@@ -345,6 +345,7 @@ pub enum StatusLevel {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MicMode {
+    Auto,
     Browser,
     Cpal,
     RawUsb,
@@ -497,6 +498,18 @@ pub struct AppState {
     /// File index of the currently-recording live file (None if not recording).
     /// Used to update the live file in-place during recording and finalization.
     pub mic_live_file_idx: RwSignal<Option<usize>>,
+    /// Wall-clock time (Date.now()) when recording started, for timer display.
+    pub mic_recording_start_time: RwSignal<Option<f64>>,
+    /// Wrapping counter incremented by setInterval(100ms) while recording.
+    pub mic_timer_tick: RwSignal<u32>,
+    /// Current mic device name (populated on open or query).
+    pub mic_device_name: RwSignal<Option<String>>,
+    /// Connection type: "USB", "Internal", "Bluetooth", etc.
+    pub mic_connection_type: RwSignal<Option<String>>,
+    /// Whether a USB audio device is currently connected.
+    pub mic_usb_connected: RwSignal<bool>,
+    /// What Auto mode resolved to (Cpal or RawUsb). Ignored when mode is not Auto.
+    pub mic_effective_mode: RwSignal<MicMode>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -694,9 +707,15 @@ impl AppState {
             mic_samples_recorded: RwSignal::new(0),
             mic_bits_per_sample: RwSignal::new(16),
             mic_max_sample_rate: RwSignal::new(0),
-            mic_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
+            mic_mode: RwSignal::new(if detect_tauri() { MicMode::Auto } else { MicMode::Browser }),
             mic_supported_rates: RwSignal::new(Vec::new()),
             mic_live_file_idx: RwSignal::new(None),
+            mic_recording_start_time: RwSignal::new(None),
+            mic_timer_tick: RwSignal::new(0),
+            mic_device_name: RwSignal::new(None),
+            mic_connection_type: RwSignal::new(None),
+            mic_usb_connected: RwSignal::new(false),
+            mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
             is_mobile: RwSignal::new(detect_mobile()),

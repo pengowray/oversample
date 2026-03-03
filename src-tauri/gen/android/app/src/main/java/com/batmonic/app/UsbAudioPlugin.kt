@@ -1,16 +1,20 @@
 package com.batmonic.app
 
+import android.Manifest
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -55,8 +59,14 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
     private var pendingPermissionInvoke: Invoke? = null
     private var pendingPermissionDevice: UsbDevice? = null
+    private var pendingAudioPermissionInvoke: Invoke? = null
     private var activeConnection: UsbDeviceConnection? = null
     private var activeDevice: UsbDevice? = null
+    private var webViewRef: android.webkit.WebView? = null
+
+    companion object {
+        const val REQUEST_AUDIO_PERMISSION = 1001
+    }
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -88,15 +98,108 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    // USB hotplug receiver — detects device attach/detach and emits events to frontend
+    private val usbHotplugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+
+            val isAudio = device?.let { dev ->
+                (0 until dev.interfaceCount).any {
+                    dev.getInterface(it).interfaceClass == USB_CLASS_AUDIO
+                }
+            } ?: false
+
+            if (!isAudio) return
+
+            val action = when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> "attached"
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> "detached"
+                else -> return
+            }
+            val productName = device?.productName ?: "USB Audio"
+            Log.i(TAG, "USB audio device $action: $productName")
+
+            // Emit event to frontend via WebView JavaScript evaluation
+            val eventData = """{"action":"$action","productName":"${productName.replace("\"", "\\\"")}", "deviceName":"${device?.deviceName ?: ""}"}"""
+            webViewRef?.post {
+                webViewRef?.evaluateJavascript(
+                    """
+                    if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.__emit) {
+                        window.__TAURI_INTERNALS__.__emit('usb-device-change', $eventData);
+                    }
+                    """.trimIndent(),
+                    null
+                )
+            }
+        }
+    }
+
     override fun load(webView: android.webkit.WebView) {
         super.load(webView)
-        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        webViewRef = webView
+
+        // Register USB permission receiver
+        val permFilter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            activity.registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED)
+            activity.registerReceiver(usbReceiver, permFilter, Context.RECEIVER_EXPORTED)
         } else {
-            activity.registerReceiver(usbReceiver, filter)
+            activity.registerReceiver(usbReceiver, permFilter)
         }
+
+        // Register USB hotplug receiver
+        val hotplugFilter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            activity.registerReceiver(usbHotplugReceiver, hotplugFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            activity.registerReceiver(usbHotplugReceiver, hotplugFilter)
+        }
+
         Log.i(TAG, "UsbAudioPlugin loaded")
+    }
+
+    /**
+     * Request Android RECORD_AUDIO runtime permission.
+     * Needed for WebView getUserMedia to work on Android.
+     */
+    @Command
+    fun requestAudioPermission(invoke: Invoke) {
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) {
+            val result = JSObject()
+            result.put("granted", true)
+            invoke.resolve(result)
+            return
+        }
+
+        pendingAudioPermissionInvoke = invoke
+        ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(Manifest.permission.RECORD_AUDIO),
+            REQUEST_AUDIO_PERMISSION
+        )
+    }
+
+    /**
+     * Called from MainActivity.onRequestPermissionsResult to resolve pending audio permission.
+     */
+    fun handlePermissionResult(requestCode: Int, grantResults: IntArray) {
+        if (requestCode != REQUEST_AUDIO_PERMISSION) return
+        val invoke = pendingAudioPermissionInvoke ?: return
+        pendingAudioPermissionInvoke = null
+
+        val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+        val result = JSObject()
+        result.put("granted", granted)
+        invoke.resolve(result)
     }
 
     /**

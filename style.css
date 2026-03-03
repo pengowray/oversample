@@ -598,6 +598,30 @@ body.sidebar-resizing {
     border-color: #666;
 }
 
+.mic-info {
+    padding: 2px 16px 4px;
+}
+
+.mic-info-row {
+    display: flex;
+    align-items: center;
+    padding: 1px 0;
+    gap: 8px;
+    font-size: 11px;
+}
+
+.mic-info-label {
+    color: #666;
+    flex: 0 0 50px;
+}
+
+.mic-info-value {
+    color: #aaa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .setting-slider-row {
     display: flex;
     align-items: center;

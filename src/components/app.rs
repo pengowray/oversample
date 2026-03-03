@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, LayerPanel, MainView, SpectrogramDisplay};
+use crate::state::{AppState, LayerPanel, MainView, MicMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -59,6 +59,68 @@ pub fn App() -> impl IntoView {
                     state.loading_count.update(|c| *c = c.saturating_sub(1));
                 });
             }
+        }
+    }
+
+    // Auto mic mode: check for USB device at startup and listen for hotplug events
+    if state.is_tauri && state.mic_mode.get_untracked() == MicMode::Auto {
+        wasm_bindgen_futures::spawn_local(async move {
+            microphone::resolve_auto_mode(&state).await;
+        });
+    }
+
+    // Listen for USB hotplug events (emitted by UsbAudioPlugin Kotlin BroadcastReceiver)
+    if state.is_tauri {
+        use crate::tauri_bridge::get_tauri_internals;
+        if let Some(tauri) = get_tauri_internals() {
+            let state_cb = state;
+            let hotplug_handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+                let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
+                    .ok().unwrap_or(event.clone());
+                let action = js_sys::Reflect::get(&payload, &JsValue::from_str("action"))
+                    .ok().and_then(|v| v.as_string()).unwrap_or_default();
+                let product = js_sys::Reflect::get(&payload, &JsValue::from_str("productName"))
+                    .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
+
+                if action == "attached" {
+                    state_cb.mic_usb_connected.set(true);
+                    if state_cb.mic_mode.get_untracked() == MicMode::Auto
+                        && !state_cb.mic_listening.get_untracked()
+                        && !state_cb.mic_recording.get_untracked()
+                    {
+                        state_cb.show_info_toast(format!("USB mic detected: {}", product));
+                        let st = state_cb;
+                        wasm_bindgen_futures::spawn_local(async move {
+                            microphone::resolve_auto_mode(&st).await;
+                        });
+                    }
+                } else if action == "detached" {
+                    state_cb.mic_usb_connected.set(false);
+                    if state_cb.mic_mode.get_untracked() == MicMode::Auto {
+                        state_cb.mic_effective_mode.set(MicMode::Cpal);
+                        state_cb.show_info_toast("USB mic disconnected, using native audio");
+                    }
+                }
+            });
+
+            // Use Tauri's event system to listen for the custom event
+            // The Kotlin plugin emits via __TAURI_INTERNALS__.__emit
+            let transform_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("transformCallback")).ok();
+            let invoke_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")).ok();
+            if let (Some(transform), Some(invoke)) = (transform_fn, invoke_fn) {
+                let transform = js_sys::Function::from(transform);
+                let invoke = js_sys::Function::from(invoke);
+                if let Ok(handler_id) = transform.call1(&tauri, hotplug_handler.as_ref().unchecked_ref()) {
+                    let args = js_sys::Object::new();
+                    js_sys::Reflect::set(&args, &"event".into(), &JsValue::from_str("usb-device-change")).ok();
+                    let target = js_sys::Object::new();
+                    js_sys::Reflect::set(&target, &"kind".into(), &JsValue::from_str("Any")).ok();
+                    js_sys::Reflect::set(&args, &"target".into(), &target).ok();
+                    js_sys::Reflect::set(&args, &"handler".into(), &handler_id).ok();
+                    let _ = invoke.call2(&tauri, &JsValue::from_str("plugin:event|listen"), &args.into());
+                }
+            }
+            hotplug_handler.forget(); // keep alive for the lifetime of the app
         }
     }
 

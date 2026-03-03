@@ -54,15 +54,22 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
         let mode = match select.value().as_str() {
+            "auto" => MicMode::Auto,
             "cpal" => MicMode::Cpal,
             "raw_usb" => MicMode::RawUsb,
             _ => MicMode::Browser,
         };
         state.mic_mode.set(mode);
         // Query actual supported rates when switching to cpal
-        if mode == MicMode::Cpal && state.is_tauri {
+        if (mode == MicMode::Cpal || mode == MicMode::Auto) && state.is_tauri {
             spawn_local(async move {
                 crate::audio::microphone::query_cpal_supported_rates(&state).await;
+                crate::audio::microphone::query_mic_info(&state).await;
+            });
+        }
+        if mode == MicMode::Auto && state.is_tauri {
+            spawn_local(async move {
+                crate::audio::microphone::resolve_auto_mode(&state).await;
             });
         }
     };
@@ -76,25 +83,33 @@ pub(super) fn ConfigPanel() -> impl IntoView {
 
     let is_tauri = state.is_tauri;
 
-    // Query cpal rates on initial render if in cpal mode
-    if is_tauri && state.mic_mode.get_untracked() == MicMode::Cpal {
-        spawn_local(async move {
-            crate::audio::microphone::query_cpal_supported_rates(&state).await;
-        });
+    // Query device info on initial render
+    if is_tauri {
+        let mode = state.mic_mode.get_untracked();
+        if mode == MicMode::Cpal || mode == MicMode::Auto {
+            spawn_local(async move {
+                crate::audio::microphone::query_cpal_supported_rates(&state).await;
+                crate::audio::microphone::query_mic_info(&state).await;
+            });
+        }
     }
 
     // Check if a specific rate is available based on mode + actual device rates
     let rate_available = move |rate: u32| -> bool {
-        match state.mic_mode.get() {
+        let mode = state.mic_mode.get();
+        let effective = if mode == MicMode::Auto {
+            state.mic_effective_mode.get()
+        } else {
+            mode
+        };
+        match effective {
             MicMode::Browser => rate <= 96_000,
             MicMode::RawUsb => rate <= 500_000,
-            MicMode::Cpal => {
+            MicMode::Auto | MicMode::Cpal => {
                 let rates = state.mic_supported_rates.get();
                 if rates.is_empty() {
-                    // Not yet queried — show all rates up to 192kHz (cpal ceiling)
                     rate <= 192_000
                 } else {
-                    // Only show rates the device actually supports
                     rates.iter().any(|&r| r >= rate)
                 }
             }
@@ -111,6 +126,18 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         class="setting-select"
                         on:change=on_mic_mode_change
                     >
+                        <option value="auto"
+                            selected=move || state.mic_mode.get() == MicMode::Auto
+                            disabled=move || !is_tauri
+                        >{move || {
+                            if !is_tauri { return "Auto".to_string(); }
+                            let eff = state.mic_effective_mode.get();
+                            match eff {
+                                MicMode::RawUsb => "Auto (USB)".to_string(),
+                                MicMode::Cpal => "Auto (Native)".to_string(),
+                                _ => "Auto".to_string(),
+                            }
+                        }}</option>
                         <option value="browser"
                             selected=move || state.mic_mode.get() == MicMode::Browser
                         >"Browser"</option>
@@ -121,7 +148,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         <option value="raw_usb"
                             selected=move || state.mic_mode.get() == MicMode::RawUsb
                             disabled=move || !is_tauri
-                        >{move || if is_tauri { "Raw USB (Recommended)" } else { "Raw USB" }}</option>
+                        >"Raw USB"</option>
                     </select>
                 </div>
                 <div class="setting-row">
@@ -154,6 +181,49 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         >"500 kHz"</option>
                     </select>
                 </div>
+                // Mic info display
+                {move || {
+                    let name = state.mic_device_name.get();
+                    let conn = state.mic_connection_type.get();
+                    let sr = state.mic_sample_rate.get();
+                    let bits = state.mic_bits_per_sample.get();
+                    let has_info = name.is_some() || sr > 0;
+                    if !has_info { return None; }
+                    Some(view! {
+                        <div class="mic-info">
+                            {name.map(|n| view! {
+                                <div class="mic-info-row">
+                                    <span class="mic-info-label">"Device"</span>
+                                    <span class="mic-info-value">{n}</span>
+                                </div>
+                            })}
+                            {conn.map(|c| view! {
+                                <div class="mic-info-row">
+                                    <span class="mic-info-label">"Type"</span>
+                                    <span class="mic-info-value">{c}</span>
+                                </div>
+                            })}
+                            {(sr > 0).then(|| view! {
+                                <div class="mic-info-row">
+                                    <span class="mic-info-label">"Rate"</span>
+                                    <span class="mic-info-value">{
+                                        if sr >= 1000 {
+                                            format!("{} kHz", sr / 1000)
+                                        } else {
+                                            format!("{} Hz", sr)
+                                        }
+                                    }</span>
+                                </div>
+                            })}
+                            {(bits > 0 && bits != 16).then(|| view! {
+                                <div class="mic-info-row">
+                                    <span class="mic-info-label">"Depth"</span>
+                                    <span class="mic-info-value">{format!("{}-bit", bits)}</span>
+                                </div>
+                            })}
+                        </div>
+                    })
+                }}
             </div>
 
             <div class="setting-group">

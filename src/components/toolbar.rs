@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use wasm_bindgen::prelude::*;
 use crate::state::AppState;
 use crate::audio::microphone;
 
@@ -8,6 +9,34 @@ pub fn Toolbar() -> impl IntoView {
     let show_about = RwSignal::new(false);
 
     let is_mobile = state.is_mobile.get_untracked();
+
+    // Recording timer: start/stop a 100ms setInterval to tick the timer signal
+    let interval_id: StoredValue<Option<i32>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let recording = state.mic_recording.get();
+        if recording {
+            // Start 100ms interval to update timer
+            let cb = Closure::<dyn FnMut()>::new(move || {
+                state.mic_timer_tick.update(|n| *n = n.wrapping_add(1));
+            });
+            if let Some(window) = web_sys::window() {
+                if let Ok(id) = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(), 100,
+                ) {
+                    interval_id.set_value(Some(id));
+                }
+            }
+            cb.forget(); // leak the closure — cleared when recording stops
+        } else {
+            // Clear interval
+            if let Some(id) = interval_id.get_value() {
+                if let Some(window) = web_sys::window() {
+                    window.clear_interval_with_handle(id);
+                }
+                interval_id.set_value(None);
+            }
+        }
+    });
 
     view! {
         <div class="toolbar">
@@ -59,9 +88,10 @@ pub fn Toolbar() -> impl IntoView {
                 title="Toggle recording (R)"
             >
                 {move || if state.mic_recording.get() {
-                    let n = state.mic_samples_recorded.get();
-                    let sr = state.mic_sample_rate.get_untracked().max(1);
-                    let secs = n as f64 / sr as f64;
+                    let _ = state.mic_timer_tick.get(); // subscribe to 100ms tick
+                    let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+                    let now = js_sys::Date::now();
+                    let secs = (now - start) / 1000.0;
                     format!("Rec {:.1}s", secs)
                 } else {
                     "Record".to_string()
