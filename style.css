@@ -625,6 +625,11 @@ body.sidebar-resizing {
     margin-top: 4px;
     font-size: 11px;
 }
+.mic-mode-hint {
+    font-size: 10px;
+    color: #888;
+    padding: 2px 16px 0;
+}
 
 /* ── Debug Log Panel ────────────────────────────────────────────────────── */
 .debug-panel {

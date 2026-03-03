@@ -73,8 +73,16 @@ pub fn Toolbar() -> impl IntoView {
                         microphone::toggle_listen(&st).await;
                     });
                 }
-                title="Toggle live listening (L)"
-            >"Listen"</button>
+                title=move || if state.mic_needs_permission.get() && state.is_tauri {
+                    "Grant USB mic permission to start listening"
+                } else {
+                    "Toggle live listening (L)"
+                }
+            >{move || if state.mic_needs_permission.get() && state.is_tauri && !state.mic_listening.get() {
+                "Allow USB mic"
+            } else {
+                "Listen"
+            }}</button>
 
             // Record button
             <button
@@ -85,7 +93,11 @@ pub fn Toolbar() -> impl IntoView {
                         microphone::toggle_record(&st).await;
                     });
                 }
-                title="Toggle recording (R)"
+                title=move || if state.mic_needs_permission.get() && state.is_tauri {
+                    "Grant USB mic permission to start recording"
+                } else {
+                    "Toggle recording (R)"
+                }
             >
                 {move || if state.mic_recording.get() {
                     let _ = state.mic_timer_tick.get(); // subscribe to 100ms tick
@@ -93,6 +105,8 @@ pub fn Toolbar() -> impl IntoView {
                     let now = js_sys::Date::now();
                     let secs = (now - start) / 1000.0;
                     format!("Rec {:.1}s", secs)
+                } else if state.mic_needs_permission.get() && state.is_tauri {
+                    "Allow USB mic".to_string()
                 } else {
                     "Record".to_string()
                 }}

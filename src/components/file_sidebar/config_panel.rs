@@ -146,18 +146,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         <option value="auto"
                             selected=move || state.mic_mode.get() == MicMode::Auto
                             disabled=move || !is_tauri
-                        >{move || {
-                            if !is_tauri { return "Auto".to_string(); }
-                            let eff = state.mic_effective_mode.get();
-                            match eff {
-                                MicMode::RawUsb => "Auto (USB)".to_string(),
-                                MicMode::Cpal => "Auto (Native)".to_string(),
-                                _ => "Auto".to_string(),
-                            }
-                        }}</option>
+                        >"Auto"</option>
                         <option value="browser"
                             selected=move || state.mic_mode.get() == MicMode::Browser
-                        >"Browser"</option>
+                            disabled=move || is_tauri
+                        >{move || if is_tauri { "Browser (unavailable)" } else { "Browser" }}</option>
                         <option value="cpal"
                             selected=move || state.mic_mode.get() == MicMode::Cpal
                             disabled=move || !is_tauri
@@ -168,6 +161,21 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         >"Raw USB"</option>
                     </select>
                 </div>
+                // Effective mode hint (only when Auto is selected in Tauri)
+                {move || {
+                    if !is_tauri || state.mic_mode.get() != MicMode::Auto {
+                        return None;
+                    }
+                    let eff = state.mic_effective_mode.get();
+                    let label = match eff {
+                        MicMode::RawUsb => "Using: USB (Raw)",
+                        MicMode::Cpal => "Using: Native audio",
+                        _ => "Using: Browser",
+                    };
+                    Some(view! {
+                        <div class="mic-mode-hint">{label}</div>
+                    })
+                }}
                 <div class="setting-row">
                     <span class="setting-label">"Max sample rate"</span>
                     <select

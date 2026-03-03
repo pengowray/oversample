@@ -179,6 +179,8 @@ pub fn start_usb_stream(
     // Channel to wait for the isochronous thread to confirm streaming has started
     let (startup_tx, startup_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
+    let app_for_thread = app.clone();
+    let cancel_for_emit = cancel_flag.clone();
     std::thread::spawn(move || {
         let result = isochronous::run_isochronous_loop(
             fd,
@@ -195,10 +197,21 @@ pub fn start_usb_stream(
         );
 
         streaming.store(false, Ordering::Relaxed);
+        // Also signal the emitter thread to stop
+        cancel_for_emit.store(true, Ordering::Relaxed);
 
+        // Emit frontend event if stream ended unexpectedly (not by explicit cancel)
+        use tauri::Emitter;
         match result {
-            Ok(()) => eprintln!("USB stream ended normally"),
-            Err(e) => eprintln!("USB stream error: {}", e),
+            Ok(()) => {
+                eprintln!("USB stream ended normally");
+                // Normal end without cancel means disconnect
+                let _ = app_for_thread.emit("usb-stream-error", "USB device disconnected");
+            }
+            Err(e) => {
+                eprintln!("USB stream error: {}", e);
+                let _ = app_for_thread.emit("usb-stream-error", &format!("USB stream error: {}", e));
+            }
         }
     });
 

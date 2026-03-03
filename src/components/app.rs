@@ -72,7 +72,8 @@ pub fn App() -> impl IntoView {
                 }
             });
             let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-            let mode = microphone::resolve_auto_mode(&state).await;
+            // Check USB status without requesting permission (don't show dialog at startup)
+            let mode = microphone::check_auto_mode_no_request(&state).await;
             microphone::query_mic_info(&state).await;
 
             // If no USB found on first try, retry after 2s (device may enumerate slowly)
@@ -83,7 +84,7 @@ pub fn App() -> impl IntoView {
                     }
                 });
                 let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-                microphone::resolve_auto_mode(&state).await;
+                microphone::check_auto_mode_no_request(&state).await;
                 microphone::query_mic_info(&state).await;
             }
         });
@@ -129,7 +130,6 @@ pub fn App() -> impl IntoView {
                 if let Some(event) = last_event {
                     if event == "attached" && !was_connected {
                         if state.mic_mode.get_untracked() == MicMode::Auto {
-                            state.show_info_toast(format!("USB mic detected: {}", product_name));
                             // Wait 500ms for USB device to fully enumerate
                             let p = js_sys::Promise::new(&mut |resolve, _| {
                                 if let Some(w) = web_sys::window() {
@@ -137,12 +137,14 @@ pub fn App() -> impl IntoView {
                                 }
                             });
                             let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-                            microphone::resolve_auto_mode(&state).await;
+                            // Check without requesting permission — user presses Record to grant
+                            microphone::check_auto_mode_no_request(&state).await;
                             microphone::query_mic_info(&state).await;
                         }
                     } else if event == "detached" && was_connected {
                         if state.mic_mode.get_untracked() == MicMode::Auto {
                             state.mic_effective_mode.set(MicMode::Cpal);
+                            state.mic_needs_permission.set(false);
                             state.show_info_toast("USB mic disconnected, using native audio");
                             microphone::query_mic_info(&state).await;
                         }
