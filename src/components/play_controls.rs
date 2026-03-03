@@ -2,6 +2,37 @@ use leptos::prelude::*;
 use crate::state::{AppState, StatusLevel};
 use crate::audio::playback;
 
+/// App-level toast display — always visible regardless of whether a file is open.
+#[component]
+pub fn ToastDisplay() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    view! {
+        <div class="app-toast-container">
+            {move || state.status_message.get().map(|msg| {
+                let state2 = state;
+                wasm_bindgen_futures::spawn_local(async move {
+                    let p = js_sys::Promise::new(&mut |resolve, _| {
+                        if let Some(w) = web_sys::window() {
+                            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 3000);
+                        }
+                    });
+                    wasm_bindgen_futures::JsFuture::from(p).await.ok();
+                    state2.status_message.set(None);
+                });
+                let cls = if state.status_level.get_untracked() == StatusLevel::Info {
+                    "status-toast status-toast-info"
+                } else {
+                    "status-toast"
+                };
+                view! {
+                    <span class=cls>{msg}</span>
+                }
+            })}
+        </div>
+    }
+}
+
 #[component]
 pub fn PlayControls() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -27,28 +58,6 @@ pub fn PlayControls() -> impl IntoView {
         <div class="play-controls"
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
-            // Status message toast (auto-dismissing)
-            {move || state.status_message.get().map(|msg| {
-                let state2 = state;
-                wasm_bindgen_futures::spawn_local(async move {
-                    let p = js_sys::Promise::new(&mut |resolve, _| {
-                        if let Some(w) = web_sys::window() {
-                            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 3000);
-                        }
-                    });
-                    wasm_bindgen_futures::JsFuture::from(p).await.ok();
-                    state2.status_message.set(None);
-                });
-                let cls = if state.status_level.get_untracked() == StatusLevel::Info {
-                    "status-toast status-toast-info"
-                } else {
-                    "status-toast"
-                };
-                view! {
-                    <span class=cls>{msg}</span>
-                }
-            })}
-
             // Play/Stop buttons (when a file is loaded)
             {move || if !has_file() {
                 view! { <span></span> }.into_any()

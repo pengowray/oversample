@@ -72,18 +72,22 @@ pub async fn request_audio_permission_tauri(state: &AppState) -> bool {
     if !state.is_tauri {
         return true; // Not needed on web
     }
+    state.log_debug("info", "Requesting RECORD_AUDIO permission via plugin...");
     match tauri_invoke("plugin:usb-audio|requestAudioPermission",
         &js_sys::Object::new().into()).await {
         Ok(result) => {
             let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
                 .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-            if !granted {
+            if granted {
+                state.log_debug("info", "RECORD_AUDIO permission granted");
+            } else {
+                state.log_debug("error", "RECORD_AUDIO permission denied");
                 state.show_error_toast("Microphone permission denied");
             }
             granted
         }
         Err(e) => {
-            log::warn!("requestAudioPermission failed (may not be Android): {}", e);
+            state.log_debug("warn", format!("requestAudioPermission failed (may not be Android): {}", e));
             true // Non-fatal on desktop Tauri
         }
     }
@@ -241,12 +245,14 @@ pub async fn query_mic_info(state: &AppState) {
 /// Resolve Auto mode to either RawUsb or Cpal based on USB device availability.
 /// Requests USB permission proactively if a USB audio device is found.
 pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
+    state.log_debug("info", "resolve_auto_mode: checking for USB devices...");
+
     // Check for USB audio devices
     let devices_result = tauri_invoke("plugin:usb-audio|listUsbDevices",
         &js_sys::Object::new().into()).await;
 
     if let Err(ref e) = devices_result {
-        log::warn!("resolve_auto_mode: listUsbDevices failed: {}", e);
+        state.log_debug("warn", format!("resolve_auto_mode: listUsbDevices failed: {}", e));
     }
 
     if let Ok(devices) = devices_result {
@@ -255,11 +261,14 @@ pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
             .map(|v| js_sys::Array::from(&v))
             .unwrap_or_else(|| js_sys::Array::new());
 
+        state.log_debug("info", format!("resolve_auto_mode: found {} USB device(s)", devices_arr.length()));
+
         for i in 0..devices_arr.length() {
             let dev = devices_arr.get(i);
             let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
                 .ok().and_then(|v| v.as_bool()).unwrap_or(false);
             if !is_audio {
+                state.log_debug("info", format!("resolve_auto_mode: device {} is not audio, skipping", i));
                 continue;
             }
 
@@ -270,6 +279,7 @@ pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
             let has_permission = js_sys::Reflect::get(&dev, &JsValue::from_str("hasPermission"))
                 .ok().and_then(|v| v.as_bool()).unwrap_or(false);
 
+            state.log_debug("info", format!("resolve_auto_mode: audio device '{}', has_permission={}", product_name, has_permission));
             state.mic_usb_connected.set(true);
 
             if has_permission {
@@ -280,6 +290,7 @@ pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
 
             // Request permission proactively
             if let Some(ref dev_name) = device_name {
+                state.log_debug("info", format!("resolve_auto_mode: requesting USB permission for '{}'...", dev_name));
                 let perm_args = js_sys::Object::new();
                 js_sys::Reflect::set(&perm_args, &JsValue::from_str("deviceName"),
                     &JsValue::from_str(dev_name)).ok();
@@ -288,17 +299,21 @@ pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
                         let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
                             .ok().and_then(|v| v.as_bool()).unwrap_or(false);
                         if granted {
+                            state.log_debug("info", "resolve_auto_mode: USB permission granted");
                             state.mic_effective_mode.set(MicMode::RawUsb);
                             state.show_info_toast(format!("USB mic: {}", product_name));
                             return MicMode::RawUsb;
                         } else {
+                            state.log_debug("warn", "resolve_auto_mode: USB permission denied");
                             state.show_info_toast("USB permission denied, using native audio");
                         }
                     }
                     Err(e) => {
-                        log::warn!("USB permission request failed: {}", e);
+                        state.log_debug("error", format!("resolve_auto_mode: USB permission request failed: {}", e));
                     }
                 }
+            } else {
+                state.log_debug("warn", "resolve_auto_mode: no deviceName, cannot request permission");
             }
 
             // Permission denied or failed — fall through to Cpal
@@ -306,6 +321,7 @@ pub async fn resolve_auto_mode(state: &AppState) -> MicMode {
         }
     }
 
+    state.log_debug("info", "resolve_auto_mode: falling back to Cpal (native audio)");
     state.mic_usb_connected.set(false);
     state.mic_effective_mode.set(MicMode::Cpal);
     MicMode::Cpal
@@ -350,10 +366,12 @@ async fn ensure_mic_open_web(state: &AppState) -> bool {
         return true;
     }
 
+    state.log_debug("info", "ensure_mic_open_web: opening browser mic...");
+
     let window = match web_sys::window() {
         Some(w) => w,
         None => {
-            log::error!("No window object");
+            state.log_debug("error", "ensure_mic_open_web: no window object");
             return false;
         }
     };
@@ -361,7 +379,7 @@ async fn ensure_mic_open_web(state: &AppState) -> bool {
     let media_devices = match navigator.media_devices() {
         Ok(md) => md,
         Err(e) => {
-            log::error!("No media devices: {:?}", e);
+            state.log_debug("error", format!("ensure_mic_open_web: no media devices: {:?}", e));
             state.status_message.set(Some("Microphone not available on this device".into()));
             return false;
         }
@@ -384,10 +402,14 @@ async fn ensure_mic_open_web(state: &AppState) -> bool {
         }
     };
 
+    state.log_debug("info", "ensure_mic_open_web: calling getUserMedia...");
     let stream_js = match JsFuture::from(promise).await {
-        Ok(s) => s,
+        Ok(s) => {
+            state.log_debug("info", "ensure_mic_open_web: getUserMedia succeeded");
+            s
+        }
         Err(e) => {
-            log::error!("Mic permission denied: {:?}", e);
+            state.log_debug("error", format!("ensure_mic_open_web: getUserMedia denied: {:?}", e));
             state.status_message.set(Some("Microphone permission denied".into()));
             return false;
         }
@@ -526,10 +548,8 @@ fn close_mic_web(state: &AppState) {
     MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
     RT_HET.with(|h| h.borrow_mut().reset());
 
-    state.mic_sample_rate.set(0);
     state.mic_samples_recorded.set(0);
-    state.mic_bits_per_sample.set(16);
-    // Don't clear mic_device_name/mic_connection_type — persist for settings display
+    // Don't clear mic info signals — persist for settings display
     log::info!("Web mic closed");
 }
 
@@ -732,9 +752,8 @@ async fn close_mic_tauri(state: &AppState) {
     TAURI_MIC_OPEN.with(|o| *o.borrow_mut() = false);
     TAURI_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
 
-    state.mic_sample_rate.set(0);
     state.mic_samples_recorded.set(0);
-    state.mic_bits_per_sample.set(16);
+    // Don't clear mic info signals — persist for settings display
     log::info!("Native mic closed");
 }
 
@@ -795,6 +814,7 @@ async fn toggle_record_tauri(state: &AppState) {
                     let sr = state.mic_sample_rate.get_untracked();
                     let file_idx = start_live_recording(state, sr);
                     spawn_live_processing_loop(*state, file_idx, sr);
+                    spawn_smooth_scroll_animation(*state);
                     log::info!("Native recording started");
                 }
                 Err(e) => {
@@ -1118,7 +1138,10 @@ async fn ensure_mic_open_usb(state: &AppState) -> bool {
     }
 
     state.mic_sample_rate.set(sample_rate);
-    state.mic_bits_per_sample.set(16);
+    // Parse bit depth from USB device info if available, default to 16
+    let usb_bits = js_sys::Reflect::get(&device_info, &JsValue::from_str("bitDepth"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(16.0) as u16;
+    state.mic_bits_per_sample.set(usb_bits);
 
     // Setup HET playback AudioContext (same as cpal mode)
     let het_ctx = match AudioContext::new() {
@@ -1221,9 +1244,8 @@ async fn close_mic_usb(state: &AppState) {
     RT_HET.with(|h| h.borrow_mut().reset());
     USB_MIC_OPEN.with(|o| *o.borrow_mut() = false);
 
-    state.mic_sample_rate.set(0);
     state.mic_samples_recorded.set(0);
-    state.mic_bits_per_sample.set(16);
+    // Don't clear mic info signals — persist for settings display
     log::info!("USB mic closed");
 }
 
@@ -1274,6 +1296,7 @@ async fn toggle_record_usb(state: &AppState) {
                     let sr = state.mic_sample_rate.get_untracked();
                     let file_idx = start_live_recording(state, sr);
                     spawn_live_processing_loop(*state, file_idx, sr);
+                    spawn_smooth_scroll_animation(*state);
                     log::info!("USB recording started");
                 }
                 Err(e) => {
@@ -1325,6 +1348,7 @@ async fn effective_mode(state: &AppState) -> MicMode {
 /// Toggle live HET listening on/off.
 pub async fn toggle_listen(state: &AppState) {
     let mode = effective_mode(state).await;
+    state.log_debug("info", format!("toggle_listen: mode={:?}, listening={}", mode, state.mic_listening.get_untracked()));
     match mode {
         MicMode::RawUsb if state.is_tauri => toggle_listen_usb(state).await,
         MicMode::Cpal if state.is_tauri => toggle_listen_tauri(state).await,
@@ -1345,6 +1369,7 @@ pub async fn toggle_listen(state: &AppState) {
 /// Toggle recording on/off. When stopping, finalizes the recording.
 pub async fn toggle_record(state: &AppState) {
     let mode = effective_mode(state).await;
+    state.log_debug("info", format!("toggle_record: mode={:?}, recording={}", mode, state.mic_recording.get_untracked()));
     match mode {
         MicMode::RawUsb if state.is_tauri => toggle_record_usb(state).await,
         MicMode::Cpal if state.is_tauri => toggle_record_tauri(state).await,
@@ -1364,6 +1389,7 @@ pub async fn toggle_record(state: &AppState) {
                     let sr = state.mic_sample_rate.get_untracked();
                     let file_idx = start_live_recording(state, sr);
                     spawn_live_processing_loop(*state, file_idx, sr);
+                    spawn_smooth_scroll_animation(*state);
                     log::info!("Recording started");
                 }
             }
@@ -1599,14 +1625,8 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
         },
     };
 
-    // Use rate-adaptive FFT sizes matching spawn_live_processing_loop
-    let (live_fft, live_hop) = if sample_rate >= 192_000 {
-        (256.0, 64.0)
-    } else if sample_rate >= 96_000 {
-        (512.0, 128.0)
-    } else {
-        (1024.0, 256.0)
-    };
+    // Fixed FFT=256/hop=64 for all sample rates during live recording
+    let (live_fft, live_hop) = (256.0, 64.0);
     let placeholder_spec = SpectrogramData {
         columns: Arc::new(Vec::new()),
         total_columns: 0,
@@ -1641,16 +1661,10 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
 fn spawn_live_processing_loop(state: AppState, file_index: usize, sample_rate: u32) {
     use crate::canvas::{spectral_store, tile_cache::{self, TILE_COLS}};
 
-    // Rate-adaptive FFT: smaller windows at high sample rates for better
-    // temporal resolution and lower CPU cost during live recording.
-    let (fft_size, hop_size): (usize, usize) = if sample_rate >= 192_000 {
-        (256, 64)
-    } else if sample_rate >= 96_000 {
-        (512, 128)
-    } else {
-        (1024, 256)
-    };
-    const PROCESS_INTERVAL_MS: i32 = 100;
+    // Fixed FFT=256/hop=64 for all sample rates during live recording.
+    // Small FFT gives good temporal resolution and low CPU cost.
+    let (fft_size, hop_size): (usize, usize) = (256, 64);
+    const PROCESS_INTERVAL_MS: i32 = 50;
 
     wasm_bindgen_futures::spawn_local(async move {
         let mut last_processed_col: usize = 0;
@@ -1781,12 +1795,15 @@ fn spawn_live_processing_loop(state: AppState, file_index: usize, sample_rate: u
             }
 
             if any_update {
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-
-                // Auto-scroll to keep recording edge visible
+                // Update live data column count for canvas clipping
                 let total_cols = state.files.with_untracked(|files| {
                     files.get(file_index).map(|f| f.spectrogram.total_columns).unwrap_or(0)
                 });
+                state.mic_live_data_cols.set(total_cols);
+
+                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+
+                // Set target scroll (rAF animation loop will smoothly interpolate)
                 if total_cols > 0 {
                     let time_res = hop_size as f64 / sample_rate as f64;
                     let recording_time = total_cols as f64 * time_res;
@@ -1795,9 +1812,9 @@ fn spawn_live_processing_loop(state: AppState, file_index: usize, sample_rate: u
                     if zoom > 0.0 && canvas_w > 0.0 {
                         let visible_cols = canvas_w / zoom;
                         let visible_time = visible_cols * time_res;
-                        // Keep recording edge at ~80% of viewport
-                        let target_scroll = (recording_time - visible_time * 0.8).max(0.0);
-                        state.scroll_offset.set(target_scroll);
+                        // Pin recording edge to the right side of viewport
+                        let target_scroll = (recording_time - visible_time).max(0.0);
+                        state.mic_recording_target_scroll.set(target_scroll);
                     }
                 }
             }
@@ -1805,7 +1822,52 @@ fn spawn_live_processing_loop(state: AppState, file_index: usize, sample_rate: u
 
         // Processing loop exited — clean up
         state.mic_live_file_idx.set(None);
+        state.mic_live_data_cols.set(0);
+        state.mic_recording_target_scroll.set(0.0);
     });
+}
+
+/// Spawns a requestAnimationFrame loop that smoothly interpolates
+/// `scroll_offset` toward `mic_recording_target_scroll` for waterfall scrolling.
+/// Automatically stops when recording ends.
+fn spawn_smooth_scroll_animation(state: AppState) {
+    use std::rc::Rc;
+    use std::cell::RefCell;
+
+    let cb: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let cb_clone = cb.clone();
+
+    *cb.borrow_mut() = Some(Closure::new(move || {
+        if !state.mic_recording.get_untracked() {
+            // Recording stopped — exit the animation loop
+            return;
+        }
+        let target = state.mic_recording_target_scroll.get_untracked();
+        let current = state.scroll_offset.get_untracked();
+        let diff = target - current;
+        if diff.abs() > 0.0001 {
+            // Exponential ease: move 30% of remaining distance each frame (~60fps)
+            let new_scroll = current + diff * 0.3;
+            state.scroll_offset.set(new_scroll);
+        }
+        // Re-register for next frame
+        if let Some(w) = web_sys::window() {
+            if let Some(ref c) = *cb_clone.borrow() {
+                let _ = w.request_animation_frame(c.as_ref().unchecked_ref());
+            }
+        }
+    }));
+
+    // Start the animation loop
+    if let Some(w) = web_sys::window() {
+        if let Some(ref c) = *cb.borrow() {
+            let _ = w.request_animation_frame(c.as_ref().unchecked_ref());
+        }
+    }
+
+    // Prevent the closure from being dropped by leaking it.
+    // It will self-terminate when recording stops (the callback checks mic_recording).
+    std::mem::forget(cb);
 }
 
 /// Finalize a live recording by updating the existing live file in-place.

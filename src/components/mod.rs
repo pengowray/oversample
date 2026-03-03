@@ -15,3 +15,4 @@ pub mod xc_browser;
 pub mod zc_chart;
 pub mod chromagram_view;
 pub mod pinch;
+pub mod debug_panel;

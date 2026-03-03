@@ -621,6 +621,54 @@ body.sidebar-resizing {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.mic-info-refresh {
+    margin-top: 4px;
+    font-size: 11px;
+}
+
+/* ── Debug Log Panel ────────────────────────────────────────────────────── */
+.debug-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.debug-panel-toolbar {
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+}
+.debug-panel-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.debug-panel-empty {
+    color: #666;
+    padding: 12px;
+    text-align: center;
+}
+.debug-entry {
+    display: flex;
+    gap: 4px;
+    padding: 1px 0;
+    word-break: break-all;
+}
+.debug-time {
+    color: #666;
+    flex-shrink: 0;
+    min-width: 50px;
+}
+.debug-level-info { color: #888; flex-shrink: 0; }
+.debug-level-warn { color: #cc6; flex-shrink: 0; }
+.debug-level-error { color: #e66; flex-shrink: 0; }
+.debug-msg { color: #ccc; }
 
 .setting-slider-row {
     display: flex;
@@ -1543,6 +1591,18 @@ body.sidebar-resizing {
 
 .unsaved-banner:hover {
     background: rgba(200, 150, 0, 0.95);
+}
+
+.app-toast-container {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    pointer-events: none;
+}
+.app-toast-container .status-toast {
+    pointer-events: auto;
 }
 
 .status-toast {

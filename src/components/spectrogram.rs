@@ -440,6 +440,20 @@ pub fn Spectrogram() -> impl IntoView {
             gamma: spect_gamma,
             gain_db: spect_gain - ref_db,
         };
+
+        // During recording, clip the canvas so partial tiles don't show black padding.
+        // The clipping region ends at the rightmost column with actual data.
+        let is_recording = state.mic_recording.get_untracked();
+        let live_data_cols = state.mic_live_data_cols.get_untracked();
+        if is_recording && live_data_cols > 0 {
+            ctx.save();
+            let data_end_col = live_data_cols as f64;
+            let data_end_px = (data_end_col - scroll_col) * zoom;
+            // Clip to [0, 0, data_end_px, canvas_height]
+            ctx.begin_path();
+            ctx.rect(0.0, 0.0, data_end_px.max(0.0), display_h as f64);
+            ctx.clip();
+        }
         // Pre-compute per-frequency dB adjustments for display EQ / noise filter
         let tile_height = state.spect_fft_mode.get_untracked().max_fft_size().max(2048) / 2 + 1;
         let freq_adjustments = compute_freq_adjustments(&state, file_max_freq, tile_height);
@@ -652,6 +666,11 @@ pub fn Spectrogram() -> impl IntoView {
             ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
             false
         };
+
+        // Restore canvas state if we clipped for recording
+        if is_recording && live_data_cols > 0 {
+            ctx.restore();
+        }
 
         // Tile debug overlay (drawn on top of tiles, under other overlays)
         if debug_tiles && total_cols > 0 {

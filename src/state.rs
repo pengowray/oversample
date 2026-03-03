@@ -61,6 +61,7 @@ pub enum RightSidebarTab {
     Harmonics,
     Notch,
     Pulses,
+    DebugLog,
 }
 
 impl RightSidebarTab {
@@ -73,6 +74,7 @@ impl RightSidebarTab {
             Self::Harmonics => "Harmonics (beta)",
             Self::Notch => "Noise Filter",
             Self::Pulses => "Pulses",
+            Self::DebugLog => "Debug Log",
         }
     }
 
@@ -84,6 +86,7 @@ impl RightSidebarTab {
         Self::Harmonics,
         Self::Notch,
         Self::Pulses,
+        Self::DebugLog,
     ];
 }
 
@@ -510,10 +513,19 @@ pub struct AppState {
     pub mic_usb_connected: RwSignal<bool>,
     /// What Auto mode resolved to (Cpal or RawUsb). Ignored when mode is not Auto.
     pub mic_effective_mode: RwSignal<MicMode>,
+    /// Target scroll offset during recording. The rAF animation loop interpolates
+    /// scroll_offset toward this value for smooth waterfall scrolling.
+    pub mic_recording_target_scroll: RwSignal<f64>,
+    /// Rightmost spectrogram column with actual data during recording.
+    /// Used to clip the canvas so partial tiles don't show black padding.
+    pub mic_live_data_cols: RwSignal<usize>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
     pub status_level: RwSignal<StatusLevel>,
+
+    // Debug log entries: (timestamp_ms, level, message)
+    pub debug_log_entries: RwSignal<Vec<(f64, String, String)>>,
 
     // Platform detection
     pub is_mobile: RwSignal<bool>,
@@ -716,8 +728,11 @@ impl AppState {
             mic_connection_type: RwSignal::new(None),
             mic_usb_connected: RwSignal::new(false),
             mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
+            mic_recording_target_scroll: RwSignal::new(0.0),
+            mic_live_data_cols: RwSignal::new(0),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
+            debug_log_entries: RwSignal::new(Vec::new()),
             is_mobile: RwSignal::new(detect_mobile()),
             is_tauri: detect_tauri(),
             xc_browser_open: RwSignal::new(false),
@@ -786,6 +801,18 @@ impl AppState {
     pub fn show_error_toast(&self, msg: impl Into<String>) {
         self.status_level.set(StatusLevel::Error);
         self.status_message.set(Some(msg.into()));
+    }
+
+    pub fn log_debug(&self, level: &str, msg: impl Into<String>) {
+        let timestamp = js_sys::Date::now();
+        let msg_str = msg.into();
+        log::info!("[{}] {}", level, &msg_str);
+        self.debug_log_entries.update(|entries| {
+            entries.push((timestamp, level.to_string(), msg_str));
+            if entries.len() > 500 {
+                entries.drain(0..entries.len() - 500);
+            }
+        });
     }
 
     /// Temporarily suspend follow-cursor so the user can scroll freely.

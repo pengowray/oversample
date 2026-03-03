@@ -11,7 +11,7 @@ use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::overview::OverviewPanel;
-use crate::components::play_controls::PlayControls;
+use crate::components::play_controls::{PlayControls, ToastDisplay};
 use crate::components::hfr_button::HfrButton;
 use crate::components::hfr_mode_button::HfrModeButton;
 use crate::components::tool_button::ToolButton;
@@ -65,14 +65,27 @@ pub fn App() -> impl IntoView {
     // Auto mic mode: check for USB device at startup (delayed to ensure Tauri internals are ready)
     if state.is_tauri && state.mic_mode.get_untracked() == MicMode::Auto {
         wasm_bindgen_futures::spawn_local(async move {
-            // Wait 1.5s for Tauri plugin system to fully initialize
+            // Wait 500ms for Tauri plugin system to initialize
             let p = js_sys::Promise::new(&mut |resolve, _| {
                 if let Some(w) = web_sys::window() {
-                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 1500);
+                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
                 }
             });
             let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-            microphone::resolve_auto_mode(&state).await;
+            let mode = microphone::resolve_auto_mode(&state).await;
+            microphone::query_mic_info(&state).await;
+
+            // If no USB found on first try, retry after 2s (device may enumerate slowly)
+            if mode == MicMode::Cpal {
+                let p = js_sys::Promise::new(&mut |resolve, _| {
+                    if let Some(w) = web_sys::window() {
+                        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 2000);
+                    }
+                });
+                let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                microphone::resolve_auto_mode(&state).await;
+                microphone::query_mic_info(&state).await;
+            }
         });
     }
 
@@ -117,12 +130,21 @@ pub fn App() -> impl IntoView {
                     if event == "attached" && !was_connected {
                         if state.mic_mode.get_untracked() == MicMode::Auto {
                             state.show_info_toast(format!("USB mic detected: {}", product_name));
+                            // Wait 500ms for USB device to fully enumerate
+                            let p = js_sys::Promise::new(&mut |resolve, _| {
+                                if let Some(w) = web_sys::window() {
+                                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
+                                }
+                            });
+                            let _ = wasm_bindgen_futures::JsFuture::from(p).await;
                             microphone::resolve_auto_mode(&state).await;
+                            microphone::query_mic_info(&state).await;
                         }
                     } else if event == "detached" && was_connected {
                         if state.mic_mode.get_untracked() == MicMode::Auto {
                             state.mic_effective_mode.set(MicMode::Cpal);
                             state.show_info_toast("USB mic disconnected, using native audio");
+                            microphone::query_mic_info(&state).await;
                         }
                     }
                 }
@@ -315,6 +337,7 @@ fn MainArea() -> impl IntoView {
     view! {
         <div class="main" on:click=on_main_click>
             <Toolbar />
+            <ToastDisplay />
             {move || {
                 if has_file() {
                     view! {

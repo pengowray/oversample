@@ -8,6 +8,7 @@ use crate::components::file_sidebar::{
     SpectrogramSettingsPanel, SelectionPanel, SidebarAnalysisPanel,
     MetadataPanel, HarmonicsPanel, NotchPanel, PulsePanel,
 };
+use crate::components::debug_panel::DebugPanel;
 
 #[component]
 pub fn RightSidebar() -> impl IntoView {
@@ -147,6 +148,7 @@ pub fn RightSidebar() -> impl IntoView {
                 RightSidebarTab::Notch => view! { <NotchPanel /> }.into_any(),
                 RightSidebarTab::Pulses => view! { <PulsePanel /> }.into_any(),
                 RightSidebarTab::Metadata => view! { <MetadataPanel /> }.into_any(),
+                RightSidebarTab::DebugLog => view! { <DebugPanel /> }.into_any(),
             }}
         </div>
     }

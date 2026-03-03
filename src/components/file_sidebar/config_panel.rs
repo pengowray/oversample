@@ -100,10 +100,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         }
     }
 
-    // Re-query mic info when USB connection status changes
+    // Re-query mic info when USB connection status or mic mode changes
     if is_tauri {
         Effect::new(move |_| {
             let _usb = state.mic_usb_connected.get(); // subscribe to USB changes
+            let _mode = state.mic_mode.get(); // subscribe to mode changes
             spawn_local(async move {
                 crate::audio::microphone::query_mic_info(&state).await;
             });
@@ -197,46 +198,59 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         >"500 kHz"</option>
                     </select>
                 </div>
-                // Mic info display
+                // Mic info display with Refresh button
                 {move || {
                     let name = state.mic_device_name.get();
                     let conn = state.mic_connection_type.get();
                     let sr = state.mic_sample_rate.get();
                     let bits = state.mic_bits_per_sample.get();
                     let has_info = name.is_some() || sr > 0;
-                    if !has_info { return None; }
                     Some(view! {
                         <div class="mic-info">
-                            {name.map(|n| view! {
-                                <div class="mic-info-row">
-                                    <span class="mic-info-label">"Device"</span>
-                                    <span class="mic-info-value">{n}</span>
-                                </div>
-                            })}
-                            {conn.map(|c| view! {
-                                <div class="mic-info-row">
-                                    <span class="mic-info-label">"Type"</span>
-                                    <span class="mic-info-value">{c}</span>
-                                </div>
-                            })}
-                            {(sr > 0).then(|| view! {
-                                <div class="mic-info-row">
-                                    <span class="mic-info-label">"Rate"</span>
-                                    <span class="mic-info-value">{
-                                        if sr >= 1000 {
-                                            format!("{} kHz", sr / 1000)
-                                        } else {
-                                            format!("{} Hz", sr)
-                                        }
-                                    }</span>
-                                </div>
-                            })}
-                            {(bits > 0).then(|| view! {
-                                <div class="mic-info-row">
-                                    <span class="mic-info-label">"Depth"</span>
-                                    <span class="mic-info-value">{format!("{}-bit", bits)}</span>
-                                </div>
-                            })}
+                            {if has_info {
+                                view! {
+                                    <div>
+                                        {name.map(|n| view! {
+                                            <div class="mic-info-row">
+                                                <span class="mic-info-label">"Device"</span>
+                                                <span class="mic-info-value">{n}</span>
+                                            </div>
+                                        })}
+                                        {conn.map(|c| view! {
+                                            <div class="mic-info-row">
+                                                <span class="mic-info-label">"Type"</span>
+                                                <span class="mic-info-value">{c}</span>
+                                            </div>
+                                        })}
+                                        {(sr > 0).then(|| view! {
+                                            <div class="mic-info-row">
+                                                <span class="mic-info-label">"Rate"</span>
+                                                <span class="mic-info-value">{
+                                                    if sr >= 1000 {
+                                                        format!("{} kHz", sr / 1000)
+                                                    } else {
+                                                        format!("{} Hz", sr)
+                                                    }
+                                                }</span>
+                                            </div>
+                                        })}
+                                        {(bits > 0).then(|| view! {
+                                            <div class="mic-info-row">
+                                                <span class="mic-info-label">"Depth"</span>
+                                                <span class="mic-info-value">{format!("{}-bit", bits)}</span>
+                                            </div>
+                                        })}
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
+                            <button class="setting-btn mic-info-refresh" on:click=move |_| {
+                                spawn_local(async move {
+                                    crate::audio::microphone::query_mic_info(&state).await;
+                                    crate::audio::microphone::query_cpal_supported_rates(&state).await;
+                                });
+                            }>{move || if has_info { "Refresh" } else { "Get mic info" }}</button>
                         </div>
                     })
                 }}
