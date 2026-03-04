@@ -69,7 +69,7 @@ pub fn ComboButton(
         cancel_hold_inner(hold_timer);
     };
 
-    let show_left_value = !left_label.is_empty(); // always show; hide via reactive check
+    let show_left_value = true;
 
     // Pre-render children so we can use FnOnce Children inside a reactive context
     let panel_content = children();

@@ -1,6 +1,6 @@
 [package]
 name = "batmonic-desktop"
-version = "0.2.83"
+version = "0.2.84"
 edition = "2021"
 
 [lib]
