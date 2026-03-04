@@ -123,8 +123,17 @@ fn combined_ff_range(state: &AppState) -> Option<(f64, f64)> {
 
 /// Apply the combined FF range from selected bat book entries.
 /// Shows toasts for out-of-range conditions.
+/// If all selected entries lack echolocation (e.g. flying foxes), clears HFR.
 fn apply_bat_book_ff(state: &AppState) {
-    let Some((lo, hi)) = combined_ff_range(state) else { return };
+    let Some((lo, hi)) = combined_ff_range(state) else {
+        // No valid frequency range — clear HFR if it was set by the bat book
+        if !state.bat_book_hfr_suppressed.get_untracked() {
+            state.ff_freq_lo.set(0.0);
+            state.ff_freq_hi.set(0.0);
+            state.hfr_enabled.set(false);
+        }
+        return;
+    };
 
     // Only apply if a file is loaded
     let files = state.files.get_untracked();
