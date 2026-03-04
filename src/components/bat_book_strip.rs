@@ -153,6 +153,15 @@ fn apply_bat_book_ff(state: &AppState) {
         ));
     }
 
+    if state.bat_book_hfr_suppressed.get_untracked() {
+        // HFR was manually turned off while bat book is active.
+        // Update hfr_saved so re-enabling HFR will apply this range,
+        // but don't touch ff or hfr_enabled.
+        state.hfr_saved_ff_lo.set(Some(lo));
+        state.hfr_saved_ff_hi.set(Some(clamped_hi));
+        return;
+    }
+
     // Save the user's previous hfr_saved values before we overwrite them,
     // so deselecting the bat book entry can restore them.
     state.bat_book_saved_hfr_ff_lo.set(state.hfr_saved_ff_lo.get_untracked());
@@ -192,21 +201,27 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
 
         if was_selected && !ctrl && !shift {
             // Click selected bat again: deselect and restore previous FF
+            let was_suppressed = state.bat_book_hfr_suppressed.get_untracked();
             state.bat_book_selected_ids.set(Vec::new());
             state.bat_book_ref_open.set(false);
             state.bat_book_last_clicked_id.set(None);
+            state.bat_book_hfr_suppressed.set(false);
             // Restore saved FF state
             if state.current_file_index.get_untracked().is_some() {
-                let saved_lo = state.bat_book_saved_ff_lo.get_untracked();
-                let saved_hi = state.bat_book_saved_ff_hi.get_untracked();
-                let saved_hfr = state.bat_book_saved_hfr.get_untracked();
-                // Restore hfr_saved values before setting hfr_enabled,
-                // so Effect A picks up the user's original HFR state.
+                // Always restore hfr_saved to the user's original values.
                 state.hfr_saved_ff_lo.set(state.bat_book_saved_hfr_ff_lo.get_untracked());
                 state.hfr_saved_ff_hi.set(state.bat_book_saved_hfr_ff_hi.get_untracked());
-                state.ff_freq_lo.set(saved_lo);
-                state.ff_freq_hi.set(saved_hi);
-                state.hfr_enabled.set(saved_hfr);
+                if was_suppressed {
+                    // HFR was manually turned off — keep it off, ff stays 0/0.
+                    // The restored hfr_saved values are ready if they re-enable HFR.
+                } else {
+                    let saved_lo = state.bat_book_saved_ff_lo.get_untracked();
+                    let saved_hi = state.bat_book_saved_ff_hi.get_untracked();
+                    let saved_hfr = state.bat_book_saved_hfr.get_untracked();
+                    state.ff_freq_lo.set(saved_lo);
+                    state.ff_freq_hi.set(saved_hi);
+                    state.hfr_enabled.set(saved_hfr);
+                }
             }
             return;
         }
@@ -215,15 +230,19 @@ fn BatBookChip(entry: BatBookEntry) -> impl IntoView {
             // Ctrl/Cmd-click an already-selected bat: remove from selection
             state.bat_book_selected_ids.update(|ids| ids.retain(|id| id != &eid));
             if state.bat_book_selected_ids.get_untracked().is_empty() {
+                let was_suppressed = state.bat_book_hfr_suppressed.get_untracked();
                 state.bat_book_ref_open.set(false);
                 state.bat_book_last_clicked_id.set(None);
+                state.bat_book_hfr_suppressed.set(false);
                 // Restore saved FF state
                 if state.current_file_index.get_untracked().is_some() {
                     state.hfr_saved_ff_lo.set(state.bat_book_saved_hfr_ff_lo.get_untracked());
                     state.hfr_saved_ff_hi.set(state.bat_book_saved_hfr_ff_hi.get_untracked());
-                    state.ff_freq_lo.set(state.bat_book_saved_ff_lo.get_untracked());
-                    state.ff_freq_hi.set(state.bat_book_saved_ff_hi.get_untracked());
-                    state.hfr_enabled.set(state.bat_book_saved_hfr.get_untracked());
+                    if !was_suppressed {
+                        state.ff_freq_lo.set(state.bat_book_saved_ff_lo.get_untracked());
+                        state.ff_freq_hi.set(state.bat_book_saved_ff_hi.get_untracked());
+                        state.hfr_enabled.set(state.bat_book_saved_hfr.get_untracked());
+                    }
                 }
             } else {
                 // Recalculate combined range

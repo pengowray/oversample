@@ -640,6 +640,9 @@ pub struct AppState {
     pub bat_book_saved_hfr_ff_hi: RwSignal<Option<f64>>,
     /// Last-clicked bat book entry ID, used for shift-click range selection.
     pub bat_book_last_clicked_id: RwSignal<Option<String>>,
+    /// True when user manually turned off HFR while bat book had a selection.
+    /// While set, bat book selections update hfr_saved but don't enable HFR.
+    pub bat_book_hfr_suppressed: RwSignal<bool>,
 }
 
 fn detect_tauri() -> bool {
@@ -835,6 +838,7 @@ impl AppState {
             bat_book_saved_hfr_ff_lo: RwSignal::new(None),
             bat_book_saved_hfr_ff_hi: RwSignal::new(None),
             bat_book_last_clicked_id: RwSignal::new(None),
+            bat_book_hfr_suppressed: RwSignal::new(false),
         };
 
         // On mobile, start with sidebar collapsed

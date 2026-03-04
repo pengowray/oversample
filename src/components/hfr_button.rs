@@ -27,6 +27,10 @@ pub fn HfrButton() -> impl IntoView {
             .unwrap_or(96_000.0);
 
         if enabled {
+            // Clear suppression — user is re-enabling HFR (bat book range
+            // is already in hfr_saved_ff if a bat is still selected).
+            state.bat_book_hfr_suppressed.set(false);
+
             let saved_lo = state.hfr_saved_ff_lo.get_untracked();
             let saved_hi = state.hfr_saved_ff_hi.get_untracked();
             let saved_mode = state.hfr_saved_playback_mode.get_untracked();
@@ -48,6 +52,13 @@ pub fn HfrButton() -> impl IntoView {
             state.min_display_freq.set(None);
             state.max_display_freq.set(None);
         } else {
+            // If bat book has a selection, suppress future bat book FF pushes
+            // until either HFR is re-enabled or bat book selection is cleared.
+            let has_bat_sel = !state.bat_book_selected_ids.get_untracked().is_empty();
+            if has_bat_sel {
+                state.bat_book_hfr_suppressed.set(true);
+            }
+
             let current_lo = state.ff_freq_lo.get_untracked();
             let current_hi = state.ff_freq_hi.get_untracked();
             let current_mode = state.playback_mode.get_untracked();

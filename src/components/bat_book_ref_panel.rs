@@ -78,9 +78,11 @@ pub fn BatBookRefPanel() -> impl IntoView {
                     let clamped_hi = entry.freq_hi_hz.min(nyquist);
                     state.hfr_saved_ff_lo.set(Some(entry.freq_lo_hz));
                     state.hfr_saved_ff_hi.set(Some(clamped_hi));
-                    state.ff_freq_lo.set(entry.freq_lo_hz);
-                    state.ff_freq_hi.set(clamped_hi);
-                    state.hfr_enabled.set(true);
+                    if !state.bat_book_hfr_suppressed.get_untracked() {
+                        state.ff_freq_lo.set(entry.freq_lo_hz);
+                        state.ff_freq_hi.set(clamped_hi);
+                        state.hfr_enabled.set(true);
+                    }
                 }
             }
         }
