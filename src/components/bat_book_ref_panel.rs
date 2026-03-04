@@ -130,6 +130,9 @@ pub fn BatBookRefPanel() -> impl IntoView {
                         }
                     }).collect_view()
                 }}
+                <div class="ref-panel-draft-notice">
+                    "Draft \u{2014} not verified. Ranges are approximate."
+                </div>
             </div>
         </div>
     }

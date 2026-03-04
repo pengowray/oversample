@@ -2797,3 +2797,11 @@ body.sidebar-resizing {
     line-height: 1.4;
     margin-top: 2px;
 }
+.ref-panel-draft-notice {
+    font-size: 9px;
+    color: #887755;
+    font-style: italic;
+    padding-top: 6px;
+    border-top: 1px solid #333;
+    margin-top: 6px;
+}

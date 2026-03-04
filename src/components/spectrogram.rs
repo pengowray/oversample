@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use js_sys;
 use std::cell::Cell;
 use std::rc::Rc;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent};
@@ -189,6 +190,8 @@ pub fn Spectrogram() -> impl IntoView {
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
     let pinch_state: RwSignal<Option<crate::components::pinch::PinchState>> = RwSignal::new(None);
     let axis_drag_raw_start = RwSignal::new(0.0f64);
+    let last_tap_time = RwSignal::new(0.0f64);
+    let last_tap_x = RwSignal::new(0.0f64);
 
     // Label hover animation: lerp label_hover_opacity toward target.
     // The Effect subscribes to BOTH label_hover_target and label_hover_opacity.
@@ -1678,6 +1681,43 @@ pub fn Spectrogram() -> impl IntoView {
                 return;
             }
             state.is_dragging.set(false);
+
+            // Double-tap detection: if two taps within 400ms in label area → remove range
+            if let Some(touch) = _ev.changed_touches().get(0) {
+                if let Some((px_x, _, _, _)) = touch_to_xtf(&touch) {
+                    let now = js_sys::Date::now();
+                    let prev_time = last_tap_time.get_untracked();
+                    let prev_x = last_tap_x.get_untracked();
+                    last_tap_time.set(now);
+                    last_tap_x.set(px_x);
+                    let in_label = px_x < LABEL_AREA_WIDTH;
+                    let prev_in_label = prev_x < LABEL_AREA_WIDTH;
+                    if now - prev_time < 400.0 && in_label && prev_in_label {
+                        let has_range = state.ff_freq_hi.get_untracked() > state.ff_freq_lo.get_untracked();
+                        if has_range {
+                            state.hfr_enabled.set(false);
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // Double-click in label area or on FF handles → remove range selection / turn off HFR
+    let on_dblclick = move |ev: MouseEvent| {
+        let has_range = state.ff_freq_hi.get_untracked() > state.ff_freq_lo.get_untracked();
+        if !has_range { return; }
+
+        if let Some((px_x, _, _, _)) = mouse_to_xtf(&ev) {
+            let in_label = px_x < LABEL_AREA_WIDTH;
+            let on_handle = matches!(
+                state.spec_hover_handle.get_untracked(),
+                Some(SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle)
+            );
+            if in_label || on_handle {
+                state.hfr_enabled.set(false);
+                ev.prevent_default();
+            }
         }
     };
 
@@ -1764,6 +1804,7 @@ pub fn Spectrogram() -> impl IntoView {
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
                 on:mouseleave=on_mouseleave
+                on:dblclick=on_dblclick
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
