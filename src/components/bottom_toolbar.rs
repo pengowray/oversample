@@ -19,6 +19,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 pub fn BottomToolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
     let has_file = move || state.current_file_index.get().is_some();
+    let is_mobile = state.is_mobile.get_untracked();
 
     // ── Recording timer ──
     let interval_id: StoredValue<Option<i32>> = StoredValue::new(None);
@@ -145,7 +146,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     view! {
-        <div class="bottom-toolbar"
+        <div class=if is_mobile { "bottom-toolbar mobile" } else { "bottom-toolbar" }
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
         >
             // ── HFR combo button ──
