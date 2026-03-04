@@ -18,6 +18,9 @@ use crate::components::xc_browser::XcBrowser;
 use crate::components::zc_chart::ZcDotChart;
 use crate::components::chromagram_view::ChromagramView;
 use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
+use crate::components::bat_book_tab::BatBookTab;
+use crate::components::bat_book_strip::BatBookStrip;
+use crate::components::bat_book_ref_panel::BatBookRefPanel;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -256,7 +259,15 @@ pub fn App() -> impl IntoView {
             ev.prevent_default();
             state_kb.hfr_enabled.update(|v| *v = !*v);
         }
+        if (ev.key() == "b" || ev.key() == "B") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
+            ev.prevent_default();
+            state_kb.bat_book_open.update(|v| *v = !*v);
+        }
         if ev.key() == "Escape" {
+            if state_kb.bat_book_ref_open.get_untracked() {
+                state_kb.bat_book_ref_open.set(false);
+                return;
+            }
             if state_kb.xc_browser_open.get_untracked() {
                 state_kb.xc_browser_open.set(false);
                 return;
@@ -402,8 +413,15 @@ fn MainArea() -> impl IntoView {
                                 <BookmarkPopup />
                                 <MainViewButton />
                                 <FreqRangeButton />
+                                <BatBookTab />
                             </div>
+
+                            // Bat book reference panel (floating overlay, right side)
+                            {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
                         </div>
+
+                        // Bat book strip (between main view and bottom toolbar)
+                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
 
                         <BottomToolbar />
                         <AnalysisPanel />
@@ -413,13 +431,23 @@ fn MainArea() -> impl IntoView {
                         view! {
                             <div class="empty-state">
                                 "Tap \u{2630} to load audio files"
+                                <div class="main-overlays">
+                                    <BatBookTab />
+                                </div>
                             </div>
+                            {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
+                            {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
                         }.into_any()
                     } else {
                         view! {
                             <div class="empty-state">
                                 "Drop WAV, FLAC or MP3 files into the sidebar"
+                                <div class="main-overlays">
+                                    <BatBookTab />
+                                </div>
                             </div>
+                            {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
+                            {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
                         }.into_any()
                     }
                 }

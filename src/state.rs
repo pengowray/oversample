@@ -624,6 +624,12 @@ pub struct AppState {
     pub normal_saved_display_auto_gain: RwSignal<bool>,
     pub normal_saved_display_eq: RwSignal<bool>,
     pub normal_saved_display_noise_filter: RwSignal<bool>,
+
+    // Bat Book
+    pub bat_book_open: RwSignal<bool>,
+    pub bat_book_region: RwSignal<crate::bat_book::types::BatBookRegion>,
+    pub bat_book_selected_id: RwSignal<Option<String>>,
+    pub bat_book_ref_open: RwSignal<bool>,
 }
 
 fn detect_tauri() -> bool {
@@ -808,6 +814,11 @@ impl AppState {
             normal_saved_display_auto_gain: RwSignal::new(false),
             normal_saved_display_eq: RwSignal::new(false),
             normal_saved_display_noise_filter: RwSignal::new(false),
+
+            bat_book_open: RwSignal::new(false),
+            bat_book_region: RwSignal::new(crate::bat_book::types::BatBookRegion::Global),
+            bat_book_selected_id: RwSignal::new(None),
+            bat_book_ref_open: RwSignal::new(false),
         };
 
         // On mobile, start with sidebar collapsed

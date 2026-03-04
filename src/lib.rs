@@ -5,6 +5,7 @@ pub mod canvas;
 pub mod components;
 pub mod state;
 pub mod tauri_bridge;
+pub mod bat_book;
 
 use leptos::prelude::*;
 use components::app::App;

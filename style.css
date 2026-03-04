@@ -1028,6 +1028,7 @@ body.sidebar-resizing {
     flex: 1;
     color: #555;
     font-size: 18px;
+    position: relative;
 }
 
 /* Toolbar brand */
@@ -2480,4 +2481,303 @@ body.sidebar-resizing {
 .xc-page-info {
     color: #888;
     font-size: 11px;
+}
+
+/* ── Bat Book ─────────────────────────────────────────────────────────────── */
+
+/* Tab handle on the left edge */
+.bat-book-tab {
+    position: absolute;
+    bottom: 8px;
+    left: 0;
+    width: 24px;
+    min-height: 56px;
+    background: rgba(20, 20, 20, 0.88);
+    border: 1px solid rgba(80, 80, 80, 0.45);
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+    color: #777;
+    cursor: pointer;
+    padding: 6px 3px;
+    z-index: 11;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.bat-book-tab:hover {
+    background: rgba(45, 45, 45, 0.95);
+    color: #ccc;
+}
+
+.bat-book-tab.open {
+    background: rgba(26, 60, 40, 0.92);
+    border-color: rgba(80, 180, 130, 0.6);
+    color: #8fc;
+}
+
+.bat-book-tab-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    user-select: none;
+}
+
+/* Strip (horizontal scrolling area) */
+.bat-book-strip {
+    flex-shrink: 0;
+    background: #141414;
+    border-top: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    position: relative;
+}
+
+.bat-book-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-bottom: 1px solid #222;
+    min-height: 22px;
+}
+
+.bat-book-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    user-select: none;
+}
+
+.bat-book-region-label {
+    font-size: 10px;
+    color: #4a8;
+    user-select: none;
+}
+
+.bat-book-config-wrap {
+    position: relative;
+}
+
+.bat-book-config-btn,
+.bat-book-close-btn {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 4px;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.bat-book-config-btn:hover,
+.bat-book-close-btn:hover {
+    color: #ccc;
+}
+
+/* Region dropdown menu */
+.bat-book-region-menu {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    min-width: 160px;
+    background: rgba(16, 16, 16, 0.97);
+    backdrop-filter: blur(10px);
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 4px 0;
+    z-index: 30;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.bat-book-region-opt {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    border-left: 2px solid transparent;
+    color: #aaa;
+    font-size: 12px;
+    padding: 5px 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.bat-book-region-opt:hover {
+    background: #222;
+    color: #eee;
+}
+
+.bat-book-region-opt.active {
+    border-left-color: #4a8;
+    background: #1f2f25;
+    color: #8fc;
+}
+
+/* Scrollable chip area */
+.bat-book-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+    -webkit-overflow-scrolling: touch;
+}
+
+.bat-book-scroll::-webkit-scrollbar {
+    height: 4px;
+}
+
+.bat-book-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.bat-book-scroll::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 2px;
+}
+
+/* Bat family chip */
+.bat-book-chip {
+    flex-shrink: 0;
+    background: rgba(25, 25, 25, 0.9);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 80px;
+    min-height: 36px;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+}
+
+.bat-book-chip:hover {
+    background: #2a2a2a;
+    border-color: #555;
+}
+
+.bat-book-chip.selected {
+    background: rgba(26, 60, 40, 0.92);
+    border-color: rgba(80, 180, 130, 0.6);
+}
+
+.bat-book-chip-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #ccc;
+    white-space: nowrap;
+}
+
+.bat-book-chip.selected .bat-book-chip-name {
+    color: #8fc;
+}
+
+.bat-book-chip-freq {
+    font-size: 9px;
+    color: #777;
+    white-space: nowrap;
+}
+
+/* Reference panel (floating overlay, right side of main view) */
+.bat-book-ref-panel {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 160px;
+    max-height: calc(100% - 16px);
+    background: rgba(14, 14, 14, 0.93);
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.ref-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border-bottom: 1px solid #2a2a2a;
+    gap: 4px;
+}
+
+.ref-panel-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ccc;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.ref-panel-close {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+
+.ref-panel-close:hover {
+    color: #eee;
+}
+
+.ref-panel-body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+}
+
+.ref-panel-family {
+    font-size: 10px;
+    color: #888;
+    font-style: italic;
+}
+
+.ref-panel-freq {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4a8;
+}
+
+.ref-panel-call-type {
+    font-size: 10px;
+    color: #777;
+}
+
+.ref-panel-desc {
+    font-size: 10px;
+    color: #666;
+    line-height: 1.4;
+    margin-top: 2px;
 }
