@@ -46,7 +46,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         is_computing.set(true);
         last_computed_idx.set(idx);
         compute_gen.update(|g| *g += 1);
-        let gen = compute_gen.get_untracked();
+        let generation = compute_gen.get_untracked();
 
         let samples = file.audio.samples.clone(); // Arc clone, O(1)
         let sample_rate = file.audio.sample_rate;
@@ -57,19 +57,19 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         spawn_local(async move {
             // Yield to let UI render "Computing..." state
             yield_to_browser().await;
-            if compute_gen.get_untracked() != gen { return; }
+            if compute_gen.get_untracked() != generation { return; }
 
             let bits_result = bit_analysis::analyze_bits(
                 &samples, bits_per_sample, is_float, duration_secs,
             );
-            if compute_gen.get_untracked() != gen { return; }
+            if compute_gen.get_untracked() != generation { return; }
             analysis.set(Some(bits_result));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != gen { return; }
+            if compute_gen.get_untracked() != generation { return; }
 
             let wsnr_res = wsnr::analyze_wsnr(&samples, sample_rate);
-            if compute_gen.get_untracked() != gen { return; }
+            if compute_gen.get_untracked() != generation { return; }
             wsnr_result.set(Some(wsnr_res));
 
             is_computing.set(false);

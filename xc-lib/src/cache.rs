@@ -15,7 +15,7 @@ pub fn sanitize_filename(name: &str) -> String {
 /// Build the base filename stem for a recording (no extension).
 /// e.g. "XC928094 - Pond Myotis - Myotis dasycneme"
 pub fn recording_stem(rec: &XcRecording) -> String {
-    sanitize_filename(&format!("XC{} - {} - {} {}", rec.id, rec.en, rec.gen, rec.sp))
+    sanitize_filename(&format!("XC{} - {} - {} {}", rec.id, rec.en, rec.genus, rec.sp))
 }
 
 /// Determine audio file extension from the recording's original filename.
@@ -128,7 +128,7 @@ pub fn build_metadata_json(rec: &XcRecording) -> serde_json::Value {
         "xc_id": rec.id,
         "url": format!("https://www.xeno-canto.org/{}", rec.id),
         "file_url": rec.file_url,
-        "gen": rec.gen,
+        "gen": rec.genus,
         "sp": rec.sp,
         "en": rec.en,
         "rec": rec.rec,
@@ -243,7 +243,7 @@ fn update_index(
         "metadata": meta_filename,
         "xc_id": rec.id,
         "en": rec.en,
-        "species": format!("{} {}", rec.gen, rec.sp),
+        "species": format!("{} {}", rec.genus, rec.sp),
         "source": "xeno-canto"
     }));
 

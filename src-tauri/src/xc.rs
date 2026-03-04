@@ -224,8 +224,8 @@ fn recording_to_metadata(rec: &XcRecording) -> Vec<(String, String)> {
     if !rec.en.is_empty() {
         fields.push(("Species".into(), rec.en.clone()));
     }
-    if !rec.gen.is_empty() && !rec.sp.is_empty() {
-        fields.push(("Scientific name".into(), format!("{} {}", rec.gen, rec.sp)));
+    if !rec.genus.is_empty() && !rec.sp.is_empty() {
+        fields.push(("Scientific name".into(), format!("{} {}", rec.genus, rec.sp)));
     }
     for (val, label) in [
         (&rec.rec, "Recordist"),

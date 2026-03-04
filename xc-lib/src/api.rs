@@ -8,7 +8,7 @@ fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
     let s = |key: &str| rec[key].as_str().unwrap_or("").to_string();
     Some(XcRecording {
         id,
-        gen: s("gen"),
+        genus: s("gen"),
         sp: s("sp"),
         en: s("en"),
         grp: s("grp"),

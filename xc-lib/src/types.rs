@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct XcRecording {
     pub id: u64,
     /// Genus
-    pub gen: String,
+    #[serde(rename = "gen")]
+    pub genus: String,
     /// Species epithet
     pub sp: String,
     /// English common name
@@ -52,7 +53,8 @@ pub struct XcRecording {
 /// Species summary extracted from recordings.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct XcSpecies {
-    pub gen: String,
+    #[serde(rename = "gen")]
+    pub genus: String,
     pub sp: String,
     pub en: String,
     pub fam: String,

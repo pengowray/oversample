@@ -179,7 +179,7 @@ async fn main() {
                 );
             }
 
-            println!("XC{}: {} ({} {})", rec.id, rec.en, rec.gen, rec.sp);
+            println!("XC{}: {} ({} {})", rec.id, rec.en, rec.genus, rec.sp);
             println!("Recordist: {}", rec.rec);
             println!("License: {}", rec.lic);
             println!(
@@ -256,7 +256,7 @@ fn print_taxonomy(taxonomy: &xc_lib::XcGroupTaxonomy) {
         println!(
             "  {:40} {:30} {:>5} recordings",
             sp.en,
-            format!("{} {}", sp.gen, sp.sp),
+            format!("{} {}", sp.genus, sp.sp),
             sp.recording_count
         );
     }

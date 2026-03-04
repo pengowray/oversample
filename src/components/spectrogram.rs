@@ -207,11 +207,11 @@ pub fn Spectrogram() -> impl IntoView {
             }
             return;
         }
-        let gen = anim_gen.get().wrapping_add(1);
-        anim_gen.set(gen);
+        let generation = anim_gen.get().wrapping_add(1);
+        anim_gen.set(generation);
         let ag = anim_gen.clone();
         let cb = Closure::once(move || {
-            if ag.get() != gen { return; }
+            if ag.get() != generation { return; }
             let cur = state.label_hover_opacity.get_untracked();
             let tgt = label_hover_target.get_untracked();
             let speed = if tgt > cur { 0.35 } else { 0.20 };
@@ -1086,9 +1086,9 @@ pub fn Spectrogram() -> impl IntoView {
 
         // Bump generation to cancel any stale preload
         state.bg_preload_gen.update(|g| *g = g.wrapping_add(1));
-        let gen = state.bg_preload_gen.get_untracked();
+        let generation = state.bg_preload_gen.get_untracked();
 
-        tile_cache::start_background_preload(state, file_idx, lod, center_tile, max_tiles, gen);
+        tile_cache::start_background_preload(state, file_idx, lod, center_tile, max_tiles, generation);
     });
 
     // Helper to get (px_x, px_y, time, freq) from mouse event

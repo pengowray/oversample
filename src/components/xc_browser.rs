@@ -48,10 +48,10 @@ fn set_opt_u32(obj: &js_sys::Object, key: &str, val: Option<u32>) {
 
 #[derive(Clone, Debug)]
 struct SpeciesInfo {
-    gen: String,
+    genus: String,
     sp: String,
     en: String,
-    fam: String,
+    _fam: String,
     recording_count: u32,
 }
 
@@ -59,8 +59,8 @@ struct SpeciesInfo {
 struct RecordingInfo {
     id: u64,
     en: String,
-    gen: String,
-    sp: String,
+    _genus: String,
+    _sp: String,
     q: String,
     length: String,
     cnt: String,
@@ -75,7 +75,7 @@ struct RecordingInfo {
 struct CachedFile {
     path: String,
     filename: String,
-    xc_id: u64,
+    _xc_id: u64,
     metadata: Vec<(String, String)>,
 }
 
@@ -98,10 +98,10 @@ fn parse_species_list(val: &JsValue) -> Vec<SpeciesInfo> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as u32;
         result.push(SpeciesInfo {
-            gen: s("gen"),
+            genus: s("gen"),
             sp: s("sp"),
             en: s("en"),
-            fam: s("fam"),
+            _fam: s("fam"),
             recording_count: n("recording_count"),
         });
     }
@@ -127,8 +127,8 @@ fn parse_recordings(val: &JsValue) -> Vec<RecordingInfo> {
         result.push(RecordingInfo {
             id,
             en: s("en"),
-            gen: s("gen"),
-            sp: s("sp"),
+            _genus: s("gen"),
+            _sp: s("sp"),
             q: s("q"),
             length: s("length"),
             cnt: s("cnt"),
@@ -191,7 +191,7 @@ fn parse_cached_file(val: &JsValue) -> Option<CachedFile> {
         }
         pairs
     }).unwrap_or_default();
-    Some(CachedFile { path, filename, xc_id, metadata })
+    Some(CachedFile { path, filename, _xc_id: xc_id, metadata })
 }
 
 // ── View states ──────────────────────────────────────────────────────
@@ -814,7 +814,7 @@ pub fn XcBrowser() -> impl IntoView {
                                 <span class="xc-col-count">"Recs"</span>
                             </div>
                             {list.into_iter().map(|sp| {
-                                let gen = sp.gen.clone();
+                                let genus = sp.genus.clone();
                                 let species = sp.sp.clone();
                                 let en = sp.en.clone();
                                 let load_sp = load_species_recordings.clone();
@@ -822,11 +822,11 @@ pub fn XcBrowser() -> impl IntoView {
                                     <button
                                         class="xc-species-row"
                                         on:click=move |_| {
-                                            load_sp(gen.clone(), species.clone(), en.clone());
+                                            load_sp(genus.clone(), species.clone(), en.clone());
                                         }
                                     >
                                         <span class="xc-col-name">{sp.en}</span>
-                                        <span class="xc-col-sci">{format!("{} {}", sp.gen, sp.sp)}</span>
+                                        <span class="xc-col-sci">{format!("{} {}", sp.genus, sp.sp)}</span>
                                         <span class="xc-col-count">{sp.recording_count}</span>
                                     </button>
                                 }

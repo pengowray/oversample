@@ -118,7 +118,7 @@ pub fn App() -> impl IntoView {
                     .ok().and_then(|v| v.as_bool()).unwrap_or(false);
                 let last_event = js_sys::Reflect::get(&status, &JsValue::from_str("lastEvent"))
                     .ok().and_then(|v| v.as_string());
-                let product_name = js_sys::Reflect::get(&status, &JsValue::from_str("productName"))
+                let _product_name = js_sys::Reflect::get(&status, &JsValue::from_str("productName"))
                     .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
 
                 // Update USB connected state

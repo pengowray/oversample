@@ -359,10 +359,10 @@ fn parse_xc_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
     if !en.is_empty() {
         fields.push(("Species".into(), en));
     }
-    let gen = s("gen");
+    let genus = s("gen");
     let sp = s("sp");
-    if !gen.is_empty() && !sp.is_empty() {
-        fields.push(("Scientific name".into(), format!("{} {}", gen, sp)));
+    if !genus.is_empty() && !sp.is_empty() {
+        fields.push(("Scientific name".into(), format!("{} {}", genus, sp)));
     }
     for (key, label) in [
         ("rec", "Recordist"),

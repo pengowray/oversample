@@ -77,8 +77,8 @@ const FADE_IN_MS: f64 = 30.0;
 /// Stop any active streaming playback with a short fade-out to avoid clicks.
 pub(crate) fn stop_stream() {
     STREAM_GEN.with(|g| {
-        let mut gen = g.borrow_mut();
-        *gen = gen.wrapping_add(1);
+        let mut generation = g.borrow_mut();
+        *generation = generation.wrapping_add(1);
     });
 
     // Take the old gain node and context; fade out then close asynchronously.

@@ -35,7 +35,7 @@ where
         on_progress(page, total_pages);
 
         for rec in &result.recordings {
-            let key = (rec.gen.clone(), rec.sp.clone());
+            let key = (rec.genus.clone(), rec.sp.clone());
             let entry = species_map.entry(key).or_insert_with(|| {
                 (rec.en.clone(), rec.fam.clone(), 0)
             });
@@ -50,8 +50,8 @@ where
 
     let mut species: Vec<XcSpecies> = species_map
         .into_iter()
-        .map(|((gen, sp), (en, fam, count))| XcSpecies {
-            gen,
+        .map(|((genus, sp), (en, fam, count))| XcSpecies {
+            genus,
             sp,
             en,
             fam,
