@@ -267,7 +267,168 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
 
     state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
 
+    // Spawn low-priority background task to build the full overview spectrogram.
+    // This only runs when the system is idle (not playing, not actively rendering tiles).
+    {
+        let name_for_overview = name.to_string();
+        wasm_bindgen_futures::spawn_local(build_streaming_overview(
+            state,
+            file_index,
+            name_for_overview,
+        ));
+    }
+
     Ok(())
+}
+
+/// Build a high-res overview spectrogram image for a streaming file in the background.
+///
+/// Reads samples progressively from the streaming source with a large hop to produce
+/// ~1024 FFT columns. Yields frequently and defers when the system is busy (playing
+/// audio or computing main-view tiles).
+async fn build_streaming_overview(
+    state: AppState,
+    file_index: usize,
+    expected_name: String,
+) {
+    use crate::audio::source::ChannelView;
+    use crate::canvas::colors::magnitude_to_greyscale;
+    use crate::types::PreviewImage;
+
+    // Initial delay — let the UI settle after loading
+    let p = js_sys::Promise::new(&mut |resolve, _| {
+        web_sys::window().unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
+    });
+    JsFuture::from(p).await.ok();
+
+    let file = match state.files.get_untracked().get(file_index).cloned() {
+        Some(f) if f.name == expected_name => f,
+        _ => return,
+    };
+
+    // Skip if an overview already exists (non-streaming path already built one)
+    if file.overview_image.is_some() { return; }
+
+    let source = &file.audio.source;
+    let sample_rate = file.audio.sample_rate;
+    let total_samples = source.total_samples() as usize;
+
+    const FFT_SIZE: usize = 512;
+    const TARGET_COLS: usize = 1024;
+    const TARGET_HEIGHT: u32 = 256;
+    const COLS_PER_BATCH: usize = 8;
+
+    let hop = (total_samples / TARGET_COLS).max(FFT_SIZE);
+    let n_cols = if total_samples >= FFT_SIZE { (total_samples - FFT_SIZE) / hop + 1 } else { 0 };
+    if n_cols == 0 { return; }
+
+    let out_w = (n_cols as u32).min(TARGET_COLS as u32);
+    let freq_bins = FFT_SIZE / 2 + 1;
+    let out_h = (freq_bins as u32).min(TARGET_HEIGHT);
+
+    // Accumulate magnitudes column by column
+    let mut all_mags: Vec<Vec<f32>> = Vec::with_capacity(n_cols);
+    let mut global_max: f32 = 0.0;
+
+    let streaming = file.audio.source.as_any().downcast_ref::<StreamingWavSource>();
+
+    let mut col = 0;
+    while col < n_cols {
+        // Check file still loaded and is still the current file
+        let still_valid = state.files.get_untracked()
+            .get(file_index)
+            .map(|f| f.name == expected_name)
+            .unwrap_or(false);
+        if !still_valid { return; }
+
+        // Defer while playing or if this isn't the current file
+        let is_busy = state.is_playing.get_untracked()
+            || state.current_file_index.get_untracked() != Some(file_index);
+        if is_busy {
+            // Sleep 500ms and retry
+            let p = js_sys::Promise::new(&mut |resolve, _| {
+                web_sys::window().unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
+            });
+            JsFuture::from(p).await.ok();
+            continue;
+        }
+
+        // Process a batch of columns
+        let batch_end = (col + COLS_PER_BATCH).min(n_cols);
+        for c in col..batch_end {
+            let sample_start = c * hop;
+            let sample_end = (sample_start + FFT_SIZE).min(total_samples);
+            let read_len = sample_end - sample_start;
+            if read_len < FFT_SIZE { break; }
+
+            // Prefetch for streaming source
+            if let Some(s) = streaming {
+                s.prefetch_region(sample_start as u64, read_len).await;
+            }
+
+            let samples = source.read_region(ChannelView::MonoMix, sample_start as u64, read_len);
+            let cols = crate::dsp::fft::compute_stft_columns(
+                &samples, sample_rate, FFT_SIZE, FFT_SIZE, 0, 1,
+            );
+            if let Some(column) = cols.into_iter().next() {
+                let col_max = column.magnitudes.iter().copied().fold(0.0f32, f32::max);
+                if col_max > global_max { global_max = col_max; }
+                all_mags.push(column.magnitudes);
+            }
+        }
+
+        col = batch_end;
+
+        // Yield to browser between batches
+        let p = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window().unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
+        });
+        JsFuture::from(p).await.ok();
+    }
+
+    if all_mags.is_empty() || global_max <= 0.0 { return; }
+
+    // Build the overview image
+    let src_w = all_mags.len();
+    let src_h = all_mags[0].len();
+    let mut pixels = vec![0u8; (out_w * out_h * 4) as usize];
+
+    for x in 0..out_w {
+        let src_col = (x as usize * src_w) / out_w as usize;
+        let mags = &all_mags[src_col.min(src_w - 1)];
+        for y in 0..out_h {
+            let src_bin = src_h - 1 - ((y as usize * src_h) / out_h as usize).min(src_h - 1);
+            let mag = if src_bin < mags.len() { mags[src_bin] } else { 0.0 };
+            let grey = magnitude_to_greyscale(mag, global_max);
+            let idx = (y * out_w + x) as usize * 4;
+            pixels[idx] = grey;
+            pixels[idx + 1] = grey;
+            pixels[idx + 2] = grey;
+            pixels[idx + 3] = 255;
+        }
+    }
+
+    let overview = PreviewImage {
+        width: out_w,
+        height: out_h,
+        pixels: Arc::new(pixels),
+    };
+
+    // Update the file's overview image
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(file_index) {
+            if f.name == expected_name {
+                f.overview_image = Some(overview);
+            }
+        }
+    });
+
+    // Signal redraw so the overview panel picks up the new image
+    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    log::info!("Background overview complete for {} ({} columns)", expected_name, src_w);
 }
 
 /// Decode raw PCM bytes to f32 samples (used for head region during streaming load).
@@ -547,6 +708,14 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 }
             }
         });
+
+        // Large non-streaming files also lack an overview — build one in the background
+        let name_for_overview = name_check.clone();
+        wasm_bindgen_futures::spawn_local(build_streaming_overview(
+            state,
+            file_index,
+            name_for_overview,
+        ));
     } else {
         // Small file: drain store and assemble full SpectrogramData.
         // Flow mode and harmonics analysis need full column data.

@@ -31,6 +31,10 @@ const FILTER_WARMUP: usize = 4096;
 /// How far ahead (in seconds) to stay buffered beyond current playback time.
 const LOOKAHEAD_SECS: f64 = 1.5;
 
+/// Number of chunks to pre-buffer before starting playback.
+/// This prevents initial skips/gaps while the first chunks are being processed.
+const PREBUFFER_CHUNKS: usize = 5; // 3 might be enough
+
 thread_local! {
     static STREAM_CTX: RefCell<Option<AudioContext>> = RefCell::new(None);
     /// Master gain node for fade-out on stop (avoids clicks).
@@ -195,15 +199,6 @@ async fn chunk_loop(
     params: PlaybackParams,
 ) {
     let mut pos = start_sample;
-    // Small initial delay so the first chunk has time to be created
-    let mut scheduled_time = ctx.current_time() + 0.02;
-
-    // Fade in from silence to avoid click when crossfading with old stream
-    {
-        let param = gain_node.gain();
-        let _ = param.set_value_at_time(0.0, scheduled_time);
-        let _ = param.linear_ramp_to_value_at_time(1.0, scheduled_time + FADE_IN_MS / 1000.0);
-    }
 
     // For auto-gain: pre-scan up to ~15s of the selection so quiet intros
     // don't cause excessive gain, without stalling on very long files.
@@ -226,79 +221,86 @@ async fn chunk_loop(
         None
     };
 
-    while pos < end_sample {
-        // Check if this stream has been cancelled
+    let gain = cached_gain.unwrap_or(params.gain_db);
+
+    // ── Pre-buffer phase ─────────────────────────────────────────────────────
+    // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
+    // has a comfortable lead and the first audible chunk doesn't skip.
+    struct PreBuf {
+        samples: Vec<f32>,
+        left: Option<Vec<f32>>,
+        right: Option<Vec<f32>>,
+    }
+    let mut prebuf: Vec<PreBuf> = Vec::with_capacity(PREBUFFER_CHUNKS);
+
+    for _ in 0..PREBUFFER_CHUNKS {
+        if pos >= end_sample { break; }
         let current_gen = STREAM_GEN.with(|g| *g.borrow());
-        if current_gen != generation {
-            break;
+        if current_gen != generation { return; }
+
+        let (final_samples, left, right, new_pos) = process_one_chunk(
+            &source, channel_view, stereo_out, source_rate, &params, gain,
+            pos, start_sample, end_sample,
+        ).await;
+        pos = new_pos;
+
+        prebuf.push(PreBuf { samples: final_samples, left, right });
+
+        // Yield between pre-buffer chunks so the UI stays responsive
+        yield_to_browser().await;
+    }
+
+    // Now schedule all pre-buffered chunks at once, starting slightly in the future
+    let mut scheduled_time = ctx.current_time() + 0.02;
+
+    // Fade in from silence to avoid click when crossfading with old stream
+    {
+        let param = gain_node.gain();
+        let _ = param.set_value_at_time(0.0, scheduled_time);
+        let _ = param.linear_ramp_to_value_at_time(1.0, scheduled_time + FADE_IN_MS / 1000.0);
+    }
+
+    for buf in prebuf {
+        if !buf.samples.is_empty() {
+            if stereo_out {
+                if let (Some(left), Some(right)) = (buf.left, buf.right) {
+                    schedule_buffer_stereo(&ctx, &gain_node, &left, &right, final_rate, scheduled_time);
+                    let chunk_duration = left.len() as f64 / final_rate as f64;
+                    scheduled_time += chunk_duration;
+                }
+            } else {
+                schedule_buffer(&ctx, &gain_node, &buf.samples, final_rate, scheduled_time);
+                let chunk_duration = buf.samples.len() as f64 / final_rate as f64;
+                scheduled_time += chunk_duration;
+            }
         }
+    }
 
-        // Determine chunk boundaries with filter warmup overlap
-        let warmup_start = if pos > start_sample {
-            pos.saturating_sub(FILTER_WARMUP)
-        } else {
-            pos
-        };
-        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
-        let warmup_len = pos - warmup_start;
+    // ── Streaming phase ──────────────────────────────────────────────────────
+    // Continue processing remaining chunks with lookahead throttling.
+    while pos < end_sample {
+        let current_gen = STREAM_GEN.with(|g| *g.borrow());
+        if current_gen != generation { break; }
 
-        // For PitchShift, add trailing overlap to avoid OLA edge artifacts
-        // at the end of each chunk (incomplete window coverage → clicks).
-        let trailing_end = if matches!(params.mode, PlaybackMode::PitchShift) {
-            (chunk_end + FILTER_WARMUP).min(end_sample)
-        } else {
-            chunk_end
-        };
-        let trailing_len = trailing_end - chunk_end;
+        let (final_samples, left, right, new_pos) = process_one_chunk(
+            &source, channel_view, stereo_out, source_rate, &params, gain,
+            pos, start_sample, end_sample,
+        ).await;
+        pos = new_pos;
 
-        // Prefetch for streaming sources (ensure chunk is in cache before sync read)
-        if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
-            streaming.prefetch_region(warmup_start as u64, trailing_end - warmup_start).await;
-        }
-
-        // Read chunk from source (mono view for DSP processing)
-        let chunk_with_warmup = source.read_region(channel_view, warmup_start as u64, trailing_end - warmup_start);
-
-        // Apply EQ/bandpass filter
-        let filtered = apply_filters(&chunk_with_warmup, source_rate, &params);
-
-        // Apply DSP mode transform
-        let processed = apply_dsp_mode(&filtered, source_rate, &params);
-
-        // Trim warmup and trailing overlap from the output.
-        let trim_start = warmup_len;
-        let trim_end = processed.len().saturating_sub(trailing_len);
-        let trimmed = if trim_start < trim_end {
-            &processed[trim_start..trim_end]
-        } else {
-            &processed[..]
-        };
-
-        // Apply gain
-        let mut final_samples = trimmed.to_vec();
-        let gain = cached_gain.unwrap_or(params.gain_db);
-        apply_gain(&mut final_samples, gain);
-
-        // Schedule this chunk in Web Audio
         if !final_samples.is_empty() {
             if stereo_out {
-                // Stereo passthrough: read L and R channels separately, apply same gain
-                let chunk_len = chunk_end - pos;
-                let mut left = source.read_region(ChannelView::Channel(0), pos as u64, chunk_len);
-                let mut right = source.read_region(ChannelView::Channel(1), pos as u64, chunk_len);
-                apply_gain(&mut left, gain);
-                apply_gain(&mut right, gain);
-                schedule_buffer_stereo(&ctx, &gain_node, &left, &right, final_rate, scheduled_time);
-                let chunk_duration = left.len() as f64 / final_rate as f64;
-                scheduled_time += chunk_duration;
+                if let (Some(left), Some(right)) = (left, right) {
+                    schedule_buffer_stereo(&ctx, &gain_node, &left, &right, final_rate, scheduled_time);
+                    let chunk_duration = left.len() as f64 / final_rate as f64;
+                    scheduled_time += chunk_duration;
+                }
             } else {
                 schedule_buffer(&ctx, &gain_node, &final_samples, final_rate, scheduled_time);
                 let chunk_duration = final_samples.len() as f64 / final_rate as f64;
                 scheduled_time += chunk_duration;
             }
         }
-
-        pos = chunk_end;
 
         // Yield to browser so UI stays responsive
         yield_to_browser().await;
@@ -312,6 +314,68 @@ async fn chunk_loop(
             }
         }
     }
+}
+
+/// Process a single chunk: prefetch, read, filter, DSP, trim, gain.
+/// Returns (mono_samples, optional_left, optional_right, next_pos).
+async fn process_one_chunk(
+    source: &Arc<dyn AudioSource>,
+    channel_view: ChannelView,
+    stereo_out: bool,
+    source_rate: u32,
+    params: &PlaybackParams,
+    gain: f64,
+    pos: usize,
+    start_sample: usize,
+    end_sample: usize,
+) -> (Vec<f32>, Option<Vec<f32>>, Option<Vec<f32>>, usize) {
+    let warmup_start = if pos > start_sample {
+        pos.saturating_sub(FILTER_WARMUP)
+    } else {
+        pos
+    };
+    let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
+    let warmup_len = pos - warmup_start;
+
+    let trailing_end = if matches!(params.mode, PlaybackMode::PitchShift) {
+        (chunk_end + FILTER_WARMUP).min(end_sample)
+    } else {
+        chunk_end
+    };
+    let trailing_len = trailing_end - chunk_end;
+
+    // Prefetch for streaming sources
+    if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
+        streaming.prefetch_region(warmup_start as u64, trailing_end - warmup_start).await;
+    }
+
+    let chunk_with_warmup = source.read_region(channel_view, warmup_start as u64, trailing_end - warmup_start);
+    let filtered = apply_filters(&chunk_with_warmup, source_rate, params);
+    let processed = apply_dsp_mode(&filtered, source_rate, params);
+
+    let trim_start = warmup_len;
+    let trim_end = processed.len().saturating_sub(trailing_len);
+    let trimmed = if trim_start < trim_end {
+        &processed[trim_start..trim_end]
+    } else {
+        &processed[..]
+    };
+
+    let mut final_samples = trimmed.to_vec();
+    apply_gain(&mut final_samples, gain);
+
+    let (left, right) = if stereo_out {
+        let chunk_len = chunk_end - pos;
+        let mut l = source.read_region(ChannelView::Channel(0), pos as u64, chunk_len);
+        let mut r = source.read_region(ChannelView::Channel(1), pos as u64, chunk_len);
+        apply_gain(&mut l, gain);
+        apply_gain(&mut r, gain);
+        (Some(l), Some(r))
+    } else {
+        (None, None)
+    };
+
+    (final_samples, left, right, chunk_end)
 }
 
 fn apply_filters(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
