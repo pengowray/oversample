@@ -371,6 +371,39 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
+.analysis-scope-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+}
+
+.analysis-scope-badge {
+    font-size: 10px;
+    color: #aaa;
+    background: #333;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.analysis-scope-badge.analysis-scope-full {
+    color: #8f8;
+    background: #243024;
+}
+
+.analysis-full-btn {
+    font-size: 10px;
+    color: #8cf;
+    background: none;
+    border: 1px solid #446;
+    border-radius: 3px;
+    padding: 1px 8px;
+    cursor: pointer;
+}
+.analysis-full-btn:hover {
+    background: #223;
+    border-color: #668;
+}
 
 .bit-sign-header {
     font-size: 11px;

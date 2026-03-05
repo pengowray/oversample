@@ -4,6 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
 use crate::state::{AppState, LoadedFile, MicMode};
+use crate::audio::source::InMemorySource;
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
 use crate::dsp::heterodyne::RealtimeHet;
@@ -1023,8 +1024,15 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         g
     };
 
+    let samples: Arc<Vec<f32>> = samples.into();
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels: 1,
+    });
     let audio = AudioData {
-        samples: samples.into(),
+        samples,
+        source,
         sample_rate,
         channels: 1,
         duration_secs,
@@ -1774,8 +1782,15 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
         now.get_seconds(),
     );
 
+    let samples: Arc<Vec<f32>> = Arc::new(Vec::new());
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels: 1,
+    });
     let audio = AudioData {
-        samples: Arc::new(Vec::new()),
+        samples,
+        source,
         sample_rate,
         channels: 1,
         duration_secs: 0.0,
@@ -2089,8 +2104,15 @@ fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state: AppState)
         g
     };
 
+    let samples: Arc<Vec<f32>> = samples.into();
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels: 1,
+    });
     let audio = AudioData {
-        samples: samples.into(),
+        samples,
+        source,
         sample_rate,
         channels: 1,
         duration_secs,
@@ -2179,8 +2201,15 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
         g
     };
 
+    let samples: Arc<Vec<f32>> = samples.into();
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels: 1,
+    });
     let audio = AudioData {
-        samples: samples.into(),
+        samples,
+        source,
         sample_rate,
         channels: 1,
         duration_secs,

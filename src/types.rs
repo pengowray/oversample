@@ -1,4 +1,5 @@
 use crate::audio::guano::GuanoMetadata;
+use crate::audio::source::AudioSource;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -10,13 +11,29 @@ pub struct FileMetadata {
     pub guano: Option<GuanoMetadata>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AudioData {
+    /// Mono-mixed samples. Kept during migration; new code should use `source`.
     pub samples: Arc<Vec<f32>>,
+    /// AudioSource abstraction for on-demand sample access.
+    pub source: Arc<dyn AudioSource>,
     pub sample_rate: u32,
+    /// Original channel count (before mono mixing).
     pub channels: u32,
     pub duration_secs: f64,
     pub metadata: FileMetadata,
+}
+
+impl std::fmt::Debug for AudioData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioData")
+            .field("samples_len", &self.samples.len())
+            .field("sample_rate", &self.sample_rate)
+            .field("channels", &self.channels)
+            .field("duration_secs", &self.duration_secs)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::audio::source::ChannelView;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
 
 #[derive(Clone, Debug)]
@@ -391,6 +392,9 @@ pub struct AppState {
     pub gain_db: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
 
+    // Channel
+    pub channel_view: RwSignal<ChannelView>,
+
     // ── New signals ──────────────────────────────────────────────────────────
 
     // Tool
@@ -686,6 +690,8 @@ impl AppState {
             gain_db: RwSignal::new(0.0),
             auto_gain: RwSignal::new(true),
 
+            channel_view: RwSignal::new(ChannelView::MonoMix),
+
             // New
             canvas_tool: RwSignal::new(CanvasTool::Hand),
             hfr_enabled: RwSignal::new(false),
@@ -846,10 +852,15 @@ impl AppState {
     }
 
     pub fn compute_auto_gain(&self) -> f64 {
+        use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+
         let files = self.files.get();
         let idx = self.current_file_index.get();
         let Some(file) = idx.and_then(|i| files.get(i)) else { return 0.0 };
-        let peak = file.audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let scan_end = file.audio.samples.len().min(
+            (DEFAULT_ANALYSIS_WINDOW_SECS * file.audio.sample_rate as f64) as usize,
+        );
+        let peak = file.audio.samples[..scan_end].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 1e-10 { return 0.0; }
         let peak_db = 20.0 * (peak as f64).log10();
         // Cap at +30 dB to avoid extreme amplification of very quiet recordings

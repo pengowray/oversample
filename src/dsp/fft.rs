@@ -448,12 +448,20 @@ pub fn compute_overview_from_spectrogram(data: &SpectrogramData) -> Option<Previ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::source::InMemorySource;
     use crate::types::{AudioData, FileMetadata};
 
     fn test_audio(samples: Vec<f32>, sample_rate: u32) -> AudioData {
+        let samples = Arc::new(samples);
+        let source = Arc::new(InMemorySource {
+            samples: samples.clone(),
+            sample_rate,
+            channels: 1,
+        });
         AudioData {
             duration_secs: samples.len() as f64 / sample_rate as f64,
-            samples: Arc::new(samples),
+            samples,
+            source,
             sample_rate,
             channels: 1,
             metadata: FileMetadata {

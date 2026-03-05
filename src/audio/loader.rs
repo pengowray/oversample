@@ -1,4 +1,5 @@
 use crate::audio::guano::parse_guano;
+use crate::audio::source::InMemorySource;
 use crate::types::{AudioData, FileMetadata};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -120,9 +121,17 @@ fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
 
     let samples = mix_to_mono(&all_samples, channels);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let samples = Arc::new(samples);
+
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels,
+    });
 
     Ok(AudioData {
-        samples: Arc::new(samples),
+        samples,
+        source,
         sample_rate,
         channels,
         duration_secs,
@@ -153,9 +162,17 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
 
     let samples = mix_to_mono(&all_samples, channels);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let samples = Arc::new(samples);
+
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels,
+    });
 
     Ok(AudioData {
-        samples: Arc::new(samples),
+        samples,
+        source,
         sample_rate,
         channels,
         duration_secs,
@@ -191,9 +208,17 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
 
     let samples = mix_to_mono(&all_samples, channels);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let samples = Arc::new(samples);
+
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels,
+    });
 
     Ok(AudioData {
-        samples: Arc::new(samples),
+        samples,
+        source,
         sample_rate,
         channels,
         duration_secs,
@@ -282,9 +307,17 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
 
     let samples = mix_to_mono(&all_samples, channels);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let samples = Arc::new(samples);
+
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        sample_rate,
+        channels,
+    });
 
     Ok(AudioData {
-        samples: Arc::new(samples),
+        samples,
+        source,
         sample_rate,
         channels,
         duration_secs,

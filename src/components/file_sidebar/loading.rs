@@ -51,9 +51,13 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     const HOP_SIZE: usize = 512; // LOD1 hop
     let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(HOP_SIZE);
 
-    // Check for silent/quiet files (short files only, to avoid perf overhead)
-    let silence_check = if audio.duration_secs < 60.0 {
-        let peak = audio.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    // Check for silent/quiet files — scan first 30s only
+    let silence_check = {
+        use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
+        let scan_end = audio.samples.len().min(
+            (DEFAULT_ANALYSIS_WINDOW_SECS * audio.sample_rate as f64) as usize,
+        );
+        let peak = audio.samples[..scan_end].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         if peak < 0.002 {
             Some(SilenceCheck::Silent)
         } else if peak > 1e-10 {
@@ -63,8 +67,6 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         } else {
             None
         }
-    } else {
-        None
     };
 
     let total_cols = if audio.samples.len() >= fft_size {

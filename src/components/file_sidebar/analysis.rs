@@ -1,9 +1,11 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
 use crate::state::{AppState, RightSidebarTab};
 use crate::dsp::bit_analysis::{self, BitAnalysis, BitCaution};
 use crate::dsp::wsnr;
+use std::sync::Arc;
 
 #[component]
 pub(crate) fn AnalysisPanel() -> impl IntoView {
@@ -15,47 +17,44 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     let is_computing = RwSignal::new(false);
     let last_computed_idx: RwSignal<Option<usize>> = RwSignal::new(None);
     let compute_gen = RwSignal::new(0u32);
+    // Whether the last analysis used full file (true) or first 30s (false).
+    let analysis_is_full = RwSignal::new(false);
+    // Whether the file is longer than the analysis window.
+    let file_is_long = RwSignal::new(false);
 
-    // Only compute expensive analysis when the Analysis tab is active
-    Effect::new(move || {
-        let tab = state.right_sidebar_tab.get();
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
-
-        if tab != RightSidebarTab::Analysis {
-            return;
-        }
-
-        // Already computed for this file
-        if idx == last_computed_idx.get_untracked() && analysis.get_untracked().is_some() {
-            return;
-        }
-
+    // Run analysis (default: first 30s; full_file=true for full scan)
+    let run_analysis = move |full_file: bool| {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i).cloned());
-        let Some(file) = file else {
-            analysis.set(None);
-            wsnr_result.set(None);
-            last_computed_idx.set(None);
-            is_computing.set(false);
-            return;
-        };
+        let Some(file) = file else { return; };
 
-        // Clear previous results and mark computing
         analysis.set(None);
         wsnr_result.set(None);
         is_computing.set(true);
         last_computed_idx.set(idx);
+        analysis_is_full.set(full_file);
         compute_gen.update(|g| *g += 1);
         let generation = compute_gen.get_untracked();
 
-        let samples = file.audio.samples.clone(); // Arc clone, O(1)
+        let all_samples = file.audio.samples.clone(); // Arc clone, O(1)
         let sample_rate = file.audio.sample_rate;
         let bits_per_sample = file.audio.metadata.bits_per_sample;
         let is_float = file.audio.metadata.is_float;
-        let duration_secs = file.audio.duration_secs;
+
+        let max_samples = (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as usize;
+        let is_long = all_samples.len() > max_samples;
+        file_is_long.set(is_long);
+
+        let samples: Arc<Vec<f32>> = if full_file || !is_long {
+            analysis_is_full.set(true);
+            all_samples
+        } else {
+            Arc::new(all_samples[..max_samples].to_vec())
+        };
+        let duration_secs = samples.len() as f64 / sample_rate as f64;
 
         spawn_local(async move {
-            // Yield to let UI render "Computing..." state
             yield_to_browser().await;
             if compute_gen.get_untracked() != generation { return; }
 
@@ -74,6 +73,34 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
             is_computing.set(false);
         });
+    };
+
+    // Only compute expensive analysis when the Analysis tab is active
+    Effect::new(move || {
+        let tab = state.right_sidebar_tab.get();
+        let _files = state.files.get();
+        let idx = state.current_file_index.get();
+
+        if tab != RightSidebarTab::Analysis {
+            return;
+        }
+
+        // Already computed for this file
+        if idx == last_computed_idx.get_untracked() && analysis.get_untracked().is_some() {
+            return;
+        }
+
+        let files = state.files.get_untracked();
+        let file = idx.and_then(|i| files.get(i).cloned());
+        if file.is_none() {
+            analysis.set(None);
+            wsnr_result.set(None);
+            last_computed_idx.set(None);
+            is_computing.set(false);
+            return;
+        }
+
+        run_analysis(false);
     });
 
     let xc_quality = Memo::new(move |_| {
@@ -120,8 +147,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 sr_text, ch_text, bit_text, dur_text, total_samples
             ));
 
-            // Signal stats
-            let smp = &f.audio.samples;
+            // Signal stats — scan first 30s only for large files
+            let max_scan = (DEFAULT_ANALYSIS_WINDOW_SECS * f.audio.sample_rate as f64) as usize;
+            let scan_len = f.audio.samples.len().min(max_scan);
+            let smp = &f.audio.samples[..scan_len];
             let len = smp.len();
             if len > 0 {
                 let mut smin = f32::INFINITY;
@@ -289,8 +318,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         let dur_text = format!("{:.3} s", f.audio.duration_secs);
                         let samples_text = format!("{}", total_samples);
 
-                        // Signal stats
-                        let samples = &f.audio.samples;
+                        // Signal stats — scan first 30s only for large files
+                        let max_scan = (DEFAULT_ANALYSIS_WINDOW_SECS * f.audio.sample_rate as f64) as usize;
+                        let scan_len = f.audio.samples.len().min(max_scan);
+                        let samples = &f.audio.samples[..scan_len];
                         let len = samples.len();
                         let (sig_min, sig_max, dc_bias, rms) = if len > 0 {
                             let mut smin = f32::INFINITY;
@@ -374,10 +405,28 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     }
                 }
             }}
-            // Computing indicator
+            // Computing indicator + analysis scope badge
             {move || {
                 if is_computing.get() {
                     view! { <div class="sidebar-panel-empty">"Computing analysis\u{2026}"</div> }.into_any()
+                } else if file_is_long.get() && !analysis_is_full.get() && analysis.get().is_some() {
+                    view! {
+                        <div class="analysis-scope-row">
+                            <span class="analysis-scope-badge">"First 30s"</span>
+                            <button
+                                class="analysis-full-btn"
+                                on:click=move |_| run_analysis(true)
+                            >
+                                "Analyze full file"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else if analysis_is_full.get() && file_is_long.get() && analysis.get().is_some() {
+                    view! {
+                        <div class="analysis-scope-row">
+                            <span class="analysis-scope-badge analysis-scope-full">"Full file"</span>
+                        </div>
+                    }.into_any()
                 } else {
                     view! { <span></span> }.into_any()
                 }
