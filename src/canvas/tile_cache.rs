@@ -588,6 +588,13 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
     spawn_local(async move {
         yield_to_browser().await;
 
+        // Defer while audio is playing — playback chunk processing needs
+        // uncontested CPU and I/O to avoid gaps
+        if state.is_playing.get_untracked() {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
             for _ in 0..3 {
@@ -747,6 +754,12 @@ pub fn schedule_tile_on_demand(
 
     spawn_local(async move {
         yield_to_browser().await;
+
+        // Defer while audio is playing — playback needs uncontested I/O and CPU
+        if state.is_playing.get_untracked() {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
 
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {

@@ -251,6 +251,29 @@ impl FftMode {
     }
 }
 
+/// Auto-gain strategy.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum GainMode {
+    /// No auto gain — use manual gain_db slider only.
+    #[default]
+    Manual,
+    /// Peak normalization: scan first N seconds, boost so peak ≈ −3 dBFS.
+    AutoPeak,
+    /// Per-chunk adaptive compression: each chunk is independently normalized
+    /// with a noise gate so silence isn't boosted.
+    Adaptive,
+}
+
+impl GainMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "Manual",
+            Self::AutoPeak => "Peak",
+            Self::Adaptive => "Adaptive",
+        }
+    }
+}
+
 /// Which floating layer panel is currently open (only one at a time).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayerPanel {
@@ -262,6 +285,7 @@ pub enum LayerPanel {
     PlayMode,
     RecordMode,
     Channel,
+    Gain,
 }
 
 /// A navigation history entry (for overview back/forward buttons).
@@ -392,6 +416,7 @@ pub struct AppState {
     // Gain
     pub gain_db: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
+    pub gain_mode: RwSignal<GainMode>,
 
     // Channel
     pub channel_view: RwSignal<ChannelView>,
@@ -690,6 +715,7 @@ impl AppState {
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
             auto_gain: RwSignal::new(false),
+            gain_mode: RwSignal::new(GainMode::Manual),
 
             channel_view: RwSignal::new(ChannelView::MonoMix),
 

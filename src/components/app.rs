@@ -172,6 +172,7 @@ pub fn App() -> impl IntoView {
             let _ = state.het_cutoff.get();
             let _ = state.gain_db.get();
             let _ = state.auto_gain.get();
+            let _ = state.gain_mode.get();
             let _ = state.filter_enabled.get();
             let _ = state.filter_freq_low.get();
             let _ = state.filter_freq_high.get();

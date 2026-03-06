@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, CanvasTool, LayerPanel, PlayStartMode, RecordMode};
+use crate::state::{AppState, CanvasTool, GainMode, LayerPanel, PlayStartMode, RecordMode};
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
 use crate::components::hfr_button::HfrButton;
@@ -208,30 +208,115 @@ pub fn BottomToolbar() -> impl IntoView {
                 </ComboButton>
             })}
 
-            // Gain toggle
+            // ── Gain combo button ──
             {move || has_file().then(|| {
-                let auto = state.auto_gain.get();
-                let db = if auto {
-                    state.compute_auto_gain()
-                } else {
-                    state.gain_db.get()
-                };
-                let label = if auto {
-                    "Auto".to_string()
-                } else if db > 0.0 {
-                    format!("+{:.0}dB", db)
-                } else {
-                    format!("{:.0}dB", db)
-                };
+                let gain_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Gain));
+
+                let gain_left_class = Signal::derive(move || {
+                    let mode = state.gain_mode.get();
+                    let open = gain_is_open.get();
+                    let active = mode != GainMode::Manual || state.gain_db.get() != 0.0;
+                    match (active, open) {
+                        (true, true) => "layer-btn combo-btn-left active open",
+                        (true, false) => "layer-btn combo-btn-left active",
+                        (false, true) => "layer-btn combo-btn-left open",
+                        (false, false) => "layer-btn combo-btn-left",
+                    }
+                });
+                let gain_right_class = Signal::derive(move || {
+                    if gain_is_open.get() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right" }
+                });
+
+                let gain_left_value = Signal::derive(move || {
+                    let mode = state.gain_mode.get();
+                    match mode {
+                        GainMode::Manual => {
+                            let db = state.gain_db.get();
+                            if db > 0.0 { format!("+{:.0}dB", db) }
+                            else { format!("{:.0}dB", db) }
+                        }
+                        GainMode::AutoPeak => {
+                            let db = state.compute_auto_gain();
+                            format!("Auto +{:.0}", db)
+                        }
+                        GainMode::Adaptive => "Adapt".to_string(),
+                    }
+                });
+                let gain_right_value = Signal::derive(move || {
+                    state.gain_mode.get().label().to_string()
+                });
+
+                let gain_left_click = Callback::new(move |_: web_sys::MouseEvent| {
+                    let mode = state.gain_mode.get_untracked();
+                    match mode {
+                        GainMode::Manual => {
+                            // Cycle: 0 → +6 → +12 → +20 → +30 → 0
+                            state.gain_db.update(|db| {
+                                *db = match *db as i32 {
+                                    0 => 6.0,
+                                    6 => 12.0,
+                                    12 => 20.0,
+                                    20 => 30.0,
+                                    _ => 0.0,
+                                };
+                            });
+                        }
+                        GainMode::AutoPeak => {
+                            // Toggle off → manual 0dB
+                            state.gain_mode.set(GainMode::Manual);
+                            state.auto_gain.set(false);
+                            state.gain_db.set(0.0);
+                        }
+                        GainMode::Adaptive => {
+                            // Toggle off → manual 0dB
+                            state.gain_mode.set(GainMode::Manual);
+                            state.auto_gain.set(false);
+                            state.gain_db.set(0.0);
+                        }
+                    }
+                });
+                let gain_toggle_menu = Callback::new(move |()| {
+                    toggle_panel(&state, LayerPanel::Gain);
+                });
+
                 view! {
-                    <button
-                        class=move || if state.auto_gain.get() { "layer-btn active" } else { "layer-btn" }
-                        on:click=move |_| state.auto_gain.update(|v| *v = !*v)
-                        title="Toggle auto gain"
+                    <ComboButton
+                        left_label="Gain"
+                        left_value=gain_left_value
+                        left_click=gain_left_click
+                        left_class=gain_left_class
+                        right_value=gain_right_value
+                        right_class=gain_right_class
+                        is_open=gain_is_open
+                        toggle_menu=gain_toggle_menu
+                        left_title="Gain (click to cycle)"
+                        right_title="Gain mode"
+                        menu_direction="above"
+                        panel_style="min-width: 180px;"
                     >
-                        <span class="layer-btn-category">"Gain"</span>
-                        <span class="layer-btn-value">{label}</span>
-                    </button>
+                        <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::Manual)
+                            on:click=move |_| {
+                                state.gain_mode.set(GainMode::Manual);
+                                state.auto_gain.set(false);
+                                state.gain_db.set(0.0);
+                                state.layer_panel_open.set(None);
+                            }
+                        >"Manual \u{2014} Set dB boost"</button>
+                        <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::AutoPeak)
+                            on:click=move |_| {
+                                state.gain_mode.set(GainMode::AutoPeak);
+                                state.auto_gain.set(true);
+                                state.layer_panel_open.set(None);
+                            }
+                        >"Peak \u{2014} Normalize to peak"</button>
+                        <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::Adaptive)
+                            on:click=move |_| {
+                                state.gain_mode.set(GainMode::Adaptive);
+                                state.auto_gain.set(true);
+                                state.layer_panel_open.set(None);
+                            }
+                        >"Adaptive \u{2014} Per-chunk compression"</button>
+                    </ComboButton>
                 }
             })}
 

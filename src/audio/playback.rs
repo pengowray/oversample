@@ -230,6 +230,7 @@ fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: 
         zc_factor: state.zc_factor.get_untracked(),
         gain_db: state.gain_db.get_untracked(),
         auto_gain: state.auto_gain.get_untracked(),
+        gain_mode: state.gain_mode.get_untracked(),
         filter_enabled: state.filter_enabled.get_untracked(),
         filter_freq_low: state.filter_freq_low.get_untracked(),
         filter_freq_high: state.filter_freq_high.get_untracked(),

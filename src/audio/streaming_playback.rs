@@ -6,14 +6,13 @@
 //! processed in the background.
 
 use web_sys::{AudioContext, AudioContextOptions};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::audio::source::{AudioSource, ChannelView};
 use crate::audio::streaming_source::StreamingWavSource;
-use crate::state::{PlaybackMode, FilterQuality};
+use crate::state::{PlaybackMode, FilterQuality, GainMode};
 use crate::dsp::heterodyne::heterodyne_mix;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
@@ -54,6 +53,7 @@ pub(crate) struct PlaybackParams {
     pub zc_factor: f64,
     pub gain_db: f64,
     pub auto_gain: bool,
+    pub gain_mode: GainMode,
     pub filter_enabled: bool,
     pub filter_freq_low: f64,
     pub filter_freq_high: f64,
@@ -74,9 +74,6 @@ pub(crate) struct PlaybackParams {
     pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
 
-/// Duration of fade-out when stopping playback (milliseconds).
-const FADE_OUT_MS: f64 = 30.0;
-
 /// Duration of fade-in when starting playback (milliseconds).
 const FADE_IN_MS: f64 = 30.0;
 
@@ -94,22 +91,13 @@ pub(crate) fn stop_stream() {
     if let (Some(gain_node), Some(old_ctx)) = (gain, ctx) {
         let now = old_ctx.current_time();
         let param = gain_node.gain();
-        // Ramp from current value to 0 over FADE_OUT_MS
+        // Mute immediately to avoid overlap with new stream
         let _ = param.cancel_scheduled_values(now);
-        let _ = param.set_value_at_time(param.value(), now);
-        let _ = param.linear_ramp_to_value_at_time(0.0, now + FADE_OUT_MS / 1000.0);
-        // Close the context after the fade completes
-        let fade_ms = (FADE_OUT_MS + 5.0) as i32; // small margin
-        let cb = wasm_bindgen::closure::Closure::once(move || {
-            let _ = old_ctx.close();
-        });
-        if let Some(w) = web_sys::window() {
-            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
-                cb.as_ref().unchecked_ref(),
-                fade_ms,
-            );
-        }
-        cb.forget();
+        let _ = param.set_value_at_time(0.0, now);
+        // Close the context immediately — the generation counter already
+        // prevents the old chunk loop from scheduling more buffers, and
+        // setting gain to 0 silences any already-scheduled ones.
+        let _ = old_ctx.close();
     }
 }
 
@@ -200,15 +188,21 @@ async fn chunk_loop(
 ) {
     let mut pos = start_sample;
 
-    // For auto-gain: pre-scan up to ~15s of the selection so quiet intros
-    // don't cause excessive gain, without stalling on very long files.
-    let cached_gain: Option<f64> = if params.auto_gain {
-        let max_scan = (source_rate as usize) * 15; // ~15 seconds
+    // For auto-gain (AutoPeak): pre-scan samples to set gain level.
+    // For streaming files, only scan what's already cached (head region) to avoid
+    // expensive disk I/O that delays playback start.
+    // For Adaptive mode, gain is computed per-chunk in process_one_chunk.
+    let is_adaptive = params.gain_mode == GainMode::Adaptive;
+    let cached_gain: Option<f64> = if params.auto_gain && !is_adaptive {
+        let is_streaming = source.as_any().downcast_ref::<StreamingWavSource>().is_some();
+        let max_scan = if is_streaming {
+            // Only scan head samples (already in memory) — no disk I/O
+            (source_rate as usize) * 5 // ~5 seconds, well within the 30s head
+        } else {
+            (source_rate as usize) * 15
+        };
         let scan_end = end_sample.min(start_sample + max_scan);
         let scan_len = scan_end - start_sample;
-        if let Some(streaming) = source.as_any().downcast_ref::<StreamingWavSource>() {
-            streaming.prefetch_region(start_sample as u64, scan_len).await;
-        }
         let scan_samples = source.read_region(channel_view, start_sample as u64, scan_len);
         let peak = scan_samples.iter().fold(0.0f32, |mx, s| mx.max(s.abs()));
         if peak < 1e-10 {
@@ -217,11 +211,14 @@ async fn chunk_loop(
             let peak_db = 20.0 * (peak as f64).log10();
             Some((-3.0 - peak_db).min(30.0))
         }
+    } else if is_adaptive {
+        // Adaptive mode: gain is per-chunk, don't pre-scan
+        None
     } else {
         None
     };
 
-    let gain = cached_gain.unwrap_or(params.gain_db);
+    let global_gain = cached_gain.unwrap_or(params.gain_db);
 
     // ── Pre-buffer phase ─────────────────────────────────────────────────────
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
@@ -239,7 +236,8 @@ async fn chunk_loop(
         if current_gen != generation { return; }
 
         let (final_samples, left, right, new_pos) = process_one_chunk(
-            &source, channel_view, stereo_out, source_rate, &params, gain,
+            &source, channel_view, stereo_out, source_rate, &params,
+            global_gain, is_adaptive,
             pos, start_sample, end_sample,
         ).await;
         pos = new_pos;
@@ -283,7 +281,8 @@ async fn chunk_loop(
         if current_gen != generation { break; }
 
         let (final_samples, left, right, new_pos) = process_one_chunk(
-            &source, channel_view, stereo_out, source_rate, &params, gain,
+            &source, channel_view, stereo_out, source_rate, &params,
+            global_gain, is_adaptive,
             pos, start_sample, end_sample,
         ).await;
         pos = new_pos;
@@ -324,7 +323,8 @@ async fn process_one_chunk(
     stereo_out: bool,
     source_rate: u32,
     params: &PlaybackParams,
-    gain: f64,
+    global_gain: f64,
+    is_adaptive: bool,
     pos: usize,
     start_sample: usize,
     end_sample: usize,
@@ -362,20 +362,44 @@ async fn process_one_chunk(
     };
 
     let mut final_samples = trimmed.to_vec();
-    apply_gain(&mut final_samples, gain);
+
+    let chunk_gain = if is_adaptive {
+        compute_adaptive_gain(&final_samples)
+    } else {
+        global_gain
+    };
+    apply_gain(&mut final_samples, chunk_gain);
 
     let (left, right) = if stereo_out {
         let chunk_len = chunk_end - pos;
         let mut l = source.read_region(ChannelView::Channel(0), pos as u64, chunk_len);
         let mut r = source.read_region(ChannelView::Channel(1), pos as u64, chunk_len);
-        apply_gain(&mut l, gain);
-        apply_gain(&mut r, gain);
+        apply_gain(&mut l, chunk_gain);
+        apply_gain(&mut r, chunk_gain);
         (Some(l), Some(r))
     } else {
         (None, None)
     };
 
     (final_samples, left, right, chunk_end)
+}
+
+/// Compute per-chunk adaptive gain with noise gate.
+/// Boosts the chunk so its peak approaches −3 dBFS, but only if the peak
+/// is above a noise gate threshold (−50 dBFS). Quiet/silent chunks get no
+/// boost, avoiding amplified noise floor. Gain is capped at +30 dB.
+fn compute_adaptive_gain(samples: &[f32]) -> f64 {
+    let peak = samples.iter().fold(0.0f32, |mx, s| mx.max(s.abs()));
+    if peak < 1e-10 {
+        return 0.0;
+    }
+    let peak_db = 20.0 * (peak as f64).log10();
+    // Noise gate: if peak is below −50 dBFS, don't boost (likely silence/noise)
+    if peak_db < -50.0 {
+        return 0.0;
+    }
+    // Boost so peak → −3 dBFS, capped at +30 dB
+    (-3.0 - peak_db).clamp(0.0, 30.0)
 }
 
 fn apply_filters(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
