@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, LayerPanel, MainView, MicMode, PlayStartMode, SpectrogramDisplay};
+use crate::state::{AppState, FileSettings, LayerPanel, MainView, MicMode, PlayStartMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -209,6 +209,67 @@ pub fn App() -> impl IntoView {
         let is_flow = state.main_view.get() == MainView::Flow;
         state.flow_enabled.set(is_flow);
     });
+
+    // Save/restore per-file settings (gain, noise filter) when switching files.
+    // Files in the same sequence group share settings.
+    {
+        let prev_idx: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+        Effect::new(move |_| {
+            let new_idx = state.current_file_index.get();
+
+            let old_idx = prev_idx.get();
+            prev_idx.set(new_idx);
+
+            // Save current settings to the outgoing file
+            if let Some(oi) = old_idx {
+                let settings = FileSettings {
+                    gain_mode: state.gain_mode.get_untracked(),
+                    gain_db: state.gain_db.get_untracked(),
+                    notch_enabled: state.notch_enabled.get_untracked(),
+                    notch_bands: state.notch_bands.get_untracked(),
+                    notch_profile_name: state.notch_profile_name.get_untracked(),
+                    notch_harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
+                    noise_reduce_enabled: state.noise_reduce_enabled.get_untracked(),
+                    noise_reduce_strength: state.noise_reduce_strength.get_untracked(),
+                    noise_reduce_floor: state.noise_reduce_floor.get_untracked(),
+                };
+
+                // Save to the outgoing file and all files in its sequence group
+                let names: Vec<String> = state.files.get_untracked().iter().map(|f| f.name.clone()).collect();
+                let groups = crate::components::file_sidebar::file_groups::compute_file_groups(&names);
+                let group_key = groups.get(oi).and_then(|g| g.as_ref()).map(|ti| ti.group_key.clone());
+
+                state.files.update(|files| {
+                    for (i, file) in files.iter_mut().enumerate() {
+                        let dominated = i == oi || group_key.as_ref().is_some_and(|gk| {
+                            groups.get(i).and_then(|g| g.as_ref()).map(|ti| &ti.group_key) == Some(gk)
+                        });
+                        if dominated {
+                            file.settings = settings.clone();
+                        }
+                    }
+                });
+            }
+
+            // Restore settings from the incoming file
+            if let Some(ni) = new_idx {
+                let files = state.files.get_untracked();
+                if let Some(file) = files.get(ni) {
+                    let s = &file.settings;
+                    state.gain_mode.set(s.gain_mode);
+                    state.auto_gain.set(s.gain_mode.is_auto());
+                    state.gain_db.set(s.gain_db);
+                    state.notch_enabled.set(s.notch_enabled);
+                    state.notch_bands.set(s.notch_bands.clone());
+                    state.notch_profile_name.set(s.notch_profile_name.clone());
+                    state.notch_harmonic_suppression.set(s.notch_harmonic_suppression);
+                    state.noise_reduce_enabled.set(s.noise_reduce_enabled);
+                    state.noise_reduce_strength.set(s.noise_reduce_strength);
+                    state.noise_reduce_floor.set(s.noise_reduce_floor.clone());
+                }
+            }
+        });
+    }
 
     // Global keyboard shortcut: Space = play/stop
     let state_kb = state.clone();

@@ -2,6 +2,37 @@ use leptos::prelude::*;
 use crate::audio::source::ChannelView;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
 
+/// Per-file settings that persist when switching between files.
+/// Files in the same sequence group share settings.
+#[derive(Clone, Debug)]
+pub struct FileSettings {
+    pub gain_mode: GainMode,
+    pub gain_db: f64,
+    pub notch_enabled: bool,
+    pub notch_bands: Vec<crate::dsp::notch::NoiseBand>,
+    pub notch_profile_name: String,
+    pub notch_harmonic_suppression: f64,
+    pub noise_reduce_enabled: bool,
+    pub noise_reduce_strength: f64,
+    pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
+}
+
+impl Default for FileSettings {
+    fn default() -> Self {
+        Self {
+            gain_mode: GainMode::Off,
+            gain_db: 0.0,
+            notch_enabled: false,
+            notch_bands: Vec::new(),
+            notch_profile_name: String::new(),
+            notch_harmonic_suppression: 0.0,
+            noise_reduce_enabled: false,
+            noise_reduce_strength: 1.0,
+            noise_reduce_floor: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadedFile {
     pub name: String,
@@ -13,6 +44,8 @@ pub struct LoadedFile {
     pub overview_image: Option<PreviewImage>,
     pub xc_metadata: Option<Vec<(String, String)>>,
     pub is_recording: bool,  // true = unsaved recording (show indicator on web)
+    /// Per-file gain and noise filter settings.
+    pub settings: FileSettings,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -254,23 +287,31 @@ impl FftMode {
 /// Auto-gain strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum GainMode {
-    /// No auto gain — use manual gain_db slider only.
+    /// No gain adjustment at all.
     #[default]
+    Off,
+    /// Manual dB boost only (from slider).
     Manual,
     /// Peak normalization: scan first N seconds, boost so peak ≈ −3 dBFS.
+    /// Manual slider adds on top.
     AutoPeak,
     /// Per-chunk adaptive compression: each chunk is independently normalized
-    /// with a noise gate so silence isn't boosted.
+    /// with a noise gate so silence isn't boosted. Manual slider adds on top.
     Adaptive,
 }
 
 impl GainMode {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Off => "Off",
             Self::Manual => "Manual",
             Self::AutoPeak => "Peak",
             Self::Adaptive => "Adaptive",
         }
+    }
+
+    pub fn is_auto(self) -> bool {
+        matches!(self, Self::AutoPeak | Self::Adaptive)
     }
 }
 
@@ -417,6 +458,8 @@ pub struct AppState {
     pub gain_db: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
     pub gain_mode: RwSignal<GainMode>,
+    /// Remembers last auto-gain mode so toggle restores it (default: Adaptive).
+    pub gain_mode_last_auto: RwSignal<GainMode>,
 
     // Channel
     pub channel_view: RwSignal<ChannelView>,
@@ -715,7 +758,8 @@ impl AppState {
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
             auto_gain: RwSignal::new(false),
-            gain_mode: RwSignal::new(GainMode::Manual),
+            gain_mode: RwSignal::new(GainMode::Off),
+            gain_mode_last_auto: RwSignal::new(GainMode::AutoPeak),
 
             channel_view: RwSignal::new(ChannelView::MonoMix),
 

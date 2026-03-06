@@ -52,7 +52,6 @@ pub(crate) struct PlaybackParams {
     pub ps_factor: f64,
     pub zc_factor: f64,
     pub gain_db: f64,
-    pub auto_gain: bool,
     pub gain_mode: GainMode,
     pub filter_enabled: bool,
     pub filter_freq_low: f64,
@@ -188,16 +187,18 @@ async fn chunk_loop(
 ) {
     let mut pos = start_sample;
 
-    // For auto-gain (AutoPeak): pre-scan samples to set gain level.
-    // For streaming files, only scan what's already cached (head region) to avoid
-    // expensive disk I/O that delays playback start.
-    // For Adaptive mode, gain is computed per-chunk in process_one_chunk.
+    // Gain computation depends on mode:
+    // - Off: no gain at all (0 dB)
+    // - Manual: gain_db slider only
+    // - AutoPeak: pre-scan peak normalization + gain_db slider on top
+    // - Adaptive: per-chunk normalization + gain_db slider on top (computed in process_one_chunk)
     let is_adaptive = params.gain_mode == GainMode::Adaptive;
-    let cached_gain: Option<f64> = if params.auto_gain && !is_adaptive {
+    let manual_boost = params.gain_db; // slider value, additive for all modes
+
+    let auto_peak_gain: f64 = if params.gain_mode == GainMode::AutoPeak {
         let is_streaming = source.as_any().downcast_ref::<StreamingWavSource>().is_some();
         let max_scan = if is_streaming {
-            // Only scan head samples (already in memory) — no disk I/O
-            (source_rate as usize) * 5 // ~5 seconds, well within the 30s head
+            (source_rate as usize) * 5
         } else {
             (source_rate as usize) * 15
         };
@@ -206,19 +207,21 @@ async fn chunk_loop(
         let scan_samples = source.read_region(channel_view, start_sample as u64, scan_len);
         let peak = scan_samples.iter().fold(0.0f32, |mx, s| mx.max(s.abs()));
         if peak < 1e-10 {
-            Some(0.0)
+            0.0
         } else {
             let peak_db = 20.0 * (peak as f64).log10();
-            Some((-3.0 - peak_db).min(30.0))
+            (-3.0 - peak_db).min(30.0)
         }
-    } else if is_adaptive {
-        // Adaptive mode: gain is per-chunk, don't pre-scan
-        None
     } else {
-        None
+        0.0
     };
 
-    let global_gain = cached_gain.unwrap_or(params.gain_db);
+    let global_gain = match params.gain_mode {
+        GainMode::Off => 0.0,
+        GainMode::Manual => manual_boost,
+        GainMode::AutoPeak => auto_peak_gain + manual_boost,
+        GainMode::Adaptive => manual_boost, // adaptive part added per-chunk
+    };
 
     // ── Pre-buffer phase ─────────────────────────────────────────────────────
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
@@ -364,7 +367,8 @@ async fn process_one_chunk(
     let mut final_samples = trimmed.to_vec();
 
     let chunk_gain = if is_adaptive {
-        compute_adaptive_gain(&final_samples)
+        // Adaptive auto-gain + manual slider on top
+        compute_adaptive_gain(&final_samples) + global_gain
     } else {
         global_gain
     };

@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
-use crate::state::{AppState, LoadedFile, MicMode};
+use crate::state::{AppState, FileSettings, LoadedFile, MicMode};
 use crate::audio::source::InMemorySource;
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
@@ -1102,6 +1102,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
                 overview_image: None,
                 xc_metadata: None,
                 is_recording: false, // Already saved by backend
+                settings: FileSettings::default(),
             });
         });
         file_index = idx;
@@ -1827,6 +1828,7 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
             overview_image: None,
             xc_metadata: None,
             is_recording: true,
+            settings: FileSettings::default(),
         });
     });
 
@@ -2259,6 +2261,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
                 overview_image: None,
                 xc_metadata: None,
                 is_recording: true,
+                settings: FileSettings::default(),
             });
         });
         file_index = idx;

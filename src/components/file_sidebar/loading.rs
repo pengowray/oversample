@@ -7,7 +7,7 @@ use web_sys::{File, FileReader};
 use crate::audio::loader::{load_audio, parse_wav_header_with_file_size};
 use crate::audio::streaming_source::{FileHandle, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::{compute_overview_from_spectrogram, compute_preview, compute_spectrogram_partial};
-use crate::state::{AppState, LoadedFile};
+use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::{AudioData, SpectrogramData};
 use std::sync::Arc;
 
@@ -225,6 +225,7 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
                 overview_image: None,
                 xc_metadata: None,
                 is_recording: false,
+                settings: FileSettings::default(),
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -561,6 +562,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 overview_image: None,
                 xc_metadata,
                 is_recording: false,
+                settings: FileSettings::default(),
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));

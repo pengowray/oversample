@@ -215,7 +215,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 let gain_left_class = Signal::derive(move || {
                     let mode = state.gain_mode.get();
                     let open = gain_is_open.get();
-                    let active = mode != GainMode::Manual || state.gain_db.get() != 0.0;
+                    let active = mode != GainMode::Off;
                     match (active, open) {
                         (true, true) => "layer-btn combo-btn-left active open",
                         (true, false) => "layer-btn combo-btn-left active",
@@ -229,17 +229,22 @@ pub fn BottomToolbar() -> impl IntoView {
 
                 let gain_left_value = Signal::derive(move || {
                     let mode = state.gain_mode.get();
+                    let manual_db = state.gain_db.get();
                     match mode {
+                        GainMode::Off => "Off".to_string(),
                         GainMode::Manual => {
-                            let db = state.gain_db.get();
-                            if db > 0.0 { format!("+{:.0}dB", db) }
-                            else { format!("{:.0}dB", db) }
+                            if manual_db > 0.0 { format!("+{:.0}dB", manual_db) }
+                            else { format!("{:.0}dB", manual_db) }
                         }
                         GainMode::AutoPeak => {
-                            let db = state.compute_auto_gain();
-                            format!("Auto +{:.0}", db)
+                            let auto_db = state.compute_auto_gain();
+                            let total = auto_db + manual_db;
+                            format!("+{:.0}dB", total)
                         }
-                        GainMode::Adaptive => "Adapt".to_string(),
+                        GainMode::Adaptive => {
+                            if manual_db > 0.0 { format!("A+{:.0}", manual_db) }
+                            else { "Auto".to_string() }
+                        }
                     }
                 });
                 let gain_right_value = Signal::derive(move || {
@@ -248,31 +253,18 @@ pub fn BottomToolbar() -> impl IntoView {
 
                 let gain_left_click = Callback::new(move |_: web_sys::MouseEvent| {
                     let mode = state.gain_mode.get_untracked();
-                    match mode {
-                        GainMode::Manual => {
-                            // Cycle: 0 → +6 → +12 → +20 → +30 → 0
-                            state.gain_db.update(|db| {
-                                *db = match *db as i32 {
-                                    0 => 6.0,
-                                    6 => 12.0,
-                                    12 => 20.0,
-                                    20 => 30.0,
-                                    _ => 0.0,
-                                };
-                            });
+                    if mode == GainMode::Off {
+                        // Turn on: restore last auto mode
+                        let last = state.gain_mode_last_auto.get_untracked();
+                        state.gain_mode.set(last);
+                        state.auto_gain.set(last.is_auto());
+                    } else {
+                        // Turn off: remember current mode
+                        if mode.is_auto() {
+                            state.gain_mode_last_auto.set(mode);
                         }
-                        GainMode::AutoPeak => {
-                            // Toggle off → manual 0dB
-                            state.gain_mode.set(GainMode::Manual);
-                            state.auto_gain.set(false);
-                            state.gain_db.set(0.0);
-                        }
-                        GainMode::Adaptive => {
-                            // Toggle off → manual 0dB
-                            state.gain_mode.set(GainMode::Manual);
-                            state.auto_gain.set(false);
-                            state.gain_db.set(0.0);
-                        }
+                        state.gain_mode.set(GainMode::Off);
+                        state.auto_gain.set(false);
                     }
                 });
                 let gain_toggle_menu = Callback::new(move |()| {
@@ -289,22 +281,29 @@ pub fn BottomToolbar() -> impl IntoView {
                         right_class=gain_right_class
                         is_open=gain_is_open
                         toggle_menu=gain_toggle_menu
-                        left_title="Gain (click to cycle)"
+                        left_title="Toggle gain"
                         right_title="Gain mode"
                         menu_direction="above"
-                        panel_style="min-width: 180px;"
+                        panel_style="min-width: 210px;"
                     >
+                        <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::Off)
+                            on:click=move |_| {
+                                state.gain_mode.set(GainMode::Off);
+                                state.auto_gain.set(false);
+                                state.layer_panel_open.set(None);
+                            }
+                        >"Off"</button>
                         <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::Manual)
                             on:click=move |_| {
                                 state.gain_mode.set(GainMode::Manual);
                                 state.auto_gain.set(false);
-                                state.gain_db.set(0.0);
                                 state.layer_panel_open.set(None);
                             }
-                        >"Manual \u{2014} Set dB boost"</button>
+                        >"Manual \u{2014} Slider boost only"</button>
                         <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::AutoPeak)
                             on:click=move |_| {
                                 state.gain_mode.set(GainMode::AutoPeak);
+                                state.gain_mode_last_auto.set(GainMode::AutoPeak);
                                 state.auto_gain.set(true);
                                 state.layer_panel_open.set(None);
                             }
@@ -312,10 +311,29 @@ pub fn BottomToolbar() -> impl IntoView {
                         <button class=move || layer_opt_class(state.gain_mode.get() == GainMode::Adaptive)
                             on:click=move |_| {
                                 state.gain_mode.set(GainMode::Adaptive);
+                                state.gain_mode_last_auto.set(GainMode::Adaptive);
                                 state.auto_gain.set(true);
                                 state.layer_panel_open.set(None);
                             }
                         >"Adaptive \u{2014} Per-chunk compression"</button>
+                        <div class="layer-panel-slider-row" style="margin-top: 6px;">
+                            <label>{move || {
+                                let db = state.gain_db.get();
+                                if db > 0.0 { format!("+{:.0}dB", db) }
+                                else { format!("{:.0}dB", db) }
+                            }}</label>
+                            <input type="range" min="0" max="30" step="1"
+                                prop:value=move || state.gain_db.get().to_string()
+                                on:input=move |ev| {
+                                    let val: f64 = event_target_value(&ev).parse().unwrap_or(0.0);
+                                    state.gain_db.set(val);
+                                    // If currently Off, switch to Manual when slider is adjusted
+                                    if state.gain_mode.get_untracked() == GainMode::Off && val > 0.0 {
+                                        state.gain_mode.set(GainMode::Manual);
+                                    }
+                                }
+                            />
+                        </div>
                     </ComboButton>
                 }
             })}
