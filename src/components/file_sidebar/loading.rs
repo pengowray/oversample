@@ -31,31 +31,39 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
     let size = file.size();
     let last_modified_ms = Some(file.last_modified());
 
-    // Helper: set last_modified_ms on the most recently added file
-    let set_last_modified = |state: AppState, lm: Option<f64>| {
+    // Helper: set last_modified_ms and compute file identity on the most recently added file
+    let name_for_identity = name.clone();
+    let finalize_loaded_file = move |state: AppState, lm: Option<f64>| {
+        let file_size = size as u64;
+        let file_name = name_for_identity.clone();
         state.files.update(|files| {
             if let Some(f) = files.last_mut() {
                 f.last_modified_ms = lm;
             }
         });
+        // Compute file identity (Layer 1 + Layer 2 async)
+        let file_index = state.files.get_untracked().len().saturating_sub(1);
+        crate::file_identity::start_identity_computation(
+            state, file_index, file_name, file_size, None,
+        );
     };
 
     // For large files, attempt streaming path (WAV or FLAC)
     if size > STREAMING_CHECK_SIZE {
         match try_streaming_wav(&file, &name, state).await {
-            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
+            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("WAV streaming not applicable for {}: {}", name, e);
             }
         }
         match try_streaming_flac(&file, &name, state).await {
-            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
+            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("FLAC streaming not applicable for {}: {}", name, e);
             }
         }
         match try_streaming_mp3(&file, &name, state).await {
-            Ok(()) => { set_last_modified(state, last_modified_ms); return Ok(()); }
+            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
             Err(e) => {
                 log::info!("MP3 streaming not applicable for {}: {}", name, e);
             }
@@ -73,7 +81,7 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
     let bytes = read_file_bytes(&file).await?;
     let result = load_named_bytes(name, &bytes, None, state).await;
     if result.is_ok() {
-        set_last_modified(state, last_modified_ms);
+        finalize_loaded_file(state, last_modified_ms);
     }
     result
 }
@@ -253,6 +261,7 @@ async fn try_streaming_wav(file: &File, name: &str, state: AppState) -> Result<(
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -521,6 +530,7 @@ async fn try_streaming_flac(file: &File, name: &str, state: AppState) -> Result<
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -867,6 +877,7 @@ async fn try_streaming_mp3(file: &File, name: &str, state: AppState) -> Result<(
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -1260,6 +1271,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
             if files.len() == 1 {
                 state.current_file_index.set(Some(0));
@@ -1267,6 +1279,11 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         });
         file_index = idx;
     }
+
+    // Compute file identity (Layer 1 + Layer 2 with bytes available)
+    crate::file_identity::start_identity_computation(
+        state, file_index, name_check.clone(), bytes.len() as u64, Some(bytes.to_vec()),
+    );
 
     // Notify user about silent/quiet files
     if let Some(check) = silence_check {

@@ -267,6 +267,62 @@ fn delete_noise_preset(app: tauri::AppHandle, name: String) -> Result<(), String
     Ok(())
 }
 
+// ── Annotation sidecar commands ──────────────────────────────────────
+
+#[tauri::command]
+fn read_sidecar(path: String) -> Result<Option<String>, String> {
+    let sidecar = format!("{}.batm", path);
+    if std::path::Path::new(&sidecar).exists() {
+        std::fs::read_to_string(&sidecar)
+            .map(Some)
+            .map_err(|e| format!("Failed to read sidecar: {e}"))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+fn write_sidecar(path: String, yaml: String) -> Result<(), String> {
+    let sidecar = format!("{}.batm", path);
+    // Atomic write: write to temp, then rename
+    let tmp = format!("{}.batm.tmp", path);
+    std::fs::write(&tmp, &yaml).map_err(|e| format!("Failed to write sidecar: {e}"))?;
+    std::fs::rename(&tmp, &sidecar).map_err(|e| format!("Failed to rename sidecar: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn read_central_annotations(app: tauri::AppHandle, file_key: String) -> Result<Option<String>, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations");
+    let path = dir.join(format!("{}.batm", file_key));
+    if path.exists() {
+        std::fs::read_to_string(&path)
+            .map(Some)
+            .map_err(|e| format!("Failed to read annotations: {e}"))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+fn write_central_annotations(app: tauri::AppHandle, file_key: String, yaml: String) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.batm", file_key));
+    let tmp = dir.join(format!("{}.batm.tmp", file_key));
+    std::fs::write(&tmp, &yaml).map_err(|e| format!("Failed to write annotations: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("Failed to rename annotations: {e}"))?;
+    Ok(())
+}
+
 // ── Audio file decoding commands ─────────────────────────────────────
 
 #[tauri::command]
@@ -538,6 +594,10 @@ pub fn run() {
             load_noise_preset,
             list_noise_presets,
             delete_noise_preset,
+            read_sidecar,
+            write_sidecar,
+            read_central_annotations,
+            write_central_annotations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

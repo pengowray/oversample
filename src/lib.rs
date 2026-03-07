@@ -6,6 +6,8 @@ pub mod components;
 pub mod state;
 pub mod tauri_bridge;
 pub mod bat_book;
+pub mod annotations;
+pub mod file_identity;
 
 use leptos::prelude::*;
 use components::app::App;

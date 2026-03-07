@@ -588,6 +588,55 @@ body.sidebar-resizing {
     font-size: 13px;
 }
 
+.sidebar-btn {
+    display: block;
+    width: calc(100% - 32px);
+    margin: 6px 16px;
+    padding: 5px 10px;
+    background: #1a3a2a;
+    border: 1px solid #3a6a4a;
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 12px;
+    cursor: pointer;
+}
+.sidebar-btn:hover {
+    background: #1a5a3a;
+    border-color: #4a8a5a;
+}
+
+.saved-selection-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 16px;
+    cursor: pointer;
+    gap: 4px;
+}
+.saved-selection-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+.saved-selection-label {
+    font-size: 12px;
+    color: #aaa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+.saved-selection-delete {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.saved-selection-delete:hover {
+    color: #e44;
+}
+
 .setting-group {
     padding: 4px 0;
 }

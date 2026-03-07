@@ -1105,6 +1105,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
         });
         file_index = idx;
@@ -1833,6 +1834,7 @@ fn start_live_recording(state: &AppState, sample_rate: u32) -> usize {
             settings: FileSettings::default(),
             add_order: file_index,
             last_modified_ms: None,
+            identity: None,
         });
     });
 
@@ -2268,6 +2270,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
                 settings: FileSettings::default(),
                 add_order: idx,
                 last_modified_ms: None,
+                identity: None,
             });
         });
         file_index = idx;

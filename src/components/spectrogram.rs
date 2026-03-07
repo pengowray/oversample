@@ -341,6 +341,8 @@ pub fn Spectrogram() -> impl IntoView {
         let _nr_enabled = state.noise_reduce_enabled.get();
         let _nr_strength = state.noise_reduce_strength.get();
         let _nr_floor_v = state.noise_reduce_floor.get();
+        let annotation_store = state.annotation_store.get();
+        let selected_annotation = state.selected_annotation_id.get();
         let _pre = pre_rendered.track();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -827,6 +829,24 @@ pub fn Spectrogram() -> impl IntoView {
                     spectrogram_renderer::draw_harmonic_shadows(
                         &ctx,
                         &sel,
+                        min_freq,
+                        max_freq,
+                        scroll,
+                        time_res,
+                        zoom,
+                        display_w as f64,
+                        display_h as f64,
+                    );
+                }
+            }
+
+            // Draw saved annotation selections
+            if let Some(file_idx_val) = idx {
+                if let Some(Some(set)) = annotation_store.sets.get(file_idx_val) {
+                    spectrogram_renderer::draw_saved_selections(
+                        &ctx,
+                        set,
+                        selected_annotation.as_deref(),
                         min_freq,
                         max_freq,
                         scroll,

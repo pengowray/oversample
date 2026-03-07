@@ -4,6 +4,7 @@ use crate::audio::source::ChannelView;
 use crate::state::{AppState, FftMode, FlowColorScheme, MainView, SpectrogramDisplay};
 use crate::components::slider_row::SliderRow;
 use crate::dsp::zero_crossing::zero_crossing_frequency;
+use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, SavedSelection, generate_uuid, now_iso8601};
 
 #[component]
 pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
@@ -478,6 +479,52 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
         Some((duration, frames, crossing_count, estimated_freq, selection.freq_low, selection.freq_high))
     };
 
+    let save_selection = move |_| {
+        let selection = state.selection.get_untracked();
+        let file_idx = state.current_file_index.get_untracked();
+        if let (Some(sel), Some(idx)) = (selection, file_idx) {
+            let annotation = Annotation {
+                id: generate_uuid(),
+                kind: AnnotationKind::Selection(SavedSelection {
+                    time_start: sel.time_start,
+                    time_end: sel.time_end,
+                    freq_low: sel.freq_low,
+                    freq_high: sel.freq_high,
+                    label: None,
+                    color: None,
+                }),
+                created_at: now_iso8601(),
+                modified_at: now_iso8601(),
+                notes: None,
+            };
+            state.annotation_store.update(|store| {
+                store.ensure_len(idx + 1);
+                if store.sets[idx].is_none() {
+                    // Create a new AnnotationSet for this file
+                    let identity = state.files.with_untracked(|files| {
+                        files.get(idx).and_then(|f| f.identity.clone())
+                    }).unwrap_or_else(|| {
+                        let name = state.files.with_untracked(|files| {
+                            files.get(idx).map(|f| f.name.clone()).unwrap_or_default()
+                        });
+                        crate::file_identity::identity_layer1(&name, 0)
+                    });
+                    store.sets[idx] = Some(AnnotationSet {
+                        version: 1,
+                        file_identity: identity,
+                        annotations: Vec::new(),
+                        app_version: env!("CARGO_PKG_VERSION").to_string(),
+                    });
+                }
+                if let Some(ref mut set) = store.sets[idx] {
+                    set.annotations.push(annotation);
+                }
+            });
+            state.annotations_dirty.set(true);
+            state.show_info_toast("Selection saved");
+        }
+    };
+
     view! {
         <div class="sidebar-panel">
             {move || {
@@ -506,6 +553,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                                     <span class="setting-label">"ZC est. freq"</span>
                                     <span class="setting-value">{match estimated_freq { Some(f) => format!("~{:.1} kHz", f / 1000.0), None => "...".into() }}</span>
                                 </div>
+                                <button class="sidebar-btn" on:click=save_selection>"Save Selection"</button>
                             </div>
                         }.into_any()
                     }
@@ -516,6 +564,211 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                     }
                 }
             }}
+            <SavedSelectionsList />
         </div>
     }
+}
+
+#[component]
+fn SavedSelectionsList() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    let saved_selections = move || {
+        let idx = state.current_file_index.get()?;
+        let store = state.annotation_store.get();
+        let set = store.sets.get(idx)?.as_ref()?;
+        let selections: Vec<(String, String)> = set.annotations.iter().filter_map(|a| {
+            if let AnnotationKind::Selection(ref sel) = a.kind {
+                let label = sel.label.clone().unwrap_or_else(|| {
+                    format!("{:.3}–{:.3}s, {:.0}–{:.0} kHz",
+                        sel.time_start, sel.time_end,
+                        sel.freq_low / 1000.0, sel.freq_high / 1000.0)
+                });
+                Some((a.id.clone(), label))
+            } else {
+                None
+            }
+        }).collect();
+        if selections.is_empty() { None } else { Some(selections) }
+    };
+
+    let on_export = move |_: web_sys::MouseEvent| {
+        export_annotations(state);
+    };
+
+    let on_import = move |_: web_sys::MouseEvent| {
+        import_annotations(state);
+    };
+
+    let has_annotations = move || {
+        let idx = state.current_file_index.get()?;
+        let store = state.annotation_store.get();
+        let set = store.sets.get(idx)?.as_ref()?;
+        if set.annotations.is_empty() { None } else { Some(true) }
+    };
+
+    view! {
+        {move || {
+            if let Some(selections) = saved_selections() {
+                view! {
+                    <div class="setting-group">
+                        <div class="setting-group-title">"Saved Selections"</div>
+                        {selections.into_iter().map(|(id, label)| {
+                            let id_click = id.clone();
+                            let id_delete = id.clone();
+                            view! {
+                                <div class="saved-selection-item"
+                                    on:click=move |_| {
+                                        restore_selection(state, &id_click);
+                                    }
+                                >
+                                    <span class="saved-selection-label">{label}</span>
+                                    <button class="saved-selection-delete"
+                                        on:click=move |e| {
+                                            e.stop_propagation();
+                                            delete_annotation(state, &id_delete);
+                                        }
+                                    >"\u{00d7}"</button>
+                                </div>
+                            }
+                        }).collect_view()}
+                    </div>
+                }.into_any()
+            } else {
+                view! { <div></div> }.into_any()
+            }
+        }}
+        <div class="setting-row" style="gap: 4px;">
+            <button
+                class="sidebar-btn"
+                style="flex: 1;"
+                on:click=on_export
+                disabled=move || has_annotations().is_none()
+            >
+                "Export .batm"
+            </button>
+            <button
+                class="sidebar-btn"
+                style="flex: 1;"
+                on:click=on_import
+            >
+                "Import .batm"
+            </button>
+        </div>
+    }
+}
+
+fn restore_selection(state: AppState, annotation_id: &str) {
+    let idx = match state.current_file_index.get_untracked() {
+        Some(i) => i,
+        None => return,
+    };
+    let store = state.annotation_store.get_untracked();
+    let set = match store.sets.get(idx).and_then(|s| s.as_ref()) {
+        Some(s) => s,
+        None => return,
+    };
+    for a in &set.annotations {
+        if a.id == annotation_id {
+            if let AnnotationKind::Selection(ref sel) = a.kind {
+                state.selection.set(Some(crate::state::Selection {
+                    time_start: sel.time_start,
+                    time_end: sel.time_end,
+                    freq_low: sel.freq_low,
+                    freq_high: sel.freq_high,
+                }));
+                state.selected_annotation_id.set(Some(annotation_id.to_string()));
+            }
+            return;
+        }
+    }
+}
+
+fn delete_annotation(state: AppState, annotation_id: &str) {
+    let idx = match state.current_file_index.get_untracked() {
+        Some(i) => i,
+        None => return,
+    };
+    state.annotation_store.update(|store| {
+        if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+            set.annotations.retain(|a| a.id != annotation_id);
+        }
+    });
+    state.annotations_dirty.set(true);
+}
+
+fn export_annotations(state: AppState) {
+    let idx = match state.current_file_index.get_untracked() {
+        Some(i) => i,
+        None => { state.show_error_toast("No file selected"); return; }
+    };
+    let store = state.annotation_store.get_untracked();
+    let set = match store.sets.get(idx).and_then(|s| s.as_ref()) {
+        Some(s) => s,
+        None => { state.show_error_toast("No annotations to export"); return; }
+    };
+
+    let yaml = match yaml_serde::to_string(set) {
+        Ok(y) => y,
+        Err(e) => { state.show_error_toast(format!("Serialize error: {e}")); return; }
+    };
+
+    let arr = js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(&yaml));
+    let Ok(blob) = web_sys::Blob::new_with_str_sequence(&arr) else { return };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return };
+
+    let doc = web_sys::window().unwrap().document().unwrap();
+    let a: web_sys::HtmlAnchorElement = doc.create_element("a").unwrap().unchecked_into();
+    a.set_href(&url);
+    let filename = format!("{}.batm", set.file_identity.filename);
+    a.set_download(&filename);
+    a.click();
+    let _ = web_sys::Url::revoke_object_url(&url);
+
+    state.show_info_toast("Annotations exported");
+}
+
+fn import_annotations(state: AppState) {
+    let doc = web_sys::window().unwrap().document().unwrap();
+    let input: web_sys::HtmlInputElement = doc.create_element("input").unwrap().unchecked_into();
+    input.set_type("file");
+    input.set_attribute("accept", ".batm,.yaml,.yml").unwrap();
+
+    let on_change = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |ev: web_sys::Event| {
+        let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+        let Some(file_list) = target.files() else { return };
+        let Some(file) = file_list.get(0) else { return };
+
+        let reader = web_sys::FileReader::new().unwrap();
+        let reader_clone = reader.clone();
+        let on_load = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+            let result = reader_clone.result().unwrap();
+            let text = result.as_string().unwrap_or_default();
+            match yaml_serde::from_str::<AnnotationSet>(&text) {
+                Ok(imported) => {
+                    let idx = state.current_file_index.get_untracked().unwrap_or(0);
+                    state.annotation_store.update(|store| {
+                        store.ensure_len(idx + 1);
+                        if let Some(Some(ref mut existing)) = store.sets.get_mut(idx) {
+                            // Merge: append imported annotations
+                            existing.annotations.extend(imported.annotations);
+                        } else {
+                            store.sets[idx] = Some(imported);
+                        }
+                    });
+                    state.annotations_dirty.set(true);
+                    state.show_info_toast("Annotations imported");
+                }
+                Err(e) => {
+                    state.show_error_toast(format!("Import error: {e}"));
+                }
+            }
+        });
+        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
+        on_load.forget();
+        reader.read_as_text(&file).unwrap();
+    });
+    input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
+    on_change.forget();
+    input.click();
 }

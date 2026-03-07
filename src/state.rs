@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::audio::source::ChannelView;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
+use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 
 /// Per-file settings that persist when switching between files.
 /// Files in the same sequence group share settings.
@@ -50,6 +51,8 @@ pub struct LoadedFile {
     pub add_order: usize,
     /// File.lastModified timestamp from the File API (ms since epoch), if available.
     pub last_modified_ms: Option<f64>,
+    /// Multi-layered file identity for annotation matching. Computed progressively after load.
+    pub identity: Option<FileIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -679,6 +682,11 @@ pub struct AppState {
     pub selected_pulse_index: RwSignal<Option<usize>>,
     pub pulse_detecting: RwSignal<bool>,
 
+    // Annotations
+    pub annotation_store: RwSignal<AnnotationStore>,
+    pub annotations_dirty: RwSignal<bool>,
+    pub selected_annotation_id: RwSignal<Option<AnnotationId>>,
+
     // Display-affecting checkboxes (spectrogram intensity settings)
     pub display_auto_gain: RwSignal<bool>,
     pub display_eq: RwSignal<bool>,
@@ -889,6 +897,10 @@ impl AppState {
             pulse_overlay_enabled: RwSignal::new(true),
             selected_pulse_index: RwSignal::new(None),
             pulse_detecting: RwSignal::new(false),
+
+            annotation_store: RwSignal::new(AnnotationStore::default()),
+            annotations_dirty: RwSignal::new(false),
+            selected_annotation_id: RwSignal::new(None),
 
             display_auto_gain: RwSignal::new(false),
             display_eq: RwSignal::new(false),

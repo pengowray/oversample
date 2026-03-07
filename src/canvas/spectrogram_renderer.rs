@@ -2352,3 +2352,76 @@ pub fn draw_tile_debug_overlay(
 
     ctx.restore();
 }
+
+/// Draw saved annotation selections as semi-transparent overlays.
+pub fn draw_saved_selections(
+    ctx: &web_sys::CanvasRenderingContext2d,
+    annotation_set: &crate::annotations::AnnotationSet,
+    selected_id: Option<&str>,
+    min_freq: f64,
+    max_freq: f64,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+) {
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+
+    for annotation in &annotation_set.annotations {
+        let sel = match &annotation.kind {
+            crate::annotations::AnnotationKind::Selection(s) => s,
+            _ => continue,
+        };
+
+        // Skip if completely outside visible range
+        if sel.time_end < start_time || sel.time_start > end_time {
+            continue;
+        }
+
+        let x0 = ((sel.time_start - start_time) * px_per_sec).max(0.0);
+        let x1 = ((sel.time_end - start_time) * px_per_sec).min(canvas_width);
+        let y0 = freq_to_y(sel.freq_high, min_freq, max_freq, canvas_height).max(0.0);
+        let y1 = freq_to_y(sel.freq_low, min_freq, max_freq, canvas_height).min(canvas_height);
+
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+
+        let is_selected = selected_id == Some(annotation.id.as_str());
+
+        // Fill
+        let fill_color = if is_selected {
+            "rgba(200, 150, 50, 0.15)"
+        } else {
+            "rgba(50, 200, 120, 0.10)"
+        };
+        ctx.set_fill_style_str(fill_color);
+        ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+
+        // Dashed border
+        let _ = ctx.set_line_dash(&js_sys::Array::of2(
+            &wasm_bindgen::JsValue::from_f64(4.0),
+            &wasm_bindgen::JsValue::from_f64(3.0),
+        ));
+        let stroke_color = if is_selected {
+            "rgba(255, 200, 80, 0.8)"
+        } else {
+            "rgba(80, 220, 140, 0.5)"
+        };
+        ctx.set_stroke_style_str(stroke_color);
+        ctx.set_line_width(1.0);
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+        // Label
+        if let Some(ref label) = sel.label {
+            ctx.set_font("11px monospace");
+            ctx.set_fill_style_str("rgba(200, 255, 200, 0.8)");
+            let _ = ctx.fill_text(label, x0 + 3.0, y0 + 12.0);
+        }
+    }
+}
