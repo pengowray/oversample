@@ -564,11 +564,27 @@ pub fn Spectrogram() -> impl IntoView {
                 // Cancel stale in-flight entries far from viewport (prevents stuck tiles during fast scroll)
                 let viewport_center_tile = ((vis_start_lod + vis_end_lod) / 2.0 / TILE_COLS as f64) as usize;
                 let visible_tile_count = last_tile.saturating_sub(first_tile) + 1;
-                let keep_radius = visible_tile_count.max(10) * 3;
-                tile_cache::cancel_far_in_flight(file_idx_val, ideal_lod, viewport_center_tile, keep_radius);
+                let keep_cancel = visible_tile_count.max(10) * 3;
+                let keep_evict = visible_tile_count.max(10) * 5;
 
-                // Proactively evict cached tiles far from viewport (free space for new tiles)
-                tile_cache::evict_far(file_idx_val, ideal_lod, viewport_center_tile, visible_tile_count.max(10) * 5);
+                // During playback, also protect tiles near the pre-play scroll position
+                // so they don't need to be regenerated when playback stops.
+                if is_playing {
+                    let pre_scroll = state.pre_play_scroll.get_untracked();
+                    let pre_col = (pre_scroll / time_res).max(0.0).min((total_cols as f64 - 1.0).max(0.0));
+                    let pre_end_col = (pre_col + display_w as f64 / zoom).min(total_cols as f64);
+                    let pre_center = (((pre_col * ratio) + (pre_end_col * ratio)) / 2.0 / TILE_COLS as f64) as usize;
+
+                    tile_cache::cancel_far_in_flight_multi(file_idx_val, ideal_lod, &[
+                        (viewport_center_tile, keep_cancel), (pre_center, keep_cancel)
+                    ]);
+                    tile_cache::evict_far_multi(file_idx_val, ideal_lod, &[
+                        (viewport_center_tile, keep_evict), (pre_center, keep_evict)
+                    ]);
+                } else {
+                    tile_cache::cancel_far_in_flight(file_idx_val, ideal_lod, viewport_center_tile, keep_cancel);
+                    tile_cache::evict_far(file_idx_val, ideal_lod, viewport_center_tile, keep_evict);
+                }
 
                 let is_loading = state.loading_count.get_untracked() > 0;
 
@@ -953,7 +969,9 @@ pub fn Spectrogram() -> impl IntoView {
             let _main_view = state.main_view.get();
             let _reassign = state.reassign_enabled.get();
             let _flow = state.flow_enabled.get();
-            let _tile_ready = state.tile_ready_signal.get();
+            // NOTE: intentionally NOT subscribing to tile_ready_signal here —
+            // that would create a feedback loop (tile completes -> prefetch fires -> schedules more).
+            // Scroll/zoom/playing changes are sufficient triggers for prefetch.
 
             // Cancel previous debounce timer
             if let Some(h) = prefetch_handle.get() {

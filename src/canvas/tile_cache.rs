@@ -308,6 +308,26 @@ pub fn evict_far(file_idx: usize, lod: u8, center_tile: usize, keep_radius: usiz
     CACHE.with(|c| c.borrow_mut().evict_far_from(file_idx, lod, center_tile, keep_radius));
 }
 
+/// Evict tiles far from ALL given centers. A tile is only evicted if it falls
+/// outside every (center, radius) zone — tiles near any center are kept.
+pub fn evict_far_multi(file_idx: usize, lod: u8, centers: &[(usize, usize)]) {
+    CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let to_evict: Vec<CacheKey> = cache.tiles.keys().copied()
+            .filter(|&(fi, l, ti)| {
+                fi == file_idx && l == lod
+                    && centers.iter().all(|&(center, radius)| ti.abs_diff(center) > radius)
+            })
+            .collect();
+        for key in to_evict {
+            if let Some(evicted) = cache.tiles.remove(&key) {
+                cache.total_bytes = cache.total_bytes.saturating_sub(evicted.rendered.byte_len());
+                cache.lru.retain(|k| k != &key);
+            }
+        }
+    });
+}
+
 /// Remove IN_FLIGHT entries far from the current viewport center.
 /// Prevents old in-flight computations from blocking cache resources
 /// when the user scrolls fast past them.
@@ -315,6 +335,16 @@ pub fn cancel_far_in_flight(file_idx: usize, lod: u8, center_tile: usize, keep_r
     IN_FLIGHT.with(|s| {
         s.borrow_mut().retain(|&(fi, l, ti), _| {
             fi != file_idx || l != lod || ti.abs_diff(center_tile) <= keep_radius
+        });
+    });
+}
+
+/// Cancel in-flight entries far from ALL given centers.
+pub fn cancel_far_in_flight_multi(file_idx: usize, lod: u8, centers: &[(usize, usize)]) {
+    IN_FLIGHT.with(|s| {
+        s.borrow_mut().retain(|&(fi, l, ti), _| {
+            fi != file_idx || l != lod
+                || centers.iter().any(|&(center, radius)| ti.abs_diff(center) <= radius)
         });
     });
 }

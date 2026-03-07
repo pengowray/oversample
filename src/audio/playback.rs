@@ -55,14 +55,17 @@ pub fn replay_live(state: &AppState) {
     let remaining_duration = (end_sample - start_sample) as f64 / sr as f64;
     let channel_view = state.channel_view.get_untracked();
 
-    streaming_playback::start_stream(
+    let Some(_) = streaming_playback::start_stream(
         file.audio.source.clone(),
         channel_view,
         sr,
         start_sample,
         end_sample,
         params,
-    );
+    ) else {
+        state.is_playing.set(false);
+        return;
+    };
 
     // Compute correct playback speed for the current mode
     let te_factor = state.te_factor.get_untracked();
@@ -139,14 +142,14 @@ pub fn play_from_time(state: &AppState, start_secs: f64) {
     let params = snapshot_params(state, selection, sr);
     let channel_view = state.channel_view.get_untracked();
 
-    streaming_playback::start_stream(
+    let Some(_) = streaming_playback::start_stream(
         file.audio.source.clone(),
         channel_view,
         sr,
         start_sample,
         end_sample,
         params,
-    );
+    ) else { return };
 
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let te_factor = state.te_factor.get_untracked();
@@ -181,14 +184,14 @@ pub fn play(state: &AppState) {
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let channel_view = state.channel_view.get_untracked();
 
-    streaming_playback::start_stream(
+    let Some(_) = streaming_playback::start_stream(
         file.audio.source.clone(),
         channel_view,
         sr,
         start_sample,
         end_sample,
         params,
-    );
+    ) else { return };
 
     let te_factor = state.te_factor.get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {

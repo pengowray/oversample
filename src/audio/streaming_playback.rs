@@ -77,26 +77,29 @@ pub(crate) struct PlaybackParams {
 const FADE_IN_MS: f64 = 30.0;
 
 /// Stop any active streaming playback with a short fade-out to avoid clicks.
+///
+/// The AudioContext is kept alive for reuse — only the gain node is disconnected.
+/// This avoids exhausting the browser's AudioContext limit (~6 in Chrome) when
+/// the user presses play repeatedly.
 pub(crate) fn stop_stream() {
     STREAM_GEN.with(|g| {
         let mut generation = g.borrow_mut();
         *generation = generation.wrapping_add(1);
     });
 
-    // Take the old gain node and context; fade out then close asynchronously.
+    // Take the gain node but keep the context alive for reuse.
     let gain = STREAM_GAIN.with(|g| g.borrow_mut().take());
-    let ctx = STREAM_CTX.with(|c| c.borrow_mut().take());
+    let ctx = STREAM_CTX.with(|c| c.borrow().clone());
 
-    if let (Some(gain_node), Some(old_ctx)) = (gain, ctx) {
+    if let (Some(gain_node), Some(ref old_ctx)) = (gain, ctx) {
         let now = old_ctx.current_time();
         let param = gain_node.gain();
         // Mute immediately to avoid overlap with new stream
         let _ = param.cancel_scheduled_values(now);
         let _ = param.set_value_at_time(0.0, now);
-        // Close the context immediately — the generation counter already
-        // prevents the old chunk loop from scheduling more buffers, and
-        // setting gain to 0 silences any already-scheduled ones.
-        let _ = old_ctx.close();
+        // Disconnect gain node to release all scheduled buffer sources.
+        // The generation counter prevents the chunk loop from scheduling more.
+        let _ = gain_node.disconnect();
     }
 }
 
@@ -109,7 +112,8 @@ pub(crate) fn is_streaming() -> bool {
 /// Start streaming playback of a sample range.
 ///
 /// `source` provides sample data; `channel_view` selects which channel(s) to play.
-/// Returns the final playback sample rate (may differ from source for TE mode).
+/// Returns the final playback sample rate (may differ from source for TE mode),
+/// or `None` if AudioContext creation failed.
 pub(crate) fn start_stream(
     source: Arc<dyn AudioSource>,
     channel_view: ChannelView,
@@ -117,7 +121,7 @@ pub(crate) fn start_stream(
     start_sample: usize,
     end_sample: usize,
     params: PlaybackParams,
-) -> u32 {
+) -> Option<u32> {
     stop_stream();
 
     let final_rate = match params.mode {
@@ -138,19 +142,36 @@ pub(crate) fn start_stream(
         && source.channel_count() >= 2
         && channel_view == ChannelView::MonoMix;
 
-    // Create AudioContext at the final playback rate
-    let opts = AudioContextOptions::new();
-    opts.set_sample_rate(final_rate as f32);
-    let ctx = AudioContext::new_with_context_options(&opts)
-        .or_else(|_| AudioContext::new())
-        .unwrap();
+    // Reuse existing AudioContext if its sample rate matches; otherwise create new.
+    let ctx = STREAM_CTX.with(|c| {
+        let existing = c.borrow().clone();
+        if let Some(ref ctx) = existing {
+            if (ctx.sample_rate() - final_rate as f32).abs() < 1.0 {
+                let _ = ctx.resume();
+                return Some(ctx.clone());
+            }
+            // Sample rate changed — must close old and create new
+            let _ = ctx.close();
+            *c.borrow_mut() = None;
+        }
+        let opts = AudioContextOptions::new();
+        opts.set_sample_rate(final_rate as f32);
+        let new_ctx = AudioContext::new_with_context_options(&opts)
+            .or_else(|_| AudioContext::new())
+            .ok()?;
+        *c.borrow_mut() = Some(new_ctx.clone());
+        Some(new_ctx)
+    });
+    let Some(ctx) = ctx else {
+        web_sys::console::warn_1(&"Playback failed: could not create AudioContext".into());
+        return None;
+    };
 
     // Create a master gain node for fade-out on stop
     let gain_node = ctx.create_gain().unwrap();
     let _ = gain_node.connect_with_audio_node(&ctx.destination());
 
     let generation = STREAM_GEN.with(|g| *g.borrow());
-    STREAM_CTX.with(|c| *c.borrow_mut() = Some(ctx.clone()));
     STREAM_GAIN.with(|g| *g.borrow_mut() = Some(gain_node.clone()));
 
     // Spawn the async chunk-processing loop
@@ -168,7 +189,7 @@ pub(crate) fn start_stream(
         params,
     ));
 
-    final_rate
+    Some(final_rate)
 }
 
 /// Async loop that processes and schedules audio chunks.
