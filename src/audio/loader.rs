@@ -255,6 +255,71 @@ pub fn parse_flac_header(header_bytes: &[u8]) -> Result<FlacHeader, String> {
     })
 }
 
+/// Parsed MP3 header — enough info to decide whether streaming is needed.
+#[derive(Clone, Debug)]
+pub struct Mp3Header {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub estimated_total_frames: u64, // from Xing/LAME header or bitrate estimate
+}
+
+/// Parse MP3 metadata from the given bytes (typically first 64KB of file).
+/// Uses symphonia to probe the format and extract codec parameters.
+/// `file_size` is needed to estimate duration when no Xing/LAME header is present.
+pub fn parse_mp3_header(header_bytes: &[u8], file_size: u64) -> Result<Mp3Header, String> {
+    use symphonia::core::codecs::CODEC_TYPE_NULL;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let cursor = Cursor::new(header_bytes.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+    let mut hint = Hint::new();
+    hint.with_extension("mp3");
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("MP3 probe error: {e}"))?;
+
+    let format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or("No audio track found in MP3")?;
+
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or("MP3 missing sample rate")?;
+    let channels = track
+        .codec_params
+        .channels
+        .ok_or("MP3 missing channel info")?
+        .count() as u16;
+
+    // Try to get exact frame count from Xing/LAME header
+    let estimated_total_frames = if let Some(n_frames) = track.codec_params.n_frames {
+        n_frames
+    } else {
+        // Estimate from file size and bitrate.
+        // Typical MP3: bitrate = file_size * 8 / duration, so duration = file_size * 8 / bitrate.
+        // Default to 128 kbps if we can't determine bitrate.
+        let bitrate = track.codec_params.bits_per_coded_sample.unwrap_or(0) as u64;
+        let bitrate = if bitrate > 0 { bitrate * 1000 } else { 128_000 };
+        // frames = duration * sample_rate = (file_size * 8 / bitrate) * sample_rate
+        file_size * 8 * sample_rate as u64 / bitrate
+    };
+
+    Ok(Mp3Header {
+        sample_rate,
+        channels,
+        estimated_total_frames,
+    })
+}
+
 /// Load audio from raw file bytes. Detects WAV, FLAC, OGG, or MP3 by header magic bytes.
 pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     if bytes.len() < 4 {
@@ -270,7 +335,7 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     }
 }
 
-fn is_mp3(bytes: &[u8]) -> bool {
+pub fn is_mp3(bytes: &[u8]) -> bool {
     // ID3v2 tag header
     if bytes.len() >= 3 && &bytes[0..3] == b"ID3" {
         return true;
