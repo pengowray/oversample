@@ -59,8 +59,10 @@ pub struct LoadedFile {
 pub struct Selection {
     pub time_start: f64,
     pub time_end: f64,
-    pub freq_low: f64,
-    pub freq_high: f64,
+    /// None means no frequency constraint (time-only selection).
+    pub freq_low: Option<f64>,
+    /// None means no frequency constraint (time-only selection).
+    pub freq_high: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

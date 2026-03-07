@@ -1334,8 +1334,8 @@ pub fn Spectrogram() -> impl IntoView {
                         state.selection.set(Some(Selection {
                             time_start: t0.min(t),
                             time_end: t0.max(t),
-                            freq_low: f0.min(f),
-                            freq_high: f0.max(f),
+                            freq_low: Some(f0.min(f)),
+                            freq_high: Some(f0.max(f)),
                         }));
                     }
                 }
@@ -1410,8 +1410,8 @@ pub fn Spectrogram() -> impl IntoView {
             let sel = Selection {
                 time_start: t0.min(t),
                 time_end: t0.max(t),
-                freq_low: f0.min(f),
-                freq_high: f0.max(f),
+                freq_low: Some(f0.min(f)),
+                freq_high: Some(f0.max(f)),
             };
             if sel.time_end - sel.time_start > 0.0001 {
                 state.selection.set(Some(sel));

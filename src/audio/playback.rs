@@ -242,9 +242,9 @@ fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: 
         filter_db_above: state.filter_db_above.get_untracked(),
         filter_band_mode: state.filter_band_mode.get_untracked(),
         filter_quality: state.filter_quality.get_untracked(),
-        sel_freq_low: selection.map(|s| s.freq_low).unwrap_or(0.0),
+        sel_freq_low: selection.and_then(|s| s.freq_low).unwrap_or(0.0),
         sel_freq_high: selection
-            .map(|s| s.freq_high)
+            .and_then(|s| s.freq_high)
             .unwrap_or(sample_rate as f64 / 2.0),
         has_selection: selection.is_some(),
         notch_enabled: state.notch_enabled.get_untracked(),

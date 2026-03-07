@@ -78,12 +78,15 @@ impl FileIdentity {
 pub type AnnotationId = String;
 
 /// A saved time+frequency region selection.
+/// Frequency bounds are optional — a time-only selection has no freq_low/freq_high.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedSelection {
     pub time_start: f64,
     pub time_end: f64,
-    pub freq_low: f64,
-    pub freq_high: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub freq_low: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub freq_high: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

@@ -476,7 +476,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
             (Some(zc.crossing_count), Some(zc.estimated_frequency_hz))
         };
 
-        Some((duration, frames, crossing_count, estimated_freq, selection.freq_low, selection.freq_high))
+        Some((duration, frames, crossing_count, estimated_freq, selection.freq_low, selection.freq_high, selection))
     };
 
     let save_selection = move |_| {
@@ -529,7 +529,11 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
         <div class="sidebar-panel">
             {move || {
                 match analysis() {
-                    Some((duration, frames, crossing_count, estimated_freq, freq_low, freq_high)) => {
+                    Some((duration, frames, crossing_count, estimated_freq, freq_low, freq_high, _sel)) => {
+                        let freq_range_str = match (freq_low, freq_high) {
+                            (Some(fl), Some(fh)) => format!("{:.0} – {:.0} kHz", fl / 1000.0, fh / 1000.0),
+                            _ => "—".to_string(),
+                        };
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"Selection"</div>
@@ -543,7 +547,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                                 </div>
                                 <div class="setting-row">
                                     <span class="setting-label">"Freq range"</span>
-                                    <span class="setting-value">{format!("{:.0} – {:.0} kHz", freq_low / 1000.0, freq_high / 1000.0)}</span>
+                                    <span class="setting-value">{freq_range_str}</span>
                                 </div>
                                 <div class="setting-row">
                                     <span class="setting-label">"ZC count"</span>
@@ -577,14 +581,16 @@ fn SavedSelectionsList() -> impl IntoView {
         let idx = state.current_file_index.get()?;
         let store = state.annotation_store.get();
         let set = store.sets.get(idx)?.as_ref()?;
-        let selections: Vec<(String, String)> = set.annotations.iter().filter_map(|a| {
+        let selections: Vec<(String, String, Option<String>)> = set.annotations.iter().filter_map(|a| {
             if let AnnotationKind::Selection(ref sel) = a.kind {
-                let label = sel.label.clone().unwrap_or_else(|| {
-                    format!("{:.3}–{:.3}s, {:.0}–{:.0} kHz",
+                let auto_label = match (sel.freq_low, sel.freq_high) {
+                    (Some(fl), Some(fh)) => format!("{:.3}–{:.3}s, {:.0}–{:.0} kHz",
                         sel.time_start, sel.time_end,
-                        sel.freq_low / 1000.0, sel.freq_high / 1000.0)
-                });
-                Some((a.id.clone(), label))
+                        fl / 1000.0, fh / 1000.0),
+                    _ => format!("{:.3}–{:.3}s", sel.time_start, sel.time_end),
+                };
+                let display = sel.label.clone().unwrap_or_else(|| auto_label.clone());
+                Some((a.id.clone(), display, sel.label.clone()))
             } else {
                 None
             }
@@ -613,16 +619,70 @@ fn SavedSelectionsList() -> impl IntoView {
                 view! {
                     <div class="setting-group">
                         <div class="setting-group-title">"Saved Selections"</div>
-                        {selections.into_iter().map(|(id, label)| {
+                        {selections.into_iter().map(|(id, display, existing_label)| {
                             let id_click = id.clone();
                             let id_delete = id.clone();
+                            let id_edit = id.clone();
+                            let editing = RwSignal::new(false);
+                            let edit_value = RwSignal::new(existing_label.unwrap_or_default());
                             view! {
                                 <div class="saved-selection-item"
                                     on:click=move |_| {
                                         restore_selection(state, &id_click);
                                     }
                                 >
-                                    <span class="saved-selection-label">{label}</span>
+                                    {move || {
+                                        if editing.get() {
+                                            let id_save = id_edit.clone();
+                                            let id_save2 = id_edit.clone();
+                                            let input_ref = NodeRef::<leptos::html::Input>::new();
+                                            Effect::new(move |_| {
+                                                if let Some(el) = input_ref.get() {
+                                                    let _ = el.focus();
+                                                }
+                                            });
+                                            view! {
+                                                <input
+                                                    class="saved-selection-label-input"
+                                                    type="text"
+                                                    prop:value=move || edit_value.get()
+                                                    placeholder="Label..."
+                                                    node_ref=input_ref
+                                                    on:input=move |ev| {
+                                                        edit_value.set(leptos::prelude::event_target_value(&ev));
+                                                    }
+                                                    on:keydown=move |ev| {
+                                                        if ev.key() == "Enter" {
+                                                            let val = edit_value.get_untracked();
+                                                            let label = if val.trim().is_empty() { None } else { Some(val) };
+                                                            update_annotation_label(state, &id_save, label);
+                                                            editing.set(false);
+                                                        } else if ev.key() == "Escape" {
+                                                            editing.set(false);
+                                                        }
+                                                    }
+                                                    on:blur=move |_| {
+                                                        let val = edit_value.get_untracked();
+                                                        let label = if val.trim().is_empty() { None } else { Some(val) };
+                                                        update_annotation_label(state, &id_save2, label);
+                                                        editing.set(false);
+                                                    }
+                                                    on:click=move |e| { e.stop_propagation(); }
+                                                />
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <span class="saved-selection-label">{display.clone()}</span>
+                                            }.into_any()
+                                        }
+                                    }}
+                                    <button class="saved-selection-edit"
+                                        title="Edit label"
+                                        on:click=move |e| {
+                                            e.stop_propagation();
+                                            editing.set(true);
+                                        }
+                                    >"\u{270E}"</button>
                                     <button class="saved-selection-delete"
                                         on:click=move |e| {
                                             e.stop_propagation();
@@ -679,6 +739,7 @@ fn restore_selection(state: AppState, annotation_id: &str) {
                 }));
                 state.selected_annotation_id.set(Some(annotation_id.to_string()));
             }
+
             return;
         }
     }
@@ -692,6 +753,24 @@ fn delete_annotation(state: AppState, annotation_id: &str) {
     state.annotation_store.update(|store| {
         if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
             set.annotations.retain(|a| a.id != annotation_id);
+        }
+    });
+    state.annotations_dirty.set(true);
+}
+
+fn update_annotation_label(state: AppState, annotation_id: &str, label: Option<String>) {
+    let idx = match state.current_file_index.get_untracked() {
+        Some(i) => i,
+        None => return,
+    };
+    state.annotation_store.update(|store| {
+        if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+            if let Some(a) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
+                if let AnnotationKind::Selection(ref mut sel) = a.kind {
+                    sel.label = label;
+                    a.modified_at = now_iso8601();
+                }
+            }
         }
     });
     state.annotations_dirty.set(true);

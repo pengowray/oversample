@@ -1957,12 +1957,21 @@ pub fn draw_selection(
 
     let x0 = ((selection.time_start - start_time) * px_per_sec).max(0.0);
     let x1 = ((selection.time_end - start_time) * px_per_sec).min(canvas_width);
-    let y0 = freq_to_y(selection.freq_high, min_freq, max_freq, canvas_height).max(0.0);
-    let y1 = freq_to_y(selection.freq_low, min_freq, max_freq, canvas_height).min(canvas_height);
 
-    if x1 <= x0 || y1 <= y0 {
+    if x1 <= x0 {
         return;
     }
+
+    // If frequency bounds are set, draw a bounded rectangle; otherwise full-height strip
+    let (y0, y1) = match (selection.freq_high, selection.freq_low) {
+        (Some(fh), Some(fl)) => {
+            let y0 = freq_to_y(fh, min_freq, max_freq, canvas_height).max(0.0);
+            let y1 = freq_to_y(fl, min_freq, max_freq, canvas_height).min(canvas_height);
+            if y1 <= y0 { return; }
+            (y0, y1)
+        }
+        _ => (0.0, canvas_height),
+    };
 
     // Fill
     ctx.set_fill_style_str("rgba(50, 120, 200, 0.15)");
@@ -1987,8 +1996,14 @@ pub fn draw_harmonic_shadows(
     canvas_width: f64,
     canvas_height: f64,
 ) {
+    // Need frequency bounds for harmonic shadows
+    let (freq_low, freq_high) = match (selection.freq_low, selection.freq_high) {
+        (Some(fl), Some(fh)) => (fl, fh),
+        _ => return,
+    };
+
     // Only show shadows if selection is less than 1 octave
-    if selection.freq_low <= 0.0 || selection.freq_high / selection.freq_low >= 2.0 {
+    if freq_low <= 0.0 || freq_high / freq_low >= 2.0 {
         return;
     }
 
@@ -2010,8 +2025,8 @@ pub fn draw_harmonic_shadows(
     ));
 
     // Octave higher
-    let hi_low = selection.freq_low * 2.0;
-    let hi_high = selection.freq_high * 2.0;
+    let hi_low = freq_low * 2.0;
+    let hi_high = freq_high * 2.0;
     if hi_low < max_freq {
         let y0 = freq_to_y(hi_high.min(max_freq), min_freq, max_freq, canvas_height).max(0.0);
         let y1 = freq_to_y(hi_low, min_freq, max_freq, canvas_height).min(canvas_height);
@@ -2025,8 +2040,8 @@ pub fn draw_harmonic_shadows(
     }
 
     // Octave lower
-    let lo_low = selection.freq_low / 2.0;
-    let lo_high = selection.freq_high / 2.0;
+    let lo_low = freq_low / 2.0;
+    let lo_high = freq_high / 2.0;
     {
         let y0 = freq_to_y(lo_high, min_freq, max_freq, canvas_height).max(0.0);
         let y1 = freq_to_y(lo_low.max(min_freq), min_freq, max_freq, canvas_height).min(canvas_height);
@@ -2384,12 +2399,20 @@ pub fn draw_saved_selections(
 
         let x0 = ((sel.time_start - start_time) * px_per_sec).max(0.0);
         let x1 = ((sel.time_end - start_time) * px_per_sec).min(canvas_width);
-        let y0 = freq_to_y(sel.freq_high, min_freq, max_freq, canvas_height).max(0.0);
-        let y1 = freq_to_y(sel.freq_low, min_freq, max_freq, canvas_height).min(canvas_height);
 
-        if x1 <= x0 || y1 <= y0 {
+        if x1 <= x0 {
             continue;
         }
+
+        let (y0, y1) = match (sel.freq_high, sel.freq_low) {
+            (Some(fh), Some(fl)) => {
+                let y0 = freq_to_y(fh, min_freq, max_freq, canvas_height).max(0.0);
+                let y1 = freq_to_y(fl, min_freq, max_freq, canvas_height).min(canvas_height);
+                if y1 <= y0 { continue; }
+                (y0, y1)
+            }
+            _ => (0.0, canvas_height),
+        };
 
         let is_selected = selected_id == Some(annotation.id.as_str());
 

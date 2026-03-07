@@ -636,6 +636,32 @@ body.sidebar-resizing {
 .saved-selection-delete:hover {
     color: #e44;
 }
+.saved-selection-edit {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+}
+.saved-selection-edit:hover {
+    color: #8cf;
+}
+.saved-selection-label-input {
+    flex: 1;
+    background: #1a1a2e;
+    border: 1px solid #446;
+    color: #ddd;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    outline: none;
+    min-width: 0;
+}
+.saved-selection-label-input:focus {
+    border-color: #68f;
+}
 
 .setting-group {
     padding: 4px 0;
