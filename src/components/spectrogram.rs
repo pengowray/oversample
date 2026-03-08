@@ -854,7 +854,7 @@ pub fn Spectrogram() -> impl IntoView {
             // Draw saved annotation selections
             if let Some(file_idx_val) = idx {
                 if let Some(Some(set)) = annotation_store.sets.get(file_idx_val) {
-                    spectrogram_renderer::draw_saved_selections(
+                    spectrogram_renderer::draw_annotations(
                         &ctx,
                         set,
                         selected_annotation.as_deref(),

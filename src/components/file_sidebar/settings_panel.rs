@@ -4,7 +4,7 @@ use crate::audio::source::ChannelView;
 use crate::state::{AppState, FftMode, FlowColorScheme, MainView, SpectrogramDisplay};
 use crate::components::slider_row::SliderRow;
 use crate::dsp::zero_crossing::zero_crossing_frequency;
-use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Group, SavedSelection, generate_uuid, now_iso8601, build_annotation_tree, AnnotationNode, collect_descendants, renumber_children};
+use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Group, Region, generate_uuid, now_iso8601, build_annotation_tree, AnnotationNode, collect_descendants, renumber_children};
 
 #[component]
 pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
@@ -479,14 +479,15 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
         Some((duration, frames, crossing_count, estimated_freq, selection.freq_low, selection.freq_high, selection))
     };
 
-    let save_selection = move |_| {
+    let annotate_region = move |_| {
         let selection = state.selection.get_untracked();
         let file_idx = state.current_file_index.get_untracked();
         if let (Some(sel), Some(idx)) = (selection, file_idx) {
+            let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
             state.snapshot_annotations();
             let annotation = Annotation {
                 id: generate_uuid(),
-                kind: AnnotationKind::Selection(SavedSelection {
+                kind: AnnotationKind::Region(Region {
                     time_start: sel.time_start,
                     time_end: sel.time_end,
                     freq_low: sel.freq_low,
@@ -503,7 +504,6 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
             state.annotation_store.update(|store| {
                 store.ensure_len(idx + 1);
                 if store.sets[idx].is_none() {
-                    // Create a new AnnotationSet for this file
                     let new_set = state.files.with_untracked(|files| {
                         files.get(idx).map(|f| {
                             let id = f.identity.clone().unwrap_or_else(|| {
@@ -521,7 +521,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                 }
             });
             state.annotations_dirty.set(true);
-            state.show_info_toast("Selection saved");
+            state.show_info_toast(if has_freq { "Region annotated" } else { "Segment annotated" });
         }
     };
 
@@ -530,10 +530,12 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
             {move || {
                 match analysis() {
                     Some((duration, frames, crossing_count, estimated_freq, freq_low, freq_high, _sel)) => {
+                        let has_freq = freq_low.is_some() && freq_high.is_some();
                         let freq_range_str = match (freq_low, freq_high) {
                             (Some(fl), Some(fh)) => format!("{:.0} – {:.0} kHz", fl / 1000.0, fh / 1000.0),
                             _ => "—".to_string(),
                         };
+                        let btn_label = if has_freq { "Annotate Region" } else { "Annotate Segment" };
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"Selection"</div>
@@ -557,7 +559,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                                     <span class="setting-label">"ZC est. freq"</span>
                                     <span class="setting-value">{match estimated_freq { Some(f) => format!("~{:.1} kHz", f / 1000.0), None => "...".into() }}</span>
                                 </div>
-                                <button class="sidebar-btn" on:click=save_selection>"Save Selection"</button>
+                                <button class="sidebar-btn" on:click=annotate_region>{btn_label}</button>
                             </div>
                         }.into_any()
                     }
@@ -568,7 +570,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
                     }
                 }
             }}
-            <SavedSelectionsList />
+            <AnnotationsList />
         </div>
     }
 }
@@ -576,15 +578,15 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
 /// Get the display label for an annotation.
 fn annotation_display(a: &Annotation) -> (String, Option<String>) {
     match &a.kind {
-        AnnotationKind::Selection(sel) => {
-            let auto_label = match (sel.freq_low, sel.freq_high) {
+        AnnotationKind::Region(reg) => {
+            let auto_label = match (reg.freq_low, reg.freq_high) {
                 (Some(fl), Some(fh)) => format!("{:.3}–{:.3}s, {:.0}–{:.0} kHz",
-                    sel.time_start, sel.time_end,
+                    reg.time_start, reg.time_end,
                     fl / 1000.0, fh / 1000.0),
-                _ => format!("{:.3}–{:.3}s", sel.time_start, sel.time_end),
+                _ => format!("{:.3}–{:.3}s", reg.time_start, reg.time_end),
             };
-            let display = sel.label.clone().unwrap_or_else(|| auto_label);
-            (display, sel.label.clone())
+            let display = reg.label.clone().unwrap_or_else(|| auto_label);
+            (display, reg.label.clone())
         }
         AnnotationKind::Marker(m) => {
             let auto_label = format!("{:.3}s", m.time);
@@ -607,7 +609,8 @@ fn annotation_display(a: &Annotation) -> (String, Option<String>) {
 /// Icon prefix for annotation kind.
 fn annotation_icon(kind: &AnnotationKind) -> &'static str {
     match kind {
-        AnnotationKind::Selection(_) => "\u{25AD} ",  // rectangle
+        AnnotationKind::Region(r) if r.freq_low.is_some() => "\u{25AD} ",  // rectangle (region)
+        AnnotationKind::Region(_) => "\u{2500} ",  // horizontal line (segment)
         AnnotationKind::Marker(_) => "\u{25C6} ",     // diamond
         AnnotationKind::Group(_) => "",                // handled by collapse toggle
         AnnotationKind::Measurement(_) => "\u{21D4} ", // double arrow
@@ -615,7 +618,7 @@ fn annotation_icon(kind: &AnnotationKind) -> &'static str {
 }
 
 #[component]
-fn SavedSelectionsList() -> impl IntoView {
+fn AnnotationsList() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let annotation_tree = move || {
@@ -821,7 +824,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                         });
                         view! {
                             <input
-                                class="saved-selection-label-input"
+                                class="annotation-label-input"
                                 type="text"
                                 prop:value=move || edit_value.get()
                                 placeholder="Label..."
@@ -850,18 +853,18 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                         }.into_any()
                     } else {
                         view! {
-                            <span class="saved-selection-label">{display.clone()}</span>
+                            <span class="annotation-label">{display.clone()}</span>
                         }.into_any()
                     }
                 }}
-                <button class="saved-selection-edit"
+                <button class="annotation-edit"
                     title="Edit label"
                     on:click=move |e| {
                         e.stop_propagation();
                         editing.set(true);
                     }
                 >"\u{270E}"</button>
-                <button class="saved-selection-delete"
+                <button class="annotation-delete"
                     on:click=move |e| {
                         e.stop_propagation();
                         delete_annotation(state, &id_delete);
@@ -892,14 +895,14 @@ fn restore_selection(state: AppState, annotation_id: &str) {
     for a in &set.annotations {
         if a.id == annotation_id {
             let jump_time = match &a.kind {
-                AnnotationKind::Selection(sel) => {
+                AnnotationKind::Region(reg) => {
                     state.selection.set(Some(crate::state::Selection {
-                        time_start: sel.time_start,
-                        time_end: sel.time_end,
-                        freq_low: sel.freq_low,
-                        freq_high: sel.freq_high,
+                        time_start: reg.time_start,
+                        time_end: reg.time_end,
+                        freq_low: reg.freq_low,
+                        freq_high: reg.freq_high,
                     }));
-                    Some((sel.time_start + sel.time_end) / 2.0)
+                    Some((reg.time_start + reg.time_end) / 2.0)
                 }
                 AnnotationKind::Marker(m) => Some(m.time),
                 AnnotationKind::Measurement(m) => Some((m.start_time + m.end_time) / 2.0),
@@ -967,7 +970,7 @@ fn update_annotation_label(state: AppState, annotation_id: &str, label: Option<S
         if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
             if let Some(a) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
                 match a.kind {
-                    AnnotationKind::Selection(ref mut sel) => { sel.label = label; }
+                    AnnotationKind::Region(ref mut reg) => { reg.label = label; }
                     AnnotationKind::Marker(ref mut m) => { m.label = label; }
                     AnnotationKind::Group(ref mut g) => { g.label = label; }
                     AnnotationKind::Measurement(ref mut m) => { m.label = label; }

@@ -2369,7 +2369,7 @@ pub fn draw_tile_debug_overlay(
 }
 
 /// Draw saved annotation selections as semi-transparent overlays.
-pub fn draw_saved_selections(
+pub fn draw_annotations(
     ctx: &web_sys::CanvasRenderingContext2d,
     annotation_set: &crate::annotations::AnnotationSet,
     selected_id: Option<&str>,
@@ -2388,7 +2388,7 @@ pub fn draw_saved_selections(
 
     for annotation in &annotation_set.annotations {
         let sel = match &annotation.kind {
-            crate::annotations::AnnotationKind::Selection(s) => s,
+            crate::annotations::AnnotationKind::Region(s) => s,
             _ => continue,
         };
 

@@ -350,6 +350,34 @@ pub fn App() -> impl IntoView {
             ev.prevent_default();
             state_kb.bat_book_open.update(|v| *v = !*v);
         }
+        // Q = toggle frequency bounds on current selection (region ↔ segment)
+        if (ev.key() == "q" || ev.key() == "Q") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
+            if let Some(sel) = state_kb.selection.get_untracked() {
+                ev.prevent_default();
+                if sel.freq_low.is_some() && sel.freq_high.is_some() {
+                    // Strip freq bounds: region → segment
+                    state_kb.selection.set(Some(crate::state::Selection {
+                        freq_low: None,
+                        freq_high: None,
+                        ..sel
+                    }));
+                    state_kb.show_info_toast("Region → Segment (Q)");
+                } else {
+                    // Restore freq bounds from display range: segment → region
+                    let files = state_kb.files.get_untracked();
+                    let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
+                    let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+                    let lo = state_kb.min_display_freq.get_untracked().unwrap_or(0.0);
+                    let hi = state_kb.max_display_freq.get_untracked().unwrap_or(file_max);
+                    state_kb.selection.set(Some(crate::state::Selection {
+                        freq_low: Some(lo),
+                        freq_high: Some(hi),
+                        ..sel
+                    }));
+                    state_kb.show_info_toast("Segment → Region (Q)");
+                }
+            }
+        }
         // Ctrl+Z / Cmd+Z = Undo, Ctrl+Shift+Z / Cmd+Shift+Z / Ctrl+Y = Redo
         if (ev.key() == "z" || ev.key() == "Z") && (ev.ctrl_key() || ev.meta_key()) && !ev.alt_key() {
             ev.prevent_default();

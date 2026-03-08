@@ -77,10 +77,10 @@ impl FileIdentity {
 /// Unique annotation identifier (UUID v4 as string).
 pub type AnnotationId = String;
 
-/// A saved time+frequency region selection.
-/// Frequency bounds are optional — a time-only selection has no freq_low/freq_high.
+/// A time+frequency region annotation.
+/// Frequency bounds are optional — present = "region" (2D box), absent = "segment" (time-only span).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SavedSelection {
+pub struct Region {
     pub time_start: f64,
     pub time_end: f64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -130,7 +130,7 @@ pub struct Group {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AnnotationKind {
-    Selection(SavedSelection),
+    Region(Region),
     Marker(Marker),
     Measurement(Measurement),
     Group(Group),
@@ -203,7 +203,7 @@ impl AnnotationSet {
     /// Create a new empty AnnotationSet for a file.
     pub fn new(file_identity: FileIdentity) -> Self {
         Self {
-            version: 1,
+            version: 2,
             id: generate_uuid(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: Some(now_iso8601()),

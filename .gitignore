@@ -23,6 +23,9 @@ desktop.ini
 *.jks
 keystore.properties
 
-# other
+# Claude Code
 CLAUDE.md
+.claude/settings.local.json
+
+# other
 .env

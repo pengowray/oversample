@@ -666,7 +666,7 @@ body.sidebar-resizing {
     padding: 3px 6px;
 }
 
-.saved-selection-item {
+.annotation-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -674,10 +674,10 @@ body.sidebar-resizing {
     cursor: pointer;
     gap: 4px;
 }
-.saved-selection-item:hover {
+.annotation-item:hover {
     background: rgba(255, 255, 255, 0.05);
 }
-.saved-selection-label {
+.annotation-label {
     font-size: 12px;
     color: #aaa;
     overflow: hidden;
@@ -685,7 +685,7 @@ body.sidebar-resizing {
     white-space: nowrap;
     flex: 1;
 }
-.saved-selection-delete {
+.annotation-delete {
     background: none;
     border: none;
     color: #666;
@@ -694,10 +694,10 @@ body.sidebar-resizing {
     padding: 0 4px;
     line-height: 1;
 }
-.saved-selection-delete:hover {
+.annotation-delete:hover {
     color: #e44;
 }
-.saved-selection-edit {
+.annotation-edit {
     background: none;
     border: none;
     color: #666;
@@ -706,10 +706,10 @@ body.sidebar-resizing {
     padding: 0 2px;
     line-height: 1;
 }
-.saved-selection-edit:hover {
+.annotation-edit:hover {
     color: #8cf;
 }
-.saved-selection-label-input {
+.annotation-label-input {
     flex: 1;
     background: #1a1a2e;
     border: 1px solid #446;
@@ -720,7 +720,7 @@ body.sidebar-resizing {
     outline: none;
     min-width: 0;
 }
-.saved-selection-label-input:focus {
+.annotation-label-input:focus {
     border-color: #68f;
 }
 
