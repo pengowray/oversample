@@ -363,8 +363,15 @@ pub fn App() -> impl IntoView {
             ev.prevent_default();
             state_kb.redo_annotations();
         }
-        // Arrow left/right: pan the view
-        if ev.key() == "ArrowLeft" || ev.key() == "ArrowRight" {
+        // Navigation: arrow keys, PgUp/PgDn, Ctrl+Home/End
+        let is_ctrl = ev.ctrl_key() || ev.meta_key();
+        let nav_action = match ev.key().as_str() {
+            "ArrowLeft" | "ArrowRight" => Some(ev.key()),
+            "PageUp" | "PageDown" => Some(ev.key()),
+            "Home" | "End" if is_ctrl => Some(ev.key()),
+            _ => None,
+        };
+        if let Some(key) = nav_action {
             ev.prevent_default();
             let files = state_kb.files.get_untracked();
             let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
@@ -372,13 +379,18 @@ pub fn App() -> impl IntoView {
                 let zoom = state_kb.zoom_level.get_untracked();
                 let canvas_w = state_kb.spectrogram_canvas_width.get_untracked();
                 let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
-                let step = visible_time * 0.2;
-                let delta = if ev.key() == "ArrowLeft" { -step } else { step };
                 let max_scroll = (file.audio.duration_secs - visible_time).max(0.0);
+                let new_scroll = match key.as_str() {
+                    "Home" => 0.0,
+                    "End" => max_scroll,
+                    "ArrowLeft" => (state_kb.scroll_offset.get_untracked() - visible_time * 0.2).max(0.0),
+                    "ArrowRight" => (state_kb.scroll_offset.get_untracked() + visible_time * 0.2).min(max_scroll),
+                    "PageUp" => (state_kb.scroll_offset.get_untracked() - visible_time * 0.8).max(0.0),
+                    "PageDown" => (state_kb.scroll_offset.get_untracked() + visible_time * 0.8).min(max_scroll),
+                    _ => state_kb.scroll_offset.get_untracked(),
+                };
                 state_kb.suspend_follow();
-                state_kb.scroll_offset.update(|s| {
-                    *s = (*s + delta).clamp(0.0, max_scroll);
-                });
+                state_kb.scroll_offset.set(new_scroll);
             }
         }
         if ev.key() == "Escape" {
