@@ -808,6 +808,15 @@ pub fn Spectrogram() -> impl IntoView {
             };
 
             let xform_on = state.display_transform.get_untracked();
+            // When xform is on, adjust marker state for right-side labels
+            let marker_state = if xform_on {
+                FreqMarkerState {
+                    mouse_in_label_area: mouse_freq.is_some() && mouse_cx > (display_w as f64 - LABEL_AREA_WIDTH),
+                    ..marker_state
+                }
+            } else {
+                marker_state
+            };
             spectrogram_renderer::draw_freq_markers(
                 &ctx,
                 min_freq,
@@ -1259,9 +1268,9 @@ pub fn Spectrogram() -> impl IntoView {
             return;
         }
 
-        // Check for axis drag (left axis frequency range selection)
+        // Check for axis drag (left axis frequency range selection) — disabled in xform view
         if let Some((px_x, _, _, freq)) = mouse_to_xtf(&ev) {
-            if px_x < LABEL_AREA_WIDTH {
+            if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
                 let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
                 let snapped = (freq / snap).round() * snap;
                 axis_drag_raw_start.set(freq);

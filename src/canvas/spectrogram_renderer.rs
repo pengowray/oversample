@@ -1432,13 +1432,22 @@ pub fn draw_freq_markers(
         (0.0, color_bar_w + 3.0, 22.0, 15.0)
     };
 
-    // Collect all division freqs within visible range
+    // Collect all division freqs within visible range.
+    // Adapt division interval to visible range so we always get ~3-12 markers.
+    let range = max_freq - min_freq;
+    let div_interval = if range <= 5_000.0 {
+        1_000.0
+    } else if range <= 25_000.0 {
+        5_000.0
+    } else {
+        10_000.0
+    };
     let mut divisions: Vec<f64> = Vec::new();
-    let first_div = ((min_freq / 10_000.0).ceil() * 10_000.0).max(10_000.0);
+    let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
     let mut freq = first_div;
     while freq < max_freq {
         divisions.push(freq);
-        freq += 10_000.0;
+        freq += div_interval;
     }
 
     // Check if top of display is nyquist
@@ -1466,9 +1475,8 @@ pub fn draw_freq_markers(
             _ => 0.7,
         };
 
-        // --- Color range bar (left edge, covering the decade above: freq to freq+10k) ---
-        // e.g. 40kHz marker (yellow) covers 40–50kHz
-        let bar_top_freq = (freq + 10_000.0).min(max_freq);
+        // --- Color range bar (covering the interval above this division) ---
+        let bar_top_freq = (freq + div_interval).min(max_freq);
         let mouse_in_range = ms.mouse_freq.map_or(false, |mf| mf >= freq && mf < bar_top_freq);
         let axis_drag_in_range = match (ms.axis_drag_lo, ms.axis_drag_hi) {
             (Some(lo), Some(hi)) => bar_top_freq > lo && freq < hi,

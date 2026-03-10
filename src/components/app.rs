@@ -292,11 +292,18 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Auto-zoom frequency range when xform view toggles on/off.
+    // Auto-zoom frequency range when xform view toggles on/off or params change.
     {
         let prev_xform = RwSignal::new(false);
         Effect::new(move |_| {
             let xform_on = state.display_transform.get();
+            // Subscribe to mode and factor signals so we re-zoom when they change
+            let mode = state.playback_mode.get();
+            let _te = state.te_factor.get();
+            let _ps = state.ps_factor.get();
+            let _pv = state.pv_factor.get();
+            let _zc = state.zc_factor.get();
+            let _het_cut = state.het_cutoff.get();
             let was_on = prev_xform.get_untracked();
             prev_xform.set(xform_on);
 
@@ -304,14 +311,15 @@ pub fn App() -> impl IntoView {
                 // Save current freq range before auto-zoom
                 state.xform_saved_min_freq.set(Some(state.min_display_freq.get_untracked()));
                 state.xform_saved_max_freq.set(Some(state.max_display_freq.get_untracked()));
+            }
 
+            if xform_on {
                 // Compute output max frequency
                 let files = state.files.get_untracked();
                 let file_max = state.current_file_index.get_untracked()
                     .and_then(|i| files.get(i))
                     .map(|f| f.spectrogram.max_freq)
                     .unwrap_or(96_000.0);
-                let mode = state.playback_mode.get_untracked();
                 let output_max = match mode {
                     PlaybackMode::Normal => file_max,
                     PlaybackMode::Heterodyne => {
