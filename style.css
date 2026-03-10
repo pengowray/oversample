@@ -1779,13 +1779,14 @@ body.sidebar-resizing {
 }
 
 .combo-btn-right {
+    position: relative;
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
     border-left: none;
     flex-direction: row;
-    align-items: flex-end;
-    gap: 5px;
-    padding: 4px 7px 5px;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 18px 5px 7px;
     min-width: 0;
     min-height: 42px;
 }
@@ -1799,11 +1800,12 @@ body.sidebar-resizing {
 }
 
 .combo-btn-arrow {
+    position: absolute;
+    right: 7px;
+    bottom: 7px;
     font-size: 9px;
     opacity: 0.55;
     line-height: 1;
-    align-self: flex-end;
-    margin-bottom: 2px;
 }
 
 .layer-btn:hover {
@@ -1877,8 +1879,13 @@ body.sidebar-resizing {
 }
 
 .bottom-toolbar.mobile .combo-btn-right {
-    padding: 6px 10px 7px;
+    padding: 6px 22px 7px 10px;
     min-height: 48px;
+}
+
+.bottom-toolbar.mobile .combo-btn-arrow {
+    right: 10px;
+    bottom: 9px;
 }
 
 .bottom-toolbar.mobile .combo-btn-arrow {
