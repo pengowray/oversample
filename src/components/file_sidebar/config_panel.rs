@@ -357,6 +357,24 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     />
                 </div>
                 <div class="setting-row">
+                    <span class="setting-label">"Show clock time"</span>
+                    <input
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.show_clock_time.get()
+                        on:change=move |ev: web_sys::Event| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                            state.show_clock_time.set(input.checked());
+                        }
+                        prop:disabled=move || {
+                            state.current_file()
+                                .and_then(|f| f.recording_start_epoch_ms())
+                                .is_none()
+                        }
+                    />
+                </div>
+                <div class="setting-row">
                     <span class="setting-label">"Max freq"</span>
                     <select
                         class="setting-select"

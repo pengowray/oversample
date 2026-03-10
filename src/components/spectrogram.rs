@@ -1239,26 +1239,6 @@ pub fn Spectrogram() -> impl IntoView {
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
 
-        // Click on the time axis area (bottom 16px) toggles clock time display
-        if let Some(canvas_el) = canvas_ref.get() {
-            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-            let rect = canvas.get_bounding_client_rect();
-            let px_y = ev.client_y() as f64 - rect.top();
-            let px_x = ev.client_x() as f64 - rect.left();
-            let ch = rect.height();
-            if px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH {
-                // Only toggle if recording start time is available
-                let has_clock = state.current_file()
-                    .and_then(|f| f.recording_start_epoch_ms())
-                    .is_some();
-                if has_clock {
-                    state.show_clock_time.update(|v| *v = !*v);
-                    ev.prevent_default();
-                    return;
-                }
-            }
-        }
-
         // Check for spec handle drag first (FF or HET — takes priority over tool)
         if let Some(handle) = state.spec_hover_handle.get_untracked() {
             state.spec_drag_handle.set(Some(handle));
