@@ -1469,6 +1469,37 @@ body.sidebar-resizing {
     to { transform: rotate(360deg); }
 }
 
+.loading-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+.loading-name {
+    font-size: 11px;
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.loading-stage {
+    font-size: 11px;
+    color: #888;
+}
+.loading-bar {
+    height: 3px;
+    background: #333;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 1px;
+}
+.loading-bar-fill {
+    height: 100%;
+    background: #4a8;
+    transition: width 0.3s ease;
+}
+
 /* Filter panel */
 .filter-band-mode {
     display: flex;

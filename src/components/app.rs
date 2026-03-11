@@ -34,7 +34,7 @@ pub fn App() -> impl IntoView {
             let trimmed = hash.trim_start_matches('#');
             if trimmed.len() >= 3 && trimmed[..2].eq_ignore_ascii_case("XC") && trimmed[2..].chars().all(|c| c.is_ascii_digit()) {
                 let xc_id = trimmed.to_uppercase();
-                state.loading_count.update(|c| *c += 1);
+                let load_id = state.loading_start(&xc_id);
                 wasm_bindgen_futures::spawn_local(async move {
                     match fetch_demo_index().await {
                         Ok(entries) => {
@@ -42,7 +42,7 @@ pub fn App() -> impl IntoView {
                                 e.filename.to_uppercase().contains(&xc_id)
                             });
                             if let Some(entry) = found {
-                                if let Err(e) = load_single_demo(entry, state).await {
+                                if let Err(e) = load_single_demo(entry, state, load_id).await {
                                     log::error!("Failed to load {}: {}", xc_id, e);
                                     state.show_error_toast(format!("Failed to load {}", xc_id));
                                 }
@@ -58,7 +58,7 @@ pub fn App() -> impl IntoView {
                             state.show_error_toast("Could not load demo sounds index");
                         }
                     }
-                    state.loading_count.update(|c| *c = c.saturating_sub(1));
+                    state.loading_done(load_id);
                 });
             }
         }

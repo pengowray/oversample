@@ -20,7 +20,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
     let drag_over = RwSignal::new(false);
     let files = state.files;
     let current_idx = state.current_file_index;
-    let loading_count = state.loading_count;
+    let loading_files = state.loading_files;
 
     let on_dragenter = move |ev: DragEvent| {
         ev.prevent_default();
@@ -54,13 +54,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
         for i in 0..file_list.length() {
             let Some(file) = file_list.get(i) else { continue };
             let state = state_for_upload.clone();
-            state.loading_count.update(|c| *c += 1);
+            let load_id = state.loading_start(&file.name());
             spawn_local(async move {
-                match read_and_load_file(file, state.clone()).await {
+                match read_and_load_file(file, state.clone(), load_id).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Failed to load file: {e}"),
                 }
-                state.loading_count.update(|c| *c = c.saturating_sub(1));
+                state.loading_done(load_id);
             });
         }
 
@@ -115,13 +115,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
         for i in 0..file_list.length() {
             let Some(file) = file_list.get(i) else { continue };
             let state = state_for_drop.clone();
-            state.loading_count.update(|c| *c += 1);
+            let load_id = state.loading_start(&file.name());
             spawn_local(async move {
-                match read_and_load_file(file, state.clone()).await {
+                match read_and_load_file(file, state.clone(), load_id).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Failed to load file: {e}"),
                 }
-                state.loading_count.update(|c| *c = c.saturating_sub(1));
+                state.loading_done(load_id);
             });
         }
     };
@@ -144,8 +144,8 @@ pub(super) fn FilesPanel() -> impl IntoView {
             />
             {move || {
                 let file_vec = files.get();
-                let lc = loading_count.get();
-                if file_vec.is_empty() && lc == 0 {
+                let loading_empty = loading_files.with(|v| v.is_empty());
+                if file_vec.is_empty() && loading_empty {
                     view! {
                         <div class="drop-hint">
                             {if !is_mobile { Some("Drop audio files here") } else { None }}
@@ -176,13 +176,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                 class="demo-item"
                                                 on:click=move |_| {
                                                     let entry = entry_clone.clone();
-                                                    state.loading_count.update(|c| *c += 1);
+                                                    let load_id = state.loading_start(&entry.filename);
                                                     spawn_local(async move {
-                                                        match load_single_demo(&entry, state).await {
+                                                        match load_single_demo(&entry, state, load_id).await {
                                                             Ok(()) => {}
                                                             Err(e) => log::error!("Failed to load demo sound: {e}"),
                                                         }
-                                                        state.loading_count.update(|c| *c = c.saturating_sub(1));
+                                                        state.loading_done(load_id);
                                                     });
                                                 }
                                             >
@@ -334,17 +334,46 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             }}
                             {items}
                             {move || {
-                                let lc = loading_count.get();
-                                if lc > 0 {
+                                let entries = loading_files.get();
+                                if entries.is_empty() {
+                                    return view! { <span></span> }.into_any();
+                                }
+                                let items: Vec<_> = entries.iter().map(|entry| {
+                                    let stage_text = match &entry.stage {
+                                        crate::state::LoadingStage::Decoding => "Decoding\u{2026}".to_string(),
+                                        crate::state::LoadingStage::Preview => "Preview\u{2026}".to_string(),
+                                        crate::state::LoadingStage::Spectrogram(pct) => format!("Spectrogram {pct}%"),
+                                        crate::state::LoadingStage::Finalizing => "Finalizing\u{2026}".to_string(),
+                                        crate::state::LoadingStage::Streaming => "Streaming\u{2026}".to_string(),
+                                    };
+                                    let pct = if let crate::state::LoadingStage::Spectrogram(p) = entry.stage { p } else { 0 };
+                                    let show_bar = matches!(entry.stage, crate::state::LoadingStage::Spectrogram(_));
+                                    let short_name = if entry.name.len() > 28 {
+                                        format!("{}\u{2026}", &entry.name[..27])
+                                    } else {
+                                        entry.name.clone()
+                                    };
                                     view! {
                                         <div class="file-item loading">
                                             <div class="loading-spinner"></div>
-                                            {format!("Loading {} file{}...", lc, if lc > 1 { "s" } else { "" })}
+                                            <div class="loading-info">
+                                                <span class="loading-name">{short_name}</span>
+                                                <span class="loading-stage">{stage_text}</span>
+                                                {if show_bar {
+                                                    Some(view! {
+                                                        <div class="loading-bar">
+                                                            <div class="loading-bar-fill"
+                                                                 style=format!("width:{}%", pct)></div>
+                                                        </div>
+                                                    })
+                                                } else {
+                                                    None
+                                                }}
+                                            </div>
                                         </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }
+                                    }
+                                }).collect::<Vec<_>>();
+                                view! { <div>{items}</div> }.into_any()
                             }}
                             <button class="upload-btn add-files-btn" on:click=on_add_click>"+ Open files"</button>
                         </div>

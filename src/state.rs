@@ -546,6 +546,24 @@ pub enum MicMode {
     RawUsb,
 }
 
+// ── Loading progress ─────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LoadingStage {
+    Decoding,
+    Preview,
+    Spectrogram(u16), // 0–100 %
+    Finalizing,
+    Streaming,
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadingEntry {
+    pub id: u64,
+    pub name: String,
+    pub stage: LoadingStage,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -561,7 +579,8 @@ pub struct AppState {
     pub scroll_offset: RwSignal<f64>,
     pub is_playing: RwSignal<bool>,
     pub playhead_time: RwSignal<f64>,
-    pub loading_count: RwSignal<usize>,
+    pub loading_files: RwSignal<Vec<LoadingEntry>>,
+    pub loading_next_id: RwSignal<u64>,
     pub ps_factor: RwSignal<f64>,
     pub pv_factor: RwSignal<f64>,
     pub pv_hq: RwSignal<bool>,
@@ -905,7 +924,8 @@ impl AppState {
             scroll_offset: RwSignal::new(0.0),
             is_playing: RwSignal::new(false),
             playhead_time: RwSignal::new(0.0),
-            loading_count: RwSignal::new(0),
+            loading_files: RwSignal::new(Vec::new()),
+            loading_next_id: RwSignal::new(0),
             ps_factor: RwSignal::new(10.0),
             pv_factor: RwSignal::new(10.0),
             pv_hq: RwSignal::new(true),
@@ -1215,6 +1235,34 @@ impl AppState {
     pub fn show_error_toast(&self, msg: impl Into<String>) {
         self.status_level.set(StatusLevel::Error);
         self.status_message.set(Some(msg.into()));
+    }
+
+    /// Start tracking a loading file. Returns a unique ID for updates.
+    pub fn loading_start(&self, name: &str) -> u64 {
+        let id = self.loading_next_id.get_untracked();
+        self.loading_next_id.set(id + 1);
+        self.loading_files.update(|v| {
+            v.push(LoadingEntry {
+                id,
+                name: name.to_string(),
+                stage: LoadingStage::Decoding,
+            });
+        });
+        id
+    }
+
+    /// Update the stage for a loading file by ID.
+    pub fn loading_update(&self, id: u64, stage: LoadingStage) {
+        self.loading_files.update(|v| {
+            if let Some(entry) = v.iter_mut().find(|e| e.id == id) {
+                entry.stage = stage;
+            }
+        });
+    }
+
+    /// Remove a loading entry (finished or failed).
+    pub fn loading_done(&self, id: u64) {
+        self.loading_files.update(|v| v.retain(|e| e.id != id));
     }
 
     pub fn log_debug(&self, level: &str, msg: impl Into<String>) {

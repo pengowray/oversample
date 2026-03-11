@@ -660,7 +660,7 @@ pub fn Spectrogram() -> impl IntoView {
                     tile_cache::evict_far(file_idx_val, ideal_lod, viewport_center_tile, keep_evict);
                 }
 
-                let is_loading = state.loading_count.get_untracked() > 0;
+                let is_loading = state.loading_files.with_untracked(|v| !v.is_empty());
 
                 let use_reassign = reassign_on && ideal_lod > 0;
 
@@ -1186,13 +1186,13 @@ pub fn Spectrogram() -> impl IntoView {
     Effect::new(move || {
         let _file_idx = state.current_file_index.get();
         let _zoom = state.zoom_level.get();
-        let _loading = state.loading_count.get();
+        let _loading = state.loading_files.get();
         let _fft = state.spect_fft_mode.get();
 
         use crate::canvas::tile_cache;
 
         // Don't preload while still loading a file
-        if state.loading_count.get_untracked() > 0 {
+        if state.loading_files.with_untracked(|v| !v.is_empty()) {
             return;
         }
 

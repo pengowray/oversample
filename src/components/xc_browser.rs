@@ -544,14 +544,15 @@ pub fn XcBrowser() -> impl IntoView {
                 };
 
                 // Use the standard loading pipeline (WASM-side decode, spectrogram, etc.)
-                state.loading_count.update(|c| *c += 1);
+                let load_id = state.loading_start(&cached.filename);
                 let load_result = crate::components::file_sidebar::load_named_bytes(
                     cached.filename.clone(),
                     &bytes,
                     Some(cached.metadata),
                     state,
+                    load_id,
                 ).await;
-                state.loading_count.update(|c| *c = c.saturating_sub(1));
+                state.loading_done(load_id);
                 load_result?;
 
                 // Switch to the newly loaded file

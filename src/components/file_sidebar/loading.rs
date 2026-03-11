@@ -26,7 +26,7 @@ const STREAMING_CHECK_SIZE: f64 = 128.0 * 1024.0 * 1024.0; // 128 MB
 /// Decoded size threshold for streaming (512 MB of f32 samples).
 const STREAMING_DECODED_THRESHOLD: u64 = 512 * 1024 * 1024;
 
-pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<(), String> {
+pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64) -> Result<(), String> {
     let name = file.name();
     let size = file.size();
     let last_modified_ms = Some(file.last_modified());
@@ -50,6 +50,7 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
 
     // For large files, attempt streaming path (WAV or FLAC)
     if size > STREAMING_CHECK_SIZE {
+        state.loading_update(load_id, crate::state::LoadingStage::Streaming);
         match try_streaming_wav(&file, &name, state).await {
             Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
             Err(e) => {
@@ -68,6 +69,8 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
                 log::info!("MP3 streaming not applicable for {}: {}", name, e);
             }
         }
+        // Streaming didn't apply — fall through to full decode
+        state.loading_update(load_id, crate::state::LoadingStage::Decoding);
     }
 
     if size > MAX_FILE_SIZE {
@@ -79,7 +82,7 @@ pub(super) async fn read_and_load_file(file: File, state: AppState) -> Result<()
         return Err(msg);
     }
     let bytes = read_file_bytes(&file).await?;
-    let result = load_named_bytes(name, &bytes, None, state).await;
+    let result = load_named_bytes(name, &bytes, None, state, load_id).await;
     if result.is_ok() {
         finalize_loaded_file(state, last_modified_ms);
     }
@@ -619,7 +622,7 @@ async fn background_flac_decode(
 
         // Defer while playing or loading
         let is_busy = state.is_playing.get_untracked()
-            || state.loading_count.get_untracked() > 0;
+            || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
             let p = js_sys::Promise::new(&mut |resolve, _| {
                 web_sys::window().unwrap()
@@ -966,7 +969,7 @@ async fn background_mp3_decode(
 
         // Defer while playing or loading
         let is_busy = state.is_playing.get_untracked()
-            || state.loading_count.get_untracked() > 0;
+            || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
             let p = js_sys::Promise::new(&mut |resolve, _| {
                 web_sys::window().unwrap()
@@ -1054,7 +1057,7 @@ async fn build_streaming_overview(
 
         // Defer while playing, loading new files, or if this isn't the current file
         let is_busy = state.is_playing.get_untracked()
-            || state.loading_count.get_untracked() > 0
+            || state.loading_files.with_untracked(|v| !v.is_empty())
             || state.current_file_index.get_untracked() != Some(file_index);
         if is_busy {
             // Sleep 500ms and retry
@@ -1201,7 +1204,7 @@ fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMe
     None
 }
 
-pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState) -> Result<(), String> {
+pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Option<Vec<(String, String)>>, state: AppState, load_id: u64) -> Result<(), String> {
     let audio = load_audio(bytes)?;
     log::info!(
         "Loaded {}: {} samples, {} Hz, {:.2}s",
@@ -1212,6 +1215,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     );
 
     // Phase 1: fast preview
+    state.loading_update(load_id, crate::state::LoadingStage::Preview);
     let preview = compute_preview(&audio, 256, 128);
     let audio_for_stft = audio.clone();
     let name_check = name.clone();
@@ -1343,6 +1347,10 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
     let mut tile_scheduled = vec![false; n_tiles];
 
+    state.loading_update(load_id, crate::state::LoadingStage::Spectrogram(0));
+    let mut chunks_done = 0usize;
+    let mut last_reported_pct = 0u16;
+
     for chunk_idx in chunk_order {
         let chunk_start = chunk_idx * CHUNK_COLS;
         if chunk_start >= total_cols {
@@ -1390,12 +1398,22 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
             state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
         }
 
+        // Update loading progress (every ~5%)
+        chunks_done += 1;
+        let pct = ((chunks_done as f64 / total_chunks as f64) * 100.0) as u16;
+        if pct >= last_reported_pct + 5 || chunks_done == total_chunks {
+            state.loading_update(load_id, crate::state::LoadingStage::Spectrogram(pct.min(100)));
+            last_reported_pct = pct;
+        }
+
         // Yield so the browser can process events / paint between chunks
         let p = js_sys::Promise::new(&mut |resolve, _| {
             web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
         });
         JsFuture::from(p).await.ok();
     }
+
+    state.loading_update(load_id, crate::state::LoadingStage::Finalizing);
 
     // Large-file threshold: above this, we keep the spectral store alive and
     // don't assemble a monolithic SpectrogramData (saves hundreds of MB).
@@ -1614,7 +1632,7 @@ pub(crate) async fn fetch_demo_index() -> Result<Vec<DemoEntry>, String> {
     Ok(entries)
 }
 
-pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState) -> Result<(), String> {
+pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState, load_id: u64) -> Result<(), String> {
     // Fetch XC metadata sidecar if available
     let xc_metadata = if let Some(meta_file) = &entry.metadata_file {
         let encoded = js_sys::encode_uri_component(meta_file);
@@ -1650,7 +1668,7 @@ pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState) -> Resu
     );
     log::info!("Fetching demo: {}", entry.filename);
     let bytes = fetch_bytes(&audio_url).await?;
-    load_named_bytes(entry.filename.clone(), &bytes, xc_metadata, state).await
+    load_named_bytes(entry.filename.clone(), &bytes, xc_metadata, state, load_id).await
 }
 
 async fn read_file_bytes(file: &File) -> Result<Vec<u8>, String> {
