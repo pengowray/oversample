@@ -221,11 +221,6 @@ pub fn ChromagramView() -> impl IntoView {
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
-        if state.is_playing.get_untracked() {
-            let t = state.playhead_time.get_untracked();
-            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
-            return;
-        }
         state.is_dragging.set(true);
         hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
     };
@@ -250,7 +245,15 @@ pub fn ChromagramView() -> impl IntoView {
         state.scroll_offset.set((start_scroll + dt).clamp(0.0, max_scroll));
     };
 
-    let on_mouseup = move |_ev: MouseEvent| {
+    let on_mouseup = move |ev: MouseEvent| {
+        if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
+            let (start_x, _) = hand_drag_start.get_untracked();
+            let dx = (ev.client_x() as f64 - start_x).abs();
+            if dx < 3.0 && state.is_playing.get_untracked() {
+                let t = state.playhead_time.get_untracked();
+                state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            }
+        }
         state.is_dragging.set(false);
     };
 
@@ -289,11 +292,6 @@ pub fn ChromagramView() -> impl IntoView {
 
         let touch = touches.get(0).unwrap();
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
-        if state.is_playing.get_untracked() {
-            let t = state.playhead_time.get_untracked();
-            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
-            return;
-        }
         ev.prevent_default();
         state.is_dragging.set(true);
         hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
@@ -358,6 +356,16 @@ pub fn ChromagramView() -> impl IntoView {
             return;
         }
         if remaining == 0 {
+            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+                if let Some(touch) = _ev.changed_touches().get(0) {
+                    let (start_x, _) = hand_drag_start.get_untracked();
+                    let dx = (touch.client_x() as f64 - start_x).abs();
+                    if dx < 5.0 && state.is_playing.get_untracked() {
+                        let t = state.playhead_time.get_untracked();
+                        state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                    }
+                }
+            }
             state.is_dragging.set(false);
         }
     };

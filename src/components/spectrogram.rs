@@ -1325,13 +1325,7 @@ pub fn Spectrogram() -> impl IntoView {
 
         match state.canvas_tool.get_untracked() {
             CanvasTool::Hand => {
-                // Bookmark tap while playing
-                if state.is_playing.get_untracked() {
-                    let t = state.playhead_time.get_untracked();
-                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
-                    return;
-                }
-                // Start hand panning
+                // Start hand panning (works whether playing or not)
                 state.is_dragging.set(true);
                 hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
             }
@@ -1558,6 +1552,17 @@ pub fn Spectrogram() -> impl IntoView {
         }
 
         state.is_dragging.set(false);
+
+        if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+            // If the mouse barely moved, treat as a click → bookmark while playing
+            let (start_x, _) = hand_drag_start.get_untracked();
+            let dx = (ev.client_x() as f64 - start_x).abs();
+            if dx < 3.0 && state.is_playing.get_untracked() {
+                let t = state.playhead_time.get_untracked();
+                state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            }
+            return;
+        }
         if state.canvas_tool.get_untracked() != CanvasTool::Selection { return; }
         if let Some((_, _, t, f)) = mouse_to_xtf(&ev) {
             let (t0, f0) = drag_start.get_untracked();
@@ -1694,11 +1699,7 @@ pub fn Spectrogram() -> impl IntoView {
 
         match state.canvas_tool.get_untracked() {
             CanvasTool::Hand => {
-                if state.is_playing.get_untracked() {
-                    let t = state.playhead_time.get_untracked();
-                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
-                    return;
-                }
+                // Always start pan drag (bookmark on tap handled in touchend)
                 ev.prevent_default();
                 state.is_dragging.set(true);
                 hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
@@ -1875,6 +1876,18 @@ pub fn Spectrogram() -> impl IntoView {
                 return;
             }
             state.is_dragging.set(false);
+
+            // Hand tool: bookmark on tap (no significant drag) while playing
+            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+                if let Some(touch) = _ev.changed_touches().get(0) {
+                    let (start_x, _) = hand_drag_start.get_untracked();
+                    let dx = (touch.client_x() as f64 - start_x).abs();
+                    if dx < 5.0 && state.is_playing.get_untracked() {
+                        let t = state.playhead_time.get_untracked();
+                        state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                    }
+                }
+            }
 
             // Update frequency focus from selection (touch equivalent of mouseup logic)
             if state.canvas_tool.get_untracked() == CanvasTool::Selection {
