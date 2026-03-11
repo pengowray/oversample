@@ -449,8 +449,19 @@ pub fn Spectrogram() -> impl IntoView {
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0);
-        // When decimation is active, tiles are computed at the decimated rate
-        let decim_effective = state.display_decimate_effective.get_untracked();
+        // Compute effective decimation inline to avoid stale resolved signal on toggle
+        let decim_effective = {
+            let enabled = state.display_filter_enabled.get_untracked();
+            let xform_on = state.display_transform.get_untracked();
+            if !enabled { 0 } else {
+                match state.display_filter_decimate.get_untracked() {
+                    DisplayFilterMode::Off => 0,
+                    DisplayFilterMode::Auto => if xform_on { 44100 } else { 0 },
+                    DisplayFilterMode::Same => 0,
+                    DisplayFilterMode::Custom => state.display_decimate_rate.get_untracked(),
+                }
+            }
+        };
         let original_sample_rate = idx
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.sample_rate)
@@ -481,7 +492,7 @@ pub fn Spectrogram() -> impl IntoView {
             }
         };
         let xform_or_decim = state.display_transform.get_untracked()
-            || state.display_decimate_effective.get_untracked() > 0;
+            || decim_effective > 0;
         let colormap = if flow_on {
             ColormapMode::Uniform(Colormap::Greyscale)
         } else if hfr_enabled && ff_hi > ff_lo && !xform_or_decim {
@@ -623,8 +634,7 @@ pub fn Spectrogram() -> impl IntoView {
             };
             // Skip preview fallback when xform/decimation is active (preview shows original untransformed data)
             let xform_on = state.display_transform.get_untracked();
-            let decim_on = state.display_decimate_effective.get_untracked() > 0;
-            let preview_ref = if xform_on || decim_on {
+            let preview_ref = if xform_on || decim_effective > 0 {
                 None
             } else {
                 file.and_then(|f| f.preview.as_ref())
@@ -835,9 +845,8 @@ pub fn Spectrogram() -> impl IntoView {
             };
 
             let xform_on = state.display_transform.get_untracked();
-            let decim_on = state.display_decimate_effective.get_untracked() > 0;
             // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
-            let marker_state = if xform_on || decim_on {
+            let marker_state = if xform_on || decim_effective > 0 {
                 FreqMarkerState {
                     mouse_in_label_area: mouse_freq.is_some() && mouse_cx > (display_w as f64 - LABEL_AREA_WIDTH),
                     ff_lo: 0.0,
