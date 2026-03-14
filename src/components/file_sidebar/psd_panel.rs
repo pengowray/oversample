@@ -530,12 +530,22 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                             let freq_hz = peak.freq_hz;
                             let power_db = peak.power_db;
 
-                            // Build hover overlays for this peak
                             let hover_color = color.clone();
                             let bw_6 = peak.bw_6db;
                             let bw_10 = peak.bw_10db;
 
-                            let on_enter = {
+                            // Peak-only hover (for dot, kHz, dB columns)
+                            let on_enter_peak = {
+                                let hover_color = hover_color.clone();
+                                move |_: web_sys::MouseEvent| {
+                                    let freqs = vec![
+                                        (freq_hz, format!("{:.1}k", freq_hz / 1000.0), hover_color.clone()),
+                                    ];
+                                    state.psd_hover_freqs.set(freqs);
+                                }
+                            };
+                            // -6 dB column hover: peak + -6 dB range
+                            let on_enter_6db = {
                                 let hover_color = hover_color.clone();
                                 move |_: web_sys::MouseEvent| {
                                     let mut freqs = vec![
@@ -545,6 +555,16 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                         freqs.push((lo, format!("-6dB lo"), "#44aa66".to_string()));
                                         freqs.push((hi, format!("-6dB hi"), "#44aa66".to_string()));
                                     }
+                                    state.psd_hover_freqs.set(freqs);
+                                }
+                            };
+                            // -10 dB column hover: peak + -10 dB range
+                            let on_enter_10db = {
+                                let hover_color = hover_color.clone();
+                                move |_: web_sys::MouseEvent| {
+                                    let mut freqs = vec![
+                                        (freq_hz, format!("{:.1}k", freq_hz / 1000.0), hover_color.clone()),
+                                    ];
                                     if let Some((lo, hi)) = bw_10 {
                                         freqs.push((lo, format!("-10dB lo"), "#aaaa44".to_string()));
                                         freqs.push((hi, format!("-10dB hi"), "#aaaa44".to_string()));
@@ -567,16 +587,15 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
                             view! {
                                 <tr class="psd-peak-row"
-                                    on:mouseenter=on_enter
                                     on:mouseleave=on_leave
                                 >
-                                    <td class="psd-peak-idx">
+                                    <td class="psd-peak-idx" on:mouseenter=on_enter_peak.clone()>
                                         <span class="psd-peak-dot" style=format!("background:{}", color)></span>
                                     </td>
-                                    <td class="psd-peak-freq">{format!("{:.1}", freq_hz / 1000.0)}</td>
-                                    <td class="psd-peak-power">{format!("{:.1}", power_db)}</td>
-                                    <td class="psd-peak-bw">{bw_6_text}</td>
-                                    <td class="psd-peak-bw">{bw_10_text}</td>
+                                    <td class="psd-peak-freq" on:mouseenter=on_enter_peak.clone()>{format!("{:.1}", freq_hz / 1000.0)}</td>
+                                    <td class="psd-peak-power" on:mouseenter=on_enter_peak>{format!("{:.1}", power_db)}</td>
+                                    <td class="psd-peak-bw" on:mouseenter=on_enter_6db>{bw_6_text}</td>
+                                    <td class="psd-peak-bw" on:mouseenter=on_enter_10db>{bw_10_text}</td>
                                 </tr>
                             }
                         }).collect();
