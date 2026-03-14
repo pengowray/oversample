@@ -252,6 +252,9 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
         (region_count, label)
     } else if selection.is_some() {
         (1, "selection")
+    } else if state.current_file_index.get().is_some() {
+        // No selection — allow exporting the whole file
+        (1, "file")
     } else {
         return None;
     };
@@ -354,6 +357,16 @@ pub fn export_selected(state: &AppState) {
         export_one_region(
             source.as_ref(), sample_rate,
             sel.time_start, sel.time_end,
+            &params, &filename,
+        );
+    } else {
+        // No selection — export the whole file
+        let params = build_export_params(state, None, false, sample_rate);
+        let duration = file.audio.source.duration_secs();
+        let filename = format!("{base_name}_export.wav");
+        export_one_region(
+            source.as_ref(), sample_rate,
+            0.0, duration,
             &params, &filename,
         );
     }
