@@ -48,7 +48,11 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let file = idx.and_then(|i| files.get(i).cloned());
         let Some(file) = file else { return; };
 
-        psd_result.set(None);
+        // Don't clear psd_result to None here — setting it synchronously inside
+        // the Effect cascade tears down the peak-table DOM (and its event-handler
+        // closures) while Leptos is still processing the triggering event, which
+        // causes "closure invoked recursively or after being dropped".
+        // Instead, keep the old result visible until the new one arrives.
         is_computing.set(true);
         compute_gen.update(|g| *g += 1);
         let generation = compute_gen.get_untracked();
@@ -145,7 +149,9 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             if compute_gen.get_untracked() != generation {
                 return;
             }
-            psd_result.set(result);
+            if let Some(r) = result {
+                psd_result.set(Some(r));
+            }
             is_computing.set(false);
         });
     };
