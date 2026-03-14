@@ -217,7 +217,7 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
         .and_then(|d| d.name().ok())
         .unwrap_or_default();
 
-    let mut devices = Vec::new();
+    let mut devices: Vec<DeviceInfo> = Vec::new();
     if let Ok(input_devices) = host.input_devices() {
         for device in input_devices {
             let name = device.name().unwrap_or_else(|_| "Unknown".into());
@@ -239,11 +239,25 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                     });
                 }
             }
-            devices.push(DeviceInfo {
-                name,
-                is_default,
-                sample_rate_ranges: ranges,
-            });
+            // Deduplicate: merge ranges into existing entry with the same name
+            // (Android's Oboe backend often reports the same device multiple times)
+            if let Some(existing) = devices.iter_mut().find(|d| d.name == name) {
+                existing.is_default |= is_default;
+                for r in ranges {
+                    let dominated = existing.sample_rate_ranges.iter().any(|e| {
+                        e.min == r.min && e.max == r.max && e.channels == r.channels && e.format == r.format
+                    });
+                    if !dominated {
+                        existing.sample_rate_ranges.push(r);
+                    }
+                }
+            } else {
+                devices.push(DeviceInfo {
+                    name,
+                    is_default,
+                    sample_rate_ranges: ranges,
+                });
+            }
         }
     }
     devices
