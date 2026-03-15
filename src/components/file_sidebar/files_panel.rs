@@ -401,6 +401,31 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         if sel.len() < 2 { return; }
                         let files = state.files.get_untracked();
                         if let Some(tv) = TimelineView::from_files(&sel, &files) {
+                            // Save to project if one exists
+                            state.current_project.update(|p| {
+                                let Some(proj) = p else { return };
+                                let entries: Vec<_> = tv.segments.iter().filter_map(|seg| {
+                                    let loaded = files.get(seg.file_index)?;
+                                    let identity = loaded.identity.as_ref()?;
+                                    let proj_idx = proj.find_file(identity)?;
+                                    Some(crate::project::TimelineEntry {
+                                        file_index: proj_idx,
+                                        start_epoch_ms: tv.origin_epoch_ms + seg.timeline_offset_secs * 1000.0,
+                                        duration_secs: seg.duration_secs,
+                                        multitrack_group_id: None,
+                                    })
+                                }).collect();
+                                if !entries.is_empty() {
+                                    proj.timelines.push(crate::project::TimelineDefinition {
+                                        id: crate::annotations::generate_uuid(),
+                                        entries,
+                                        label: None,
+                                    });
+                                    proj.touch();
+                                }
+                            });
+                            state.project_dirty.set(true);
+
                             state.active_timeline.set(Some(tv));
                             state.active_timeline_track.set(None);
                             state.current_file_index.set(None);

@@ -467,13 +467,72 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
             // Timelines
             {if timeline_count > 0 || seq_count > 0 {
-                let timeline_items: Vec<_> = timelines_clone.iter().map(|tl| {
+                let timeline_items: Vec<_> = timelines_clone.iter().enumerate().map(|(_tl_idx, tl)| {
                     let label = tl.label.clone().unwrap_or_else(|| format!("Timeline ({})", tl.entries.len()));
                     let entry_count = tl.entries.len();
+                    let tl_entries = tl.entries.clone();
+                    let tl_id = tl.id.clone();
+
+                    // Activate this saved timeline
+                    let on_activate = move |_: web_sys::MouseEvent| {
+                        let files = state.files.get_untracked();
+                        let proj = state.current_project.get_untracked();
+                        let Some(proj) = proj else { return };
+
+                        // Map project file indices → runtime file indices
+                        let mut runtime_indices: Vec<usize> = Vec::new();
+                        for entry in &tl_entries {
+                            if let Some(pf) = proj.files.get(entry.file_index) {
+                                if let Some(ri) = files.iter().position(|lf| {
+                                    lf.identity.as_ref().map_or(false, |id| {
+                                        if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
+                                            a == b
+                                        } else {
+                                            pf.identity.filename == id.filename && pf.identity.file_size == id.file_size
+                                        }
+                                    })
+                                }) {
+                                    if !runtime_indices.contains(&ri) {
+                                        runtime_indices.push(ri);
+                                    }
+                                }
+                            }
+                        }
+
+                        if runtime_indices.len() >= 2 {
+                            if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
+                                state.selected_file_indices.set(runtime_indices);
+                                state.active_timeline.set(Some(tv));
+                                state.active_timeline_track.set(None);
+                                state.current_file_index.set(None);
+                            }
+                        }
+                    };
+
+                    // Delete this timeline from the project
+                    let tl_id_del = tl_id.clone();
+                    let on_delete = move |ev: web_sys::MouseEvent| {
+                        ev.stop_propagation();
+                        let id = tl_id_del.clone();
+                        state.current_project.update(|p| {
+                            let Some(proj) = p else { return };
+                            proj.timelines.retain(|t| t.id != id);
+                            proj.touch();
+                        });
+                        state.project_dirty.set(true);
+                    };
+
                     view! {
-                        <div class="project-file-item">
+                        <div class="project-file-item clickable" on:click=on_activate
+                            title="Click to activate this timeline"
+                        >
                             <div class="project-file-name">{label}</div>
-                            <div class="project-file-info">{format!("{} files", entry_count)}</div>
+                            <div class="project-file-info">
+                                {format!("{} files", entry_count)}
+                                <button class="project-timeline-delete" on:click=on_delete
+                                    title="Remove timeline"
+                                >{"\u{00D7}"}</button>
+                            </div>
                         </div>
                     }
                 }).collect();

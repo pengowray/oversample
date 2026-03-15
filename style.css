@@ -2807,6 +2807,25 @@ body.sidebar-resizing {
     padding-left: 14px;
 }
 
+.project-file-item.clickable {
+    cursor: pointer;
+}
+.project-file-item.clickable:hover {
+    background: #282828;
+}
+.project-timeline-delete {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 4px;
+    margin-left: 6px;
+}
+.project-timeline-delete:hover {
+    color: #f66;
+}
+
 .project-meta-warn {
     color: #da5;
 }
