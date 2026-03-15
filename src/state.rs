@@ -507,29 +507,35 @@ impl ChromaColormap {
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum FileSortMode {
     #[default]
+    GroupedAdded,
     AddOrder,
     ByName,
     ByDate,
     ByMetadataDate,
     Grouped,
+    ByDateGrouped,
 }
 
 impl FileSortMode {
     pub const ALL: &[FileSortMode] = &[
+        Self::GroupedAdded,
         Self::AddOrder,
         Self::ByName,
         Self::ByDate,
         Self::ByMetadataDate,
         Self::Grouped,
+        Self::ByDateGrouped,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::GroupedAdded => "Grouped + added",
             Self::AddOrder => "Added",
             Self::ByName => "Name",
             Self::ByDate => "Date",
             Self::ByMetadataDate => "Meta date",
             Self::Grouped => "Grouped",
+            Self::ByDateGrouped => "Date, grouped",
         }
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::{Clamped, JsCast};
@@ -202,24 +203,52 @@ pub(super) fn FilesPanel() -> impl IntoView {
                 } else {
                     let is_tauri = state.is_tauri;
                     let names: Vec<String> = file_vec.iter().map(|f| f.name.clone()).collect();
-                    let groups = file_groups::compute_file_groups(&names);
+                    let group_infos = file_groups::compute_all_groups(&names, &file_vec);
                     let active_group_key: Option<String> = current_idx.get()
-                        .and_then(|idx| groups.get(idx))
-                        .and_then(|g| g.as_ref())
+                        .and_then(|idx| group_infos.get(idx))
+                        .and_then(|g| g.track.as_ref())
                         .map(|ti| ti.group_key.clone());
 
                     // Compute sorted display order
                     let sort_mode = state.file_sort_mode.get();
-                    let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &groups);
+                    let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &group_infos);
 
-                    let items: Vec<_> = sorted_indices.iter().map(|&i| {
+                    let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
+                    for (pos, &i) in sorted_indices.iter().enumerate() {
+                        // Insert gap separator between consecutive sequence files
+                        if pos > 0 {
+                            let prev_i = sorted_indices[pos - 1];
+                            if let (Some(prev_seq), Some(cur_seq)) = (
+                                group_infos[prev_i].sequence.as_ref(),
+                                group_infos[i].sequence.as_ref(),
+                            ) {
+                                if prev_seq.sequence_key == cur_seq.sequence_key {
+                                    let gap_view = if let Some(gap) = cur_seq.gap_from_prev_secs {
+                                        let (label, cls) = if gap.abs() < 0.01 {
+                                            ("continuous".to_string(), "seq-gap-row continuous")
+                                        } else if gap <= 60.0 {
+                                            (format!("{gap:.1}s gap"), "seq-gap-row")
+                                        } else {
+                                            (format!("{gap:.0}s gap"), "seq-gap-row large-gap")
+                                        };
+                                        view! { <div class=cls>{label}</div> }.into_any()
+                                    } else {
+                                        view! { <div class="seq-gap-row unknown">"? gap"</div> }.into_any()
+                                    };
+                                    items.push(gap_view);
+                                }
+                            }
+                        }
+                    {
                         let f = &file_vec[i];
                         let name = f.name.clone();
                         let dur = f.audio.duration_secs;
                         let sr = f.audio.sample_rate;
                         let preview = f.preview.clone();
                         let is_rec = f.is_recording;
-                        let track_badge = groups.get(i).cloned().flatten();
+                        let gi = &group_infos[i];
+                        let track_badge = gi.track.clone();
+                        let seq_badge = gi.sequence.clone();
                         let is_group_highlighted = track_badge.as_ref()
                             .map(|ti| Some(&ti.group_key) == active_group_key.as_ref())
                             .unwrap_or(false);
@@ -272,7 +301,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
                         // Show unsaved badge on web recordings only
                         let show_unsaved = is_rec && !is_tauri;
-                        view! {
+                        let file_view = view! {
                             <div
                                 class=move || if is_active() { "file-item active" } else { "file-item" }
                                 on:click=on_click
@@ -292,6 +321,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                 "file-badge file-badge-track"
                                             };
                                             view! { <span class=cls>{format!("[{}]", ti.label)}</span> }
+                                        })}
+                                        {seq_badge.map(|si| {
+                                            view! { <span class="file-badge file-badge-seq"
+                                                title=si.gap_from_prev_secs.map(|g| format!("Gap: {g:.1}s")).unwrap_or_default()
+                                            >{format!("#{}", si.sequence_number)}</span> }
                                         })}
                                         {if is_streaming {
                                             Some(view! { <span class="file-badge file-badge-streaming" title="Streaming (large file)">"[~]"</span> })
@@ -316,8 +350,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     {format!("{:.1}s  {}kHz", dur, sr / 1000)}
                                 </div>
                             </div>
-                        }
-                    }).collect();
+                        }.into_any();
+                        items.push(file_view);
+                    }}
                     let on_add_click = move |_: web_sys::MouseEvent| {
                         if let Some(input) = file_input_ref.get() {
                             let el: &HtmlInputElement = input.as_ref();
@@ -453,12 +488,23 @@ fn guano_timestamp(f: &LoadedFile) -> Option<String> {
         .map(|(_, v)| v.clone())
 }
 
+/// Get a combined group key for sorting: (sequence_key, track_label).
+/// Files with sequence or track info get grouped; others return None.
+fn combined_group_key(gi: &file_groups::FileGroupInfo) -> Option<(String, String)> {
+    match (&gi.sequence, &gi.track) {
+        (Some(seq), Some(track)) => Some((seq.sequence_key.clone(), track.label.clone())),
+        (Some(seq), None) => Some((seq.sequence_key.clone(), String::new())),
+        (None, Some(track)) => Some((track.group_key.clone(), track.label.clone())),
+        (None, None) => None,
+    }
+}
+
 /// Compute display indices sorted according to the selected mode.
 fn compute_sorted_indices(
     files: &[LoadedFile],
     mode: FileSortMode,
     names: &[String],
-    groups: &[Option<file_groups::TrackInfo>],
+    groups: &[file_groups::FileGroupInfo],
 ) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..files.len()).collect();
     match mode {
@@ -486,8 +532,8 @@ fn compute_sorted_indices(
         }
         FileSortMode::Grouped => {
             indices.sort_by(|&a, &b| {
-                let ga = groups[a].as_ref().map(|ti| (&ti.group_key, &ti.label));
-                let gb = groups[b].as_ref().map(|ti| (&ti.group_key, &ti.label));
+                let ga = groups[a].track.as_ref().map(|ti| (&ti.group_key, &ti.label));
+                let gb = groups[b].track.as_ref().map(|ti| (&ti.group_key, &ti.label));
                 match (ga, gb) {
                     (Some((gk_a, l_a)), Some((gk_b, l_b))) => {
                         gk_a.cmp(gk_b).then_with(|| l_a.cmp(l_b))
@@ -496,6 +542,78 @@ fn compute_sorted_indices(
                     (None, Some(_)) => std::cmp::Ordering::Greater,
                     (None, None) => names[a].to_lowercase().cmp(&names[b].to_lowercase()),
                 }
+            });
+        }
+        FileSortMode::GroupedAdded => {
+            // Groups (sequences/multitracks) first, ordered by earliest add_order in each group.
+            // Within a group: by sequence_number then track label.
+            // Ungrouped files after, in add_order.
+            let mut group_min_order: HashMap<String, usize> = HashMap::new();
+            for (i, gi) in groups.iter().enumerate() {
+                if let Some((key, _)) = combined_group_key(gi) {
+                    let order = files[i].add_order;
+                    group_min_order.entry(key).and_modify(|m| *m = (*m).min(order)).or_insert(order);
+                }
+            }
+            indices.sort_by(|&a, &b| {
+                let ka = combined_group_key(&groups[a]);
+                let kb = combined_group_key(&groups[b]);
+                match (&ka, &kb) {
+                    (Some((key_a, _)), Some((key_b, _))) => {
+                        let order_a = group_min_order.get(key_a).copied().unwrap_or(usize::MAX);
+                        let order_b = group_min_order.get(key_b).copied().unwrap_or(usize::MAX);
+                        order_a.cmp(&order_b)
+                            .then_with(|| key_a.cmp(key_b))
+                            .then_with(|| {
+                                let seq_a = groups[a].sequence.as_ref().map(|s| s.sequence_number).unwrap_or(0);
+                                let seq_b = groups[b].sequence.as_ref().map(|s| s.sequence_number).unwrap_or(0);
+                                seq_a.cmp(&seq_b)
+                            })
+                            .then_with(|| {
+                                let la = groups[a].track.as_ref().map(|t| &t.label);
+                                let lb = groups[b].track.as_ref().map(|t| &t.label);
+                                la.cmp(&lb)
+                            })
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => files[a].add_order.cmp(&files[b].add_order),
+                }
+            });
+        }
+        FileSortMode::ByDateGrouped => {
+            // Chronological, but sequences/multitracks kept together.
+            // Groups ordered by their earliest recording start time.
+            let mut group_min_time: HashMap<String, f64> = HashMap::new();
+            for (i, gi) in groups.iter().enumerate() {
+                if let Some((key, _)) = combined_group_key(gi) {
+                    let t = files[i].recording_start_epoch_ms().unwrap_or(f64::MAX);
+                    group_min_time.entry(key).and_modify(|m| *m = m.min(t)).or_insert(t);
+                }
+            }
+            indices.sort_by(|&a, &b| {
+                let ka = combined_group_key(&groups[a]);
+                let kb = combined_group_key(&groups[b]);
+                let time_a = match &ka {
+                    Some((key, _)) => *group_min_time.get(key).unwrap_or(&f64::MAX),
+                    None => files[a].recording_start_epoch_ms().unwrap_or(f64::MAX),
+                };
+                let time_b = match &kb {
+                    Some((key, _)) => *group_min_time.get(key).unwrap_or(&f64::MAX),
+                    None => files[b].recording_start_epoch_ms().unwrap_or(f64::MAX),
+                };
+                time_a.partial_cmp(&time_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        let seq_a = groups[a].sequence.as_ref().map(|s| s.sequence_number).unwrap_or(0);
+                        let seq_b = groups[b].sequence.as_ref().map(|s| s.sequence_number).unwrap_or(0);
+                        seq_a.cmp(&seq_b)
+                    })
+                    .then_with(|| {
+                        let la = groups[a].track.as_ref().map(|t| &t.label);
+                        let lb = groups[b].track.as_ref().map(|t| &t.label);
+                        la.cmp(&lb)
+                    })
             });
         }
     }

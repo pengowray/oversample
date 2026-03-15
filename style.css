@@ -2186,6 +2186,14 @@ body.sidebar-resizing {
     color: #adf;
     background: #255080;
 }
+.file-badge-seq {
+    color: #7a7;
+    background: #1a2a1a;
+}
+.file-item.active .file-badge-seq {
+    color: #afa;
+    background: #254025;
+}
 .file-badge-streaming {
     color: #a90;
     background: #221800;
@@ -2193,6 +2201,28 @@ body.sidebar-resizing {
 .file-item.active .file-badge-streaming {
     color: #fc8;
     background: #332200;
+}
+
+/* Sequence gap indicators */
+.seq-gap-row {
+    font-size: 10px;
+    color: #666;
+    text-align: center;
+    padding: 1px 8px;
+    border-left: 2px solid #2a4a2a;
+    margin-left: 8px;
+}
+.seq-gap-row.continuous {
+    color: #4a8;
+    border-left-color: #4a8;
+}
+.seq-gap-row.large-gap {
+    color: #a86;
+    border-left-color: #6a4a2a;
+}
+.seq-gap-row.unknown {
+    color: #555;
+    border-left-color: #333;
 }
 
 /* Unsaved recording indicators */
