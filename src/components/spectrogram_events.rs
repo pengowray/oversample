@@ -697,22 +697,21 @@ pub fn on_wheel(
             *z = (*z * delta).max(0.1).min(400.0);
         });
     } else {
-        let delta = (ev.delta_y() + ev.delta_x()) * 0.001;
-        let max_scroll = {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked().unwrap_or(0);
-            if let Some(file) = files.get(idx) {
-                let zoom = state.zoom_level.get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
-                (file.audio.duration_secs - visible_time).max(0.0)
-            } else {
-                f64::MAX
-            }
-        };
-        state.suspend_follow();
-        state.scroll_offset.update(|s| {
-            *s = (*s + delta).clamp(0.0, max_scroll);
-        });
+        let raw_delta = ev.delta_y() + ev.delta_x();
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked().unwrap_or(0);
+        if let Some(file) = files.get(idx) {
+            let zoom = state.zoom_level.get_untracked();
+            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let visible_time = (canvas_w / zoom) * file.spectrogram.time_resolution;
+            let max_scroll = (file.audio.duration_secs - visible_time).max(0.0);
+            // Scroll proportional to visible time (like arrow keys),
+            // normalized so a typical wheel tick (~100px) scrolls ~10% of the view
+            let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
+            state.suspend_follow();
+            state.scroll_offset.update(|s| {
+                *s = (*s + delta).clamp(0.0, max_scroll);
+            });
+        }
     }
 }
