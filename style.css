@@ -2596,7 +2596,7 @@ body.sidebar-resizing {
 
 /* ── Project panel ────────────────────────────────────────────────── */
 .project-panel {
-    padding: 16px 12px;
+    padding: 12px 10px;
     flex: 1;
     overflow-y: auto;
 }
@@ -2612,6 +2612,224 @@ body.sidebar-resizing {
     color: #666;
     font-size: 11px;
     margin-top: 8px;
+}
+
+.project-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    justify-content: center;
+}
+
+.project-btn {
+    padding: 5px 12px;
+    font-size: 11px;
+    background: #2a5a3a;
+    color: #cec;
+    border: 1px solid #3a6a4a;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.project-btn:hover { background: #3a6a4a; }
+.project-btn:disabled { opacity: 0.4; cursor: default; }
+.project-btn-secondary {
+    background: #2a2a3a;
+    color: #aac;
+    border-color: #3a3a5a;
+}
+.project-btn-secondary:hover { background: #3a3a5a; }
+.project-btn-danger {
+    background: #3a2222;
+    color: #daa;
+    border-color: #5a3333;
+}
+.project-btn-danger:hover { background: #5a3333; }
+
+.project-view {
+    font-size: 12px;
+}
+
+.project-name-row {
+    margin-bottom: 8px;
+}
+.project-name-input {
+    width: 100%;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #1a1a1a;
+    color: #eee;
+    border: 1px solid #333;
+    border-radius: 3px;
+    box-sizing: border-box;
+}
+.project-name-input:focus {
+    border-color: #4a8;
+    outline: none;
+}
+
+.project-meta {
+    color: #888;
+    font-size: 11px;
+    margin-bottom: 6px;
+}
+.project-meta-sep { margin: 0 4px; }
+.project-unsaved { color: #da5; }
+
+.project-tauri-hint {
+    font-size: 10px;
+    color: #886;
+    background: #1a1a10;
+    border: 1px solid #332;
+    border-radius: 3px;
+    padding: 4px 6px;
+    margin-bottom: 8px;
+}
+
+.project-section-header {
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 0 3px;
+}
+
+.project-file-list {
+    border-top: 1px solid #333;
+    margin-top: 6px;
+}
+
+.project-file-item {
+    padding: 4px 0;
+    border-bottom: 1px solid #222;
+}
+.project-file-item.missing {
+    opacity: 0.5;
+}
+.project-file-name {
+    color: #ccc;
+    font-size: 11px;
+    word-break: break-all;
+}
+.project-file-status {
+    color: #555;
+    font-size: 9px;
+}
+.project-file-status.loaded {
+    color: #4a8;
+}
+.project-file-info {
+    color: #777;
+    font-size: 10px;
+    margin-top: 1px;
+    padding-left: 14px;
+}
+
+.project-meta-warn {
+    color: #da5;
+}
+
+.project-groupings {
+    font-size: 11px;
+    color: #7a7;
+    margin-bottom: 4px;
+}
+
+.project-new-files-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #aad;
+    background: #1a1a2a;
+    border: 1px solid #2a2a4a;
+    border-radius: 3px;
+    padding: 4px 6px;
+    margin-bottom: 6px;
+}
+.project-btn-inline {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: #2a3a5a;
+    color: #aac;
+    border: 1px solid #3a4a6a;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-left: 6px;
+}
+.project-btn-inline:hover { background: #3a4a6a; }
+
+.project-notes-section {
+    margin-top: 8px;
+}
+.project-notes-input {
+    width: 100%;
+    min-height: 48px;
+    padding: 4px 6px;
+    font-size: 11px;
+    background: #1a1a1a;
+    color: #ccc;
+    border: 1px solid #333;
+    border-radius: 3px;
+    resize: vertical;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+.project-notes-input:focus {
+    border-color: #4a8;
+    outline: none;
+}
+
+.project-merge-section {
+    margin-top: 8px;
+}
+.project-merge-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.project-merge-count {
+    font-size: 10px;
+    color: #666;
+}
+.project-merge-status {
+    font-size: 10px;
+    color: #8a8;
+    margin-top: 2px;
+}
+
+.project-list-picker {
+    margin-top: 8px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.project-list-item {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: #ccc;
+    background: #1a1a1a;
+    border: none;
+    border-bottom: 1px solid #222;
+    cursor: pointer;
+    text-align: left;
+}
+.project-list-item:last-child { border-bottom: none; }
+.project-list-item:hover { background: #252530; }
+
+.file-badge-tauri {
+    color: #a8d;
+    background: #2a1a3a;
+    font-size: 9px;
+    padding: 0 3px;
+    margin-left: 3px;
+    border-radius: 2px;
 }
 
 /* ── Right sidebar overrides ───────────────────────────────────────── */

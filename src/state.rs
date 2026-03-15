@@ -854,6 +854,12 @@ pub struct AppState {
     /// Undo/redo stack for annotation operations.
     pub undo_stack: RwSignal<UndoStack>,
 
+    // Project
+    /// Currently loaded .batproj project (None = no project open).
+    pub current_project: RwSignal<Option<crate::project::BatProject>>,
+    /// Whether the project has unsaved changes.
+    pub project_dirty: RwSignal<bool>,
+
     // Display-affecting checkboxes (spectrogram intensity settings)
     pub display_auto_gain: RwSignal<bool>,
     pub display_eq: RwSignal<bool>,
@@ -1117,6 +1123,9 @@ impl AppState {
             dragging_annotation_id: RwSignal::new(None),
             drop_target: RwSignal::new(None),
             undo_stack: RwSignal::new(UndoStack::default()),
+
+            current_project: RwSignal::new(None),
+            project_dirty: RwSignal::new(false),
 
             display_auto_gain: RwSignal::new(false),
             display_eq: RwSignal::new(false),

@@ -11,6 +11,8 @@ pub mod annotations;
 pub mod file_identity;
 pub mod format_time;
 pub mod opfs;
+pub mod project;
+pub mod project_store;
 
 use leptos::prelude::*;
 use components::app::App;

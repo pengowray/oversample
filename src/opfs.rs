@@ -98,6 +98,27 @@ pub async fn opfs_load(key: &str) -> Result<Option<String>, String> {
     Ok(text.as_string())
 }
 
+/// Delete a file from OPFS by key.
+pub async fn opfs_delete(key: &str) -> Result<(), String> {
+    let dir = get_opfs_dir().await?;
+    JsFuture::from(dir.remove_entry(key))
+        .await
+        .map_err(|e| format!("OPFS delete: {e:?}"))?;
+    Ok(())
+}
+
+/// Load and parse a .batm sidecar by its OPFS key.
+pub async fn load_batm_by_key(key: &str) -> Result<Option<crate::annotations::AnnotationSet>, String> {
+    match opfs_load(key).await? {
+        Some(yaml) => {
+            let set: crate::annotations::AnnotationSet = yaml_serde::from_str(&yaml)
+                .map_err(|e| format!("YAML parse: {e}"))?;
+            Ok(Some(set))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Build a NoiseProfile from current app state, or None if there's nothing to save.
 fn sync_noise_profile_from_state(state: crate::state::AppState) -> Option<crate::dsp::notch::NoiseProfile> {
     use leptos::prelude::GetUntracked;
