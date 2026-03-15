@@ -86,6 +86,27 @@ pub(crate) struct PlaybackParams {
     pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
 
+fn selection_bandpass_active(sample_rate: u32, params: &PlaybackParams) -> bool {
+    params.has_selection
+        && matches!(
+            params.mode,
+            PlaybackMode::Normal
+                | PlaybackMode::TimeExpansion
+                | PlaybackMode::PitchShift
+                | PlaybackMode::PhaseVocoder
+                | PlaybackMode::ZeroCrossing
+        )
+        && (params.sel_freq_low > 0.0
+            || params.sel_freq_high < (sample_rate as f64 / 2.0))
+}
+
+fn has_mono_only_processing(sample_rate: u32, params: &PlaybackParams) -> bool {
+    params.filter_enabled
+        || selection_bandpass_active(sample_rate, params)
+        || (params.notch_enabled && !params.notch_bands.is_empty())
+        || (params.noise_reduce_enabled && params.noise_reduce_floor.is_some())
+}
+
 /// Duration of fade-in when starting playback (milliseconds).
 const FADE_IN_MS: f64 = 30.0;
 
@@ -153,7 +174,8 @@ pub(crate) fn start_stream(
     // Stereo passthrough: Normal mode + stereo source + MonoMix view
     let stereo_out = matches!(params.mode, PlaybackMode::Normal)
         && source.channel_count() >= 2
-        && channel_view == ChannelView::MonoMix;
+        && channel_view == ChannelView::MonoMix
+        && !has_mono_only_processing(sample_rate, &params);
 
     // Reuse existing AudioContext if its sample rate matches; otherwise create new.
     let ctx = STREAM_CTX.with(|c| {
@@ -525,18 +547,7 @@ pub(crate) fn apply_filters(samples: &[f32], sample_rate: u32, params: &Playback
                 params.filter_band_mode,
             ),
         }
-    } else if params.has_selection
-        && matches!(
-            params.mode,
-            PlaybackMode::Normal
-                | PlaybackMode::TimeExpansion
-                | PlaybackMode::PitchShift
-                | PlaybackMode::PhaseVocoder
-                | PlaybackMode::ZeroCrossing
-        )
-        && (params.sel_freq_low > 0.0
-            || params.sel_freq_high < (sample_rate as f64 / 2.0))
-    {
+    } else if selection_bandpass_active(sample_rate, params) {
         apply_bandpass(samples, sample_rate, params.sel_freq_low, params.sel_freq_high)
     } else {
         samples.to_vec()
