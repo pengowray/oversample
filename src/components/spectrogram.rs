@@ -1111,7 +1111,8 @@ pub fn Spectrogram() -> impl IntoView {
     view! {
         <div class="spectrogram-container"
             style=move || {
-                if state.axis_drag_start_freq.get().is_some() || state.mouse_in_label_area.get() {
+                if state.axis_drag_start_freq.get().is_some() || state.mouse_in_label_area.get()
+                    || state.mouse_in_time_axis.get() {
                     return "cursor: cell; touch-action: none;".to_string();
                 }
                 if state.spec_drag_handle.get().is_some() {

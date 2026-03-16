@@ -28,6 +28,10 @@ pub struct SpectInteraction {
     pub last_tap_x: RwSignal<f64>,
     /// Time-axis tooltip: (x_px, tooltip_text) — None when not hovering the axis
     pub time_axis_tooltip: RwSignal<Option<(f64, String)>>,
+    /// True when dragging along the bottom time axis to select a time segment
+    pub time_axis_dragging: RwSignal<bool>,
+    /// Raw (un-snapped) time where time-axis drag started
+    pub time_axis_drag_raw_start: RwSignal<f64>,
     /// Velocity tracker for inertia scrolling
     pub velocity_tracker: StoredValue<crate::components::inertia::VelocityTracker>,
     /// Generation counter for cancelling inertia animations
@@ -45,6 +49,8 @@ impl SpectInteraction {
             last_tap_time: RwSignal::new(0.0f64),
             last_tap_x: RwSignal::new(0.0f64),
             time_axis_tooltip: RwSignal::new(None),
+            time_axis_dragging: RwSignal::new(false),
+            time_axis_drag_raw_start: RwSignal::new(0.0f64),
             velocity_tracker: StoredValue::new(crate::components::inertia::VelocityTracker::new()),
             inertia_generation: StoredValue::new(0u32),
         }
@@ -230,14 +236,67 @@ pub fn on_mousedown(
     // Check for axis drag (left axis frequency range selection) — disabled in xform view
     if let Some((px_x, _, _, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
-            let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+            // Shift+click: extend existing FF range (anchor at far edge)
+            let ff_lo = state.ff_freq_lo.get_untracked();
+            let ff_hi = state.ff_freq_hi.get_untracked();
+            let has_range = ff_hi > ff_lo;
+            let (raw_start, snap) = if ev.shift_key() && has_range {
+                // Anchor at the edge farthest from the click
+                let anchor = if (freq - ff_lo).abs() < (freq - ff_hi).abs() { ff_hi } else { ff_lo };
+                (anchor, 5_000.0)
+            } else {
+                let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
+                (freq, snap)
+            };
             let snapped = (freq / snap).round() * snap;
-            ix.axis_drag_raw_start.set(freq);
-            state.axis_drag_start_freq.set(Some(snapped));
+            ix.axis_drag_raw_start.set(raw_start);
+            state.axis_drag_start_freq.set(Some((raw_start / snap).round() * snap));
             state.axis_drag_current_freq.set(Some(snapped));
+            // Live update FF range immediately for shift-extend
+            if ev.shift_key() && has_range {
+                let lo = raw_start.min(freq);
+                let hi = raw_start.max(freq);
+                if hi - lo > 500.0 {
+                    state.set_ff_range(lo, hi);
+                }
+            }
             state.is_dragging.set(true);
             ev.prevent_default();
             return;
+        }
+    }
+
+    // Check for time-axis drag (bottom axis time segment selection)
+    if let Some((px_x, px_y, t, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.get_bounding_client_rect().height();
+            if px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH {
+                // Shift+click: extend existing time selection (anchor at far edge)
+                let anchor = if ev.shift_key() {
+                    if let Some(sel) = state.selection.get_untracked() {
+                        if sel.time_end - sel.time_start > 0.0001 {
+                            Some(if (t - sel.time_start).abs() < (t - sel.time_end).abs() {
+                                sel.time_end
+                            } else {
+                                sel.time_start
+                            })
+                        } else { None }
+                    } else { None }
+                } else { None };
+                let start = anchor.unwrap_or(t);
+                ix.time_axis_dragging.set(true);
+                ix.time_axis_drag_raw_start.set(start);
+                state.selection.set(Some(Selection {
+                    time_start: start.min(t),
+                    time_end: start.max(t),
+                    freq_low: None,
+                    freq_high: None,
+                }));
+                state.is_dragging.set(true);
+                ev.prevent_default();
+                return;
+            }
         }
     }
 
@@ -288,9 +347,15 @@ pub fn on_mousemove(
             }
         }
 
-        // Update label hover target and in-label-area state
+        // Update label hover target and in-label-area / time-axis state
         let in_label_area = px_x < LABEL_AREA_WIDTH;
         state.mouse_in_label_area.set(in_label_area);
+        let in_time_axis = if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.get_bounding_client_rect().height();
+            px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH
+        } else { false };
+        state.mouse_in_time_axis.set(in_time_axis);
         let current_target = ix.label_hover_target.get_untracked();
         let new_target = if in_label_area { 1.0 } else { 0.0 };
         if current_target != new_target {
@@ -311,6 +376,18 @@ pub fn on_mousemove(
                 let raw_start = ix.axis_drag_raw_start.get_untracked();
                 let snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
                 apply_axis_drag(state, raw_start, f, snap);
+                return;
+            }
+
+            // Time-axis drag takes third priority
+            if ix.time_axis_dragging.get_untracked() {
+                let t0 = ix.time_axis_drag_raw_start.get_untracked();
+                state.selection.set(Some(Selection {
+                    time_start: t0.min(t),
+                    time_end: t0.max(t),
+                    freq_low: None,
+                    freq_high: None,
+                }));
                 return;
             }
 
@@ -359,6 +436,7 @@ pub fn on_mouseleave(
 ) {
     state.mouse_freq.set(None);
     state.mouse_in_label_area.set(false);
+    state.mouse_in_time_axis.set(false);
     state.cursor_time.set(None);
     ix.label_hover_target.set(0.0);
     state.is_dragging.set(false);
@@ -366,6 +444,7 @@ pub fn on_mouseleave(
     state.spec_hover_handle.set(None);
     state.axis_drag_start_freq.set(None);
     state.axis_drag_current_freq.set(None);
+    ix.time_axis_dragging.set(false);
     ix.time_axis_tooltip.set(None);
 }
 
@@ -387,6 +466,19 @@ pub fn on_mouseup(
     // End axis drag (FF range already updated live during drag)
     if state.axis_drag_start_freq.get_untracked().is_some() {
         finalize_axis_drag(state);
+        return;
+    }
+
+    // End time-axis drag (selection already updated live during drag)
+    if ix.time_axis_dragging.get_untracked() {
+        ix.time_axis_dragging.set(false);
+        state.is_dragging.set(false);
+        // Clear tiny accidental drags
+        if let Some(sel) = state.selection.get_untracked() {
+            if sel.time_end - sel.time_start < 0.0001 {
+                state.selection.set(None);
+            }
+        }
         return;
     }
 
@@ -485,6 +577,7 @@ pub fn on_touchstart(
         state.spec_drag_handle.set(None);
         state.axis_drag_start_freq.set(None);
         state.axis_drag_current_freq.set(None);
+        ix.time_axis_dragging.set(false);
         return;
     }
 
@@ -541,6 +634,27 @@ pub fn on_touchstart(
             state.is_dragging.set(true);
             ev.prevent_default();
             return;
+        }
+    }
+
+    // Check for time-axis drag (bottom axis time segment selection)
+    if let Some((px_x, px_y, t, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+        if let Some(canvas_el) = canvas_ref.get() {
+            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+            let ch = canvas.get_bounding_client_rect().height();
+            if px_y > ch - 16.0 && px_x > LABEL_AREA_WIDTH {
+                ix.time_axis_dragging.set(true);
+                ix.time_axis_drag_raw_start.set(t);
+                state.selection.set(Some(Selection {
+                    time_start: t,
+                    time_end: t,
+                    freq_low: None,
+                    freq_high: None,
+                }));
+                state.is_dragging.set(true);
+                ev.prevent_default();
+                return;
+            }
         }
     }
 
@@ -610,6 +724,20 @@ pub fn on_touchmove(
         return;
     }
 
+    // Time-axis drag takes third priority
+    if ix.time_axis_dragging.get_untracked() {
+        if let Some((_, _, t, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+            let t0 = ix.time_axis_drag_raw_start.get_untracked();
+            state.selection.set(Some(Selection {
+                time_start: t0.min(t),
+                time_end: t0.max(t),
+                freq_low: None,
+                freq_high: None,
+            }));
+        }
+        return;
+    }
+
     match state.canvas_tool.get_untracked() {
         CanvasTool::Hand => {
             apply_hand_pan(state, touch.client_x() as f64, canvas_ref, ix.hand_drag_start.get_untracked());
@@ -653,6 +781,17 @@ pub fn on_touchend(
         // Finalize axis drag
         if state.axis_drag_start_freq.get_untracked().is_some() {
             finalize_axis_drag(state);
+            return;
+        }
+        // Finalize time-axis drag
+        if ix.time_axis_dragging.get_untracked() {
+            ix.time_axis_dragging.set(false);
+            state.is_dragging.set(false);
+            if let Some(sel) = state.selection.get_untracked() {
+                if sel.time_end - sel.time_start < 0.0001 {
+                    state.selection.set(None);
+                }
+            }
             return;
         }
         state.is_dragging.set(false);
