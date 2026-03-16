@@ -18,12 +18,16 @@ fn cancel_replay_timer() {
 }
 
 pub fn stop(state: &AppState) {
+    let was_playing = state.is_playing.get_untracked();
     cancel_replay_timer();
     cancel_playhead();
     streaming_playback::stop_stream();
-    // Restore scroll to pre-play position when stopping
-    state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+    if was_playing {
+        // Restore scroll to pre-play position when stopping active playback.
+        state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+    }
     state.is_playing.set(false);
+    state.active_playback_selection.set(None);
 }
 
 /// Continue playback from the current playhead position with fresh parameters.
@@ -39,7 +43,7 @@ pub fn replay_live(state: &AppState) {
     let idx = state.current_file_index.get_untracked();
     let Some(file) = idx.and_then(|i| files.get(i)) else { return };
 
-    let selection = state.selection.get_untracked();
+    let selection = state.active_playback_selection.get_untracked();
     let sr = file.audio.sample_rate;
     let total = file.audio.source.total_samples() as usize;
     let sel_end = selection.map(|s| s.time_end).unwrap_or(file.audio.duration_secs);
@@ -177,6 +181,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
         _ => 1.0,
     };
 
+    state.active_playback_selection.set(selection);
     state.is_playing.set(true);
     state.playhead_time.set(start_secs);
     start_playhead(state.clone(), start_secs, play_duration, playback_speed);
@@ -219,6 +224,7 @@ pub fn play(state: &AppState) {
     };
 
     state.pre_play_scroll.set(state.scroll_offset.get_untracked());
+    state.active_playback_selection.set(selection);
     state.is_playing.set(true);
     state.playhead_time.set(play_start_time);
     start_playhead(state.clone(), play_start_time, play_duration, playback_speed);
