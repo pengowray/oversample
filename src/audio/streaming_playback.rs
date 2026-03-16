@@ -100,13 +100,6 @@ fn selection_bandpass_active(sample_rate: u32, params: &PlaybackParams) -> bool 
             || params.sel_freq_high < (sample_rate as f64 / 2.0))
 }
 
-fn has_mono_only_processing(sample_rate: u32, params: &PlaybackParams) -> bool {
-    params.filter_enabled
-        || selection_bandpass_active(sample_rate, params)
-        || (params.notch_enabled && !params.notch_bands.is_empty())
-        || (params.noise_reduce_enabled && params.noise_reduce_floor.is_some())
-}
-
 /// Duration of fade-in when starting playback (milliseconds).
 const FADE_IN_MS: f64 = 30.0;
 
@@ -171,11 +164,9 @@ pub(crate) fn start_stream(
         _ => sample_rate,
     };
 
-    // Stereo passthrough: Normal mode + stereo source + MonoMix view
-    let stereo_out = matches!(params.mode, PlaybackMode::Normal)
-        && source.channel_count() >= 2
-        && channel_view == ChannelView::MonoMix
-        && !has_mono_only_processing(sample_rate, &params);
+    // Stereo output: stereo source + MonoMix view (all modes, not just Normal)
+    let stereo_out = source.channel_count() >= 2
+        && channel_view == ChannelView::MonoMix;
 
     // Reuse existing AudioContext if its sample rate matches; otherwise create new.
     let ctx = STREAM_CTX.with(|c| {
@@ -329,11 +320,15 @@ async fn chunk_loop(
 
     for buf in prebuf {
         if !buf.samples.is_empty() {
-            if stereo_out && !pv_hq_mode {
-                if let (Some(left), Some(right)) = (buf.left, buf.right) {
-                    schedule_buffer_stereo(&ctx, &gain_node, &left, &right, final_rate, scheduled_time);
-                    let chunk_duration = left.len() as f64 / final_rate as f64;
-                    scheduled_time += chunk_duration;
+            if stereo_out {
+                if let (Some(ref left), Some(ref right)) = (buf.left, buf.right) {
+                    schedule_buffer_stereo(&ctx, &gain_node, left, right, final_rate, scheduled_time);
+                    if pv_hq_mode {
+                        scheduled_time += stride_duration;
+                    } else {
+                        let chunk_duration = left.len() as f64 / final_rate as f64;
+                        scheduled_time += chunk_duration;
+                    }
                 }
             } else {
                 schedule_buffer(&ctx, &gain_node, &buf.samples, final_rate, scheduled_time);
@@ -363,11 +358,15 @@ async fn chunk_loop(
         pos = new_pos;
 
         if !final_samples.is_empty() {
-            if stereo_out && !pv_hq_mode {
-                if let (Some(left), Some(right)) = (left, right) {
-                    schedule_buffer_stereo(&ctx, &gain_node, &left, &right, final_rate, scheduled_time);
-                    let chunk_duration = left.len() as f64 / final_rate as f64;
-                    scheduled_time += chunk_duration;
+            if stereo_out {
+                if let (Some(ref left), Some(ref right)) = (left, right) {
+                    schedule_buffer_stereo(&ctx, &gain_node, left, right, final_rate, scheduled_time);
+                    if pv_hq_mode {
+                        scheduled_time += stride_duration;
+                    } else {
+                        let chunk_duration = left.len() as f64 / final_rate as f64;
+                        scheduled_time += chunk_duration;
+                    }
                 }
             } else {
                 schedule_buffer(&ctx, &gain_node, &final_samples, final_rate, scheduled_time);
@@ -433,42 +432,49 @@ async fn process_one_chunk(
     let filtered = apply_filters(&chunk_with_warmup, source_rate, params);
     let processed = apply_dsp_mode(&filtered, source_rate, params);
 
+    // Helper: process a channel through filters + DSP (same pipeline as mono)
+    let process_ch = |cv: ChannelView| -> Vec<f32> {
+        let raw = source.read_region(cv, warmup_start as u64, trailing_end - warmup_start);
+        let filtered = apply_filters(&raw, source_rate, params);
+        apply_dsp_mode(&filtered, source_rate, params)
+    };
+
     if pv_hq_mode {
         // HQ mode: trim warmup but keep trailing overlap with crossfade envelope.
         let trim_start = warmup_len;
+        let core_len = chunk_end - pos; // nominal chunk length (without overlap)
+
+        // Apply PV HQ fading to a processed buffer
+        let apply_pv_hq_fading = |buf: &mut Vec<f32>| {
+            // Hann fade-in on leading overlap (first chunk's start is clean)
+            if pos > start_sample {
+                let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(buf.len());
+                for i in 0..fade_in_len {
+                    let t = i as f32 / fade_in_len as f32;
+                    let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+                    buf[i] *= w;
+                }
+            }
+            // Hann fade-out on trailing overlap
+            if trailing_len > 0 {
+                let fade_out_start = buf.len().saturating_sub(trailing_len);
+                let fade_out_len = buf.len() - fade_out_start;
+                for i in 0..fade_out_len {
+                    let t = i as f32 / fade_out_len as f32;
+                    let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+                    buf[fade_out_start + i] *= w;
+                }
+            }
+        };
+
         let mut final_samples = if trim_start < processed.len() {
             processed[trim_start..].to_vec()
         } else {
             processed.to_vec()
         };
-
-        let core_len = chunk_end - pos; // nominal chunk length (without overlap)
-
-        // Apply Hann fade-in on leading overlap (first chunk's start is clean)
-        if pos > start_sample {
-            let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(final_samples.len());
-            for i in 0..fade_in_len {
-                let t = i as f32 / fade_in_len as f32;
-                // Hann fade-in: 0.5 * (1 - cos(π*t))
-                let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                final_samples[i] *= w;
-            }
-        }
-
-        // Apply Hann fade-out on trailing overlap
-        if trailing_len > 0 {
-            let fade_out_start = final_samples.len().saturating_sub(trailing_len);
-            let fade_out_len = final_samples.len() - fade_out_start;
-            for i in 0..fade_out_len {
-                let t = i as f32 / fade_out_len as f32;
-                // Hann fade-out: 0.5 * (1 + cos(π*t))
-                let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                final_samples[fade_out_start + i] *= w;
-            }
-        }
+        apply_pv_hq_fading(&mut final_samples);
 
         let chunk_gain = if is_adaptive {
-            // Compute gain on the core region only (excluding fades)
             let core_end = core_len.min(final_samples.len());
             compute_adaptive_gain(&final_samples[..core_end]) + global_gain
         } else {
@@ -476,7 +482,21 @@ async fn process_one_chunk(
         };
         apply_gain(&mut final_samples, chunk_gain);
 
-        (final_samples, None, None, chunk_end)
+        let (left, right) = if stereo_out {
+            let l_proc = process_ch(ChannelView::Channel(0));
+            let r_proc = process_ch(ChannelView::Channel(1));
+            let mut l = if trim_start < l_proc.len() { l_proc[trim_start..].to_vec() } else { l_proc };
+            let mut r = if trim_start < r_proc.len() { r_proc[trim_start..].to_vec() } else { r_proc };
+            apply_pv_hq_fading(&mut l);
+            apply_pv_hq_fading(&mut r);
+            apply_gain(&mut l, chunk_gain);
+            apply_gain(&mut r, chunk_gain);
+            (Some(l), Some(r))
+        } else {
+            (None, None)
+        };
+
+        (final_samples, left, right, chunk_end)
     } else {
         // Standard mode: trim warmup and trailing
         let trim_start = warmup_len;
@@ -497,9 +517,12 @@ async fn process_one_chunk(
         apply_gain(&mut final_samples, chunk_gain);
 
         let (left, right) = if stereo_out {
-            let chunk_len = chunk_end - pos;
-            let mut l = source.read_region(ChannelView::Channel(0), pos as u64, chunk_len);
-            let mut r = source.read_region(ChannelView::Channel(1), pos as u64, chunk_len);
+            let l_proc = process_ch(ChannelView::Channel(0));
+            let r_proc = process_ch(ChannelView::Channel(1));
+            let l_trim_end = l_proc.len().saturating_sub(trailing_len);
+            let r_trim_end = r_proc.len().saturating_sub(trailing_len);
+            let mut l = if trim_start < l_trim_end { l_proc[trim_start..l_trim_end].to_vec() } else { l_proc };
+            let mut r = if trim_start < r_trim_end { r_proc[trim_start..r_trim_end].to_vec() } else { r_proc };
             apply_gain(&mut l, chunk_gain);
             apply_gain(&mut r, chunk_gain);
             (Some(l), Some(r))
