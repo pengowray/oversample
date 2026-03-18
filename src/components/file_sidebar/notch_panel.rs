@@ -249,11 +249,6 @@ pub(crate) fn NotchPanel() -> impl IntoView {
         }
     };
 
-    // Profile name handler
-    let on_name_change = move |ev: web_sys::Event| {
-        let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-        state.notch_profile_name.set(target.value());
-    };
 
     // Save preset (Tauri only)
     let on_save_preset = move |_: web_sys::MouseEvent| {
@@ -338,6 +333,84 @@ pub(crate) fn NotchPanel() -> impl IntoView {
 
     view! {
         <div class="sidebar-panel notch-panel">
+            // === Noise Reduction (spectral subtraction) ===
+            <div class="setting-group">
+                <div class="setting-row">
+                    <label class="setting-label" style="flex: 1; cursor: pointer;">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.noise_reduce_enabled.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+                                state.noise_reduce_enabled.set(target.checked());
+                            }
+                        />
+                        " Noise Reduction"
+                    </label>
+                </div>
+                <div class="setting-row" style="font-size: 10px; opacity: 0.5; margin-top: -2px;">
+                    "Spectral subtraction"
+                </div>
+                <div class="setting-row" style="gap: 4px;">
+                    <button
+                        class="sidebar-btn"
+                        style="flex: 1;"
+                        on:click=on_learn_floor
+                        disabled=move || state.noise_reduce_learning.get() || state.current_file_index.get().is_none()
+                    >
+                        {move || if state.noise_reduce_learning.get() {
+                            "Learning..."
+                        } else {
+                            "Learn Noise Floor"
+                        }}
+                    </button>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">"Strength"</span>
+                    <span style="font-size: 11px; opacity: 0.7; min-width: 36px; text-align: right;">
+                        {move || format!("{:.0}%", state.noise_reduce_strength.get() * 100.0)}
+                    </span>
+                    <input
+                        type="range"
+                        class="setting-slider"
+                        min="0"
+                        max="300"
+                        step="5"
+                        prop:value=move || (state.noise_reduce_strength.get() * 100.0) as i32
+                        on:input=on_strength_change
+                        title=move || format!("{:.0}%", state.noise_reduce_strength.get() * 100.0)
+                    />
+                </div>
+                {move || {
+                    let floor = state.noise_reduce_floor.get();
+                    if let Some(f) = floor {
+                        view! {
+                            <div class="setting-row" style="font-size: 11px; opacity: 0.7;">
+                                {format!("{} bins, {:.1}s analyzed", f.bin_magnitudes.len(), f.analysis_duration_secs)}
+                            </div>
+                            <div class="setting-row" style="gap: 4px; margin-top: 2px;">
+                                <button
+                                    class="sidebar-btn"
+                                    style="flex: 1; font-size: 10px;"
+                                    on:click=move |_: web_sys::MouseEvent| {
+                                        state.noise_reduce_floor.set(None);
+                                        state.noise_reduce_enabled.set(false);
+                                    }
+                                >
+                                    "Clear Floor"
+                                </button>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <div class="setting-row" style="opacity: 0.5; font-size: 11px;">
+                                "No noise floor learned"
+                            </div>
+                        }.into_any()
+                    }
+                }}
+            </div>
+
             // === Notch Filter ===
             <div class="setting-group">
                 <div class="setting-row">
@@ -488,81 +561,6 @@ pub(crate) fn NotchPanel() -> impl IntoView {
                 }}
             </div>
 
-            // === Noise Reduction (spectral subtraction) ===
-            <div class="setting-group">
-                <div class="setting-row">
-                    <label class="setting-label" style="flex: 1; cursor: pointer;">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || state.noise_reduce_enabled.get()
-                            on:change=move |ev: web_sys::Event| {
-                                let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-                                state.noise_reduce_enabled.set(target.checked());
-                            }
-                        />
-                        " Noise Reduction"
-                    </label>
-                </div>
-                <div class="setting-row" style="font-size: 10px; opacity: 0.5; margin-top: -2px;">
-                    "Spectral subtraction"
-                </div>
-                <div class="setting-row" style="gap: 4px;">
-                    <button
-                        class="sidebar-btn"
-                        style="flex: 1;"
-                        on:click=on_learn_floor
-                        disabled=move || state.noise_reduce_learning.get() || state.current_file_index.get().is_none()
-                    >
-                        {move || if state.noise_reduce_learning.get() {
-                            "Learning..."
-                        } else {
-                            "Learn Noise Floor"
-                        }}
-                    </button>
-                </div>
-                <div class="setting-row">
-                    <span class="setting-label">"Strength"</span>
-                    <input
-                        type="range"
-                        class="setting-slider"
-                        min="0"
-                        max="300"
-                        step="5"
-                        prop:value=move || (state.noise_reduce_strength.get() * 100.0) as i32
-                        on:input=on_strength_change
-                        title=move || format!("{:.0}%", state.noise_reduce_strength.get() * 100.0)
-                    />
-                </div>
-                {move || {
-                    let floor = state.noise_reduce_floor.get();
-                    if let Some(f) = floor {
-                        view! {
-                            <div class="setting-row" style="font-size: 11px; opacity: 0.7;">
-                                {format!("{} bins, {:.1}s analyzed", f.bin_magnitudes.len(), f.analysis_duration_secs)}
-                            </div>
-                            <div class="setting-row" style="gap: 4px; margin-top: 2px;">
-                                <button
-                                    class="sidebar-btn"
-                                    style="flex: 1; font-size: 10px;"
-                                    on:click=move |_: web_sys::MouseEvent| {
-                                        state.noise_reduce_floor.set(None);
-                                        state.noise_reduce_enabled.set(false);
-                                    }
-                                >
-                                    "Clear Floor"
-                                </button>
-                            </div>
-                        }.into_any()
-                    } else {
-                        view! {
-                            <div class="setting-row" style="opacity: 0.5; font-size: 11px;">
-                                "No noise floor learned"
-                            </div>
-                        }.into_any()
-                    }
-                }}
-            </div>
-
             // === Harmonic Suppression ===
             {move || {
                 let has_bands = !state.notch_bands.get().is_empty();
@@ -610,16 +608,6 @@ pub(crate) fn NotchPanel() -> impl IntoView {
             // === Profile management ===
             <div class="setting-group">
                 <div class="setting-group-title">"Profile"</div>
-                <div class="setting-row">
-                    <input
-                        type="text"
-                        class="setting-input"
-                        style="flex: 1; font-size: 11px; padding: 2px 4px; background: var(--bg-secondary, #333); color: inherit; border: 1px solid #555; border-radius: 3px;"
-                        placeholder="Profile name"
-                        prop:value=move || state.notch_profile_name.get()
-                        on:input=on_name_change
-                    />
-                </div>
                 // Tauri-only: Save Preset + preset list
                 {if state.is_tauri {
                     Some(view! {

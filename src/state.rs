@@ -29,7 +29,7 @@ impl Default for FileSettings {
             notch_profile_name: String::new(),
             notch_harmonic_suppression: 0.0,
             noise_reduce_enabled: false,
-            noise_reduce_strength: 1.0,
+            noise_reduce_strength: 0.6,
             noise_reduce_floor: None,
         }
     }
@@ -1142,7 +1142,7 @@ impl AppState {
             notch_harmonic_suppression: RwSignal::new(0.0),
 
             noise_reduce_enabled: RwSignal::new(false),
-            noise_reduce_strength: RwSignal::new(1.0),
+            noise_reduce_strength: RwSignal::new(0.6),
             noise_reduce_floor: RwSignal::new(None),
             noise_reduce_learning: RwSignal::new(false),
 
