@@ -872,7 +872,8 @@ pub fn draw_notch_bands(
 /// LOD0 = yellow, missing = red.
 pub fn draw_tile_debug_overlay(
     ctx: &CanvasRenderingContext2d,
-    canvas: &web_sys::HtmlCanvasElement,
+    viewport_width: f64,
+    viewport_height: f64,
     file_idx: usize,
     total_cols: usize,
     scroll_col: f64,
@@ -882,8 +883,8 @@ pub fn draw_tile_debug_overlay(
 ) {
     use crate::canvas::tile_cache::{self, TILE_COLS};
 
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let cw = viewport_width;
+    let ch = viewport_height;
     if total_cols == 0 || zoom <= 0.0 { return; }
 
     let ideal_lod = tile_cache::select_lod(zoom);

@@ -7,6 +7,7 @@ use crate::project_store;
 use crate::annotations::AudioFileMetadata;
 use crate::opfs;
 use crate::format_time::format_duration_compact;
+use crate::viewport;
 
 /// Helper: build AudioFileMetadata from a LoadedFile.
 fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
@@ -570,10 +571,26 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
                         if runtime_indices.len() >= 2 {
                             if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
+                                let timeline_duration = tv.total_duration_secs;
+                                let primary_time_res = tv.segments.first()
+                                    .and_then(|s| files.get(s.file_index))
+                                    .map(|f| f.spectrogram.time_resolution)
+                                    .unwrap_or(1.0);
+                                let canvas_w = state.spectrogram_canvas_width.get_untracked();
                                 state.selected_file_indices.set(runtime_indices);
                                 state.active_timeline.set(Some(tv));
                                 state.active_timeline_track.set(None);
                                 state.current_file_index.set(None);
+                                state.suspend_follow();
+                                if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
+                                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
+                                    state.zoom_level.set(fit_zoom);
+                                    let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
+                                    let from_here_mode = state.play_start_mode.get_untracked() == crate::state::PlayStartMode::FromHere;
+                                    state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
+                                } else {
+                                    state.scroll_offset.set(0.0);
+                                }
                             }
                         }
                     };

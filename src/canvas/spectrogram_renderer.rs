@@ -215,15 +215,16 @@ pub enum ColormapMode {
 pub fn blit_viewport(
     ctx: &CanvasRenderingContext2d,
     pre_rendered: &PreRendered,
-    canvas: &HtmlCanvasElement,
+    viewport_width: f64,
+    viewport_height: f64,
     scroll_col: f64,
     zoom: f64,
     freq_crop_lo: f64,
     freq_crop_hi: f64,
     colormap: ColormapMode,
 ) {
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let cw = viewport_width;
+    let ch = viewport_height;
 
     // Clear canvas
     ctx.set_fill_style_str("#000");
@@ -350,7 +351,8 @@ pub fn blit_viewport(
 pub fn blit_preview_as_background(
     ctx: &CanvasRenderingContext2d,
     preview: &PreviewImage,
-    canvas: &HtmlCanvasElement,
+    viewport_width: f64,
+    viewport_height: f64,
     scroll_offset: f64,    // left edge of viewport in seconds
     visible_time: f64,     // seconds of audio visible in viewport
     total_duration: f64,   // total file duration in seconds
@@ -358,8 +360,8 @@ pub fn blit_preview_as_background(
     freq_crop_hi: f64,     // 0..1 fraction of Nyquist
     colormap: ColormapMode,
 ) {
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let cw = viewport_width;
+    let ch = viewport_height;
 
     ctx.set_fill_style_str("#000");
     ctx.fill_rect(0.0, 0.0, cw, ch);
@@ -551,7 +553,8 @@ fn db_tile_to_rgba(
 /// Returns true if at least one tile was drawn, false if nothing was available.
 pub fn blit_tiles_viewport(
     ctx: &CanvasRenderingContext2d,
-    canvas: &HtmlCanvasElement,
+    viewport_width: f64,
+    viewport_height: f64,
     file_idx: usize,
     total_cols: usize,
     scroll_col: f64,
@@ -570,13 +573,13 @@ pub fn blit_tiles_viewport(
 ) -> bool {
     use crate::canvas::tile_blit::{ViewportGeometry, compute_tile_blit_coords, for_each_visible_tile};
 
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let cw = viewport_width;
+    let ch = viewport_height;
 
     // Draw colormapped preview as base layer so tile gaps show preview, not black.
     if let Some(pv) = preview {
         blit_preview_as_background(
-            ctx, pv, canvas,
+            ctx, pv, cw, ch,
             scroll_offset, visible_time, total_duration,
             freq_crop_lo, freq_crop_hi, colormap,
         );
@@ -711,7 +714,8 @@ fn db_flow_tile_to_rgba(
 
 pub fn blit_flow_tiles_viewport(
     ctx: &CanvasRenderingContext2d,
-    canvas: &HtmlCanvasElement,
+    viewport_width: f64,
+    viewport_height: f64,
     file_idx: usize,
     total_cols: usize,
     scroll_col: f64,
@@ -734,13 +738,13 @@ pub fn blit_flow_tiles_viewport(
 ) -> bool {
     use crate::canvas::tile_blit::{ViewportGeometry, compute_tile_blit_coords, for_each_visible_tile};
 
-    let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let cw = viewport_width;
+    let ch = viewport_height;
 
     // Draw a dark background (no colormap-aware preview for flow mode)
     if let Some(pv) = preview {
         blit_preview_as_background(
-            ctx, pv, canvas,
+            ctx, pv, cw, ch,
             scroll_offset, visible_time, total_duration,
             freq_crop_lo, freq_crop_hi, ColormapMode::Uniform(Colormap::Greyscale),
         );

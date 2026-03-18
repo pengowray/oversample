@@ -9,6 +9,7 @@ use crate::audio::streaming_source;
 use crate::canvas::tile_cache;
 use crate::state::{AppState, FileSortMode, LoadedFile};
 use crate::types::PreviewImage;
+use crate::viewport;
 
 use super::file_groups;
 use crate::timeline::TimelineView;
@@ -409,6 +410,12 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         if sel.len() < 2 { return; }
                         let files = state.files.get_untracked();
                         if let Some(tv) = TimelineView::from_files(&sel, &files) {
+                            let timeline_duration = tv.total_duration_secs;
+                            let primary_time_res = tv.segments.first()
+                                .and_then(|s| files.get(s.file_index))
+                                .map(|f| f.spectrogram.time_resolution)
+                                .unwrap_or(1.0);
+                            let canvas_w = state.spectrogram_canvas_width.get_untracked();
                             // Save to project if one exists
                             state.current_project.update(|p| {
                                 let Some(proj) = p else { return };
@@ -437,6 +444,16 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             state.active_timeline.set(Some(tv));
                             state.active_timeline_track.set(None);
                             state.current_file_index.set(None);
+                            state.suspend_follow();
+                            if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
+                                let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
+                                state.zoom_level.set(fit_zoom);
+                                let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
+                                let from_here_mode = state.play_start_mode.get_untracked() == crate::state::PlayStartMode::FromHere;
+                                state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
+                            } else {
+                                state.scroll_offset.set(0.0);
+                            }
                         }
                     };
 

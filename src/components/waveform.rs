@@ -92,6 +92,7 @@ pub fn Waveform() -> impl IntoView {
         let is_playing = state.is_playing.get();
         let canvas_tool = state.canvas_tool.get();
         let cv = state.channel_view.get();
+        let _tile_ready = state.tile_ready_signal.get();
         let wave_auto = state.wave_view_auto_gain.get();
         let gain_db = if wave_auto {
             state.compute_auto_gain()
@@ -187,7 +188,7 @@ pub fn Waveform() -> impl IntoView {
                 ctx.begin_path();
                 ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
                 ctx.clip();
-                ctx.translate(seg_canvas_start, 0.0).unwrap_or(());
+                ctx.translate(clip_left, 0.0).unwrap_or(());
 
                 waveform_renderer::draw_waveform(
                     &ctx,
@@ -196,7 +197,7 @@ pub fn Waveform() -> impl IntoView {
                     file_scroll,
                     zoom,
                     seg_time_res,
-                    display_w as f64,
+                    clip_right - clip_left,
                     display_h as f64,
                     sel_time,
                     gain_db,

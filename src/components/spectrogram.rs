@@ -375,8 +375,9 @@ pub fn Spectrogram() -> impl IntoView {
                 ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
                 ctx.clip();
 
-                // Translate so the segment's start aligns correctly
-                let translate_x = seg_canvas_start;
+                // Translate to the visible start of this segment so the helper
+                // can render against a segment-local viewport.
+                let translate_x = clip_left;
                 ctx.translate(translate_x, 0.0).unwrap_or(());
 
                 let seg_visible_time = (clip_right - clip_left) / px_per_sec;
@@ -397,7 +398,7 @@ pub fn Spectrogram() -> impl IntoView {
                 };
 
                 let drawn = spectrogram_renderer::blit_tiles_viewport(
-                    &ctx, canvas, seg.file_index, seg_total_cols,
+                    &ctx, clip_right - clip_left, display_h as f64, seg.file_index, seg_total_cols,
                     file_scroll_col, seg_zoom, freq_crop_lo, freq_crop_hi, colormap,
                     &display_settings,
                     freq_adjustments.as_deref(),
@@ -467,7 +468,7 @@ pub fn Spectrogram() -> impl IntoView {
             };
             let flow_scheme = state.flow_color_scheme.get_untracked();
             let drawn = spectrogram_renderer::blit_flow_tiles_viewport(
-                &ctx, canvas, file_idx_val, total_cols,
+                &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi,
                 &display_settings, freq_adjustments.as_deref(),
                 ig, mg, op, sg, cg, algo, flow_scheme,
@@ -497,7 +498,7 @@ pub fn Spectrogram() -> impl IntoView {
                 file.and_then(|f| f.preview.as_ref())
             };
             let drawn = spectrogram_renderer::blit_tiles_viewport(
-                &ctx, canvas, file_idx_val, total_cols,
+                &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols,
                 scroll_col, zoom, freq_crop_lo, freq_crop_hi, colormap,
                 &display_settings,
                 freq_adjustments.as_deref(),
@@ -518,7 +519,7 @@ pub fn Spectrogram() -> impl IntoView {
             pre_rendered.with_untracked(|pr| {
                 if let Some(rendered) = pr {
                     spectrogram_renderer::blit_viewport(
-                        &ctx, rendered, canvas, scroll_col, zoom,
+                        &ctx, rendered, display_w as f64, display_h as f64, scroll_col, zoom,
                         freq_crop_lo, freq_crop_hi, colormap,
                     );
                 }
@@ -526,7 +527,7 @@ pub fn Spectrogram() -> impl IntoView {
             true
         } else if let Some(pv) = file.and_then(|f| f.preview.as_ref()) {
             spectrogram_renderer::blit_preview_as_background(
-                &ctx, pv, canvas,
+                &ctx, pv, display_w as f64, display_h as f64,
                 scroll, visible_time, duration,
                 freq_crop_lo, freq_crop_hi,
                 colormap,
@@ -573,16 +574,16 @@ pub fn Spectrogram() -> impl IntoView {
                     ctx.begin_path();
                     ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
                     ctx.clip();
-                    ctx.translate(seg_canvas_start, 0.0).unwrap_or(());
+                    ctx.translate(clip_left, 0.0).unwrap_or(());
                     spectrogram_renderer::draw_tile_debug_overlay(
-                        &ctx, canvas, seg.file_index, seg_tc, file_scroll_col, seg_zoom,
+                        &ctx, clip_right - clip_left, display_h as f64, seg.file_index, seg_tc, file_scroll_col, seg_zoom,
                         state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
                     );
                     ctx.restore();
                 }
             } else if total_cols > 0 {
                 spectrogram_renderer::draw_tile_debug_overlay(
-                    &ctx, canvas, file_idx_val, total_cols, scroll_col, zoom,
+                    &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols, scroll_col, zoom,
                     state.spect_fft_mode.get_untracked().max_fft_size(), flow_on,
                 );
             }
