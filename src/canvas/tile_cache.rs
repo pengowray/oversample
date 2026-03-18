@@ -8,6 +8,7 @@
 //! - LOD 1: hop=512, covers ~131K samples/tile (normal)
 //! - LOD 2: hop=128, covers ~33K samples/tile (zoomed in)
 //! - LOD 3: hop=32, covers ~8K samples/tile (deep zoom)
+//! - LOD 4: hop=8, covers ~2K samples/tile (extreme zoom)
 //!
 //! Each level is 4× finer than the previous. The renderer picks the ideal LOD
 //! for the current zoom and falls back to lower LODs when tiles aren't cached.
@@ -46,26 +47,28 @@ pub struct LodConfig {
     pub hop_size: usize,
 }
 
-pub const NUM_LODS: usize = 4;
+pub const NUM_LODS: usize = 5;
 
 pub const LOD_CONFIGS: [LodConfig; NUM_LODS] = [
     LodConfig { fft_size: 256, hop_size: 2048 }, // LOD 0 — wide overview
     LodConfig { fft_size: 256, hop_size: 512 },  // LOD 1 — normal resolution
     LodConfig { fft_size: 256, hop_size: 128 },  // LOD 2 — zoomed in
     LodConfig { fft_size: 256, hop_size: 32 },   // LOD 3 — deep zoom
+    LodConfig { fft_size: 256, hop_size: 8 },    // LOD 4 — extreme zoom
 ];
 
 /// Select the ideal LOD level for the current zoom.
 /// `zoom` is pixels per LOD1 column.
 pub fn select_lod(zoom: f64) -> u8 {
-    if zoom >= 8.0 { 3 }
+    if zoom >= 32.0 { 4 }
+    else if zoom >= 8.0 { 3 }
     else if zoom >= 2.0 { 2 }
     else if zoom >= 0.5 { 1 }
     else { 0 }
 }
 
 /// Ratio of LOD1 columns to LOD_L columns (how many LOD_L cols per LOD1 col).
-/// LOD0: 0.25, LOD1: 1.0, LOD2: 4.0, LOD3: 16.0
+/// LOD0: 0.25, LOD1: 1.0, LOD2: 4.0, LOD3: 16.0, LOD4: 64.0
 pub fn lod_ratio(lod: u8) -> f64 {
     LOD_CONFIGS[1].hop_size as f64 / LOD_CONFIGS[lod as usize].hop_size as f64
 }

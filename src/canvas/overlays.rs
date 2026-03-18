@@ -919,7 +919,13 @@ pub fn draw_tile_debug_overlay(
         };
         let (displayed_lod, displayed_tile, lod_label, color) = if has_tile(file_idx, ideal_lod, tile_idx) {
             let label = format!("L{ideal_lod}");
-            let c = match ideal_lod { 3 => "#0ff", 2 => "#0f0", 0 => "#ff0", _ => "#48f" };
+            let c = match ideal_lod {
+                4 => "#f6f",
+                3 => "#0ff",
+                2 => "#0f0",
+                0 => "#ff0",
+                _ => "#48f",
+            };
             (ideal_lod, tile_idx, label, c)
         } else if if flow_on {
             tile_cache::flow_tile_active(file_idx, ideal_lod, tile_idx)
@@ -940,7 +946,13 @@ pub fn draw_tile_debug_overlay(
             match found {
                 Some((l, ft)) => {
                     let label = format!("L{l}fb");
-                    let c = match l { 0 => "#ff0", 1 => "#48f", 2 => "#0f0", _ => "#0ff" };
+                    let c = match l {
+                        0 => "#ff0",
+                        1 => "#48f",
+                        2 => "#0f0",
+                        3 => "#0ff",
+                        _ => "#f6f",
+                    };
                     (l, ft, label, c)
                 }
                 None => (255, 0, "--".to_string(), "#f44"),
