@@ -998,7 +998,7 @@ impl AppState {
             files: RwSignal::new(Vec::new()),
             current_file_index: RwSignal::new(None),
             file_sort_mode: RwSignal::new(FileSortMode::AddOrder),
-            show_file_previews: RwSignal::new(true),
+            show_file_previews: RwSignal::new(false),
             selection: RwSignal::new(None),
             playback_mode: RwSignal::new(PlaybackMode::Normal),
             het_frequency: RwSignal::new(45_000.0),
