@@ -897,6 +897,11 @@ pub fn draw_tile_debug_overlay(
 
     let first_tile = (vis_start_lod / tile_cache::TILE_COLS as f64).floor() as usize;
     let last_tile = ((vis_end_lod - 0.001).max(0.0) / tile_cache::TILE_COLS as f64).floor() as usize;
+    let stats = if flow_on {
+        tile_cache::flow_debug_stats(file_idx, ideal_lod, first_tile, last_tile)
+    } else {
+        tile_cache::magnitude_debug_stats(file_idx, ideal_lod, first_tile, last_tile)
+    };
 
     ctx.save();
     ctx.set_line_width(1.0);
@@ -916,6 +921,12 @@ pub fn draw_tile_debug_overlay(
             let label = format!("L{ideal_lod}");
             let c = match ideal_lod { 3 => "#0ff", 2 => "#0f0", 0 => "#ff0", _ => "#48f" };
             (ideal_lod, tile_idx, label, c)
+        } else if if flow_on {
+            tile_cache::flow_tile_active(file_idx, ideal_lod, tile_idx)
+        } else {
+            tile_cache::magnitude_tile_active(file_idx, ideal_lod, tile_idx)
+        } {
+            (ideal_lod, tile_idx, "..".to_string(), "#fa0")
         } else {
             // Check fallback LODs
             let mut found = None;
@@ -970,7 +981,7 @@ pub fn draw_tile_debug_overlay(
         // Draw label background (three lines)
         let label = format!("T{tile_idx} {lod_label}");
         let label_x = dx + 3.0;
-        let label_y = 3.0;
+        let label_y = 20.0;
         ctx.set_fill_style_str("rgba(0,0,0,0.6)");
         ctx.fill_rect(label_x - 1.0, label_y - 1.0, 100.0, 40.0);
 
@@ -985,15 +996,26 @@ pub fn draw_tile_debug_overlay(
         let _ = ctx.fill_text(&tex_line, label_x, label_y + 26.0);
     }
 
-    // Draw zoom level + ideal LOD + resolution in top-right corner
+    // Draw telemetry panel in bottom-right so it doesn't overlap tile labels.
     let ideal_hop = tile_cache::LOD_CONFIGS[ideal_lod as usize].hop_size;
     let actual_fft = user_fft.max(ideal_hop);
-    let zoom_label = format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}");
-    let label_w = 220.0;
+    let panel_lines = [
+        format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}"),
+        format!("visible c:{} f:{} m:{}", stats.visible_cached, stats.visible_in_flight, stats.visible_missing),
+        format!("cache {} / {} tiles", stats.total_cached, stats.total_in_flight),
+        format!("mem {:.1} / {:.0} MB", stats.used_bytes as f64 / 1_048_576.0, stats.max_bytes as f64 / 1_048_576.0),
+        format!("range T{first_tile}..T{last_tile}"),
+    ];
+    let label_w = 228.0;
+    let label_h = 14.0 * panel_lines.len() as f64 + 6.0;
+    let panel_x = cw - label_w - 6.0;
+    let panel_y = (ch - label_h - 6.0).max(3.0);
     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-    ctx.fill_rect(cw - label_w - 3.0, 3.0, label_w, 14.0);
-    ctx.set_fill_style_str("#fff");
-    let _ = ctx.fill_text(&zoom_label, cw - label_w - 1.0, 4.0);
+    ctx.fill_rect(panel_x, panel_y, label_w, label_h);
+    for (idx, line) in panel_lines.iter().enumerate() {
+        ctx.set_fill_style_str(if idx == 1 && stats.visible_missing > 0 { "#f88" } else { "#fff" });
+        let _ = ctx.fill_text(line, panel_x + 4.0, panel_y + 3.0 + idx as f64 * 14.0);
+    }
 
     ctx.restore();
 }

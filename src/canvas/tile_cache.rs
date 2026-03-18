@@ -15,7 +15,7 @@
 //! The cache uses an LRU eviction policy capped at `MAX_BYTES` total pixel storage.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -27,8 +27,14 @@ use crate::audio::streaming_source;
 /// Number of spectrogram columns per tile (constant across all LODs).
 pub const TILE_COLS: usize = 256;
 
-/// ~120 MB cap for tile pixel data.
-const MAX_BYTES: usize = 120 * 1024 * 1024;
+/// Main magnitude spectrogram cache budget.
+const MAGNITUDE_MAX_BYTES: usize = 256 * 1024 * 1024;
+/// Flow cache budget.
+const FLOW_MAX_BYTES: usize = 120 * 1024 * 1024;
+/// Reassignment cache budget.
+const REASSIGN_MAX_BYTES: usize = 120 * 1024 * 1024;
+/// Chromagram cache budget.
+const CHROMA_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum time (ms) a tile can be in-flight before being considered stuck.
 const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
@@ -105,38 +111,75 @@ pub struct Tile {
     pub file_idx: usize,
     pub lod: u8,
     pub rendered: PreRendered,
+    lru_stamp: u64,
 }
 
 struct TileCache {
     tiles: HashMap<CacheKey, Tile>,
-    /// LRU order: front = oldest, back = most recently used
-    lru: Vec<CacheKey>,
+    /// LRU order with lazy stale-entry skipping.
+    lru: VecDeque<(CacheKey, u64)>,
     total_bytes: usize,
+    max_bytes: usize,
+    next_stamp: u64,
 }
 
 impl TileCache {
-    fn new() -> Self {
-        Self { tiles: HashMap::new(), lru: Vec::new(), total_bytes: 0 }
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            tiles: HashMap::new(),
+            lru: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes,
+            next_stamp: 0,
+        }
+    }
+
+    fn allocate_stamp(&mut self) -> u64 {
+        self.next_stamp = self.next_stamp.wrapping_add(1);
+        self.next_stamp
+    }
+
+    fn maybe_compact_lru(&mut self) {
+        let threshold = self.tiles.len().saturating_mul(8).max(1024);
+        if self.lru.len() <= threshold {
+            return;
+        }
+
+        let mut entries: Vec<(u64, CacheKey)> = self.tiles
+            .iter()
+            .map(|(&key, tile)| (tile.lru_stamp, key))
+            .collect();
+        entries.sort_by_key(|(stamp, _)| *stamp);
+        self.lru = entries.into_iter().map(|(stamp, key)| (key, stamp)).collect();
+    }
+
+    fn evict_to_fit(&mut self, incoming_bytes: usize) {
+        while self.total_bytes + incoming_bytes > self.max_bytes {
+            let Some((oldest, stamp)) = self.lru.pop_front() else { break };
+            let should_evict = self.tiles
+                .get(&oldest)
+                .map(|tile| tile.lru_stamp == stamp)
+                .unwrap_or(false);
+            if should_evict {
+                if let Some(evicted) = self.tiles.remove(&oldest) {
+                    self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
+                }
+            }
+        }
     }
 
     fn insert(&mut self, file_idx: usize, lod: u8, tile_idx: usize, rendered: PreRendered) {
         let key = (file_idx, lod, tile_idx);
         let bytes = rendered.byte_len();
-        // Remove old entry if replacing
         if let Some(old) = self.tiles.remove(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
-            self.lru.retain(|k| k != &key);
         }
-        // Evict until under cap
-        while self.total_bytes + bytes > MAX_BYTES && !self.lru.is_empty() {
-            let oldest = self.lru.remove(0);
-            if let Some(evicted) = self.tiles.remove(&oldest) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
+        self.evict_to_fit(bytes);
+        let stamp = self.allocate_stamp();
         self.total_bytes += bytes;
-        self.tiles.insert(key, Tile { tile_idx, file_idx, lod, rendered });
-        self.lru.push(key);
+        self.tiles.insert(key, Tile { tile_idx, file_idx, lod, rendered, lru_stamp: stamp });
+        self.lru.push_back((key, stamp));
+        self.maybe_compact_lru();
     }
 
     fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<&Tile> {
@@ -144,8 +187,12 @@ impl TileCache {
     }
 
     fn touch(&mut self, key: CacheKey) {
-        self.lru.retain(|k| k != &key);
-        self.lru.push(key);
+        let stamp = self.allocate_stamp();
+        if let Some(tile) = self.tiles.get_mut(&key) {
+            tile.lru_stamp = stamp;
+            self.lru.push_back((key, stamp));
+            self.maybe_compact_lru();
+        }
     }
 
     fn evict_far_from(&mut self, file_idx: usize, lod: u8, center_tile: usize, keep_radius: usize) {
@@ -157,7 +204,6 @@ impl TileCache {
         for key in keys_to_evict {
             if let Some(evicted) = self.tiles.remove(&key) {
                 self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                self.lru.retain(|k| k != &key);
             }
         }
     }
@@ -167,7 +213,6 @@ impl TileCache {
         for key in keys {
             if let Some(evicted) = self.tiles.remove(&key) {
                 self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                self.lru.retain(|k| k != &key);
             }
         }
     }
@@ -186,13 +231,55 @@ type ChromaKey = (usize, usize);
 
 struct ChromaTileCache {
     tiles: HashMap<ChromaKey, Tile>,
-    lru: Vec<ChromaKey>,
+    lru: VecDeque<(ChromaKey, u64)>,
     total_bytes: usize,
+    max_bytes: usize,
+    next_stamp: u64,
 }
 
 impl ChromaTileCache {
-    fn new() -> Self {
-        Self { tiles: HashMap::new(), lru: Vec::new(), total_bytes: 0 }
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            tiles: HashMap::new(),
+            lru: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes,
+            next_stamp: 0,
+        }
+    }
+
+    fn allocate_stamp(&mut self) -> u64 {
+        self.next_stamp = self.next_stamp.wrapping_add(1);
+        self.next_stamp
+    }
+
+    fn maybe_compact_lru(&mut self) {
+        let threshold = self.tiles.len().saturating_mul(8).max(512);
+        if self.lru.len() <= threshold {
+            return;
+        }
+
+        let mut entries: Vec<(u64, ChromaKey)> = self.tiles
+            .iter()
+            .map(|(&key, tile)| (tile.lru_stamp, key))
+            .collect();
+        entries.sort_by_key(|(stamp, _)| *stamp);
+        self.lru = entries.into_iter().map(|(stamp, key)| (key, stamp)).collect();
+    }
+
+    fn evict_to_fit(&mut self, incoming_bytes: usize) {
+        while self.total_bytes + incoming_bytes > self.max_bytes {
+            let Some((oldest, stamp)) = self.lru.pop_front() else { break };
+            let should_evict = self.tiles
+                .get(&oldest)
+                .map(|tile| tile.lru_stamp == stamp)
+                .unwrap_or(false);
+            if should_evict {
+                if let Some(evicted) = self.tiles.remove(&oldest) {
+                    self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
+                }
+            }
+        }
     }
 
     fn insert(&mut self, file_idx: usize, tile_idx: usize, rendered: PreRendered) {
@@ -200,17 +287,13 @@ impl ChromaTileCache {
         let bytes = rendered.byte_len();
         if let Some(old) = self.tiles.remove(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
-            self.lru.retain(|k| k != &key);
         }
-        while self.total_bytes + bytes > MAX_BYTES && !self.lru.is_empty() {
-            let oldest = self.lru.remove(0);
-            if let Some(evicted) = self.tiles.remove(&oldest) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
+        self.evict_to_fit(bytes);
+        let stamp = self.allocate_stamp();
         self.total_bytes += bytes;
-        self.tiles.insert(key, Tile { tile_idx, file_idx, lod: 1, rendered });
-        self.lru.push(key);
+        self.tiles.insert(key, Tile { tile_idx, file_idx, lod: 1, rendered, lru_stamp: stamp });
+        self.lru.push_back((key, stamp));
+        self.maybe_compact_lru();
     }
 
     fn get(&self, file_idx: usize, tile_idx: usize) -> Option<&Tile> {
@@ -218,14 +301,18 @@ impl ChromaTileCache {
     }
 
     fn touch(&mut self, key: ChromaKey) {
-        self.lru.retain(|k| k != &key);
-        self.lru.push(key);
+        let stamp = self.allocate_stamp();
+        if let Some(tile) = self.tiles.get_mut(&key) {
+            tile.lru_stamp = stamp;
+            self.lru.push_back((key, stamp));
+            self.maybe_compact_lru();
+        }
     }
 }
 
 thread_local! {
     /// Unified magnitude tile cache — all LOD levels in one cache.
-    static CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(MAGNITUDE_MAX_BYTES));
     /// Map of (file_idx, lod, tile_idx) → timestamp (ms) for tiles currently being generated.
     /// Entries older than IN_FLIGHT_TIMEOUT_MS are considered stuck and can be re-scheduled.
     static IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
@@ -236,17 +323,17 @@ thread_local! {
     static CACHE_GENERATION: RefCell<u64> = RefCell::new(0);
 
     /// Flow-mode tile cache — multi-LOD, same CacheKey as magnitude tiles.
-    static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(FLOW_MAX_BYTES));
     static FLOW_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
         RefCell::new(HashMap::new());
 
     /// Reassignment spectrogram tile cache — multi-LOD, same CacheKey as magnitude tiles.
-    static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new());
+    static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(REASSIGN_MAX_BYTES));
     static REASSIGN_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
         RefCell::new(HashMap::new());
 
     /// Chromagram tile cache (LOD1-only).
-    static CHROMA_CACHE: RefCell<ChromaTileCache> = RefCell::new(ChromaTileCache::new());
+    static CHROMA_CACHE: RefCell<ChromaTileCache> = RefCell::new(ChromaTileCache::new(CHROMA_MAX_BYTES));
     static CHROMA_IN_FLIGHT: RefCell<HashMap<ChromaKey, f64>> =
         RefCell::new(HashMap::new());
 
@@ -331,7 +418,6 @@ pub fn evict_far_multi(file_idx: usize, lod: u8, centers: &[(usize, usize)]) {
         for key in to_evict {
             if let Some(evicted) = cache.tiles.remove(&key) {
                 cache.total_bytes = cache.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                cache.lru.retain(|k| k != &key);
             }
         }
     });
@@ -375,7 +461,119 @@ pub fn count_missing_visible(file_idx: usize, lod: u8, first_tile: usize, last_t
 
 /// Returns (used_bytes, max_bytes) for the magnitude tile cache.
 pub fn cache_usage() -> (usize, usize) {
-    CACHE.with(|c| (c.borrow().total_bytes, MAX_BYTES))
+    CACHE.with(|c| {
+        let cache = c.borrow();
+        (cache.total_bytes, cache.max_bytes)
+    })
+}
+
+#[derive(Clone, Copy)]
+pub struct TileDebugStats {
+    pub visible_cached: usize,
+    pub visible_in_flight: usize,
+    pub visible_missing: usize,
+    pub total_cached: usize,
+    pub total_in_flight: usize,
+    pub used_bytes: usize,
+    pub max_bytes: usize,
+}
+
+fn collect_debug_stats<K>(
+    tiles_len: usize,
+    inflight: &mut HashMap<K, f64>,
+    visible_keys: impl Iterator<Item = K>,
+    contains_tile: impl Fn(&K) -> bool,
+) -> TileDebugStats
+where
+    K: Eq + std::hash::Hash + Copy,
+{
+    let mut visible_cached = 0usize;
+    let mut visible_in_flight = 0usize;
+    let mut visible_missing = 0usize;
+
+    for key in visible_keys {
+        if contains_tile(&key) {
+            visible_cached += 1;
+        } else if has_active_in_flight(inflight, &key) {
+            visible_in_flight += 1;
+        } else {
+            visible_missing += 1;
+        }
+    }
+
+    let inflight_keys: Vec<K> = inflight.keys().copied().collect();
+    let total_in_flight = inflight_keys
+        .into_iter()
+        .filter(|key| has_active_in_flight(inflight, key))
+        .count();
+
+    TileDebugStats {
+        visible_cached,
+        visible_in_flight,
+        visible_missing,
+        total_cached: tiles_len,
+        total_in_flight,
+        used_bytes: 0,
+        max_bytes: 0,
+    }
+}
+
+pub fn magnitude_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
+    CACHE.with(|c| {
+        let cache = c.borrow();
+        IN_FLIGHT.with(|s| {
+            let mut inflight = s.borrow_mut();
+            let mut stats = collect_debug_stats(
+                cache.tiles.len(),
+                &mut inflight,
+                (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
+                |key| cache.tiles.contains_key(key),
+            );
+            stats.used_bytes = cache.total_bytes;
+            stats.max_bytes = cache.max_bytes;
+            stats
+        })
+    })
+}
+
+pub fn flow_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
+    FLOW_CACHE.with(|c| {
+        let cache = c.borrow();
+        FLOW_IN_FLIGHT.with(|s| {
+            let mut inflight = s.borrow_mut();
+            let mut stats = collect_debug_stats(
+                cache.tiles.len(),
+                &mut inflight,
+                (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
+                |key| cache.tiles.contains_key(key),
+            );
+            stats.used_bytes = cache.total_bytes;
+            stats.max_bytes = cache.max_bytes;
+            stats
+        })
+    })
+}
+
+pub fn magnitude_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
+    let key = (file_idx, lod, tile_idx);
+    IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key))
+}
+
+pub fn flow_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
+    let key = (file_idx, lod, tile_idx);
+    FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key))
+}
+
+fn magnitude_request_still_active(key: &CacheKey) -> bool {
+    IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+}
+
+fn flow_request_still_active(key: &CacheKey) -> bool {
+    FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+}
+
+fn reassign_request_still_active(key: &CacheKey) -> bool {
+    REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
 }
 
 /// Returns the number of complete LOD1 tiles for a file currently in the cache.
@@ -419,14 +617,24 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
+
         // Extra yields for expensive LODs (LOD2, LOD3) and non-current files
         if lod >= 2 {
             yield_to_browser().await;
+            if !magnitude_request_still_active(&key) {
+                return;
+            }
         }
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
+                if !magnitude_request_still_active(&key) {
+                    return;
+                }
             }
         }
 
@@ -464,6 +672,10 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
         // Prefetch for streaming sources
         streaming_source::prefetch_streaming(audio.source.as_ref(), padded_start as u64, padded_len).await;
+
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
 
         let raw_samples = audio.source.read_region(cv, padded_start as u64, padded_len);
 
@@ -527,10 +739,17 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
+
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
+                if !magnitude_request_still_active(&key) {
+                    return;
+                }
             }
         }
 
@@ -676,6 +895,10 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
+
         // Defer while audio is playing — playback chunk processing needs
         // uncontested CPU and I/O to avoid gaps
         if state.is_playing.get_untracked() {
@@ -687,6 +910,9 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
+                if !magnitude_request_still_active(&key) {
+                    return;
+                }
             }
         }
 
@@ -843,6 +1069,10 @@ pub fn schedule_tile_on_demand(
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
+
         // Defer while audio is playing — playback needs uncontested I/O and CPU
         if state.is_playing.get_untracked() {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
@@ -853,6 +1083,9 @@ pub fn schedule_tile_on_demand(
         if !is_current {
             for _ in 0..3 {
                 yield_to_browser().await;
+                if !magnitude_request_still_active(&key) {
+                    return;
+                }
             }
         }
 
@@ -875,6 +1108,10 @@ pub fn schedule_tile_on_demand(
 
         // Prefetch for streaming sources
         streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
+
+        if !magnitude_request_still_active(&key) {
+            return;
+        }
 
         let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
         let cols = compute_stft_columns(&samples, audio.sample_rate, fft_size, hop_size, 0, TILE_COLS);
@@ -959,13 +1196,25 @@ pub fn schedule_flow_tile(
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !flow_request_still_active(&key) {
+            return;
+        }
+
         // Extra yields for expensive LODs and non-current files
         if lod >= 2 {
             yield_to_browser().await;
+            if !flow_request_still_active(&key) {
+                return;
+            }
         }
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
-            for _ in 0..3 { yield_to_browser().await; }
+            for _ in 0..3 {
+                yield_to_browser().await;
+                if !flow_request_still_active(&key) {
+                    return;
+                }
+            }
         }
 
         let audio = state.files.with_untracked(|files| {
@@ -990,6 +1239,10 @@ pub fn schedule_flow_tile(
                 // Prefetch for streaming sources
                 streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
+                if !flow_request_still_active(&key) {
+                    return;
+                }
+
                 let total = audio.source.total_samples() as usize;
                 let sample_end = (sample_start + sample_len).min(total);
                 if sample_start >= total || sample_start >= sample_end {
@@ -1001,6 +1254,10 @@ pub fn schedule_flow_tile(
                 let samples = &ch_samples[..];
 
                 yield_to_browser().await;
+
+                if !flow_request_still_active(&key) {
+                    return;
+                }
 
                 if algo == FlowAlgo::Phase {
                     harmonics::compute_tile_phase_angle_data(
@@ -1022,6 +1279,10 @@ pub fn schedule_flow_tile(
 
                 streaming_source::prefetch_streaming(audio.source.as_ref(), region_sample_start as u64, region_sample_len).await;
 
+                if !flow_request_still_active(&key) {
+                    return;
+                }
+
                 let region_samples = audio.source.read_region(cv, region_sample_start as u64, region_sample_len);
 
                 let prev_col = if extra_cols > 0 {
@@ -1034,6 +1295,10 @@ pub fn schedule_flow_tile(
                 };
 
                 yield_to_browser().await;
+
+                if !flow_request_still_active(&key) {
+                    return;
+                }
 
                 let cols = compute_stft_columns(
                     &region_samples, audio.sample_rate, actual_fft, config_hop, extra_cols, TILE_COLS,
@@ -1117,13 +1382,31 @@ pub fn schedule_reassign_tile(
     spawn_local(async move {
         yield_to_browser().await;
 
+        if !reassign_request_still_active(&key) {
+            return;
+        }
+
         // Extra yields: 3x FFT cost + expensive LODs
-        if lod >= 2 { yield_to_browser().await; }
+        if lod >= 2 {
+            yield_to_browser().await;
+            if !reassign_request_still_active(&key) {
+                return;
+            }
+        }
         yield_to_browser().await;
+
+        if !reassign_request_still_active(&key) {
+            return;
+        }
 
         let is_current = state.current_file_index.get_untracked() == Some(file_idx);
         if !is_current {
-            for _ in 0..3 { yield_to_browser().await; }
+            for _ in 0..3 {
+                yield_to_browser().await;
+                if !reassign_request_still_active(&key) {
+                    return;
+                }
+            }
         }
 
         let audio = state.files.with_untracked(|files| {
@@ -1141,6 +1424,10 @@ pub fn schedule_reassign_tile(
         // Prefetch for streaming sources
         streaming_source::prefetch_streaming(audio.source.as_ref(), sample_start as u64, sample_len).await;
 
+        if !reassign_request_still_active(&key) {
+            return;
+        }
+
         let total = audio.source.total_samples() as usize;
         let sample_end = (sample_start + sample_len).min(total);
         if sample_start >= total || sample_start >= sample_end {
@@ -1152,6 +1439,10 @@ pub fn schedule_reassign_tile(
         let samples = &ch_samples[..];
 
         yield_to_browser().await;
+
+        if !reassign_request_still_active(&key) {
+            return;
+        }
 
         let rendered = compute_reassigned_tile(
             samples, TILE_COLS, actual_fft, config_hop, -60.0,
@@ -1383,7 +1674,8 @@ fn run_preload_batch(state: AppState, generation: u32) {
 
         // Check if cache is near capacity (stop at 90%)
         let cache_full = CACHE.with(|c| {
-            c.borrow().total_bytes >= MAX_BYTES * 9 / 10
+            let cache = c.borrow();
+            cache.total_bytes >= cache.max_bytes * 9 / 10
         });
         if cache_full { return None; }
 
