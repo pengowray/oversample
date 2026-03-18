@@ -1,14 +1,68 @@
 use leptos::prelude::*;
-use crate::types::AudioData;
 use crate::annotations::AnnotationKind;
 use crate::state::{AppState, Selection, PlaybackMode};
 use crate::audio::streaming_playback::{self, PlaybackParams};
+use crate::audio::source::{AudioSource, TimelineAudioSource};
 use crate::viewport;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 thread_local! {
     static PLAYHEAD_HANDLE: RefCell<Option<i32>> = RefCell::new(None);
     static REPLAY_TIMER: RefCell<Option<i32>> = RefCell::new(None);
+}
+
+struct PlaybackTarget {
+    source: Arc<dyn AudioSource>,
+    sample_rate: u32,
+    duration_secs: f64,
+}
+
+fn timeline_selection(state: &AppState) -> Option<Selection> {
+    state.selection.get_untracked()
+}
+
+fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
+    let files = state.files.get_untracked();
+
+    if let Some(timeline) = state.active_timeline.get_untracked() {
+        let mut sample_rate = None;
+        let mut segments = Vec::with_capacity(timeline.segments.len());
+
+        for seg in &timeline.segments {
+            let file = files.get(seg.file_index)?;
+            let sr = file.audio.sample_rate;
+            if let Some(expected_sr) = sample_rate {
+                if expected_sr != sr {
+                    state.show_error_toast("Timeline playback requires matching sample rates");
+                    return None;
+                }
+            } else {
+                sample_rate = Some(sr);
+            }
+            segments.push((
+                file.audio.source.clone(),
+                seg.timeline_offset_secs,
+                seg.duration_secs,
+            ));
+        }
+
+        let sr = sample_rate?;
+        let source: Arc<dyn AudioSource> = Arc::new(TimelineAudioSource::new(segments, sr));
+        return Some(PlaybackTarget {
+            source,
+            sample_rate: sr,
+            duration_secs: timeline.total_duration_secs,
+        });
+    }
+
+    let idx = state.current_file_index.get_untracked()?;
+    let file = files.get(idx)?;
+    Some(PlaybackTarget {
+        source: file.audio.source.clone(),
+        sample_rate: file.audio.sample_rate,
+        duration_secs: file.audio.duration_secs,
+    })
 }
 
 /// Resolve the effective selection for playback, checking both transient
@@ -17,6 +71,10 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
     // 1. Transient selection takes priority
     if let Some(sel) = state.selection.get_untracked() {
         return Some(sel);
+    }
+
+    if state.active_timeline.get_untracked().is_some() {
+        return None;
     }
 
     // 2. Selected annotations — compute bounding box of all Region annotations
@@ -97,14 +155,12 @@ pub fn replay_live(state: &AppState) {
     cancel_playhead();
     streaming_playback::stop_stream();
 
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let Some(file) = idx.and_then(|i| files.get(i)) else { return };
+    let Some(target) = playback_target(state) else { return; };
 
     let selection = state.active_playback_selection.get_untracked();
-    let sr = file.audio.sample_rate;
-    let total = file.audio.source.total_samples() as usize;
-    let sel_end = selection.map(|s| s.time_end).unwrap_or(file.audio.duration_secs);
+    let sr = target.sample_rate;
+    let total = target.source.total_samples() as usize;
+    let sel_end = selection.map(|s| s.time_end).unwrap_or(target.duration_secs);
     let start_sample = ((current_time * sr as f64) as usize).min(total);
     let end_sample = ((sel_end * sr as f64) as usize).min(total);
 
@@ -118,7 +174,7 @@ pub fn replay_live(state: &AppState) {
     let channel_view = state.channel_view.get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
-        file.audio.source.clone(),
+        target.source,
         channel_view,
         sr,
         start_sample,
@@ -189,21 +245,31 @@ pub fn play_from_here(state: &AppState) {
 }
 
 fn current_play_from_here_time(state: &AppState) -> f64 {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let Some(file) = idx.and_then(|i| files.get(i)) else {
+    let Some(target) = playback_target(state) else {
         return state.play_from_here_time.get_untracked();
     };
 
     let canvas_width = state.spectrogram_canvas_width.get_untracked();
     let zoom = state.zoom_level.get_untracked();
     let scroll = state.scroll_offset.get_untracked();
-    let visible_time = viewport::visible_time(canvas_width, zoom, file.spectrogram.time_resolution);
+    let time_res = if let Some(ref tl) = state.active_timeline.get_untracked() {
+        let files = state.files.get_untracked();
+        tl.segments.first().and_then(|s| files.get(s.file_index))
+            .map(|f| f.spectrogram.time_resolution)
+            .unwrap_or(1.0)
+    } else {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        idx.and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.time_resolution)
+            .unwrap_or(1.0)
+    };
+    let visible_time = viewport::visible_time(canvas_width, zoom, time_res);
 
     if visible_time <= 0.0 {
         state.play_from_here_time.get_untracked()
     } else {
-        viewport::play_from_here_time(scroll, visible_time).clamp(0.0, file.audio.duration_secs)
+        viewport::play_from_here_time(scroll, visible_time).clamp(0.0, target.duration_secs)
     }
 }
 
@@ -216,13 +282,11 @@ pub fn play_from_time(state: &AppState, start_secs: f64) {
 
 /// Inner implementation: play from `start_secs` to `sel_end` (or end of file).
 fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Selection>) {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let Some(file) = idx.and_then(|i| files.get(i)) else { return };
+    let Some(target) = playback_target(state) else { return; };
 
-    let sr = file.audio.sample_rate;
-    let total = file.audio.source.total_samples() as usize;
-    let end_secs = selection.map(|s| s.time_end).unwrap_or(file.audio.duration_secs);
+    let sr = target.sample_rate;
+    let total = target.source.total_samples() as usize;
+    let end_secs = selection.map(|s| s.time_end).unwrap_or(target.duration_secs);
     let start_secs = start_secs.max(0.0).min(end_secs);
     let start_sample = (start_secs * sr as f64) as usize;
     let end_sample = ((end_secs * sr as f64) as usize).min(total);
@@ -237,7 +301,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     let channel_view = state.channel_view.get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
-        file.audio.source.clone(),
+        target.source,
         channel_view,
         sr,
         start_sample,
@@ -267,14 +331,16 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
 pub fn play(state: &AppState) {
     stop(state);
 
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let Some(file) = idx.and_then(|i| files.get(i)) else { return };
+    let Some(target) = playback_target(state) else { return; };
 
-    let selection = effective_selection(state);
-    let sr = file.audio.sample_rate;
+    let selection = if state.active_timeline.get_untracked().is_some() {
+        timeline_selection(state)
+    } else {
+        effective_selection(state)
+    };
+    let sr = target.sample_rate;
 
-    let (start_sample, end_sample) = extract_selection_range(&file.audio, selection);
+    let (start_sample, end_sample) = extract_selection_range(sr, target.source.total_samples() as usize, selection);
     if end_sample <= start_sample { return; }
 
     let params = snapshot_params(state, selection, sr);
@@ -283,7 +349,7 @@ pub fn play(state: &AppState) {
     let channel_view = state.channel_view.get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
-        file.audio.source.clone(),
+        target.source,
         channel_view,
         sr,
         start_sample,
@@ -308,9 +374,8 @@ pub fn play(state: &AppState) {
 }
 
 /// Returns (start_sample, end_sample) for the current selection or full file.
-fn extract_selection_range(audio: &AudioData, selection: Option<Selection>) -> (usize, usize) {
-    let sr = audio.sample_rate;
-    let total = audio.source.total_samples() as usize;
+fn extract_selection_range(sample_rate: u32, total: usize, selection: Option<Selection>) -> (usize, usize) {
+    let sr = sample_rate;
     if let Some(sel) = selection {
         let start = ((sel.time_start * sr as f64) as usize).min(total);
         let end = ((sel.time_end * sr as f64) as usize).min(total);

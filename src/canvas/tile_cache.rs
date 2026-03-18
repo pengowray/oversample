@@ -24,6 +24,7 @@ use crate::canvas::spectrogram_renderer::{self, PreRendered, FlowAlgo};
 use crate::state::{AppState, LoadedFile, PlaybackMode};
 use crate::audio::streaming_playback::PV_HQ_OVERLAP;
 use crate::audio::streaming_source;
+use crate::viewport;
 
 /// Number of spectrogram columns per tile (constant across all LODs).
 pub const TILE_COLS: usize = 256;
@@ -40,13 +41,103 @@ const CHROMA_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum time (ms) a tile can be in-flight before being considered stuck.
 const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
 
-/// Check if a file is the "current" file (selected or part of the active timeline).
-/// Used to prioritise tile generation — current files skip extra yield delays.
-fn is_current_file(state: &AppState, file_idx: usize) -> bool {
-    state.current_file_index.get_untracked() == Some(file_idx)
-        || state.active_timeline.with_untracked(|tl| {
-            tl.as_ref().map_or(false, |t| t.segments.iter().any(|s| s.file_index == file_idx))
+fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f64)> {
+    let files = state.files.get_untracked();
+    let file = files.get(file_idx)?;
+    let file_time_res = file.spectrogram.time_resolution;
+    let file_duration = file.audio.duration_secs;
+    let scroll = state.scroll_offset.get_untracked();
+    let zoom = state.zoom_level.get_untracked();
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+
+    if state.current_file_index.get_untracked() == Some(file_idx) {
+        let visible_time = viewport::visible_time(canvas_w, zoom, file_time_res);
+        return viewport::data_window(scroll, visible_time, file_duration);
+    }
+
+    let timeline = state.active_timeline.get_untracked();
+    let tl = timeline.as_ref()?;
+    let global_time_res = tl.segments.first()
+        .and_then(|s| files.get(s.file_index))
+        .map(|f| f.spectrogram.time_resolution)
+        .unwrap_or(file_time_res);
+    let visible_time = viewport::visible_time(canvas_w, zoom, global_time_res);
+    if visible_time <= 0.0 {
+        return None;
+    }
+    let visible_start = scroll;
+    let visible_end = scroll + visible_time;
+
+    tl.segments.iter()
+        .filter(|seg| seg.file_index == file_idx)
+        .find_map(|seg| {
+            let seg_start = seg.timeline_offset_secs;
+            let seg_end = seg_start + seg.duration_secs;
+            if seg_start >= visible_end || seg_end <= visible_start {
+                return None;
+            }
+            let local_start = (visible_start - seg_start).max(0.0);
+            let local_end = (visible_end - seg_start).min(seg.duration_secs);
+            if local_end > local_start {
+                Some((local_start, local_end))
+            } else {
+                None
+            }
         })
+}
+
+fn visible_tile_focus_for_file(
+    state: &AppState,
+    file_idx: usize,
+    total_cols: usize,
+    time_res: f64,
+) -> Option<(usize, usize, usize)> {
+    if total_cols == 0 || time_res <= 0.0 {
+        return None;
+    }
+
+    let (local_start, local_end) = visible_window_for_file(state, file_idx)?;
+    let max_col = total_cols.saturating_sub(1) as f64;
+    let start_col = (local_start / time_res).clamp(0.0, max_col);
+    let end_col = ((local_end / time_res) - 0.001).clamp(0.0, max_col);
+    if end_col < start_col {
+        return None;
+    }
+
+    let first_tile = (start_col / TILE_COLS as f64).floor() as usize;
+    let last_tile = (end_col / TILE_COLS as f64).floor() as usize;
+    let center_col = ((local_start + local_end) * 0.5 / time_res).clamp(0.0, max_col);
+    let center_tile = (center_col / TILE_COLS as f64).floor() as usize;
+    Some((first_tile, last_tile, center_tile.clamp(first_tile, last_tile)))
+}
+
+fn full_tile_order(n_tiles: usize, center_tile: usize) -> Vec<usize> {
+    if n_tiles == 0 {
+        return Vec::new();
+    }
+
+    let clamped_center = center_tile.min(n_tiles - 1);
+    let mut order = Vec::with_capacity(n_tiles);
+    order.push(clamped_center);
+
+    let mut distance = 1usize;
+    while order.len() < n_tiles {
+        if let Some(left) = clamped_center.checked_sub(distance) {
+            order.push(left);
+        }
+        let right = clamped_center + distance;
+        if right < n_tiles {
+            order.push(right);
+        }
+        distance += 1;
+    }
+
+    order
+}
+
+/// Check if a file is currently visible and should be prioritised.
+fn is_current_file(state: &AppState, file_idx: usize) -> bool {
+    visible_window_for_file(state, file_idx).is_some()
 }
 
 // ── LOD configuration ────────────────────────────────────────────────────────
@@ -831,7 +922,11 @@ pub fn schedule_all_tiles(state: AppState, file: LoadedFile, file_idx: usize) {
     if total_cols == 0 { return; }
     let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
 
-    for tile_idx in 0..n_tiles {
+    let tile_order = visible_tile_focus_for_file(&state, file_idx, total_cols, file.spectrogram.time_resolution)
+        .map(|(_, _, center_tile)| full_tile_order(n_tiles, center_tile))
+        .unwrap_or_else(|| (0..n_tiles).collect());
+
+    for tile_idx in tile_order {
         schedule_tile(state.clone(), file.clone(), file_idx, tile_idx);
     }
 }
@@ -1011,12 +1106,9 @@ pub fn schedule_visible_tiles_from_store(state: AppState, file_idx: usize, total
     let time_res = state.files.with_untracked(|files| {
         files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
     });
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
-    let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-    let center_col = ((scroll + visible_time / 2.0) / time_res) as usize;
-    let center_tile = center_col / TILE_COLS;
+    let center_tile = visible_tile_focus_for_file(&state, file_idx, total_cols, time_res)
+        .map(|(_, _, center_tile)| center_tile)
+        .unwrap_or(0);
 
     let max_schedule = 20.min(n_tiles);
     let mut scheduled = 0;

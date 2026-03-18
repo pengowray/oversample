@@ -10,6 +10,120 @@
 
 use std::sync::Arc;
 
+#[derive(Clone)]
+struct TimelineSourceSegment {
+    source: Arc<dyn AudioSource>,
+    timeline_start_sample: u64,
+    duration_samples: u64,
+}
+
+/// Virtual source that stitches multiple files onto one timeline-local sample axis.
+/// Gaps between segments read as silence.
+pub struct TimelineAudioSource {
+    segments: Vec<TimelineSourceSegment>,
+    sample_rate: u32,
+    channels: u32,
+    total_samples: u64,
+}
+
+impl std::fmt::Debug for TimelineAudioSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimelineAudioSource")
+            .field("segments", &self.segments.len())
+            .field("sample_rate", &self.sample_rate)
+            .field("channels", &self.channels)
+            .field("total_samples", &self.total_samples)
+            .finish()
+    }
+}
+
+impl TimelineAudioSource {
+    pub fn new(segments: Vec<(Arc<dyn AudioSource>, f64, f64)>, sample_rate: u32) -> Self {
+        let mut mapped_segments = Vec::with_capacity(segments.len());
+        let mut channels = 1u32;
+        let mut total_samples = 0u64;
+
+        for (source, timeline_offset_secs, duration_secs) in segments {
+            let timeline_start_sample = (timeline_offset_secs * sample_rate as f64).round().max(0.0) as u64;
+            let duration_samples = (duration_secs * sample_rate as f64).round().max(0.0) as u64;
+            channels = channels.max(source.channel_count());
+            total_samples = total_samples.max(timeline_start_sample.saturating_add(duration_samples));
+            mapped_segments.push(TimelineSourceSegment {
+                source,
+                timeline_start_sample,
+                duration_samples,
+            });
+        }
+
+        Self {
+            segments: mapped_segments,
+            sample_rate,
+            channels,
+            total_samples,
+        }
+    }
+}
+
+impl AudioSource for TimelineAudioSource {
+    fn total_samples(&self) -> u64 {
+        self.total_samples
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn channel_count(&self) -> u32 {
+        self.channels
+    }
+
+    fn read_samples(
+        &self,
+        channel: ChannelView,
+        start: u64,
+        buf: &mut [f32],
+    ) -> usize {
+        if start >= self.total_samples || buf.is_empty() {
+            return 0;
+        }
+
+        let n = buf.len().min((self.total_samples - start) as usize);
+        buf[..n].fill(0.0);
+        let request_end = start + n as u64;
+
+        // Reverse iteration preserves TimelineView::file_at_time semantics: if
+        // segments overlap, the earlier timeline segment wins.
+        for seg in self.segments.iter().rev() {
+            let seg_start = seg.timeline_start_sample;
+            let seg_end = seg_start.saturating_add(seg.duration_samples);
+            let overlap_start = start.max(seg_start);
+            let overlap_end = request_end.min(seg_end);
+            if overlap_end <= overlap_start {
+                continue;
+            }
+
+            let dst_start = (overlap_start - start) as usize;
+            let len = (overlap_end - overlap_start) as usize;
+            let local_start = overlap_start - seg_start;
+            let _ = seg.source.read_samples(channel, local_start, &mut buf[dst_start..dst_start + len]);
+        }
+
+        n
+    }
+
+    fn is_fully_loaded(&self) -> bool {
+        self.segments.iter().all(|seg| seg.source.is_fully_loaded())
+    }
+
+    fn as_contiguous(&self) -> Option<&[f32]> {
+        None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Default analysis window in seconds.
 /// Whole-file analysis operations (auto-gain, wSNR, bit analysis) should
 /// default to scanning only this many seconds from the start of the file,
