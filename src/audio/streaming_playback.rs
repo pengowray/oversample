@@ -479,8 +479,7 @@ async fn process_one_chunk(
             apply_gain(&mut l, global_gain);
             apply_gain(&mut r, global_gain);
             if let Some(agc_cell) = agc {
-                agc_cell.borrow_mut().process(&mut l);
-                agc_cell.borrow_mut().process(&mut r);
+                agc_cell.borrow_mut().process_stereo(&mut l, &mut r);
             }
             (Some(l), Some(r))
         } else {
@@ -515,8 +514,7 @@ async fn process_one_chunk(
             apply_gain(&mut l, global_gain);
             apply_gain(&mut r, global_gain);
             if let Some(agc_cell) = agc {
-                agc_cell.borrow_mut().process(&mut l);
-                agc_cell.borrow_mut().process(&mut r);
+                agc_cell.borrow_mut().process_stereo(&mut l, &mut r);
             }
             (Some(l), Some(r))
         } else {

@@ -131,4 +131,57 @@ impl AgcProcessor {
             }
         }
     }
+
+    /// Process stereo channels with linked envelope detection.
+    /// Uses the louder of the two channels for envelope/gain computation,
+    /// then applies the same gain to both — preserving the stereo image
+    /// and avoiding cross-channel pumping.
+    pub fn process_stereo(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let target = self.config.target_db;
+        let max_boost = self.config.max_boost_db;
+        let max_cut = self.config.max_cut_db;
+        let gate = self.config.gate_threshold_db;
+        let attack = self.attack_coeff;
+        let release = self.release_coeff;
+        let gain_smooth = self.gain_smooth_coeff;
+        let ceiling = self.ceiling_linear;
+
+        let len = left.len().min(right.len());
+        for i in 0..len {
+            // Detect level from the louder channel
+            let abs_val = left[i].abs().max(right[i].abs());
+            let instant_db = if abs_val > 1e-10 {
+                20.0 * (abs_val as f64).log10()
+            } else {
+                -100.0
+            };
+
+            // Smooth envelope
+            if instant_db > self.envelope_db {
+                self.envelope_db = attack * self.envelope_db + (1.0 - attack) * instant_db;
+            } else {
+                self.envelope_db = release * self.envelope_db + (1.0 - release) * instant_db;
+            }
+
+            // Compute desired gain
+            let desired_gain_db = if self.envelope_db < gate {
+                0.0
+            } else {
+                (target - self.envelope_db).clamp(-max_cut, max_boost)
+            };
+
+            // Smooth gain changes
+            self.smooth_gain_db = gain_smooth * self.smooth_gain_db
+                + (1.0 - gain_smooth) * desired_gain_db;
+
+            // Apply same gain to both channels
+            let gain_linear = 10.0_f64.powf(self.smooth_gain_db / 20.0);
+            left[i] = (left[i] as f64 * gain_linear) as f32;
+            right[i] = (right[i] as f64 * gain_linear) as f32;
+
+            // Hard limiter on both
+            left[i] = left[i].clamp(-ceiling, ceiling);
+            right[i] = right[i].clamp(-ceiling, ceiling);
+        }
+    }
 }
