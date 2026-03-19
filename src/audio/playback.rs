@@ -226,7 +226,6 @@ pub fn play_from_start(state: &AppState) {
     let pre = state.scroll_offset.get_untracked();
     stop(state);
     state.pre_play_scroll.set(pre);
-    state.selection.set(None);
     // Use play_from_time_inner directly to avoid double-stop (play() calls stop() again,
     // which would restore scroll_offset to pre_play_scroll, undoing our scroll_offset=0).
     play_from_time_inner(state, 0.0, None);
