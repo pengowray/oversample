@@ -320,20 +320,33 @@ pub fn SelectionComboButton() -> impl IntoView {
                 {move || {
                     if let Some((dur, freq, has_freq)) = selection_details() {
                         let btn_label = if has_freq { "Annotate Region" } else { "Annotate Segment" };
-                        let toggle_label = if has_freq { "Strip freq \u{2192} Segment (Q)" } else { "Add freq \u{2192} Region (Q)" };
                         view! {
                             <div class="layer-panel-title">"Selection"</div>
                             <div style="padding: 4px 8px; font-size: 11px; color: #aaa;">
                                 <div>"Duration: " {dur}</div>
-                                <div>"Freq range: " {freq}</div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    "Freq range: " {freq}
+                                    {if has_freq {
+                                        view! {
+                                            <button class="sel-combo-freq-btn remove"
+                                                title="Remove frequency range (Q)"
+                                                on:click=move |_| toggle_region_segment(&state)
+                                            >{"\u{00D7}"}</button>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <button class="sel-combo-freq-btn add"
+                                                title="Add frequency range from current view (Q)"
+                                                on:click=move |_| toggle_region_segment(&state)
+                                            >{"+"}</button>
+                                        }.into_any()
+                                    }}
+                                </div>
                             </div>
-                            <div style="padding: 4px 8px; display: flex; flex-direction: column; gap: 3px;">
+                            <div style="padding: 4px 8px;">
                                 <button class="sel-combo-action-btn"
                                     on:click=move |_| annotate_selection(&state)
                                 >{btn_label}</button>
-                                <button class="sel-combo-action-btn subtle"
-                                    on:click=move |_| toggle_region_segment(&state)
-                                >{toggle_label}</button>
                             </div>
                             <div class="layer-panel-divider"></div>
                         }.into_any()
@@ -355,7 +368,7 @@ pub fn SelectionComboButton() -> impl IntoView {
 
                         let lock_label = if info.is_locked { "\u{1F512} Unlock" } else { "\u{1F513} Lock" };
                         let new_locked = !info.is_locked;
-                        let toggle_label = if info.has_freq { "Strip freq \u{2192} Segment (Q)" } else { "Add freq \u{2192} Region (Q)" };
+                        let has_freq = info.has_freq;
 
                         if editing.get_untracked() {
                             // Editing mode: show label + tags inputs
@@ -427,7 +440,24 @@ pub fn SelectionComboButton() -> impl IntoView {
                                     {info.duration.as_ref().map(|d| view! {
                                         <div>"Duration: " {d.clone()}</div>
                                     })}
-                                    <div>"Freq range: " {info.freq_range.as_deref().unwrap_or("\u{2014}").to_string()}</div>
+                                    <div style="display: flex; align-items: center; gap: 4px;">
+                                        "Freq range: " {info.freq_range.as_deref().unwrap_or("\u{2014}").to_string()}
+                                        {if has_freq {
+                                            view! {
+                                                <button class="sel-combo-freq-btn remove"
+                                                    title="Remove frequency range (Q)"
+                                                    on:click=move |_| toggle_region_segment(&state)
+                                                >{"\u{00D7}"}</button>
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <button class="sel-combo-freq-btn add"
+                                                    title="Add frequency range from current view (Q)"
+                                                    on:click=move |_| toggle_region_segment(&state)
+                                                >{"+"}</button>
+                                            }.into_any()
+                                        }}
+                                    </div>
                                     {(!info.tags.is_empty()).then(|| view! {
                                         <div style="margin-top: 2px; color: #8cf; font-size: 10px;">{info.tags.join(", ")}</div>
                                     })}
@@ -443,9 +473,6 @@ pub fn SelectionComboButton() -> impl IntoView {
                                             }
                                         >{lock_label}</button>
                                     })}
-                                    <button class="sel-combo-action-btn subtle"
-                                        on:click=move |_| toggle_region_segment(&state)
-                                    >{toggle_label}</button>
                                     <button class="sel-combo-action-btn danger"
                                         on:click=move |_| {
                                             delete_annotation(state, &ann_id_del);

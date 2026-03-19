@@ -886,9 +886,11 @@ pub fn on_mouseup(
         };
         if sel.time_end - sel.time_start > 0.0001 {
             state.selection.set(Some(sel));
-            if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
-                if hi - lo > 100.0 {
-                    state.set_ff_range(lo, hi);
+            if state.annotation_auto_focus.get_untracked() {
+                if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                    if hi - lo > 100.0 {
+                        state.set_ff_range(lo, hi);
+                    }
                 }
             }
         } else {
@@ -1387,8 +1389,8 @@ pub fn on_touchend(
             }
         }
 
-        // Update frequency focus from selection
-        if state.canvas_tool.get_untracked() == CanvasTool::Selection {
+        // Update frequency focus from selection (if auto-focus enabled)
+        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.annotation_auto_focus.get_untracked() {
             if let Some(sel) = state.selection.get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {

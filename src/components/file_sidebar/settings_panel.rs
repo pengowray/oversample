@@ -462,18 +462,6 @@ fn AnnotationsList() -> impl IntoView {
                 }}
             </button>
         </div>
-        <div class="setting-row" style="gap: 4px; align-items: center; padding: 0 8px;">
-            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                <input type="checkbox"
-                    prop:checked=move || state.export_use_region_focus.get()
-                    on:change=move |ev| {
-                        let checked = leptos::prelude::event_target_checked(&ev);
-                        state.export_use_region_focus.set(checked);
-                    }
-                />
-                "Use region frequency focus"
-            </label>
-        </div>
         <div class="setting-row" style="gap: 4px;">
             <button
                 class="sidebar-btn"
