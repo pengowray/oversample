@@ -270,6 +270,44 @@ pub fn App() -> impl IntoView {
         state.flow_enabled.set(is_flow);
     });
 
+    // Keep scroll valid for the active file/timeline when the viewport, zoom,
+    // or target duration changes. Without this, switching to a shorter file or
+    // resizing while a non-spectrogram view is active can leave scroll outside
+    // the valid data window and the waveform view renders a blank canvas.
+    Effect::new(move |_| {
+        let scroll = state.scroll_offset.get();
+        let zoom = state.zoom_level.get();
+        let canvas_w = state.spectrogram_canvas_width.get();
+        let from_here_mode = state.play_start_mode.get() == PlayStartMode::FromHere;
+        let timeline = state.active_timeline.get();
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+
+        let (time_res, duration) = if let Some(ref tl) = timeline {
+            let time_res = tl
+                .segments
+                .first()
+                .and_then(|seg| files.get(seg.file_index))
+                .map(|file| file.spectrogram.time_resolution)
+                .unwrap_or(1.0);
+            (time_res, tl.total_duration_secs)
+        } else {
+            idx.and_then(|i| files.get(i))
+                .map(|file| (file.spectrogram.time_resolution, file.audio.duration_secs))
+                .unwrap_or((1.0, 0.0))
+        };
+
+        let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
+        if visible_time <= 0.0 {
+            return;
+        }
+
+        let clamped = viewport::clamp_scroll_for_mode(scroll, duration, visible_time, from_here_mode);
+        if (clamped - scroll).abs() > f64::EPSILON {
+            state.scroll_offset.set(clamped);
+        }
+    });
+
     // Sync focus_stack → ff_freq_lo/hi + hfr_enabled output signals.
     // This keeps downstream Effects (B, C, D in hfr_button) working unchanged.
     Effect::new(move |_| {

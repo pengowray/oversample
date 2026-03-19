@@ -130,6 +130,7 @@ pub fn Waveform() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
+        state.spectrogram_canvas_width.set(display_w as f64);
 
         let ctx = canvas
             .get_context("2d")
