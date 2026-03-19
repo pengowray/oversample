@@ -287,6 +287,16 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    // Keep annotation-driven FF in sync regardless of whether selection happened
+    // from the sidebar or directly on the canvas.
+    Effect::new(move |_| {
+        let _ = state.current_file_index.get();
+        let _ = state.annotation_auto_focus.get();
+        let _ = state.selected_annotation_ids.get();
+        let _ = state.annotation_store.get();
+        state.sync_annotation_auto_focus();
+    });
+
     // Resolve display filter modes → effective display_* booleans.
     // When the DSP panel is enabled, the per-stage modes drive the existing
     // display_auto_gain / display_eq / display_noise_filter signals.

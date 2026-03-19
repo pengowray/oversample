@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::audio::source::ChannelView;
 use crate::canvas::spectrogram_renderer::Colormap;
+use crate::annotations::AnnotationKind;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
 use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 
@@ -1158,7 +1159,7 @@ impl AppState {
             annotations_dirty: RwSignal::new(false),
             selected_annotation_ids: RwSignal::new(Vec::new()),
             last_clicked_annotation_id: RwSignal::new(None),
-            annotation_auto_focus: RwSignal::new(true),
+            annotation_auto_focus: RwSignal::new(false),
             export_use_region_focus: RwSignal::new(true),
             dragging_annotation_id: RwSignal::new(None),
             drop_target: RwSignal::new(None),
@@ -1541,6 +1542,66 @@ impl AppState {
         self.min_display_freq.set(None);
         self.max_display_freq.set(None);
         self.sync_focus_outputs();
+    }
+
+    /// Frequency bounds implied by the current annotation selection, if any.
+    pub fn selected_annotation_focus_range(&self) -> Option<(f64, f64)> {
+        let idx = self.current_file_index.get_untracked()?;
+        let ids = self.selected_annotation_ids.get_untracked();
+        if ids.is_empty() {
+            return None;
+        }
+
+        let store = self.annotation_store.get_untracked();
+        let set = store.sets.get(idx)?.as_ref()?;
+
+        let mut freq_lo = f64::MAX;
+        let mut freq_hi = f64::MIN;
+        let mut found = false;
+
+        for ann in &set.annotations {
+            if !ids.contains(&ann.id) {
+                continue;
+            }
+
+            let range = match &ann.kind {
+                AnnotationKind::Region(region) => match (region.freq_low, region.freq_high) {
+                    (Some(lo), Some(hi)) => Some((lo.min(hi), lo.max(hi))),
+                    _ => None,
+                },
+                AnnotationKind::Measurement(measurement) => Some((
+                    measurement.start_freq.min(measurement.end_freq),
+                    measurement.start_freq.max(measurement.end_freq),
+                )),
+                _ => None,
+            };
+
+            if let Some((lo, hi)) = range {
+                freq_lo = freq_lo.min(lo);
+                freq_hi = freq_hi.max(hi);
+                found = true;
+            }
+        }
+
+        if found && freq_hi - freq_lo > 100.0 {
+            Some((freq_lo, freq_hi))
+        } else {
+            None
+        }
+    }
+
+    /// Keep the annotation focus override in sync with the current selection.
+    pub fn sync_annotation_auto_focus(&self) {
+        if !self.annotation_auto_focus.get_untracked() {
+            self.pop_annotation_ff();
+            return;
+        }
+
+        if let Some((lo, hi)) = self.selected_annotation_focus_range() {
+            self.push_annotation_ff(lo, hi);
+        } else {
+            self.pop_annotation_ff();
+        }
     }
 
     /// Toggle HFR on/off. Saves/restores playback mode and bandpass.

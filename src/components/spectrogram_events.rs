@@ -465,9 +465,10 @@ pub fn on_mousedown(
         }
     }
 
-    // Check for annotation body click-to-select
-    // For Hand tool: defer selection to mouseup so panning takes priority over annotation selection
-    if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+    // Check for annotation body click-to-select only in Hand mode.
+    // In Selection mode, allow drags to start on top of existing annotations.
+    if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+        if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
         let store = state.annotation_store.get_untracked();
         if let Some(Some(set)) = store.sets.get(file_idx) {
@@ -488,29 +489,12 @@ pub fn on_mousedown(
                     set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
                 ) {
                     let ctrl = ev.ctrl_key() || ev.meta_key();
-                    if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                        // Defer annotation selection — panning takes priority
-                        ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
-                    } else {
-                        if ctrl {
-                            // Toggle in/out of selection
-                            state.selected_annotation_ids.update(|ids| {
-                                if let Some(pos) = ids.iter().position(|id| *id == hit_id) {
-                                    ids.remove(pos);
-                                } else {
-                                    ids.push(hit_id.clone());
-                                }
-                            });
-                        } else {
-                            state.selected_annotation_ids.set(vec![hit_id.clone()]);
-                        }
-                        state.last_clicked_annotation_id.set(Some(hit_id));
-                        ev.prevent_default();
-                        return;
-                    }
+                    // Defer annotation selection — panning takes priority.
+                    ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
                 }
             }
         }
+    }
     }
 
     // Click on empty area deselects annotations (unless modifier held)

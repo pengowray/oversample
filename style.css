@@ -2032,9 +2032,6 @@ body.sidebar-resizing {
     /* overflow: visible so layer-panels can extend above this container */
     overflow: visible;
     min-height: 0;
-    /* Layer-panel dropdowns inside main-overlays must paint above the
-       bottom-toolbar (z-index: 15) which is a sibling of this element. */
-    z-index: 16;
 }
 
 /* Spectrogram and waveform canvases clip their own content */
@@ -2065,7 +2062,9 @@ body.sidebar-resizing {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 10;
+    /* Floating controls/panels must render above the bottom toolbar without
+       lifting the entire main view above it. */
+    z-index: 20;
     /* Allow panels to overflow upward into the overview strip area */
     overflow: visible;
 }
