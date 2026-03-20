@@ -326,6 +326,7 @@ fn write_central_annotations(app: tauri::AppHandle, file_key: String, yaml: Stri
 
 /// Show a native save dialog and export annotations to the chosen path.
 /// Returns the saved path, or empty string if cancelled.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn export_annotations_file(filename: String, yaml: String) -> Result<String, String> {
     let handle = rfd::AsyncFileDialog::new()
@@ -346,7 +347,14 @@ async fn export_annotations_file(filename: String, yaml: String) -> Result<Strin
     }
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn export_annotations_file(_filename: String, _yaml: String) -> Result<String, String> {
+    Err("File export dialog not supported on Android".into())
+}
+
 /// Show a native file-open dialog and return the selected paths.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn open_file_dialog() -> Result<Vec<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
@@ -359,6 +367,12 @@ async fn open_file_dialog() -> Result<Vec<String>, String> {
         Some(files) => Ok(files.iter().map(|f| f.path().to_string_lossy().to_string()).collect()),
         None => Ok(Vec::new()), // cancelled
     }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn open_file_dialog() -> Result<Vec<String>, String> {
+    Err("File open dialog not supported on Android".into())
 }
 
 // ── Audio file decoding commands ─────────────────────────────────────
