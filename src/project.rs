@@ -165,6 +165,12 @@ pub struct MergeRecord {
 fn is_zero(v: &f64) -> bool { *v == 0.0 }
 fn default_gap_threshold() -> f64 { 60.0 }
 
+impl Default for BatProject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BatProject {
     /// Create a new empty project.
     pub fn new() -> Self {

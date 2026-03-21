@@ -39,13 +39,11 @@ pub fn BottomToolbar() -> impl IntoView {
                 }
             }
             cb.forget();
-        } else {
-            if let Some(id) = interval_id.get_value() {
-                if let Some(window) = web_sys::window() {
-                    window.clear_interval_with_handle(id);
-                }
-                interval_id.set_value(None);
+        } else if let Some(id) = interval_id.get_value() {
+            if let Some(window) = web_sys::window() {
+                window.clear_interval_with_handle(id);
             }
+            interval_id.set_value(None);
         }
     });
 
@@ -171,7 +169,7 @@ pub fn BottomToolbar() -> impl IntoView {
         if !drag_active.get_value() { return; }
         ev.prevent_default();
         let delta = drag_start_y.get_value() - ev.client_y() as f64; // dragging up = positive
-        let new_height = (drag_start_height.get_value() + delta).max(48.0).min(400.0);
+        let new_height = (drag_start_height.get_value() + delta).clamp(48.0, 400.0);
         max_height.set(Some(new_height));
     };
 
@@ -287,9 +285,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     let dim = if state.gain_mode.get() == GainMode::Off { " dim" } else { "" };
                     if gain_is_open.get() {
                         if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
-                    } else {
-                        if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
-                    }
+                    } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
                 });
 
                 let gain_left_value = Signal::derive(move || {

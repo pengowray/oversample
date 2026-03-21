@@ -189,7 +189,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     // Step 8: ITU-R 468 noise measurement
     let itu_filtered = apply_weighting(analysis_region, sample_rate, itu_r_468_gain, sample_rate);
     // Use ~5ms windows (matching the plugin's 240 samples @ 48kHz) and exclude silent gaps
-    let noise_window = ((sample_rate / 200) as usize).max(40).min(2400);
+    let noise_window = ((sample_rate / 200) as usize).clamp(40, 2400);
     let (noise_db, has_silent_gaps) = noise_floor_db(&itu_filtered, noise_window);
 
     // Step 9: ISO 226 @ 80 phon signal measurement

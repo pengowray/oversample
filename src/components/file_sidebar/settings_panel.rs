@@ -329,12 +329,12 @@ fn annotation_display(a: &Annotation) -> (String, Option<String>) {
                     fl / 1000.0, fh / 1000.0),
                 _ => crate::format_time::format_time_range(reg.time_start, reg.time_end, 3),
             };
-            let display = reg.label.clone().unwrap_or_else(|| auto_label);
+            let display = reg.label.clone().unwrap_or(auto_label);
             (display, reg.label.clone())
         }
         AnnotationKind::Marker(m) => {
             let auto_label = crate::format_time::format_time_display(m.time, 3);
-            let display = m.label.clone().unwrap_or_else(|| auto_label);
+            let display = m.label.clone().unwrap_or(auto_label);
             (display, m.label.clone())
         }
         AnnotationKind::Group(g) => {
@@ -1080,7 +1080,7 @@ fn perform_drop(state: AppState) {
                     }
                     renumber_children(&mut set.annotations, target_parent.as_deref());
                 }
-                "after" | _ => {
+                _ => {
                     if let Some(a) = set.annotations.iter_mut().find(|a| a.id == dragged_id) {
                         a.parent_id = target_parent.clone();
                         a.sort_order = Some(target_order + 0.5);

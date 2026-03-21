@@ -175,11 +175,10 @@ pub fn hit_test_annotation_handles(
 
         for (pos, hx, hy) in &handles {
             let d = ((px_x - hx).powi(2) + (px_y - hy).powi(2)).sqrt();
-            if d <= hit_radius {
-                if best.as_ref().map_or(true, |(_, _, bd)| d < *bd) {
+            if d <= hit_radius
+                && best.as_ref().is_none_or(|(_, _, bd)| d < *bd) {
                     best = Some((ann.id.clone(), *pos, d));
                 }
-            }
         }
     }
 
@@ -239,7 +238,7 @@ pub fn hit_test_annotation_body(
             }
 
             let area = (x1 - x0) * (y1 - y0);
-            if best_body.as_ref().map_or(true, |(_, ba)| area < *ba) {
+            if best_body.as_ref().is_none_or(|(_, ba)| area < *ba) {
                 best_body = Some((ann.id.clone(), area));
             }
         }

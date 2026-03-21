@@ -273,7 +273,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     let loaded_files = state.files.get_untracked();
     let file_statuses: Vec<(crate::project::ProjectFile, bool)> = project.files.iter().map(|pf| {
         let is_loaded = loaded_files.iter().any(|lf| {
-            lf.identity.as_ref().map_or(false, |id| {
+            lf.identity.as_ref().is_some_and(|id| {
                 if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
                     a == b
                 } else {
@@ -289,7 +289,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     let new_files_count = {
         let proj_clone = project.clone();
         loaded_files.iter().filter(|lf| {
-            lf.identity.as_ref().map_or(false, |id| proj_clone.find_file(id).is_none())
+            lf.identity.as_ref().is_some_and(|id| proj_clone.find_file(id).is_none())
         }).count()
     };
 
@@ -363,7 +363,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
                 // Check if already merged
                 let already = state.current_project.with_untracked(|p| {
-                    p.as_ref().map_or(false, |proj| proj.was_merged(&key))
+                    p.as_ref().is_some_and(|proj| proj.was_merged(&key))
                 });
                 if already { skipped += 1; continue; }
 
@@ -371,7 +371,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 match opfs::load_batm_by_key(&key).await {
                     Ok(Some(set)) => {
                         let did_merge = state.current_project.try_update(|p| {
-                            p.as_mut().map_or(false, |proj| proj.merge_batm(&set, &key))
+                            p.as_mut().is_some_and(|proj| proj.merge_batm(&set, &key))
                         }).unwrap_or(false);
                         if did_merge {
                             merged_count += 1;
@@ -420,7 +420,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     let proj_to_runtime: StoredValue<Vec<Option<usize>>> = StoredValue::new(file_statuses.iter().map(|(pf, is_loaded)| {
         if !is_loaded { return None; }
         loaded_files.iter().position(|lf| {
-            lf.identity.as_ref().map_or(false, |id| {
+            lf.identity.as_ref().is_some_and(|id| {
                 if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
                     a == b
                 } else {
@@ -545,7 +545,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     }}
                 </div>
                 <div class="project-file-info">
-                    {duration.map(|d| format_duration_compact(d)).unwrap_or_default()}
+                    {duration.map(format_duration_compact).unwrap_or_default()}
                     {sample_rate.map(|sr| format!("  {}kHz", sr / 1000)).unwrap_or_default()}
                     {if has_annotations { " annot." } else { "" }}
                     {if has_noise { " NR" } else { "" }}
@@ -671,7 +671,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
             // Timelines
             {
-                let timeline_items: Vec<_> = timelines_clone.iter().enumerate().map(|(_tl_idx, tl)| {
+                let timeline_items: Vec<_> = timelines_clone.iter().map(|tl| {
                     let label = tl.label.clone().unwrap_or_else(|| format!("Timeline ({})", tl.entries.len()));
                     let entry_count = tl.entries.len();
                     let tl_entries = tl.entries.clone();
@@ -688,7 +688,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         for entry in &tl_entries {
                             if let Some(pf) = proj.files.get(entry.file_index) {
                                 if let Some(ri) = files.iter().position(|lf| {
-                                    lf.identity.as_ref().map_or(false, |id| {
+                                    lf.identity.as_ref().is_some_and(|id| {
                                         if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
                                             a == b
                                         } else {

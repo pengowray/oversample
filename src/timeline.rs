@@ -129,7 +129,7 @@ impl TimelineView {
         let mut seen_groups = std::collections::HashSet::new();
 
         for &idx in file_indices {
-            if let Some(ref ti) = all_groups.get(idx).and_then(|g| g.as_ref()) {
+            if let Some(ti) = all_groups.get(idx).and_then(|g| g.as_ref()) {
                 if seen_groups.insert(ti.group_key.clone()) {
                     // Find all tracks in this group
                     let group_members: Vec<(usize, TrackInfo)> = all_groups.iter()

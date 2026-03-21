@@ -42,6 +42,12 @@ pub struct RealtimeHet {
     lp_state: [f32; 4],
 }
 
+impl Default for RealtimeHet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RealtimeHet {
     pub fn new() -> Self {
         Self {

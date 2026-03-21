@@ -170,7 +170,7 @@ fn draw_overview_spectrogram(
             if x >= 0.0 && x <= cw {
                 ctx.begin_path();
                 let _ = ctx.arc(x, 5.0, 3.0, 0.0, std::f64::consts::TAU);
-                let _ = ctx.fill();
+                ctx.fill();
             }
         }
     }
@@ -229,7 +229,7 @@ fn draw_overview_waveform(
             if x >= 0.0 && x <= cw {
                 ctx.begin_path();
                 let _ = ctx.arc(x, 5.0, 3.0, 0.0, std::f64::consts::TAU);
-                let _ = ctx.fill();
+                ctx.fill();
             }
         }
     }

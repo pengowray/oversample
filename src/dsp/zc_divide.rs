@@ -83,9 +83,9 @@ pub fn zc_divide(samples: &[f32], sample_rate: u32, division_factor: u32, skip_b
                 crossing_count = 0;
                 let amp = (env / threshold_high).min(1.0) * output_gain;
                 let end = (i + click_len).min(samples.len());
-                for j in i..end {
-                    let phase = (j - i) as f64 / click_len as f64 * std::f64::consts::PI;
-                    output[j] = phase.sin() as f32 * amp;
+                for (k, out_sample) in output[i..end].iter_mut().enumerate() {
+                    let phase = k as f64 / click_len as f64 * std::f64::consts::PI;
+                    *out_sample = phase.sin() as f32 * amp;
                 }
             }
         }
@@ -120,7 +120,7 @@ pub fn zc_rate_per_bin(
     let (threshold_high, threshold_low) = adaptive_threshold(&filtered);
 
     let bin_samples = ((sample_rate as f64 * bin_duration) as usize).max(1);
-    let num_bins = (filtered.len() + bin_samples - 1) / bin_samples;
+    let num_bins = filtered.len().div_ceil(bin_samples);
     let mut bins = Vec::with_capacity(num_bins);
 
     let mut armed = false;
@@ -137,12 +137,11 @@ pub fn zc_rate_per_bin(
         }
 
         let curr_positive = filtered[i] >= 0.0;
-        if prev_positive != curr_positive {
-            if armed {
+        if prev_positive != curr_positive
+            && armed {
                 bin_crossings += 1;
                 bin_armed = true;
             }
-        }
         prev_positive = curr_positive;
 
         // End of bin?

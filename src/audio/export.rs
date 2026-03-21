@@ -102,10 +102,10 @@ pub(crate) fn process_region(
             // Hann fade-in on leading overlap (skip for first chunk)
             if !is_first_chunk {
                 let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(chunk_samples.len());
-                for i in 0..fade_in_len {
+                for (i, sample) in chunk_samples.iter_mut().enumerate().take(fade_in_len) {
                     let t = i as f32 / fade_in_len as f32;
                     let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                    chunk_samples[i] *= w;
+                    *sample *= w;
                 }
             }
 
@@ -365,7 +365,7 @@ pub fn export_selected(state: &AppState) {
         for (i, (_annotation, region)) in regions.iter().enumerate() {
             let params = build_export_params(state, Some(region), use_region_focus, sample_rate);
             let label = region.label.as_deref()
-                .or_else(|| if regions.len() > 1 { None } else { Some("") });
+                .or(if regions.len() > 1 { None } else { Some("") });
             let suffix = match label {
                 Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
                 _ => {

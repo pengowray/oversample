@@ -26,14 +26,12 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
         let band_mode = state.filter_band_mode.get_untracked();
         let harmonics_bounds = harmonics_band_bounds(freq_low, freq_high, band_mode);
 
-        for row in 0..tile_height {
+        for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
             let bin = tile_height - 1 - row; // bin 0 = DC
             let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
             let eq_db = if freq < freq_low {
                 db_below
-            } else if freq <= freq_high {
-                db_selected
-            } else if band_mode <= 2 {
+            } else if freq <= freq_high || band_mode <= 2 {
                 db_selected
             } else if let Some((harmonics_lower, harmonics_upper)) = harmonics_bounds {
                 if freq >= harmonics_lower && freq <= harmonics_upper {
@@ -44,7 +42,7 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
             } else {
                 db_above
             };
-            adj[row] += eq_db;
+            *adj_val += eq_db;
         }
     }
 
@@ -68,7 +66,7 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
         if show_notch {
             let bands = state.notch_bands.get_untracked();
             let harm_supp = state.notch_harmonic_suppression.get_untracked();
-            for row in 0..tile_height {
+            for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                 let bin = tile_height - 1 - row;
                 let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
                 for band in &bands {
@@ -76,14 +74,14 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
                     let half_bw = band.bandwidth_hz / 2.0;
                     // Primary notch
                     if (freq - band.center_hz).abs() <= half_bw {
-                        adj[row] -= band.strength_db as f32;
+                        *adj_val -= band.strength_db as f32;
                     }
                     // Harmonic suppression at 2x and 3x
                     if harm_supp > 0.0 {
                         for harmonic in [2.0, 3.0] {
                             let hfreq = band.center_hz * harmonic;
                             if (freq - hfreq).abs() <= half_bw * harmonic {
-                                adj[row] -= (band.strength_db * harm_supp) as f32;
+                                *adj_val -= (band.strength_db * harm_supp) as f32;
                             }
                         }
                     }
@@ -115,7 +113,7 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
             if let Some(nf) = nf_opt {
                 let nf_bins = nf.bin_magnitudes.len();
                 let nf_max_freq = nf.sample_rate as f64 / 2.0;
-                for row in 0..tile_height {
+                for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                     let bin = tile_height - 1 - row;
                     let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
                     let nf_bin = ((freq / nf_max_freq) * (nf_bins - 1) as f64).round() as usize;
@@ -123,7 +121,7 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
                         let noise_mag = nf.bin_magnitudes[nf_bin];
                         if noise_mag > 1e-15 {
                             let noise_db = 20.0 * (noise_mag as f32).log10();
-                            adj[row] -= noise_db * strength as f32;
+                            *adj_val -= noise_db * strength as f32;
                         }
                     }
                 }

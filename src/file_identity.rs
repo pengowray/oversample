@@ -143,7 +143,7 @@ pub async fn compute_full_hashes(
         offset += len;
 
         // Yield every 4 MB
-        if (offset / chunk_size) % 4 == 0 {
+        if (offset / chunk_size).is_multiple_of(4) {
             yield_now().await;
         }
     }
@@ -174,7 +174,7 @@ pub async fn compute_full_sha256(
         hasher.update(&bytes);
         offset += len;
 
-        if (offset / chunk_size) % 4 == 0 {
+        if (offset / chunk_size).is_multiple_of(4) {
             yield_now().await;
         }
     }
@@ -252,7 +252,7 @@ pub fn start_identity_computation(
 ) {
     // Skip if identity already computed (e.g. by load_named_bytes)
     let already_has_identity = state.files.with_untracked(|files| {
-        files.get(file_index).map_or(false, |f| f.identity.is_some())
+        files.get(file_index).is_some_and(|f| f.identity.is_some())
     });
     if already_has_identity {
         // Still try loading saved annotations even if identity was already set

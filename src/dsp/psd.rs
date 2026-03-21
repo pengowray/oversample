@@ -194,7 +194,7 @@ pub async fn compute_psd_async(
         frame_count += 1;
         pos += hop;
 
-        if frame_count % yield_interval == 0 {
+        if frame_count.is_multiple_of(yield_interval) {
             // Yield to browser
             let promise = js_sys::Promise::new(&mut |resolve, _| {
                 let win = web_sys::window().unwrap();
@@ -311,9 +311,9 @@ fn find_peaks(power_db: &[f64], freq_resolution: f64, freq_range: Option<(f64, f
         }
         // Walk right
         let mut right_min = power;
-        for j in (bin + 1)..n {
-            right_min = right_min.min(power_db[j]);
-            if power_db[j] > power {
+        for &val in &power_db[(bin + 1)..n] {
+            right_min = right_min.min(val);
+            if val > power {
                 break;
             }
         }

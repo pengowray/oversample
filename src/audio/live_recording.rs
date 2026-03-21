@@ -213,11 +213,10 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 for tile_idx in tw.first_tile..tw.last_tile {
                     let tile_start = tile_idx * TILE_COLS;
                     let tile_end = tile_start + TILE_COLS;
-                    if tile_end <= tw.total_cols {
-                        if spectral_store::tile_complete(file_index, tile_start, tile_end) {
+                    if tile_end <= tw.total_cols
+                        && spectral_store::tile_complete(file_index, tile_start, tile_end) {
                             tile_cache::render_tile_from_store_sync(file_index, tile_idx, fft_size);
                         }
-                    }
                 }
 
                 // Render the rightmost partial (live) tile
@@ -582,7 +581,7 @@ pub(crate) fn spawn_spectrogram_computation(
         // Initialise spectral store for progressive tile generation
         spectral_store::init(file_index, total_cols, FFT_SIZE);
 
-        let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+        let n_tiles = total_cols.div_ceil(TILE_COLS);
         let mut tile_scheduled = vec![false; n_tiles];
         let mut chunk_start = 0;
 
@@ -612,15 +611,16 @@ pub(crate) fn spawn_spectrogram_computation(
             let first_tile = chunk_start / TILE_COLS;
             let last_tile = ((chunk_start + chunk.len()).saturating_sub(1)) / TILE_COLS;
             let mut any_tile_rendered = false;
-            for tile_idx in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
-                if tile_scheduled[tile_idx] { continue; }
+            let tile_end_idx = last_tile.min(n_tiles.saturating_sub(1));
+            for (tile_idx, scheduled) in tile_scheduled.iter_mut().enumerate().take(tile_end_idx + 1).skip(first_tile) {
+                if *scheduled { continue; }
                 let tile_start = tile_idx * TILE_COLS;
                 let tile_end = (tile_start + TILE_COLS).min(total_cols);
                 if spectral_store::tile_complete(file_index, tile_start, tile_end) {
                     if tile_cache::render_tile_from_store_sync(file_index, tile_idx, FFT_SIZE) {
                         any_tile_rendered = true;
                     }
-                    tile_scheduled[tile_idx] = true;
+                    *scheduled = true;
                 }
             }
             if any_tile_rendered {
@@ -679,7 +679,7 @@ pub(crate) fn spawn_spectrogram_computation(
         tile_cache::clear_file(file_index);
         let file_for_tiles = state.files.get_untracked().get(file_index).cloned();
         if let Some(file) = file_for_tiles {
-            tile_cache::schedule_all_tiles(state.clone(), file, file_index);
+            tile_cache::schedule_all_tiles(state, file, file_index);
         }
 
         state.tile_ready_signal.update(|n| *n += 1);

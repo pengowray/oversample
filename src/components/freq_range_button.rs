@@ -96,19 +96,19 @@ pub fn FreqRangeButton() -> impl IntoView {
                             on:click=set_range(None, None)
                         >"Full"</button>
                         <button class=move || {
-                            let is_22k = state.max_display_freq.get().map_or(false, |m| (m - 22_000.0).abs() < 100.0);
+                            let is_22k = state.max_display_freq.get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
                             layer_opt_class(is_22k)
                         }
                             on:click=set_range(Some(0.0), Some(22_000.0))
                         >"0 – 22 kHz"</button>
                         <button class=move || {
-                            let is_50k = state.max_display_freq.get().map_or(false, |m| (m - 50_000.0).abs() < 100.0);
+                            let is_50k = state.max_display_freq.get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
                             layer_opt_class(is_50k)
                         }
                             on:click=set_range(Some(0.0), Some(50_000.0))
                         >"0 – 50 kHz"</button>
                         <button class=move || {
-                            let is_100k = state.max_display_freq.get().map_or(false, |m| (m - 100_000.0).abs() < 100.0);
+                            let is_100k = state.max_display_freq.get().is_some_and(|m| (m - 100_000.0).abs() < 100.0);
                             layer_opt_class(is_100k)
                         }
                             on:click=set_range(Some(0.0), Some(100_000.0))

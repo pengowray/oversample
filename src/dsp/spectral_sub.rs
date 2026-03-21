@@ -104,7 +104,7 @@ pub async fn learn_noise_floor_async(
 
         pos += hop_size;
         frame_count += 1;
-        if frame_count % yield_interval == 0 {
+        if frame_count.is_multiple_of(yield_interval) {
             yield_to_browser().await;
         }
     }

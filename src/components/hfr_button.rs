@@ -28,7 +28,7 @@ fn smart_auto_factor(ff_lo: f64, ff_hi: f64, max_factor: f64) -> f64 {
         let preferred: &[f64] = &[8.0, 4.0, 16.0, 2.0, 32.0, 10.0];
         let comfortable = |f: f64| {
             let out = ff_center / f;
-            out >= 1000.0 && out <= 6000.0
+            (1000.0..=6000.0).contains(&out)
         };
 
         for &f in preferred {
@@ -47,7 +47,7 @@ fn smart_auto_factor(ff_lo: f64, ff_hi: f64, max_factor: f64) -> f64 {
         let preferred: &[f64] = &[8.0, 4.0, 16.0, 2.0, 32.0, 10.0];
         let comfortable = |f: f64| {
             let out = ff_center * f;
-            out >= 1000.0 && out <= 6000.0
+            (1000.0..=6000.0).contains(&out)
         };
 
         for &f in preferred {
@@ -269,12 +269,10 @@ pub fn HfrButton() -> impl IntoView {
         let dim = if !state.hfr_enabled.get() { " dim" } else { "" };
         if is_open.get() {
             if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
-        } else {
-            if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
-        }
+        } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
     });
 
-    let left_value = Signal::derive(|| String::new());
+    let left_value = Signal::derive(String::new);
     let right_value = Signal::derive(move || {
         if !state.hfr_enabled.get() {
             "OFF".to_string()
@@ -524,7 +522,7 @@ pub fn HfrButton() -> impl IntoView {
                                         on:focus=move |ev: web_sys::FocusEvent| {
                                             use wasm_bindgen::JsCast;
                                             if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                let _ = input.select();
+                                                input.select();
                                             }
                                         }
                                         title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
@@ -576,7 +574,7 @@ pub fn HfrButton() -> impl IntoView {
                                         on:focus=move |ev: web_sys::FocusEvent| {
                                             use wasm_bindgen::JsCast;
                                             if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                let _ = input.select();
+                                                input.select();
                                             }
                                         }
                                         title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
@@ -638,7 +636,7 @@ pub fn HfrButton() -> impl IntoView {
                                         on:focus=move |ev: web_sys::FocusEvent| {
                                             use wasm_bindgen::JsCast;
                                             if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                let _ = input.select();
+                                                input.select();
                                             }
                                         }
                                         title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"

@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 thread_local! {
-    static PLAYHEAD_HANDLE: RefCell<Option<i32>> = RefCell::new(None);
-    static REPLAY_TIMER: RefCell<Option<i32>> = RefCell::new(None);
+    static PLAYHEAD_HANDLE: RefCell<Option<i32>> = const { RefCell::new(None) };
+    static REPLAY_TIMER: RefCell<Option<i32>> = const { RefCell::new(None) };
 }
 
 struct PlaybackTarget {
@@ -128,7 +128,7 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
 fn cancel_replay_timer() {
     REPLAY_TIMER.with(|t| {
         if let Some(handle) = t.borrow_mut().take() {
-            let _ = web_sys::window().unwrap().clear_timeout_with_handle(handle);
+            web_sys::window().unwrap().clear_timeout_with_handle(handle);
         }
     });
 }
@@ -195,7 +195,7 @@ pub fn replay_live(state: &AppState) {
         _ => 1.0,
     };
 
-    start_playhead(state.clone(), current_time, remaining_duration, playback_speed);
+    start_playhead(*state, current_time, remaining_duration, playback_speed);
 }
 
 /// Debounced version of `replay_live()`. Coalesces rapid signal changes
@@ -324,7 +324,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     state.active_playback_selection.set(selection);
     state.is_playing.set(true);
     state.playhead_time.set(start_secs);
-    start_playhead(state.clone(), start_secs, play_duration, playback_speed);
+    start_playhead(*state, start_secs, play_duration, playback_speed);
 }
 
 pub fn play(state: &AppState) {
@@ -369,7 +369,7 @@ pub fn play(state: &AppState) {
     state.active_playback_selection.set(selection);
     state.is_playing.set(true);
     state.playhead_time.set(play_start_time);
-    start_playhead(state.clone(), play_start_time, play_duration, playback_speed);
+    start_playhead(*state, play_start_time, play_duration, playback_speed);
 }
 
 /// Returns (start_sample, end_sample) for the current selection or full file.
@@ -504,7 +504,7 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
             // Show bookmark popup briefly if any bookmarks were made during playback
             if !state.bookmarks.get_untracked().is_empty() {
                 state.show_bookmark_popup.set(true);
-                let state_bm = state.clone();
+                let state_bm = state;
                 let cb = wasm_bindgen::closure::Closure::once(move || {
                     state_bm.show_bookmark_popup.set(false);
                 });

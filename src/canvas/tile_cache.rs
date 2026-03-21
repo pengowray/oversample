@@ -178,7 +178,7 @@ pub fn tile_count_for_samples(total_samples: usize, lod: u8) -> usize {
     let config = &LOD_CONFIGS[lod as usize];
     if total_samples < config.fft_size { return 0; }
     let total_cols = (total_samples - config.fft_size) / config.hop_size + 1;
-    (total_cols + TILE_COLS - 1) / TILE_COLS
+    total_cols.div_ceil(TILE_COLS)
 }
 
 
@@ -423,19 +423,19 @@ thread_local! {
     /// Generation counter — incremented on every clear_all_tiles(). In-flight
     /// async tasks capture the generation at spawn time and discard their result
     /// if a clear happened while they were computing (prevents stale tiles).
-    static CACHE_GENERATION: RefCell<u64> = RefCell::new(0);
+    static CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
     /// Flow-mode tile cache — multi-LOD, same CacheKey as magnitude tiles.
     static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(FLOW_MAX_BYTES));
     static FLOW_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
         RefCell::new(HashMap::new());
-    static FLOW_CACHE_GENERATION: RefCell<u64> = RefCell::new(0);
+    static FLOW_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
     /// Reassignment spectrogram tile cache — multi-LOD, same CacheKey as magnitude tiles.
     static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(REASSIGN_MAX_BYTES));
     static REASSIGN_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
         RefCell::new(HashMap::new());
-    static REASSIGN_CACHE_GENERATION: RefCell<u64> = RefCell::new(0);
+    static REASSIGN_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
     /// Chromagram tile cache (LOD1-only).
     static CHROMA_CACHE: RefCell<ChromaTileCache> = RefCell::new(ChromaTileCache::new(CHROMA_MAX_BYTES));
@@ -474,7 +474,7 @@ pub fn borrow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(
             cache.touch(key);
             drop(cache);
             CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(|t| f(t))
+                c.borrow().tiles.get(&key).map(f)
             })
         } else {
             None
@@ -920,14 +920,14 @@ pub fn schedule_all_tiles(state: AppState, file: LoadedFile, file_idx: usize) {
         file.spectrogram.columns.len()
     };
     if total_cols == 0 { return; }
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+    let n_tiles = total_cols.div_ceil(TILE_COLS);
 
     let tile_order = visible_tile_focus_for_file(&state, file_idx, total_cols, file.spectrogram.time_resolution)
         .map(|(_, _, center_tile)| full_tile_order(n_tiles, center_tile))
         .unwrap_or_else(|| (0..n_tiles).collect());
 
     for tile_idx in tile_order {
-        schedule_tile(state.clone(), file.clone(), file_idx, tile_idx);
+        schedule_tile(state, file.clone(), file_idx, tile_idx);
     }
 }
 
@@ -1101,7 +1101,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
 /// Schedule visible LOD1 tiles from the spectral store.
 pub fn schedule_visible_tiles_from_store(state: AppState, file_idx: usize, total_cols: usize) {
     if total_cols == 0 { return; }
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+    let n_tiles = total_cols.div_ceil(TILE_COLS);
 
     let time_res = state.files.with_untracked(|files| {
         files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
@@ -1128,7 +1128,7 @@ pub fn schedule_visible_tiles_from_store(state: AppState, file_idx: usize, total
         };
         if tiles.is_empty() { break; }
         for t in tiles {
-            schedule_tile_from_store(state.clone(), file_idx, t);
+            schedule_tile_from_store(state, file_idx, t);
             scheduled += 1;
         }
         dist += 1;
@@ -1309,7 +1309,7 @@ pub fn borrow_flow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl Fn
             cache.touch(key);
             drop(cache);
             FLOW_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(|t| f(t))
+                c.borrow().tiles.get(&key).map(f)
             })
         } else {
             None
@@ -1508,7 +1508,7 @@ pub fn borrow_reassign_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: imp
             cache.touch(key);
             drop(cache);
             REASSIGN_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(|t| f(t))
+                c.borrow().tiles.get(&key).map(f)
             })
         } else {
             None
@@ -1653,7 +1653,7 @@ pub fn borrow_chroma_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&T
             cache.touch(key);
             drop(cache);
             CHROMA_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(|t| f(t))
+                c.borrow().tiles.get(&key).map(f)
             })
         } else {
             None
@@ -1773,7 +1773,7 @@ struct BgPreloadState {
 }
 
 thread_local! {
-    static BG_PRELOAD: RefCell<Option<BgPreloadState>> = RefCell::new(None);
+    static BG_PRELOAD: RefCell<Option<BgPreloadState>> = const { RefCell::new(None) };
 }
 
 /// Start (or restart) background preloading of tiles at the given LOD,
@@ -1793,7 +1793,7 @@ pub fn start_background_preload(
         let mut bg = bg.borrow_mut();
         if let Some(old) = bg.as_ref() {
             if let Some(h) = old.batch_timer {
-                let _ = web_sys::window().unwrap().clear_timeout_with_handle(h);
+                web_sys::window().unwrap().clear_timeout_with_handle(h);
             }
         }
         *bg = Some(BgPreloadState {
@@ -1816,7 +1816,7 @@ pub fn stop_background_preload() {
         let mut bg = bg.borrow_mut();
         if let Some(ref s) = *bg {
             if let Some(h) = s.batch_timer {
-                let _ = web_sys::window().unwrap().clear_timeout_with_handle(h);
+                web_sys::window().unwrap().clear_timeout_with_handle(h);
             }
         }
         *bg = None;

@@ -1,7 +1,7 @@
-/// Inertia/momentum scrolling for touch pan gestures.
-///
-/// Tracks finger velocity during touchmove, then animates a decaying
-/// scroll after touchend via requestAnimationFrame.
+//! Inertia/momentum scrolling for touch pan gestures.
+//!
+//! Tracks finger velocity during touchmove, then animates a decaying
+//! scroll after touchend via requestAnimationFrame.
 
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -26,6 +26,12 @@ pub struct VelocityTracker {
     samples: [(f64, f64); MAX_SAMPLES], // (timestamp_ms, client_x)
     count: usize,
     index: usize,
+}
+
+impl Default for VelocityTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VelocityTracker {

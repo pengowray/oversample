@@ -292,8 +292,7 @@ pub fn draw_zc_rate(
     let first_bin = ((start_time / bin_duration) as usize).saturating_sub(1);
     let last_bin = ((end_time / bin_duration) as usize + 2).min(bins.len());
 
-    for bin_idx in first_bin..last_bin {
-        let (rate_hz, armed) = bins[bin_idx];
+    for (bin_idx, &(rate_hz, armed)) in bins.iter().enumerate().take(last_bin).skip(first_bin) {
         if rate_hz <= 0.0 {
             continue;
         }

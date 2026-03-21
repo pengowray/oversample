@@ -14,10 +14,10 @@ use std::sync::Arc;
 // ── Thread-local state: Web Audio mode ──────────────────────────────────
 
 thread_local! {
-    static MIC_CTX: RefCell<Option<AudioContext>> = RefCell::new(None);
-    static MIC_STREAM: RefCell<Option<web_sys::MediaStream>> = RefCell::new(None);
-    static MIC_PROCESSOR: RefCell<Option<web_sys::ScriptProcessorNode>> = RefCell::new(None);
-    static MIC_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::new());
+    static MIC_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
+    static MIC_STREAM: RefCell<Option<web_sys::MediaStream>> = const { RefCell::new(None) };
+    static MIC_PROCESSOR: RefCell<Option<web_sys::ScriptProcessorNode>> = const { RefCell::new(None) };
+    static MIC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
     static RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
 }
@@ -26,15 +26,15 @@ thread_local! {
 
 thread_local! {
     /// Whether the Tauri native mic is currently open
-    static TAURI_MIC_OPEN: RefCell<bool> = RefCell::new(false);
+    static TAURI_MIC_OPEN: RefCell<bool> = const { RefCell::new(false) };
     /// AudioContext for HET playback (output only, no mic input)
-    static HET_CTX: RefCell<Option<AudioContext>> = RefCell::new(None);
+    static HET_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     /// Next scheduled playback time for HET audio buffers
-    static HET_NEXT_TIME: RefCell<f64> = RefCell::new(0.0);
+    static HET_NEXT_TIME: RefCell<f64> = const { RefCell::new(0.0) };
     /// Keep the event listener closure alive
     static TAURI_EVENT_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
     /// Unlisten function returned by Tauri event subscription
-    static TAURI_UNLISTEN: RefCell<Option<js_sys::Function>> = RefCell::new(None);
+    static TAURI_UNLISTEN: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
 }
 
 // ── Thread-local state: Live recording buffer (Tauri) ────────────────
@@ -42,7 +42,7 @@ thread_local! {
 thread_local! {
     /// Accumulated recording samples on the frontend for Tauri modes (cpal/USB).
     /// In browser mode, MIC_BUFFER serves this purpose instead.
-    static TAURI_REC_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::new());
+    static TAURI_REC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Borrow the live recording buffer and call `f` with a reference to the samples.
@@ -59,7 +59,7 @@ pub fn with_live_samples<R>(is_tauri: bool, f: impl FnOnce(&[f32]) -> R) -> R {
 
 thread_local! {
     /// Whether the USB stream is currently open
-    static USB_MIC_OPEN: RefCell<bool> = RefCell::new(false);
+    static USB_MIC_OPEN: RefCell<bool> = const { RefCell::new(false) };
     /// Keep the USB stream error event listener closure alive
     static USB_ERROR_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
 }
@@ -166,7 +166,7 @@ pub async fn query_mic_info(state: &AppState) {
                 let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
                     .ok()
                     .map(|v| js_sys::Array::from(&v))
-                    .unwrap_or_else(|| js_sys::Array::new());
+                    .unwrap_or_default();
                 for i in 0..devices_arr.length() {
                     let dev = devices_arr.get(i);
                     let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
@@ -207,7 +207,7 @@ pub async fn query_mic_info(state: &AppState) {
                         state.mic_device_name.set(name);
 
                         // Extract native sample rate and format from the device's supported ranges
-                        if let Some(ranges) = js_sys::Reflect::get(&dev, &JsValue::from_str("sample_rate_ranges")).ok() {
+                        if let Ok(ranges) = js_sys::Reflect::get(&dev, &JsValue::from_str("sample_rate_ranges")) {
                             let ranges = js_sys::Array::from(&ranges);
                             let mut max_rate: u32 = 0;
                             let mut format_str: Option<String> = None;
@@ -249,7 +249,7 @@ pub async fn query_mic_info(state: &AppState) {
         let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
             .ok()
             .map(|v| js_sys::Array::from(&v))
-            .unwrap_or_else(|| js_sys::Array::new());
+            .unwrap_or_default();
         let has_audio = (0..devices_arr.length()).any(|i| {
             let dev = devices_arr.get(i);
             js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
@@ -277,7 +277,7 @@ pub async fn resolve_auto_mode(state: &AppState) -> Option<MicMode> {
         let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
             .ok()
             .map(|v| js_sys::Array::from(&v))
-            .unwrap_or_else(|| js_sys::Array::new());
+            .unwrap_or_default();
 
         state.log_debug("info", format!("resolve_auto_mode: found {} USB device(s)", devices_arr.length()));
 
@@ -373,7 +373,7 @@ pub async fn check_auto_mode_no_request(state: &AppState) -> MicMode {
         let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
             .ok()
             .map(|v| js_sys::Array::from(&v))
-            .unwrap_or_else(|| js_sys::Array::new());
+            .unwrap_or_default();
 
         for i in 0..devices_arr.length() {
             let dev = devices_arr.get(i);
@@ -891,14 +891,12 @@ async fn toggle_listen_tauri(state: &AppState) {
         js_sys::Reflect::set(&args, &"listening".into(), &JsValue::FALSE).ok();
         let _ = tauri_invoke("mic_set_listening", &args.into()).await;
         maybe_close_mic_tauri(state).await;
-    } else {
-        if ensure_mic_open_tauri(state).await {
-            // Tell backend to start streaming audio chunks
-            let args = js_sys::Object::new();
-            js_sys::Reflect::set(&args, &"listening".into(), &JsValue::TRUE).ok();
-            let _ = tauri_invoke("mic_set_listening", &args.into()).await;
-            state.mic_listening.set(true);
-        }
+    } else if ensure_mic_open_tauri(state).await {
+        // Tell backend to start streaming audio chunks
+        let args = js_sys::Object::new();
+        js_sys::Reflect::set(&args, &"listening".into(), &JsValue::TRUE).ok();
+        let _ = tauri_invoke("mic_set_listening", &args.into()).await;
+        state.mic_listening.set(true);
     }
 }
 
@@ -1160,7 +1158,7 @@ async fn ensure_mic_open_usb(state: &AppState) -> bool {
     let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
         .ok()
         .map(|v| js_sys::Array::from(&v))
-        .unwrap_or_else(|| js_sys::Array::new());
+        .unwrap_or_default();
 
     let mut audio_device_name: Option<String> = None;
     let mut has_permission = false;
@@ -1438,10 +1436,8 @@ async fn toggle_listen_usb(state: &AppState) {
     if state.mic_listening.get_untracked() {
         state.mic_listening.set(false);
         maybe_close_mic_usb(state).await;
-    } else {
-        if ensure_mic_open_usb(state).await {
-            state.mic_listening.set(true);
-        }
+    } else if ensure_mic_open_usb(state).await {
+        state.mic_listening.set(true);
     }
 }
 
@@ -1543,10 +1539,8 @@ pub async fn toggle_listen(state: &AppState) {
             if state.mic_listening.get_untracked() {
                 state.mic_listening.set(false);
                 maybe_close_mic_web(state);
-            } else {
-                if ensure_mic_open_web(state).await {
-                    state.mic_listening.set(true);
-                }
+            } else if ensure_mic_open_web(state).await {
+                state.mic_listening.set(true);
             }
         }
     }
@@ -1572,18 +1566,16 @@ pub async fn toggle_record(state: &AppState) {
                     finalize_live_recording(samples, sr, *state);
                 }
                 maybe_close_mic_web(state);
-            } else {
-                if ensure_mic_open_web(state).await {
-                    MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
-                    state.mic_samples_recorded.set(0);
-                    state.mic_recording.set(true);
-                    state.mic_recording_start_time.set(Some(js_sys::Date::now()));
-                    let sr = state.mic_sample_rate.get_untracked();
-                    let file_idx = start_live_recording(state, sr);
-                    spawn_live_processing_loop(*state, file_idx, sr);
-                    spawn_smooth_scroll_animation(*state);
-                    log::info!("Recording started");
-                }
+            } else if ensure_mic_open_web(state).await {
+                MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
+                state.mic_samples_recorded.set(0);
+                state.mic_recording.set(true);
+                state.mic_recording_start_time.set(Some(js_sys::Date::now()));
+                let sr = state.mic_sample_rate.get_untracked();
+                let file_idx = start_live_recording(state, sr);
+                spawn_live_processing_loop(*state, file_idx, sr);
+                spawn_smooth_scroll_animation(*state);
+                log::info!("Recording started");
             }
         }
     }

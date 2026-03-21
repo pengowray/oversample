@@ -1,4 +1,4 @@
-/// Pinch-to-zoom gesture helpers shared across all canvas components.
+//! Pinch-to-zoom gesture helpers shared across all canvas components.
 
 use crate::viewport;
 

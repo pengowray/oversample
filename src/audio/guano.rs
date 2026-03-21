@@ -47,7 +47,7 @@ pub fn append_guano_chunk(wav_bytes: &mut Vec<u8>, guano_text: &str) {
     wav_bytes.extend_from_slice(text_bytes);
 
     // RIFF word-alignment: pad with a zero byte if chunk data size is odd
-    if text_bytes.len() % 2 != 0 {
+    if !text_bytes.len().is_multiple_of(2) {
         wav_bytes.push(0);
     }
 

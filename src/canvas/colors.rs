@@ -262,16 +262,16 @@ fn oklch_to_linear_srgb(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
     let a = c * h.cos();
     let b_ab = c * h.sin();
     // Oklab → LMS (inverse of cube-root transform)
-    let l_ = l + 0.3963377774 * a + 0.2158037573 * b_ab;
-    let m_ = l - 0.1055613458 * a - 0.0638541728 * b_ab;
-    let s_ = l - 0.0894841775 * a - 1.2914855480 * b_ab;
+    let l_ = l + 0.396_337_78 * a + 0.215_803_76 * b_ab;
+    let m_ = l - 0.105_561_346 * a - 0.063_854_17 * b_ab;
+    let s_ = l - 0.089_484_18 * a - 1.291_485_5 * b_ab;
     let l3 = l_ * l_ * l_;
     let m3 = m_ * m_ * m_;
     let s3 = s_ * s_ * s_;
     // LMS → linear sRGB
-    let r =  4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
-    let g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
-    let b = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3;
+    let r =  4.076_741_7 * l3 - 3.307_711_6 * m3 + 0.230_969_94 * s3;
+    let g = -1.268_438 * l3 + 2.609_757_4 * m3 - 0.341_319_38 * s3;
+    let b = -0.0041960863 * l3 - 0.703_418_6 * m3 + 1.707_614_7 * s3;
     (r, g, b)
 }
 
@@ -288,10 +288,10 @@ fn linear_to_srgb(c: f32) -> f32 {
 /// have equal perceived brightness, unlike HSV.
 static OKLCH_PHASE_LUT: std::sync::LazyLock<[[u8; 3]; 256]> = std::sync::LazyLock::new(|| {
     let mut lut = [[0u8; 3]; 256];
-    for i in 0..256 {
+    for (i, entry) in lut.iter_mut().enumerate() {
         let hue = i as f32 * std::f32::consts::TAU / 256.0;
         let (r, g, b) = oklch_to_linear_srgb(0.75, 0.12, hue);
-        lut[i] = [
+        *entry = [
             (linear_to_srgb(r.clamp(0.0, 1.0)) * 255.0) as u8,
             (linear_to_srgb(g.clamp(0.0, 1.0)) * 255.0) as u8,
             (linear_to_srgb(b.clamp(0.0, 1.0)) * 255.0) as u8,

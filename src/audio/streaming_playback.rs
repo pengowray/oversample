@@ -47,11 +47,11 @@ const LOOKAHEAD_SECS: f64 = 1.5;
 const PREBUFFER_CHUNKS: usize = 5; // 3 might be enough
 
 thread_local! {
-    static STREAM_CTX: RefCell<Option<AudioContext>> = RefCell::new(None);
+    static STREAM_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     /// Master gain node for fade-out on stop (avoids clicks).
-    static STREAM_GAIN: RefCell<Option<web_sys::GainNode>> = RefCell::new(None);
+    static STREAM_GAIN: RefCell<Option<web_sys::GainNode>> = const { RefCell::new(None) };
     /// Monotonically increasing generation counter to detect stale streams.
-    static STREAM_GEN: RefCell<u32> = RefCell::new(0);
+    static STREAM_GEN: RefCell<u32> = const { RefCell::new(0) };
 }
 
 /// Snapshot of all playback parameters, frozen at play start so that
@@ -439,10 +439,10 @@ async fn process_one_chunk(
             // Hann fade-in on leading overlap (first chunk's start is clean)
             if pos > start_sample {
                 let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(buf.len());
-                for i in 0..fade_in_len {
+                for (i, sample) in buf.iter_mut().enumerate().take(fade_in_len) {
                     let t = i as f32 / fade_in_len as f32;
                     let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                    buf[i] *= w;
+                    *sample *= w;
                 }
             }
             // Hann fade-out on trailing overlap

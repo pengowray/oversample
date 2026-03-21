@@ -478,8 +478,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                         (freq_hz, format!("{:.1}k", freq_hz / 1000.0), hover_color.clone()),
                                     ];
                                     if let Some((lo, hi)) = bw_6 {
-                                        freqs.push((lo, format!("-6dB lo"), "#44aa66".to_string()));
-                                        freqs.push((hi, format!("-6dB hi"), "#44aa66".to_string()));
+                                        freqs.push((lo, "-6dB lo".to_string(), "#44aa66".to_string()));
+                                        freqs.push((hi, "-6dB hi".to_string(), "#44aa66".to_string()));
                                     }
                                     state.psd_hover_freqs.set(freqs);
                                 }
@@ -492,8 +492,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                         (freq_hz, format!("{:.1}k", freq_hz / 1000.0), hover_color.clone()),
                                     ];
                                     if let Some((lo, hi)) = bw_10 {
-                                        freqs.push((lo, format!("-10dB lo"), "#aaaa44".to_string()));
-                                        freqs.push((hi, format!("-10dB hi"), "#aaaa44".to_string()));
+                                        freqs.push((lo, "-10dB lo".to_string(), "#aaaa44".to_string()));
+                                        freqs.push((hi, "-10dB hi".to_string(), "#aaaa44".to_string()));
                                     }
                                     state.psd_hover_freqs.set(freqs);
                                 }
@@ -755,11 +755,11 @@ fn PsdChart(psd: PsdResult, log_scale: bool) -> impl IntoView {
         ctx.set_line_width(1.5);
         ctx.begin_path();
         let mut started = false;
-        for i in 0..n_bins {
+        for (i, &pdb) in power_db.iter().enumerate().take(n_bins) {
             let freq = i as f64 * freq_res;
             if log_scale && freq < min_log_freq { continue; }
             let x = freq_to_x(freq);
-            let y = db_to_y(power_db[i]);
+            let y = db_to_y(pdb);
             if !started {
                 ctx.move_to(x, y);
                 started = true;

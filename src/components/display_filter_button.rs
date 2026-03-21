@@ -54,7 +54,7 @@ pub fn DspFilterRow(
                             {mode.short_label()}
                             {is_same.then(|| {
                                 let br = browser_resampling;
-                                let tip = sam_tooltip.clone();
+                                let tip = sam_tooltip;
                                 view! {
                                     <span
                                         class=move || {

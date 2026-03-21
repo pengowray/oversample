@@ -257,12 +257,12 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let center_col = center_col.min(total_cols.saturating_sub(1));
 
     // Generate chunk start indices in expanding-ring order from center
-    let total_chunks = (total_cols + CHUNK_COLS - 1) / CHUNK_COLS;
+    let total_chunks = total_cols.div_ceil(CHUNK_COLS);
     let center_chunk = center_col / CHUNK_COLS;
     let chunk_order = expanding_chunk_order(center_chunk, total_chunks);
 
     // Track which tile-width ranges have been fully computed
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+    let n_tiles = total_cols.div_ceil(TILE_COLS);
     let mut tile_scheduled = vec![false; n_tiles];
 
     state.loading_update(load_id, crate::state::LoadingStage::Spectrogram(0));
@@ -301,15 +301,16 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         let first_affected_tile = chunk_start / TILE_COLS;
         let last_affected_tile = ((chunk_start + chunk.len()).saturating_sub(1)) / TILE_COLS;
         let mut any_tile_rendered = false;
-        for tile_idx in first_affected_tile..=last_affected_tile.min(n_tiles.saturating_sub(1)) {
-            if tile_scheduled[tile_idx] { continue; }
+        let tile_end_idx = last_affected_tile.min(n_tiles.saturating_sub(1));
+        for (tile_idx, scheduled) in tile_scheduled.iter_mut().enumerate().take(tile_end_idx + 1).skip(first_affected_tile) {
+            if *scheduled { continue; }
             let tile_start = tile_idx * TILE_COLS;
             let tile_end = (tile_start + TILE_COLS).min(total_cols);
             if spectral_store::tile_complete(file_index, tile_start, tile_end) {
                 if tile_cache::render_tile_from_store_sync(file_index, tile_idx, fft_size) {
                     any_tile_rendered = true;
                 }
-                tile_scheduled[tile_idx] = true;
+                *scheduled = true;
             }
         }
         if any_tile_rendered {

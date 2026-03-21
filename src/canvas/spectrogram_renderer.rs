@@ -893,7 +893,7 @@ pub fn blit_chromagram_tiles_viewport(
 
     let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
     let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-    let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+    let n_tiles = total_cols.div_ceil(TILE_COLS);
 
     let mut any_drawn = false;
 

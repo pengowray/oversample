@@ -316,9 +316,9 @@ impl AudioSource for InMemorySource {
                 let frames = self.frame_count();
                 let avail = frames.saturating_sub(start);
                 let n = buf.len().min(avail);
-                for i in 0..n {
+                for (i, sample) in buf.iter_mut().enumerate().take(n) {
                     let base = (start + i) * channels;
-                    buf[i] = raw[base] - raw[base + 1];
+                    *sample = raw[base] - raw[base + 1];
                 }
                 n
             }

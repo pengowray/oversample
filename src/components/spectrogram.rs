@@ -185,7 +185,7 @@ pub fn Spectrogram() -> impl IntoView {
         let selected_annotation_ids = state.selected_annotation_ids.get();
         let annotation_hover_handle = state.annotation_hover_handle.get();
         let _timeline = state.active_timeline.get(); // trigger redraw on timeline change
-        let _pre = pre_rendered.track();
+        pre_rendered.track();
         // Re-read canvas dimensions when sidebar layout changes
         let _sidebar = state.sidebar_collapsed.get();
         let _sidebar_width = state.sidebar_width.get();
@@ -336,9 +336,8 @@ pub fn Spectrogram() -> impl IntoView {
 
         // Step 1: Render base spectrogram.
         // Priority: timeline | flow tiles | normal tiles > pre_rendered > preview > black
-        let base_drawn = if timeline.is_some() {
+        let base_drawn = if let Some(tl) = timeline.as_ref() {
             // ── Timeline mode: render each visible segment ──
-            let tl = timeline.as_ref().unwrap();
             let px_per_sec = zoom / time_res;
             let visible_start = scroll;
             let visible_end = scroll + visible_time;
@@ -896,7 +895,7 @@ pub fn Spectrogram() -> impl IntoView {
                 if x >= 0.0 && x <= display_w as f64 {
                     ctx.begin_path();
                     let _ = ctx.arc(x, 6.0, 4.0, 0.0, std::f64::consts::TAU);
-                    let _ = ctx.fill();
+                    ctx.fill();
                 }
             }
         }
@@ -994,7 +993,7 @@ pub fn Spectrogram() -> impl IntoView {
 
             // Cancel previous debounce timer
             if let Some(h) = prefetch_handle.get() {
-                let _ = web_sys::window().unwrap().clear_timeout_with_handle(h);
+                web_sys::window().unwrap().clear_timeout_with_handle(h);
             }
 
             let handle_rc = prefetch_handle.clone();

@@ -248,7 +248,7 @@ impl StreamingOggSource {
         }
 
         // Advance cursors
-        let advance = OGG_WINDOW_BYTES.min((read_end - read_start) as u64);
+        let advance = OGG_WINDOW_BYTES.min(read_end - read_start);
         let new_byte_cursor = read_start + advance;
         let new_frame_cursor = frame_cursor + total_new_frames as u64;
 

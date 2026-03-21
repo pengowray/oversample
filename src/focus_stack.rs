@@ -87,6 +87,12 @@ pub struct FocusStack {
     hfr_saved_bandpass_mode: Option<BandpassMode>,
 }
 
+impl Default for FocusStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FocusStack {
     pub fn new() -> Self {
         Self {
@@ -134,7 +140,7 @@ impl FocusStack {
 
     /// Is the topmost override (if any) adopted by the user?
     pub fn is_top_adopted(&self) -> bool {
-        self.overrides.last().map_or(false, |l| l.adopted)
+        self.overrides.last().is_some_and(|l| l.adopted)
     }
 
     /// Is a specific override adopted?
@@ -142,7 +148,7 @@ impl FocusStack {
         self.overrides
             .iter()
             .find(|l| l.source == source)
-            .map_or(false, |l| l.adopted)
+            .is_some_and(|l| l.adopted)
     }
 
     /// Get the topmost active source.

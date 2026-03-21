@@ -130,7 +130,7 @@ fn farthest_present(columns: &[Option<SpectrogramColumn>], center: usize) -> Opt
     for (i, col) in columns.iter().enumerate() {
         if col.is_some() {
             let dist = i.abs_diff(center);
-            if best.map_or(true, |(_, d)| dist > d) {
+            if best.is_none_or(|(_, d)| dist > d) {
                 best = Some((i, dist));
             }
         }

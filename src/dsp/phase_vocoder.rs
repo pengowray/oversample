@@ -40,7 +40,7 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
     // Pad input so the STFT frames fully cover every sample.
     // Without padding, the last (samples.len() % HOP) samples get no STFT frame,
     // producing a brief silence/click at streaming chunk boundaries.
-    let padded_len = if (samples.len() - FFT_SIZE) % HOP != 0 {
+    let padded_len = if !(samples.len() - FFT_SIZE).is_multiple_of(HOP) {
         let n = (samples.len() - FFT_SIZE) / HOP + 2; // one extra frame
         (n - 1) * HOP + FFT_SIZE
     } else {
@@ -112,7 +112,7 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         // Use source phase scaled by pitch_factor — this preserves the phase
         // relationship proportional to the frequency shift and is stateless
         // (no accumulator that drifts across streaming chunks).
-        for j in 0..n_bins {
+        for (j, spec_bin) in spectrum.iter_mut().enumerate().take(n_bins) {
             let source = j as f32 / pitch_factor;
             let s_idx = source as usize;
             let s_frac = source - s_idx as f32;
@@ -134,8 +134,8 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
             // preserving the phase-frequency relationship.
             let out_phase = src_phase * pitch_factor;
 
-            spectrum[j].re = m * out_phase.cos();
-            spectrum[j].im = m * out_phase.sin();
+            spec_bin.re = m * out_phase.cos();
+            spec_bin.im = m * out_phase.sin();
         }
 
         // DC and Nyquist bins must be real for realfft inverse
@@ -167,8 +167,8 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
     // Fade in over the first HOP samples to avoid onset click from incomplete
     // window overlap at the start of each chunk
     let fade_len = HOP.min(out_len);
-    for i in 0..fade_len {
-        output[i] *= i as f32 / fade_len as f32;
+    for (i, sample) in output.iter_mut().enumerate().take(fade_len) {
+        *sample *= i as f32 / fade_len as f32;
     }
 
     // Truncate to original input length

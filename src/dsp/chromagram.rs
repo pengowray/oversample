@@ -39,7 +39,7 @@ pub fn stft_to_chromagram(
 
         // MIDI note number: 69 = A4 = 440 Hz
         let midi = 69.0 + 12.0 * (freq / 440.0).log2();
-        if midi < 0.0 || midi > 127.0 { continue; }
+        if !(0.0..=127.0).contains(&midi) { continue; }
 
         let midi_rounded = midi.round() as usize;
         let pc = midi_rounded % 12;

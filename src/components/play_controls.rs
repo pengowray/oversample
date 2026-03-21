@@ -49,7 +49,7 @@ pub fn BookmarkPopup() -> impl IntoView {
                     <div class="bookmark-popup-title">"Bookmarks"</div>
                     {recent.into_iter().map(|bm| {
                         let t = bm.time;
-                        let state2 = state.clone();
+                        let state2 = state;
                         view! {
                             <button class="bookmark-item"
                                 on:click=move |_| {

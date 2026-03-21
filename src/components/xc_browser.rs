@@ -84,7 +84,7 @@ struct CachedFile {
 fn parse_species_list(val: &JsValue) -> Vec<SpeciesInfo> {
     let species_arr = js_sys::Reflect::get(val, &"species".into())
         .ok()
-        .and_then(|v| js_sys::Array::try_from(v).ok());
+        .map(|v| js_sys::Array::from(&v));
     let Some(arr) = species_arr else { return Vec::new() };
     let mut result = Vec::new();
     for i in 0..arr.length() {
@@ -111,7 +111,7 @@ fn parse_species_list(val: &JsValue) -> Vec<SpeciesInfo> {
 fn parse_recordings(val: &JsValue) -> Vec<RecordingInfo> {
     let rec_arr = js_sys::Reflect::get(val, &"recordings".into())
         .ok()
-        .and_then(|v| js_sys::Array::try_from(v).ok());
+        .map(|v| js_sys::Array::from(&v));
     let Some(arr) = rec_arr else { return Vec::new() };
     let mut result = Vec::new();
     for i in 0..arr.length() {
@@ -177,7 +177,7 @@ fn parse_cached_file(val: &JsValue) -> Option<CachedFile> {
     let xc_id = js_sys::Reflect::get(val, &"xc_id".into()).ok()?.as_f64()? as u64;
     let meta_arr = js_sys::Reflect::get(val, &"metadata".into())
         .ok()
-        .and_then(|v| js_sys::Array::try_from(v).ok());
+        .map(|v| js_sys::Array::from(&v));
     let metadata = meta_arr.map(|arr| {
         let mut pairs = Vec::new();
         for i in 0..arr.length() {
@@ -245,14 +245,11 @@ pub fn XcBrowser() -> impl IntoView {
 
     // Check if API key is already set
     spawn_local(async move {
-        match crate::tauri_bridge::tauri_invoke_no_args("xc_get_api_key").await {
-            Ok(val) => {
-                if val.is_string() && !val.as_string().unwrap_or_default().is_empty() {
-                    has_key.set(true);
-                    view.set(BrowserView::GroupBrowse);
-                }
+        if let Ok(val) = crate::tauri_bridge::tauri_invoke_no_args("xc_get_api_key").await {
+            if val.is_string() && !val.as_string().unwrap_or_default().is_empty() {
+                has_key.set(true);
+                view.set(BrowserView::GroupBrowse);
             }
-            Err(_) => {}
         }
     });
 
@@ -818,7 +815,7 @@ pub fn XcBrowser() -> impl IntoView {
                                 let genus = sp.genus.clone();
                                 let species = sp.sp.clone();
                                 let en = sp.en.clone();
-                                let load_sp = load_species_recordings.clone();
+                                let load_sp = load_species_recordings;
                                 view! {
                                     <button
                                         class="xc-species-row"
@@ -876,7 +873,7 @@ pub fn XcBrowser() -> impl IntoView {
                             </div>
                             {recs.into_iter().map(|rec| {
                                 let id = rec.id;
-                                let dl = download_and_load.clone();
+                                let dl = download_and_load;
                                 let q_class = match rec.q.as_str() {
                                     "A" => "xc-rec-quality xc-q-a",
                                     "B" => "xc-rec-quality xc-q-b",

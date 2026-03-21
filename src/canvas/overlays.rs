@@ -104,7 +104,7 @@ pub fn draw_freq_markers(
 
         // --- Color range bar (covering the interval above this division) ---
         let bar_top_freq = (freq + div_interval).min(max_freq);
-        let mouse_in_range = ms.mouse_freq.map_or(false, |mf| mf >= freq && mf < bar_top_freq);
+        let mouse_in_range = ms.mouse_freq.is_some_and(|mf| mf >= freq && mf < bar_top_freq);
         let axis_drag_in_range = match (ms.axis_drag_lo, ms.axis_drag_hi) {
             (Some(lo), Some(hi)) => bar_top_freq > lo && freq < hi,
             _ => false,
@@ -339,7 +339,7 @@ pub fn draw_ff_overlay(
             ctx.line_to(center_x, y + handle_size);              // bottom
             ctx.line_to(center_x - handle_size, y);              // left
             ctx.close_path();
-            let _ = ctx.fill();
+            ctx.fill();
 
             // Short horizontal line through handle zone for visual affordance
             let line_half = handle_zone_half * 0.6;
@@ -366,7 +366,7 @@ pub fn draw_ff_overlay(
         ctx.line_to(center_x, mid_y + mid_size);
         ctx.line_to(center_x - mid_size, mid_y);
         ctx.close_path();
-        let _ = ctx.fill();
+        ctx.fill();
     }
 
     // FF range labels (only when handles are active): top and bottom frequencies
@@ -439,7 +439,7 @@ pub fn draw_het_overlay(
             ctx.line_to(canvas_width - handle_size, y);
             ctx.line_to(canvas_width, y + handle_size);
             ctx.close_path();
-            let _ = ctx.fill();
+            ctx.fill();
         }
     }
 
@@ -480,7 +480,7 @@ pub fn draw_het_overlay(
         ctx.line_to(canvas_width - handle_size, y_center);
         ctx.line_to(canvas_width, y_center + handle_size);
         ctx.close_path();
-        let _ = ctx.fill();
+        ctx.fill();
     }
 
     // Label at center line
@@ -1029,14 +1029,12 @@ pub fn draw_tile_debug_overlay(
     } else {
         "OK"
     };
-    let panel_lines = vec![
-        format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}"),
+    let panel_lines = [format!("z={zoom:.1} LOD{ideal_lod} fft={actual_fft} hop={ideal_hop}"),
         format!("visible c:{} f:{} m:{}", stats.visible_cached, stats.visible_in_flight, stats.visible_missing),
         format!("cache {} / {} tiles", stats.total_cached, stats.total_in_flight),
         format!("mem {used_mb:.1} / {max_mb:.0} MB"),
         format!("headroom {headroom_mb:.1} MB  {fullness_pct:.0}%  {pressure}"),
-        format!("range T{first_tile}..T{last_tile}"),
-    ];
+        format!("range T{first_tile}..T{last_tile}")];
     let label_w = 248.0;
     let label_h = 14.0 * panel_lines.len() as f64 + 6.0;
     let panel_x = cw - label_w - 6.0;
@@ -1157,7 +1155,7 @@ pub fn draw_annotations(
             for (pos, hx, hy) in &handles {
                 let is_hovered = hover_handle
                     .as_ref()
-                    .map_or(false, |(hid, hp)| *hid == annotation.id && *hp == *pos);
+                    .is_some_and(|(hid, hp)| *hid == annotation.id && *hp == *pos);
 
                 let size = if is_hovered {
                     if is_mobile { 8.0 } else { 4.0 }

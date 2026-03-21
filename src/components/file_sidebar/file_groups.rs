@@ -102,10 +102,8 @@ pub fn compute_file_groups(names: &[String]) -> Vec<Option<TrackInfo>> {
 
     // Count occurrences per group_key
     let mut counts: HashMap<String, usize> = HashMap::new();
-    for info in &parsed {
-        if let Some(ti) = info {
-            *counts.entry(ti.group_key.clone()).or_insert(0) += 1;
-        }
+    for ti in parsed.iter().flatten() {
+        *counts.entry(ti.group_key.clone()).or_insert(0) += 1;
     }
 
     // Only keep entries where group has 2+ members

@@ -86,11 +86,11 @@ pub fn ChromagramView() -> impl IntoView {
             let src_end = (src_start + visible_cols_f).min(total_cols as f64);
             let first_tile = (src_start / TILE_COLS as f64).floor() as usize;
             let last_tile = ((src_end - 1.0).max(0.0) / TILE_COLS as f64).floor() as usize;
-            let n_tiles = (total_cols + TILE_COLS - 1) / TILE_COLS;
+            let n_tiles = total_cols.div_ceil(TILE_COLS);
 
             for t in first_tile..=last_tile.min(n_tiles.saturating_sub(1)) {
                 if tile_cache::get_chroma_tile(file_idx, t).is_none() {
-                    tile_cache::schedule_chroma_tile(state.clone(), file_idx, t);
+                    tile_cache::schedule_chroma_tile(state, file_idx, t);
                 }
             }
         }
@@ -100,7 +100,7 @@ pub fn ChromagramView() -> impl IntoView {
         let row_height = ch / (NUM_PITCH_CLASSES * NUM_OCTAVES) as f64;
         ctx.set_font("10px monospace");
         ctx.set_text_baseline("middle");
-        for pc in 0..NUM_PITCH_CLASSES {
+        for (pc, &label) in PITCH_CLASS_NAMES.iter().enumerate().take(NUM_PITCH_CLASSES) {
             let band_bottom = ch - (pc * NUM_OCTAVES) as f64 * row_height;
             let band_top = band_bottom - NUM_OCTAVES as f64 * row_height;
             let band_center = (band_top + band_bottom) / 2.0;
@@ -111,7 +111,7 @@ pub fn ChromagramView() -> impl IntoView {
 
             // Label text
             ctx.set_fill_style_str("#aaa");
-            let _ = ctx.fill_text(PITCH_CLASS_NAMES[pc], 2.0, band_center);
+            let _ = ctx.fill_text(label, 2.0, band_center);
 
             // Separator line between pitch classes
             if pc > 0 {
@@ -208,7 +208,7 @@ pub fn ChromagramView() -> impl IntoView {
         ev.prevent_default();
         if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-            state.zoom_level.update(|z| *z = (*z * delta).max(0.1).min(100.0));
+            state.zoom_level.update(|z| *z = (*z * delta).clamp(0.1, 100.0));
         } else {
             let delta = ev.delta_y() * 0.001;
             let files = state.files.get_untracked();

@@ -212,14 +212,13 @@ pub fn ZcDotChart() -> impl IntoView {
         let armed_g = (200.0 + small_t * 55.0) as u32;
         ctx.set_fill_style_str(&format!("rgba(100, {armed_g}, 100, {armed_alpha:.2})"));
         ctx.begin_path();
-        for bin_idx in first_bin..last_bin {
-            let (rate_hz, armed) = bins[bin_idx];
+        for (bin_idx, &(rate_hz, armed)) in bins.iter().enumerate().take(last_bin).skip(first_bin) {
             if rate_hz <= 0.0 || !armed { continue; }
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
             let x = LABEL_AREA_WIDTH + data_x + (bin_time - start_time) * px_per_sec;
             let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
-            let _ = ctx.move_to(x + radius_armed, y);
+            ctx.move_to(x + radius_armed, y);
             let _ = ctx.arc(x, y, radius_armed, 0.0, TAU);
         }
         ctx.fill();
@@ -229,14 +228,13 @@ pub fn ZcDotChart() -> impl IntoView {
         let unarmed_g = (130.0 + small_t * 50.0) as u32;
         ctx.set_fill_style_str(&format!("rgba(60, {unarmed_g}, 60, {unarmed_alpha:.2})"));
         ctx.begin_path();
-        for bin_idx in first_bin..last_bin {
-            let (rate_hz, armed) = bins[bin_idx];
+        for (bin_idx, &(rate_hz, armed)) in bins.iter().enumerate().take(last_bin).skip(first_bin) {
             if rate_hz <= 0.0 || armed { continue; }
             if rate_hz < min_freq || rate_hz > max_freq { continue; }
             let bin_time = bin_idx as f64 * ZC_BIN_DURATION;
             let x = LABEL_AREA_WIDTH + data_x + (bin_time - start_time) * px_per_sec;
             let y = spectrogram_renderer::freq_to_y(rate_hz, min_freq, max_freq, ch);
-            let _ = ctx.move_to(x + radius_unarmed, y);
+            ctx.move_to(x + radius_unarmed, y);
             let _ = ctx.arc(x, y, radius_unarmed, 0.0, TAU);
         }
         ctx.fill();
@@ -431,7 +429,7 @@ pub fn ZcDotChart() -> impl IntoView {
         ev.prevent_default();
         if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-            state.zoom_level.update(|z| *z = (*z * delta).max(0.1).min(100.0));
+            state.zoom_level.update(|z| *z = (*z * delta).clamp(0.1, 100.0));
         } else {
             let delta = (ev.delta_y() + ev.delta_x()) * 0.001;
             let visible_time = {

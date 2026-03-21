@@ -75,12 +75,10 @@ pub fn bit_label(bit_index: usize, bits_per_sample: u16, is_float: bool) -> Stri
             23..=30 => format!("E{}", bit_pos - 23),
             _ => format!("M{}", bit_pos),
         }
+    } else if bit_pos == bits_per_sample as usize - 1 {
+        "S".into()
     } else {
-        if bit_pos == bits_per_sample as usize - 1 {
-            "S".into()
-        } else {
-            format!("{}", bit_pos)
-        }
+        format!("{}", bit_pos)
     }
 }
 
@@ -292,7 +290,7 @@ fn analyze_int_bits(
                 last[b] = Some(idx);
             }
         }
-        for p in 0..n_pairs {
+        for (p, pair_count) in pair_counts.iter_mut().enumerate().take(n_pairs) {
             let b0 = 2 * p;
             let b1 = 2 * p + 1;
             let bit_pos0 = mask_bits as usize - 1 - b0;
@@ -300,7 +298,7 @@ fn analyze_int_bits(
             let v0 = ((bits >> bit_pos0) & 1) as usize;
             let v1 = ((bits >> bit_pos1) & 1) as usize;
             let combo = v0 * 2 + v1; // 00=0, 01=1, 10=2, 11=3
-            pair_counts[p][combo] += 1;
+            pair_count[combo] += 1;
         }
     }
 }
@@ -345,7 +343,7 @@ fn analyze_float_bits(
                 last[b] = Some(idx);
             }
         }
-        for p in 0..n_pairs {
+        for (p, pair_count) in pair_counts.iter_mut().enumerate().take(n_pairs) {
             let b0 = 2 * p;
             let b1 = 2 * p + 1;
             let bit_pos0 = 31 - b0;
@@ -353,7 +351,7 @@ fn analyze_float_bits(
             let v0 = ((bits >> bit_pos0) & 1) as usize;
             let v1 = ((bits >> bit_pos1) & 1) as usize;
             let combo = v0 * 2 + v1;
-            pair_counts[p][combo] += 1;
+            pair_count[combo] += 1;
         }
     }
 }

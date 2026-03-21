@@ -39,11 +39,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
     let file_input_ref = NodeRef::<leptos::html::Input>::new();
 
-    let state_for_upload = state.clone();
+    let state_for_upload = state;
     let on_upload_click = move |_: web_sys::MouseEvent| {
         if state.is_tauri && !state.is_mobile.get_untracked() {
             // Tauri desktop: use native file dialog to get real filesystem paths
-            let state = state_for_upload.clone();
+            let state = state_for_upload;
             spawn_local(async move {
                 let args = js_sys::Object::new();
                 match crate::tauri_bridge::tauri_invoke("open_file_dialog", &args.into()).await {
@@ -54,10 +54,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             .collect();
                         for path in paths {
                             let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
-                            let state = state.clone();
+                            let state = state;
                             let load_id = state.loading_start(&name);
                             spawn_local(async move {
-                                match load_native_file(path, state.clone(), load_id).await {
+                                match load_native_file(path, state, load_id).await {
                                     Ok(()) => {}
                                     Err(e) => log::error!("Failed to load file: {e}"),
                                 }
@@ -81,10 +81,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
         for i in 0..file_list.length() {
             let Some(file) = file_list.get(i) else { continue };
-            let state = state_for_upload.clone();
+            let state = state_for_upload;
             let load_id = state.loading_start(&file.name());
             spawn_local(async move {
-                match read_and_load_file(file, state.clone(), load_id).await {
+                match read_and_load_file(file, state, load_id).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Failed to load file: {e}"),
                 }
@@ -124,7 +124,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
     };
 
 
-    let state_for_drop = state.clone();
+    let state_for_drop = state;
     let on_drop = move |ev: DragEvent| {
         ev.prevent_default();
         drag_over.set(false);
@@ -142,10 +142,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
         for i in 0..file_list.length() {
             let Some(file) = file_list.get(i) else { continue };
-            let state = state_for_drop.clone();
+            let state = state_for_drop;
             let load_id = state.loading_start(&file.name());
             spawn_local(async move {
-                match read_and_load_file(file, state.clone(), load_id).await {
+                match read_and_load_file(file, state, load_id).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Failed to load file: {e}"),
                 }

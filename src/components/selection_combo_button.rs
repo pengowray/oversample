@@ -99,7 +99,7 @@ fn toggle_region_segment(state: &AppState) {
         let store = state.annotation_store.get_untracked();
         let all_have_freq = if let Some(Some(ref set)) = store.sets.get(idx) {
             sel_ids.iter().all(|id| {
-                set.annotations.iter().find(|a| &a.id == id).map_or(false, |a| {
+                set.annotations.iter().find(|a| &a.id == id).is_some_and(|a| {
                     matches!(&a.kind, AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some())
                 })
             })

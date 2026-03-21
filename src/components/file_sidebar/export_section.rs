@@ -342,7 +342,7 @@ pub fn ExportSection(
                                 class="sidebar-btn"
                                 style="flex: 1;"
                                 on:click={
-                                    let cb = on_save_sidecar.clone();
+                                    let cb = on_save_sidecar;
                                     move |_: web_sys::MouseEvent| cb.run(())
                                 }
                                 disabled=move || has_annotations.get().is_none() || has_file_path.get().is_none()
@@ -354,7 +354,7 @@ pub fn ExportSection(
                                 class="sidebar-btn"
                                 style="flex: 1;"
                                 on:click={
-                                    let cb = on_export_batm.clone();
+                                    let cb = on_export_batm;
                                     move |_: web_sys::MouseEvent| cb.run(())
                                 }
                                 disabled=move || has_annotations.get().is_none()
@@ -369,7 +369,7 @@ pub fn ExportSection(
                                 class="sidebar-btn"
                                 style="flex: 1;"
                                 on:click={
-                                    let cb = on_export_batm.clone();
+                                    let cb = on_export_batm;
                                     move |_: web_sys::MouseEvent| cb.run(())
                                 }
                                 disabled=move || has_annotations.get().is_none()
@@ -382,7 +382,7 @@ pub fn ExportSection(
                         class="sidebar-btn"
                         style="flex: 1;"
                         on:click={
-                            let cb = on_import_batm.clone();
+                            let cb = on_import_batm;
                             move |_: web_sys::MouseEvent| cb.run(())
                         }
                     >

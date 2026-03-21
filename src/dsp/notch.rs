@@ -343,12 +343,12 @@ fn merge_overlapping(bands: &mut Vec<NoiseBand>) {
 fn running_median(data: &[f64], half_w: usize) -> Vec<f64> {
     let n = data.len();
     let mut result = vec![0.0; n];
-    for i in 0..n {
+    for (i, res) in result.iter_mut().enumerate().take(n) {
         let start = i.saturating_sub(half_w);
         let end = (i + half_w + 1).min(n);
         let mut window: Vec<f64> = data[start..end].to_vec();
         window.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        result[i] = window[window.len() / 2];
+        *res = window[window.len() / 2];
     }
     result
 }
@@ -415,7 +415,7 @@ pub async fn detect_noise_bands_async(
 
         pos += hop_size;
         frame_count += 1;
-        if frame_count % yield_interval == 0 {
+        if frame_count.is_multiple_of(yield_interval) {
             yield_to_browser().await;
         }
     }

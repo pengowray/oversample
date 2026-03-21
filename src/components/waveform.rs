@@ -430,7 +430,7 @@ pub fn Waveform() -> impl IntoView {
         if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
             state.zoom_level.update(|z| {
-                *z = (*z * delta).max(0.1).min(100.0);
+                *z = (*z * delta).clamp(0.1, 100.0);
             });
         } else {
             let delta = (ev.delta_y() + ev.delta_x()) * 0.001;

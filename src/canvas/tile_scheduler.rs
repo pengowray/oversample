@@ -91,15 +91,14 @@ pub fn schedule_normal_tiles(
 
     for &t in &tile_order {
         // Schedule reassignment tiles when enabled (skip LOD0)
-        if use_reassign {
-            if tile_cache::get_reassign_tile(file_idx, ideal_lod, t).is_none() {
-                tile_cache::schedule_reassign_tile(state.clone(), file_idx, ideal_lod, t);
+        if use_reassign
+            && tile_cache::get_reassign_tile(file_idx, ideal_lod, t).is_none() {
+                tile_cache::schedule_reassign_tile(state, file_idx, ideal_lod, t);
             }
-        }
 
         // Always schedule normal tiles (for fallback and non-reassign mode)
         if tile_cache::get_tile(file_idx, ideal_lod, t).is_none() {
-            tile_cache::schedule_tile_lod(state.clone(), file_idx, ideal_lod, t);
+            tile_cache::schedule_tile_lod(state, file_idx, ideal_lod, t);
         }
     }
 
@@ -107,19 +106,18 @@ pub fn schedule_normal_tiles(
         // Also ensure a LOD1 fallback tile exists (for smooth transitions)
         if ideal_lod != 1 {
             let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
-            if tile_cache::get_tile(file_idx, 1, fb_tile).is_none() {
-                if !is_loading {
+            if tile_cache::get_tile(file_idx, 1, fb_tile).is_none()
+                && !is_loading {
                     let tile_start = fb_tile * TILE_COLS;
                     let tile_end = (tile_start + TILE_COLS).min(total_cols);
                     if spectral_store::has_store(file_idx)
                         && spectral_store::tile_complete(file_idx, tile_start, tile_end)
                     {
-                        tile_cache::schedule_tile_from_store(state.clone(), file_idx, fb_tile);
+                        tile_cache::schedule_tile_from_store(state, file_idx, fb_tile);
                     } else {
-                        tile_cache::schedule_tile_on_demand(state.clone(), file_idx, fb_tile);
+                        tile_cache::schedule_tile_on_demand(state, file_idx, fb_tile);
                     }
                 }
-            }
         }
     }
 
@@ -135,9 +133,9 @@ pub fn schedule_normal_tiles(
                 if spectral_store::has_store(file_idx)
                     && spectral_store::tile_complete(file_idx, tile_start, tile_end)
                 {
-                    tile_cache::schedule_tile_from_store(state.clone(), file_idx, t);
+                    tile_cache::schedule_tile_from_store(state, file_idx, t);
                 } else {
-                    tile_cache::schedule_tile_on_demand(state.clone(), file_idx, t);
+                    tile_cache::schedule_tile_on_demand(state, file_idx, t);
                 }
             }
         }
@@ -186,14 +184,14 @@ pub fn schedule_flow_tiles(
     for t in first_tile..=last_tile {
         // Schedule ideal LOD tile
         if tile_cache::get_flow_tile(file_idx, ideal_lod, t).is_none() {
-            tile_cache::schedule_flow_tile(state.clone(), file_idx, ideal_lod, t, algo);
+            tile_cache::schedule_flow_tile(state, file_idx, ideal_lod, t, algo);
         }
 
         // Also ensure a LOD1 fallback exists for smooth transitions
         if ideal_lod != 1 {
             let (fb_tile, _, _) = tile_cache::fallback_tile_info(ideal_lod, t, 1);
             if tile_cache::get_flow_tile(file_idx, 1, fb_tile).is_none() {
-                tile_cache::schedule_flow_tile(state.clone(), file_idx, 1, fb_tile, algo);
+                tile_cache::schedule_flow_tile(state, file_idx, 1, fb_tile, algo);
             }
         }
     }

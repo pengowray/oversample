@@ -351,8 +351,8 @@ fn detect_fundamental_hps(avg_spectrum: &[f32]) -> Option<usize> {
     }
     // Skip first 1 % of bins to avoid DC / subharmonic artefacts.
     let min_bin = (hps_len / 100).max(1);
-    for k in 0..min_bin {
-        hps[k] = 0.0;
+    for val in hps.iter_mut().take(min_bin) {
+        *val = 0.0;
     }
     let (peak_k, peak_v) = hps
         .iter()
@@ -701,8 +701,8 @@ pub fn compute_tile_phase_angle_data(
         }
         fft.process(&mut input, &mut spectrum).expect("FFT failed");
 
-        for k in 0..n_bins {
-            let mag = spectrum[k].norm();
+        for (k, spec_bin) in spectrum.iter().enumerate().take(n_bins) {
+            let mag = spec_bin.norm();
             let row = n_bins - 1 - k;
             let idx = row * width as usize + col;
 
@@ -712,7 +712,7 @@ pub fn compute_tile_phase_angle_data(
             if mag < 1e-8 {
                 flow_shifts[idx] = 0.0;
             } else {
-                flow_shifts[idx] = spectrum[k].arg() / PI;
+                flow_shifts[idx] = spec_bin.arg() / PI;
             }
         }
         actual_cols += 1;

@@ -50,6 +50,12 @@ pub struct SpectInteraction {
     pub pending_annotation_hit: RwSignal<Option<(String, bool)>>, // (annotation_id, ctrl_held)
 }
 
+impl Default for SpectInteraction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpectInteraction {
     pub fn new() -> Self {
         Self {
@@ -380,8 +386,8 @@ pub fn on_mousedown(
                 let _snap = if ev.shift_key() { 10_000.0 } else { 5_000.0 };
                 let has_range = ff_hi > ff_lo;
                 let raw_start_freq = if ev.shift_key() && has_range {
-                    let anchor = if (freq - ff_lo).abs() < (freq - ff_hi).abs() { ff_hi } else { ff_lo };
-                    anchor
+                    
+                    if (freq - ff_lo).abs() < (freq - ff_hi).abs() { ff_hi } else { ff_lo }
                 } else {
                     freq
                 };
@@ -517,14 +523,13 @@ pub fn on_mousedown(
 
     // Click on empty area deselects annotations (unless modifier held)
     // For Hand tool: defer to mouseup so panning isn't blocked
-    if state.canvas_tool.get_untracked() != CanvasTool::Hand {
-        if !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
+    if state.canvas_tool.get_untracked() != CanvasTool::Hand
+        && !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
             let ids = state.selected_annotation_ids.get_untracked();
             if !ids.is_empty() {
                 state.selected_annotation_ids.set(Vec::new());
             }
         }
-    }
 
     match state.canvas_tool.get_untracked() {
         CanvasTool::Hand => {
@@ -1487,7 +1492,7 @@ pub fn on_wheel(
     } else if ev.ctrl_key() {
         let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
         state.zoom_level.update(|z| {
-            *z = (*z * delta).max(0.1).min(400.0);
+            *z = (*z * delta).clamp(0.1, 400.0);
         });
     } else {
         let raw_delta = ev.delta_y() + ev.delta_x();

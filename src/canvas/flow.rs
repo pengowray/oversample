@@ -121,8 +121,8 @@ fn compute_centroid_shift(prev: &[f32], curr: &[f32], bin: usize, h: usize) -> f
     let centroid = |mags: &[f32]| -> f32 {
         let mut sum_w = 0.0f32;
         let mut sum_wf = 0.0f32;
-        for i in lo..hi {
-            let w = mags[i] * mags[i]; // weight by energy
+        for (i, &mag) in mags.iter().enumerate().take(hi).skip(lo) {
+            let w = mag * mag; // weight by energy
             sum_w += w;
             sum_wf += w * i as f32;
         }
@@ -177,10 +177,10 @@ fn compute_flow_shift(prev: &[f32], curr: &[f32], bin: usize, h: usize) -> f32 {
 
     for d in -max_disp..=max_disp {
         let mut corr = 0.0f32;
-        for i in lo..hi {
+        for (i, &c) in curr.iter().enumerate().take(hi).skip(lo) {
             let j = (i as isize + d) as usize;
             if j < h {
-                corr += curr[i] * prev[j];
+                corr += c * prev[j];
             }
         }
         if corr > best_corr {

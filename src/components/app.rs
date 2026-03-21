@@ -157,14 +157,13 @@ pub fn App() -> impl IntoView {
                             microphone::check_auto_mode_no_request(&state).await;
                             microphone::query_mic_info(&state).await;
                         }
-                    } else if event == "detached" && was_connected {
-                        if state.mic_mode.get_untracked() == MicMode::Auto {
+                    } else if event == "detached" && was_connected
+                        && state.mic_mode.get_untracked() == MicMode::Auto {
                             state.mic_effective_mode.set(MicMode::Cpal);
                             state.mic_needs_permission.set(false);
                             state.show_info_toast("USB mic disconnected, using native audio");
                             microphone::query_mic_info(&state).await;
                         }
-                    }
                 }
 
                 was_connected = is_connected;
@@ -226,12 +225,12 @@ pub fn App() -> impl IntoView {
     {
         use std::cell::RefCell;
         thread_local! {
-            static AUTOSAVE_TIMER: RefCell<Option<i32>> = RefCell::new(None);
+            static AUTOSAVE_TIMER: RefCell<Option<i32>> = const { RefCell::new(None) };
         }
         fn cancel_autosave_timer() {
             AUTOSAVE_TIMER.with(|t| {
                 if let Some(handle) = t.borrow_mut().take() {
-                    let _ = web_sys::window().unwrap().clear_timeout_with_handle(handle);
+                    web_sys::window().unwrap().clear_timeout_with_handle(handle);
                 }
             });
         }
@@ -579,7 +578,7 @@ pub fn App() -> impl IntoView {
     });
 
     // Global keyboard shortcut: Space = play/stop
-    let state_kb = state.clone();
+    let state_kb = state;
     let handler = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
         // Ignore if focus is on an input/select/textarea
         if let Some(target) = ev.target() {
@@ -673,7 +672,7 @@ pub fn App() -> impl IntoView {
                     let store = state_kb.annotation_store.get_untracked();
                     let all_have_freq = if let Some(Some(ref set)) = store.sets.get(idx) {
                         sel_ids.iter().all(|id| {
-                            set.annotations.iter().find(|a| &a.id == id).map_or(false, |a| {
+                            set.annotations.iter().find(|a| &a.id == id).is_some_and(|a| {
                                 matches!(&a.kind, crate::annotations::AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some())
                             })
                         })
@@ -800,18 +799,17 @@ pub fn App() -> impl IntoView {
             }
         }
         // Backtick: activate clean view (hide overlays)
-        if ev.key() == "`" && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
-            if !state_kb.clean_view.get_untracked() {
+        if ev.key() == "`" && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key()
+            && !state_kb.clean_view.get_untracked() {
                 state_kb.clean_view.set(true);
             }
-        }
     });
     let window = web_sys::window().unwrap();
     let _ = window.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
     handler.forget();
 
     // Keyup handler: release clean view on backtick release
-    let state_ku = state.clone();
+    let state_ku = state;
     let keyup_handler = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
         if ev.key() == "`" {
             state_ku.clean_view.set(false);
@@ -821,7 +819,7 @@ pub fn App() -> impl IntoView {
     keyup_handler.forget();
 
     // Reset clean view if window loses focus (so it doesn't stick)
-    let state_blur = state.clone();
+    let state_blur = state;
     let blur_handler = Closure::<dyn Fn()>::new(move || {
         state_blur.clean_view.set(false);
     });
@@ -859,7 +857,7 @@ pub fn App() -> impl IntoView {
 
     // Tauri: listen for native file drag-drop events (provides real filesystem paths)
     if state.is_tauri {
-        let state_drop = state.clone();
+        let state_drop = state;
         let callback = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(move |ev: wasm_bindgen::JsValue| {
             // Payload shape: { event: "tauri://drag-drop", payload: { paths: [...], position: {x, y} } }
             let payload = js_sys::Reflect::get(&ev, &wasm_bindgen::JsValue::from_str("payload")).unwrap_or_default();
@@ -877,10 +875,10 @@ pub fn App() -> impl IntoView {
                     log::info!("Skipping non-audio drop: {name}");
                     continue;
                 }
-                let state = state_drop.clone();
+                let state = state_drop;
                 let load_id = state.loading_start(&name);
                 leptos::task::spawn_local(async move {
-                    match crate::components::file_sidebar::load_native_file(path, state.clone(), load_id).await {
+                    match crate::components::file_sidebar::load_native_file(path, state, load_id).await {
                         Ok(()) => {}
                         Err(e) => log::error!("Failed to load dropped file: {e}"),
                     }
@@ -893,7 +891,7 @@ pub fn App() -> impl IntoView {
 
     // Android back button: close sidebar when open
     if is_mobile {
-        let state_back = state.clone();
+        let state_back = state;
         let on_popstate = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
             if !state_back.right_sidebar_collapsed.get_untracked() {
                 state_back.right_sidebar_collapsed.set(true);
@@ -1036,30 +1034,28 @@ fn MainArea() -> impl IntoView {
 
                         <AnalysisPanel />
                     }.into_any()
+                } else if is_mobile {
+                    view! {
+                        <div class="empty-state">
+                            "Tap \u{2630} to load audio files"
+                            <div class="main-overlays">
+                                <BatBookTab />
+                            </div>
+                        </div>
+                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
+                        {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
+                    }.into_any()
                 } else {
-                    if is_mobile {
-                        view! {
-                            <div class="empty-state">
-                                "Tap \u{2630} to load audio files"
-                                <div class="main-overlays">
-                                    <BatBookTab />
-                                </div>
+                    view! {
+                        <div class="empty-state">
+                            "Drop WAV, FLAC or MP3 files into the sidebar"
+                            <div class="main-overlays">
+                                <BatBookTab />
                             </div>
-                            {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
-                            {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
-                        }.into_any()
-                    } else {
-                        view! {
-                            <div class="empty-state">
-                                "Drop WAV, FLAC or MP3 files into the sidebar"
-                                <div class="main-overlays">
-                                    <BatBookTab />
-                                </div>
-                            </div>
-                            {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
-                            {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
-                        }.into_any()
-                    }
+                        </div>
+                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
+                        {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
+                    }.into_any()
                 }
             }}
             <BottomToolbar />

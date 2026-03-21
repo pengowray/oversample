@@ -93,29 +93,26 @@ pub fn MicChooserModal() -> impl IntoView {
 
         // Fetch USB devices (if available)
         let usb_args = js_sys::Object::new();
-        match tauri_invoke("plugin:usb-audio|listUsbDevices", &usb_args.into()).await {
-            Ok(val) => {
-                let devices_val = js_sys::Reflect::get(&val, &JsValue::from_str("devices"))
-                    .ok()
-                    .unwrap_or(JsValue::UNDEFINED);
-                let arr = js_sys::Array::from(&devices_val);
-                let mut devs = Vec::new();
-                for i in 0..arr.length() {
-                    let item = arr.get(i);
-                    let is_audio = js_sys::Reflect::get(&item, &JsValue::from_str("isAudioDevice"))
-                        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                    if !is_audio { continue; }
-                    let device_name = js_sys::Reflect::get(&item, &JsValue::from_str("deviceName"))
-                        .ok().and_then(|v| v.as_string()).unwrap_or_default();
-                    let product_name = js_sys::Reflect::get(&item, &JsValue::from_str("productName"))
-                        .ok().and_then(|v| v.as_string()).unwrap_or_else(|| device_name.clone());
-                    let has_permission = js_sys::Reflect::get(&item, &JsValue::from_str("hasPermission"))
-                        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                    devs.push(UsbDevice { device_name, product_name, has_permission });
-                }
-                usb_devices.set(devs);
+        if let Ok(val) = tauri_invoke("plugin:usb-audio|listUsbDevices", &usb_args.into()).await {
+            let devices_val = js_sys::Reflect::get(&val, &JsValue::from_str("devices"))
+                .ok()
+                .unwrap_or(JsValue::UNDEFINED);
+            let arr = js_sys::Array::from(&devices_val);
+            let mut devs = Vec::new();
+            for i in 0..arr.length() {
+                let item = arr.get(i);
+                let is_audio = js_sys::Reflect::get(&item, &JsValue::from_str("isAudioDevice"))
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+                if !is_audio { continue; }
+                let device_name = js_sys::Reflect::get(&item, &JsValue::from_str("deviceName"))
+                    .ok().and_then(|v| v.as_string()).unwrap_or_default();
+                let product_name = js_sys::Reflect::get(&item, &JsValue::from_str("productName"))
+                    .ok().and_then(|v| v.as_string()).unwrap_or_else(|| device_name.clone());
+                let has_permission = js_sys::Reflect::get(&item, &JsValue::from_str("hasPermission"))
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+                devs.push(UsbDevice { device_name, product_name, has_permission });
             }
-            Err(_) => {} // USB plugin not available (not Android)
+            usb_devices.set(devs);
         }
 
         loading.set(false);
@@ -193,7 +190,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                         </div>
                                         <div class="mic-chooser-device-caps">
                                             {if !dev.rates_summary.is_empty() {
-                                                format!("{}", dev.rates_summary)
+                                                dev.rates_summary.to_string()
                                             } else {
                                                 "No rates reported".to_string()
                                             }}

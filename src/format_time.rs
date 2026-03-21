@@ -1,9 +1,9 @@
-/// Centralized time formatting for the entire app.
-///
-/// All time values are in seconds. Two main entry points:
-///
-/// - **`format_time_label`** — adaptive precision for canvas timeline labels (compact)
-/// - **`format_time_display`** — fixed precision for UI text (annotations, metadata, etc.)
+//! Centralized time formatting for the entire app.
+//!
+//! All time values are in seconds. Two main entry points:
+//!
+//! - **`format_time_label`** — adaptive precision for canvas timeline labels (compact)
+//! - **`format_time_display`** — fixed precision for UI text (annotations, metadata, etc.)
 
 // ── Adaptive-precision (canvas timeline) ────────────────────────────────
 
@@ -18,9 +18,7 @@ pub fn format_time_label(seconds: f64, interval: f64, use_ms: bool) -> String {
     if abs < 1.0 {
         if use_ms {
             let ms = seconds * 1000.0;
-            return if interval < 0.001 {
-                format!("{:.1}ms", ms)
-            } else if interval < 0.01 {
+            return if interval < 0.01 {
                 format!("{:.1}ms", ms)
             } else {
                 format!("{:.0}ms", ms)
