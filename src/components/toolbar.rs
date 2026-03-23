@@ -208,8 +208,14 @@ pub fn Toolbar() -> impl IntoView {
                     let attr = attribution.get();
 
                     if let Some(cc_label) = cc {
-                        // CC license badge — clicking opens info panel
-                        let tooltip = attr.unwrap_or_else(|| cc_label.clone());
+                        // Strip leading "CC " from label since the logo replaces it
+                        let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
+                        // Build tooltip: "Creative Commons BY-NC-SA 4.0 — attribution text"
+                        let tooltip = if let Some(attr_text) = attr {
+                            format!("Creative Commons {} \u{2014} {}", short_label, attr_text)
+                        } else {
+                            format!("Creative Commons {}", short_label)
+                        };
                         Some(leptos::either::Either::Left(view! {
                             <button
                                 class="toolbar-cc-badge"
@@ -219,8 +225,8 @@ pub fn Toolbar() -> impl IntoView {
                                     state.right_sidebar_collapsed.set(false);
                                 }
                             >
-                                <span class="toolbar-cc-icon">"CC"</span>
-                                <span class="toolbar-cc-label">{cc_label}</span>
+                                <span class="toolbar-cc-icon"></span>
+                                <span class="toolbar-cc-label">{short_label}</span>
                             </button>
                         }))
                     } else {
