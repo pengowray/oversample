@@ -220,7 +220,8 @@ pub fn Toolbar() -> impl IntoView {
                             <button
                                 class="toolbar-cc-badge"
                                 title=tooltip
-                                on:click=move |_| {
+                                on:click=move |e: web_sys::MouseEvent| {
+                                    e.stop_propagation();
                                     state.right_sidebar_tab.set(RightSidebarTab::Metadata);
                                     state.right_sidebar_collapsed.set(false);
                                 }
@@ -236,7 +237,8 @@ pub fn Toolbar() -> impl IntoView {
                             <button
                                 class="toolbar-info-btn"
                                 title=title_str
-                                on:click=move |_| {
+                                on:click=move |e: web_sys::MouseEvent| {
+                                    e.stop_propagation();
                                     state.right_sidebar_tab.set(RightSidebarTab::Metadata);
                                     state.right_sidebar_collapsed.set(false);
                                 }
