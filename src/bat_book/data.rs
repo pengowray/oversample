@@ -1438,6 +1438,680 @@ const NORTH_AMERICA_BOOK: &[BookEntryDef] = &[
     },
 ];
 
+// ══════════════════════════════════════════════════════════════════════════════
+// South America — species-level entries sorted by commonness
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Sources:
+// - López-Baucells et al. (2016) Pelagic: Guía de los murciélagos de la Amazonia
+// - Barataud (2020): Ecologie acoustique des chiroptères d'Europe (neotropical appendix)
+// - Jung et al. (2014) PMC: Neotropical molossid call design
+// - Arias-Aguilar et al. (2018): Echolocation of Amazonian bats
+// - Schnitzler & Kalko (2001): Echolocation by insect-eating bats
+// - Nogueira et al. (2014): Echolocation of Brazilian bats
+// - Falcão et al. (2015): Bat assemblages in Brazilian Atlantic Forest
+// - Rodríguez-San Pedro & Simonetti (2015): Chilean bats
+
+const SOUTH_AMERICA_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::SACCOPTERYX_BILINEATA,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Abundant across Amazonian and Atlantic Forest lowlands. Roosts on tree trunks and building walls. Alternates ~45/48 kHz. Complex vocal learning with regional song dialects."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_MOLOSSUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Abundant in buildings and urban areas throughout South America. Alternating QCF at ~34.5/39.6 kHz. One of the first bats detected at dusk. Open-space aerial hawker."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CAROLLIA_PERSPICILLATA,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("One of the most abundant South American bats. Peak ~71 kHz. Low-intensity whispering calls\u{2014}detectable only within a few meters. Key seed disperser of Piper plants."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ARTIBEUS_LITURATUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Abundant large frugivore throughout South America. Lower peak (~52 kHz) than congeners. Prominent facial stripes. Low-intensity multiharmonic FM. Important seed disperser."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ARTIBEUS_PLANIROSTRIS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Very common frugivore, replaces A. jamaicensis across much of mainland South America. Peak ~54 kHz. Low-intensity multiharmonic FM. Important seed disperser."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::GLOSSOPHAGA_SORICINA,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Abundant nectarivore throughout South America. Peak ~80 kHz. Low-intensity calls\u{2014}hard to detect beyond a few meters. Uses echolocation to find flowers with acoustic reflectors. Important pollinator."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::STURNIRA_LILIUM,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Very common frugivore across South America. Peak ~66.5 kHz. Low-intensity FM. Yellow shoulder epaulettes in males. Key seed disperser of Solanum."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DESMODUS_ROTUNDUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Common throughout South America near livestock. Peak ~55 kHz. Relatively long calls for a phyllostomid (~5.5 ms). Low-intensity. Obligate blood-feeder. Important rabies vector in livestock regions."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TADARIDA_BRASILIENSIS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Abundant throughout South America\u{2014}the type locality is in Brazil. Extremely flexible acoustics: QCF 49\u{2013}70 kHz in open space, drops to 25\u{2013}40 kHz near objects. Forms massive colonies. Fast, high-altitude forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_RUFUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Widespread in South American lowlands. Low-frequency QCF at ~25\u{2013}26 kHz. Largest Molossus. Roosts in buildings and hollow trees. Open-space forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_NIGRICANS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("One of the most widespread South American vespertilionids. Highly plastic calls adapting to clutter. Peak ~50 kHz. FM sweeps. Common in forests and urban edges."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PLATYRRHINUS_LINEATUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Common frugivore of open habitats and forest edges. Peak ~62 kHz. Prominent white facial and dorsal stripes. Low-intensity FM. Cerrado and Atlantic Forest."),
+        name: None,
+    },
+
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::PTERONOTUS_PARNELLII,
+        commonness: Some(Commonness::Common),
+        description: Some("The South American high-duty-cycle echolocator. Long CF at ~60 kHz (2nd harmonic) with Doppler compensation. Unmistakable call structure. Huge cave colonies. Split from P. mesoamericanus."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::SACCOPTERYX_LEPTURA,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in Amazonian lowland forests. Higher frequency (~50 kHz) than S. bilineata. Similar QCF structure. Thinner dorsal stripes. Roosts on tree trunks."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHYNCHONYCTERIS_NASO,
+        commonness: Some(Commonness::Common),
+        description: Some("Common along Amazonian rivers, often in lines under bridges and overhanging banks. CF-FM with peak at ~47 kHz. Cryptic bark-like camouflage. Widespread from Mexico to Bolivia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NOCTILIO_LEPORINUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common along South American rivers and coasts. Long CF at 53\u{2013}56 kHz + FM sweep. Rakes water with large clawed feet to catch fish. Found throughout the continent."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NOCTILIO_ALBIVENTRIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread along Amazonian waterways. Higher CF (~75 kHz) than N. leporinus. Trawls insects and small fish from water surfaces."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PTERONOTUS_GYMNONOTUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in South American lowlands. CF at ~54\u{2013}57 kHz. Largest Pteronotus. Bare-backed in flight. Cave-dwelling. Often in mixed colonies with other mormoopids."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PTERONOTUS_PERSONATUS,
+        commonness: Some(Commonness::Common),
+        description: Some("South American lowlands. Highest frequency Pteronotus: initial CF ~83 kHz, terminal ~68 kHz. Cave-roosting."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PEROPTERYX_MACROTIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in South American lowlands. Multiharmonic QCF at ~40 kHz (2nd harmonic). Found near caves and rock shelters."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PHYLLOSTOMUS_HASTATUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common in South American lowlands. Large omnivore. Peak ~47 kHz. Low-intensity FM. Harem groups in caves and hollow trees. One of the loudest phyllostomids."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TRACHOPS_CIRRHOSUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common in South American lowland forests. Famous frog-eating bat\u{2014}identifies prey by their mating calls. Peak ~70 kHz. Low-intensity FM. Warty lips."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CAROLLIA_BREVICAUDA,
+        commonness: Some(Commonness::Common),
+        description: Some("Andean foothills and premontane forests throughout South America. Intermediate peak (~73 kHz) between C. perspicillata and C. castanea. Frugivore specializing on Piper."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ARTIBEUS_OBSCURUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common Amazonian frugivore. Peak ~55 kHz. Intermediate size between A. jamaicensis and A. lituratus. Low-intensity FM. Indistinct facial stripes."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::URODERMA_BILOBATUM,
+        commonness: Some(Commonness::Common),
+        description: Some("Tent-roosting frugivore in northern South American lowlands. Peak ~70 kHz. Low-intensity nasal FM. Modifies palm and banana leaves into tents."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DERMANURA_PHAEOTIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Small frugivore of northern SA lowlands. Peak ~75 kHz. Low-intensity FM. Tent-roosting. Important disperser of understory fruits."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LOPHOSTOMA_SILVICOLUM,
+        commonness: Some(Commonness::Common),
+        description: Some("Common in Amazonian forests. Modifies active termite nests into roosts\u{2014}unique among bats. Peak ~70 kHz. Low-intensity FM. Gleaning insectivore."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MICRONYCTERIS_MICROTIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in South American forests. Very short broadband FM at ~90\u{2013}100 kHz. Ultra-low intensity. Gleaning insectivore with large ears."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ANOURA_GEOFFROYI,
+        commonness: Some(Commonness::Common),
+        description: Some("Andean cloud forests and highlands throughout South America. Nectarivore. Peak ~70 kHz. Low-intensity FM. Important pollinator. Tailless."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ANOURA_CAUDIFER,
+        commonness: Some(Commonness::Common),
+        description: Some("Nectarivore with short tail (unlike tailless A. geoffroyi). Peak ~72 kHz. Low-intensity FM. Atlantic Forest and lower Andean slopes. Important pollinator."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_AURIPENDULUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in South American lowlands. Alternating QCF at ~23\u{2013}26 kHz. High, fast flight above canopy. Large ears joined at base."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_SINALOAE,
+        commonness: Some(Commonness::Common),
+        description: Some("Northern South America (Colombia, Venezuela, Ecuador). QCF at ~34 kHz. Open-space forager. Roosts in buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSOPS_TEMMINCKII,
+        commonness: Some(Commonness::Common),
+        description: Some("Small but widespread molossid. QCF at ~38\u{2013}42 kHz\u{2014}one of the highest frequency molossids, consistent with small body size. Open cerrado and forest edge forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPTESICUS_BRASILIENSIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common across South American lowlands and mid-elevations. Peak ~54\u{2013}60 kHz. FM-QCF. Forest edges and open areas."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LASIURUS_BLOSSEVILLII,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread in South America. Open-air forager. Peak ~42 kHz. FM-QCF. Migratory. Distinctive reddish fur. Roosts solitarily in foliage."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_ALBESCENS,
+        commonness: Some(Commonness::Common),
+        description: Some("Common South American Myotis. Peak ~48 kHz. FM sweeps. Silver-tipped dorsal fur distinctive. Forages over water and in forest clearings. Widespread from Mexico to Argentina."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_CHILOENSIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Southern South American Myotis (Chile, Argentina, Patagonia). Peak ~45 kHz. FM sweeps. One of the southernmost-ranging bats in the Americas. Forest and edge habitats."),
+        name: None,
+    },
+
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::CORMURA_BREVIROSTRIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Amazonian forest-interior forager. Unusual: most energy in 5th harmonic at ~68 kHz. Multiharmonic calls. Roosts in hollow trees."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PEROPTERYX_KAPPLERI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Amazonian lowlands. Lower frequency (~32 kHz) than P. macrotis. 2nd harmonic dominant. Near caves and rocky outcrops."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::SACCOPTERYX_CANESCENS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Amazonian endemic. Highest frequency Saccopteryx (~52 kHz). Similar QCF structure to congeners. Smaller than S. bilineata. Roosts on tree trunks in terra firme forest."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CENTRONYCTERIS_MAXIMILIANI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Rare canopy-level forager. Steep FM sweeps ~45\u{2013}55 kHz. Long shaggy fur. One of the least-known Neotropical emballonurids. Amazonian forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PEROPTERYX_LEUCOPTERA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Distinctive white wing membrane patches. QCF at ~42 kHz. Amazonian lowland forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PTERONOTUS_DAVYI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American populations in Venezuela, Colombia, Peru. CF-FM at ~67 kHz with sweep to ~51 kHz. Cave-roosting."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MORMOOPS_MEGALOPHYLLA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Northern South America (Venezuela, Colombia). 2nd harmonic at ~67 kHz dominates. Large cave colonies. At southern edge of range."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PHYLLOSTOMUS_DISCOLOR,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Widespread in South American lowlands. Omnivore. Peak ~55 kHz. Low-intensity FM. Large colonies in hollow trees. Important pollinator of balsa trees."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LONCHORHINA_AURITA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("UNIQUE phyllostomid with CF-FM calls\u{2014}the only leaf-nosed bat with constant-frequency echolocation. Long CF at ~45 kHz. Longest phyllostomid calls (up to 8.7 ms). Amazonian caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MIMON_CRENULATUM,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Widespread in South American forests. Gleaning insectivore. Peak ~75 kHz. Low-intensity FM. Now Gardnerycteris crenulatum. Forest understory."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TONATIA_SAUROPHILA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Amazonian forests. Gleaning insectivore/carnivore. Peak ~65 kHz. Low-intensity FM. Roosts in hollow trees. Forest interior specialist."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CAROLLIA_CASTANEA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American lowland forests. Higher peak (~78 kHz) than C. perspicillata. Low-intensity FM. Smallest Carollia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PLATYRRHINUS_HELLERI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small frugivore. Peak ~68 kHz. Low-intensity FM. Widespread in Neotropical lowland forests. Important seed disperser."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::VAMPYRESSA_THYONE,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small frugivore. Peak ~78 kHz. Low-intensity FM. Tent-roosting. Yellow ear margins. Northern South American lowlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::VAMPYRODES_CARACCIOLI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large stenodermatine frugivore. Peak ~58 kHz. Prominent white facial stripes. Low-intensity FM. Forages in canopy. Amazonian and northern SA lowlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CHIRODERMA_VILLOSUM,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Canopy frugivore with large eyes. Peak ~62 kHz. Low-intensity FM. Widespread in Neotropical lowlands. White dorsal stripe."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOPHYLLA_PUMILIO,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small Amazonian frugivore. Peak ~80 kHz. Low-intensity FM. Related to Carollia. Important disperser of understory fruits. Common in terra firme forest."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LONCHOPHYLLA_THOMASI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small nectarivore. Peak ~80 kHz. Low-intensity multiharmonic FM. Important pollinator of understory plants. Amazonian forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::STURNIRA_ERYTHROMOS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Andean frugivore of montane forests (1000\u{2013}3200 m). Peak ~70 kHz. Low-intensity FM. Key seed disperser in cloud forest ecosystems."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTINOMOPS_LATICAUDATUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Widespread in South America. Distinctive three-frequency alternation (~26.7, 28.7, 32.4 kHz). Open-space forager. Cliff and building roosts."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CYNOMOPS_GREENHALLI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American lowlands. Low frequency (~22 kHz) open-space forager. Roosts in hollow trees and buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PROMOPS_CENTRALIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American lowlands. Distinctive upward-modulated QCF. Alternating pairs at ~30/35 kHz. Open-space forager above canopy."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_GLAUCINUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American lowlands. Very low frequency (~22\u{2013}25 kHz) QCF. High-altitude forager above canopy. Large bonneted bat."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_BONARIENSIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Medium-sized bonneted bat. QCF at ~26\u{2013}30 kHz. Open-area forager. Southern South America (Argentina, Uruguay, Brazil). Roosts in buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_PATAGONICUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Medium bonneted bat of the southern cone (Argentina, Paraguay, southern Brazil). QCF at ~28 kHz. Open and semi-open habitat forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PROMOPS_NASUTUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("QCF at ~30 kHz. Similar to P. centralis but lacks the distinctive upward frequency modulation. Open-space forager. South American drylands and forest edges."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CYNOMOPS_ABRASUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Medium molossid. Low-frequency QCF at ~22\u{2013}24 kHz. Open-space forager. Brazilian cerrado and Atlantic Forest edge."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CYNOMOPS_PLANIROSTRIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small to medium molossid. QCF at ~25 kHz. Flat face with forward-pointing nostrils. Open habitats across South American lowlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_KEAYSI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Andean highlands and cloud forests. Short FM calls (~2.5 ms). Peak ~55 kHz. Forages in cluttered forest understory."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_RIPARIUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Widespread in South American lowlands. Steep broadband FM sweep from ~120 to ~50 kHz. Forages near streams and over water."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPTESICUS_FURINALIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American lowlands. Lower frequency (~43 kHz) than E. brasiliensis. FM-QCF. Forest edges and open areas."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_LEVIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("South American Myotis. Peak ~46 kHz. FM sweeps. Southern Brazil, Uruguay, Argentina. Open areas and forest edges."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_OXYOTUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("High-altitude Andean Myotis (1500\u{2013}3800 m). Peak ~50 kHz. FM sweeps. Cloud forests and paramo edges. Colombia to Bolivia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LASIURUS_VILLOSISSIMUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large vespertilionid, recently split from L. cinereus. Low-frequency FM-QCF at ~22\u{2013}25 kHz. Long narrow wings for fast open-air flight. Migratory. Frosted fur."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HISTIOTUS_MONTANUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Distinctive very large ears (Plecotus-like). Peak ~28 kHz. FM sweeps. Open habitats in southern South America (Patagonia to southern Brazil). Slow, maneuverable flight."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HISTIOTUS_VELATUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large-eared vespertilionid. Peak ~32 kHz. FM sweeps. Brazilian cerrado and Atlantic Forest. Slightly higher frequency than H. montanus, consistent with smaller ears."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPTESICUS_DIMINUTUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small Eptesicus of southern Brazil, Paraguay, Argentina. Peak ~50 kHz. FM-QCF. Forest edges and open areas."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LASIURUS_EGA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Widespread in South American lowlands. Lower peak (~35 kHz) than L. blossevillii. FM-QCF. Roosts solitarily in palm fronds. Yellow fur."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_BONDAE,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Northern South America (Colombia, Venezuela, Ecuador). QCF at ~33 kHz. Open-space forager. Roosts in buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_COIBENSIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Northern South America. QCF at ~35 kHz. Smallest Molossus. Open-space forager."),
+        name: None,
+    },
+
+    // ── Rare ─────────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::DICLIDURUS_ALBUS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Rare in Amazonian canopy. Distinctive all-white fur\u{2014}the ghost bat. Narrowband QCF at ~24 kHz. High-altitude forager above the canopy."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PEROPTERYX_TRINITATIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Northern South America (Venezuela, Trinidad). QCF at ~43 kHz. Open-area forager near rock shelters and caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::BALANTIOPTERYX_PLICATA,
+        commonness: Some(Commonness::Rare),
+        description: Some("At the southern edge of its range in northern South America (Venezuela, Colombia). Long QCF at ~43 kHz. Open-area forager near caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DIAEMUS_YOUNGI,
+        commonness: Some(Commonness::Rare),
+        description: Some("Feeds on bird blood. Peak ~70 kHz. White wing tips distinctive in flight. Low-intensity FM. Rarer than D. rotundus. Lowland forests of South America."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DIPHYLLA_ECAUDATA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Bird blood specialist (unlike the mammal-feeding D. rotundus). Peak ~80 kHz. Higher frequency than common vampire. Short multiharmonic FM. Low-intensity. Atlantic Forest and Amazonia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::VAMPYRUM_SPECTRUM,
+        commonness: Some(Commonness::Rare),
+        description: Some("Largest bat in the Americas (wingspan ~1 m). Peak ~70 kHz. Low-intensity FM\u{2014}very difficult to detect acoustically. Carnivorous: preys on birds and other bats."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::CHROTOPTERUS_AURITUS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Carnivorous gleaner. Peak ~77 kHz. Short FM (0.8\u{2013}1.4 ms). Low-intensity\u{2014}hard to detect beyond a few meters. Large ears; hunts other bats and rodents."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MACROPHYLLUM_MACROPHYLLUM,
+        commonness: Some(Commonness::Rare),
+        description: Some("Unusual trawling phyllostomid. Louder than most relatives (~101 dB SPL). Peak ~85 kHz. Large feet for grabbing insects from water surfaces."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MICRONYCTERIS_HIRSUTA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Gleaning insectivore. Lower peak (~52 kHz) than M. microtis. Low-intensity FM. Forest interior. Amazonian forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::LAMPRONYCTERIS_BRACHYOTIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Rare gleaning insectivore. Peak ~75 kHz. Low-intensity FM. Poorly documented acoustically. Yellow throat patches. Amazonian forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::GLYPHONYCTERIS_SYLVESTRIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Rare gleaner. Peak ~85 kHz. Ultra-short broadband FM (0.3\u{2013}1 ms). Very low intensity. Forest interior."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::TRINYCTERIS_NICEFORI,
+        commonness: Some(Commonness::Rare),
+        description: Some("Low-intensity gleaner. Peak ~80 kHz. Multiharmonic FM. Forest understory specialist. Rarely captured or detected."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MESOPHYLLA_MACCONNELLI,
+        commonness: Some(Commonness::Rare),
+        description: Some("Tiny Amazonian tent-roosting frugivore. Highest peak frequency of any phyllostomid (~100\u{2013}118 kHz). Ultra-low intensity."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PHYLLODERMA_STENOPS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Large omnivorous phyllostomid. Peak ~55 kHz. Low-intensity FM. Pale face distinctive. Roosts in hollow trees. Amazonian forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ANOURA_CULTRATA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Highland nectarivore. Peak ~68 kHz. Low-intensity FM. Andean cloud forests 1000\u{2013}2600 m. Uniquely keeled lower incisors."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::STURNIRA_BOGOTENSIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("High-altitude Andean frugivore (2000\u{2013}3400 m). Peak ~68 kHz. Low-intensity FM. One of the few bat species found above 3000 m."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::THYROPTERA_TRICOLOR,
+        commonness: Some(Commonness::Rare),
+        description: Some("Suction-cup disks for roosting in rolled Heliconia/Calathea leaves. Extremely low intensity\u{2014}barely detectable at <1 m. Distinctive social calls for roost-finding. Amazonian lowlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::THYROPTERA_DISCIFERA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Similar to T. tricolor but slightly larger suction disks. Peak ~50 kHz. Roosts in furled Heliconia leaves. Amazonian lowland forests. Extremely low-intensity echolocation."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_HANSAE,
+        commonness: Some(Commonness::Rare),
+        description: Some("Medium molossid. QCF at ~28\u{2013}32 kHz. Amazonian and Atlantic Forest lowlands. Roosts in tree hollows. Uncommonly recorded."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTINOMOPS_MACROTIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Large free-tailed bat. Low-frequency QCF at ~14\u{2013}17 kHz, often audible. Roosts in cliff crevices and buildings. South American drylands and cerrado."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::ARTIBEUS_JAMAICENSIS,
+        commonness: Some(Commonness::Rare),
+        description: Some("At the edge of its range in northern coastal South America. Peak ~56 kHz. Low-intensity FM. Important fig seed disperser where it occurs."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHOGEESSA_TUMIDA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Northern South America. Small vespertilionid. Broadband FM + QCF at ~48 kHz. Forest edges."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_LAVALI,
+        commonness: Some(Commonness::Rare),
+        description: Some("Small Myotis endemic to eastern Brazil (Cerrado, Caatinga). Peak ~52 kHz. Steep FM sweeps. Recently described. Associated with rock outcrops."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::FURIPTERUS_HORRENS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Tiny (3\u{2013}5 g) insectivore with vestigial thumb. Very high frequency FM sweeps peaking ~130\u{2013}150 kHz. One of the highest-frequency New World bats. Caves and mines. Endemic family Furipteridae."),
+        name: None,
+    },
+
+    // ── Endangered ───────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::AMORPHOCHILUS_SCHNABLII,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Rare, endemic to western South America (Ecuador, Peru, Chile). High-frequency FM sweeps ~80\u{2013}100 kHz. Cave-dwelling. One of only two species in the endemic family Furipteridae. IUCN Vulnerable."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NATALUS_MACROURUS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Very high frequency echolocator, peak ~100\u{2013}120 kHz. Extremely low intensity. Cave-roosting. Endemic to eastern Brazil (Cerrado/Caatinga). IUCN Vulnerable. Cave-dependent."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NATALUS_TUMIDIROSTRIS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Very high frequency FM, peak ~100\u{2013}130 kHz. Cave-roosting. Northern South America (Venezuela, Colombia, Trinidad). Low-intensity calls barely detectable beyond 1 m. Restricted range."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::THYROPTERA_LAVALI,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Rare Amazonian disk-winged bat. Roosts in curled leaves. Poorly known acoustically. Low-intensity FM calls. Restricted range."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EUMOPS_DABBENEI,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Very large molossid. Low-frequency QCF at ~18\u{2013}20 kHz, sometimes audible. Open-space forager over savanna and cerrado. Rarely recorded. Northern Argentina to Colombia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HISTIOTUS_MACROTUS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Largest-eared Histiotus. Very low-frequency peak ~25 kHz. FM sweeps. Chile and western Argentina. Arid and semi-arid open habitats. Restricted range."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSOPS_NEGLECTUS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Small Amazonian molossid. QCF at ~40 kHz. Poorly known\u{2014}one of the least-studied South American bats. Forest edge and gap forager."),
+        name: None,
+    },
+];
+
 /// Get the bat book manifest for a given region.
 ///
 /// Non-echolocating species are always sorted to the end (stable sort preserves
@@ -1450,6 +2124,7 @@ pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
         BatBookRegion::Japan => JAPAN_BOOK,
         BatBookRegion::UK => UK_BOOK,
         BatBookRegion::NorthAmerica => NORTH_AMERICA_BOOK,
+        BatBookRegion::SouthAmerica => SOUTH_AMERICA_BOOK,
         _ => GLOBAL_BOOK,
     };
     let mut entries: Vec<_> = book.iter().map(|e| e.materialize()).collect();

@@ -2569,3 +2569,585 @@ pub const LEPTONYCTERIS_NIVALIS: BatSpecies = BatSpecies {
     description: "Federally endangered nectar bat. Migrates to Big Bend region of Texas in summer. Pollinates agave plants. Quiet FM calls ~75 kHz. Only known US roost in a single cave in the Chisos Mountains.",
     echolocates: true,
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// South America additional species
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Sources:
+// - López-Baucells et al. (2016) Pelagic: Guía de los murciélagos de la Amazonia
+// - Barataud (2020): Ecologie acoustique des chiroptères d'Europe (neotropical appendix)
+// - Jung et al. (2014) PMC: Neotropical molossid call design
+// - Arias-Aguilar et al. (2018): Echolocation of Amazonian bats
+// - Schnitzler & Kalko (2001): Echolocation by insect-eating bats
+// - Nogueira et al. (2014): Echolocation of Brazilian bats
+// - Falcão et al. (2015): Bat assemblages in Brazilian Atlantic Forest
+// - Rodríguez-San Pedro & Simonetti (2015): Chilean bats
+
+// ── Mormoopidae ────────────────────────────────────────────────────────────
+
+pub const PTERONOTUS_PARNELLII: BatSpecies = BatSpecies {
+    id: "pteronotus_parnellii",
+    name: "Parnell's Mustached Bat",
+    scientific_name: "Pteronotus parnellii",
+    family: "Mormoopidae",
+    call_type: "CF-FM",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 120_000.0,
+    description: "The South American high-duty-cycle echolocator. Long CF at ~60 kHz (2nd harmonic) with Doppler compensation. Split from P. mesoamericanus. Huge cave colonies.",
+    echolocates: true,
+};
+
+// ── Furipteridae (endemic Neotropical family) ──────────────────────────────
+
+pub const FURIPTERUS_HORRENS: BatSpecies = BatSpecies {
+    id: "furipterus_horrens",
+    name: "Thumbless Bat",
+    scientific_name: "Furipterus horrens",
+    family: "Furipteridae",
+    call_type: "FM",
+    freq_lo_hz: 90_000.0,
+    freq_hi_hz: 160_000.0,
+    description: "Tiny (3\u{2013}5 g) insectivore with vestigial thumb. Very high frequency FM sweeps peaking ~130\u{2013}150 kHz. One of the highest-frequency New World bats. Caves and mines.",
+    echolocates: true,
+};
+
+pub const AMORPHOCHILUS_SCHNABLII: BatSpecies = BatSpecies {
+    id: "amorphochilus_schnablii",
+    name: "Smoky Bat",
+    scientific_name: "Amorphochilus schnablii",
+    family: "Furipteridae",
+    call_type: "FM",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 120_000.0,
+    description: "Rare, endemic to western South America (Ecuador, Peru, Chile). High-frequency FM sweeps ~80\u{2013}100 kHz. Cave-dwelling. IUCN Vulnerable.",
+    echolocates: true,
+};
+
+// ── Natalidae ──────────────────────────────────────────────────────────────
+
+pub const NATALUS_MACROURUS: BatSpecies = BatSpecies {
+    id: "natalus_macrourus",
+    name: "Brazilian Funnel-eared Bat",
+    scientific_name: "Natalus macrourus",
+    family: "Natalidae",
+    call_type: "FM",
+    freq_lo_hz: 80_000.0,
+    freq_hi_hz: 150_000.0,
+    description: "Very high frequency echolocator, peak ~100\u{2013}120 kHz. Extremely low intensity. Cave-roosting. Endemic to eastern Brazil (Cerrado/Caatinga). IUCN Vulnerable.",
+    echolocates: true,
+};
+
+pub const NATALUS_TUMIDIROSTRIS: BatSpecies = BatSpecies {
+    id: "natalus_tumidirostris",
+    name: "Trinidadian Funnel-eared Bat",
+    scientific_name: "Natalus tumidirostris",
+    family: "Natalidae",
+    call_type: "FM",
+    freq_lo_hz: 80_000.0,
+    freq_hi_hz: 140_000.0,
+    description: "Very high frequency FM, peak ~100\u{2013}130 kHz. Cave-roosting. Northern South America (Venezuela, Colombia, Trinidad). Low-intensity calls barely detectable beyond 1 m.",
+    echolocates: true,
+};
+
+// ── Thyropteridae ──────────────────────────────────────────────────────────
+
+pub const THYROPTERA_DISCIFERA: BatSpecies = BatSpecies {
+    id: "thyroptera_discifera",
+    name: "Peters' Disk-winged Bat",
+    scientific_name: "Thyroptera discifera",
+    family: "Thyropteridae",
+    call_type: "FM",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Similar to T. tricolor but slightly larger suction disks. Peak ~50 kHz. Roosts in furled Heliconia leaves. Amazonian lowland forests. Extremely low-intensity echolocation.",
+    echolocates: true,
+};
+
+pub const THYROPTERA_LAVALI: BatSpecies = BatSpecies {
+    id: "thyroptera_lavali",
+    name: "LaVal's Disk-winged Bat",
+    scientific_name: "Thyroptera lavali",
+    family: "Thyropteridae",
+    call_type: "FM",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 75_000.0,
+    description: "Rare Amazonian disk-winged bat. Roosts in curled leaves. Poorly known acoustically. Low-intensity FM calls.",
+    echolocates: true,
+};
+
+// ── Emballonuridae ─────────────────────────────────────────────────────────
+
+pub const SACCOPTERYX_CANESCENS: BatSpecies = BatSpecies {
+    id: "saccopteryx_canescens",
+    name: "Frosted Sac-winged Bat",
+    scientific_name: "Saccopteryx canescens",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 55_000.0,
+    description: "Amazonian endemic. Highest frequency Saccopteryx (~52 kHz). Similar QCF structure to congeners. Smaller than S. bilineata. Roosts on tree trunks in terra firme forest.",
+    echolocates: true,
+};
+
+pub const CENTRONYCTERIS_MAXIMILIANI: BatSpecies = BatSpecies {
+    id: "centronycteris_maximiliani",
+    name: "Shaggy Bat",
+    scientific_name: "Centronycteris maximiliani",
+    family: "Emballonuridae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 65_000.0,
+    description: "Rare canopy-level forager. Steep FM sweeps ~45\u{2013}55 kHz. Long shaggy fur. One of the least-known Neotropical emballonurids. Amazonian forests.",
+    echolocates: true,
+};
+
+pub const PEROPTERYX_LEUCOPTERA: BatSpecies = BatSpecies {
+    id: "peropteryx_leucoptera",
+    name: "White-winged Dog-like Bat",
+    scientific_name: "Peropteryx leucoptera",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 38_000.0,
+    freq_hi_hz: 50_000.0,
+    description: "Distinctive white wing membrane patches. QCF at ~42 kHz. Amazonian lowland forests.",
+    echolocates: true,
+};
+
+pub const PEROPTERYX_TRINITATIS: BatSpecies = BatSpecies {
+    id: "peropteryx_trinitatis",
+    name: "Trinidad Dog-like Bat",
+    scientific_name: "Peropteryx trinitatis",
+    family: "Emballonuridae",
+    call_type: "QCF",
+    freq_lo_hz: 38_000.0,
+    freq_hi_hz: 52_000.0,
+    description: "Northern South America. QCF at ~43 kHz. Open-area forager near rock shelters and caves.",
+    echolocates: true,
+};
+
+// ── Phyllostomidae (additional South American species) ─────────────────────
+
+pub const DIPHYLLA_ECAUDATA: BatSpecies = BatSpecies {
+    id: "diphylla_ecaudata",
+    name: "Hairy-legged Vampire Bat",
+    scientific_name: "Diphylla ecaudata",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 65_000.0,
+    freq_hi_hz: 100_000.0,
+    description: "Bird blood specialist (unlike the mammal-feeding D. rotundus). Peak ~80 kHz. Higher frequency than common vampire. Short multiharmonic FM. Low-intensity.",
+    echolocates: true,
+};
+
+pub const DIAEMUS_YOUNGI: BatSpecies = BatSpecies {
+    id: "diaemus_youngi",
+    name: "White-winged Vampire Bat",
+    scientific_name: "Diaemus youngi",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 55_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Feeds on bird blood. Peak ~70 kHz. White wing tips distinctive in flight. Low-intensity FM. Rarer than D. rotundus. Lowland forests.",
+    echolocates: true,
+};
+
+pub const ARTIBEUS_OBSCURUS: BatSpecies = BatSpecies {
+    id: "artibeus_obscurus",
+    name: "Dark Fruit-eating Bat",
+    scientific_name: "Artibeus obscurus",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 85_000.0,
+    description: "Common Amazonian frugivore. Peak ~55 kHz. Intermediate size between A. jamaicensis and A. lituratus. Low-intensity FM. Indistinct facial stripes.",
+    echolocates: true,
+};
+
+pub const ARTIBEUS_PLANIROSTRIS: BatSpecies = BatSpecies {
+    id: "artibeus_planirostris",
+    name: "Flat-faced Fruit Bat",
+    scientific_name: "Artibeus planirostris",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 82_000.0,
+    description: "Very common South American frugivore, replaces A. jamaicensis in many mainland habitats. Peak ~54 kHz. Low-intensity multiharmonic FM. Important seed disperser.",
+    echolocates: true,
+};
+
+pub const PLATYRRHINUS_LINEATUS: BatSpecies = BatSpecies {
+    id: "platyrrhinus_lineatus",
+    name: "White-lined Broad-nosed Bat",
+    scientific_name: "Platyrrhinus lineatus",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 90_000.0,
+    description: "Common frugivore of open habitats and forest edges. Peak ~62 kHz. Prominent white facial and dorsal stripes. Low-intensity FM. Cerrado and Atlantic Forest.",
+    echolocates: true,
+};
+
+pub const PLATYRRHINUS_HELLERI: BatSpecies = BatSpecies {
+    id: "platyrrhinus_helleri",
+    name: "Heller's Broad-nosed Bat",
+    scientific_name: "Platyrrhinus helleri",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 55_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Small frugivore. Peak ~68 kHz. Low-intensity FM. Widespread in Neotropical lowland forests. Important seed disperser.",
+    echolocates: true,
+};
+
+pub const VAMPYRESSA_THYONE: BatSpecies = BatSpecies {
+    id: "vampyressa_thyone",
+    name: "Northern Little Yellow-eared Bat",
+    scientific_name: "Vampyressa thyone",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 105_000.0,
+    description: "Small frugivore. Peak ~78 kHz. Low-intensity FM. Tent-roosting. Yellow ear margins. Northern South American lowlands.",
+    echolocates: true,
+};
+
+pub const VAMPYRODES_CARACCIOLI: BatSpecies = BatSpecies {
+    id: "vampyrodes_caraccioli",
+    name: "Great Stripe-faced Bat",
+    scientific_name: "Vampyrodes caraccioli",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 82_000.0,
+    description: "Large stenodermatine frugivore. Peak ~58 kHz. Prominent white facial stripes. Low-intensity FM. Forages in canopy.",
+    echolocates: true,
+};
+
+pub const LONCHOPHYLLA_THOMASI: BatSpecies = BatSpecies {
+    id: "lonchophylla_thomasi",
+    name: "Thomas's Nectar Bat",
+    scientific_name: "Lonchophylla thomasi",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 110_000.0,
+    description: "Small nectarivore. Peak ~80 kHz. Low-intensity multiharmonic FM. Important pollinator of understory plants. Amazonian forests.",
+    echolocates: true,
+};
+
+pub const ANOURA_CAUDIFER: BatSpecies = BatSpecies {
+    id: "anoura_caudifer",
+    name: "Tailed Tailless Bat",
+    scientific_name: "Anoura caudifer",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 55_000.0,
+    freq_hi_hz: 100_000.0,
+    description: "Nectarivore with short tail (unlike tailless A. geoffroyi). Peak ~72 kHz. Low-intensity FM. Atlantic Forest and lower Andean slopes. Important pollinator.",
+    echolocates: true,
+};
+
+pub const ANOURA_CULTRATA: BatSpecies = BatSpecies {
+    id: "anoura_cultrata",
+    name: "Handley's Tailless Bat",
+    scientific_name: "Anoura cultrata",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 55_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Highland nectarivore. Peak ~68 kHz. Low-intensity FM. Andean cloud forests 1000\u{2013}2600 m. Uniquely keeled lower incisors.",
+    echolocates: true,
+};
+
+pub const STURNIRA_ERYTHROMOS: BatSpecies = BatSpecies {
+    id: "sturnira_erythromos",
+    name: "Hairy Yellow-shouldered Bat",
+    scientific_name: "Sturnira erythromos",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 62_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Andean frugivore of montane forests (1000\u{2013}3200 m). Peak ~70 kHz. Low-intensity FM. Key seed disperser in cloud forest ecosystems.",
+    echolocates: true,
+};
+
+pub const STURNIRA_BOGOTENSIS: BatSpecies = BatSpecies {
+    id: "sturnira_bogotensis",
+    name: "Bogota Yellow-shouldered Bat",
+    scientific_name: "Sturnira bogotensis",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 60_000.0,
+    freq_hi_hz: 78_000.0,
+    description: "High-altitude Andean frugivore (2000\u{2013}3400 m). Peak ~68 kHz. Low-intensity FM. One of the few bat species found above 3000 m.",
+    echolocates: true,
+};
+
+pub const CHIRODERMA_VILLOSUM: BatSpecies = BatSpecies {
+    id: "chiroderma_villosum",
+    name: "Hairy Big-eyed Bat",
+    scientific_name: "Chiroderma villosum",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 90_000.0,
+    description: "Canopy frugivore with large eyes. Peak ~62 kHz. Low-intensity FM. Widespread in Neotropical lowlands. White dorsal stripe.",
+    echolocates: true,
+};
+
+pub const PHYLLODERMA_STENOPS: BatSpecies = BatSpecies {
+    id: "phylloderma_stenops",
+    name: "Pale-faced Bat",
+    scientific_name: "Phylloderma stenops",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 45_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Large omnivorous phyllostomid. Peak ~55 kHz. Low-intensity FM. Pale face distinctive. Roosts in hollow trees. Amazonian forests.",
+    echolocates: true,
+};
+
+pub const RHINOPHYLLA_PUMILIO: BatSpecies = BatSpecies {
+    id: "rhinophylla_pumilio",
+    name: "Dwarf Little Fruit Bat",
+    scientific_name: "Rhinophylla pumilio",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 65_000.0,
+    freq_hi_hz: 110_000.0,
+    description: "Small Amazonian frugivore. Peak ~80 kHz. Low-intensity FM. Related to Carollia. Important disperser of understory fruits. Common in terra firme forest.",
+    echolocates: true,
+};
+
+// ── Molossidae (additional South American species) ─────────────────────────
+
+pub const MOLOSSOPS_TEMMINCKII: BatSpecies = BatSpecies {
+    id: "molossops_temminckii",
+    name: "Dwarf Dog-faced Bat",
+    scientific_name: "Molossops temminckii",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 50_000.0,
+    description: "Small molossid. QCF at ~38\u{2013}42 kHz. One of the highest frequency molossids, consistent with small body size. Open cerrado and forest edge forager.",
+    echolocates: true,
+};
+
+pub const MOLOSSOPS_NEGLECTUS: BatSpecies = BatSpecies {
+    id: "molossops_neglectus",
+    name: "Rufous Dog-faced Bat",
+    scientific_name: "Molossops neglectus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 32_000.0,
+    freq_hi_hz: 48_000.0,
+    description: "Small Amazonian molossid. QCF at ~40 kHz. Poorly known. Forest edge and gap forager.",
+    echolocates: true,
+};
+
+pub const EUMOPS_BONARIENSIS: BatSpecies = BatSpecies {
+    id: "eumops_bonariensis",
+    name: "Peters' Mastiff Bat",
+    scientific_name: "Eumops bonariensis",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 34_000.0,
+    description: "Medium-sized bonneted bat. QCF at ~26\u{2013}30 kHz. Open-area forager. Southern South America (Argentina, Uruguay, Brazil). Roosts in buildings.",
+    echolocates: true,
+};
+
+pub const EUMOPS_HANSAE: BatSpecies = BatSpecies {
+    id: "eumops_hansae",
+    name: "Sanborn's Bonneted Bat",
+    scientific_name: "Eumops hansae",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 24_000.0,
+    freq_hi_hz: 38_000.0,
+    description: "Medium molossid. QCF at ~28\u{2013}32 kHz. Amazonian and Atlantic Forest lowlands. Roosts in tree hollows. Uncommonly recorded.",
+    echolocates: true,
+};
+
+pub const EUMOPS_DABBENEI: BatSpecies = BatSpecies {
+    id: "eumops_dabbenei",
+    name: "Big Bonneted Bat",
+    scientific_name: "Eumops dabbenei",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 14_000.0,
+    freq_hi_hz: 24_000.0,
+    description: "Very large molossid. Low-frequency QCF at ~18\u{2013}20 kHz, sometimes audible. Open-space forager over savanna and cerrado. Northern Argentina to Colombia.",
+    echolocates: true,
+};
+
+pub const EUMOPS_PATAGONICUS: BatSpecies = BatSpecies {
+    id: "eumops_patagonicus",
+    name: "Patagonian Bonneted Bat",
+    scientific_name: "Eumops patagonicus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 36_000.0,
+    description: "Medium bonneted bat of the southern cone (Argentina, Paraguay, southern Brazil). QCF at ~28 kHz. Open and semi-open habitat forager. Roosts in buildings and tree hollows.",
+    echolocates: true,
+};
+
+pub const PROMOPS_NASUTUS: BatSpecies = BatSpecies {
+    id: "promops_nasutus",
+    name: "Brown Mastiff Bat",
+    scientific_name: "Promops nasutus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 25_000.0,
+    freq_hi_hz: 38_000.0,
+    description: "QCF at ~30 kHz. Similar to P. centralis but lacks the distinctive upward frequency modulation. Open-space forager. South American drylands and forest edges.",
+    echolocates: true,
+};
+
+pub const CYNOMOPS_ABRASUS: BatSpecies = BatSpecies {
+    id: "cynomops_abrasus",
+    name: "Cinnamon Dog-faced Bat",
+    scientific_name: "Cynomops abrasus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 28_000.0,
+    description: "Medium molossid. Low-frequency QCF at ~22\u{2013}24 kHz. Open-space forager. Brazilian cerrado and Atlantic Forest edge.",
+    echolocates: true,
+};
+
+pub const CYNOMOPS_PLANIROSTRIS: BatSpecies = BatSpecies {
+    id: "cynomops_planirostris",
+    name: "Southern Dog-faced Bat",
+    scientific_name: "Cynomops planirostris",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 32_000.0,
+    description: "Small to medium molossid. QCF at ~25 kHz. Flat face with forward-pointing nostrils. Open habitats across South American lowlands.",
+    echolocates: true,
+};
+
+// ── Vespertilionidae (additional South American species) ───────────────────
+
+pub const MYOTIS_ALBESCENS: BatSpecies = BatSpecies {
+    id: "myotis_albescens",
+    name: "Silver-tipped Myotis",
+    scientific_name: "Myotis albescens",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 38_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "Common South American Myotis. Peak ~48 kHz. FM sweeps. Silver-tipped dorsal fur distinctive. Forages over water and in forest clearings.",
+    echolocates: true,
+};
+
+pub const MYOTIS_CHILOENSIS: BatSpecies = BatSpecies {
+    id: "myotis_chiloensis",
+    name: "Chilean Myotis",
+    scientific_name: "Myotis chiloensis",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 75_000.0,
+    description: "Southern South American Myotis (Chile, Argentina, Patagonia). Peak ~45 kHz. FM sweeps. One of the southernmost-ranging bats in the Americas.",
+    echolocates: true,
+};
+
+pub const MYOTIS_LEVIS: BatSpecies = BatSpecies {
+    id: "myotis_levis",
+    name: "Yellowish Myotis",
+    scientific_name: "Myotis levis",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 38_000.0,
+    freq_hi_hz: 75_000.0,
+    description: "South American Myotis. Peak ~46 kHz. FM sweeps. Southern Brazil, Uruguay, Argentina. Open areas and forest edges.",
+    echolocates: true,
+};
+
+pub const MYOTIS_OXYOTUS: BatSpecies = BatSpecies {
+    id: "myotis_oxyotus",
+    name: "Montane Myotis",
+    scientific_name: "Myotis oxyotus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 40_000.0,
+    freq_hi_hz: 80_000.0,
+    description: "High-altitude Andean Myotis (1500\u{2013}3800 m). Peak ~50 kHz. FM sweeps. Cloud forests and paramo edges. Colombia to Bolivia.",
+    echolocates: true,
+};
+
+pub const MYOTIS_LAVALI: BatSpecies = BatSpecies {
+    id: "myotis_lavali",
+    name: "LaVal's Myotis",
+    scientific_name: "Myotis lavali",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 42_000.0,
+    freq_hi_hz: 85_000.0,
+    description: "Small Myotis endemic to eastern Brazil (Cerrado, Caatinga). Peak ~52 kHz. Steep FM sweeps. Recently described. Associated with rock outcrops.",
+    echolocates: true,
+};
+
+pub const LASIURUS_VILLOSISSIMUS: BatSpecies = BatSpecies {
+    id: "lasiurus_villosissimus",
+    name: "South American Hoary Bat",
+    scientific_name: "Lasiurus villosissimus",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "Large vespertilionid, recently split from L. cinereus. Low-frequency FM-QCF at ~22\u{2013}25 kHz. Long narrow wings for fast open-air flight. Migratory. Frosted fur.",
+    echolocates: true,
+};
+
+pub const HISTIOTUS_MONTANUS: BatSpecies = BatSpecies {
+    id: "histiotus_montanus",
+    name: "Small Big-eared Brown Bat",
+    scientific_name: "Histiotus montanus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 45_000.0,
+    description: "Distinctive very large ears (Plecotus-like). Peak ~28 kHz. FM sweeps. Open habitats in southern South America (Patagonia to southern Brazil). Slow, maneuverable flight.",
+    echolocates: true,
+};
+
+pub const HISTIOTUS_VELATUS: BatSpecies = BatSpecies {
+    id: "histiotus_velatus",
+    name: "Tropical Big-eared Brown Bat",
+    scientific_name: "Histiotus velatus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 50_000.0,
+    description: "Large-eared vespertilionid. Peak ~32 kHz. FM sweeps. Brazilian cerrado and Atlantic Forest. Slightly higher frequency than H. montanus, consistent with smaller ears.",
+    echolocates: true,
+};
+
+pub const HISTIOTUS_MACROTUS: BatSpecies = BatSpecies {
+    id: "histiotus_macrotus",
+    name: "Big-eared Brown Bat",
+    scientific_name: "Histiotus macrotus",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 16_000.0,
+    freq_hi_hz: 40_000.0,
+    description: "Largest-eared Histiotus. Very low-frequency peak ~25 kHz. FM sweeps. Chile and western Argentina. Arid and semi-arid open habitats. Gleans insects from foliage.",
+    echolocates: true,
+};
+
+pub const EPTESICUS_DIMINUTUS: BatSpecies = BatSpecies {
+    id: "eptesicus_diminutus",
+    name: "Diminutive Serotine",
+    scientific_name: "Eptesicus diminutus",
+    family: "Vespertilionidae",
+    call_type: "FM-QCF",
+    freq_lo_hz: 40_000.0,
+    freq_hi_hz: 70_000.0,
+    description: "Small Eptesicus of southern Brazil, Paraguay, Argentina. Peak ~50 kHz. FM-QCF. Forest edges and open areas.",
+    echolocates: true,
+};
