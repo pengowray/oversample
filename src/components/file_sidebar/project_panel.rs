@@ -475,7 +475,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 state.current_file_index.set(None);
                 state.suspend_follow();
                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
-                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
+                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.02, 400.0);
                     state.zoom_level.set(fit_zoom);
                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
                     let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
@@ -717,7 +717,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                                 state.current_file_index.set(None);
                                 state.suspend_follow();
                                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
-                                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.1, 400.0);
+                                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(0.02, 400.0);
                                     state.zoom_level.set(fit_zoom);
                                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
                                     let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();

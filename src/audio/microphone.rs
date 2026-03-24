@@ -1142,6 +1142,12 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         None, None, None,
     );
 
+    // Zoom to fit the entire recording
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let final_time_res = 512.0 / sample_rate as f64;
+    state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
+    state.scroll_offset.set(0.0);
+
     // Async chunked spectrogram computation with final normalization
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }

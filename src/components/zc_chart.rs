@@ -428,7 +428,7 @@ pub fn ZcDotChart() -> impl IntoView {
         ev.prevent_default();
         if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-            state.zoom_level.update(|z| *z = (*z * delta).clamp(0.1, 100.0));
+            state.zoom_level.update(|z| *z = (*z * delta).clamp(0.02, 100.0));
         } else {
             let delta = (ev.delta_y() + ev.delta_x()) * 0.001;
             let visible_time = {

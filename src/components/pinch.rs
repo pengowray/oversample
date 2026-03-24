@@ -54,7 +54,7 @@ pub fn apply_pinch(
 
     // Zoom proportional to finger distance ratio
     let scale = current_dist / pinch.initial_dist;
-    let new_zoom = (pinch.initial_zoom * scale).clamp(0.1, 400.0);
+    let new_zoom = (pinch.initial_zoom * scale).clamp(0.02, 400.0);
 
     // What time was under the initial midpoint?
     let initial_visible_time = viewport::visible_time(canvas_width, pinch.initial_zoom, pinch.time_res);

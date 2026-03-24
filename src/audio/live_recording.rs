@@ -86,6 +86,12 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     state.current_file_index.set(Some(file_index));
     state.mic_live_file_idx.set(Some(file_index));
 
+    // Set zoom for comfortable live recording scroll speed
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let live_time_res = 64.0 / sample_rate as f64;
+    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.scroll_offset.set(0.0);
+
     file_index
 }
 
@@ -427,6 +433,12 @@ pub(crate) fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state
         }
     }
 
+    // Zoom to fit the entire recording
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let final_time_res = 512.0 / sample_rate as f64;
+    state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
+    state.scroll_offset.set(0.0);
+
     // Re-compute full spectrogram with accurate final normalization
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }
@@ -565,6 +577,12 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
             });
         }
     }
+
+    // Zoom to fit the entire recording
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let final_time_res = 512.0 / sample_rate as f64;
+    state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
+    state.scroll_offset.set(0.0);
 
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }

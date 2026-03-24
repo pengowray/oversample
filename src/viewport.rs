@@ -77,6 +77,24 @@ pub fn data_window(scroll_offset: f64, visible_time: f64, duration: f64) -> Opti
     }
 }
 
+/// Compute zoom level for live recording so that a comfortable duration is visible.
+/// Uses sqrt(canvas_width) scaling: ~8s on mobile (320px), ~15s on desktop (1200px).
+pub fn recording_zoom(canvas_width: f64, time_resolution: f64) -> f64 {
+    if canvas_width <= 0.0 || time_resolution <= 0.0 {
+        return 1.0;
+    }
+    let target_secs = (canvas_width.sqrt() * 0.45).clamp(8.0, 20.0);
+    (canvas_width * time_resolution / target_secs).max(0.005)
+}
+
+/// Compute zoom level that fits `duration` seconds into the canvas.
+pub fn fit_zoom(canvas_width: f64, time_resolution: f64, duration: f64) -> f64 {
+    if canvas_width <= 0.0 || time_resolution <= 0.0 || duration <= 0.0 {
+        return 1.0;
+    }
+    (canvas_width * time_resolution / duration).clamp(0.02, 400.0)
+}
+
 pub fn data_region_px(
     scroll_offset: f64,
     visible_time: f64,

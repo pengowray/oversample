@@ -1576,7 +1576,7 @@ pub fn on_wheel(
     } else if ev.ctrl_key() {
         let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
         state.zoom_level.update(|z| {
-            *z = (*z * delta).clamp(0.1, 400.0);
+            *z = (*z * delta).clamp(0.02, 400.0);
         });
     } else {
         let raw_delta = ev.delta_y() + ev.delta_x();
