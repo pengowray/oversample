@@ -242,51 +242,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "batmonic"
-version = "0.3.0"
-dependencies = [
- "blake3",
- "claxon",
- "console_error_panic_hook",
- "console_log",
- "hound",
- "js-sys",
- "leptos",
- "lewton",
- "log",
- "realfft",
- "serde",
- "serde_json",
- "sha2",
- "symphonia",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "yaml_serde",
-]
-
-[[package]]
-name = "batmonic-desktop"
-version = "0.2.135"
-dependencies = [
- "chrono",
- "claxon",
- "cpal",
- "hound",
- "lewton",
- "libc",
- "reqwest 0.12.28",
- "rfd",
- "serde",
- "serde_json",
- "symphonia",
- "tauri",
- "tauri-build",
- "tokio",
- "xc-lib",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3152,6 +3107,51 @@ name = "or_poisoned"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
+
+[[package]]
+name = "oversample"
+version = "0.3.1"
+dependencies = [
+ "blake3",
+ "claxon",
+ "console_error_panic_hook",
+ "console_log",
+ "hound",
+ "js-sys",
+ "leptos",
+ "lewton",
+ "log",
+ "realfft",
+ "serde",
+ "serde_json",
+ "sha2",
+ "symphonia",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "yaml_serde",
+]
+
+[[package]]
+name = "oversample-desktop"
+version = "0.2.135"
+dependencies = [
+ "chrono",
+ "claxon",
+ "cpal",
+ "hound",
+ "lewton",
+ "libc",
+ "reqwest 0.12.28",
+ "rfd",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "tauri",
+ "tauri-build",
+ "tokio",
+ "xc-lib",
+]
 
 [[package]]
 name = "pango"

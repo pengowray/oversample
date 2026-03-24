@@ -331,7 +331,7 @@ fn write_central_annotations(app: tauri::AppHandle, file_key: String, yaml: Stri
 async fn export_annotations_file(filename: String, yaml: String) -> Result<String, String> {
     let handle = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
-        .add_filter("Batmonic annotations", &["batm"])
+        .add_filter("Oversample annotations", &["batm"])
         .add_filter("YAML files", &["yaml", "yml"])
         .set_title("Export annotations")
         .save_file()

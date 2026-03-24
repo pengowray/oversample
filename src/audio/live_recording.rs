@@ -358,7 +358,7 @@ pub(crate) fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state
         g.add("Timestamp", &timestamp);
         g.add("Length", &format!("{:.6}", duration_secs));
         g.add("Samplerate", &sample_rate.to_string());
-        g.add("Make", "batmonic");
+        g.add("Make", "Oversample");
         g.add("Firmware Version", version);
         g.add("Original Filename", &name_check);
         g
@@ -473,7 +473,7 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
         g.add("Timestamp", &timestamp);
         g.add("Length", &format!("{:.6}", duration_secs));
         g.add("Samplerate", &sample_rate.to_string());
-        g.add("Make", "batmonic");
+        g.add("Make", "Oversample");
         g.add("Firmware Version", version);
         g.add("Original Filename", &name);
         g

@@ -143,11 +143,11 @@ pub fn Toolbar() -> impl IntoView {
         let listening = state.mic_listening.get();
 
         let title = match (prefix.as_deref(), listening && !recording, name.as_deref()) {
-            (Some(pfx), true, _) => format!("{} Listening... - Batmonic", pfx),
-            (Some(pfx), false, Some(name)) => format!("{} {} - Batmonic", pfx, name),
-            (Some(pfx), false, None) => format!("{} Batmonic", pfx),
-            (None, _, Some(name)) => format!("{} - Batmonic", name),
-            (None, _, None) => "Batmonic".to_string(),
+            (Some(pfx), true, _) => format!("{} Listening... - Oversample", pfx),
+            (Some(pfx), false, Some(name)) => format!("{} {} - Oversample", pfx, name),
+            (Some(pfx), false, None) => format!("{} Oversample", pfx),
+            (None, _, Some(name)) => format!("{} - Oversample", name),
+            (None, _, None) => "Oversample".to_string(),
         };
 
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
@@ -177,7 +177,7 @@ pub fn Toolbar() -> impl IntoView {
                 style=move || if !is_mobile && state.sidebar_collapsed.get() { "margin-left: 24px; cursor: pointer" } else { "cursor: pointer" }
                 on:click=move |_| show_about.set(true)
                 title="About"
-            ><b>"Batmonic"</b></span>
+            ><b>"Oversample"</b></span>
 
             // Center: status indicators + file name (or "Listening...")
             <div class="toolbar-title-center">
@@ -290,21 +290,26 @@ pub fn Toolbar() -> impl IntoView {
                 <div class="about-overlay" on:click=move |_| show_about.set(false)>
                     <div class="about-dialog" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                         <div class="about-header">
-                            <span class="about-title"><b>"Batmonic"</b>" by Pengo Wray"</span>
+                            <span class="about-title"><b>"Oversample"</b></span>
                             <span class="about-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span>
                         </div>
+                        <div style="font-size: 11px; color: #aaa; margin-top: 2px;">"by Pengo Wray"</div>
                         <p class="about-desc">"Bat call viewer and acoustic analysis tool."</p>
                         <div style="margin-top: 12px; font-size: 11px; color: #999; line-height: 1.8;">
                             "Thanks to the libraries that make this possible:"
                             <div style="margin-top: 6px; columns: 2; column-gap: 16px;">
-                                <div><a href="https://leptos.dev" target="_blank" style="color: #8cf; text-decoration: none;">"Leptos"</a>""</div>
+                                <div><a href="https://leptos.dev" target="_blank" style="color: #8cf; text-decoration: none;">"Leptos"</a></div>
+                                <div><a href="https://tauri.app" target="_blank" style="color: #8cf; text-decoration: none;">"Tauri"</a></div>
                                 <div><a href="https://crates.io/crates/realfft" target="_blank" style="color: #8cf; text-decoration: none;">"RealFFT"</a></div>
+                                <div><a href="https://crates.io/crates/cpal" target="_blank" style="color: #8cf; text-decoration: none;">"cpal"</a></div>
                                 <div><a href="https://crates.io/crates/hound" target="_blank" style="color: #8cf; text-decoration: none;">"Hound"</a></div>
                                 <div><a href="https://crates.io/crates/claxon" target="_blank" style="color: #8cf; text-decoration: none;">"Claxon"</a></div>
                                 <div><a href="https://crates.io/crates/lewton" target="_blank" style="color: #8cf; text-decoration: none;">"Lewton"</a></div>
                                 <div><a href="https://crates.io/crates/symphonia" target="_blank" style="color: #8cf; text-decoration: none;">"Symphonia"</a></div>
-                                <div><a href="https://github.com/jmears63/batgizmo-app-public" target="_blank" style="color: #8cf; text-decoration: none;">"batgizmo-app"</a></div>
+                                <div><a href="https://crates.io/crates/wasm-bindgen" target="_blank" style="color: #8cf; text-decoration: none;">"wasm-bindgen"</a></div>
+                                <div><a href="https://crates.io/crates/web-sys" target="_blank" style="color: #8cf; text-decoration: none;">"web-sys"</a></div>
                             </div>
+                            <div style="margin-top: 8px;">"and mic code from "<a href="https://github.com/jmears63/batgizmo-app-public" target="_blank" style="color: #8cf; text-decoration: none;">"batgizmo-app"</a></div>
                         </div>
                         <button class="about-close" on:click=move |_| show_about.set(false)>"Close"</button>
                     </div>

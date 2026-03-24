@@ -1,10 +1,10 @@
 [package]
-name = "batmonic-desktop"
+name = "oversample-desktop"
 version = "0.2.135"
 edition = "2021"
 
 [lib]
-name = "batmonic_desktop"
+name = "oversample_desktop"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]

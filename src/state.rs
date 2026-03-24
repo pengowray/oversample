@@ -1370,7 +1370,7 @@ impl AppState {
             projects_enabled: RwSignal::new({
                 web_sys::window()
                     .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                    .and_then(|ls: web_sys::Storage| ls.get_item("batmonic_projects_enabled").ok().flatten())
+                    .and_then(|ls: web_sys::Storage| ls.get_item("oversample_projects_enabled").ok().flatten())
                     .map(|v| v == "true")
                     .unwrap_or(false)
             }),
@@ -1423,7 +1423,7 @@ impl AppState {
             bat_book_region: RwSignal::new({
                 web_sys::window()
                     .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                    .and_then(|ls: web_sys::Storage| ls.get_item("batmonic_bat_book_region").ok().flatten())
+                    .and_then(|ls: web_sys::Storage| ls.get_item("oversample_bat_book_region").ok().flatten())
                     .and_then(|v| crate::bat_book::types::BatBookRegion::from_storage_key(&v))
                     .unwrap_or(crate::bat_book::types::BatBookRegion::Global)
             }),

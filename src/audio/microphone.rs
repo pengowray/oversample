@@ -1025,7 +1025,7 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         g.add("Timestamp", &timestamp);
         g.add("Length", &format!("{:.6}", duration_secs));
         g.add("Samplerate", &sample_rate.to_string());
-        g.add("Make", "batmonic");
+        g.add("Make", "Oversample");
         g.add("Firmware Version", version);
         g.add("Original Filename", &filename);
         g

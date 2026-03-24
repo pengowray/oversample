@@ -4,9 +4,9 @@ use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemWritabl
 
 use crate::project::BatProject;
 
-const OPFS_PROJECTS_DIR: &str = "batmonic-projects";
+const OPFS_PROJECTS_DIR: &str = "oversample-projects";
 
-/// Get the OPFS batmonic-projects directory, creating it if needed.
+/// Get the OPFS oversample-projects directory, creating it if needed.
 async fn get_projects_dir() -> Result<FileSystemDirectoryHandle, String> {
     let window = web_sys::window().ok_or("no window")?;
     let navigator = window.navigator();

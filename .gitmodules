@@ -1,3 +1,3 @@
-[submodule "batmonic-demo-sounds"]
-	path = batmonic-demo-sounds
-	url = https://github.com/pengowray/batmonic-demo-sounds.git
+[submodule "bat-demo-sounds"]
+	path = bat-demo-sounds
+	url = https://github.com/pengowray/bat-demo-sounds.git

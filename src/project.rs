@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use crate::annotations::{FileIdentity, AudioFileMetadata, Annotation, generate_uuid, now_iso8601};
 use crate::dsp::notch::NoiseProfile;
 
-/// A batmonic project file (.batproj) — groups multiple audio files with their
+/// An Oversample project file (.batproj) — groups multiple audio files with their
 /// annotations, sequence/multitrack definitions, and shared settings.
 ///
 /// Serialized as YAML. Stored in OPFS on web, filesystem on Tauri.

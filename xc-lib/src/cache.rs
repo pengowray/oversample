@@ -62,23 +62,23 @@ pub fn migrate_sidecar_json(json: &mut serde_json::Value) -> bool {
     };
 
     let hash_keys = ["blake3", "sha256", "file_size", "spot_hash"];
-    let mut batmonic = serde_json::Map::new();
+    let mut app_meta = serde_json::Map::new();
     let mut found_any = false;
 
     for key in &hash_keys {
         if let Some(val) = obj.remove(*key) {
-            batmonic.insert((*key).to_string(), val);
+            app_meta.insert((*key).to_string(), val);
             found_any = true;
         }
     }
 
-    // Also move "retrieved" into the batmonic sub-object (it's our metadata, not XC's)
+    // Also move "retrieved" into the app sub-object (it's our metadata, not XC's)
     if let Some(val) = obj.remove("retrieved") {
-        batmonic.insert("retrieved".to_string(), val);
+        app_meta.insert("retrieved".to_string(), val);
     }
 
-    if found_any || !batmonic.is_empty() {
-        obj.insert("_app".to_string(), serde_json::Value::Object(batmonic));
+    if found_any || !app_meta.is_empty() {
+        obj.insert("_app".to_string(), serde_json::Value::Object(app_meta));
         true
     } else {
         false
@@ -265,7 +265,7 @@ pub fn build_metadata_json(rec: &XcRecording) -> serde_json::Value {
 pub fn build_metadata_json_with_hashes(rec: &XcRecording, hashes: &FileHashes) -> serde_json::Value {
     let mut json = build_metadata_json(rec);
     if let Some(obj) = json.as_object_mut() {
-        // Remove top-level "retrieved" — it goes under batmonic
+        // Remove top-level "retrieved" — it goes under _app
         let retrieved = obj.remove("retrieved");
         let mut bm = serde_json::Map::new();
         bm.insert("file_size".into(), serde_json::json!(hashes.size_bytes));

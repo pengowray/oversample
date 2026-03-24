@@ -442,7 +442,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             if let Some(ls) = web_sys::window()
                                 .and_then(|w| w.local_storage().ok().flatten())
                             {
-                                let _ = ls.set_item("batmonic_projects_enabled", if checked { "true" } else { "false" });
+                                let _ = ls.set_item("oversample_projects_enabled", if checked { "true" } else { "false" });
                             }
                         }
                     />

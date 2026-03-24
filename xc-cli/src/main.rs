@@ -84,7 +84,7 @@ enum Commands {
         #[arg(long)]
         cache_dir: Option<PathBuf>,
     },
-    /// Save your XC API key (shared with the batmonic desktop app)
+    /// Save your XC API key (shared with the Oversample desktop app)
     SetKey {
         /// The API key to store
         key: String,

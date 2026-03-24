@@ -60,10 +60,10 @@ pub(crate) fn encode_wav_with_guano(samples: &[f32], sample_rate: u32, filename:
     guano_meta.add("Timestamp", &timestamp);
     guano_meta.add("Length", &format!("{:.6}", duration_secs));
     guano_meta.add("Samplerate", &sample_rate.to_string());
-    guano_meta.add("Make", "batmonic");
+    guano_meta.add("Make", "Oversample");
     guano_meta.add("Firmware Version", version);
     guano_meta.add("Original Filename", filename);
-    guano_meta.add("Note", &format!("Recorded with batmonic v{} (browser)", version));
+    guano_meta.add("Note", &format!("Recorded with Oversample v{} (browser)", version));
 
     guano::append_guano_chunk(&mut wav_data, &guano_meta.to_text());
     wav_data

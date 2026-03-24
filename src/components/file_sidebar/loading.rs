@@ -443,7 +443,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
 }
 
 const DEMO_SOUNDS_BASE: &str =
-    "https://raw.githubusercontent.com/pengowray/batmonic-demo-sounds/main";
+    "https://raw.githubusercontent.com/pengowray/bat-demo-sounds/main";
 
 pub(super) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     let window = web_sys::window().ok_or("No window")?;

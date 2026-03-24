@@ -2,9 +2,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemWritableFileStream, WritableStream};
 
-const OPFS_DIR: &str = "batmonic-annotations";
+const OPFS_DIR: &str = "oversample-annotations";
 
-/// Get the OPFS batmonic-annotations directory, creating it if needed.
+/// Get the OPFS oversample-annotations directory, creating it if needed.
 async fn get_opfs_dir() -> Result<FileSystemDirectoryHandle, String> {
     let window = web_sys::window().ok_or("no window")?;
     let navigator = window.navigator();
