@@ -135,6 +135,7 @@ pub enum BatBookRegion {
     SouthAmerica,
     CostaRica,
     Japan,
+    UK,
 }
 
 impl BatBookRegion {
@@ -150,6 +151,7 @@ impl BatBookRegion {
             Self::SouthAmerica => "South America",
             Self::CostaRica => "Costa Rica",
             Self::Japan => "Japan",
+            Self::UK => "United Kingdom",
         }
     }
 
@@ -165,11 +167,13 @@ impl BatBookRegion {
             Self::SouthAmerica => "S. America",
             Self::CostaRica => "Costa Rica",
             Self::Japan => "Japan",
+            Self::UK => "UK",
         }
     }
 
     pub const ALL: &'static [BatBookRegion] = &[
         Self::Global,
+        Self::UK,
         Self::Europe,
         Self::NorthAmerica,
         Self::CostaRica,
@@ -193,6 +197,7 @@ impl BatBookRegion {
             Self::SouthAmerica => "south_america",
             Self::CostaRica => "costa_rica",
             Self::Japan => "japan",
+            Self::UK => "uk",
         }
     }
 

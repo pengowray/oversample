@@ -1033,6 +1033,158 @@ const JAPAN_BOOK: &[BookEntryDef] = &[
     },
 ];
 
+// ══════════════════════════════════════════════════════════════════════════════
+// United Kingdom — all 18 resident species + vagrants
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Sources:
+// - Russ (2012): British Bat Calls — A Guide to Species Identification
+// - Dietz & Kiefer (2016): Bats of Britain and Europe
+// - BCT (Bat Conservation Trust): UK bat species profiles
+// - Barlow & Jones (1999): Pipistrellus pipistrellus / pygmaeus cryptic species
+// - Jan et al. (2010): First UK record of Myotis alcathoe
+
+const UK_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_PIPISTRELLUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Britain's most common bat. Peak frequency ~45 kHz; calls heard on almost every bat detector outing. Roosts in buildings, forages along hedgerows, woodland edges, and over water. Often the first species new bat workers learn to identify."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_PYGMAEUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Split from common pipistrelle in 1999. Peak frequency ~55 kHz. Strongly associated with waterways and riparian habitats across the UK. Maternity roosts can hold over 1,000 individuals. Sometimes called the 55 kHz pipistrelle."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PLECOTUS_AURITUS,
+        commonness: Some(Commonness::VeryCommon),
+        description: Some("Widespread across Britain. Very quiet, broadband FM calls (25–50 kHz) rarely detected beyond a few metres. Gleaning feeder — picks moths and spiders from foliage. Roosts in older buildings, churches, and tree holes. Ears nearly as long as the body."),
+        name: None,
+    },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::MYOTIS_DAUBENTONII,
+        commonness: Some(Commonness::Common),
+        description: Some("The 'water bat' — iconic low passes skimming rivers, canals, and lakes, scooping insects from the surface. Regular FM calls sweep from ~85 kHz to ~32 kHz. Roosts under bridges and in tunnels. Widespread across England, Wales, and Scotland."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_NATTERERI,
+        commonness: Some(Commonness::Common),
+        description: Some("Broadband FM sweeps from ~115 kHz down to ~25 kHz. Gleaner — hunts close to vegetation, sometimes hovering to pick prey off leaves. Distinctive fringe of stiff hairs along the tail membrane. Roosts in old buildings, trees, and bat boxes across Britain."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_MYSTACINUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Small Myotis, widespread but under-recorded. FM calls sweep ~90–35 kHz, very similar to Brandt's bat on a detector. Reliable separation requires examination in the hand. Roosts in buildings; forages along woodland edges and over water."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_BRANDTII,
+        commonness: Some(Commonness::Common),
+        description: Some("Cryptic species pair with whiskered bat — only separated in 1970. Calls nearly identical (~90–35 kHz FM). Tends to be more woodland-associated than whiskered. Found across England and Wales; scarcer in Scotland."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTALUS_NOCTULA,
+        commonness: Some(Commonness::Common),
+        description: Some("Britain's largest common bat. Distinctive loud, narrow-band calls around 20–25 kHz, often alternating with steep FM sweeps. One of the first bats out at dusk — sometimes flies in daylight. Open-air forager, often high above the canopy. Roosts in tree holes."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::NYCTALUS_LEISLERI,
+        commonness: Some(Commonness::Common),
+        description: Some("Smaller cousin of the noctule. Calls at ~25–27 kHz — slightly higher than noctule. Fast, high-flying forager. More common in Ireland than in Great Britain. Roosts in tree holes and bat boxes; rarely in buildings."),
+        name: None,
+    },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::EPTESICUS_SEROTINUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large bat of southern England. Loud FM-QCF calls with characteristic frequency around 25–28 kHz. Slow, heavy flight often along treelines and around street lights. Roosts almost exclusively in buildings. Range rarely extends north of the Midlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_NATHUSII,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Long-distance migrant — birds ringed in Latvia have been found in the UK. Peak frequency ~38 kHz; calls can resemble common pip but slightly lower and often with distinctive social calls. Breeding colonies now established in several UK sites. Associated with waterside habitats."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_FERRUMEQUINUM,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Britain's largest horseshoe bat. Constant-frequency calls at ~82 kHz — unmistakable warbling tone on a heterodyne detector. Restricted to south-west England and south Wales. Hibernates in caves and mines; summer roosts in large roof spaces. UK population internationally important."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_HIPPOSIDEROS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Tiny horseshoe bat weighing only 5–9 g. CF calls at ~110 kHz. Found in western Britain — south-west England, Wales, and western Ireland. Very sensitive to roost disturbance and light pollution. Hibernates underground; maternity roosts in buildings."),
+        name: None,
+    },
+    // ── Rare ─────────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::BARBASTELLA_BARBASTELLUS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Distinctive flat-faced bat with alternating call frequencies — short FM pulses alternating between ~32 kHz and ~43 kHz. One of the UK's rarest bats. Hunts tympanate moths and can switch frequencies to evade moth hearing. Found in mature woodland in southern England; roosts behind loose bark."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PLECOTUS_AUSTRIACUS,
+        commonness: Some(Commonness::Rare),
+        description: Some("Very similar to brown long-eared but restricted to the southern coast of England, mainly around the Channel Islands border. Slightly louder calls than brown long-eared. Fewer than 1,000 individuals estimated in the UK. Roosts in buildings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_BECHSTEINII,
+        commonness: Some(Commonness::Rare),
+        description: Some("Elusive woodland specialist of southern England. Long ears (for a Myotis) and broadband FM calls. Rarely caught in mist nets — stays within the canopy. Associated with ancient woodland with veteran trees. One of the UK's rarest resident bats."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_ALCATHOE,
+        commonness: Some(Commonness::Rare),
+        description: Some("Europe's smallest Myotis, confirmed in the UK in 2010. FM calls sweep from ~100 kHz to ~40 kHz with peak energy ~50–55 kHz — slightly higher than whiskered or Brandt's. Very few confirmed UK sites; likely under-recorded. Requires DNA or detailed morphometrics for reliable identification."),
+        name: None,
+    },
+    // ── Endangered ───────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::MYOTIS_MYOTIS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("Britain's largest Myotis. Declared extinct as a UK breeding species in 1990, but a single male has hibernated in a Sussex mine since at least 2002. Loud FM calls sweep ~25–80 kHz. Gleaner — picks large beetles from the ground. Any UK sighting is nationally significant."),
+        name: None,
+    },
+    // ── Vagrant ──────────────────────────────────────────────────
+    BookEntryDef {
+        species: &species::VESPERTILIO_MURINUS,
+        commonness: Some(Commonness::Vagrant),
+        description: Some("Continental migrant occasionally reaching eastern England and North Sea oil rigs, mostly in autumn. Distinctive alternating call pattern at ~24 kHz and ~30 kHz. Loud social calls audible to the human ear."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PIPISTRELLUS_KUHLII,
+        commonness: Some(Commonness::Vagrant),
+        description: Some("Mediterranean species expanding northward through Europe. Peak frequency ~40 kHz. Extremely rare in the UK with only a handful of confirmed records, but range expansion may bring more sightings."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::HYPSUGO_SAVII,
+        commonness: Some(Commonness::Vagrant),
+        description: Some("Shallow FM sweep with quasi-constant-frequency tail at ~32–34 kHz. Primarily a Mediterranean species but increasingly recorded crossing the Channel to southern England. Distinctive call shape helps separate it from pipistrelles on a spectrogram."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::EPTESICUS_NILSSONII,
+        commonness: Some(Commonness::Vagrant),
+        description: Some("Northern bat of Scandinavia and continental Europe. Calls around 27–30 kHz. Very rare UK vagrant — most records are from Scotland and the Northern Isles."),
+        name: None,
+    },
+];
+
 /// Get the bat book manifest for a given region.
 ///
 /// Non-echolocating species are always sorted to the end (stable sort preserves
@@ -1043,6 +1195,7 @@ pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
         BatBookRegion::Europe => EUROPE_BOOK,
         BatBookRegion::CostaRica => COSTA_RICA_BOOK,
         BatBookRegion::Japan => JAPAN_BOOK,
+        BatBookRegion::UK => UK_BOOK,
         _ => GLOBAL_BOOK,
     };
     let mut entries: Vec<_> = book.iter().map(|e| e.materialize()).collect();

@@ -757,6 +757,32 @@ pub const MINIOPTERUS_SCHREIBERSII: BatSpecies = BatSpecies {
     echolocates: true,
 };
 
+// ── Additional UK species ────────────────────────────────────────────────────
+
+pub const MYOTIS_ALCATHOE: BatSpecies = BatSpecies {
+    id: "myotis_alcathoe",
+    name: "Alcathoe Bat",
+    scientific_name: "Myotis alcathoe",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 40_000.0,
+    freq_hi_hz: 105_000.0,
+    description: "Tiny Myotis first described in 2001, confirmed breeding in the UK in 2010. FM calls sweep from ~100 kHz down to ~40 kHz with peak energy around 50–55 kHz. Closely resembles whiskered and Brandt's bats but smaller with shorter ears.",
+    echolocates: true,
+};
+
+pub const HYPSUGO_SAVII: BatSpecies = BatSpecies {
+    id: "hypsugo_savii",
+    name: "Savi's Pipistrelle",
+    scientific_name: "Hypsugo savii",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 42_000.0,
+    description: "Medium pipistrelle with shallow FM sweep ending in a quasi-constant-frequency tail around 32–34 kHz. Primarily Mediterranean; increasingly recorded as a vagrant in southern England.",
+    echolocates: true,
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Species: Costa Rica
 // ══════════════════════════════════════════════════════════════════════════════
