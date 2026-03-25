@@ -13,22 +13,28 @@ pub fn country_to_region(country: &str) -> Option<BatBookRegion> {
         "japan" => Some(BatBookRegion::Japan),
         "costa rica" => Some(BatBookRegion::CostaRica),
         "australia" => Some(BatBookRegion::Australia),
+        "greece" => Some(BatBookRegion::Greece),
+        "sweden" => Some(BatBookRegion::Sweden),
+        "netherlands" | "holland" => Some(BatBookRegion::Netherlands),
+        "canada" => Some(BatBookRegion::Canada),
+        "united states" | "usa" => Some(BatBookRegion::UnitedStates),
+        "mexico" => Some(BatBookRegion::Mexico),
+        "kenya" => Some(BatBookRegion::Kenya),
+        "eswatini" | "swaziland" => Some(BatBookRegion::Eswatini),
 
         // ── Europe ───────────────────────────────────────────────────
         "albania" | "andorra" | "austria" | "belarus" | "belgium" | "bosnia and herzegovina"
         | "bulgaria" | "croatia" | "cyprus" | "czech republic" | "czechia" | "denmark"
-        | "estonia" | "finland" | "france" | "germany" | "greece" | "hungary" | "iceland"
+        | "estonia" | "finland" | "france" | "germany" | "hungary" | "iceland"
         | "ireland" | "italy" | "kosovo" | "latvia" | "liechtenstein" | "lithuania"
-        | "luxembourg" | "malta" | "moldova" | "monaco" | "montenegro" | "netherlands"
+        | "luxembourg" | "malta" | "moldova" | "monaco" | "montenegro"
         | "north macedonia" | "norway" | "poland" | "portugal" | "romania"
         | "russian federation" | "russia" | "san marino" | "serbia" | "slovakia" | "slovenia"
-        | "spain" | "sweden" | "switzerland" | "ukraine" | "vatican city"
+        | "spain" | "switzerland" | "ukraine" | "vatican city"
         | "canary islands" | "azores" | "madeira" | "gibraltar" => Some(BatBookRegion::Europe),
 
         // ── North America ────────────────────────────────────────────
-        "united states" | "usa" | "canada" | "mexico" | "bermuda" => {
-            Some(BatBookRegion::NorthAmerica)
-        }
+        "bermuda" => Some(BatBookRegion::NorthAmerica),
 
         // ── Central America & Caribbean → South America (neotropical) ─
         "belize" | "el salvador" | "guatemala" | "honduras" | "nicaragua" | "panama"
@@ -48,8 +54,8 @@ pub fn country_to_region(country: &str) -> Option<BatBookRegion> {
         | "cameroon" | "cape verde" | "cabo verde" | "central african republic" | "chad"
         | "comoros" | "congo" | "democratic republic of the congo"
         | "republic of the congo" | "djibouti" | "equatorial guinea" | "eritrea"
-        | "eswatini" | "swaziland" | "ethiopia" | "gabon" | "gambia" | "ghana" | "guinea"
-        | "guinea-bissau" | "ivory coast" | "cote d'ivoire" | "kenya" | "lesotho"
+        | "ethiopia" | "gabon" | "gambia" | "ghana" | "guinea"
+        | "guinea-bissau" | "ivory coast" | "cote d'ivoire" | "lesotho"
         | "liberia" | "libya" | "madagascar" | "malawi" | "mali" | "mauritania"
         | "mauritius" | "morocco" | "mozambique" | "namibia" | "niger" | "nigeria"
         | "rwanda" | "sao tome and principe" | "senegal" | "seychelles" | "sierra leone"

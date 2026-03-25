@@ -140,6 +140,15 @@ pub enum BatBookRegion {
     Japan,
     UK,
     Antarctica,
+    // Country-specific books
+    Greece,
+    Sweden,
+    Netherlands,
+    Canada,
+    UnitedStates,
+    Mexico,
+    Kenya,
+    Eswatini,
 }
 
 impl BatBookRegion {
@@ -160,6 +169,14 @@ impl BatBookRegion {
             Self::Japan => "Japan",
             Self::UK => "United Kingdom",
             Self::Antarctica => "Antarctica",
+            Self::Greece => "Greece",
+            Self::Sweden => "Sweden",
+            Self::Netherlands => "Netherlands",
+            Self::Canada => "Canada",
+            Self::UnitedStates => "United States",
+            Self::Mexico => "Mexico",
+            Self::Kenya => "Kenya",
+            Self::Eswatini => "Eswatini",
         }
     }
 
@@ -180,16 +197,32 @@ impl BatBookRegion {
             Self::Japan => "Japan",
             Self::UK => "UK",
             Self::Antarctica => "Antarctica",
+            Self::Greece => "Greece",
+            Self::Sweden => "Sweden",
+            Self::Netherlands => "NL",
+            Self::Canada => "Canada",
+            Self::UnitedStates => "USA",
+            Self::Mexico => "Mexico",
+            Self::Kenya => "Kenya",
+            Self::Eswatini => "Eswatini",
         }
     }
 
     pub const ALL: &'static [BatBookRegion] = &[
         Self::Global,
         Self::UK,
+        Self::Greece,
+        Self::Sweden,
+        Self::Netherlands,
         Self::Europe,
+        Self::Canada,
+        Self::UnitedStates,
+        Self::Mexico,
         Self::NorthAmerica,
         Self::CostaRica,
         Self::SouthAmerica,
+        Self::Kenya,
+        Self::Eswatini,
         Self::Africa,
         Self::MiddleEast,
         Self::SouthAsia,
@@ -218,6 +251,14 @@ impl BatBookRegion {
             Self::Japan => "japan",
             Self::UK => "uk",
             Self::Antarctica => "antarctica",
+            Self::Greece => "greece",
+            Self::Sweden => "sweden",
+            Self::Netherlands => "netherlands",
+            Self::Canada => "canada",
+            Self::UnitedStates => "united_states",
+            Self::Mexico => "mexico",
+            Self::Kenya => "kenya",
+            Self::Eswatini => "eswatini",
         }
     }
 

@@ -396,6 +396,31 @@ const EUROPE_BOOK: &[BookEntryDef] = &[
         description: None,
         name: None,
     },
+    // ── Species from Greece/Mediterranean demo recordings ───────
+    BookEntryDef {
+        species: &species::HYPSUGO_SAVII,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread across Mediterranean Europe. Shallow FM sweep ending in QCF tail ~32\u{2013}34 kHz. Common around buildings and cliffs."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_EMARGINATUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Gleaning insectivore with distinctive notched ears. FM sweeps. Picks spiders and flies from foliage. Warm-temperate Europe; cave-roosting."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHINOLOPHUS_BLASII,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Medium horseshoe bat of southern Europe. CF peak ~94\u{2013}98 kHz. Often roosts with R. euryale and R. ferrumequinum in caves."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_DAVIDII,
+        commonness: Some(Commonness::Rare),
+        description: Some("Recently described from the M. daubentonii complex. Greece and Turkey populations. FM sweeps similar to Daubenton's bat."),
+        name: None,
+    },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -970,6 +995,55 @@ const COSTA_RICA_BOOK: &[BookEntryDef] = &[
         species: &species::PTERONOTUS_QUADRIDENS,
         commonness: Some(Commonness::Rare),
         description: Some("Caribbean endemic mormoopid. CF-FM with CF at ~70 kHz. Smallest Pteronotus. Cave-dwelling."),
+        name: None,
+    },
+    // ── Species present in Costa Rica demos but not previously in book ──
+    BookEntryDef {
+        species: &species::CHIRODERMA_VILLOSUM,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large frugivore with distinctive facial stripes. Very quiet multi-harmonic FM. Feeds on figs. Canopy forager."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PLATYRRHINUS_HELLERI,
+        commonness: Some(Commonness::Common),
+        description: Some("Small broad-nosed frugivore. Multi-harmonic FM. Common in lowland forests. Roosts in small groups under leaves and in hollow trees."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::VAMPYRESSA_THYONE,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Tiny frugivore (~8 g). Multi-harmonic FM, very quiet. Tent-making behaviour. Lowland forests."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::VAMPYRODES_CARACCIOLI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Largest stenodermatine. Multi-harmonic FM. Bold facial stripes. Roosts in modified palm leaves. Feeds primarily on figs."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DIPHYLLA_ECAUDATA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Hairy-legged vampire specialising on bird blood. Very quiet FM calls. Approaches roosting birds from below. Less studied than Desmodus."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_ALBESCENS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small Myotis with silvery-tipped fur. FM sweeps. Forages near water and over clearings. Widespread Neotropics."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_OXYOTUS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Montane Myotis of cloud forests and highlands. FM sweeps ~80\u{2013}40 kHz. Costa Rica to Bolivia."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::DASYPTERUS_EGA,
+        commonness: Some(Commonness::Rare),
+        description: Some("Tree bat roosting in dead palm fronds. FM ~35\u{2013}40 kHz. Ranges from southern USA to South America. Formerly Lasiurus ega."),
         name: None,
     },
 ];
@@ -1629,6 +1703,62 @@ const NORTH_AMERICA_BOOK: &[BookEntryDef] = &[
         species: &species::DASYPTERUS_EGA,
         commonness: Some(Commonness::Uncommon),
         description: Some("Medium tree bat. FM characteristic frequency ~35\u{2013}40 kHz. Roosts in dead palm fronds. Southern USA (Texas, Louisiana, Florida) to South America. Formerly Lasiurus ega."),
+        name: None,
+    },
+    // ── Mexican species from demo recordings ───────────────────
+    BookEntryDef {
+        species: &species::PTERONOTUS_FULVUS,
+        commonness: Some(Commonness::Common),
+        description: Some("Mexican mormoopid split from P. davyi complex. CF-FM with short CF at ~55\u{2013}60 kHz. Cave-roosting in large colonies. Dry forests of western Mexico."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PTERONOTUS_PSILOTIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Recently split from P. personatus. CF-FM at ~70 kHz. Mexican lowland and premontane forests. Cave-dwelling."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_NIGRICANS,
+        commonness: Some(Commonness::Common),
+        description: Some("Widespread Neotropical molossid. QCF at ~25\u{2013}30 kHz. Fast open-air forager. Common in buildings across Mexico and Central America."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MOLOSSUS_ALVAREZI,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Recently described from Mexico and Central America. QCF ~25\u{2013}30 kHz. Acoustically distinct from M. molossus."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PEROPTERYX_MACROTIS,
+        commonness: Some(Commonness::Common),
+        description: Some("Emballonurid with multiharmonic QCF; most energy in 2nd harmonic at ~40 kHz. Mexican lowlands."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::PROMOPS_CENTRALIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Large crested mastiff bat. QCF at ~20\u{2013}25 kHz. Fast high-altitude forager. Roosts in tree hollows. Mexico to South America."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::RHOGEESSA_AENEA,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Small vespertilionid of the Yucatan Peninsula. FM sweeps ~48\u{2013}53 kHz. Forest edges and secondary growth."),
+        name: None,
+    },
+    BookEntryDef {
+        species: &species::MYOTIS_PILOSATIBIALIS,
+        commonness: Some(Commonness::Uncommon),
+        description: Some("Split from M. keaysi. FM sweeps. Forest and forest-edge forager across Mexico and Central America."),
+        name: None,
+    },
+    // ── US territories ─────────────────────────────────────────
+    BookEntryDef {
+        species: &species::PTEROPUS_MARIANNUS,
+        commonness: Some(Commonness::Endangered),
+        description: Some("No echolocation. Mariana Islands endemic (Guam, Rota, Saipan). Endangered; severely impacted by brown tree snake on Guam."),
         name: None,
     },
 ];
@@ -3419,6 +3549,346 @@ const ANTARCTICA_BOOK: &[BookEntryDef] = &[
     },
 ];
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Greece — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~35 bat species confirmed. Rich Mediterranean fauna with 5 horseshoe species.
+
+const GREECE_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::PIPISTRELLUS_PIPISTRELLUS, commonness: Some(Commonness::VeryCommon), description: Some("Abundant across Greece from sea level to mountains. Characteristic frequency ~45 kHz."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_PYGMAEUS, commonness: Some(Commonness::VeryCommon), description: Some("Common in riparian habitats and coastal areas. ~55 kHz. Often sympatric with common pipistrelle."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_KUHLII, commonness: Some(Commonness::VeryCommon), description: Some("Abundant in urban areas and around street lights. ~40 kHz. Expanding across the Mediterranean."), name: None },
+    BookEntryDef { species: &species::HYPSUGO_SAVII, commonness: Some(Commonness::VeryCommon), description: Some("Common across Greece, especially around cliffs and buildings. FM-QCF ~32\u{2013}34 kHz."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::TADARIDA_TENIOTIS, commonness: Some(Commonness::Common), description: Some("Loud low-frequency calls ~12\u{2013}15 kHz, audible to humans. Cliff-roosting. Common in mountainous areas."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_FERRUMEQUINUM, commonness: Some(Commonness::Common), description: Some("Widespread in caves and old buildings. CF ~82\u{2013}83 kHz. Large colonies in karst regions."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_HIPPOSIDEROS, commonness: Some(Commonness::Common), description: Some("Common in caves and cellars. CF ~110 kHz. Found across mainland and islands."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_EURYALE, commonness: Some(Commonness::Common), description: Some("Cave-dwelling; CF ~104 kHz. Important populations in the Peloponnese and northern Greece."), name: None },
+    BookEntryDef { species: &species::MINIOPTERUS_SCHREIBERSII, commonness: Some(Commonness::Common), description: Some("Large cave colonies across Greece. FM ~52 kHz. Important maternity colonies on Crete and mainland."), name: None },
+    BookEntryDef { species: &species::MYOTIS_EMARGINATUS, commonness: Some(Commonness::Common), description: Some("Gleaning insectivore with notched ears. FM. Common in warm-temperate areas; cave and building rooster."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_LEISLERI, commonness: Some(Commonness::Common), description: Some("Fast open-air forager. QCF ~25 kHz. Tree-roosting. Common but under-recorded."), name: None },
+    BookEntryDef { species: &species::MYOTIS_CAPACCINII, commonness: Some(Commonness::Common), description: Some("Trawling bat over Mediterranean rivers and lakes. FM ~48 kHz. Important populations in Greek caves."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_KOLOMBATOVICI, commonness: Some(Commonness::Common), description: Some("Mediterranean long-eared bat. Very quiet FM. Adriatic and Aegean coasts; recently split from P. austriacus."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::RHINOLOPHUS_BLASII, commonness: Some(Commonness::Uncommon), description: Some("CF ~94\u{2013}98 kHz. Cave-dwelling; often with R. euryale and R. ferrumequinum. Mediterranean habitats."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYOTIS, commonness: Some(Commonness::Uncommon), description: Some("Large ground-gleaning Myotis. FM. Cave-roosting."), name: None },
+    BookEntryDef { species: &species::MYOTIS_DAUBENTONII, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    BookEntryDef { species: &species::MYOTIS_DAVIDII, commonness: Some(Commonness::Uncommon), description: Some("Recently split from M. daubentonii complex. FM. Greek and Turkish populations."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_MACROBULLARIS, commonness: Some(Commonness::Uncommon), description: Some("Mountain long-eared bat. Very quiet FM. Found in mountainous regions of northern Greece."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_NATHUSII, commonness: Some(Commonness::Uncommon), description: Some("Migratory. ~38 kHz. Passage migrant and occasional breeder in Greece."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_HANAKI, commonness: Some(Commonness::Uncommon), description: Some("Endemic to Crete and nearby islands. ~47\u{2013}48 kHz. Recently described cryptic species."), name: None },
+    BookEntryDef { species: &species::MYOTIS_NATTERERI, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    BookEntryDef { species: &species::BARBASTELLA_BARBASTELLUS, commonness: Some(Commonness::Rare), description: Some("Forest-dependent. Alternating FM ~32/34 kHz. Rare in Greece; found in montane forests."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_NOCTULA, commonness: Some(Commonness::Uncommon), description: Some("Large noctule. QCF ~20 kHz. Migratory; more common in northern Greece."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_SEROTINUS, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    BookEntryDef { species: &species::MYOTIS_BLYTHII, commonness: Some(Commonness::Uncommon), description: Some("Large Myotis. FM. Cave colonies. Hunts grasshoppers in open habitats."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_MEHELYI, commonness: Some(Commonness::Uncommon), description: Some("CF ~106\u{2013}108 kHz. Cave-dwelling. Southern and western Greece; often with R. euryale."), name: None },
+    BookEntryDef { species: &species::VESPERTILIO_MURINUS, commonness: Some(Commonness::Uncommon), description: Some("Migratory. Alternating QCF ~25 kHz. Passage migrant and occasional breeder."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AUSTRIACUS, commonness: Some(Commonness::Uncommon), description: Some("Grey long-eared bat. Very quiet FM. Lowland and Mediterranean habitats."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AURITUS, commonness: Some(Commonness::Uncommon), description: Some("Very quiet broadband FM. Limited distribution in northern Greece."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYSTACINUS, commonness: Some(Commonness::Uncommon), description: Some("FM ~45 kHz. Woodland edges. Presence confirmed in northern Greece."), name: None },
+    // ── Rare ────────────────────────────────────────────────────
+    BookEntryDef { species: &species::MYOTIS_BECHSTEINII, commonness: Some(Commonness::Rare), description: Some("Old-growth forest specialist. Very quiet broadband FM. Rare in Greece."), name: None },
+    BookEntryDef { species: &species::MYOTIS_ALCATHOE, commonness: Some(Commonness::Rare), description: Some("Cryptic Myotis. FM. Recently confirmed in Greece; montane forests."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_LASIOPTERUS, commonness: Some(Commonness::Rare), description: Some("Europe's largest bat. QCF ~16\u{2013}18 kHz. Rare in Greece; migratory."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_NILSSONII, commonness: Some(Commonness::Rare), description: Some("FM ~30 kHz. Very limited in northern mountainous Greece."), name: Some("Northern Bat") },
+    BookEntryDef { species: &species::ROUSETTUS_AEGYPTIACUS, commonness: Some(Commonness::Rare), description: Some("Tongue-click echolocation. Limited to a few Aegean islands; non-echolocating fruit bat."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sweden — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~19 confirmed species. Northern distribution; all vespertilionids.
+
+const SWEDEN_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::EPTESICUS_NILSSONII, commonness: Some(Commonness::VeryCommon), description: Some("Sweden's most widespread bat. Found to the Arctic Circle. FM ~30 kHz. Common in boreal forests and settlements."), name: Some("Northern Bat") },
+    BookEntryDef { species: &species::PIPISTRELLUS_PYGMAEUS, commonness: Some(Commonness::VeryCommon), description: Some("Common in southern and central Sweden. ~55 kHz. Riparian habitats and towns."), name: None },
+    BookEntryDef { species: &species::MYOTIS_DAUBENTONII, commonness: Some(Commonness::VeryCommon), description: Some("Common across Sweden. Trawls over lakes and rivers. FM sweeps."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::PIPISTRELLUS_NATHUSII, commonness: Some(Commonness::Common), description: Some("Migratory; breeds in southern Sweden. ~38 kHz. Wetlands and forest edges."), name: None },
+    BookEntryDef { species: &species::MYOTIS_BRANDTII, commonness: Some(Commonness::Common), description: Some("Mature forests of central and northern Sweden. FM ~40 kHz. Difficult to separate from whiskered bat acoustically."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYSTACINUS, commonness: Some(Commonness::Common), description: Some("Villages and woodland edges. FM ~45 kHz. Southern half of Sweden."), name: None },
+    BookEntryDef { species: &species::MYOTIS_NATTERERI, commonness: Some(Commonness::Common), description: Some("Broadband FM gleaner. Southern and central Sweden. Forests and parkland."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_NOCTULA, commonness: Some(Commonness::Common), description: Some("Large noctule. QCF ~20 kHz. Southern Sweden; tree hollows. Early emerger."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AURITUS, commonness: Some(Commonness::Common), description: Some("Very quiet broadband FM. Old forests and buildings. Common in southern Sweden."), name: None },
+    BookEntryDef { species: &species::VESPERTILIO_MURINUS, commonness: Some(Commonness::Common), description: Some("Migratory. Alternating QCF ~25 kHz. Eastern and coastal Sweden."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::PIPISTRELLUS_PIPISTRELLUS, commonness: Some(Commonness::Uncommon), description: Some("~45 kHz. Southern Sweden only; less common than soprano pipistrelle."), name: None },
+    BookEntryDef { species: &species::BARBASTELLA_BARBASTELLUS, commonness: Some(Commonness::Uncommon), description: Some("Rare in Sweden; restricted to old-growth forests in the south. Alternating FM ~32/34 kHz."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_SEROTINUS, commonness: Some(Commonness::Uncommon), description: Some("Southern tip of Sweden only. FM ~27 kHz. Buildings and parkland."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_LEISLERI, commonness: Some(Commonness::Uncommon), description: Some("QCF ~25 kHz. Rare breeder in southern Sweden."), name: None },
+    BookEntryDef { species: &species::MYOTIS_DASYCNEME, commonness: Some(Commonness::Rare), description: Some("Trawling bat. FM. Very rare in Sweden; found near large lakes and rivers in the south."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AUSTRIACUS, commonness: Some(Commonness::Rare), description: Some("Southern tip of Sweden only. Very quiet FM. Buildings and parkland."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYOTIS, commonness: Some(Commonness::Rare), description: Some("At northern range limit. Single known site in Skåne. FM. Ground-gleaning beetle specialist."), name: None },
+    BookEntryDef { species: &species::MYOTIS_BECHSTEINII, commonness: Some(Commonness::Rare), description: Some("Old-growth forest specialist. Very quiet FM. Extremely rare in southern Sweden."), name: None },
+    BookEntryDef { species: &species::MYOTIS_ALCATHOE, commonness: Some(Commonness::Rare), description: Some("Cryptic Myotis. FM. Recently discovered in Sweden; very limited range."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Netherlands — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~20 confirmed species. Lowland country; important for migratory species.
+
+const NETHERLANDS_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::PIPISTRELLUS_PIPISTRELLUS, commonness: Some(Commonness::VeryCommon), description: Some("Most common bat in the Netherlands. ~45 kHz. Urban gardens and parks."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_PYGMAEUS, commonness: Some(Commonness::Common), description: Some("~55 kHz. Increasingly recorded; favours riparian habitats."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_NATHUSII, commonness: Some(Commonness::VeryCommon), description: Some("Common migratory species. ~38 kHz. Important stopover country for NE European populations."), name: None },
+    BookEntryDef { species: &species::MYOTIS_DAUBENTONII, commonness: Some(Commonness::VeryCommon), description: Some("Common over canals, ditches, and lakes. FM trawling."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::EPTESICUS_SEROTINUS, commonness: Some(Commonness::Common), description: Some("Common in rural areas and villages. FM ~27 kHz. Roosts in buildings."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_NOCTULA, commonness: Some(Commonness::Common), description: Some("QCF ~20 kHz. Tree hollows and bat boxes. Common across the country."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_LEISLERI, commonness: Some(Commonness::Common), description: Some("QCF ~25 kHz. Tree-roosting. Common in parks and forests."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AURITUS, commonness: Some(Commonness::Common), description: Some("Very quiet FM. Old buildings, churches, forests. Relatively common."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYOTIS, commonness: Some(Commonness::Common), description: Some("Largest Dutch Myotis. Ground-gleaning beetle specialist. Cave hibernation sites in Limburg."), name: None },
+    BookEntryDef { species: &species::MYOTIS_DASYCNEME, commonness: Some(Commonness::Common), description: Some("Netherlands is a stronghold for this species. Trawling bat over broad waterways. FM. Internationally important populations."), name: None },
+    BookEntryDef { species: &species::MYOTIS_MYSTACINUS, commonness: Some(Commonness::Common), description: Some("Villages and woodland edges. FM ~45 kHz."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::MYOTIS_NATTERERI, commonness: Some(Commonness::Uncommon), description: Some("Broadband FM gleaner. Forests and old buildings."), name: None },
+    BookEntryDef { species: &species::MYOTIS_BRANDTII, commonness: Some(Commonness::Uncommon), description: Some("Mature forests. FM. Difficult to separate from whiskered bat."), name: None },
+    BookEntryDef { species: &species::MYOTIS_BECHSTEINII, commonness: Some(Commonness::Rare), description: Some("Rare old-growth forest specialist. Very quiet broadband FM. Conservation priority."), name: None },
+    BookEntryDef { species: &species::BARBASTELLA_BARBASTELLUS, commonness: Some(Commonness::Rare), description: Some("Extremely rare in the Netherlands. Alternating FM ~32/34 kHz. Old-growth forest."), name: None },
+    BookEntryDef { species: &species::VESPERTILIO_MURINUS, commonness: Some(Commonness::Uncommon), description: Some("Migratory. QCF ~25 kHz. Passage migrant, occasionally breeds."), name: None },
+    BookEntryDef { species: &species::PLECOTUS_AUSTRIACUS, commonness: Some(Commonness::Rare), description: Some("Southern Netherlands only. Very quiet FM. Warmer lowland areas."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_NILSSONII, commonness: Some(Commonness::Vagrant), description: Some("Occasional vagrant from Scandinavia. FM ~30 kHz."), name: Some("Northern Bat") },
+    BookEntryDef { species: &species::MYOTIS_EMARGINATUS, commonness: Some(Commonness::Rare), description: Some("Geoffroy's bat. FM. Rare; southern border only (Limburg)."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_KUHLII, commonness: Some(Commonness::Rare), description: Some("~40 kHz. Recent arrival expanding northward with climate change. First Dutch records in 2010s."), name: None },
+    BookEntryDef { species: &species::NYCTALUS_LASIOPTERUS, commonness: Some(Commonness::Vagrant), description: Some("Europe's largest bat. QCF ~16\u{2013}18 kHz. Occasional vagrant; very rare records."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Canada — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~19 confirmed species. White-nose Syndrome has devastated several species.
+
+const CANADA_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::EPTESICUS_FUSCUS, commonness: Some(Commonness::VeryCommon), description: Some("Most commonly detected bat in Canada. FM-QCF ~27 kHz. Buildings, bridges, bat boxes. Relatively resistant to White-nose Syndrome."), name: None },
+    BookEntryDef { species: &species::MYOTIS_LUCIFUGUS, commonness: Some(Commonness::VeryCommon), description: Some("Historically Canada's most common bat. FM ~45 kHz. Devastated by White-nose Syndrome; Endangered (COSEWIC)."), name: None },
+    BookEntryDef { species: &species::AEORESTES_CINEREUS, commonness: Some(Commonness::Common), description: Some("Canada's largest bat. Low FM-QCF ~25 kHz. Solitary tree-roosting migrant. Major wind-turbine mortality concern."), name: Some("Hoary Bat") },
+    BookEntryDef { species: &species::LASIONYCTERIS_NOCTIVAGANS, commonness: Some(Commonness::Common), description: Some("Migratory tree bat. FM ~25\u{2013}30 kHz. Forests and forest edges across Canada."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::LASIURUS_BOREALIS, commonness: Some(Commonness::Common), description: Some("Migratory. FM ~40 kHz. Solitary tree-roosting. Eastern and central Canada."), name: None },
+    BookEntryDef { species: &species::MYOTIS_SEPTENTRIONALIS, commonness: Some(Commonness::Common), description: Some("Steep FM, high frequency. Gleaning forager. Endangered (COSEWIC) due to White-nose Syndrome."), name: None },
+    BookEntryDef { species: &species::PERIMYOTIS_SUBFLAVUS, commonness: Some(Commonness::Common), description: Some("FM ~45 kHz with distinctive steep sweeps. Endangered (COSEWIC). Cave hibernator."), name: None },
+    BookEntryDef { species: &species::MYOTIS_LEIBII, commonness: Some(Commonness::Common), description: Some("One of Canada's smallest bats. FM ~50\u{2013}55 kHz. Rock crevices and talus slopes. Appears somewhat resistant to WNS."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::MYOTIS_VOLANS, commonness: Some(Commonness::Uncommon), description: Some("Western Canada. FM ~40 kHz. Mountainous forests. Tree and cliff crevice roosting."), name: None },
+    BookEntryDef { species: &species::MYOTIS_EVOTIS, commonness: Some(Commonness::Uncommon), description: Some("Western montane forests. FM sweeps. Gleaning insectivore with large ears."), name: None },
+    BookEntryDef { species: &species::CORYNORHINUS_TOWNSENDII, commonness: Some(Commonness::Rare), description: Some("Very quiet FM. Southern BC only. Cave-roosting. Gleaning specialist."), name: None },
+    BookEntryDef { species: &species::LASIURUS_BLOSSEVILLII, commonness: Some(Commonness::Rare), description: Some("Southern BC. FM ~40 kHz. Solitary tree-roosting."), name: None },
+    BookEntryDef { species: &species::TADARIDA_BRASILIENSIS, commonness: Some(Commonness::Rare), description: Some("Occasional records in southern BC and Ontario. QCF ~25 kHz."), name: None },
+    BookEntryDef { species: &species::PARASTRELLUS_HESPERUS, commonness: Some(Commonness::Rare), description: Some("Southern BC only. High QCF ~48\u{2013}50 kHz. Desert cliffs and canyons."), name: None },
+    BookEntryDef { species: &species::MYOTIS_CALIFORNICUS, commonness: Some(Commonness::Common), description: Some("Western Canada (BC, Alberta). FM ~50 kHz. Arid habitats and forests."), name: None },
+    BookEntryDef { species: &species::MYOTIS_CILIOLABRUM, commonness: Some(Commonness::Uncommon), description: Some("Western prairies and foothills. FM ~55 kHz. Rock crevices and badlands."), name: None },
+    BookEntryDef { species: &species::MYOTIS_YUMANENSIS, commonness: Some(Commonness::Uncommon), description: Some("Southern BC. FM. Trawling bat over rivers and lakes."), name: None },
+    BookEntryDef { species: &species::MYOTIS_KEENII, commonness: Some(Commonness::Rare), description: Some("Pacific Northwest temperate rainforest endemic. Broad FM sweep. Very similar to M. evotis acoustically. SE Alaska to southern BC."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// United States — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~47 confirmed species. Diverse from desert Southwest to eastern forests.
+
+const UNITED_STATES_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::EPTESICUS_FUSCUS, commonness: Some(Commonness::VeryCommon), description: Some("Most commonly detected bat across much of the US. FM-QCF ~27 kHz. Buildings, bridges, bat boxes."), name: None },
+    BookEntryDef { species: &species::TADARIDA_BRASILIENSIS, commonness: Some(Commonness::VeryCommon), description: Some("Forms massive colonies (millions) in caves and bridges across the southern US. QCF ~25 kHz. Bracken Cave, TX is the world's largest known bat colony."), name: None },
+    BookEntryDef { species: &species::MYOTIS_LUCIFUGUS, commonness: Some(Commonness::VeryCommon), description: Some("Formerly abundant across the eastern US. FM ~45 kHz. Severely impacted by White-nose Syndrome."), name: None },
+    BookEntryDef { species: &species::LASIURUS_BOREALIS, commonness: Some(Commonness::VeryCommon), description: Some("Common migratory tree bat in eastern US. FM ~40 kHz. Major wind-turbine mortality."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::AEORESTES_CINEREUS, commonness: Some(Commonness::Common), description: Some("Largest US vespertilionid. FM-QCF ~25 kHz. Solitary tree-roosting migrant. Major wind-energy concern."), name: Some("Hoary Bat") },
+    BookEntryDef { species: &species::LASIONYCTERIS_NOCTIVAGANS, commonness: Some(Commonness::Common), description: Some("Migratory tree bat. FM ~25\u{2013}30 kHz. Forest edges across the US."), name: None },
+    BookEntryDef { species: &species::PARASTRELLUS_HESPERUS, commonness: Some(Commonness::Common), description: Some("Tiny desert bat of the Southwest. High QCF ~48\u{2013}50 kHz. One of the first bats to emerge at dusk."), name: None },
+    BookEntryDef { species: &species::ANTROZOUS_PALLIDUS, commonness: Some(Commonness::Common), description: Some("Western US. Distinctive low FM ~30 kHz. Ground-gleaning specialist taking scorpions and beetles."), name: None },
+    BookEntryDef { species: &species::MYOTIS_SEPTENTRIONALIS, commonness: Some(Commonness::Common), description: Some("Steep FM. Gleaning forager. Endangered due to WNS. Eastern US forests."), name: None },
+    BookEntryDef { species: &species::PERIMYOTIS_SUBFLAVUS, commonness: Some(Commonness::Common), description: Some("Eastern US. FM ~45 kHz. Devastating WNS decline. Cave hibernator."), name: None },
+    BookEntryDef { species: &species::NYCTINOMOPS_MACROTIS, commonness: Some(Commonness::Common), description: Some("Large free-tailed bat. Low QCF ~15\u{2013}18 kHz. Western canyons and cliffs."), name: None },
+    BookEntryDef { species: &species::LASIURUS_BLOSSEVILLII, commonness: Some(Commonness::Common), description: Some("Western counterpart of eastern red bat. FM ~40 kHz."), name: None },
+    BookEntryDef { species: &species::MYOTIS_LEIBII, commonness: Some(Commonness::Common), description: None, name: None },
+    BookEntryDef { species: &species::MYOTIS_THYSANODES, commonness: Some(Commonness::Common), description: Some("Western US. FM sweep. Mines and caves. Distinctive fringe of hairs on tail membrane."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::EUDERMA_MACULATUM, commonness: Some(Commonness::Uncommon), description: Some("Spectacular large ears and spotted fur. Very low FM ~10\u{2013}15 kHz. Western cliffs. Unmistakable on a bat detector."), name: None },
+    BookEntryDef { species: &species::IDIONYCTERIS_PHYLLOTIS, commonness: Some(Commonness::Uncommon), description: Some("Large lappets on muzzle. FM ~10\u{2013}12 kHz low frequency. Western montane forests."), name: None },
+    BookEntryDef { species: &species::CORYNORHINUS_TOWNSENDII, commonness: Some(Commonness::Uncommon), description: Some("Very quiet FM. Cave-roosting gleaning specialist. Western US and scattered eastern populations."), name: None },
+    BookEntryDef { species: &species::CORYNORHINUS_RAFINESQUII, commonness: Some(Commonness::Uncommon), description: Some("Southeastern US. Very quiet FM. Hollow trees and old buildings. Gleaning specialist."), name: None },
+    BookEntryDef { species: &species::NYCTINOMOPS_FEMOROSACCUS, commonness: Some(Commonness::Uncommon), description: Some("Desert Southwest. QCF ~17\u{2013}22 kHz. Cliff crevices and rock shelters."), name: None },
+    BookEntryDef { species: &species::MYOTIS_VOLANS, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    BookEntryDef { species: &species::MYOTIS_EVOTIS, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    // ── Endangered ───────────────────────────────────────────────
+    BookEntryDef { species: &species::EUMOPS_FLORIDANUS, commonness: Some(Commonness::Endangered), description: None, name: None },
+    BookEntryDef { species: &species::LEPTONYCTERIS_YERBABUENAE, commonness: Some(Commonness::Endangered), description: None, name: None },
+    BookEntryDef { species: &species::LEPTONYCTERIS_NIVALIS, commonness: Some(Commonness::Endangered), description: Some("Mexican long-nosed bat. Quiet FM. Big Bend region of Texas. Key agave pollinator."), name: None },
+    BookEntryDef { species: &species::MYOTIS_SODALIS, commonness: Some(Commonness::Endangered), description: Some("Indiana bat. FM ~45 kHz. Critically impacted by WNS. Cave hibernation; forest-edge foraging."), name: None },
+    BookEntryDef { species: &species::MYOTIS_GRISESCENS, commonness: Some(Commonness::Endangered), description: Some("Gray bat. FM ~45 kHz. Cave obligate year-round. Large colonies in southeastern US caves."), name: None },
+    BookEntryDef { species: &species::PTEROPUS_MARIANNUS, commonness: Some(Commonness::Endangered), description: Some("No echolocation. Guam and Northern Mariana Islands (US territory). Critically endangered due to brown tree snake."), name: None },
+    // ── Additional common species ──────────────────────────────
+    BookEntryDef { species: &species::MYOTIS_CALIFORNICUS, commonness: Some(Commonness::Common), description: Some("Small western Myotis. FM ~50 kHz. Arid habitats, mines, buildings."), name: None },
+    BookEntryDef { species: &species::MYOTIS_YUMANENSIS, commonness: Some(Commonness::Common), description: Some("Western trawling bat. FM. Rivers and reservoirs. Buildings and bridges."), name: None },
+    BookEntryDef { species: &species::MYOTIS_VELIFER, commonness: Some(Commonness::Common), description: Some("Cave myotis of the Southwest. FM ~45\u{2013}50 kHz. Large cave colonies. Also extends into the Southeast."), name: None },
+    BookEntryDef { species: &species::NYCTICEIUS_HUMERALIS, commonness: Some(Commonness::Common), description: Some("Evening bat. FM ~38 kHz. Eastern US forests and suburban areas. Tree-roosting."), name: None },
+    BookEntryDef { species: &species::LASIURUS_SEMINOLUS, commonness: Some(Commonness::Common), description: Some("Southeastern counterpart of eastern red bat. FM ~40 kHz. Spanish moss and pine forests."), name: None },
+    BookEntryDef { species: &species::MYOTIS_CILIOLABRUM, commonness: Some(Commonness::Common), description: Some("Western prairies and badlands. FM ~55 kHz. Rock crevices."), name: None },
+    BookEntryDef { species: &species::MYOTIS_AUSTRORIPARIUS, commonness: Some(Commonness::Uncommon), description: Some("Southeastern cave bat. FM ~48 kHz. Large cave and bridge colonies in Gulf states."), name: None },
+    BookEntryDef { species: &species::EUMOPS_PEROTIS, commonness: Some(Commonness::Uncommon), description: Some("Western mastiff bat. Very low QCF ~12\u{2013}15 kHz, audible to humans. Cliff-roosting. Largest US bat."), name: None },
+    BookEntryDef { species: &species::MACROTUS_CALIFORNICUS, commonness: Some(Commonness::Uncommon), description: Some("California leaf-nosed bat. Broadband FM. Desert Southwest. Gleaning specialist. Does not hibernate."), name: None },
+    BookEntryDef { species: &species::MORMOOPS_MEGALOPHYLLA, commonness: Some(Commonness::Uncommon), description: Some("Ghost-faced bat. 2nd harmonic ~67 kHz. Southern Texas border. Cave-dwelling."), name: None },
+    BookEntryDef { species: &species::LASIURUS_INTERMEDIUS, commonness: Some(Commonness::Uncommon), description: Some("Northern yellow bat. FM ~30 kHz. Gulf Coast states. Spanish moss rooster."), name: None },
+    BookEntryDef { species: &species::DASYPTERUS_EGA, commonness: Some(Commonness::Rare), description: Some("Southern yellow bat. FM ~35 kHz. Texas and Florida. Palm tree rooster."), name: None },
+    BookEntryDef { species: &species::MYOTIS_KEENII, commonness: Some(Commonness::Rare), description: Some("Keen's myotis. Broad FM sweep. Pacific Northwest temperate rainforests (WA). Very similar to M. evotis."), name: None },
+    BookEntryDef { species: &species::EUMOPS_UNDERWOODI, commonness: Some(Commonness::Uncommon), description: Some("Underwood's bonneted bat. Low QCF ~14\u{2013}28 kHz. Desert Southwest (AZ, NM). Audible to humans."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Mexico — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~140 species — one of the most bat-diverse countries. Nearctic/Neotropical overlap.
+
+const MEXICO_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::TADARIDA_BRASILIENSIS, commonness: Some(Commonness::VeryCommon), description: Some("Abundant across Mexico. QCF ~25 kHz. Massive cave colonies. Forms the famous column emergence at Cueva de la Boca."), name: None },
+    BookEntryDef { species: &species::ARTIBEUS_JAMAICENSIS, commonness: Some(Commonness::VeryCommon), description: Some("Very common frugivore across lowland and mid-elevation Mexico. Quiet multi-harmonic FM."), name: None },
+    BookEntryDef { species: &species::GLOSSOPHAGA_SORICINA, commonness: Some(Commonness::VeryCommon), description: Some("Abundant nectarivore across Mexico. Very quiet FM. Important cactus and agave pollinator."), name: None },
+    BookEntryDef { species: &species::MOLOSSUS_MOLOSSUS, commonness: Some(Commonness::VeryCommon), description: Some("Common in buildings and hollow trees. QCF ~30\u{2013}35 kHz."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::PTERONOTUS_MESOAMERICANUS, commonness: Some(Commonness::Common), description: Some("Long CF at ~61 kHz. Large cave colonies. The only high-duty-cycle bat in the New World."), name: None },
+    BookEntryDef { species: &species::PTERONOTUS_FULVUS, commonness: Some(Commonness::Common), description: Some("CF-FM ~55\u{2013}60 kHz. Western Mexico dry forests. Cave-roosting."), name: None },
+    BookEntryDef { species: &species::PTERONOTUS_PSILOTIS, commonness: Some(Commonness::Common), description: Some("CF-FM ~70 kHz. Recently split from P. personatus. Cave-dwelling."), name: None },
+    BookEntryDef { species: &species::MORMOOPS_MEGALOPHYLLA, commonness: Some(Commonness::Common), description: Some("2nd harmonic ~67 kHz dominant. Large cave colonies. Northern and central Mexico."), name: None },
+    BookEntryDef { species: &species::MOLOSSUS_NIGRICANS, commonness: Some(Commonness::Common), description: Some("QCF ~25\u{2013}30 kHz. Fast open-air forager. Common in buildings."), name: None },
+    BookEntryDef { species: &species::PEROPTERYX_MACROTIS, commonness: Some(Commonness::Common), description: Some("QCF ~40 kHz (2nd harmonic). Lowland forests and cave entrances."), name: None },
+    BookEntryDef { species: &species::STURNIRA_LILIUM, commonness: Some(Commonness::Common), description: Some("Common frugivore. Quiet FM. Second-growth and forest edges."), name: None },
+    BookEntryDef { species: &species::DESMODUS_ROTUNDUS, commonness: Some(Commonness::Common), description: Some("Common vampire bat. Very quiet FM. Livestock areas throughout Mexico."), name: None },
+    BookEntryDef { species: &species::PARASTRELLUS_HESPERUS, commonness: Some(Commonness::Common), description: Some("Desert bat. High QCF ~48\u{2013}50 kHz. Northern Mexico deserts."), name: None },
+    BookEntryDef { species: &species::NYCTINOMOPS_FEMOROSACCUS, commonness: Some(Commonness::Common), description: Some("QCF ~17\u{2013}22 kHz. Rock crevices in arid regions."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_FUSCUS, commonness: Some(Commonness::Common), description: Some("FM-QCF ~27 kHz. Buildings and bridges. Highland areas."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::MOLOSSUS_ALVAREZI, commonness: Some(Commonness::Uncommon), description: Some("Recently described. QCF ~25\u{2013}30 kHz. Yucatan and southern Mexico."), name: None },
+    BookEntryDef { species: &species::RHOGEESSA_AENEA, commonness: Some(Commonness::Uncommon), description: Some("Yucatan endemic. FM ~48\u{2013}53 kHz. Forest edges."), name: None },
+    BookEntryDef { species: &species::PROMOPS_CENTRALIS, commonness: Some(Commonness::Uncommon), description: Some("Large molossid. QCF ~20\u{2013}25 kHz. Fast high-altitude forager."), name: None },
+    BookEntryDef { species: &species::MYOTIS_PILOSATIBIALIS, commonness: Some(Commonness::Uncommon), description: Some("FM sweeps. Forest and forest-edge forager. Southern Mexico."), name: None },
+    BookEntryDef { species: &species::LEPTONYCTERIS_YERBABUENAE, commonness: Some(Commonness::Uncommon), description: Some("Nectar bat. Quiet FM. Key pollinator of columnar cacti and agave. Migratory."), name: None },
+    BookEntryDef { species: &species::CAROLLIA_PERSPICILLATA, commonness: Some(Commonness::Common), description: Some("Common short-tailed frugivore. Multi-harmonic FM. Important Piper seed disperser."), name: None },
+    BookEntryDef { species: &species::RHOGEESSA_TUMIDA, commonness: Some(Commonness::Uncommon), description: None, name: None },
+    BookEntryDef { species: &species::EUMOPS_AURIPENDULUS, commonness: Some(Commonness::Uncommon), description: Some("Large bonneted bat. Low QCF ~15 kHz. Open-air forager."), name: None },
+    // ── Additional common species ──────────────────────────────
+    BookEntryDef { species: &species::BALANTIOPTERYX_PLICATA, commonness: Some(Commonness::Common), description: Some("Gray sac-winged bat. QCF ~42\u{2013}45 kHz. Abundant at cave entrances and rock walls across Mexico."), name: None },
+    BookEntryDef { species: &species::ARTIBEUS_LITURATUS, commonness: Some(Commonness::Common), description: Some("Large frugivore. Quiet multi-harmonic FM. Lowland forests."), name: None },
+    BookEntryDef { species: &species::SACCOPTERYX_BILINEATA, commonness: Some(Commonness::Common), description: Some("Distinctive two-lined sac-winged bat. FM-QCF. Tree trunks and buildings in lowland forests."), name: None },
+    BookEntryDef { species: &species::PTERONOTUS_PERSONATUS, commonness: Some(Commonness::Common), description: Some("Wagner's mustached bat. CF-FM ~90 kHz. Cave-dwelling across southern Mexico."), name: None },
+    BookEntryDef { species: &species::PTERONOTUS_DAVYI, commonness: Some(Commonness::Common), description: Some("Davy's naked-backed bat. CF-FM ~65 kHz. Large cave colonies."), name: None },
+    BookEntryDef { species: &species::NYCTINOMOPS_MACROTIS, commonness: Some(Commonness::Common), description: Some("Big free-tailed bat. Low QCF ~15\u{2013}18 kHz. Canyon and cliff crevices across Mexico."), name: None },
+    BookEntryDef { species: &species::MYOTIS_VELIFER, commonness: Some(Commonness::Common), description: Some("Cave myotis. FM ~45\u{2013}50 kHz. Large cave colonies in central Mexico."), name: None },
+    BookEntryDef { species: &species::NATALUS_MEXICANUS, commonness: Some(Commonness::Common), description: Some("Mexican funnel-eared bat. FM ~70\u{2013}80 kHz. Hot humid caves."), name: None },
+    BookEntryDef { species: &species::LASIURUS_BOREALIS, commonness: Some(Commonness::Common), description: Some("Eastern red bat. FM ~40 kHz. Solitary tree-roosting. Northern and highland Mexico."), name: None },
+    BookEntryDef { species: &species::LASIURUS_BLOSSEVILLII, commonness: Some(Commonness::Common), description: Some("Western red bat. FM ~40 kHz. Solitary tree-roosting."), name: None },
+    BookEntryDef { species: &species::LEPTONYCTERIS_NIVALIS, commonness: Some(Commonness::Uncommon), description: Some("Mexican long-nosed bat. Quiet FM. Key agave pollinator. Highland caves."), name: None },
+    BookEntryDef { species: &species::STURNIRA_LUDOVICI, commonness: Some(Commonness::Uncommon), description: Some("Highland yellow-shouldered bat. Quiet FM. Cloud forests."), name: None },
+    BookEntryDef { species: &species::CHROTOPTERUS_AURITUS, commonness: Some(Commonness::Uncommon), description: Some("Large carnivorous phyllostomid. Very quiet broadband FM. Caves and hollow trees."), name: None },
+    BookEntryDef { species: &species::NOCTILIO_LEPORINUS, commonness: Some(Commonness::Uncommon), description: Some("Greater bulldog bat. FM-QCF ~55 kHz. Fish-eating specialist over coastal and freshwater."), name: None },
+    BookEntryDef { species: &species::EUMOPS_UNDERWOODI, commonness: Some(Commonness::Uncommon), description: Some("Underwood's bonneted bat. Low QCF ~14\u{2013}28 kHz. Arid and semiarid western Mexico. Loud calls."), name: None },
+    BookEntryDef { species: &species::CYNOMOPS_MEXICANUS, commonness: Some(Commonness::Uncommon), description: Some("Mexican endemic molossid. QCF ~22\u{2013}38 kHz. Tropical dry forest and thorn scrub."), name: None },
+    BookEntryDef { species: &species::ARTIBEUS_AZTECUS, commonness: Some(Commonness::Common), description: Some("Highland endemic frugivore. Whispering FM. Cloud forests of Mexico."), name: None },
+    BookEntryDef { species: &species::STURNIRA_PARVIDENS, commonness: Some(Commonness::Common), description: Some("Common lowland frugivore. Whispering FM. Recently split from S. lilium. Important seed disperser."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Kenya — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~110 species — one of Africa's most bat-diverse countries.
+
+const KENYA_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::SCOTOPHILUS_DINGANII, commonness: Some(Commonness::VeryCommon), description: Some("Most commonly recorded bat in Kenya. Two phonic forms (~33 kHz and ~44 kHz). Roosts in buildings."), name: None },
+    BookEntryDef { species: &species::MOPS_PUMILUS, commonness: Some(Commonness::VeryCommon), description: Some("Abundant in buildings across Kenya. QCF ~21\u{2013}25 kHz. Urban areas."), name: Some("Little Free-tailed Bat") },
+    BookEntryDef { species: &species::HIPPOSIDEROS_CAFFER, commonness: Some(Commonness::VeryCommon), description: Some("Common leaf-nosed bat. CF ~138\u{2013}144 kHz. Caves, hollow trees, and buildings across Kenya."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::PIPISTRELLUS_HESPERIDUS, commonness: Some(Commonness::Common), description: Some("Common pipistrelle across Kenya. FM ~43\u{2013}47 kHz. Forest edges and towns."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_RUSTICUS, commonness: Some(Commonness::Common), description: Some("FM ~44\u{2013}48 kHz. Woodland and savanna. Tree hollows and buildings."), name: None },
+    BookEntryDef { species: &species::TAPHOZOUS_MAURITIANUS, commonness: Some(Commonness::Common), description: Some("Tomb bat roosting on building walls and tree trunks. FM-QCF ~22\u{2013}28 kHz. Open-air forager."), name: None },
+    BookEntryDef { species: &species::MINIOPTERUS_NATALENSIS, commonness: Some(Commonness::Common), description: Some("Cave-roosting. FM ~52 kHz. Large colonies in Rift Valley caves."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_LANDERI, commonness: Some(Commonness::Common), description: Some("CF ~102\u{2013}108 kHz. Caves and hollow trees. Widespread across Kenya."), name: None },
+    BookEntryDef { species: &species::SCOTOPHILUS_KUHLII, commonness: Some(Commonness::Common), description: Some("Coastal Kenya. FM-QCF ~35 kHz. Buildings and palm trees."), name: Some("Lesser Yellow Bat") },
+    BookEntryDef { species: &species::EPOMOPHORUS_GAMBIANUS, commonness: Some(Commonness::Common), description: Some("No echolocation. Loud honking fruit bat. Common in savanna and woodland."), name: Some("Epauletted Fruit Bat") },
+    BookEntryDef { species: &species::EIDOLON_HELVUM, commonness: Some(Commonness::Common), description: Some("No echolocation. Large straw-colored fruit bat forming massive camps of millions. Long-distance migrant."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::MOPS_MAJOR, commonness: Some(Commonness::Uncommon), description: Some("Large molossid. QCF ~22\u{2013}26 kHz. Western Kenya forests."), name: None },
+    BookEntryDef { species: &species::MINIOPTERUS_AFRICANUS, commonness: Some(Commonness::Uncommon), description: Some("Recently split from M. natalensis. FM ~50\u{2013}55 kHz. East African caves."), name: None },
+    BookEntryDef { species: &species::SCOTOECUS_ALBIGULA, commonness: Some(Commonness::Uncommon), description: Some("FM ~35\u{2013}45 kHz. Dry woodland. Roosts in buildings."), name: None },
+    BookEntryDef { species: &species::GLAUCONYCTERIS_ARGENTATA, commonness: Some(Commonness::Uncommon), description: Some("Distinctive silvery wing pattern. FM ~40\u{2013}50 kHz. Western Kenya forests."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_AERO, commonness: Some(Commonness::Rare), description: Some("Highland forest pipistrelle. FM ~45\u{2013}50 kHz. Montane areas."), name: None },
+    BookEntryDef { species: &species::CARDIODERMA_COR, commonness: Some(Commonness::Uncommon), description: Some("Large sit-and-wait predator of coastal and savanna Kenya. Heart-shaped noseleaf. Quiet broadband FM."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_FUMIGATUS, commonness: Some(Commonness::Uncommon), description: Some("Large horseshoe bat. CF ~54\u{2013}56 kHz. Caves and rock overhangs."), name: None },
+    BookEntryDef { species: &species::NYCTERIS_THEBAICA, commonness: Some(Commonness::Common), description: Some("Slit-faced bat. Very quiet broadband FM. Gleaning specialist. Hollow trees and buildings."), name: None },
+    BookEntryDef { species: &species::ROUSETTUS_AEGYPTIACUS, commonness: Some(Commonness::Common), description: Some("Tongue-click echolocation in caves. Large fruit bat. Important cave populations at Mt. Elgon and Kitum Cave."), name: None },
+    // ── Additional common species ──────────────────────────────
+    BookEntryDef { species: &species::NEOROMICIA_CAPENSIS, commonness: Some(Commonness::Common), description: Some("Cape serotine. FM ~35 kHz. Common in towns and savanna across Kenya."), name: None },
+    BookEntryDef { species: &species::MOPS_CONDYLURUS, commonness: Some(Commonness::Common), description: Some("Angolan free-tailed bat. QCF ~25\u{2013}30 kHz. Buildings and hollow trees. Often with Chaerephon pumilus."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_CLIVOSUS, commonness: Some(Commonness::Common), description: Some("Geoffroy's horseshoe bat. CF ~90\u{2013}92 kHz. Caves across Kenya."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_HILDEBRANDTII, commonness: Some(Commonness::Common), description: Some("Large horseshoe bat. CF ~44\u{2013}46 kHz. Caves and rock overhangs. Widespread in Kenya."), name: None },
+    BookEntryDef { species: &species::SCOTOPHILUS_VIRIDIS, commonness: Some(Commonness::Common), description: Some("Green house bat. FM-QCF ~30\u{2013}34 kHz. Buildings and tree hollows. Savanna and woodland."), name: None },
+    BookEntryDef { species: &species::HIPPOSIDEROS_RUBER, commonness: Some(Commonness::Uncommon), description: Some("Noack's leaf-nosed bat. CF ~138\u{2013}142 kHz. Caves and hollow trees. Western Kenya forests."), name: None },
+    BookEntryDef { species: &species::OTOMOPS_MARTIENSSENI, commonness: Some(Commonness::Uncommon), description: Some("Giant mastiff bat. Very low QCF ~11\u{2013}14 kHz, audible to humans. Cliff and cave rooster."), name: None },
+    BookEntryDef { species: &species::EPOMOPHORUS_WAHLBERGI, commonness: Some(Commonness::Common), description: Some("No echolocation. Wahlberg's fruit bat. Honking calls. Savanna and suburban gardens."), name: None },
+    BookEntryDef { species: &species::TADARIDA_AEGYPTIACA, commonness: Some(Commonness::Common), description: Some("Egyptian free-tailed bat. QCF ~20\u{2013}28 kHz. Cliffs and buildings."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_DECKENII, commonness: Some(Commonness::Uncommon), description: Some("CF ~86 kHz. Coastal and lowland caves. East African endemic."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_ELOQUENS, commonness: Some(Commonness::Uncommon), description: Some("Large horseshoe bat. CF ~50\u{2013}52 kHz. Highland caves. East African endemic."), name: None },
+    BookEntryDef { species: &species::OTOMOPS_HARRISONI, commonness: Some(Commonness::Rare), description: Some("Recently split from O. martiensseni. Very low QCF ~14\u{2013}24 kHz. Caves and buildings."), name: None },
+    BookEntryDef { species: &species::SCOTOECUS_HIRUNDO, commonness: Some(Commonness::Common), description: Some("Dark-winged house bat. FM ~35\u{2013}50 kHz. Savanna and woodland. Roosts in buildings."), name: None },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Eswatini (Swaziland) — country-specific bat book
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ~50-60 species. Important acoustic survey data from Monadjem et al. (2017).
+
+const ESWATINI_BOOK: &[BookEntryDef] = &[
+    // ── Very Common ──────────────────────────────────────────────
+    BookEntryDef { species: &species::SCOTOPHILUS_DINGANII, commonness: Some(Commonness::VeryCommon), description: Some("Most commonly recorded bat in Eswatini. Two phonic forms (~33 kHz and ~44 kHz). Buildings and tree hollows."), name: None },
+    BookEntryDef { species: &species::AFRONYCTERIS_NANUS, commonness: Some(Commonness::VeryCommon), description: Some("Common small bat in savanna and woodland. FM ~42 kHz. Buildings and tree hollows."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_HESPERIDUS, commonness: Some(Commonness::VeryCommon), description: Some("Common pipistrelle. FM ~43\u{2013}47 kHz. Forest edges and towns."), name: None },
+    // ── Common ───────────────────────────────────────────────────
+    BookEntryDef { species: &species::HIPPOSIDEROS_CAFFER, commonness: Some(Commonness::Common), description: Some("CF ~138\u{2013}144 kHz. Caves and hollow trees. Common across Eswatini."), name: None },
+    BookEntryDef { species: &species::MINIOPTERUS_NATALENSIS, commonness: Some(Commonness::Common), description: Some("Cave-roosting. FM ~52 kHz. Important maternity caves in Eswatini highlands."), name: None },
+    BookEntryDef { species: &species::NYCTERIS_THEBAICA, commonness: Some(Commonness::Common), description: Some("Slit-faced bat. Very quiet broadband FM. Gleaning specialist. Hollow trees and culverts."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_DARLINGI, commonness: Some(Commonness::Common), description: Some("CF ~86\u{2013}90 kHz. Caves and mine adits. Relatively common in Eswatini."), name: None },
+    BookEntryDef { species: &species::TAPHOZOUS_MAURITIANUS, commonness: Some(Commonness::Common), description: Some("FM-QCF ~22\u{2013}28 kHz. Roosting on walls and trunks. Open-air forager."), name: None },
+    BookEntryDef { species: &species::MYOTIS_BOCAGII, commonness: Some(Commonness::Common), description: Some("Rufous Myotis. FM sweeps. Forages over water and forest edges."), name: None },
+    BookEntryDef { species: &species::EPTESICUS_HOTTENTOTUS, commonness: Some(Commonness::Common), description: Some("Long-tailed serotine. FM-QCF ~28\u{2013}32 kHz. Savanna and forest edge."), name: None },
+    // ── Uncommon ─────────────────────────────────────────────────
+    BookEntryDef { species: &species::RHINOLOPHUS_CLIVOSUS, commonness: Some(Commonness::Uncommon), description: Some("CF ~90\u{2013}92 kHz. Caves. Highland areas of Eswatini."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_SIMULATOR, commonness: Some(Commonness::Uncommon), description: Some("CF ~80 kHz. Savannas. Often sympatric with R. swinnyi."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_SWINNYI, commonness: Some(Commonness::Uncommon), description: Some("High CF ~107 kHz. Dense vegetation forager."), name: None },
+    BookEntryDef { species: &species::TADARIDA_AEGYPTIACA, commonness: Some(Commonness::Uncommon), description: Some("QCF ~20\u{2013}28 kHz. Cliff and building rooster. Open-air forager."), name: None },
+    BookEntryDef { species: &species::ROUSETTUS_AEGYPTIACUS, commonness: Some(Commonness::Uncommon), description: Some("Cave-roosting fruit bat. Tongue-click echolocation. Highland caves."), name: None },
+    // ── Additional species ─────────────────────────────────────
+    BookEntryDef { species: &species::MOPS_CONDYLURUS, commonness: Some(Commonness::Common), description: Some("Angolan free-tailed bat. QCF ~25\u{2013}30 kHz. Buildings and hollow trees."), name: None },
+    BookEntryDef { species: &species::NEOROMICIA_CAPENSIS, commonness: Some(Commonness::Common), description: Some("Cape serotine. FM ~35 kHz. Common in towns and savanna."), name: None },
+    BookEntryDef { species: &species::SCOTOPHILUS_VIRIDIS, commonness: Some(Commonness::Common), description: Some("Green house bat. FM-QCF ~30\u{2013}34 kHz. Lowveld savanna."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_BLASII, commonness: Some(Commonness::Uncommon), description: Some("Blasius's horseshoe bat. CF ~94\u{2013}98 kHz. Caves."), name: None },
+    BookEntryDef { species: &species::RHINOLOPHUS_HILDEBRANDTII, commonness: Some(Commonness::Uncommon), description: Some("CF ~44\u{2013}46 kHz. Caves and rock overhangs."), name: None },
+    BookEntryDef { species: &species::MINIOPTERUS_FRATERCULUS, commonness: Some(Commonness::Uncommon), description: Some("Lesser long-fingered bat. FM ~58\u{2013}62 kHz. Caves."), name: None },
+    BookEntryDef { species: &species::MYOTIS_TRICOLOR, commonness: Some(Commonness::Uncommon), description: Some("Temminck's myotis. FM. Cave-roosting. Highland areas."), name: None },
+    BookEntryDef { species: &species::NYCTICEINOPS_SCHLIEFFENI, commonness: Some(Commonness::Uncommon), description: Some("Schlieffen's twilight bat. FM ~43\u{2013}48 kHz. One of the earliest bats to emerge."), name: None },
+    BookEntryDef { species: &species::GLAUCONYCTERIS_VARIEGATA, commonness: Some(Commonness::Uncommon), description: Some("Butterfly bat. FM ~38\u{2013}42 kHz. Distinctive wing pattern. Woodland."), name: None },
+    BookEntryDef { species: &species::MYOTIS_WELWITSCHII, commonness: Some(Commonness::Rare), description: Some("Welwitsch's myotis. FM. Forest and woodland. Long orange-tipped fur."), name: None },
+    BookEntryDef { species: &species::PIPISTRELLUS_RUSTICUS, commonness: Some(Commonness::Uncommon), description: Some("Rusty pipistrelle. FM ~44\u{2013}48 kHz. Woodland and savanna."), name: None },
+    BookEntryDef { species: &species::HIPPOSIDEROS_VITTATUS, commonness: Some(Commonness::Rare), description: Some("Striped leaf-nosed bat. CF ~62 kHz. Caves. Large and distinctive."), name: None },
+    BookEntryDef { species: &species::CLOEOTIS_PERCIVALI, commonness: Some(Commonness::Rare), description: Some("Percival's trident bat. Highest bat echolocation frequency ~212 kHz. Requires >400 kHz sample rate detectors."), name: None },
+    BookEntryDef { species: &species::EPOMOPHORUS_WAHLBERGI, commonness: Some(Commonness::Common), description: Some("No echolocation. Wahlberg's fruit bat. Common in savanna and gardens."), name: None },
+    BookEntryDef { species: &species::COLEURA_AFRA, commonness: Some(Commonness::Rare), description: Some("African sheath-tailed bat. FM-QCF. Caves and rock overhangs."), name: None },
+];
+
 /// Non-echolocating species are always sorted to the end (stable sort preserves
 /// relative order within each group).
 pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
@@ -3437,6 +3907,14 @@ pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
         BatBookRegion::EastAsia => EAST_ASIA_BOOK,
         BatBookRegion::MiddleEast => MIDDLE_EAST_BOOK,
         BatBookRegion::Antarctica => ANTARCTICA_BOOK,
+        BatBookRegion::Greece => GREECE_BOOK,
+        BatBookRegion::Sweden => SWEDEN_BOOK,
+        BatBookRegion::Netherlands => NETHERLANDS_BOOK,
+        BatBookRegion::Canada => CANADA_BOOK,
+        BatBookRegion::UnitedStates => UNITED_STATES_BOOK,
+        BatBookRegion::Mexico => MEXICO_BOOK,
+        BatBookRegion::Kenya => KENYA_BOOK,
+        BatBookRegion::Eswatini => ESWATINI_BOOK,
         _ => GLOBAL_BOOK,
     };
     let mut entries: Vec<_> = book.iter().map(|e| e.materialize()).collect();

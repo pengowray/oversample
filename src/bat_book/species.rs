@@ -1693,6 +1693,30 @@ pub const STURNIRA_LILIUM: BatSpecies = BatSpecies {
     echolocates: true,
 };
 
+pub const STURNIRA_PARVIDENS: BatSpecies = BatSpecies {
+    id: "sturnira_parvidens",
+    name: "Little Yellow-shouldered Bat",
+    scientific_name: "Sturnira parvidens",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 50_000.0,
+    freq_hi_hz: 90_000.0,
+    description: "Common frugivore of Mesoamerican lowlands. Whispering FM calls. Recently split from S. lilium. Important seed disperser in tropical forests.",
+    echolocates: true,
+};
+
+pub const ARTIBEUS_AZTECUS: BatSpecies = BatSpecies {
+    id: "artibeus_aztecus",
+    name: "Aztec Fruit-eating Bat",
+    scientific_name: "Artibeus aztecus",
+    family: "Phyllostomidae",
+    call_type: "FM",
+    freq_lo_hz: 55_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Small frugivorous phyllostomid endemic to montane cloud forests of Mexico and Central America. Low-intensity whispering FM. Feeds primarily on figs.",
+    echolocates: true,
+};
+
 pub const URODERMA_BILOBATUM: BatSpecies = BatSpecies {
     id: "uroderma_bilobatum",
     name: "Tent-making Bat",
@@ -1836,6 +1860,30 @@ pub const EUMOPS_GLAUCINUS: BatSpecies = BatSpecies {
     freq_lo_hz: 19_000.0,
     freq_hi_hz: 29_000.0,
     description: "Among the lowest-frequency calling molossids (~22\u{2013}25 kHz). Large bat with long, narrow wings. High-altitude open-space forager.",
+    echolocates: true,
+};
+
+pub const EUMOPS_UNDERWOODI: BatSpecies = BatSpecies {
+    id: "eumops_underwoodi",
+    name: "Underwood's Bonneted Bat",
+    scientific_name: "Eumops underwoodi",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 14_000.0,
+    freq_hi_hz: 28_000.0,
+    description: "Large molossid of arid and semiarid habitats from the southwestern US through western Mexico to Central America. Loud low-frequency calls, often audible to humans.",
+    echolocates: true,
+};
+
+pub const CYNOMOPS_MEXICANUS: BatSpecies = BatSpecies {
+    id: "cynomops_mexicanus",
+    name: "Mexican Dog-faced Bat",
+    scientific_name: "Cynomops mexicanus",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 22_000.0,
+    freq_hi_hz: 38_000.0,
+    description: "Small molossid endemic to western Mexico. Tropical dry forest and thorn scrub. Roosts in tree hollows and buildings, foraging above the canopy.",
     echolocates: true,
 };
 
@@ -2177,9 +2225,9 @@ pub const MOLOSSUS_ALVAREZI: BatSpecies = BatSpecies {
     scientific_name: "Molossus alvarezi",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 30_000.0,
-    freq_hi_hz: 45_000.0,
-    description: "Recently described molossid from Mexico and Central America. QCF calls ~35\u{2013}40 kHz. Fast open-air forager. Similar to M. molossus but acoustically and genetically distinct.",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "Recently described molossid from Mexico and Central America. QCF calls ~25\u{2013}30 kHz. Fast open-air forager. Similar to M. molossus but acoustically and genetically distinct.",
     echolocates: true,
 };
 
@@ -2189,9 +2237,9 @@ pub const MOLOSSUS_NIGRICANS: BatSpecies = BatSpecies {
     scientific_name: "Molossus nigricans",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 28_000.0,
-    freq_hi_hz: 42_000.0,
-    description: "Widespread Neotropical molossid, formerly included in M. ater. QCF at ~32\u{2013}38 kHz. Roosts in buildings and tree hollows. Fast open-air forager.",
+    freq_lo_hz: 20_000.0,
+    freq_hi_hz: 35_000.0,
+    description: "Widespread Neotropical molossid, formerly included in M. ater. QCF at ~25\u{2013}30 kHz. Roosts in buildings and tree hollows. Fast open-air forager.",
     echolocates: true,
 };
 
@@ -2225,9 +2273,9 @@ pub const PTERONOTUS_QUADRIDENS: BatSpecies = BatSpecies {
     scientific_name: "Pteronotus quadridens",
     family: "Mormoopidae",
     call_type: "CF-FM",
-    freq_lo_hz: 45_000.0,
-    freq_hi_hz: 73_000.0,
-    description: "Caribbean endemic mormoopid (Cuba, Jamaica, Puerto Rico, Hispaniola). CF-FM with CF at ~70 kHz. Smallest Pteronotus. Cave-dwelling; large mixed-species colonies.",
+    freq_lo_hz: 65_000.0,
+    freq_hi_hz: 100_000.0,
+    description: "Caribbean endemic mormoopid (Cuba, Jamaica, Puerto Rico, Hispaniola). QCF of 2nd harmonic at ~81\u{2013}84 kHz followed by FM sweep. Smallest Pteronotus. Cave-dwelling; large mixed-species colonies.",
     echolocates: true,
 };
 
@@ -2273,9 +2321,9 @@ pub const EUMOPS_TRUMBULLI: BatSpecies = BatSpecies {
     scientific_name: "Eumops trumbulli",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 15_000.0,
-    freq_hi_hz: 30_000.0,
-    description: "Large bonneted bat of Central and South America. Low-frequency QCF ~18\u{2013}25 kHz. Fast high-altitude forager with long narrow wings. Roosts in buildings and tree cavities.",
+    freq_lo_hz: 10_000.0,
+    freq_hi_hz: 22_000.0,
+    description: "Large bonneted bat of Central and South America. Very low-frequency QCF ~12\u{2013}20 kHz, partially audible to humans. Fast high-altitude forager with long narrow wings.",
     echolocates: true,
 };
 
@@ -2869,6 +2917,18 @@ pub const MYOTIS_THYSANODES: BatSpecies = BatSpecies {
     freq_lo_hz: 25_000.0,
     freq_hi_hz: 55_000.0,
     description: "Named for the fringe of stiff hairs along the tail membrane. FM sweep with characteristic frequency ~40 kHz. Roosts in caves, mines, and buildings in western mountains.",
+    echolocates: true,
+};
+
+pub const MYOTIS_KEENII: BatSpecies = BatSpecies {
+    id: "myotis_keenii",
+    name: "Keen's Myotis",
+    scientific_name: "Myotis keenii",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 95_000.0,
+    description: "Rare Pacific Northwest endemic restricted to temperate rainforests from SE Alaska to Washington. Broad FM sweep. Roosts in tree and rock crevices.",
     echolocates: true,
 };
 
@@ -4277,6 +4337,18 @@ pub const SAUROMYS_PETROPHILUS: BatSpecies = BatSpecies {
     echolocates: true,
 };
 
+pub const OTOMOPS_HARRISONI: BatSpecies = BatSpecies {
+    id: "otomops_harrisoni",
+    name: "Harrison's Giant Mastiff Bat",
+    scientific_name: "Otomops harrisoni",
+    family: "Molossidae",
+    call_type: "QCF",
+    freq_lo_hz: 14_000.0,
+    freq_hi_hz: 24_000.0,
+    description: "Large free-tailed bat recently split from O. martiensseni. East Africa and Arabian Peninsula. Very low QCF calls, often audible to humans. Cave and building rooster.",
+    echolocates: true,
+};
+
 pub const CHAEREPHON_ANSORGEI: BatSpecies = BatSpecies {
     id: "chaerephon_ansorgei",
     name: "Ansorge's Free-tailed Bat",
@@ -4569,9 +4641,9 @@ pub const MOPS_PUMILUS: BatSpecies = BatSpecies {
     scientific_name: "Mops pumilus",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 28_000.0,
-    freq_hi_hz: 40_000.0,
-    description: "Small molossid widespread across sub-Saharan Africa. QCF at ~32\u{2013}36 kHz. Roosts in buildings, roof spaces, and tree hollows. Common in urban areas.",
+    freq_lo_hz: 19_000.0,
+    freq_hi_hz: 30_000.0,
+    description: "Small molossid widespread across sub-Saharan Africa. QCF at ~21\u{2013}25 kHz. Roosts in buildings, roof spaces, and tree hollows. Common in urban areas. Geographic frequency variation noted.",
     echolocates: true,
 };
 
@@ -4623,6 +4695,30 @@ pub const RHINOLOPHUS_ALCYONE: BatSpecies = BatSpecies {
     echolocates: true,
 };
 
+pub const RHINOLOPHUS_DECKENII: BatSpecies = BatSpecies {
+    id: "rhinolophus_deckenii",
+    name: "Decken's Horseshoe Bat",
+    scientific_name: "Rhinolophus deckenii",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 84_000.0,
+    freq_hi_hz: 88_000.0,
+    description: "East African cave-dwelling horseshoe bat found in Kenya, Tanzania, and Mozambique. CF peak ~86 kHz. Roosts in caves and mines in coastal and lowland habitats.",
+    echolocates: true,
+};
+
+pub const RHINOLOPHUS_ELOQUENS: BatSpecies = BatSpecies {
+    id: "rhinolophus_eloquens",
+    name: "Eloquent Horseshoe Bat",
+    scientific_name: "Rhinolophus eloquens",
+    family: "Rhinolophidae",
+    call_type: "CF",
+    freq_lo_hz: 48_000.0,
+    freq_hi_hz: 54_000.0,
+    description: "Large horseshoe bat endemic to East African highlands of Kenya, Tanzania, and Ethiopia. CF peak ~50\u{2013}52 kHz. Montane forest and woodland caves.",
+    echolocates: true,
+};
+
 pub const RHINOLOPHUS_LANDERI: BatSpecies = BatSpecies {
     id: "rhinolophus_landeri",
     name: "Lander's Horseshoe Bat",
@@ -4632,6 +4728,18 @@ pub const RHINOLOPHUS_LANDERI: BatSpecies = BatSpecies {
     freq_lo_hz: 96_000.0,
     freq_hi_hz: 112_000.0,
     description: "Small horseshoe bat widespread across sub-Saharan Africa. CF peak ~102\u{2013}108 kHz. Cave and hollow-tree rooster. Forages in forest and woodland.",
+    echolocates: true,
+};
+
+pub const SCOTOECUS_HIRUNDO: BatSpecies = BatSpecies {
+    id: "scotoecus_hirundo",
+    name: "Dark-winged Lesser House Bat",
+    scientific_name: "Scotoecus hirundo",
+    family: "Vespertilionidae",
+    call_type: "FM",
+    freq_lo_hz: 30_000.0,
+    freq_hi_hz: 60_000.0,
+    description: "Small vespertilionid of sub-Saharan East and Central African savannas. FM calls ~35\u{2013}50 kHz. Roosts in buildings and under bark.",
     echolocates: true,
 };
 
@@ -5719,10 +5827,10 @@ pub const CYNOPTERUS_BRACHYOTIS: BatSpecies = BatSpecies {
     name: "Lesser Short-nosed Fruit Bat",
     scientific_name: "Cynopterus brachyotis",
     family: "Pteropodidae",
-    call_type: "none",
-    freq_lo_hz: 0.0,
-    freq_hi_hz: 0.0,
-    description: "No echolocation. Common small fruit bat across Southeast Asia. Modifies palm fronds into tent roosts. Important pollinator and seed disperser in tropical forests and gardens.",
+    call_type: "clicks",
+    freq_lo_hz: 10_000.0,
+    freq_hi_hz: 60_000.0,
+    description: "Produces primitive tongue-click echolocation for crude orientation but relies mainly on vision and smell. Common small fruit bat across SE Asia. Modifies palm fronds into tent roosts. Important pollinator.",
     echolocates: false,
 };
 
@@ -5744,9 +5852,9 @@ pub const MOPS_SARASINORUM: BatSpecies = BatSpecies {
     scientific_name: "Mops sarasinorum",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 22_000.0,
-    freq_hi_hz: 35_000.0,
-    description: "Molossid endemic to Sulawesi and nearby islands. QCF at ~28\u{2013}32 kHz. Roosts in caves and buildings. Fast open-air forager.",
+    freq_lo_hz: 18_000.0,
+    freq_hi_hz: 26_000.0,
+    description: "Molossid endemic to Sulawesi and nearby islands. Low-frequency QCF at ~20\u{2013}24 kHz. Roosts in caves and buildings. Fast open-air forager.",
     echolocates: true,
 };
 
