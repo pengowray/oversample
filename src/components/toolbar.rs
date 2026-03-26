@@ -67,7 +67,7 @@ pub fn Toolbar() -> impl IntoView {
         get_xc_field(&meta, "Attribution")
     });
 
-    // Derived: status prefix (recording/playing/listening indicators)
+    // Derived: status prefix for document title (text-only — no CSS possible in <title>)
     let status_prefix = Memo::new(move |_| {
         let recording = state.mic_recording.get();
         let listening = state.mic_listening.get();
@@ -82,9 +82,9 @@ pub fn Toolbar() -> impl IntoView {
         if listening {
             let listen_mode = state.listen_mode.get();
             if listen_mode == ListenMode::Normal {
-                parts.push("\u{1F442}"); // 👂 (ear — 1:1 passthrough)
+                parts.push("\u{1F3A4}"); // 🎤 (mic — 1:1 passthrough)
             } else {
-                parts.push("\u{1F987}"); // 🦇 (bat — HFR processing)
+                parts.push("\u{1F3A4}\u{1F987}"); // 🎤🦇 (mic + bat — HFR processing)
             }
         } else if playing && !recording {
             parts.push("\u{25B6}\u{FE0F}"); // ▶️
@@ -179,75 +179,102 @@ pub fn Toolbar() -> impl IntoView {
                 title="About"
             ><b>"Oversample"</b></span>
 
-            // Center: status indicators + file name (or "Listening...")
+            // Center: status indicators + file name (row 1) + info/CC (row 2)
             <div class="toolbar-title-center">
-                // Status indicators (recording dot, play icon, listen icon)
-                {move || status_prefix.get().map(|pfx| view! {
-                    <span class="toolbar-status-icons">{pfx}</span>
-                })}
+                // Row 1: status icons + filename
+                <div class="toolbar-title-row">
+                    // Status icons container (always present to reserve space)
+                    <span class="toolbar-status-icons">
+                        // Recording: CSS-rendered red dot (not emoji — looks better cross-platform)
+                        {move || state.mic_recording.get().then(|| view! {
+                            <span class="toolbar-rec-dot"></span>
+                        })}
+                        // Listening: mic emoji (+ bat for HFR)
+                        {move || {
+                            let listening = state.mic_listening.get();
+                            let playing = state.is_playing.get();
+                            let recording = state.mic_recording.get();
 
-                // File name (with middle ellipsis via CSS)
-                <span
-                    class="toolbar-title-filename"
-                    title=move || {
-                        let name = file_name.get().unwrap_or_default();
-                        if name.is_empty() { String::new() } else { name }
-                    }
-                >
-                    {move || center_text.get()}
-                </span>
+                            if listening {
+                                let listen_mode = state.listen_mode.get();
+                                if listen_mode == ListenMode::Normal {
+                                    Some("\u{1F3A4}".to_string()) // 🎤
+                                } else {
+                                    Some("\u{1F3A4}\u{1F987}".to_string()) // 🎤🦇
+                                }
+                            } else if playing && !recording {
+                                Some("\u{25B6}\u{FE0F}".to_string()) // ▶️
+                            } else {
+                                None
+                            }
+                        }}
+                    </span>
 
-                // Info / CC license button (right side of center)
-                {move || {
-                    let has_file = file_name.get().is_some();
-                    if !has_file {
-                        return None;
-                    }
+                    // File name (with end ellipsis via CSS)
+                    <span
+                        class="toolbar-title-filename"
+                        title=move || {
+                            let name = file_name.get().unwrap_or_default();
+                            if name.is_empty() { String::new() } else { name }
+                        }
+                    >
+                        {move || center_text.get()}
+                    </span>
+                </div>
 
-                    let cc = cc_license.get();
-                    let attr = attribution.get();
+                // Row 2: Info / CC license button
+                <div class="toolbar-info-row">
+                    {move || {
+                        let has_file = file_name.get().is_some();
+                        if !has_file {
+                            return None;
+                        }
 
-                    if let Some(cc_label) = cc {
-                        // Strip leading "CC " from label since the logo replaces it
-                        let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
-                        // Build tooltip: "Creative Commons BY-NC-SA 4.0 — attribution text"
-                        let tooltip = if let Some(attr_text) = attr {
-                            format!("Creative Commons {} \u{2014} {}", short_label, attr_text)
+                        let cc = cc_license.get();
+                        let attr = attribution.get();
+
+                        if let Some(cc_label) = cc {
+                            // Strip leading "CC " from label since the logo replaces it
+                            let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
+                            // Build tooltip: "Creative Commons BY-NC-SA 4.0 — attribution text"
+                            let tooltip = if let Some(attr_text) = attr {
+                                format!("Creative Commons {} \u{2014} {}", short_label, attr_text)
+                            } else {
+                                format!("Creative Commons {}", short_label)
+                            };
+                            Some(leptos::either::Either::Left(view! {
+                                <button
+                                    class="toolbar-cc-badge"
+                                    title=tooltip
+                                    on:click=move |e: web_sys::MouseEvent| {
+                                        e.stop_propagation();
+                                        state.right_sidebar_tab.set(RightSidebarTab::Metadata);
+                                        state.right_sidebar_collapsed.set(false);
+                                    }
+                                >
+                                    <span class="toolbar-cc-icon"></span>
+                                    <span class="toolbar-cc-label">{short_label}</span>
+                                </button>
+                            }))
                         } else {
-                            format!("Creative Commons {}", short_label)
-                        };
-                        Some(leptos::either::Either::Left(view! {
-                            <button
-                                class="toolbar-cc-badge"
-                                title=tooltip
-                                on:click=move |e: web_sys::MouseEvent| {
-                                    e.stop_propagation();
-                                    state.right_sidebar_tab.set(RightSidebarTab::Metadata);
-                                    state.right_sidebar_collapsed.set(false);
-                                }
-                            >
-                                <span class="toolbar-cc-icon"></span>
-                                <span class="toolbar-cc-label">{short_label}</span>
-                            </button>
-                        }))
-                    } else {
-                        // Plain info icon
-                        let title_str = "File info".to_string();
-                        Some(leptos::either::Either::Right(view! {
-                            <button
-                                class="toolbar-info-btn"
-                                title=title_str
-                                on:click=move |e: web_sys::MouseEvent| {
-                                    e.stop_propagation();
-                                    state.right_sidebar_tab.set(RightSidebarTab::Metadata);
-                                    state.right_sidebar_collapsed.set(false);
-                                }
-                            >
-                                {"\u{24D8}"} // ⓘ
-                            </button>
-                        }))
-                    }
-                }}
+                            // Plain info icon
+                            let title_str = "File info".to_string();
+                            Some(leptos::either::Either::Right(view! {
+                                <button
+                                    class="toolbar-info-btn"
+                                    title=title_str
+                                    on:click=move |e: web_sys::MouseEvent| {
+                                        e.stop_propagation();
+                                        state.right_sidebar_tab.set(RightSidebarTab::Metadata);
+                                        state.right_sidebar_collapsed.set(false);
+                                    }
+                                >
+                                    {"\u{24D8}"} // ⓘ
+                                </button>
+                            }))
+                        }
+                    }}
+                </div>
             </div>
 
             // Undo/Redo buttons

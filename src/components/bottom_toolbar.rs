@@ -673,7 +673,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     if state.mic_needs_permission.get() && state.is_tauri && !state.mic_listening.get() {
                         "USB mic".to_string()
                     } else {
-                        "Listen".to_string()
+                        "\u{1F3A4} Listen".to_string() // 🎤 Listen
                     }
                 });
                 let listen_right_value = Signal::derive(move || {

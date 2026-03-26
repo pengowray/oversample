@@ -1655,21 +1655,60 @@ body.sidebar-resizing {
     flex-shrink: 0;
 }
 
-/* Title center area — file name + status + info/CC */
+/* Title center area — two-row layout: row 1 = status + filename, row 2 = info/CC */
 .toolbar-title-center {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 0; /* allow shrinking */
+    overflow: hidden;
+    gap: 1px;
+}
+
+.toolbar-title-row {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    min-width: 0; /* allow shrinking */
+    min-width: 0;
     overflow: hidden;
+    width: 100%;
+}
+
+.toolbar-info-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .toolbar-status-icons {
     flex-shrink: 0;
     font-size: 14px;
     line-height: 1;
+    min-width: 20px; /* reserve space so filename doesn't shift */
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+/* CSS-rendered recording dot for the heading (cross-platform, pulsing) */
+.toolbar-rec-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #e44;
+    flex-shrink: 0;
+    animation: toolbar-rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes toolbar-rec-pulse {
+    0%, 100% { opacity: 1.0; }
+    50% { opacity: 0.4; }
 }
 
 .toolbar-title-filename {
@@ -1679,11 +1718,6 @@ body.sidebar-resizing {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
-    /* Direction trick: ellipsis in the middle — the filename shows start and end,
-       truncating in the middle. We achieve "middle ellipsis" by using a combination:
-       the CSS text-overflow only does end-ellipsis, but the direction:rtl trick
-       clips from the left which is useful for paths. For file names we just use
-       normal end-ellipsis which is fine since extensions are short. */
     direction: ltr;
 }
 
@@ -2336,9 +2370,18 @@ body.sidebar-resizing {
     50% { border-color: rgba(220, 60, 60, 1.0); }
 }
 
-/* Record button circle — use text rendering so it looks consistent across platforms */
-.rec-btn .layer-btn-value {
-    color: #e44;
+/* Record button circle — CSS-rendered dot replaces Unicode ● for cross-platform consistency */
+.rec-btn:not(.mic-recording) .layer-btn-value {
+    font-size: 0; /* hide the Unicode ● character */
+    position: relative;
+}
+.rec-btn:not(.mic-recording) .layer-btn-value::before {
+    content: '';
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background-color: #e44;
 }
 .rec-btn.mic-recording .layer-btn-value {
     color: #f66;
@@ -2348,6 +2391,12 @@ body.sidebar-resizing {
     opacity: 0.35;
     cursor: default;
     pointer-events: none;
+}
+
+/* Mobile: slightly larger record dot */
+.bottom-toolbar.mobile .rec-btn:not(.mic-recording) .layer-btn-value::before {
+    width: 20px;
+    height: 20px;
 }
 
 /* ── Mobile bottom toolbar ─────────────────────────────────────────────── */
