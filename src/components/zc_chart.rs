@@ -7,7 +7,7 @@ use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, SpectrogramHandle};
-use crate::components::spectrogram_events::freq_snap;
+use crate::components::spectrogram_events::{freq_snap, apply_axis_drag};
 use crate::viewport;
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
@@ -535,22 +535,7 @@ pub fn ZcDotChart() -> impl IntoView {
                 // Axis drag takes second priority
                 if state.axis_drag_start_freq.get_untracked().is_some() {
                     let raw_start = axis_drag_raw_start.get_untracked();
-                    let snap = freq_snap(freq, ev.shift_key());
-                    let (snapped_start, snapped_end) = if freq > raw_start {
-                        ((raw_start / snap).floor() * snap, (freq / snap).ceil() * snap)
-                    } else if freq < raw_start {
-                        ((raw_start / snap).ceil() * snap, (freq / snap).floor() * snap)
-                    } else {
-                        let s = (raw_start / snap).round() * snap;
-                        (s, s)
-                    };
-                    state.axis_drag_start_freq.set(Some(snapped_start));
-                    state.axis_drag_current_freq.set(Some(snapped_end));
-                    let lo = snapped_start.min(snapped_end);
-                    let hi = snapped_start.max(snapped_end);
-                    if hi - lo > 500.0 {
-                        state.set_ff_range(lo, hi);
-                    }
+                    apply_axis_drag(state, raw_start, freq, ev.shift_key());
                     return;
                 }
 

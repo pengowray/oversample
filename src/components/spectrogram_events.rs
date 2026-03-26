@@ -149,16 +149,19 @@ pub fn apply_axis_drag(
     state: AppState,
     raw_start: f64,
     freq: f64,
-    snap: f64,
+    shift: bool,
 ) {
+    // Snap each endpoint independently based on its own frequency zone
+    let snap_start = freq_snap(raw_start, shift);
+    let snap_end = freq_snap(freq, shift);
     let (snapped_start, snapped_end) = if freq > raw_start {
         // Dragging up: start floors down, end ceils up
-        ((raw_start / snap).floor() * snap, (freq / snap).ceil() * snap)
+        ((raw_start / snap_start).floor() * snap_start, (freq / snap_end).ceil() * snap_end)
     } else if freq < raw_start {
         // Dragging down: start ceils up, end floors down
-        ((raw_start / snap).ceil() * snap, (freq / snap).floor() * snap)
+        ((raw_start / snap_start).ceil() * snap_start, (freq / snap_end).floor() * snap_end)
     } else {
-        let s = (raw_start / snap).round() * snap;
+        let s = (raw_start / snap_start).round() * snap_start;
         (s, s)
     };
     state.axis_drag_start_freq.set(Some(snapped_start));
@@ -460,18 +463,17 @@ pub fn on_mousedown(
             let ff_lo = state.ff_freq_lo.get_untracked();
             let ff_hi = state.ff_freq_hi.get_untracked();
             let has_range = ff_hi > ff_lo;
-            let (raw_start, snap) = if ev.shift_key() && has_range {
+            let raw_start = if ev.shift_key() && has_range {
                 // Anchor at the edge farthest from the click
-                let anchor = if (freq - ff_lo).abs() < (freq - ff_hi).abs() { ff_hi } else { ff_lo };
-                (anchor, freq_snap(freq, ev.shift_key()))
+                if (freq - ff_lo).abs() < (freq - ff_hi).abs() { ff_hi } else { ff_lo }
             } else {
-                let snap = freq_snap(freq, ev.shift_key());
-                (freq, snap)
+                freq
             };
-            let snapped = (freq / snap).round() * snap;
+            let snap_start = freq_snap(raw_start, ev.shift_key());
+            let snap_end = freq_snap(freq, ev.shift_key());
             ix.axis_drag_raw_start.set(raw_start);
-            state.axis_drag_start_freq.set(Some((raw_start / snap).round() * snap));
-            state.axis_drag_current_freq.set(Some(snapped));
+            state.axis_drag_start_freq.set(Some((raw_start / snap_start).round() * snap_start));
+            state.axis_drag_current_freq.set(Some((freq / snap_end).round() * snap_end));
             // Live update FF range immediately for shift-extend
             if ev.shift_key() && has_range {
                 let lo = raw_start.min(freq);
@@ -687,8 +689,7 @@ pub fn on_mousemove(
                 // Apply the committed axis's drag update
                 if want_y_axis {
                     let raw_start = ix.axis_drag_raw_start.get_untracked();
-                    let snap = freq_snap(f, ev.shift_key());
-                    apply_axis_drag(state, raw_start, f, snap);
+                    apply_axis_drag(state, raw_start, f, ev.shift_key());
                 } else {
                     let t0 = ix.time_axis_drag_raw_start.get_untracked();
                     let ff = state.focus_stack.get_untracked().effective_range();
@@ -706,8 +707,7 @@ pub fn on_mousemove(
             // Axis drag takes third priority
             if state.axis_drag_start_freq.get_untracked().is_some() {
                 let raw_start = ix.axis_drag_raw_start.get_untracked();
-                let snap = freq_snap(f, ev.shift_key());
-                apply_axis_drag(state, raw_start, f, snap);
+                apply_axis_drag(state, raw_start, f, ev.shift_key());
                 return;
             }
 
@@ -1317,8 +1317,7 @@ pub fn on_touchmove(
             }
             if want_y_axis {
                 let raw_start = ix.axis_drag_raw_start.get_untracked();
-                let snap = freq_snap(f, false);
-                apply_axis_drag(state, raw_start, f, snap);
+                apply_axis_drag(state, raw_start, f, false);
             } else {
                 let t0 = ix.time_axis_drag_raw_start.get_untracked();
                 let ff = state.focus_stack.get_untracked().effective_range();
@@ -1338,8 +1337,7 @@ pub fn on_touchmove(
     if state.axis_drag_start_freq.get_untracked().is_some() {
         if let Some((_, _, _, f)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
             let raw_start = ix.axis_drag_raw_start.get_untracked();
-            let snap = freq_snap(f, false);
-            apply_axis_drag(state, raw_start, f, snap);
+            apply_axis_drag(state, raw_start, f, false);
         }
         return;
     }
