@@ -68,8 +68,15 @@ pub fn BottomToolbar() -> impl IntoView {
             _ => String::new(),
         }
     });
+    let play_right_frozen: StoredValue<Option<String>> = StoredValue::new(None);
     let play_right_value = Signal::derive(move || {
-        match state.play_start_mode.get() {
+        // Freeze the label while playing so scrolling doesn't flicker it
+        if state.is_playing.get() {
+            if let Some(frozen) = play_right_frozen.get_value() {
+                return frozen;
+            }
+        }
+        let val = match state.play_start_mode.get() {
             PlayStartMode::All => "All".to_string(),
             PlayStartMode::FromHere => "Here".to_string(),
             PlayStartMode::Selected => "Sel".to_string(),
@@ -93,7 +100,9 @@ pub fn BottomToolbar() -> impl IntoView {
                     "Here".to_string()
                 }
             }
-        }
+        };
+        play_right_frozen.set_value(Some(val.clone()));
+        val
     });
 
     let play_left_click = Callback::new(move |_: web_sys::MouseEvent| {
