@@ -13,7 +13,14 @@ pub struct SidecarHashes {
     pub blake3: Option<String>,
     pub sha256: Option<String>,
     pub file_size: Option<u64>,
-    pub spot_hash: Option<String>,
+    /// Multi-point spot hash (16×1MB chunks, matches main app Layer 2).
+    pub spot_hash_b3: Option<String>,
+    /// Content hash (BLAKE3 with header zeroed).
+    pub content_hash: Option<String>,
+    /// Audio data region byte offset within the file.
+    pub data_offset: Option<u64>,
+    /// Audio data region byte length.
+    pub data_size: Option<u64>,
 }
 
 impl SidecarHashes {

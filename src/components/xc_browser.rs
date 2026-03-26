@@ -198,14 +198,18 @@ fn parse_cached_file(val: &JsValue) -> Option<CachedFile> {
             return None;
         }
         let s = |k: &str| js_sys::Reflect::get(&h, &k.into()).ok().and_then(|v| v.as_string());
+        let u = |k: &str| js_sys::Reflect::get(&h, &k.into()).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
         let blake3 = s("blake3");
         let sha256 = s("sha256");
-        let file_size = js_sys::Reflect::get(&h, &"file_size".into()).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
-        let spot_hash = s("spot_hash");
+        let file_size = u("file_size");
+        let spot_hash_b3 = s("spot_hash_b3");
+        let content_hash = s("content_hash");
+        let data_offset = u("data_offset");
+        let data_size = u("data_size");
         if blake3.is_none() && sha256.is_none() && file_size.is_none() {
             None
         } else {
-            Some(crate::state::SidecarHashes { blake3, sha256, file_size, spot_hash })
+            Some(crate::state::SidecarHashes { blake3, sha256, file_size, spot_hash_b3, content_hash, data_offset, data_size })
         }
     });
     Some(CachedFile { path, filename, _xc_id: xc_id, metadata, hashes })

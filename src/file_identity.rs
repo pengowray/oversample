@@ -153,6 +153,57 @@ pub async fn compute_full_hashes(
     Ok((content_hash, full_hash))
 }
 
+/// Compute content hash with a reconstructed header size.
+///
+/// When a file's header has changed size (e.g. metadata was edited), the standard
+/// content_hash won't match because it zeros a different number of header bytes.
+/// This function reconstructs what the content_hash would be if the header were
+/// `original_header_size` bytes long: BLAKE3(zeros[0..original_header_size] || audio_data).
+///
+/// `current_data_offset` is where audio starts in the current file.
+/// `original_header_size` is the inferred header size of the original file
+/// (typically `original_file_size - original_data_size`).
+pub async fn compute_content_hash_reconstructed(
+    reader: &(impl AsyncRangeReader + ?Sized),
+    file_size: u64,
+    current_data_offset: u64,
+    original_header_size: u64,
+    generation: u32,
+    check_cancelled: impl Fn(u32) -> bool,
+) -> Result<String, String> {
+    let mut hasher = blake3::Hasher::new();
+
+    // Feed zeros for the original header size
+    let zero_chunk = vec![0u8; SPOT_CHUNK_SIZE as usize];
+    let mut zeros_remaining = original_header_size;
+    while zeros_remaining > 0 {
+        if check_cancelled(generation) {
+            return Err("Cancelled".into());
+        }
+        let len = (SPOT_CHUNK_SIZE).min(zeros_remaining);
+        hasher.update(&zero_chunk[..len as usize]);
+        zeros_remaining -= len;
+    }
+
+    // Feed the audio data from the current file (starting at current_data_offset)
+    let mut offset = current_data_offset;
+    while offset < file_size {
+        if check_cancelled(generation) {
+            return Err("Cancelled".into());
+        }
+        let len = SPOT_CHUNK_SIZE.min(file_size - offset);
+        let bytes = reader.read(offset, len).await?;
+        hasher.update(&bytes);
+        offset += len;
+
+        if ((offset - current_data_offset) / SPOT_CHUNK_SIZE).is_multiple_of(4) {
+            yield_now().await;
+        }
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
 /// Compute full file SHA-256 via async range reader.
 pub async fn compute_full_sha256(
     reader: &(impl AsyncRangeReader + ?Sized),
@@ -316,17 +367,19 @@ pub fn start_identity_computation(
             }
         }
 
-        // For small files with file handles but no in-memory bytes, auto-compute full hashes
+        // For small files with file handles but no in-memory bytes, auto-compute
+        // blake3 + content_hash (but not SHA-256 — that's on-demand only)
         if file_bytes.is_none() && file_size < 10_000_000 {
             let has_handle = state.files.with_untracked(|files| {
                 files.get(file_index).is_some_and(|f| f.file_handle.is_some())
             });
             if has_handle {
-                start_full_hash_computation(state, file_index, true);
+                start_full_hash_computation(state, file_index, false);
             }
         }
 
-        // When we have in-memory bytes, also compute full BLAKE3 + SHA-256 (Layers 3+4)
+        // When we have in-memory bytes, compute blake3 + content_hash
+        // (SHA-256 is on-demand only — user can click "Compute" in the info panel)
         if let Some(bytes) = file_bytes {
             yield_now().await; // yield before heavy computation
 
@@ -345,22 +398,11 @@ pub fn start_identity_computation(
             };
             let full_blake3 = blake3::hash(&bytes).to_hex().to_string();
 
-            yield_now().await;
-
-            // Layer 4-alt: full SHA-256
-            let full_sha256 = {
-                use sha2::{Sha256, Digest};
-                let mut hasher = Sha256::new();
-                hasher.update(&bytes);
-                format!("{:x}", hasher.finalize())
-            };
-
             state.files.update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
                     if let Some(ref mut id) = f.identity {
                         id.content_hash = Some(content_hash);
                         id.full_blake3 = Some(full_blake3);
-                        id.full_sha256 = Some(full_sha256);
                     }
                 }
             });

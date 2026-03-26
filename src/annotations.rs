@@ -85,7 +85,18 @@ impl FileIdentity {
         // Layer 3: content hash (header-zeroed BLAKE3)
         if let (Some(a), Some(b)) = (&self.content_hash, &other.content_hash) {
             if a == b { return MatchConfidence::High; }
-            return MatchConfidence::None;
+            // If content_hash mismatches but data_size is the same, the header may have
+            // changed size (different zero-padding length → different content_hash).
+            // Don't reject outright — fall through to spot hash check.
+            // A full reconstruction can be attempted on-demand via
+            // compute_content_hash_reconstructed().
+            let same_data_size = matches!(
+                (&self.data_size, &other.data_size),
+                (Some(a), Some(b)) if *a == *b && *a > 0
+            );
+            if !same_data_size {
+                return MatchConfidence::None;
+            }
         }
         // Layer 2: BLAKE3 spot hash
         if let (Some(a), Some(b)) = (&self.spot_hash_b3, &other.spot_hash_b3) {

@@ -101,6 +101,8 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     // XC sidecar hashes (structured data, separate from display metadata)
     let xc_blake3 = f.xc_hashes.as_ref().and_then(|h| h.blake3.clone());
     let xc_sha256 = f.xc_hashes.as_ref().and_then(|h| h.sha256.clone());
+    let xc_spot_hash_b3 = f.xc_hashes.as_ref().and_then(|h| h.spot_hash_b3.clone());
+    let xc_content_hash = f.xc_hashes.as_ref().and_then(|h| h.content_hash.clone());
     let xc_file_size = f.xc_hashes.as_ref().and_then(|h| h.file_size);
     let has_xc_hashes = xc_blake3.is_some() || xc_sha256.is_some();
 
@@ -121,11 +123,10 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     if let Some(ref id) = identity {
         // Spot hash (Layer 2)
         if let Some(ref hash) = id.spot_hash_b3 {
-            items.push(metadata_row(
-                "Spot hash".into(),
-                hash.clone(),
-                None,
-            ).into_any());
+            let reference = sidecar_identity.as_ref()
+                .and_then(|sid| sid.spot_hash_b3.as_deref())
+                .or(xc_spot_hash_b3.as_deref());
+            items.push(hash_row("Spot hash", hash, reference).into_any());
         } else {
             items.push(metadata_row(
                 "Spot hash".into(),
@@ -136,11 +137,10 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
 
         // Content hash (Layer 3)
         if let Some(ref hash) = id.content_hash {
-            items.push(metadata_row(
-                "Content hash".into(),
-                hash.clone(),
-                None,
-            ).into_any());
+            let reference = sidecar_identity.as_ref()
+                .and_then(|sid| sid.content_hash.as_deref())
+                .or(xc_content_hash.as_deref());
+            items.push(hash_row("Content hash", hash, reference).into_any());
         }
 
         // Full BLAKE3 (Layer 4)

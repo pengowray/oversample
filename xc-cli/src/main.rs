@@ -103,6 +103,20 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Recompute and add missing hashes (spot_hash_b3, content_hash, etc.) to .xc.json files
+    Rehash {
+        /// Directory containing sounds/ with .xc.json and audio files (default: current directory)
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+
+        /// Dry run — show what would change without modifying files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Force recompute all hashes even if already present
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn require_api_key(explicit: &Option<String>) -> String {
@@ -521,6 +535,148 @@ async fn main() {
             );
         }
 
+        Commands::Rehash { cache_dir, dry_run, force } => {
+            let root = cache_dir.unwrap_or_else(|| PathBuf::from("."));
+            let sounds_dir = root.join("sounds");
+            if !sounds_dir.exists() {
+                eprintln!("No sounds/ directory found at {}", root.display());
+                std::process::exit(1);
+            }
+
+            // Find all .xc.json files
+            let json_entries: Vec<_> = std::fs::read_dir(&sounds_dir)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error reading {}: {e}", sounds_dir.display());
+                    std::process::exit(1);
+                })
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".xc.json"))
+                .collect();
+
+            eprintln!("Found {} .xc.json files", json_entries.len());
+
+            let mut updated = 0u32;
+            let mut skipped = 0u32;
+            let mut errors = 0u32;
+
+            for entry in &json_entries {
+                let json_path = entry.path();
+                let json_name = entry.file_name().to_string_lossy().to_string();
+
+                // Find corresponding audio file
+                let stem = json_name.strip_suffix(".xc.json").unwrap();
+                let audio_path = find_audio_file(&sounds_dir, stem);
+                let Some(audio_path) = audio_path else {
+                    eprintln!("  No audio file found for {json_name}");
+                    errors += 1;
+                    continue;
+                };
+
+                // Read and parse JSON
+                let content = match std::fs::read_to_string(&json_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("  Error reading {json_name}: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                };
+                let mut json: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("  Error parsing {json_name}: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                // Check what hashes are missing
+                let app = if json["_app"].is_object() { &json["_app"] } else { &json };
+                let has_spot_b3 = app["spot_hash_b3"].is_string();
+                let has_content = app["content_hash"].is_string();
+                let has_blake3 = app["blake3"].is_string();
+                let has_sha256 = app["sha256"].is_string();
+
+                if !force && has_spot_b3 && has_content && has_blake3 && has_sha256 {
+                    skipped += 1;
+                    continue;
+                }
+
+                // Read audio file
+                let audio_bytes = match std::fs::read(&audio_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("  Error reading audio {}: {e}", audio_path.display());
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                let hashes = cache::compute_file_hashes(&audio_bytes);
+
+                // Ensure _app object exists
+                if !json["_app"].is_object() {
+                    // Migrate first
+                    cache::migrate_sidecar_json(&mut json);
+                }
+                if !json["_app"].is_object() {
+                    json.as_object_mut().unwrap().insert("_app".into(), serde_json::json!({}));
+                }
+                let app_obj = json["_app"].as_object_mut().unwrap();
+
+                let mut changes = Vec::new();
+                if force || !has_blake3 {
+                    app_obj.insert("blake3".into(), serde_json::json!(hashes.blake3));
+                    changes.push("blake3");
+                }
+                if force || !has_sha256 {
+                    app_obj.insert("sha256".into(), serde_json::json!(hashes.sha256));
+                    changes.push("sha256");
+                }
+                if force || !has_spot_b3 {
+                    app_obj.insert("spot_hash_b3".into(), serde_json::json!(hashes.spot_hash_b3));
+                    changes.push("spot_hash_b3");
+                }
+                if force || !has_content {
+                    app_obj.insert("content_hash".into(), serde_json::json!(hashes.content_hash));
+                    changes.push("content_hash");
+                }
+                // Always ensure file_size, data_offset, data_size are present
+                app_obj.insert("file_size".into(), serde_json::json!(hashes.size_bytes));
+                if let Some(offset) = hashes.data_offset {
+                    app_obj.insert("data_offset".into(), serde_json::json!(offset));
+                }
+                if let Some(size) = hashes.data_size {
+                    app_obj.insert("data_size".into(), serde_json::json!(size));
+                }
+                // Remove old spot_hash if present
+                app_obj.remove("spot_hash");
+
+                if changes.is_empty() && !force {
+                    skipped += 1;
+                    continue;
+                }
+
+                if dry_run {
+                    eprintln!("  Would update {json_name}: +{}", changes.join(", "));
+                } else {
+                    let json_str = serde_json::to_string_pretty(&json).unwrap();
+                    if let Err(e) = std::fs::write(&json_path, format!("{json_str}\n")) {
+                        eprintln!("  Error writing {json_name}: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                    eprintln!("  Updated {json_name}: +{}", changes.join(", "));
+                }
+                updated += 1;
+            }
+
+            println!(
+                "Done. Updated: {updated}, Already complete: {skipped}, Errors: {errors}{}",
+                if dry_run { " (dry run)" } else { "" }
+            );
+        }
+
         Commands::Delete {
             recording,
             cache_dir,
@@ -595,6 +751,18 @@ fn count_cached_for_species(root: &std::path::Path, genus: &str, sp: &str) -> u3
         }
     }
     count
+}
+
+/// Find the audio file corresponding to a .xc.json stem in a sounds directory.
+/// Tries common audio extensions.
+fn find_audio_file(sounds_dir: &std::path::Path, stem: &str) -> Option<PathBuf> {
+    for ext in &["wav", "mp3", "flac", "ogg"] {
+        let path = sounds_dir.join(format!("{stem}.{ext}"));
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn print_taxonomy(taxonomy: &xc_lib::XcGroupTaxonomy) {

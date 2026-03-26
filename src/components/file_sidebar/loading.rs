@@ -532,7 +532,10 @@ fn extract_sidecar_hashes(json: &serde_json::Value) -> crate::state::SidecarHash
         blake3: src["blake3"].as_str().map(|s| s.to_string()),
         sha256: src["sha256"].as_str().map(|s| s.to_string()),
         file_size: src["file_size"].as_u64(),
-        spot_hash: src["spot_hash"].as_str().map(|s| s.to_string()),
+        spot_hash_b3: src["spot_hash_b3"].as_str().map(|s| s.to_string()),
+        content_hash: src["content_hash"].as_str().map(|s| s.to_string()),
+        data_offset: src["data_offset"].as_u64(),
+        data_size: src["data_size"].as_u64(),
     }
 }
 

@@ -196,7 +196,10 @@ pub async fn xc_download(
         blake3: Some(file_hashes.blake3.clone()),
         sha256: Some(file_hashes.sha256.clone()),
         file_size: Some(file_hashes.size_bytes),
-        spot_hash: Some(file_hashes.spot_hash.clone()),
+        spot_hash_b3: Some(file_hashes.spot_hash_b3.clone()),
+        content_hash: Some(file_hashes.content_hash.clone()),
+        data_offset: file_hashes.data_offset,
+        data_size: file_hashes.data_size,
     });
 
     // Save to cache
