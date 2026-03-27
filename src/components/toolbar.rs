@@ -167,12 +167,20 @@ pub fn Toolbar() -> impl IntoView {
         let recording = state.mic_recording.get();
         let listening = state.mic_listening.get();
 
-        if recording && listening {
-            recording_file_name.get().unwrap_or_default()
+        if recording {
+            let _ = state.mic_timer_tick.get(); // subscribe to timer ticks
+            let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+            let now = js_sys::Date::now();
+            let secs = (now - start) / 1000.0;
+            let dur = crate::format_time::format_duration_compact(secs);
+            let name = recording_file_name.get().unwrap_or_default();
+            if name.is_empty() {
+                format!("Recording ({})", dur)
+            } else {
+                format!("Recording ({}) \u{2014} {}", dur, name)
+            }
         } else if listening {
             "Listening...".to_string()
-        } else if recording {
-            recording_file_name.get().unwrap_or_default()
         } else {
             file_name.get().unwrap_or_default()
         }
@@ -185,12 +193,22 @@ pub fn Toolbar() -> impl IntoView {
         let recording = state.mic_recording.get();
         let listening = state.mic_listening.get();
 
-        let title = match (prefix.as_deref(), listening && !recording, name.as_deref()) {
-            (Some(pfx), true, _) => format!("{} Listening... - Oversample", pfx),
-            (Some(pfx), false, Some(name)) => format!("{} {} - Oversample", pfx, name),
-            (Some(pfx), false, None) => format!("{} Oversample", pfx),
-            (None, _, Some(name)) => format!("{} - Oversample", name),
-            (None, _, None) => "Oversample".to_string(),
+        let title = if recording {
+            let _ = state.mic_timer_tick.get(); // subscribe for live updates
+            let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+            let now = js_sys::Date::now();
+            let secs = (now - start) / 1000.0;
+            let dur = crate::format_time::format_duration_compact(secs);
+            let pfx = prefix.as_deref().unwrap_or("");
+            format!("{} Recording ({}) - Oversample", pfx, dur)
+        } else {
+            match (prefix.as_deref(), listening, name.as_deref()) {
+                (Some(pfx), true, _) => format!("{} Listening... - Oversample", pfx),
+                (Some(pfx), false, Some(name)) => format!("{} {} - Oversample", pfx, name),
+                (Some(pfx), false, None) => format!("{} Oversample", pfx),
+                (None, _, Some(name)) => format!("{} - Oversample", name),
+                (None, _, None) => "Oversample".to_string(),
+            }
         };
 
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {

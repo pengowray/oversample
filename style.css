@@ -2225,6 +2225,19 @@ body.sidebar-resizing {
     min-height: 0;
 }
 
+/* VU meter — red level indicator on right edge during recording/listening */
+.vu-meter {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 3px;
+    background: #f44;
+    z-index: 10;
+    pointer-events: none;
+    transition: height 0.05s linear;
+    border-radius: 1px 1px 0 0;
+}
+
 /* Spectrogram and waveform canvases clip their own content */
 .spectrogram-container,
 .waveform-container {

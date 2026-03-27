@@ -137,6 +137,7 @@ fn mic_stop_recording(
     // Append GUANO metadata
     let guano_text = recording::build_recording_guano(
         sample_rate, num_samples, &m.device_name, &filename, &now,
+        bits_per_sample, is_float, Some("Cpal"),
     );
     recording::append_guano_chunk(&mut wav_data, &guano_text);
 
@@ -513,6 +514,7 @@ fn usb_stop_recording(
     // Append GUANO metadata
     let guano_text = recording::build_recording_guano(
         sample_rate, num_samples, &s.device_name, &filename, &now,
+        16, false, Some("USB (Raw)"),
     );
     recording::append_guano_chunk(&mut wav_data, &guano_text);
 

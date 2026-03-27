@@ -99,6 +99,14 @@ pub fn parse_guano_chunk(chunk_body: &[u8]) -> Option<GuanoMetadata> {
     Some(parse_guano_text(text))
 }
 
+/// Extra recording metadata for GUANO beyond the core fields.
+#[derive(Default)]
+pub struct RecordingGuanoExtra {
+    pub bits_per_sample: Option<u16>,
+    pub is_float: bool,
+    pub connection_type: Option<String>,
+}
+
 /// Build GUANO metadata for a recording (WASM side).
 /// Consolidates the duplicated inline GUANO construction from wav_encoder,
 /// live_recording, etc. into a single shared function.
@@ -108,6 +116,7 @@ pub fn build_recording_guano(
     filename: &str,
     is_tauri: bool,
     mic_device_name: Option<&str>,
+    extra: &RecordingGuanoExtra,
 ) -> GuanoMetadata {
     let now = js_sys::Date::new_0();
     let start_ms = now.get_time() - (duration_secs * 1000.0);
@@ -137,6 +146,20 @@ pub fn build_recording_guano(
     if let Some(mic) = mic_device_name {
         if !mic.is_empty() {
             g.add("Microphone", mic);
+        }
+    }
+    if let Some(bits) = extra.bits_per_sample {
+        let fmt = if extra.is_float {
+            format!("{}-bit float", bits)
+        } else {
+            format!("{}-bit int", bits)
+        };
+        g.add("Oversample|Bits Per Sample", &bits.to_string());
+        g.add("Oversample|Sample Format", &fmt);
+    }
+    if let Some(ref conn) = extra.connection_type {
+        if !conn.is_empty() {
+            g.add("Oversample|Connection", conn);
         }
     }
     let platform = if is_tauri { "Tauri" } else { "browser" };

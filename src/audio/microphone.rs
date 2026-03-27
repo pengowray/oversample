@@ -1025,27 +1025,16 @@ fn finalize_recording_tauri(result: JsValue, state: AppState) {
         if is_float { " float" } else { "" }, saved_path);
 
     // Build GUANO metadata for display in metadata panel
-    let guano = {
-        use crate::audio::guano::GuanoMetadata;
-        let now = js_sys::Date::new_0();
-        let start_ms = now.get_time() - (duration_secs * 1000.0);
-        let start = js_sys::Date::new(&JsValue::from_f64(start_ms));
-        let timestamp = format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-            start.get_full_year(), start.get_month() + 1, start.get_date(),
-            start.get_hours(), start.get_minutes(), start.get_seconds(),
-        );
-        let version = env!("CARGO_PKG_VERSION");
-        let mut g = GuanoMetadata::new();
-        g.add("GUANO|Version", "1.0");
-        g.add("Timestamp", &timestamp);
-        g.add("Length", &format!("{:.6}", duration_secs));
-        g.add("Samplerate", &sample_rate.to_string());
-        g.add("Make", "Oversample");
-        g.add("Firmware Version", version);
-        g.add("Original Filename", &filename);
-        g
-    };
+    let mic_name = state.mic_device_name.get_untracked();
+    let conn_type = state.mic_connection_type.get_untracked();
+    let guano = crate::audio::guano::build_recording_guano(
+        sample_rate, duration_secs, &filename, state.is_tauri, mic_name.as_deref(),
+        &crate::audio::guano::RecordingGuanoExtra {
+            bits_per_sample: Some(bits_per_sample),
+            is_float,
+            connection_type: conn_type,
+        },
+    );
 
     let samples: Arc<Vec<f32>> = samples.into();
     let source = Arc::new(InMemorySource {

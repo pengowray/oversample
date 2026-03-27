@@ -949,6 +949,9 @@ pub struct AppState {
     /// Rightmost spectrogram column with actual data during recording.
     /// Used to clip the canvas so partial tiles don't show black padding.
     pub mic_live_data_cols: RwSignal<usize>,
+    /// Current mic input peak level (0.0–1.0, dB-scaled).
+    /// Updated from the live processing loop every ~50ms for VU meter display.
+    pub mic_peak_level: RwSignal<f32>,
     /// True when a USB audio device is detected but lacks permission.
     /// Used to change Record/Listen button labels to "Allow USB mic".
     pub mic_needs_permission: RwSignal<bool>,
@@ -1338,6 +1341,7 @@ impl AppState {
             mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
             mic_recording_target_scroll: RwSignal::new(0.0),
             mic_live_data_cols: RwSignal::new(0),
+            mic_peak_level: RwSignal::new(0.0),
             mic_needs_permission: RwSignal::new(false),
             mic_selected_device: RwSignal::new(None),
             show_mic_chooser: RwSignal::new(false),

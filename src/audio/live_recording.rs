@@ -137,14 +137,14 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             }
 
             // Compute new FFT columns from the live buffer
-            let any_update = with_live_samples(is_tauri, |samples| -> bool {
+            let (any_update, peak_normalized) = with_live_samples(is_tauri, |samples| -> (bool, f32) {
                 if samples.len() < fft_size {
-                    return false;
+                    return (false, 0.0);
                 }
 
                 let total_possible_cols = (samples.len() - fft_size) / hop_size + 1;
                 if total_possible_cols <= last_processed_col {
-                    return false;
+                    return (false, 0.0);
                 }
 
                 let new_col_count = total_possible_cols - last_processed_col;
@@ -160,7 +160,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 );
 
                 if new_cols.is_empty() {
-                    return false;
+                    return (false, 0.0);
                 }
 
                 // Push to waterfall for direct rendering
@@ -192,11 +192,20 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     }
                 }
 
+                // Compute peak of recent samples for VU meter
+                let vu_start = samples.len().saturating_sub(2048);
+                let peak = samples[vu_start..]
+                    .iter()
+                    .fold(0.0f32, |max, &s| max.max(s.abs()));
+                let peak_db = if peak > 0.0 { 20.0 * peak.log10() } else { -96.0 };
+                let normalized = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
+
                 last_processed_col = total_possible_cols;
-                true
+                (true, normalized)
             });
 
             if any_update {
+                state.mic_peak_level.set(peak_normalized);
                 let total_cols = live_waterfall::total_columns();
                 state.mic_live_data_cols.set(total_cols);
 
@@ -220,6 +229,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         }
 
         // Processing loop exited — clean up
+        state.mic_peak_level.set(0.0);
         if !state.mic_recording.get_untracked() {
             // Only clear waterfall when fully done (not when switching from listen to record)
             live_waterfall::clear();
@@ -312,8 +322,15 @@ pub(crate) fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state
     });
 
     let mic_name = state.mic_device_name.get_untracked();
+    let conn_type = state.mic_connection_type.get_untracked();
+    let bits = state.mic_bits_per_sample.get_untracked();
     let guano = crate::audio::guano::build_recording_guano(
         sample_rate, duration_secs, &name_check, state.is_tauri, mic_name.as_deref(),
+        &crate::audio::guano::RecordingGuanoExtra {
+            bits_per_sample: Some(bits),
+            is_float: false,
+            connection_type: conn_type,
+        },
     );
 
     let samples: Arc<Vec<f32>> = samples.into();
@@ -371,9 +388,16 @@ pub(crate) fn finalize_live_recording(samples: Vec<f32>, sample_rate: u32, state
     // Try Tauri auto-save in background
     if is_tauri {
         let mic_name = state.mic_device_name.get_untracked();
+        let conn_type_save = state.mic_connection_type.get_untracked();
+        let bits_save = state.mic_bits_per_sample.get_untracked();
         let samples_ref = state.files.get_untracked();
         if let Some(file) = samples_ref.get(file_index) {
-            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, mic_name.as_deref());
+            let extra = crate::audio::guano::RecordingGuanoExtra {
+                bits_per_sample: Some(bits_save),
+                is_float: false,
+                connection_type: conn_type_save,
+            };
+            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, mic_name.as_deref(), &extra);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
                 if try_tauri_save(&wav_data, &filename).await {
@@ -413,8 +437,15 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
     );
 
     let mic_name = state.mic_device_name.get_untracked();
+    let conn_type = state.mic_connection_type.get_untracked();
+    let bits = state.mic_bits_per_sample.get_untracked();
     let guano = crate::audio::guano::build_recording_guano(
         sample_rate, duration_secs, &name, state.is_tauri, mic_name.as_deref(),
+        &crate::audio::guano::RecordingGuanoExtra {
+            bits_per_sample: Some(bits),
+            is_float: false,
+            connection_type: conn_type,
+        },
     );
 
     let samples: Arc<Vec<f32>> = samples.into();
@@ -502,9 +533,16 @@ fn finalize_recording(samples: Vec<f32>, sample_rate: u32, state: AppState) {
 
     // Try Tauri auto-save in background (web mode path for old save_recording command)
     if is_tauri {
+        let conn_type_save = state.mic_connection_type.get_untracked();
+        let bits_save = state.mic_bits_per_sample.get_untracked();
         let samples_ref = state.files.get_untracked();
         if let Some(file) = samples_ref.get(file_index) {
-            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, mic_name.as_deref());
+            let extra = crate::audio::guano::RecordingGuanoExtra {
+                bits_per_sample: Some(bits_save),
+                is_float: false,
+                connection_type: conn_type_save,
+            };
+            let wav_data = encode_wav_with_guano(&file.audio.samples, file.audio.sample_rate, &name_for_save, true, mic_name.as_deref(), &extra);
             let filename = name_for_save;
             wasm_bindgen_futures::spawn_local(async move {
                 if try_tauri_save(&wav_data, &filename).await {

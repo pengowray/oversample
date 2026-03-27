@@ -513,6 +513,24 @@ pub fn OverviewPanel() -> impl IntoView {
                             ff_range,
                             clean_view,
                         );
+                    } else if file.is_recording && !file.audio.samples.is_empty() {
+                        // Live recording: draw waveform from snapshotted samples
+                        draw_overview_waveform(
+                            &ctx, canvas, &file.audio.samples,
+                            file.audio.sample_rate,
+                            file.spectrogram.time_resolution,
+                            scroll, zoom, main_canvas_w,
+                            &bm_tuples, gain_db, clean_view,
+                        );
+                    } else if file.is_recording {
+                        // Recording but no samples yet
+                        ctx.set_fill_style_str("#1a1a1a");
+                        ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
+                        ctx.set_fill_style_str("#f66");
+                        ctx.set_font("11px system-ui");
+                        ctx.set_text_align("center");
+                        ctx.set_text_baseline("middle");
+                        let _ = ctx.fill_text("Recording\u{2026}", w as f64 / 2.0, h as f64 / 2.0);
                     } else {
                         ctx.set_fill_style_str("#333");
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);

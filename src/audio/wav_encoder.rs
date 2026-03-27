@@ -41,13 +41,14 @@ pub(crate) fn encode_wav_with_guano(
     filename: &str,
     is_tauri: bool,
     mic_device_name: Option<&str>,
+    extra: &crate::audio::guano::RecordingGuanoExtra,
 ) -> Vec<u8> {
     use crate::audio::guano;
     let mut wav_data = encode_wav(samples, sample_rate);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
 
     let guano_meta = guano::build_recording_guano(
-        sample_rate, duration_secs, filename, is_tauri, mic_device_name,
+        sample_rate, duration_secs, filename, is_tauri, mic_device_name, extra,
     );
     guano::append_guano_chunk(&mut wav_data, &guano_meta.to_text());
     wav_data
@@ -55,7 +56,8 @@ pub(crate) fn encode_wav_with_guano(
 
 /// Trigger a browser download of WAV data.
 pub fn download_wav(samples: &[f32], sample_rate: u32, filename: &str, is_tauri: bool, mic_device_name: Option<&str>) {
-    let wav_data = encode_wav_with_guano(samples, sample_rate, filename, is_tauri, mic_device_name);
+    let wav_data = encode_wav_with_guano(samples, sample_rate, filename, is_tauri, mic_device_name,
+        &Default::default());
 
     let array = js_sys::Uint8Array::new_with_length(wav_data.len() as u32);
     array.copy_from(&wav_data);

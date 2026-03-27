@@ -308,8 +308,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                     });
                                 }
                             >
-                                <div class="mic-chooser-device-name">"Auto (system default)"</div>
-                                <div class="mic-chooser-device-caps">"Automatically select the best available device"</div>
+                                <div class="mic-chooser-device-name">"System default"</div>
+                                <div class="mic-chooser-device-caps">"Automatically selected device"</div>
                             </div>
                         })
                     }}

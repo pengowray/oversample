@@ -1028,6 +1028,21 @@ fn MainArea() -> impl IntoView {
                                 MainView::Chromagram => view! { <ChromagramView /> }.into_any(),
                             }}
 
+                            // VU meter — red line on right edge during recording/listening
+                            {move || {
+                                let recording = state.mic_recording.get();
+                                let listening = state.mic_listening.get();
+                                if !recording && !listening { return None; }
+                                let level = state.mic_peak_level.get();
+                                let height_pct = (level * 100.0).clamp(0.0, 100.0);
+                                Some(view! {
+                                    <div
+                                        class="vu-meter"
+                                        style:height=format!("{}%", height_pct)
+                                    ></div>
+                                })
+                            }}
+
                             // Floating overlay layer
                             <div class="main-overlays"
                                 style:display=move || if state.clean_view.get() { "none" } else { "" }

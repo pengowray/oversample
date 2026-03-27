@@ -170,7 +170,7 @@ pub fn BottomToolbar() -> impl IntoView {
             let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
             let now = js_sys::Date::now();
             let secs = (now - start) / 1000.0;
-            format!("Rec {:.1}s", secs)
+            format!("Rec {}", crate::format_time::format_duration_compact(secs))
         } else {
             "\u{25CF}".to_string() // ●
         }
