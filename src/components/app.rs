@@ -301,7 +301,12 @@ pub fn App() -> impl IntoView {
             return;
         }
 
-        let clamped = viewport::clamp_scroll_for_mode(scroll, duration, visible_time, from_here_mode);
+        // During live recording/listening, use standard scroll bounds (no negative
+        // lead-in) so the waterfall grows right from the left edge instead of
+        // sliding leftward from a from-here offset.
+        let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+        let effective_from_here = from_here_mode && !is_live;
+        let clamped = viewport::clamp_scroll_for_mode(scroll, duration, visible_time, effective_from_here);
         if (clamped - scroll).abs() > f64::EPSILON {
             state.scroll_offset.set(clamped);
         }
