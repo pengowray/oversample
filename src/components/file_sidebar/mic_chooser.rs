@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsValue;
-use crate::state::{AppState, MicBackend, MicAcquisitionState, MicPendingAction, MicDeviceInfo};
+use crate::state::{AppState, MicBackend, MicAcquisitionState, MicPendingAction, MicDeviceInfo, MicStrategy};
 use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
 
 #[derive(Clone, Debug)]
@@ -178,6 +178,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                         on:click=move |_| {
                                             let name = dev_name.clone();
                                             state.mic_backend.set(Some(MicBackend::RawUsb));
+                                            state.mic_strategy.set(MicStrategy::Selected);
                                             state.mic_selected_device.set(Some(name.clone()));
                                             state.mic_device_info.set(Some(MicDeviceInfo {
                                                 name: product_for_click.clone(),
@@ -247,6 +248,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                         on:click=move |_| {
                                             let name = dev_name.clone();
                                             state.mic_backend.set(Some(MicBackend::Cpal));
+                                            state.mic_strategy.set(MicStrategy::Selected);
                                             state.mic_selected_device.set(Some(name.clone()));
                                             state.mic_device_info.set(Some(MicDeviceInfo {
                                                 name: name.clone(),
@@ -317,6 +319,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                                 on:click=move |_| {
                                     state.mic_backend.set(Some(MicBackend::Browser));
+                                    state.mic_strategy.set(MicStrategy::Selected);
                                     state.mic_selected_device.set(None);
                                     state.mic_device_info.set(Some(MicDeviceInfo {
                                         name: "Browser microphone".to_string(),
@@ -365,6 +368,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                                 on:click=move |_| {
                                     state.mic_backend.set(Some(MicBackend::Cpal));
+                                    state.mic_strategy.set(MicStrategy::Selected);
                                     state.mic_selected_device.set(None);
                                     state.mic_device_info.set(None);
                                     state.show_mic_chooser.set(false);

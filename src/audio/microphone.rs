@@ -1496,14 +1496,17 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                 Some(MicBackend::Browser)
             } else {
                 state.mic_acquisition_state.set(MicAcquisitionState::Failed);
-                // Reset to Ask on failure — no fallback (requirement 11)
+                // Reset to Ask on failure — clear selection
                 state.mic_strategy.set(MicStrategy::Ask);
+                state.mic_backend.set(None);
+                state.mic_device_info.set(None);
+                state.mic_selected_device.set(None);
                 state.status_message.set(Some("Browser mic failed. Please choose a microphone.".into()));
                 None
             }
         }
-        MicStrategy::Ask => {
-            // Check if a mic was already chosen (remembered from chooser)
+        MicStrategy::Selected => {
+            // A mic was previously chosen — open it directly
             if let Some(backend) = state.mic_backend.get_untracked() {
                 state.mic_acquisition_state.set(MicAcquisitionState::Acquiring);
                 let t0 = js_sys::Date::now();
@@ -1513,7 +1516,8 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                     state.mic_acquisition_state.set(MicAcquisitionState::Ready);
                     return Some(backend);
                 } else {
-                    // Failure: clear remembered mic, don't fallback
+                    // Failure: clear selection, revert to Ask
+                    state.mic_strategy.set(MicStrategy::Ask);
                     state.mic_backend.set(None);
                     state.mic_device_info.set(None);
                     state.mic_selected_device.set(None);
@@ -1522,8 +1526,15 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                     return None;
                 }
             }
-
-            // No mic remembered — show chooser dialog and stash the pending action
+            // No backend remembered despite Selected — fall back to Ask behavior
+            state.mic_strategy.set(MicStrategy::Ask);
+            state.mic_pending_action.set(Some(action));
+            state.mic_acquisition_state.set(MicAcquisitionState::AwaitingChoice);
+            state.show_mic_chooser.set(true);
+            None
+        }
+        MicStrategy::Ask => {
+            // Show chooser dialog and stash the pending action
             state.mic_pending_action.set(Some(action));
             state.mic_acquisition_state.set(MicAcquisitionState::AwaitingChoice);
             state.show_mic_chooser.set(true);

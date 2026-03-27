@@ -154,7 +154,7 @@ pub fn BottomToolbar() -> impl IntoView {
     let rec_left_class = Signal::derive(move || {
         if state.mic_recording.get() {
             "layer-btn combo-btn-left rec-btn mic-recording"
-        } else if state.record_mode.get() == RecordMode::ListenOnly {
+        } else if state.record_mode.get() == RecordMode::ListenOnly || state.mic_strategy.get() == MicStrategy::None {
             "layer-btn combo-btn-left rec-btn disabled"
         } else {
             "layer-btn combo-btn-left rec-btn"
@@ -186,7 +186,8 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let rec_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if state.record_mode.get_untracked() == RecordMode::ListenOnly {
+        if state.record_mode.get_untracked() == RecordMode::ListenOnly
+            || state.mic_strategy.get_untracked() == MicStrategy::None {
             return; // greyed out
         }
         let st = state;
@@ -693,8 +694,23 @@ pub fn BottomToolbar() -> impl IntoView {
                 <div class="layer-panel-title">"Microphone"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                     <button class=move || layer_opt_class(state.mic_strategy.get() == MicStrategy::Ask)
-                        on:click=move |_| state.mic_strategy.set(MicStrategy::Ask)
+                        on:click=move |_| {
+                            state.mic_strategy.set(MicStrategy::Ask);
+                            // Clear previous selection so user gets asked again
+                            state.mic_backend.set(None);
+                            state.mic_device_info.set(None);
+                            state.mic_selected_device.set(None);
+                        }
                     >"Ask"</button>
+                    <button class=move || {
+                        if state.mic_strategy.get() == MicStrategy::Selected {
+                            layer_opt_class(true)
+                        } else {
+                            "layer-panel-opt disabled"
+                        }
+                    }
+                        title="Active when a mic has been selected"
+                    >"Selected"</button>
                     <button class=move || {
                         if state.is_tauri {
                             "layer-panel-opt disabled"
@@ -715,7 +731,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 </div>
 
                 // Selected device info + change button
-                <Show when=move || state.mic_strategy.get() == MicStrategy::Ask>
+                <Show when=move || matches!(state.mic_strategy.get(), MicStrategy::Ask | MicStrategy::Selected)>
                     <div style="padding: 2px 8px;">
                         {move || {
                             let info = state.mic_device_info.get();
@@ -815,6 +831,9 @@ pub fn BottomToolbar() -> impl IntoView {
                 let listen_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode));
 
                 let listen_left_class = Signal::derive(move || {
+                    if state.mic_strategy.get() == MicStrategy::None {
+                        return "layer-btn combo-btn-left disabled";
+                    }
                     let is_listening_ready = state.mic_listening.get()
                         && state.mic_acquisition_state.get() == MicAcquisitionState::Ready;
                     let is_rec_ready = state.record_ready_state.get() == RecordReadyState::AwaitingConfirmation;
@@ -857,6 +876,9 @@ pub fn BottomToolbar() -> impl IntoView {
                 });
 
                 let listen_left_click = Callback::new(move |_: web_sys::MouseEvent| {
+                    if state.mic_strategy.get_untracked() == MicStrategy::None {
+                        return; // greyed out
+                    }
                     let st = state;
                     wasm_bindgen_futures::spawn_local(async move {
                         microphone::toggle_listen(&st).await;

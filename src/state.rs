@@ -717,6 +717,7 @@ pub enum StatusLevel {
 pub enum MicStrategy {
     #[default]
     Ask,      // show chooser on record/listen (default on Tauri)
+    Selected, // a mic has been chosen via the chooser — use it directly
     Browser,  // Web Audio API (default on web; disabled on Tauri)
     None,     // no microphone
 }
