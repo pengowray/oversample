@@ -712,67 +712,12 @@ pub enum StatusLevel {
     Info,
 }
 
-/// User-facing mic selection strategy.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum MicStrategy {
-    #[default]
-    Ask,      // show chooser on record/listen (default on Tauri)
-    Selected, // a mic has been chosen via the chooser — use it directly
-    Browser,  // Web Audio API (default on web; disabled on Tauri)
-    None,     // no microphone
-}
-
-/// Internal mic backend (set by chooser, not user-visible).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MicBackend {
+pub enum MicMode {
+    Auto,
     Browser,
     Cpal,
     RawUsb,
-}
-
-/// Tracks mic acquisition progress.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum MicAcquisitionState {
-    #[default]
-    Idle,
-    AwaitingChoice,   // chooser dialog showing
-    Acquiring,        // opening mic / waiting for permissions
-    Ready,            // mic open and streaming data
-    Failed,
-}
-
-/// What action triggered mic acquisition (so chooser can resume it).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MicPendingAction {
-    Listen,
-    Record,
-}
-
-/// "Ready to record" dialog state.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum RecordReadyState {
-    #[default]
-    None,
-    AwaitingConfirmation,
-    Confirmed,
-}
-
-/// Mono or stereo recording preference.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum ChannelMode {
-    #[default]
-    Mono,
-    Stereo,
-}
-
-/// Device capabilities retained from mic chooser selection.
-#[derive(Clone, Debug, Default)]
-pub struct MicDeviceInfo {
-    pub name: String,
-    pub connection_type: String,
-    pub supported_rates: Vec<u32>,
-    pub supported_bit_depths: Vec<u16>,
-    pub max_channels: u16,
 }
 
 /// Playback mode for live listening (like PlaybackMode but without TimeExpansion).
@@ -784,7 +729,6 @@ pub enum ListenMode {
     PhaseVocoder,
     ZeroCrossing,
     Normal,
-    ReadyMic,  // silent mic warm-up (no audio output)
 }
 
 // ── Loading progress ─────────────────────────────────────────────────────────
@@ -982,6 +926,7 @@ pub struct AppState {
     pub mic_samples_recorded: RwSignal<usize>,
     pub mic_bits_per_sample: RwSignal<u16>,
     pub mic_max_sample_rate: RwSignal<u32>, // 0 = auto (device default)
+    pub mic_mode: RwSignal<MicMode>,
     pub mic_supported_rates: RwSignal<Vec<u32>>, // actual rates from cpal device query
     /// File index of the currently-recording live file (None if not recording).
     /// Used to update the live file in-place during recording and finalization.
@@ -996,40 +941,21 @@ pub struct AppState {
     pub mic_connection_type: RwSignal<Option<String>>,
     /// Whether a USB audio device is currently connected.
     pub mic_usb_connected: RwSignal<bool>,
+    /// What Auto mode resolved to (Cpal or RawUsb). Ignored when mode is not Auto.
+    pub mic_effective_mode: RwSignal<MicMode>,
     /// Target scroll offset during recording. The rAF animation loop interpolates
     /// scroll_offset toward this value for smooth waterfall scrolling.
     pub mic_recording_target_scroll: RwSignal<f64>,
     /// Rightmost spectrogram column with actual data during recording.
     /// Used to clip the canvas so partial tiles don't show black padding.
     pub mic_live_data_cols: RwSignal<usize>,
-    /// Current mic input peak level (0.0–1.0, dB-scaled).
-    /// Updated from the live processing loop every ~50ms for VU meter display.
-    pub mic_peak_level: RwSignal<f32>,
+    /// True when a USB audio device is detected but lacks permission.
+    /// Used to change Record/Listen button labels to "Allow USB mic".
+    pub mic_needs_permission: RwSignal<bool>,
     /// User's preferred device name for mic input. None = use system default.
     pub mic_selected_device: RwSignal<Option<String>>,
     /// Whether the mic chooser modal dialog is visible.
     pub show_mic_chooser: RwSignal<bool>,
-
-    // New recording flow signals
-    /// User-facing mic strategy: Ask (show chooser), Browser (web audio), None.
-    pub mic_strategy: RwSignal<MicStrategy>,
-    /// Internal mic backend resolved by chooser (None = not yet chosen).
-    pub mic_backend: RwSignal<Option<MicBackend>>,
-    /// Tracks where we are in the mic acquisition flow.
-    pub mic_acquisition_state: RwSignal<MicAcquisitionState>,
-    /// What action triggered mic acquisition (so chooser can resume it).
-    pub mic_pending_action: RwSignal<Option<MicPendingAction>>,
-    /// "Ready to record" dialog state.
-    pub record_ready_state: RwSignal<RecordReadyState>,
-    /// True if we believe the OS showed a permission dialog during mic acquisition.
-    /// Detected by timing: if mic open took >1.5s, a dialog was probably shown.
-    pub mic_permission_dialog_shown: RwSignal<bool>,
-    /// Max bit depth preference: 0 = auto (native max), 16, 24, 32.
-    pub mic_max_bit_depth: RwSignal<u16>,
-    /// Mono or stereo recording preference.
-    pub mic_channel_mode: RwSignal<ChannelMode>,
-    /// Device capabilities retained from mic chooser selection.
-    pub mic_device_info: RwSignal<Option<MicDeviceInfo>>,
 
     // Listen mode settings (independent from HFR file playback)
     pub listen_mode: RwSignal<ListenMode>,
@@ -1401,6 +1327,7 @@ impl AppState {
             mic_samples_recorded: RwSignal::new(0),
             mic_bits_per_sample: RwSignal::new(16),
             mic_max_sample_rate: RwSignal::new(0),
+            mic_mode: RwSignal::new(if detect_tauri() { MicMode::Auto } else { MicMode::Browser }),
             mic_supported_rates: RwSignal::new(Vec::new()),
             mic_live_file_idx: RwSignal::new(None),
             mic_recording_start_time: RwSignal::new(None),
@@ -1408,20 +1335,12 @@ impl AppState {
             mic_device_name: RwSignal::new(None),
             mic_connection_type: RwSignal::new(None),
             mic_usb_connected: RwSignal::new(false),
+            mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
             mic_recording_target_scroll: RwSignal::new(0.0),
             mic_live_data_cols: RwSignal::new(0),
-            mic_peak_level: RwSignal::new(0.0),
+            mic_needs_permission: RwSignal::new(false),
             mic_selected_device: RwSignal::new(None),
             show_mic_chooser: RwSignal::new(false),
-            mic_strategy: RwSignal::new(if detect_tauri() { MicStrategy::Ask } else { MicStrategy::Browser }),
-            mic_backend: RwSignal::new(None),
-            mic_acquisition_state: RwSignal::new(MicAcquisitionState::Idle),
-            mic_pending_action: RwSignal::new(None),
-            record_ready_state: RwSignal::new(RecordReadyState::None),
-            mic_permission_dialog_shown: RwSignal::new(false),
-            mic_max_bit_depth: RwSignal::new(0),
-            mic_channel_mode: RwSignal::new(ChannelMode::Mono),
-            mic_device_info: RwSignal::new(None),
             listen_mode: RwSignal::new(ListenMode::default()),
             listen_het_frequency: RwSignal::new(45_000.0),
             listen_het_cutoff: RwSignal::new(15_000.0),
