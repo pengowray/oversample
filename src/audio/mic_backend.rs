@@ -26,6 +26,8 @@ thread_local! {
     static MIC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
     static WEB_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
+    /// Overlap context state for PS/PV live listening (web).
+    static WEB_LISTEN_STATE: RefCell<ListenDspState> = RefCell::new(ListenDspState::new());
 }
 
 // ── Thread-local state: Native mode (shared by cpal AND USB) ────────────
@@ -45,6 +47,8 @@ thread_local! {
     static NATIVE_REC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// Realtime heterodyne processor for native modes.
     static NATIVE_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
+    /// Overlap context state for PS/PV live listening (native).
+    static NATIVE_LISTEN_STATE: RefCell<ListenDspState> = RefCell::new(ListenDspState::new());
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -151,14 +155,45 @@ impl TauriRecordingResult {
 
 // ── Live listen DSP dispatch ──────────────────────────────────────────
 
+/// Minimum context buffer size for PS/PV overlap processing.
+/// With 4096-sample chunks this gives ~4 chunks of context, enough for
+/// PV's 4096-pt FFT to produce ~13 STFT frames with full OLA coverage
+/// in the tail region we extract.
+const LISTEN_CONTEXT_MIN: usize = 16384;
+
+/// Crossfade length (samples) between consecutive output chunks to
+/// eliminate any residual boundary discontinuity after overlap-save.
+const LISTEN_CROSSFADE: usize = 256;
+
+/// Persistent state for overlap-save PS/PV live processing.
+struct ListenDspState {
+    /// Accumulated raw input samples (sliding context window).
+    context: Vec<f32>,
+    /// Tail of the previous returned chunk, used for crossfade.
+    prev_tail: Vec<f32>,
+}
+
+impl ListenDspState {
+    const fn new() -> Self {
+        Self { context: Vec::new(), prev_tail: Vec::new() }
+    }
+
+    fn clear(&mut self) {
+        self.context.clear();
+        self.prev_tail.clear();
+    }
+}
+
 /// Apply the selected listen mode DSP to a chunk of mic input.
-/// For Heterodyne, uses the stateful `RealtimeHet` processor.
-/// For other modes, uses the batch DSP functions directly.
+///
+/// For PS/PV, `dsp_state` accumulates raw input so the batch DSP functions
+/// see enough overlap context, then extracts the tail with a crossfade.
 fn process_listen_audio(
     input: &[f32],
     mode: ListenMode,
     sample_rate: u32,
     rt_het: &mut RealtimeHet,
+    dsp_state: &mut ListenDspState,
     het_freq: f64,
     het_cutoff: f64,
     ps_factor: f64,
@@ -167,30 +202,67 @@ fn process_listen_audio(
 ) -> Vec<f32> {
     match mode {
         ListenMode::Heterodyne => {
+            dsp_state.clear();
             let mut out = vec![0.0f32; input.len()];
             rt_het.process(input, &mut out, sample_rate, het_freq, het_cutoff);
             out
         }
-        ListenMode::PitchShift => {
-            pitch_shift_realtime(input, ps_factor)
-        }
-        ListenMode::PhaseVocoder => {
-            let mut out = phase_vocoder_pitch_shift(input, pv_factor);
-            // PV inherently loses ~6 dB; apply compensatory boost
-            let boost = 10.0f32.powf(crate::audio::streaming_playback::PV_MODE_BOOST_DB as f32 / 20.0);
-            for s in &mut out {
-                *s *= boost;
+        ListenMode::PitchShift | ListenMode::PhaseVocoder => {
+            // Accumulate input into sliding context window
+            dsp_state.context.extend_from_slice(input);
+            let max_ctx = LISTEN_CONTEXT_MIN.max(input.len() * 4);
+            if dsp_state.context.len() > max_ctx {
+                let excess = dsp_state.context.len() - max_ctx;
+                dsp_state.context.drain(..excess);
             }
-            out
+
+            // Run the batch DSP on the full context
+            let full_output = if mode == ListenMode::PitchShift {
+                pitch_shift_realtime(&dsp_state.context, ps_factor)
+            } else {
+                let mut out = phase_vocoder_pitch_shift(&dsp_state.context, pv_factor);
+                let boost = 10.0f32.powf(
+                    crate::audio::streaming_playback::PV_MODE_BOOST_DB as f32 / 20.0,
+                );
+                for s in &mut out {
+                    *s *= boost;
+                }
+                out
+            };
+
+            // Extract the last chunk_len samples (deep interior of OLA = clean)
+            let chunk_len = input.len();
+            let extracted = if full_output.len() >= chunk_len {
+                &full_output[full_output.len() - chunk_len..]
+            } else {
+                &full_output[..]
+            };
+            let mut result = extracted.to_vec();
+
+            // Crossfade start of this chunk with end of previous chunk
+            let fade = LISTEN_CROSSFADE.min(result.len()).min(dsp_state.prev_tail.len());
+            for i in 0..fade {
+                let t = i as f32 / fade as f32; // 0→1
+                result[i] = dsp_state.prev_tail[i] * (1.0 - t) + result[i] * t;
+            }
+
+            // Save tail of current result for next crossfade
+            dsp_state.prev_tail.clear();
+            let tail_start = result.len().saturating_sub(LISTEN_CROSSFADE);
+            dsp_state.prev_tail.extend_from_slice(&result[tail_start..]);
+
+            result
         }
         ListenMode::ZeroCrossing => {
+            dsp_state.clear();
             zc_divide(input, sample_rate, zc_factor as u32, false)
         }
         ListenMode::Normal => {
+            dsp_state.clear();
             input.to_vec()
         }
         ListenMode::ReadyMic => {
-            // Silence -- mic is open but not producing audio output
+            dsp_state.clear();
             vec![0.0f32; input.len()]
         }
     }
@@ -501,6 +573,7 @@ async fn setup_het_context(state: &AppState) -> bool {
     HET_CTX.with(|c| *c.borrow_mut() = Some(het_ctx));
     HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
     NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
+    NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
     true
 }
 
@@ -537,17 +610,20 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
             let sr = state_cb.mic_sample_rate.get_untracked();
             let mode = state_cb.listen_mode.get_untracked();
             let out_data = NATIVE_RT_HET.with(|h| {
-                process_listen_audio(
-                    &input_data,
-                    mode,
-                    sr,
-                    &mut h.borrow_mut(),
-                    state_cb.listen_het_frequency.get_untracked(),
-                    state_cb.listen_het_cutoff.get_untracked(),
-                    state_cb.ps_factor.get_untracked(),
-                    state_cb.pv_factor.get_untracked(),
-                    state_cb.zc_factor.get_untracked(),
-                )
+                NATIVE_LISTEN_STATE.with(|s| {
+                    process_listen_audio(
+                        &input_data,
+                        mode,
+                        sr,
+                        &mut h.borrow_mut(),
+                        &mut s.borrow_mut(),
+                        state_cb.listen_het_frequency.get_untracked(),
+                        state_cb.listen_het_cutoff.get_untracked(),
+                        state_cb.ps_factor.get_untracked(),
+                        state_cb.pv_factor.get_untracked(),
+                        state_cb.zc_factor.get_untracked(),
+                    )
+                })
             });
 
             // Schedule playback via AudioBuffer
@@ -585,6 +661,7 @@ fn cleanup_native_state() {
     });
 
     NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
+    NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
     NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
     crate::canvas::live_waterfall::clear();
 }
@@ -695,6 +772,7 @@ async fn open_web(state: &AppState) -> bool {
     }
 
     WEB_RT_HET.with(|h| h.borrow_mut().reset());
+    WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
 
     let state_cb = *state;
     let handler = Closure::<dyn FnMut(web_sys::AudioProcessingEvent)>::new(move |ev: web_sys::AudioProcessingEvent| {
@@ -716,17 +794,20 @@ async fn open_web(state: &AppState) -> bool {
             let sr = state_cb.mic_sample_rate.get_untracked();
             let mode = state_cb.listen_mode.get_untracked();
             let out_data = WEB_RT_HET.with(|h| {
-                process_listen_audio(
-                    &input_data,
-                    mode,
-                    sr,
-                    &mut h.borrow_mut(),
-                    state_cb.listen_het_frequency.get_untracked(),
-                    state_cb.listen_het_cutoff.get_untracked(),
-                    state_cb.ps_factor.get_untracked(),
-                    state_cb.pv_factor.get_untracked(),
-                    state_cb.zc_factor.get_untracked(),
-                )
+                WEB_LISTEN_STATE.with(|s| {
+                    process_listen_audio(
+                        &input_data,
+                        mode,
+                        sr,
+                        &mut h.borrow_mut(),
+                        &mut s.borrow_mut(),
+                        state_cb.listen_het_frequency.get_untracked(),
+                        state_cb.listen_het_cutoff.get_untracked(),
+                        state_cb.ps_factor.get_untracked(),
+                        state_cb.pv_factor.get_untracked(),
+                        state_cb.zc_factor.get_untracked(),
+                    )
+                })
             });
             let _ = output_buffer.copy_to_channel(&out_data, 0);
         } else {
@@ -786,6 +867,7 @@ fn close_web(state: &AppState) {
 
     MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
     WEB_RT_HET.with(|h| h.borrow_mut().reset());
+    WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
     crate::canvas::live_waterfall::clear();
 
     state.mic_samples_recorded.set(0);
@@ -1095,6 +1177,7 @@ async fn open_usb(state: &AppState) -> bool {
             }
         });
         NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
+        NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
         NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
     });
     tauri_listen_usb_error("usb-stream-error", error_handler);
