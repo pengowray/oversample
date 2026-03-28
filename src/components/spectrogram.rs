@@ -226,21 +226,36 @@ pub fn Spectrogram() -> impl IntoView {
         } else {
             idx
         };
-        let time_res = primary_file_idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.spectrogram.time_resolution)
-            .unwrap_or(1.0);
+        // Check for active waterfall early — when active, use waterfall
+        // parameters so listening/recording works identically with or without
+        // a file open.
+        let is_recording = state.mic_recording.get_untracked();
+        let is_listening = state.mic_listening.get_untracked();
+        let waterfall_active = (is_recording || is_listening) && crate::canvas::live_waterfall::is_active();
+
+        let (time_res, original_max_freq) = if waterfall_active {
+            (crate::canvas::live_waterfall::time_resolution(),
+             crate::canvas::live_waterfall::max_freq())
+        } else {
+            let tr = primary_file_idx
+                .and_then(|i| files.get(i))
+                .map(|f| f.spectrogram.time_resolution)
+                .unwrap_or(1.0);
+            let mf = primary_file_idx
+                .and_then(|i| files.get(i))
+                .map(|f| f.spectrogram.max_freq)
+                .unwrap_or(96_000.0);
+            (tr, mf)
+        };
         let scroll_col = scroll / time_res;
-        let original_max_freq = primary_file_idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.spectrogram.max_freq)
-            .unwrap_or(96_000.0);
         let decim_effective = state.display_decimate_effective.get_untracked();
         let original_sample_rate = primary_file_idx
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.sample_rate)
             .unwrap_or(192_000);
-        let file_max_freq = if decim_effective > 0 && decim_effective < original_sample_rate {
+        let file_max_freq = if waterfall_active {
+            original_max_freq
+        } else if decim_effective > 0 && decim_effective < original_sample_rate {
             let effective_rate = crate::dsp::filters::decimated_rate(original_sample_rate, decim_effective);
             effective_rate as f64 / 2.0
         } else {
@@ -272,7 +287,9 @@ pub fn Spectrogram() -> impl IntoView {
         };
 
         // Timeline or single-file duration and rendering setup
-        let duration = if let Some(ref tl) = timeline {
+        let duration = if waterfall_active {
+            crate::canvas::live_waterfall::total_columns() as f64 * time_res
+        } else if let Some(ref tl) = timeline {
             tl.total_duration_secs
         } else {
             idx.and_then(|i| files.get(i)).map(|f| f.audio.duration_secs).unwrap_or(0.0)
@@ -319,12 +336,8 @@ pub fn Spectrogram() -> impl IntoView {
 
         // ── Live waterfall rendering (recording / listening) ──
         // When the waterfall is active, render directly from it and skip the
-        // tile-based pipeline entirely. This gives immediate column-by-column
-        // display without any tile cache or LOD complexity.
-        let is_recording = state.mic_recording.get_untracked();
-        let is_listening = state.mic_listening.get_untracked();
+        // tile-based pipeline entirely.
         let live_data_cols = state.mic_live_data_cols.get_untracked();
-        let waterfall_active = (is_recording || is_listening) && crate::canvas::live_waterfall::is_active();
 
         let base_drawn = if waterfall_active {
             // Use waterfall's own time_res and max_freq for correct viewport mapping

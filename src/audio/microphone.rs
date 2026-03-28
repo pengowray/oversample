@@ -381,6 +381,11 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     backend.clear_buffer();
     state.mic_listening.set(true);
     let sr = state.mic_sample_rate.get_untracked();
+    // Set zoom for comfortable waterfall viewing (same formula as recording)
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let live_time_res = 64.0 / sr as f64;
+    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.scroll_offset.set(0.0);
     spawn_live_processing_loop(*state, 0, sr);
     spawn_smooth_scroll_animation(*state);
 }

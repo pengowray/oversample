@@ -25,7 +25,16 @@ pub fn pointer_to_xtf(
 
     let files = state.files.get_untracked();
     let timeline = state.active_timeline.get_untracked();
-    let (time_res, file_max_freq) = if let Some(ref tl) = timeline {
+
+    // When the waterfall is active, use its parameters so interactions work
+    // even without a file loaded (listening/recording mode).
+    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let waterfall_active = is_mic_active && crate::canvas::live_waterfall::is_active();
+
+    let (time_res, file_max_freq) = if waterfall_active {
+        (crate::canvas::live_waterfall::time_resolution(),
+         crate::canvas::live_waterfall::max_freq())
+    } else if let Some(ref tl) = timeline {
         let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index))?;
         (primary_file.spectrogram.time_resolution, primary_file.spectrogram.max_freq)
     } else {

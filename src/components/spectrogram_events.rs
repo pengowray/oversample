@@ -190,10 +190,17 @@ pub fn resolve_freq_at_pointer(
     let canvas_el = canvas_ref.get()?;
     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
     let ch = canvas.height() as f64;
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let file = idx.and_then(|i| files.get(i));
-    let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let wf_active = is_mic_active && crate::canvas::live_waterfall::is_active();
+    let file_max_freq = if wf_active {
+        crate::canvas::live_waterfall::max_freq()
+    } else {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        idx.and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .unwrap_or(96_000.0)
+    };
     let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
     let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
     let freq = spectrogram_renderer::y_to_freq(px_y, min_freq_val, max_freq_val, ch);
@@ -203,12 +210,16 @@ pub fn resolve_freq_at_pointer(
 /// Select all frequencies: set FF range to 0..Nyquist and enable HFR.
 /// Used by double-click / double-tap on the y-axis.
 pub fn select_all_frequencies(state: AppState) {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
-    let file_max_freq = idx
-        .and_then(|i| files.get(i))
-        .map(|f| f.spectrogram.max_freq)
-        .unwrap_or(96_000.0);
+    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let file_max_freq = if is_mic_active && crate::canvas::live_waterfall::is_active() {
+        crate::canvas::live_waterfall::max_freq()
+    } else {
+        let files = state.files.get_untracked();
+        let idx = state.current_file_index.get_untracked();
+        idx.and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .unwrap_or(96_000.0)
+    };
     state.set_ff_range(0.0, file_max_freq);
     let stack = state.focus_stack.get_untracked();
     if !stack.hfr_enabled() {
@@ -1600,14 +1611,23 @@ pub fn on_wheel(
     state: AppState,
 ) {
     ev.prevent_default();
+
+    // Resolve file_max_freq / time_res: prefer waterfall params when active,
+    // so scroll/zoom work during listening/recording without a file.
+    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let wf_active = is_mic_active && crate::canvas::live_waterfall::is_active();
+
     if ev.shift_key() {
         // Shift+scroll: vertical freq zoom around mouse position
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
-        let file_max_freq = idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.spectrogram.max_freq)
-            .unwrap_or(96_000.0);
+        let file_max_freq = if wf_active {
+            crate::canvas::live_waterfall::max_freq()
+        } else {
+            let files = state.files.get_untracked();
+            let idx = state.current_file_index.get_untracked();
+            idx.and_then(|i| files.get(i))
+                .map(|f| f.spectrogram.max_freq)
+                .unwrap_or(96_000.0)
+        };
         let cur_max = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
         let cur_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
         let range = cur_max - cur_min;
@@ -1637,7 +1657,11 @@ pub fn on_wheel(
         let raw_delta = ev.delta_y() + ev.delta_x();
         let files = state.files.get_untracked();
         let timeline = state.active_timeline.get_untracked();
-        let (time_res, duration) = if let Some(ref tl) = timeline {
+        let (time_res, duration) = if wf_active {
+            let tr = crate::canvas::live_waterfall::time_resolution();
+            let dur = crate::canvas::live_waterfall::total_columns() as f64 * tr;
+            (tr, dur)
+        } else if let Some(ref tl) = timeline {
             let tr = tl.segments.first().and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
             (tr, tl.total_duration_secs)
