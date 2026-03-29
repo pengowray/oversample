@@ -268,28 +268,28 @@ pub fn Toolbar() -> impl IntoView {
             {if is_mobile {
                 Some(view! {
                     <button
-                        class="toolbar-menu-btn"
+                        class="toolbar-info-btn-mobile"
                         on:click=move |ev: web_sys::MouseEvent| {
                             ev.stop_propagation();
                             state.sidebar_collapsed.update(|c| *c = !*c);
                         }
                         title="Menu"
-                    >"\u{2630}"</button>
+                    >"\u{24D8}"</button>
                 })
             } else {
                 None
             }}
-            <span
-                class="toolbar-brand"
-                style=move || if !is_mobile && state.sidebar_collapsed.get() { "margin-left: 24px; cursor: pointer" } else { "cursor: pointer" }
-                on:click=move |_| show_about.set(true)
-                title="About"
-            ><b>"Oversample"</b></span>
-
-            // Center: status indicators + file name (row 1) + badges (row 2)
+            // Center: brand + filename + undo/redo (row 1) + badges (row 2)
             <div class="toolbar-title-center">
-                // Row 1: status icons + filename (with unsaved asterisk)
+                // Row 1: brand + status icons + filename + undo/redo
                 <div class="toolbar-title-row">
+                    <span
+                        class="toolbar-brand"
+                        style=move || if !is_mobile && state.sidebar_collapsed.get() { "margin-left: 24px; cursor: pointer" } else { "cursor: pointer" }
+                        on:click=move |_| show_about.set(true)
+                        title="About"
+                    ><b>"Oversample"</b></span>
+
                     <span class="toolbar-status-icons">
                         {move || state.mic_recording.get().then(|| view! {
                             <span class="toolbar-rec-dot"></span>
@@ -326,6 +326,21 @@ pub fn Toolbar() -> impl IntoView {
                         })}
                         {move || center_text.get()}
                     </span>
+
+                    <div class="toolbar-undo-redo">
+                        <button
+                            class="toolbar-undo-btn"
+                            title="Undo (Ctrl+Z)"
+                            on:click=move |_| state.undo_annotations()
+                            disabled=move || !state.can_undo()
+                        >{"\u{21B6}"}</button>
+                        <button
+                            class="toolbar-undo-btn"
+                            title="Redo (Ctrl+Shift+Z)"
+                            on:click=move |_| state.redo_annotations()
+                            disabled=move || !state.can_redo()
+                        >{"\u{21B7}"}</button>
+                    </div>
                 </div>
 
                 // Row 2: badge row (replaces old info-row)
@@ -381,15 +396,15 @@ pub fn Toolbar() -> impl IntoView {
                                 }
                             })}
 
-                            // CC badge or info button
-                            {if let Some(cc_label) = cc {
+                            // CC badge (info badge removed — mobile uses dedicated button)
+                            {cc.map(|cc_label| {
                                 let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
                                 let tooltip = if let Some(attr_text) = attr {
                                     format!("Creative Commons {} \u{2014} {}", short_label, attr_text)
                                 } else {
                                     format!("Creative Commons {}", short_label)
                                 };
-                                Some(leptos::either::Either::Left(view! {
+                                view! {
                                     <button
                                         class="toolbar-cc-badge"
                                         title=tooltip
@@ -402,22 +417,8 @@ pub fn Toolbar() -> impl IntoView {
                                         <span class="toolbar-cc-icon"></span>
                                         <span class="toolbar-cc-label">{short_label}</span>
                                     </button>
-                                }))
-                            } else {
-                                Some(leptos::either::Either::Right(view! {
-                                    <button
-                                        class="toolbar-info-btn"
-                                        title="File info"
-                                        on:click=move |e: web_sys::MouseEvent| {
-                                            e.stop_propagation();
-                                            state.right_sidebar_tab.set(RightSidebarTab::Metadata);
-                                            state.right_sidebar_collapsed.set(false);
-                                        }
-                                    >
-                                        {"\u{24D8}"}
-                                    </button>
-                                }))
-                            }}
+                                }
+                            })}
                         })
                     }}
 
@@ -475,22 +476,6 @@ pub fn Toolbar() -> impl IntoView {
                         }
                     })}
                 </div>
-            </div>
-
-            // Undo/Redo buttons
-            <div class="toolbar-undo-redo">
-                <button
-                    class="toolbar-undo-btn"
-                    title="Undo (Ctrl+Z)"
-                    on:click=move |_| state.undo_annotations()
-                    disabled=move || !state.can_undo()
-                >{"\u{21B6}"}</button>
-                <button
-                    class="toolbar-undo-btn"
-                    title="Redo (Ctrl+Shift+Z)"
-                    on:click=move |_| state.redo_annotations()
-                    disabled=move || !state.can_redo()
-                >{"\u{21B7}"}</button>
             </div>
 
             // Right sidebar button (mobile only)

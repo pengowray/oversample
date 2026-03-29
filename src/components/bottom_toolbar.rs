@@ -166,6 +166,8 @@ pub fn BottomToolbar() -> impl IntoView {
             "layer-btn combo-btn-left rec-btn mic-recording"
         } else if state.record_mode.get() == RecordMode::ListenOnly || state.mic_strategy.get() == MicStrategy::None {
             "layer-btn combo-btn-left rec-btn disabled"
+        } else if state.mic_strategy.get() == MicStrategy::Ask && state.mic_backend.get().is_none() {
+            "layer-btn combo-btn-left rec-btn mic-ask"
         } else {
             "layer-btn combo-btn-left rec-btn"
         }
@@ -182,9 +184,9 @@ pub fn BottomToolbar() -> impl IntoView {
             let secs = (now - start) / 1000.0;
             format!("Rec {}", crate::format_time::format_duration_compact(secs))
         } else if state.mic_strategy.get() == MicStrategy::Ask && state.mic_backend.get().is_none() {
-            "\u{25CF}?".to_string() // ●? — pressing record will prompt for mic selection
+            "?".to_string() // ? — pressing record will prompt for mic selection
         } else {
-            "\u{25CF}".to_string() // ●
+            String::new() // CSS ::before renders the red dot
         }
     });
     let rec_right_value = Signal::derive(move || {

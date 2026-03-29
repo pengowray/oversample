@@ -89,7 +89,7 @@ pub fn ComboButton(
 
     view! {
         <div
-            class="combo-btn-row"
+            class=move || if is_open.get() { "combo-btn-row open" } else { "combo-btn-row" }
             style=move || format!(
                 "pointer-events: {};",
                 if state.mouse_in_label_area.get() { "none" } else { "auto" }
