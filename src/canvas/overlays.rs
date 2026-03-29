@@ -57,48 +57,52 @@ fn draw_bend_shield(
     bands: [[u8; 3]; 3],
     alpha: f64,
 ) {
-    // Bend occupies the middle ~30% of the diagonal
-    let bend_frac = 0.30;
-    let t0 = 0.5 - bend_frac / 2.0; // ~0.35
-    let t1 = 0.5 + bend_frac / 2.0; // ~0.65
+    // Two parallel diagonal lines divide the rectangle into 3 regions.
+    // `diag_slope` controls the diagonal tilt (how far the midline deviates
+    // from horizontal at each edge); `band_frac` controls the middle band's
+    // vertical thickness. These MUST be independent — if they're equal the
+    // two boundary lines collapse into one and the bend vanishes.
+    let band_frac = 0.28_f64; // middle band vertical thickness (fraction of h)
+    let diag_slope = 0.15_f64; // diagonal midline half-range (fraction of h)
 
-    // Helper: for a fraction t (0..1), the diagonal line goes from
-    // (x, y_top + t*h) to (x + w, y_top + (t - w/h)*h) approximately.
-    // We use the "bend sinister" direction: top-right to bottom-left.
-    // Points along the top edge at fraction t: (x + t*w, y_top)
-    // Points along the bottom edge at fraction t: (x + t*w, y_top + h)
-    // Actually for a per-bend (top-left to bottom-right diagonal):
-    // The band runs parallel to the main diagonal.
+    let half = band_frac / 2.0;
+
+    // Upper boundary of bend (separates region 1 from region 2)
+    let u_l = 0.5 + diag_slope - half; // left edge y-fraction
+    let u_r = 0.5 - diag_slope - half; // right edge y-fraction
+
+    // Lower boundary of bend (separates region 2 from region 3)
+    let l_l = 0.5 + diag_slope + half; // left edge y-fraction
+    let l_r = 0.5 - diag_slope + half; // right edge y-fraction
 
     let fmt = |c: [u8; 3]| format!("rgba({},{},{},{:.2})", c[0], c[1], c[2], alpha);
     let fim_color = format!("rgba(0,0,0,{:.2})", alpha * 0.5);
     let fim_w = 1.0_f64; // fimbriation width
 
-    // Region 1 (top-left triangle): above the bend
-    // Polygon: top-left, top-right, point on right edge at t0*h, point on left edge at t0*h offset
+    // Region 1 (top-left): above the upper diagonal
     ctx.begin_path();
     ctx.move_to(x, y_top);
     ctx.line_to(x + w, y_top);
-    ctx.line_to(x + w, y_top + t0 * h);
-    ctx.line_to(x, y_top + t1 * h);
+    ctx.line_to(x + w, y_top + u_r * h);
+    ctx.line_to(x, y_top + u_l * h);
     ctx.close_path();
     ctx.set_fill_style_str(&fmt(bands[0]));
     ctx.fill();
 
     // Region 2 (bend / diagonal band): the middle stripe
     ctx.begin_path();
-    ctx.move_to(x, y_top + t1 * h);
-    ctx.line_to(x + w, y_top + t0 * h);
-    ctx.line_to(x + w, y_top + (1.0 - t1) * h);
-    ctx.line_to(x, y_top + (1.0 - t0) * h);
+    ctx.move_to(x, y_top + u_l * h);
+    ctx.line_to(x + w, y_top + u_r * h);
+    ctx.line_to(x + w, y_top + l_r * h);
+    ctx.line_to(x, y_top + l_l * h);
     ctx.close_path();
     ctx.set_fill_style_str(&fmt(bands[1]));
     ctx.fill();
 
-    // Region 3 (bottom-right triangle): below the bend
+    // Region 3 (bottom-right): below the lower diagonal
     ctx.begin_path();
-    ctx.move_to(x, y_top + (1.0 - t0) * h);
-    ctx.line_to(x + w, y_top + (1.0 - t1) * h);
+    ctx.move_to(x, y_top + l_l * h);
+    ctx.line_to(x + w, y_top + l_r * h);
     ctx.line_to(x + w, y_top + h);
     ctx.line_to(x, y_top + h);
     ctx.close_path();
@@ -110,14 +114,14 @@ fn draw_bend_shield(
     ctx.set_line_width(fim_w);
     if colors_similar(bands[0], bands[1]) {
         ctx.begin_path();
-        ctx.move_to(x, y_top + t1 * h);
-        ctx.line_to(x + w, y_top + t0 * h);
+        ctx.move_to(x, y_top + u_l * h);
+        ctx.line_to(x + w, y_top + u_r * h);
         ctx.stroke();
     }
     if colors_similar(bands[1], bands[2]) {
         ctx.begin_path();
-        ctx.move_to(x, y_top + (1.0 - t0) * h);
-        ctx.line_to(x + w, y_top + (1.0 - t1) * h);
+        ctx.move_to(x, y_top + l_l * h);
+        ctx.line_to(x + w, y_top + l_r * h);
         ctx.stroke();
     }
 }
