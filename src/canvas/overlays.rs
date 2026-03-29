@@ -37,6 +37,91 @@ pub struct FreqMarkerState {
     pub ff_handles_active: bool,
 }
 
+/// Returns true if two RGB colors are perceptually similar enough to need fimbriation.
+fn colors_similar(a: [u8; 3], b: [u8; 3]) -> bool {
+    let dr = (a[0] as i32 - b[0] as i32).abs();
+    let dg = (a[1] as i32 - b[1] as i32).abs();
+    let db = (a[2] as i32 - b[2] as i32).abs();
+    // Weighted distance (human eye is more sensitive to green)
+    let dist_sq = 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+    dist_sq < 12000
+}
+
+/// Draw a "bend" heraldic shield for 3-color resistor bands.
+/// The rectangle is divided diagonally: 1st color top-left, 2nd color as a diagonal
+/// bend across the middle, 3rd color bottom-right. A thin fimbriation line is drawn
+/// between adjacent bands when their colors are too similar.
+fn draw_bend_shield(
+    ctx: &CanvasRenderingContext2d,
+    x: f64, y_top: f64, w: f64, h: f64,
+    bands: [[u8; 3]; 3],
+    alpha: f64,
+) {
+    // Bend occupies the middle ~30% of the diagonal
+    let bend_frac = 0.30;
+    let t0 = 0.5 - bend_frac / 2.0; // ~0.35
+    let t1 = 0.5 + bend_frac / 2.0; // ~0.65
+
+    // Helper: for a fraction t (0..1), the diagonal line goes from
+    // (x, y_top + t*h) to (x + w, y_top + (t - w/h)*h) approximately.
+    // We use the "bend sinister" direction: top-right to bottom-left.
+    // Points along the top edge at fraction t: (x + t*w, y_top)
+    // Points along the bottom edge at fraction t: (x + t*w, y_top + h)
+    // Actually for a per-bend (top-left to bottom-right diagonal):
+    // The band runs parallel to the main diagonal.
+
+    let fmt = |c: [u8; 3]| format!("rgba({},{},{},{:.2})", c[0], c[1], c[2], alpha);
+    let fim_color = format!("rgba(0,0,0,{:.2})", alpha * 0.5);
+    let fim_w = 1.0_f64; // fimbriation width
+
+    // Region 1 (top-left triangle): above the bend
+    // Polygon: top-left, top-right, point on right edge at t0*h, point on left edge at t0*h offset
+    ctx.begin_path();
+    ctx.move_to(x, y_top);
+    ctx.line_to(x + w, y_top);
+    ctx.line_to(x + w, y_top + t0 * h);
+    ctx.line_to(x, y_top + t1 * h);
+    ctx.close_path();
+    ctx.set_fill_style_str(&fmt(bands[0]));
+    ctx.fill();
+
+    // Region 2 (bend / diagonal band): the middle stripe
+    ctx.begin_path();
+    ctx.move_to(x, y_top + t1 * h);
+    ctx.line_to(x + w, y_top + t0 * h);
+    ctx.line_to(x + w, y_top + (1.0 - t1) * h);
+    ctx.line_to(x, y_top + (1.0 - t0) * h);
+    ctx.close_path();
+    ctx.set_fill_style_str(&fmt(bands[1]));
+    ctx.fill();
+
+    // Region 3 (bottom-right triangle): below the bend
+    ctx.begin_path();
+    ctx.move_to(x, y_top + (1.0 - t0) * h);
+    ctx.line_to(x + w, y_top + (1.0 - t1) * h);
+    ctx.line_to(x + w, y_top + h);
+    ctx.line_to(x, y_top + h);
+    ctx.close_path();
+    ctx.set_fill_style_str(&fmt(bands[2]));
+    ctx.fill();
+
+    // Fimbriation: thin dark lines between similar adjacent colors
+    ctx.set_stroke_style_str(&fim_color);
+    ctx.set_line_width(fim_w);
+    if colors_similar(bands[0], bands[1]) {
+        ctx.begin_path();
+        ctx.move_to(x, y_top + t1 * h);
+        ctx.line_to(x + w, y_top + t0 * h);
+        ctx.stroke();
+    }
+    if colors_similar(bands[1], bands[2]) {
+        ctx.begin_path();
+        ctx.move_to(x, y_top + (1.0 - t0) * h);
+        ctx.line_to(x + w, y_top + (1.0 - t1) * h);
+        ctx.stroke();
+    }
+}
+
 /// Draw horizontal frequency marker lines with subtle, interactive UI.
 /// Labels are white; colored range bars indicate the resistor-band color.
 pub fn draw_freq_markers(
@@ -51,7 +136,7 @@ pub fn draw_freq_markers(
     labels_on_right: bool,
 ) {
     let cutoff = het_cutoff;
-    let color_bar_w = 6.0;
+    let color_bar_w = 10.0;
     let (color_bar_x, label_x, tick_len, right_tick_len) = if labels_on_right {
         (canvas_width - color_bar_w, canvas_width - color_bar_w - 3.0, 15.0, 22.0)
     } else {
@@ -115,11 +200,7 @@ pub fn draw_freq_markers(
             let bar_y_top = freq_to_y(bar_top_freq, min_freq, max_freq, canvas_height);
             let bar_y_bot = freq_to_y(freq, min_freq, max_freq, canvas_height);
             let bands = freq_resistor_bands(freq);
-            let band_w = color_bar_w / 3.0;
-            for (i, band_color) in bands.iter().enumerate() {
-                ctx.set_fill_style_str(&format!("rgba({},{},{},{:.2})", band_color[0], band_color[1], band_color[2], bar_alpha));
-                ctx.fill_rect(color_bar_x + i as f64 * band_w, bar_y_top, band_w, bar_y_bot - bar_y_top);
-            }
+            draw_bend_shield(ctx, color_bar_x, bar_y_top, color_bar_w, bar_y_bot - bar_y_top, bands, bar_alpha);
         }
 
         // --- White text label (drawn ABOVE the division line) ---
@@ -290,11 +371,7 @@ pub fn draw_freq_markers(
                 let by_top = freq_to_y(bar_top_freq_m, min_freq, max_freq, canvas_height);
                 let by_bot = freq_to_y(mf, min_freq, max_freq, canvas_height);
                 let bands = freq_resistor_bands(mf);
-                let band_w = color_bar_w / 3.0;
-                for (i, band_color) in bands.iter().enumerate() {
-                    ctx.set_fill_style_str(&format!("rgba({},{},{},{:.2})", band_color[0], band_color[1], band_color[2], bar_alpha_m));
-                    ctx.fill_rect(color_bar_x + i as f64 * band_w, by_top, band_w, by_bot - by_top);
-                }
+                draw_bend_shield(ctx, color_bar_x, by_top, color_bar_w, by_bot - by_top, bands, bar_alpha_m);
             }
 
             // Small label (only when hovering label area)

@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen_futures::JsFuture;
 use crate::state::{AppState, MicBackend, MicAcquisitionState, MicPendingAction, MicDeviceInfo, MicStrategy};
 use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
 
@@ -21,13 +23,29 @@ struct UsbDevice {
     has_permission: bool,
 }
 
+#[derive(Clone, Debug)]
+struct BrowserDevice {
+    device_id: String,
+    label: String,
+    is_default: bool,
+}
+
 #[component]
 pub fn MicChooserModal() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let cpal_devices: RwSignal<Vec<CpalDevice>> = RwSignal::new(Vec::new());
     let usb_devices: RwSignal<Vec<UsbDevice>> = RwSignal::new(Vec::new());
+    let browser_devices: RwSignal<Vec<BrowserDevice>> = RwSignal::new(Vec::new());
+    let browser_needs_permission = RwSignal::new(false);
     let loading = RwSignal::new(true);
+
+    // Enumerate browser audio input devices (non-Tauri only)
+    if !state.is_tauri {
+        spawn_local(async move {
+            enumerate_browser_devices(browser_devices, browser_needs_permission).await;
+        });
+    }
 
     // Fetch devices on mount
     spawn_local(async move {
@@ -309,13 +327,93 @@ pub fn MicChooserModal() -> impl IntoView {
                     // Browser section (hidden on Tauri)
                     {move || {
                         if state.is_tauri { return None; }
+                        let devs = browser_devices.get();
+                        let needs_perm = browser_needs_permission.get();
                         Some(view! {
-                            <div class="mic-chooser-group-title" style="margin-top: 8px;">"Browser"</div>
+                            <div class="mic-chooser-group-title" style="margin-top: 8px;">"Browser Audio Devices"</div>
+
+                            // Permission request button (shown when devices have no labels)
+                            {needs_perm.then(|| view! {
+                                <div
+                                    class="mic-chooser-device"
+                                    style="cursor: pointer; text-align: center;"
+                                    on:click=move |_| {
+                                        spawn_local(async move {
+                                            request_browser_permission(browser_devices, browser_needs_permission).await;
+                                        });
+                                    }
+                                >
+                                    <div class="mic-chooser-device-name" style="color: #4af;">"Grant microphone access to see devices"</div>
+                                    <div class="mic-chooser-device-caps">"Browser will prompt for permission"</div>
+                                </div>
+                            })}
+
+                            // Enumerated browser devices
+                            {devs.into_iter().map(|dev| {
+                                let dev_id = dev.device_id.clone();
+                                let dev_id_for_class = dev.device_id.clone();
+                                let dev_id_for_badge = dev.device_id.clone();
+                                let label = dev.label.clone();
+                                let is_default = dev.is_default;
+                                view! {
+                                    <div
+                                        class=move || {
+                                            let sel = state.mic_selected_device.get() == Some(dev_id_for_class.clone())
+                                                && state.mic_backend.get() == Some(MicBackend::Browser);
+                                            if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
+                                        }
+                                        on:click=move |_| {
+                                            let id = dev_id.clone();
+                                            let lbl = label.clone();
+                                            state.mic_backend.set(Some(MicBackend::Browser));
+                                            state.mic_strategy.set(MicStrategy::Selected);
+                                            state.mic_selected_device.set(Some(id));
+                                            state.mic_device_info.set(Some(MicDeviceInfo {
+                                                name: lbl,
+                                                connection_type: "Browser".to_string(),
+                                                supported_rates: vec![44100, 48000, 96000],
+                                                supported_bit_depths: vec![32],
+                                                max_channels: 1,
+                                            }));
+                                            state.show_mic_chooser.set(false);
+                                            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                            crate::audio::microphone::stop_all(&state);
+                                            let pending = state.mic_pending_action.get_untracked();
+                                            state.mic_pending_action.set(None);
+                                            if let Some(action) = pending {
+                                                spawn_local(async move {
+                                                    match action {
+                                                        MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
+                                                        MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    >
+                                        <div class="mic-chooser-device-name">
+                                            {label.clone()}
+                                            {is_default.then(|| view! {
+                                                <span class="mic-chooser-device-badge">"default"</span>
+                                            })}
+                                            {move || {
+                                                let sel = state.mic_selected_device.get() == Some(dev_id_for_badge.clone())
+                                                    && state.mic_backend.get() == Some(MicBackend::Browser);
+                                                sel.then(|| view! {
+                                                    <span class="mic-chooser-device-badge sel">"selected"</span>
+                                                })
+                                            }}
+                                        </div>
+                                        <div class="mic-chooser-device-caps">"Web Audio API"</div>
+                                    </div>
+                                }
+                            }).collect::<Vec<_>>()}
+
+                            // Fallback: "Browser default" option (always shown)
                             <div
-                                class=move || if state.mic_backend.get() == Some(MicBackend::Browser) {
-                                    "mic-chooser-device selected"
-                                } else {
-                                    "mic-chooser-device"
+                                class=move || {
+                                    let sel = state.mic_selected_device.get().is_none()
+                                        && state.mic_backend.get() == Some(MicBackend::Browser);
+                                    if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                 }
                                 on:click=move |_| {
                                     state.mic_backend.set(Some(MicBackend::Browser));
@@ -331,7 +429,6 @@ pub fn MicChooserModal() -> impl IntoView {
                                     state.show_mic_chooser.set(false);
                                     state.mic_acquisition_state.set(MicAcquisitionState::Idle);
                                     crate::audio::microphone::stop_all(&state);
-                                    // Re-trigger pending action if any
                                     let pending = state.mic_pending_action.get_untracked();
                                     state.mic_pending_action.set(None);
                                     if let Some(action) = pending {
@@ -345,18 +442,23 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                             >
                                 <div class="mic-chooser-device-name">
-                                    "Browser microphone"
-                                    {move || (state.mic_backend.get() == Some(MicBackend::Browser)).then(|| view! {
-                                        <span class="mic-chooser-device-badge sel">"selected"</span>
-                                    })}
+                                    "Browser default"
+                                    {move || {
+                                        let sel = state.mic_selected_device.get().is_none()
+                                            && state.mic_backend.get() == Some(MicBackend::Browser);
+                                        sel.then(|| view! {
+                                            <span class="mic-chooser-device-badge sel">"selected"</span>
+                                        })
+                                    }}
                                 </div>
-                                <div class="mic-chooser-device-caps">"Web Audio API (max ~96 kHz)"</div>
+                                <div class="mic-chooser-device-caps">"Let browser choose (Web Audio API)"</div>
                             </div>
                         })
                     }}
 
-                    // "Use Default" option
+                    // "Use Default" option (Tauri only — cpal not available in browser)
                     {move || {
+                        if !state.is_tauri { return None; }
                         Some(view! {
                             <div class="mic-chooser-group-title" style="margin-top: 8px;"></div>
                             <div
@@ -398,4 +500,103 @@ pub fn MicChooserModal() -> impl IntoView {
             </div>
         </div>
     }
+}
+
+/// Enumerate browser audio input devices via `navigator.mediaDevices.enumerateDevices()`.
+/// If labels are empty (permission not yet granted), sets `needs_permission` to true.
+async fn enumerate_browser_devices(
+    devices_signal: RwSignal<Vec<BrowserDevice>>,
+    needs_permission: RwSignal<bool>,
+) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return,
+    };
+    let media_devices = match window.navigator().media_devices() {
+        Ok(md) => md,
+        Err(_) => return,
+    };
+    let promise = match media_devices.enumerate_devices() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let result = match JsFuture::from(promise).await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let arr = js_sys::Array::from(&result);
+    let mut devs = Vec::new();
+    let mut has_empty_label = false;
+    let mut first_audio_input = true;
+
+    for i in 0..arr.length() {
+        let item = arr.get(i);
+        let kind = js_sys::Reflect::get(&item, &"kind".into())
+            .ok().and_then(|v| v.as_string()).unwrap_or_default();
+        if kind != "audioinput" { continue; }
+
+        let device_id = js_sys::Reflect::get(&item, &"deviceId".into())
+            .ok().and_then(|v| v.as_string()).unwrap_or_default();
+        let label = js_sys::Reflect::get(&item, &"label".into())
+            .ok().and_then(|v| v.as_string()).unwrap_or_default();
+
+        if label.is_empty() {
+            has_empty_label = true;
+            continue; // Skip unlabeled devices — we'll show the permission prompt instead
+        }
+
+        // The "default" deviceId or the first audioinput is typically the default
+        let is_default = device_id == "default" || first_audio_input;
+        first_audio_input = false;
+
+        // Skip the synthetic "default" entry if we already have real devices
+        if device_id == "default" { continue; }
+
+        devs.push(BrowserDevice { device_id, label, is_default: is_default && devs.is_empty() });
+    }
+
+    // If we got no labeled devices but there were unlabeled ones, prompt for permission
+    if devs.is_empty() && has_empty_label {
+        needs_permission.set(true);
+    } else {
+        needs_permission.set(false);
+    }
+    devices_signal.set(devs);
+}
+
+/// Request mic permission via a temporary getUserMedia call, then re-enumerate.
+async fn request_browser_permission(
+    devices_signal: RwSignal<Vec<BrowserDevice>>,
+    needs_permission: RwSignal<bool>,
+) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return,
+    };
+    let media_devices = match window.navigator().media_devices() {
+        Ok(md) => md,
+        Err(_) => return,
+    };
+
+    // Request mic access to unlock device labels
+    let constraints = web_sys::MediaStreamConstraints::new();
+    constraints.set_audio(&JsValue::TRUE);
+    let promise = match media_devices.get_user_media_with_constraints(&constraints) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Ok(stream_js) = JsFuture::from(promise).await {
+        // Stop the temporary stream immediately
+        if let Ok(stream) = stream_js.dyn_into::<web_sys::MediaStream>() {
+            for track in stream.get_tracks().iter() {
+                if let Ok(track) = track.dyn_into::<web_sys::MediaStreamTrack>() {
+                    track.stop();
+                }
+            }
+        }
+    }
+
+    // Re-enumerate now that permission is granted
+    enumerate_browser_devices(devices_signal, needs_permission).await;
 }

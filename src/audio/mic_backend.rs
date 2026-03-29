@@ -713,6 +713,14 @@ async fn open_web(state: &AppState) -> bool {
     js_sys::Reflect::set(&audio_opts, &"echoCancellation".into(), &JsValue::FALSE).ok();
     js_sys::Reflect::set(&audio_opts, &"noiseSuppression".into(), &JsValue::FALSE).ok();
     js_sys::Reflect::set(&audio_opts, &"autoGainControl".into(), &JsValue::FALSE).ok();
+    // If a specific browser device was selected, constrain to that deviceId
+    if let Some(device_id) = state.mic_selected_device.get_untracked() {
+        if state.mic_backend.get_untracked() == Some(MicBackend::Browser) && !device_id.is_empty() {
+            let exact = js_sys::Object::new();
+            js_sys::Reflect::set(&exact, &"exact".into(), &JsValue::from_str(&device_id)).ok();
+            js_sys::Reflect::set(&audio_opts, &"deviceId".into(), &exact.into()).ok();
+        }
+    }
     constraints.set_audio(&audio_opts.into());
 
     let promise = match media_devices.get_user_media_with_constraints(&constraints) {
@@ -760,7 +768,10 @@ async fn open_web(state: &AppState) -> bool {
 
     let sample_rate = ctx.sample_rate() as u32;
     state.mic_sample_rate.set(sample_rate);
-    state.mic_device_name.set(Some("Browser microphone".into()));
+    let dev_name = state.mic_device_info.get_untracked()
+        .map(|info| info.name.clone())
+        .unwrap_or_else(|| "Browser microphone".into());
+    state.mic_device_name.set(Some(dev_name));
     state.mic_connection_type.set(None);
     let source = match ctx.create_media_stream_source(&stream) {
         Ok(s) => s,
