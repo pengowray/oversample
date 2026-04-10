@@ -6,10 +6,33 @@
 
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
+use crate::state::{AppState, GpsLocation, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
 use crate::audio::mic_backend::{ActiveBackend, StopResult};
 use crate::audio::live_recording::FinalizeParams;
 use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
+
+// ── GPS location acquisition ────────────────────────────────────────────
+
+/// Request a one-shot GPS fix from the native geolocation plugin.
+/// Returns None if the plugin is unavailable, permission denied, or location times out.
+async fn acquire_gps_location() -> Option<GpsLocation> {
+    let result = tauri_invoke("plugin:geolocation|getCurrentLocation", &JsValue::from(js_sys::Object::new())).await.ok()?;
+    // Check for error response
+    if js_sys::Reflect::get(&result, &JsValue::from_str("error")).ok().and_then(|v| v.as_string()).is_some() {
+        return None;
+    }
+    let latitude = js_sys::Reflect::get(&result, &JsValue::from_str("latitude")).ok()?.as_f64()?;
+    let longitude = js_sys::Reflect::get(&result, &JsValue::from_str("longitude")).ok()?.as_f64()?;
+    let has_altitude = js_sys::Reflect::get(&result, &JsValue::from_str("hasAltitude"))
+        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+    let elevation = if has_altitude {
+        js_sys::Reflect::get(&result, &JsValue::from_str("altitude")).ok().and_then(|v| v.as_f64())
+    } else {
+        None
+    };
+    let accuracy = js_sys::Reflect::get(&result, &JsValue::from_str("accuracy")).ok().and_then(|v| v.as_f64());
+    Some(GpsLocation { latitude, longitude, elevation, accuracy })
+}
 
 // ── Tauri IPC query helpers ─────────────────────────────────────────────
 
@@ -317,6 +340,13 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
 async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     let was_listening = state.mic_listening.get_untracked();
     let has_listen_file = was_listening && state.mic_live_file_idx.get_untracked().is_some();
+
+    // Acquire GPS location if enabled (one-shot, non-blocking)
+    if state.gps_location_enabled.get_untracked() && state.is_tauri && state.is_mobile.get_untracked() {
+        state.recording_location.set(acquire_gps_location().await);
+    } else {
+        state.recording_location.set(None);
+    }
 
     if !has_listen_file {
         // Fresh recording — clear buffer and tiles

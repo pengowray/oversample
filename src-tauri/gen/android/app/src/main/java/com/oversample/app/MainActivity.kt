@@ -9,6 +9,7 @@ private const val TAG = "MainActivity"
 class MainActivity : TauriActivity() {
   private var usbAudioPlugin: UsbAudioPlugin? = null
   private var mediaStorePlugin: MediaStorePlugin? = null
+  private var geolocationPlugin: GeolocationPlugin? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -20,6 +21,10 @@ class MainActivity : TauriActivity() {
     val msPlugin = MediaStorePlugin(this)
     mediaStorePlugin = msPlugin
     pluginManager.load(null, "media-store", msPlugin, "{}")
+
+    val geoPlugin = GeolocationPlugin(this)
+    geolocationPlugin = geoPlugin
+    pluginManager.load(null, "geolocation", geoPlugin, "{}")
 
     super.onCreate(savedInstanceState)
     // Note: We do NOT override the WebChromeClient. The generated RustWebChromeClient
@@ -38,6 +43,7 @@ class MainActivity : TauriActivity() {
     // Forward to plugins for permission handling
     usbAudioPlugin?.handlePermissionResult(requestCode, grantResults)
     mediaStorePlugin?.handlePermissionResult(requestCode, grantResults)
+    geolocationPlugin?.handlePermissionResult(requestCode, grantResults)
   }
 
   @Suppress("DEPRECATION")

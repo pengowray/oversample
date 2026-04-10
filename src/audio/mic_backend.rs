@@ -17,6 +17,23 @@ use crate::dsp::zc_divide::zc_divide;
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
 use std::cell::RefCell;
 
+/// Build IPC args for mic_stop_recording / usb_stop_recording,
+/// including optional GPS location fields from state.
+fn build_stop_recording_args(state: &AppState) -> JsValue {
+    let args = js_sys::Object::new();
+    if let Some(loc) = state.recording_location.get_untracked() {
+        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLatitude"), &JsValue::from_f64(loc.latitude));
+        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLongitude"), &JsValue::from_f64(loc.longitude));
+        if let Some(e) = loc.elevation {
+            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locElevation"), &JsValue::from_f64(e));
+        }
+        if let Some(a) = loc.accuracy {
+            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locAccuracy"), &JsValue::from_f64(a));
+        }
+    }
+    args.into()
+}
+
 // ── Thread-local state: Web Audio mode ──────────────────────────────────
 
 thread_local! {
@@ -358,7 +375,8 @@ impl ActiveBackend {
                 }
             }
             ActiveBackend::Cpal => {
-                match tauri_invoke_no_args("mic_stop_recording").await {
+                let args = build_stop_recording_args(state);
+                match tauri_invoke("mic_stop_recording", &args).await {
                     Ok(result) => {
                         match TauriRecordingResult::from_js(&result) {
                             Some(r) => {
@@ -380,7 +398,8 @@ impl ActiveBackend {
                 }
             }
             ActiveBackend::RawUsb => {
-                match tauri_invoke_no_args("usb_stop_recording").await {
+                let args = build_stop_recording_args(state);
+                match tauri_invoke("usb_stop_recording", &args).await {
                     Ok(result) => {
                         match TauriRecordingResult::from_js(&result) {
                             Some(r) => {

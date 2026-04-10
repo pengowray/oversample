@@ -15,6 +15,7 @@
     "media-store:allow-createRecordingEntry",
     "media-store:allow-finalizeRecordingEntry",
     "media-store:allow-cancelRecordingEntry",
-    "media-store:allow-exportFile"
+    "media-store:allow-exportFile",
+    "geolocation:allow-getCurrentLocation"
   ]
 }

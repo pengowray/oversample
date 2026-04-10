@@ -24,6 +24,12 @@ fn main() {
                     "cancelRecordingEntry",
                     "exportFile",
                 ]),
+            )
+            .plugin(
+                "geolocation",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "getCurrentLocation",
+                ]),
             ),
     )
     .expect("failed to run tauri-build");

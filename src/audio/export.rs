@@ -276,7 +276,7 @@ fn build_export_guano(
     if let Some(src) = source_guano {
         for (k, v) in &src.fields {
             match k.as_str() {
-                "Loc Position" | "Loc Elevation" | "Microphone" => {
+                "Loc Position" | "Loc Elevation" | "Loc Accuracy" | "Microphone" => {
                     g.add(k, v);
                 }
                 _ => {}

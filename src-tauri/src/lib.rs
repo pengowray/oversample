@@ -113,6 +113,10 @@ fn mic_start_recording(state: tauri::State<MicMutex>, shared_fd: Option<i32>) ->
 fn mic_stop_recording(
     app: tauri::AppHandle,
     state: tauri::State<MicMutex>,
+    loc_latitude: Option<f64>,
+    loc_longitude: Option<f64>,
+    loc_elevation: Option<f64>,
+    loc_accuracy: Option<f64>,
 ) -> Result<RecordingResult, String> {
     let mic = state.lock().map_err(|e| e.to_string())?;
     let m = mic.as_ref().ok_or("Microphone not open")?;
@@ -143,10 +147,21 @@ fn mic_stop_recording(
 
     drop(buf);
 
+    // Build location struct if coordinates were provided
+    let location = match (loc_latitude, loc_longitude) {
+        (Some(lat), Some(lon)) => Some(recording::RecordingLocation {
+            latitude: lat,
+            longitude: lon,
+            elevation: loc_elevation,
+            accuracy: loc_accuracy,
+        }),
+        _ => None,
+    };
+
     // Append GUANO metadata
     let guano_text = recording::build_recording_guano(
         sample_rate, num_samples, &m.device_name, &filename, &now,
-        bits_per_sample, is_float, Some("Cpal"),
+        bits_per_sample, is_float, Some("Cpal"), location.as_ref(),
     );
     recording::append_guano_chunk(&mut wav_data, &guano_text);
 
@@ -503,6 +518,10 @@ fn usb_start_recording(state: tauri::State<UsbStreamMutex>, shared_fd: Option<i3
 fn usb_stop_recording(
     app: tauri::AppHandle,
     state: tauri::State<UsbStreamMutex>,
+    loc_latitude: Option<f64>,
+    loc_longitude: Option<f64>,
+    loc_elevation: Option<f64>,
+    loc_accuracy: Option<f64>,
 ) -> Result<RecordingResult, String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     let s = usb.as_ref().ok_or("USB stream not open")?;
@@ -529,10 +548,20 @@ fn usb_stop_recording(
     let mut wav_data = usb_audio::encode_usb_wav(s)?;
     let samples_f32 = usb_audio::get_usb_samples_f32(s);
 
+    let location = match (loc_latitude, loc_longitude) {
+        (Some(lat), Some(lon)) => Some(recording::RecordingLocation {
+            latitude: lat,
+            longitude: lon,
+            elevation: loc_elevation,
+            accuracy: loc_accuracy,
+        }),
+        _ => None,
+    };
+
     // Append GUANO metadata
     let guano_text = recording::build_recording_guano(
         sample_rate, num_samples, &s.device_name, &filename, &now,
-        16, false, Some("USB (Raw)"),
+        16, false, Some("USB (Raw)"), location.as_ref(),
     );
     recording::append_guano_chunk(&mut wav_data, &guano_text);
 
@@ -622,6 +651,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri::plugin::Builder::<_, ()>::new("usb-audio").build())
         .plugin(tauri::plugin::Builder::<_, ()>::new("media-store").build())
+        .plugin(tauri::plugin::Builder::<_, ()>::new("geolocation").build())
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))

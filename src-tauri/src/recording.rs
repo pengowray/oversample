@@ -612,6 +612,14 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     Ok(cursor.into_inner())
 }
 
+/// Optional GPS location for GUANO metadata.
+pub struct RecordingLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub elevation: Option<f64>,
+    pub accuracy: Option<f64>,
+}
+
 /// Build GUANO metadata fields for a recording.
 pub fn build_recording_guano(
     sample_rate: u32,
@@ -622,6 +630,7 @@ pub fn build_recording_guano(
     bits_per_sample: u16,
     is_float: bool,
     connection_type: Option<&str>,
+    location: Option<&RecordingLocation>,
 ) -> String {
     let duration_secs = num_samples as f64 / sample_rate as f64;
     let version = env!("CARGO_PKG_VERSION");
@@ -651,6 +660,15 @@ pub fn build_recording_guano(
     if let Some(conn) = connection_type {
         if !conn.is_empty() {
             fields.push(("Oversample|Connection", conn.to_string()));
+        }
+    }
+    if let Some(loc) = location {
+        fields.push(("Loc Position", format!("{} {}", loc.latitude, loc.longitude)));
+        if let Some(elev) = loc.elevation {
+            fields.push(("Loc Elevation", format!("{:.1}", elev)));
+        }
+        if let Some(acc) = loc.accuracy {
+            fields.push(("Loc Accuracy", format!("{:.1}", acc)));
         }
     }
     fields.push(("Note", format!("Recorded with Oversample v{} ({})", version, device_name)));

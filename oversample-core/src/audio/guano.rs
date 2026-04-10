@@ -103,6 +103,12 @@ pub fn parse_guano_chunk(chunk_body: &[u8]) -> Option<GuanoMetadata> {
 #[derive(Default)]
 pub struct RecordingGuanoExtra {
     pub connection_type: Option<String>,
+    /// GPS location: (latitude, longitude) in WGS84 decimal degrees.
+    pub loc_position: Option<(f64, f64)>,
+    /// Elevation in meters above mean sea level.
+    pub loc_elevation: Option<f64>,
+    /// Horizontal accuracy in meters.
+    pub loc_accuracy: Option<f64>,
 }
 
 /// Build GUANO metadata for a recording.
@@ -148,6 +154,15 @@ pub fn build_recording_guano(
         if !conn.is_empty() {
             g.add("Oversample|Connection", conn);
         }
+    }
+    if let Some((lat, lon)) = extra.loc_position {
+        g.add("Loc Position", &format!("{} {}", lat, lon));
+    }
+    if let Some(elev) = extra.loc_elevation {
+        g.add("Loc Elevation", &format!("{:.1}", elev));
+    }
+    if let Some(acc) = extra.loc_accuracy {
+        g.add("Loc Accuracy", &format!("{:.1}", acc));
     }
     let platform = if is_tauri && is_mobile {
         "Android"

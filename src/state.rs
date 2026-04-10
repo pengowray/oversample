@@ -790,6 +790,15 @@ pub struct MicDeviceInfo {
     pub max_channels: u16,
 }
 
+/// GPS location fix for embedding in recording GUANO metadata.
+#[derive(Clone, Debug)]
+pub struct GpsLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub elevation: Option<f64>,
+    pub accuracy: Option<f64>,
+}
+
 // ── Loading progress ─────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1003,6 +1012,10 @@ pub struct AppState {
     pub mic_device_name: RwSignal<Option<String>>,
     /// Connection type: "USB", "Internal", "Bluetooth", etc.
     pub mic_connection_type: RwSignal<Option<String>>,
+    /// Whether GPS location embedding is enabled (privacy toggle, persisted).
+    pub gps_location_enabled: RwSignal<bool>,
+    /// GPS location acquired at recording start (cleared after finalization).
+    pub recording_location: RwSignal<Option<GpsLocation>>,
     /// Whether a USB audio device is currently connected.
     pub mic_usb_connected: RwSignal<bool>,
     /// What Auto mode resolved to (Cpal or RawUsb). Ignored when mode is not Auto.
@@ -1423,6 +1436,14 @@ impl AppState {
             mic_timer_tick: RwSignal::new(0),
             mic_device_name: RwSignal::new(None),
             mic_connection_type: RwSignal::new(None),
+            gps_location_enabled: RwSignal::new({
+                web_sys::window()
+                    .and_then(|w| w.local_storage().ok().flatten())
+                    .and_then(|ls| ls.get_item("oversample_gps_enabled").ok().flatten())
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+            }),
+            recording_location: RwSignal::new(None),
             mic_usb_connected: RwSignal::new(false),
             mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
             mic_recording_target_scroll: RwSignal::new(0.0),

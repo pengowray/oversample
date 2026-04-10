@@ -182,6 +182,37 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                 </div>
             </div>
 
+            {move || {
+                if state.is_mobile.get() {
+                    view! {
+                        <div class="setting-group">
+                            <div class="setting-group-title">"Recording"</div>
+                            <div class="setting-row">
+                                <span class="setting-label">"Embed GPS location"</span>
+                                <input
+                                    type="checkbox"
+                                    class="setting-checkbox"
+                                    prop:checked=move || state.gps_location_enabled.get()
+                                    on:change=move |ev: web_sys::Event| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                        let checked = input.checked();
+                                        state.gps_location_enabled.set(checked);
+                                        if let Some(ls) = web_sys::window()
+                                            .and_then(|w| w.local_storage().ok().flatten())
+                                        {
+                                            let _ = ls.set_item("oversample_gps_enabled", if checked { "true" } else { "false" });
+                                        }
+                                    }
+                                />
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
+
             <div class="setting-group">
                 <div class="setting-group-title">"Beta"</div>
                 <div class="setting-row">
