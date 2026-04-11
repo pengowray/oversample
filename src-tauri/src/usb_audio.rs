@@ -27,6 +27,7 @@ pub struct UsbStreamState {
     pub buffer: Arc<Mutex<UsbRecordingBuffer>>,
     pub sample_rate: u32,
     pub device_name: String,
+    pub uac_version: u32, // 1 or 2, from USB Audio Class descriptor
 }
 
 pub struct UsbRecordingBuffer {
@@ -173,6 +174,7 @@ pub fn start_usb_stream(
     app: tauri::AppHandle,
     interface_number: u32,
     alternate_setting: u32,
+    uac_version: u32,
 ) -> Result<UsbStreamState, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
@@ -241,6 +243,7 @@ pub fn start_usb_stream(
         sample_rate,
         is_streaming,
         device_name,
+        uac_version,
     })
 }
 
@@ -255,6 +258,7 @@ pub fn start_usb_stream(
     _app: tauri::AppHandle,
     _interface_number: u32,
     _alternate_setting: u32,
+    _uac_version: u32,
 ) -> Result<UsbStreamState, String> {
     Err("USB audio streaming is only supported on Android".into())
 }
@@ -465,6 +469,13 @@ mod isochronous {
         let mut mono_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
         let mut startup_signaled = false;
 
+        // EMT2 workaround: retry on poll timeout instead of failing immediately.
+        // Wildlife Acoustics EMT2 can send oversized USB packets that cause the
+        // isochronous transfer to hang. Discarding URBs and resubmitting recovers.
+        // See batgizmo nativeusb.cpp lines 337-367 and UsbService.kt lines 1152-1173.
+        const MAX_TIMEOUT_RETRIES: u32 = 3;
+        let mut timeout_retries: u32 = 0;
+
         // Main juggling loop
         while !cancel.load(Ordering::Relaxed) || balls_in_air > 0 {
             let mut pfd = libc::pollfd {
@@ -478,12 +489,69 @@ mod isochronous {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                discard_urbs(fd, &urbs);
-                let msg = "USB stream poll timeout — device may have disconnected".to_string();
-                if !startup_signaled {
-                    let _ = startup_tx.send(Err(msg.clone()));
+                timeout_retries += 1;
+                if timeout_retries > MAX_TIMEOUT_RETRIES {
+                    discard_urbs(fd, &urbs);
+                    let msg = format!(
+                        "USB stream poll timeout after {} retries — device may have disconnected",
+                        MAX_TIMEOUT_RETRIES
+                    );
+                    if !startup_signaled {
+                        let _ = startup_tx.send(Err(msg.clone()));
+                    }
+                    return Err(msg);
                 }
-                return Err(msg);
+                eprintln!(
+                    "USB poll timeout ({}/{}), discarding URBs and retrying (EMT2-style recovery)...",
+                    timeout_retries, MAX_TIMEOUT_RETRIES
+                );
+                discard_urbs(fd, &urbs);
+                // Resubmit all URBs with fresh packet descriptors
+                balls_in_air = 0;
+                for urb in &mut urbs {
+                    // Reset packet descriptors to requested sizes
+                    for packet in &mut urb.packet_desc {
+                        packet.length = requested_bytes_per_frame as u32;
+                        packet.actual_length = 0;
+                        packet.status = 0;
+                    }
+                    urb.urb.status = 0;
+                    urb.urb.actual_length = 0;
+                    urb.urb.error_count = 0;
+                    let ret = unsafe {
+                        libc::ioctl(
+                            fd,
+                            USBDEVFS_SUBMITURB as libc::c_int,
+                            &urb.urb as *const UsbdevfsUrb,
+                        )
+                    };
+                    if ret == 0 {
+                        balls_in_air += 1;
+                    } else {
+                        let err = std::io::Error::last_os_error();
+                        if err.raw_os_error() == Some(libc::ENODEV) {
+                            let msg = "USB device disconnected during timeout recovery".to_string();
+                            if !startup_signaled {
+                                let _ = startup_tx.send(Err(msg.clone()));
+                            }
+                            return Err(msg);
+                        }
+                        eprintln!("USBDEVFS_SUBMITURB resubmit during retry error: {}", err);
+                    }
+                }
+                if balls_in_air == 0 {
+                    let msg = "Failed to resubmit any URBs after timeout recovery".to_string();
+                    if !startup_signaled {
+                        let _ = startup_tx.send(Err(msg.clone()));
+                    }
+                    return Err(msg);
+                }
+                continue;
+            }
+            // Reset timeout counter on successful poll
+            if timeout_retries > 0 {
+                eprintln!("USB stream recovered after {} timeout retries", timeout_retries);
+                timeout_retries = 0;
             }
 
             let mut urb_reaped: *mut UsbdevfsUrb = std::ptr::null_mut();
@@ -587,23 +655,41 @@ mod isochronous {
     }
 
     fn discard_urbs(fd: i32, urbs: &[Box<UrbWithPackets>]) {
+        // Retry on EINTR — a signal can interrupt the ioctl mid-call.
+        // Matches batgizmo nativeusb.cpp discard_URBs().
         for urb in urbs {
-            unsafe {
-                libc::ioctl(
-                    fd,
-                    USBDEVFS_DISCARDURB as libc::c_int,
-                    &urb.urb as *const UsbdevfsUrb,
-                );
+            loop {
+                let ret = unsafe {
+                    libc::ioctl(
+                        fd,
+                        USBDEVFS_DISCARDURB as libc::c_int,
+                        &urb.urb as *const UsbdevfsUrb,
+                    )
+                };
+                if ret == 0 {
+                    break;
+                }
+                if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                    break; // non-retriable error — expected during cleanup
+                }
             }
         }
         for _ in urbs {
             let mut urb_reaped: *mut UsbdevfsUrb = std::ptr::null_mut();
-            unsafe {
-                libc::ioctl(
-                    fd,
-                    USBDEVFS_REAPURBNDELAY as libc::c_int,
-                    &mut urb_reaped as *mut *mut UsbdevfsUrb,
-                );
+            loop {
+                let ret = unsafe {
+                    libc::ioctl(
+                        fd,
+                        USBDEVFS_REAPURBNDELAY as libc::c_int,
+                        &mut urb_reaped as *mut *mut UsbdevfsUrb,
+                    )
+                };
+                if ret == 0 {
+                    break;
+                }
+                if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                    break; // non-retriable error — expected during cleanup
+                }
             }
         }
     }

@@ -64,6 +64,16 @@ private const val GET_CUR = 0x01
 private const val SET_CUR = 0x01
 private const val USB_DIR_OUT_STANDARD_INTERFACE = 0x01
 private const val USB_REQUEST_SET_INTERFACE = 11
+private const val DEVICE_TO_HOST_CLASS_ENDPOINT = 0xA2
+
+// Known device vendors
+private const val VENDOR_WILDLIFE_ACOUSTICS = 0x2926 // Wildlife Acoustics, Inc.
+
+// EMT2 quirks: Wildlife Acoustics Echo Meter Touch 2 sends oversized USB packets
+// (771 bytes when descriptor declares 515) and sends frames sized for 288 kHz
+// unless the sample rate is explicitly set via control transfer.
+// See batgizmo UsbService.kt and nativeusb.cpp for reference.
+private const val EMT2_MIN_PACKET_SIZE = 1024 // Safety margin above observed 771 bytes
 
 @TauriPlugin
 class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
@@ -81,6 +91,16 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
     companion object {
         const val REQUEST_AUDIO_PERMISSION = 1001
+    }
+
+    /**
+     * Detect Wildlife Acoustics Echo Meter Touch 2 devices.
+     * These require special handling: forced sample rate setting and oversized packet buffers.
+     */
+    private fun isEmt2Device(device: UsbDevice): Boolean {
+        val name = (device.productName ?: "").lowercase()
+        return device.vendorId == VENDOR_WILDLIFE_ACOUSTICS ||
+               name.contains("echo meter") || name.contains("emt2")
     }
 
     private val usbReceiver = object : BroadcastReceiver() {
@@ -392,6 +412,16 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             }
             result.put("endpoints", endpointsArray)
 
+            // EMT2 detection for frontend display
+            val emt2 = isEmt2Device(device)
+            result.put("isEmt2", emt2)
+            if (emt2) {
+                Log.i(TAG, "EMT2 device detected in getUsbDeviceInfo: ${device.productName}")
+                result.put("emt2OversizedPackets", true)
+                result.put("emt2Notes", "Wildlife Acoustics EMT2: may send oversized USB packets; " +
+                        "sample rate must be explicitly set to avoid 288 kHz frame size quirk")
+            }
+
             invoke.resolve(result)
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing USB descriptors", e)
@@ -508,11 +538,32 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 Log.d(TAG, "controlTransfer SET_INTERFACE result=$setAltResult")
             }
 
-            // Set sample rate via control transfer
-            val actualRate = if (desiredRate > 0 && endpoint.sampleRateSettable) {
-                setSampleRate(connection, audioInfo.uacVersion, endpoint, desiredRate)
+            // Set sample rate via control transfer.
+            // EMT2 quirk: MUST always set the rate when sampleRateSettable is true,
+            // even if only one rate is available. Without this, EMT2 sends data frames
+            // sized for 288 kHz regardless of advertised rate.
+            // See batgizmo UsbService.kt lines 1093-1103.
+            val emt2 = isEmt2Device(device)
+            val rateToSet = if (desiredRate > 0) desiredRate else endpoint.sampleRate
+            val actualRate = if (endpoint.sampleRateSettable) {
+                if (emt2) {
+                    Log.i(TAG, "EMT2 detected: forcing sample rate set to $rateToSet " +
+                            "(vendor=0x${device.vendorId.toString(16)}, product=${device.productName})")
+                }
+                setSampleRate(connection, audioInfo.uacVersion, endpoint, rateToSet)
             } else {
                 endpoint.sampleRate
+            }
+
+            // EMT2 quirk: device sends oversized USB packets (observed 771 bytes when
+            // descriptor declares 515). Inflate maxPacketSize so the Rust isochronous
+            // loop allocates large enough per-frame buffers.
+            val reportedMaxPacketSize = endpoint.maxPacketSize
+            val adjustedMaxPacketSize = if (emt2 && reportedMaxPacketSize < EMT2_MIN_PACKET_SIZE) {
+                Log.w(TAG, "EMT2: inflating maxPacketSize from $reportedMaxPacketSize to $EMT2_MIN_PACKET_SIZE")
+                EMT2_MIN_PACKET_SIZE
+            } else {
+                reportedMaxPacketSize
             }
 
             // Keep connection open for streaming
@@ -522,7 +573,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             val result = JSObject()
             result.put("fd", connection.fileDescriptor)
             result.put("endpointAddress", endpoint.address and 0x7F) // strip direction bit
-            result.put("maxPacketSize", endpoint.maxPacketSize)
+            result.put("maxPacketSize", adjustedMaxPacketSize)
             result.put("sampleRate", actualRate)
             result.put("numChannels", endpoint.channels)
             result.put("bitResolution", endpoint.bitResolution)
@@ -531,6 +582,11 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             result.put("deviceName", device.deviceName)
             result.put("productName", device.productName ?: "Unknown")
             result.put("uacVersion", audioInfo.uacVersion)
+            result.put("isEmt2", emt2)
+            if (emt2) {
+                result.put("emt2OversizedPackets", true)
+                result.put("reportedMaxPacketSize", reportedMaxPacketSize)
+            }
             invoke.resolve(result)
 
         } catch (e: Exception) {
@@ -627,15 +683,38 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             data[0] = (desiredRate and 0xFF).toByte()
             data[1] = ((desiredRate shr 8) and 0xFF).toByte()
             data[2] = ((desiredRate shr 16) and 0xFF).toByte()
+            val epAddr = endpoint.address or 0x80  // ensure input direction bit
             val result = connection.controlTransfer(
                 HOST_TO_DEVICE_CLASS_ENDPOINT,  // 0x22
                 SET_CUR,                         // 0x01
                 0x0100,                          // SAMPLING_FREQ_CONTROL << 8
-                endpoint.address,                // endpoint address
-                data, data.size, 1000
+                epAddr,                          // endpoint address with direction bit
+                data, data.size, 500
             )
-            Log.i(TAG, "UAC1 SET_CUR rate=$desiredRate ep=0x${endpoint.address.toString(16)} result=$result")
-            if (result >= 0) return desiredRate
+            Log.i(TAG, "UAC1 SET_CUR rate=$desiredRate ep=0x${epAddr.toString(16)} result=$result")
+            if (result >= 0) {
+                // Read back the actual rate to verify what the device accepted.
+                // Important for EMT2 which may not honor the requested rate.
+                // See batgizmo UsbService.kt setEndpointSamplingRate().
+                val readBuf = ByteArray(3)
+                val readResult = connection.controlTransfer(
+                    DEVICE_TO_HOST_CLASS_ENDPOINT,  // 0xA2
+                    GET_CUR,                         // 0x81 — but GET_CUR is 0x01 for UAC1
+                    0x0100,                          // SAMPLING_FREQ_CONTROL << 8
+                    epAddr,                          // endpoint address with direction bit
+                    readBuf, readBuf.size, 500
+                )
+                if (readResult == 3) {
+                    val actualRate = (readBuf[0].toInt() and 0xFF) or
+                            ((readBuf[1].toInt() and 0xFF) shl 8) or
+                            ((readBuf[2].toInt() and 0xFF) shl 16)
+                    Log.i(TAG, "UAC1 GET_CUR actual rate=$actualRate Hz")
+                    if (actualRate > 0) return actualRate
+                } else {
+                    Log.w(TAG, "UAC1 GET_CUR read-back failed (result=$readResult), assuming $desiredRate")
+                }
+                return desiredRate
+            }
         }
         // Fallback to the endpoint's reported rate
         return endpoint.sampleRate

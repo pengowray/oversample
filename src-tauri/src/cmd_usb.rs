@@ -16,6 +16,7 @@ pub fn usb_start_stream(
     device_name: String,
     interface_number: Option<u32>,
     alternate_setting: Option<u32>,
+    uac_version: Option<u32>,
 ) -> Result<UsbStreamInfo, String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     // Stop existing stream if any
@@ -34,6 +35,7 @@ pub fn usb_start_stream(
         app,
         interface_number.unwrap_or(0),
         alternate_setting.unwrap_or(0),
+        uac_version.unwrap_or(0),
     )?;
 
     let info = UsbStreamInfo {
@@ -122,10 +124,20 @@ pub fn usb_stop_recording(
         _ => None,
     };
 
-    // Append GUANO metadata
+    // Append GUANO metadata — use device-specific interface label
+    let device_lower = s.device_name.to_lowercase();
+    let interface_label = if device_lower.contains("echo meter") || device_lower.contains("emt2") {
+        "USB (EMT2)"
+    } else {
+        match s.uac_version {
+            2 => "USB (UAC2)",
+            1 => "USB (UAC1)",
+            _ => "USB (UAC)",
+        }
+    };
     let guano_text = recording::build_recording_guano(
         sample_rate, num_samples, &s.device_name, &filename, &now,
-        Some("USB (Raw)"), location.as_ref(), device_model.as_deref(),
+        Some(interface_label), location.as_ref(), device_model.as_deref(),
     );
     recording::append_guano_chunk(&mut wav_data, &guano_text);
 

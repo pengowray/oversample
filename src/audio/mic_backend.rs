@@ -1158,6 +1158,10 @@ async fn open_usb(state: &AppState) -> bool {
         &JsValue::from_f64(interface_number as f64)).ok();
     js_sys::Reflect::set(&stream_args, &JsValue::from_str("alternateSetting"),
         &JsValue::from_f64(alternate_setting as f64)).ok();
+    let uac_version = js_sys::Reflect::get(&device_info, &JsValue::from_str("uacVersion"))
+        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
+    js_sys::Reflect::set(&stream_args, &JsValue::from_str("uacVersion"),
+        &JsValue::from_f64(uac_version as f64)).ok();
 
     match tauri_invoke("usb_start_stream", &stream_args.into()).await {
         Ok(_) => {}
