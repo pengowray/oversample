@@ -441,6 +441,21 @@ pub fn is_mp3(bytes: &[u8]) -> bool {
     false
 }
 
+/// Return the total size of the ID3v2 tag (header + body) in bytes, or 0 if none.
+/// Only needs the first 10 bytes of the file.
+pub fn id3v2_tag_size(bytes: &[u8]) -> u64 {
+    if bytes.len() >= 10 && &bytes[0..3] == b"ID3" {
+        // ID3v2 size is a 28-bit synchsafe integer in bytes 6-9
+        let size = ((bytes[6] as u64 & 0x7F) << 21)
+            | ((bytes[7] as u64 & 0x7F) << 14)
+            | ((bytes[8] as u64 & 0x7F) << 7)
+            | (bytes[9] as u64 & 0x7F);
+        10 + size // 10-byte ID3v2 header + tag body
+    } else {
+        0
+    }
+}
+
 pub fn is_ogg(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[0..4] == b"OggS"
 }
@@ -955,10 +970,24 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
-    // Parse header for data_offset before decoding
-    let mp3_data_offset = parse_mp3_header(bytes, bytes.len() as u64)
-        .map(|h| h.data_offset)
-        .unwrap_or(0);
+    // Parse header for data_offset and estimated size before decoding
+    let mp3_header = parse_mp3_header(bytes, bytes.len() as u64).ok();
+    let mp3_data_offset = mp3_header.as_ref().map(|h| h.data_offset).unwrap_or(0);
+
+    // Safety: reject files whose decoded size would exceed WASM's 32-bit address space.
+    // ~1.5 billion f32 samples ≈ 6 GB — well beyond the ~4 GB WASM limit.
+    if let Some(ref h) = mp3_header {
+        let estimated_samples = h.estimated_total_frames as u128 * h.channels as u128;
+        if estimated_samples > 1_500_000_000 {
+            let hours = h.estimated_total_frames as f64 / h.sample_rate as f64 / 3600.0;
+            return Err(format!(
+                "MP3 too large for in-memory decode (~{:.1} hours, ~{:.1} GB decoded). \
+                 This file should use the streaming path.",
+                hours,
+                estimated_samples as f64 * 4.0 / 1_073_741_824.0,
+            ));
+        }
+    }
 
     let cursor = Cursor::new(bytes.to_vec());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());

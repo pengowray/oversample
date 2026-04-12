@@ -5,7 +5,7 @@ use js_sys;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileReader};
 use crate::audio::loader::load_audio;
-use crate::dsp::fft::{compute_overview_from_spectrogram, compute_preview, compute_spectrogram_partial};
+use crate::dsp::fft::compute_preview;
 use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::SpectrogramData;
 use std::sync::Arc;
@@ -227,221 +227,40 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         }
     }
 
-    // Yield to let the UI render the preview
-    let yield_promise = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window()
-            .unwrap()
-            .set_timeout_with_callback(&resolve)
-            .unwrap();
-    });
-    JsFuture::from(yield_promise).await.ok();
-
-    // Phase 2: full spectrogram — computed in small chunks so the browser
-    // stays responsive.  Chunks are computed viewport-first (expanding
-    // outward from the current scroll position) so the visible region
-    // appears quickly even for very long files.
-    //
-    // Columns are inserted into the spectral store as they are computed,
-    // and completed TILE_COLS-wide tiles are scheduled for rendering
-    // immediately — so the user sees tiles appearing progressively.
-    const CHUNK_COLS: usize = 32; // ~50 ms of work per chunk on typical hardware
-
-    // total_cols already computed above for placeholder_spec
-
-    // Initialise the spectral column store for incremental tile generation
-    use crate::canvas::spectral_store;
-    use crate::canvas::tile_cache::{self, TILE_COLS};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Build chunk schedule: viewport-first expanding order
-    let time_resolution = HOP_SIZE as f64 / audio_for_stft.sample_rate as f64;
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
-    let visible_time = if zoom > 0.0 { canvas_w / zoom * time_resolution } else { 1.0 };
-    let center_col = ((scroll + visible_time / 2.0) / time_resolution) as usize;
-    let center_col = center_col.min(total_cols.saturating_sub(1));
-
-    // Generate chunk start indices in expanding-ring order from center
-    let total_chunks = total_cols.div_ceil(CHUNK_COLS);
-    let center_chunk = center_col / CHUNK_COLS;
-    let chunk_order = expanding_chunk_order(center_chunk, total_chunks);
-
-    // Track which tile-width ranges have been fully computed
-    let n_tiles = total_cols.div_ceil(TILE_COLS);
-    let mut tile_scheduled = vec![false; n_tiles];
-
-    state.loading_update(load_id, crate::state::LoadingStage::Spectrogram(0));
-    let mut chunks_done = 0usize;
-    let mut last_reported_pct = 0u16;
-
-    for chunk_idx in chunk_order {
-        let chunk_start = chunk_idx * CHUNK_COLS;
-        if chunk_start >= total_cols {
-            continue;
-        }
-
-        // Check the file is still loaded (user may have removed it)
-        let still_present = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == name_check)
-            .unwrap_or(false);
-        if !still_present {
-            spectral_store::clear_file(file_index);
-            return Ok(());
-        }
-
-        let chunk = compute_spectrogram_partial(
-            &audio_for_stft,
-            fft_size,
-            HOP_SIZE,
-            chunk_start,
-            CHUNK_COLS,
-        );
-
-        // Insert into spectral store (updates running max magnitude)
-        spectral_store::insert_columns(file_index, chunk_start, &chunk);
-
-        // Check if any tile-width ranges are now complete and render them
-        // synchronously — before more insertions can evict the columns.
-        let first_affected_tile = chunk_start / TILE_COLS;
-        let last_affected_tile = ((chunk_start + chunk.len()).saturating_sub(1)) / TILE_COLS;
-        let mut any_tile_rendered = false;
-        let tile_end_idx = last_affected_tile.min(n_tiles.saturating_sub(1));
-        for (tile_idx, scheduled) in tile_scheduled.iter_mut().enumerate().take(tile_end_idx + 1).skip(first_affected_tile) {
-            if *scheduled { continue; }
-            let tile_start = tile_idx * TILE_COLS;
-            let tile_end = (tile_start + TILE_COLS).min(total_cols);
-            if spectral_store::tile_complete(file_index, tile_start, tile_end) {
-                if tile_cache::render_tile_from_store_sync(file_index, tile_idx, fft_size) {
-                    any_tile_rendered = true;
-                }
-                *scheduled = true;
-            }
-        }
-        if any_tile_rendered {
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-        }
-
-        // Update loading progress (every ~5%)
-        chunks_done += 1;
-        let pct = ((chunks_done as f64 / total_chunks as f64) * 100.0) as u16;
-        if pct >= last_reported_pct + 5 || chunks_done == total_chunks {
-            state.loading_update(load_id, crate::state::LoadingStage::Spectrogram(pct.min(100)));
-            last_reported_pct = pct;
-        }
-
-        // Yield so the browser can process events / paint between chunks
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap().set_timeout_with_callback(&resolve).unwrap();
-        });
-        JsFuture::from(p).await.ok();
-    }
-
     state.loading_update(load_id, crate::state::LoadingStage::Finalizing);
 
-    // Large-file threshold: above this, we keep the spectral store alive and
-    // don't assemble a monolithic SpectrogramData (saves hundreds of MB).
-    // ~50 000 columns ≈ 5 min @ 44.1 kHz or 2.7 min @ 96 kHz ≈ 200 MB of column data.
-    const LARGE_FILE_COLS: usize = 50_000;
-    let is_large = total_cols > LARGE_FILE_COLS;
-
+    // Set spectrogram metadata — tiles are computed on-demand by the tile
+    // cache (schedule_tile_lod / schedule_tile_on_demand) as the user
+    // scrolls, so no upfront full-file STFT is needed.
+    let time_resolution = HOP_SIZE as f64 / audio_for_stft.sample_rate as f64;
     let freq_resolution = audio_for_stft.sample_rate as f64 / fft_size as f64;
     let max_freq = audio_for_stft.sample_rate as f64 / 2.0;
 
-    if is_large {
-        // Large file: keep spectral store alive, don't assemble full column data.
-        // Tiles will be computed on-demand from the store (or recomputed from audio).
-        log::info!(
-            "Large file ({} columns) — keeping spectral store, skipping full assembly",
-            total_cols
-        );
-
-        // Update metadata without draining columns
-        let spectrogram = SpectrogramData {
-            columns: Arc::new(Vec::new()),
-            total_columns: total_cols,
-            freq_resolution,
-            time_resolution,
-            max_freq,
-            sample_rate: audio_for_stft.sample_rate,
-        };
-        state.files.update(|files| {
-            if let Some(f) = files.get_mut(file_index) {
-                if f.name == name_check {
-                    f.spectrogram = spectrogram;
-                }
+    let spectrogram = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: total_cols,
+        freq_resolution,
+        time_resolution,
+        max_freq,
+        sample_rate: audio_for_stft.sample_rate,
+    };
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(file_index) {
+            if f.name == name_check {
+                f.spectrogram = spectrogram;
             }
-        });
-
-        // Large non-streaming files also lack an overview — build one in the background
-        let name_for_overview = name_check.clone();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(
-            state,
-            file_index,
-            name_for_overview,
-        ));
-    } else {
-        // Small file: drain store and assemble full SpectrogramData.
-        // Flow mode and harmonics analysis need full column data.
-        let final_columns = spectral_store::drain_columns(file_index)
-            .unwrap_or_default();
-
-        let spectrogram = SpectrogramData {
-            columns: Arc::new(final_columns),
-            total_columns: total_cols,
-            freq_resolution,
-            time_resolution,
-            max_freq,
-            sample_rate: audio_for_stft.sample_rate,
-        };
-
-        log::info!(
-            "Spectrogram: {} columns, freq_res={:.1} Hz, time_res={:.4}s",
-            spectrogram.columns.len(),
-            spectrogram.freq_resolution,
-            spectrogram.time_resolution
-        );
-
-        // Compute higher-resolution overview image from the full spectrogram
-        let overview_img = compute_overview_from_spectrogram(&spectrogram);
-
-        state.files.update(|files| {
-            if let Some(f) = files.get_mut(file_index) {
-                if f.name == name_check {
-                    f.spectrogram = spectrogram;
-                    f.overview_image = overview_img;
-                }
-            }
-        });
-    }
-
-    // Re-schedule all tiles with the final (accurate) max magnitude.
-    // During progressive loading, early tiles may have used a provisional max;
-    // if the final max differs significantly, re-render for consistent brightness.
-    // For large files, tiles are computed from the spectral store on-demand.
-    if !is_large {
-        // Clear stale tiles rendered during progressive loading — they used
-        // the spectral store's running max_magnitude at the time of rendering,
-        // which grows as louder columns are discovered.  Without clearing,
-        // schedule_all_tiles() skips already-cached tiles and they keep their
-        // inconsistent normalization (visible as a stepped brightness gradient).
-        tile_cache::clear_file(file_index);
-        let file_for_tiles = state.files.get_untracked().get(file_index).cloned();
-        if let Some(file) = file_for_tiles {
-            tile_cache::schedule_all_tiles(state, file, file_index);
         }
-    } else {
-        // Large files: clear tile cache and re-render with final normalization.
-        // During loading, the running max_magnitude grew as louder columns were found,
-        // so early tiles used a lower max than late tiles — creating visible brightness
-        // discontinuities.  Clearing forces re-rendering with the correct final max.
-        // The colormapped preview base layer fills the gaps until new tiles arrive.
-        tile_cache::clear_file(file_index);
-        tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    }
+    });
 
-    // Signal the spectrogram canvas to repaint with the new data
+    // Build waveform overview in the background
+    let name_for_overview = name_check.clone();
+    wasm_bindgen_futures::spawn_local(build_streaming_overview(
+        state,
+        file_index,
+        name_for_overview,
+    ));
+
+    // Signal the spectrogram canvas to start rendering visible tiles on-demand
     state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
 
     Ok(())
@@ -699,34 +518,6 @@ async fn read_file_bytes(file: &File) -> Result<Vec<u8>, String> {
 
 /// Generate chunk indices in expanding-ring order from a center chunk.
 /// Returns indices: center, center-1, center+1, center-2, center+2, ...
-fn expanding_chunk_order(center: usize, total: usize) -> Vec<usize> {
-    let mut order = Vec::with_capacity(total);
-    if total == 0 {
-        return order;
-    }
-    let center = center.min(total - 1);
-    order.push(center);
-    let mut dist = 1usize;
-    while order.len() < total {
-        let left = center.checked_sub(dist);
-        let right = center + dist;
-        if let Some(l) = left {
-            if l < total {
-                order.push(l);
-            }
-        }
-        if right < total {
-            order.push(right);
-        }
-        // If both are out of bounds, we're done
-        if left.is_none() && right >= total {
-            break;
-        }
-        dist += 1;
-    }
-    order
-}
-
 /// Load a file from a native filesystem path (Tauri only).
 /// Reads bytes via IPC, decodes in WASM, and stores the original path in FileIdentity.
 pub(crate) async fn load_native_file(path: String, state: AppState, load_id: u64) -> Result<(), String> {
