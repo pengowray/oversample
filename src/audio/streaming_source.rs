@@ -647,6 +647,7 @@ impl StreamingFlacSource {
             if self.decode_one_window().await.is_err() {
                 break;
             }
+            crate::canvas::tile_cache::yield_to_browser().await;
         }
     }
 
@@ -695,6 +696,8 @@ impl StreamingFlacSource {
         let channels = self.channels as usize;
         let max_val = (1u32 << (self.bits_per_sample - 1)) as f32;
         let mut total_new_frames = 0usize;
+        let mut frames_since_yield = 0usize;
+        const YIELD_EVERY_FRAMES: usize = 65_536;
 
         // Accumulate interleaved f32 samples, then flush to cache in CHUNK_FRAMES-sized pieces
         let mut pending_interleaved: Vec<f32> = Vec::new();
@@ -722,6 +725,12 @@ impl StreamingFlacSource {
                         }
                     }
                     total_new_frames += n_frames;
+                    frames_since_yield += n_frames;
+
+                    if frames_since_yield >= YIELD_EVERY_FRAMES {
+                        frames_since_yield = 0;
+                        crate::canvas::tile_cache::yield_to_browser().await;
+                    }
 
                     // Flush complete CHUNK_FRAMES-sized chunks to cache
                     loop {
@@ -987,16 +996,22 @@ impl AudioSource for StreamingFlacSource {
 
 /// Prefetch a sample region from a streaming source (WAV, FLAC, MP3, or OGG).
 /// No-op for in-memory sources.
-pub async fn prefetch_streaming(source: &dyn AudioSource, start: u64, len: usize) {
+/// Returns `true` if the MP3 streaming source had to seek-skip (approximate position).
+pub async fn prefetch_streaming(source: &dyn AudioSource, start: u64, len: usize) -> bool {
     if let Some(s) = source.as_any().downcast_ref::<StreamingWavSource>() {
         s.prefetch_region(start, len).await;
     } else if let Some(s) = source.as_any().downcast_ref::<StreamingFlacSource>() {
         s.prefetch_region(start, len).await;
     } else if let Some(s) = source.as_any().downcast_ref::<StreamingMp3Source>() {
         s.prefetch_region(start, len).await;
+        if s.did_seek_skip.get() {
+            s.did_seek_skip.set(false);
+            return true;
+        }
     } else if let Some(s) = source.as_any().downcast_ref::<StreamingOggSource>() {
         s.prefetch_region(start, len).await;
     }
+    false
 }
 
 /// Check if a source is a streaming (non-in-memory) source.

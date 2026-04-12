@@ -110,6 +110,7 @@ impl StreamingOggSource {
             if self.decode_one_window().await.is_err() {
                 break;
             }
+            crate::canvas::tile_cache::yield_to_browser().await;
         }
     }
 
@@ -180,6 +181,8 @@ impl StreamingOggSource {
         let mut pending_interleaved: Vec<f32> = Vec::new();
         let mut pending_start_frame = frame_cursor;
         let mut window_byte_pos: u64 = 0;
+        let mut frames_since_yield = 0usize;
+        const YIELD_EVERY_FRAMES: usize = 65_536;
 
         loop {
             let packet = match format.next_packet() {
@@ -217,6 +220,12 @@ impl StreamingOggSource {
                     let n_frames = samples.len() / channels;
                     pending_interleaved.extend_from_slice(samples);
                     total_new_frames += n_frames;
+                    frames_since_yield += n_frames;
+
+                    if frames_since_yield >= YIELD_EVERY_FRAMES {
+                        frames_since_yield = 0;
+                        crate::canvas::tile_cache::yield_to_browser().await;
+                    }
 
                     // Flush complete CHUNK_FRAMES-sized chunks to cache
                     loop {

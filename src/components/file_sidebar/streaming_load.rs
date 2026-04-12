@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::File;
 use std::sync::Arc;
-use crate::audio::loader::{is_mp3, is_ogg, parse_flac_header, parse_mp3_header, parse_ogg_header, parse_wav_header_with_file_size};
+use crate::audio::loader::{id3v2_tag_size, is_mp3, is_ogg, parse_flac_header, parse_mp3_header, parse_ogg_header, parse_wav_header_with_file_size};
 use crate::audio::streaming_source::{FileHandle, StreamingFlacSource, StreamingMp3Source, StreamingOggSource, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::compute_preview;
 use crate::state::{AppState, FileSettings, LoadedFile};
@@ -347,6 +347,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     let max_val = (1u32 << (header.bits_per_sample - 1)) as f32;
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
+    let mut frames_since_yield: u64 = 0;
 
     {
         let mut blocks = reader.blocks();
@@ -362,7 +363,13 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
                         }
                     }
                     head_frame_count += n_frames as u64;
+                    frames_since_yield += n_frames as u64;
                     block_buf = block.into_buffer();
+
+                    if frames_since_yield >= 65_536 {
+                        frames_since_yield = 0;
+                        crate::canvas::tile_cache::yield_to_browser().await;
+                    }
 
                     if head_frame_count >= head_target_frames {
                         break;
@@ -628,13 +635,23 @@ async fn background_flac_decode(
 /// Attempt to open a large MP3 file using the streaming path.
 /// Returns Ok(()) if successful, Err if the file is not suitable for streaming.
 pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, force_streaming: bool) -> Result<(), String> {
-    // Read first 64KB for header probing
-    let header_size = 65536.0f64.min(file.size());
-    let header_bytes = read_blob_range(file, 0.0, header_size).await?;
+    // Read first 64KB for initial detection
+    let initial_size = 65536.0f64.min(file.size());
+    let initial_bytes = read_blob_range(file, 0.0, initial_size).await?;
 
-    if !is_mp3(&header_bytes) {
+    if !is_mp3(&initial_bytes) {
         return Err("Not an MP3 file".into());
     }
+
+    // MP3 files can have large ID3v2 tags (artwork, etc.) that push the first
+    // audio frame far into the file.  Read enough to cover the tag + some audio.
+    let id3_size = id3v2_tag_size(&initial_bytes);
+    let header_size = ((id3_size + 65536).min(file.size() as u64)) as f64;
+    let header_bytes = if header_size > initial_size {
+        read_blob_range(file, 0.0, header_size).await?
+    } else {
+        initial_bytes
+    };
 
     let file_size = file.size() as u64;
     let header = parse_mp3_header(&header_bytes, file_size)?;
@@ -711,6 +728,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
 
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
+    let mut frames_since_yield: u64 = 0;
 
     loop {
         let packet = match format.next_packet() {
@@ -740,6 +758,13 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
                 let n_frames = samples.len() / channels;
                 head_interleaved.extend_from_slice(samples);
                 head_frame_count += n_frames as u64;
+                frames_since_yield += n_frames as u64;
+
+                // Yield periodically so the browser stays responsive during head decode
+                if frames_since_yield >= 65_536 {
+                    frames_since_yield = 0;
+                    crate::canvas::tile_cache::yield_to_browser().await;
+                }
 
                 if head_frame_count >= head_target_frames {
                     break;
@@ -948,12 +973,18 @@ async fn background_mp3_decode(
     expected_name: String,
     source: Arc<StreamingMp3Source>,
 ) {
+    use crate::canvas::tile_cache::{self, TILE_COLS};
+
     // Initial delay — let the UI settle
     let p = js_sys::Promise::new(&mut |resolve, _| {
         web_sys::window().unwrap()
             .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
     });
     JsFuture::from(p).await.ok();
+
+    let hop_size = 512usize;
+    let tile_samples = TILE_COLS * hop_size;
+    let mut last_tile_scheduled: Option<usize> = None;
 
     while !source.is_fully_decoded() {
         // Check file still loaded
@@ -976,8 +1007,21 @@ async fn background_mp3_decode(
         }
 
         // Decode one window worth of frames
-        let cursor = source.decode_frame_cursor_value();
-        source.prefetch_region(cursor, 262_144).await;
+        let cursor_before = source.decode_frame_cursor_value();
+        source.prefetch_region(cursor_before, 262_144).await;
+        let cursor_after = source.decode_frame_cursor_value();
+
+        // Schedule tiles left-to-right for newly decoded regions
+        if cursor_after > cursor_before && tile_samples > 0 {
+            let first_tile = cursor_before as usize / tile_samples;
+            let last_tile = cursor_after as usize / tile_samples;
+            let start = last_tile_scheduled.map(|t| t + 1).unwrap_or(first_tile);
+            for t in start..=last_tile {
+                tile_cache::schedule_tile_on_demand(state, file_index, t);
+            }
+            last_tile_scheduled = Some(last_tile);
+            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        }
 
         // Yield to browser
         let p = js_sys::Promise::new(&mut |resolve, _| {
@@ -1075,6 +1119,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
 
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
+    let mut frames_since_yield: u64 = 0;
 
     loop {
         let packet = match format.next_packet() {
@@ -1104,6 +1149,12 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
                 let n_frames = samples.len() / channels;
                 head_interleaved.extend_from_slice(samples);
                 head_frame_count += n_frames as u64;
+                frames_since_yield += n_frames as u64;
+
+                if frames_since_yield >= 65_536 {
+                    frames_since_yield = 0;
+                    crate::canvas::tile_cache::yield_to_browser().await;
+                }
 
                 if head_frame_count >= head_target_frames {
                     break;

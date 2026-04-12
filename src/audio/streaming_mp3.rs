@@ -1,6 +1,6 @@
 //! Streaming MP3 source — progressive decode via symphonia.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use crate::audio::source::{AudioSource, ChannelView};
@@ -9,8 +9,11 @@ use super::streaming_source::{FileHandle, ChunkCache, CachedChunk, CHUNK_FRAMES,
 /// Size of each compressed read window for MP3 streaming (4 MB).
 const MP3_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Overlap bytes for MP3 window reads (covers max MP3 frame size ~1441 bytes).
-const MP3_OVERLAP_BYTES: u64 = 2048;
+/// Overlap bytes for MP3 window reads.  Must be large enough to contain
+/// several complete MP3 frames so the decoder can fill its bit reservoir
+/// (main_data_begin can reference up to 511 bytes from prior frames).
+/// 32 KB covers ~20+ frames at typical bitrates, plenty for warm-up.
+const MP3_OVERLAP_BYTES: u64 = 32 * 1024;
 
 ///
 /// Like FLAC, MP3 is compressed and frame-based, so we decode sequentially in
@@ -20,6 +23,8 @@ pub struct StreamingMp3Source {
     sample_rate: u32,
     channels: u32,
     file_size: u64,
+    /// Byte offset where audio frames begin (after ID3v2 tags).
+    data_offset: u64,
     /// Total per-channel frames. May be estimated (refined when decode finishes).
     total_frames: RefCell<u64>,
     head_mono: Arc<Vec<f32>>,
@@ -30,6 +35,8 @@ pub struct StreamingMp3Source {
     decode_byte_cursor: RefCell<u64>,
     /// Per-channel frames decoded so far (beyond the head).
     decode_frame_cursor: RefCell<u64>,
+    /// Set when a seek skip happened; cleared after the caller reads it.
+    pub(crate) did_seek_skip: Cell<bool>,
 }
 
 // SAFETY: WASM is single-threaded; these are required by AudioSource: Send + Sync.
@@ -64,6 +71,7 @@ impl StreamingMp3Source {
             sample_rate: header.sample_rate,
             channels: header.channels as u32,
             file_size,
+            data_offset: header.data_offset,
             total_frames: RefCell::new(header.estimated_total_frames),
             head_mono: Arc::new(head_mono),
             head_raw: head_raw.map(Arc::new),
@@ -71,7 +79,20 @@ impl StreamingMp3Source {
             cache: RefCell::new(ChunkCache::new()),
             decode_byte_cursor: RefCell::new(initial_byte_cursor),
             decode_frame_cursor: RefCell::new(initial_frame_cursor),
+            did_seek_skip: Cell::new(false),
         }
+    }
+
+    /// Estimate the byte offset for a given frame number.
+    /// Uses linear interpolation over the audio data region (after ID3v2 tag).
+    fn estimate_byte_for_frame(&self, frame: u64) -> u64 {
+        let total = *self.total_frames.borrow();
+        if total == 0 {
+            return self.data_offset;
+        }
+        let audio_bytes = self.file_size.saturating_sub(self.data_offset);
+        let ratio = frame as f64 / total as f64;
+        self.data_offset + (audio_bytes as f64 * ratio) as u64
     }
 
     /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
@@ -103,10 +124,28 @@ impl StreamingMp3Source {
             return;
         }
 
+        // If the target region is far ahead of the current decode cursor,
+        // seek directly rather than decoding every window in between.
+        // This trades accuracy (VBR byte estimates are approximate) for speed.
+        let cursor_frame = *self.decode_frame_cursor.borrow();
+        let skip_threshold = MP3_WINDOW_BYTES * 2; // ~8 MB worth of sequential decode
+        if fetch_start > cursor_frame {
+            let gap_bytes = self.estimate_byte_for_frame(fetch_start)
+                .saturating_sub(*self.decode_byte_cursor.borrow());
+            if gap_bytes > skip_threshold {
+                let seek_byte = self.estimate_byte_for_frame(fetch_start);
+                *self.decode_byte_cursor.borrow_mut() = seek_byte;
+                *self.decode_frame_cursor.borrow_mut() = fetch_start;
+                self.did_seek_skip.set(true);
+            }
+        }
+
         while *self.decode_frame_cursor.borrow() < end_frame {
             if self.decode_one_window().await.is_err() {
                 break;
             }
+            // Yield between windows so the UI stays responsive
+            crate::canvas::tile_cache::yield_to_browser().await;
         }
     }
 
@@ -179,6 +218,9 @@ impl StreamingMp3Source {
         let mut pending_interleaved: Vec<f32> = Vec::new();
         let mut pending_start_frame = frame_cursor;
         let mut window_byte_pos: u64 = 0;
+        // Yield every ~64K decoded frames to keep the UI responsive
+        let mut frames_since_yield = 0usize;
+        const YIELD_EVERY_FRAMES: usize = 65_536;
 
         loop {
             let packet = match format.next_packet() {
@@ -199,11 +241,16 @@ impl StreamingMp3Source {
                 continue;
             }
 
-            // Track approximate byte position within the window to skip overlap
+            // Track approximate byte position within the window
             window_byte_pos += packet.buf().len() as u64;
 
-            // Skip packets that fall within the overlap region (already decoded)
-            if window_byte_pos <= overlap_bytes && overlap_bytes > 0 {
+            // Overlap region: decode to warm up the bit reservoir, but discard output.
+            // MP3 frames reference prior frames via main_data_begin; skipping decode
+            // leaves the reservoir empty, causing underflow errors on every window.
+            let in_overlap = window_byte_pos <= overlap_bytes && overlap_bytes > 0;
+            if in_overlap {
+                // Decode to build up bit reservoir state, ignore errors and output
+                let _ = decoder.decode(&packet);
                 continue;
             }
 
@@ -217,6 +264,13 @@ impl StreamingMp3Source {
                     let n_frames = samples.len() / channels;
                     pending_interleaved.extend_from_slice(samples);
                     total_new_frames += n_frames;
+                    frames_since_yield += n_frames;
+
+                    // Yield periodically so the browser can paint / handle input
+                    if frames_since_yield >= YIELD_EVERY_FRAMES {
+                        frames_since_yield = 0;
+                        crate::canvas::tile_cache::yield_to_browser().await;
+                    }
 
                     // Flush complete CHUNK_FRAMES-sized chunks to cache
                     loop {
