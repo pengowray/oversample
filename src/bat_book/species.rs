@@ -2165,9 +2165,9 @@ pub const LONCHOPHYLLA_CONCAVA: BatSpecies = BatSpecies {
     scientific_name: "Lonchophylla concava",
     family: "Phyllostomidae",
     call_type: "FM",
-    freq_lo_hz: 55_000.0,
-    freq_hi_hz: 85_000.0,
-    description: "Small nectarivore of Central American lowland forests. Multi-harmonic FM calls. Visits Heliconia and other tubular flowers. Costa Rica to NW Ecuador.",
+    freq_lo_hz: 75_000.0,
+    freq_hi_hz: 150_000.0,
+    description: "Small nectarivore of Central American lowland forests. Broadband multi-harmonic FM calls. Visits Heliconia and other tubular flowers. Costa Rica to NW Ecuador.",
     echolocates: true,
 };
 
