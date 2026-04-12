@@ -2263,6 +2263,7 @@ body.sidebar-resizing {
     position: relative;
     background: #000;
     border-bottom: 10px solid #000;
+    touch-action: none;
     /* overflow: visible so the View panel can extend upward into the toolbar area */
     overflow: visible;
     cursor: crosshair;

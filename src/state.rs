@@ -380,8 +380,8 @@ pub enum ResizeHandlePosition {
 /// What the overview strip shows.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum OverviewView {
-    #[default]
     Spectrogram,
+    #[default]
     Waveform,
 }
 
@@ -1412,7 +1412,7 @@ impl AppState {
             hfr_enabled: RwSignal::new(false),
             bandpass_mode: RwSignal::new(BandpassMode::Auto),
             bandpass_range: RwSignal::new(BandpassRange::FollowFocus),
-            overview_view: RwSignal::new(OverviewView::Spectrogram),
+            overview_view: RwSignal::new(OverviewView::Waveform),
             nav_history: RwSignal::new(Vec::new()),
             nav_index: RwSignal::new(0),
             bookmarks: RwSignal::new(Vec::new()),
