@@ -15,6 +15,16 @@ struct WaveformEnvelope {
     key: (usize, usize, u32, u64),
 }
 
+/// Cached off-screen canvas holding the fully rendered waveform bitmap.
+/// On scroll we just `drawImage` from this instead of re-running ~1000
+/// canvas path operations per frame.
+struct WaveformCanvasCache {
+    canvas: HtmlCanvasElement,
+    ctx: CanvasRenderingContext2d,
+    /// Cache key: (samples_ptr, samples_len, canvas_width, canvas_height, gain_bits)
+    key: (usize, usize, u32, u32, u64),
+}
+
 thread_local! {
     /// Reusable off-screen canvas for the overview preview blit.
     static OVERVIEW_TMP: RefCell<Option<(HtmlCanvasElement, CanvasRenderingContext2d)>> =
@@ -25,6 +35,9 @@ thread_local! {
         const { RefCell::new((0, 0, 0)) };
     /// Cached min/max envelope for overview waveform.
     static OVERVIEW_ENVELOPE: RefCell<Option<WaveformEnvelope>> =
+        const { RefCell::new(None) };
+    /// Cached rendered waveform bitmap (off-screen canvas).
+    static OVERVIEW_WAVEFORM_CANVAS: RefCell<Option<WaveformCanvasCache>> =
         const { RefCell::new(None) };
 }
 
@@ -249,55 +262,120 @@ fn draw_overview_waveform(
     if samples.is_empty() || cw == 0 || ch == 0 { return; }
 
     let total_duration = samples.len() as f64 / sample_rate as f64;
-    let gain_linear = 10.0f64.powf(gain_db / 20.0);
 
-    // Cache key: sample identity + pixel width + gain.
-    let key = (samples.as_ptr() as usize, samples.len(), cw, gain_db.to_bits());
+    // Cache key includes dimensions + gain so we re-render on resize or gain change.
+    let cache_key = (samples.as_ptr() as usize, samples.len(), cw, ch, gain_db.to_bits());
 
-    // Get or compute the envelope (O(total_samples) once, then cached).
-    let envelope = OVERVIEW_ENVELOPE.with(|cell| {
-        let mut slot = cell.borrow_mut();
+    // Get or create the cached off-screen canvas with the rendered waveform.
+    // The waveform bitmap only changes when the file, canvas size, or gain changes —
+    // NOT on scroll. This turns per-frame cost from ~1000 path ops to a single drawImage.
+    let cache_hit = OVERVIEW_WAVEFORM_CANVAS.with(|cell| {
+        let slot = cell.borrow();
         if let Some(ref cached) = *slot {
-            if cached.key == key {
-                return cached.data.clone();
+            if cached.key == cache_key {
+                // Cache hit — blit the pre-rendered waveform in one GPU call.
+                let _ = ctx.draw_image_with_html_canvas_element(&cached.canvas, 0.0, 0.0);
+                return true;
             }
         }
-        let env = compute_envelope(samples, cw, gain_linear);
-        *slot = Some(WaveformEnvelope { data: env.clone(), key });
-        env
+        false
     });
 
-    // Render from the envelope: O(canvas_width), not O(total_samples).
-    let mid_y = ch as f64 / 2.0;
-    let scale = mid_y * 0.9;
+    if !cache_hit {
+        let gain_linear = 10.0f64.powf(gain_db / 20.0);
 
-    // Background
-    ctx.set_fill_style_str("#0a0a0a");
-    ctx.fill_rect(0.0, 0.0, cw as f64, ch as f64);
+        // Get or compute the min/max envelope (O(total_samples) once).
+        let envelope_key = (samples.as_ptr() as usize, samples.len(), cw, gain_db.to_bits());
+        let envelope = OVERVIEW_ENVELOPE.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if let Some(ref cached) = *slot {
+                if cached.key == envelope_key {
+                    return cached.data.clone();
+                }
+            }
+            let env = compute_envelope(samples, cw, gain_linear);
+            *slot = Some(WaveformEnvelope { data: env.clone(), key: envelope_key });
+            env
+        });
 
-    // Center line
-    ctx.set_stroke_style_str("#333");
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(0.0, mid_y);
-    ctx.line_to(cw as f64, mid_y);
-    ctx.stroke();
+        // Create or reuse the off-screen canvas and render the waveform to it.
+        OVERVIEW_WAVEFORM_CANVAS.with(|cell| {
+            let mut slot = cell.borrow_mut();
 
-    // Waveform envelope
-    ctx.set_stroke_style_str("#4a4");
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    let pw = cw as usize;
-    for px in 0..pw {
-        let lo = envelope[px * 2] as f64;
-        let hi = envelope[px * 2 + 1] as f64;
-        let y_top = mid_y - hi * scale;
-        let y_bot = mid_y - lo * scale;
-        let x = px as f64;
-        ctx.move_to(x, y_top);
-        ctx.line_to(x, y_bot);
+            // Ensure we have an off-screen canvas of the right size.
+            let needs_create = match *slot {
+                Some(ref c) => c.canvas.width() != cw || c.canvas.height() != ch,
+                None => true,
+            };
+            if needs_create {
+                let doc = match web_sys::window().and_then(|w| w.document()) {
+                    Some(d) => d,
+                    None => return,
+                };
+                let c = match doc.create_element("canvas")
+                    .ok()
+                    .and_then(|e| e.dyn_into::<HtmlCanvasElement>().ok())
+                {
+                    Some(c) => c,
+                    None => return,
+                };
+                c.set_width(cw);
+                c.set_height(ch);
+                let oc = match c.get_context("2d")
+                    .ok()
+                    .flatten()
+                    .and_then(|o| o.dyn_into::<CanvasRenderingContext2d>().ok())
+                {
+                    Some(oc) => oc,
+                    None => return,
+                };
+                *slot = Some(WaveformCanvasCache {
+                    canvas: c,
+                    ctx: oc,
+                    key: cache_key,
+                });
+            }
+
+            let cached = slot.as_mut().unwrap();
+
+            // Render the static waveform to the off-screen canvas.
+            let off_ctx = &cached.ctx;
+            let mid_y = ch as f64 / 2.0;
+            let scale = mid_y * 0.9;
+
+            // Background
+            off_ctx.set_fill_style_str("#0a0a0a");
+            off_ctx.fill_rect(0.0, 0.0, cw as f64, ch as f64);
+
+            // Center line
+            off_ctx.set_stroke_style_str("#333");
+            off_ctx.set_line_width(1.0);
+            off_ctx.begin_path();
+            off_ctx.move_to(0.0, mid_y);
+            off_ctx.line_to(cw as f64, mid_y);
+            off_ctx.stroke();
+
+            // Waveform envelope
+            off_ctx.set_stroke_style_str("#4a4");
+            off_ctx.set_line_width(1.0);
+            off_ctx.begin_path();
+            let pw = cw as usize;
+            for px in 0..pw {
+                let lo = envelope[px * 2] as f64;
+                let hi = envelope[px * 2 + 1] as f64;
+                let y_top = mid_y - hi * scale;
+                let y_bot = mid_y - lo * scale;
+                let x = px as f64;
+                off_ctx.move_to(x, y_top);
+                off_ctx.line_to(x, y_bot);
+            }
+            off_ctx.stroke();
+
+            // Update cache key and blit to the main canvas.
+            cached.key = cache_key;
+            let _ = ctx.draw_image_with_html_canvas_element(&cached.canvas, 0.0, 0.0);
+        });
     }
-    ctx.stroke();
 
     if !clean_view {
         let px_per_sec = cw as f64 / total_duration;
