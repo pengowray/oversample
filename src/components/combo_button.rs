@@ -58,6 +58,8 @@ pub fn ComboButton(
     let hold_timer: RwSignal<Option<i32>> = RwSignal::new(None);
     // Tracks whether the hold timer already fired (long press opened the menu)
     let hold_fired: RwSignal<bool> = RwSignal::new(false);
+    // Initial touch position for movement threshold
+    let touch_start_xy: RwSignal<(f64, f64)> = RwSignal::new((0.0, 0.0));
 
     let start_hold = move || {
         cancel_hold_inner(hold_timer);
@@ -123,6 +125,9 @@ pub fn ComboButton(
                 on:mouseup=move |_| cancel_hold()
                 on:touchstart=move |ev: web_sys::TouchEvent| {
                     ev.prevent_default();
+                    if let Some(touch) = ev.touches().get(0) {
+                        touch_start_xy.set((touch.client_x() as f64, touch.client_y() as f64));
+                    }
                     start_hold();
                 }
                 on:touchend=move |ev: web_sys::TouchEvent| {
@@ -135,7 +140,18 @@ pub fn ComboButton(
                     }
                     ev.prevent_default();
                 }
-                on:touchmove=move |_| cancel_hold()
+                on:touchmove=move |ev: web_sys::TouchEvent| {
+                    // Only cancel hold if finger moved more than 10px (prevents
+                    // accidental cancellation from natural finger jitter on mobile)
+                    if let Some(touch) = ev.touches().get(0) {
+                        let (sx, sy) = touch_start_xy.get_untracked();
+                        let dx = touch.client_x() as f64 - sx;
+                        let dy = touch.client_y() as f64 - sy;
+                        if (dx * dx + dy * dy) > 100.0 {
+                            cancel_hold();
+                        }
+                    }
+                }
                 on:contextmenu=move |ev: web_sys::MouseEvent| ev.prevent_default()
             >
                 <span class="combo-btn-text combo-btn-text-left">
@@ -172,6 +188,9 @@ pub fn ComboButton(
                 on:mouseup=move |_| cancel_hold()
                 on:touchstart=move |ev: web_sys::TouchEvent| {
                     ev.prevent_default();
+                    if let Some(touch) = ev.touches().get(0) {
+                        touch_start_xy.set((touch.client_x() as f64, touch.client_y() as f64));
+                    }
                     start_hold();
                 }
                 on:touchend=move |ev: web_sys::TouchEvent| {
@@ -182,7 +201,16 @@ pub fn ComboButton(
                     }
                     ev.prevent_default();
                 }
-                on:touchmove=move |_| cancel_hold()
+                on:touchmove=move |ev: web_sys::TouchEvent| {
+                    if let Some(touch) = ev.touches().get(0) {
+                        let (sx, sy) = touch_start_xy.get_untracked();
+                        let dx = touch.client_x() as f64 - sx;
+                        let dy = touch.client_y() as f64 - sy;
+                        if (dx * dx + dy * dy) > 100.0 {
+                            cancel_hold();
+                        }
+                    }
+                }
                 on:contextmenu=move |ev: web_sys::MouseEvent| ev.prevent_default()
             >
                 <span class="combo-btn-text combo-btn-text-right">
