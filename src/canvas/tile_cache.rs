@@ -1734,6 +1734,7 @@ pub fn schedule_chroma_tile(
 ) {
     use crate::canvas::spectral_store;
     use crate::dsp::chromagram;
+    use crate::dsp::fft::compute_stft_columns;
 
     let key = (file_idx, tile_idx);
     if CHROMA_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
@@ -1761,18 +1762,69 @@ pub fn schedule_chroma_tile(
             files.get(file_idx).map(|f| f.spectrogram.freq_resolution)
         }).unwrap_or(1.0);
 
+        // Try spectral_store first, then file columns, then compute on-demand from audio
+        let cols_from_store = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _| {
+            cols.to_vec()
+        });
+        let cols_from_file = if cols_from_store.is_some() {
+            None
+        } else {
+            state.files.with_untracked(|files| {
+                files.get(file_idx).and_then(|f| {
+                    if f.spectrogram.columns.is_empty() { return None; }
+                    let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
+                    if col_start >= end { return None; }
+                    Some(f.spectrogram.columns[col_start..end].to_vec())
+                })
+            })
+        };
+
+        let stft_cols = if let Some(c) = cols_from_store {
+            c
+        } else if let Some(c) = cols_from_file {
+            c
+        } else {
+            // On-demand: compute STFT from audio samples (same as schedule_tile_on_demand)
+            let audio = state.files.with_untracked(|files| {
+                files.get(file_idx).map(|f| f.audio.clone())
+            });
+            let Some(audio) = audio else {
+                CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                return;
+            };
+
+            let cv = state.channel_view.get_untracked();
+            let hop_size = 512usize;
+            let fft_size = active_lod1_fft(state);
+            let sample_start = col_start * hop_size;
+            let sample_len = TILE_COLS * hop_size + fft_size;
+
+            streaming_source::prefetch_streaming(
+                audio.source.as_ref(),
+                sample_start as u64,
+                sample_len,
+            ).await;
+
+            let samples = audio.source.read_region(cv, sample_start as u64, sample_len);
+            let cols = compute_stft_columns(&samples, audio.sample_rate, fft_size, hop_size, 0, TILE_COLS);
+            if cols.is_empty() {
+                CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                return;
+            }
+
+            // Cache in spectral_store for future use
+            spectral_store::insert_columns(file_idx, col_start, &cols);
+            cols
+        };
+
+        // Compute global normalization max (needed for consistent brightness)
         let global_max = CHROMA_GLOBAL_MAX.with(|m| m.borrow().get(&file_idx).copied());
         let (max_class, max_note) = if let Some(gm) = global_max {
             gm
         } else {
             let from_store = spectral_store::compute_chroma_global_max(file_idx, freq_res);
             let gm = from_store.unwrap_or_else(|| {
-                state.files.with_untracked(|files| {
-                    files.get(file_idx)
-                        .filter(|f| !f.spectrogram.columns.is_empty())
-                        .map(|f| chromagram::compute_chroma_max(&f.spectrogram.columns, freq_res))
-                        .unwrap_or((0.0, 0.0))
-                })
+                chromagram::compute_chroma_max(&stft_cols, freq_res)
             });
             if gm.0 > 0.0 {
                 CHROMA_GLOBAL_MAX.with(|m| m.borrow_mut().insert(file_idx, gm));
@@ -1780,34 +1832,7 @@ pub fn schedule_chroma_tile(
             gm
         };
 
-        let result = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _max_mag| {
-            chromagram::pre_render_chromagram_columns(cols, freq_res, max_class, max_note)
-        });
-
-        let rendered = if let Some(r) = result {
-            r
-        } else {
-            let fallback = state.files.with_untracked(|files| {
-                files.get(file_idx).and_then(|f| {
-                    if f.spectrogram.columns.is_empty() { return None; }
-                    let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
-                    if col_start >= end { return None; }
-                    Some(chromagram::pre_render_chromagram_columns(
-                        &f.spectrogram.columns[col_start..end],
-                        freq_res,
-                        max_class,
-                        max_note,
-                    ))
-                })
-            });
-            match fallback {
-                Some(r) => r,
-                None => {
-                    CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-                    return;
-                }
-            }
-        };
+        let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note);
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

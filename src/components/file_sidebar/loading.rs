@@ -6,6 +6,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileReader};
 use crate::audio::loader::load_audio;
 use crate::dsp::fft::compute_preview;
+use crate::canvas::spectral_store;
 use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::SpectrogramData;
 use std::sync::Arc;
@@ -250,6 +251,10 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
             }
         }
     });
+
+    // Initialise spectral store so on-demand tile computation can cache
+    // STFT columns for chromagram and other consumers.
+    spectral_store::init(file_index, total_cols, fft_size);
 
     // Build waveform overview in the background
     let name_for_overview = name_check.clone();

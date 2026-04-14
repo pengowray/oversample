@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, DisplayFilterMode, FftMode, FileSettings, FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy, MicAcquisitionState, PlayStartMode, PlaybackMode, SpectrogramDisplay};
+use crate::state::{AppState, ChromaColormap, DisplayFilterMode, FftMode, FileSettings, FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy, MicAcquisitionState, PlayStartMode, PlaybackMode, SpectrogramDisplay};
 use crate::audio::playback;
 use crate::audio::microphone;
 use crate::components::file_sidebar::FileSidebar;
@@ -2030,6 +2030,68 @@ fn MainViewButton() -> impl IntoView {
                             />
                             <span class="dsp-custom-value">{move || {
                                 let g = state.flow_color_gamma.get();
+                                if g == 1.0 { "linear".to_string() } else { format!("{:.2}", g) }
+                            }}</span>
+                        </div>
+                    </div>
+                }
+            })}
+
+            // Chromagram options (when Chromagram is active)
+            {move || (state.main_view.get() == MainView::Chromagram).then(|| {
+                view! {
+                    <hr />
+                    <div class="layer-panel-title">"Colormap"</div>
+                    {ChromaColormap::ALL.iter().map(|&mode| {
+                        view! {
+                            <button
+                                class=move || layer_opt_class(state.chroma_colormap.get() == mode)
+                                on:click=move |_| state.chroma_colormap.set(mode)
+                            >
+                                {mode.label()}
+                            </button>
+                        }
+                    }).collect_view()}
+
+                    <hr />
+                    <div class="dsp-custom-section">
+                        <div class="dsp-custom-title">"Chromagram Controls"</div>
+                        <div class="dsp-custom-slider-row">
+                            <span class="dsp-slider-label">"Gain"</span>
+                            <input
+                                type="range"
+                                class="setting-range"
+                                min="0.25" max="4.0" step="0.05"
+                                prop:value=move || state.chroma_gain.get().to_string()
+                                on:input=move |ev: web_sys::Event| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                    if let Ok(v) = input.value().parse::<f32>() {
+                                        state.chroma_gain.set(v);
+                                    }
+                                }
+                                on:dblclick=move |_| state.chroma_gain.set(1.0)
+                            />
+                            <span class="dsp-custom-value">{move || format!("{:.2}x", state.chroma_gain.get())}</span>
+                        </div>
+                        <div class="dsp-custom-slider-row">
+                            <span class="dsp-slider-label">"Contrast"</span>
+                            <input
+                                type="range"
+                                class="setting-range"
+                                min="0.2" max="3.0" step="0.05"
+                                prop:value=move || state.chroma_gamma.get().to_string()
+                                on:input=move |ev: web_sys::Event| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                    if let Ok(v) = input.value().parse::<f32>() {
+                                        state.chroma_gamma.set(v);
+                                    }
+                                }
+                                on:dblclick=move |_| state.chroma_gamma.set(1.0)
+                            />
+                            <span class="dsp-custom-value">{move || {
+                                let g = state.chroma_gamma.get();
                                 if g == 1.0 { "linear".to_string() } else { format!("{:.2}", g) }
                             }}</span>
                         </div>
