@@ -4,31 +4,52 @@ const API_BASE: &str = "https://xeno-canto.org/api/3/recordings";
 
 /// Parse an XC recording from API JSON.
 fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
-    let id = rec["id"].as_str()?.parse::<u64>().ok()?;
+    let _id = rec["id"].as_str()?; // ensure id exists
     let s = |key: &str| rec[key].as_str().unwrap_or("").to_string();
+    let also = rec["also"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(XcRecording {
-        id,
+        id: s("id"),
         genus: s("gen"),
         sp: s("sp"),
+        ssp: s("ssp"),
         en: s("en"),
         grp: s("grp"),
-        fam: s("fam"),
         rec: s("rec"),
         cnt: s("cnt"),
         loc: s("loc"),
         lat: s("lat"),
         lon: s("lon"),
-        date: s("date"),
-        time: s("time"),
+        alt: s("alt"),
         sound_type: s("type"),
-        q: s("q"),
-        length: s("length"),
-        smp: s("smp"),
-        lic: s("lic"),
+        sex: s("sex"),
+        stage: s("stage"),
+        method: s("method"),
+        url: s("url"),
         file_url: s("file"),
         file_name: s("file-name"),
-        ssp: s("ssp"),
+        lic: s("lic"),
+        q: s("q"),
+        length: s("length"),
+        time: s("time"),
+        date: s("date"),
+        uploaded: s("uploaded"),
+        also,
         rmk: s("rmk"),
+        animal_seen: s("animal-seen"),
+        playback_used: s("playback-used"),
+        temp: s("temp"),
+        regnr: s("regnr"),
+        auto_rec: s("auto"),
+        dvc: s("dvc"),
+        mic: s("mic"),
+        smp: s("smp"),
     })
 }
 

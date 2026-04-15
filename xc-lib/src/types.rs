@@ -3,18 +3,19 @@ use serde::{Deserialize, Serialize};
 /// A single recording from the XC API.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct XcRecording {
-    pub id: u64,
+    /// Recording ID (string in API, stored as String for fidelity)
+    pub id: String,
     /// Genus
     #[serde(rename = "gen")]
     pub genus: String,
     /// Species epithet
     pub sp: String,
+    /// Subspecies
+    pub ssp: String,
     /// English common name
     pub en: String,
     /// Group (bats, birds, frogs, grasshoppers, land mammals)
     pub grp: String,
-    /// Family (e.g. Vespertilionidae)
-    pub fam: String,
     /// Recordist
     pub rec: String,
     /// Country
@@ -25,29 +26,62 @@ pub struct XcRecording {
     pub lat: String,
     /// Longitude
     pub lon: String,
-    /// Date (YYYY-MM-DD)
-    pub date: String,
-    /// Time (HH:MM)
-    pub time: String,
+    /// Altitude (metres)
+    pub alt: String,
     /// Sound type (e.g. "echolocation, feeding buzz")
     #[serde(rename = "type")]
     pub sound_type: String,
+    /// Sex of animal
+    pub sex: String,
+    /// Life stage
+    pub stage: String,
+    /// Recording method (e.g. "field recording")
+    pub method: String,
+    /// Recording page URL
+    pub url: String,
+    /// Download URL for audio file (API field: "file")
+    pub file_url: String,
+    /// Original filename from XC (API field: "file-name")
+    pub file_name: String,
+    /// License URL
+    pub lic: String,
     /// Quality rating (A-E)
     pub q: String,
     /// Duration string (e.g. "0:16")
     pub length: String,
-    /// Sample rate (as string from API, e.g. "256000")
-    pub smp: String,
-    /// License URL
-    pub lic: String,
-    /// Download URL for audio file
-    pub file_url: String,
-    /// Original filename from XC
-    pub file_name: String,
-    /// Subspecies
-    pub ssp: String,
+    /// Time (HH:MM)
+    pub time: String,
+    /// Date (YYYY-MM-DD)
+    pub date: String,
+    /// Upload date (YYYY-MM-DD)
+    pub uploaded: String,
+    /// Other species heard
+    pub also: Vec<String>,
     /// Remarks
     pub rmk: String,
+    /// Whether the animal was seen ("yes"/"no")
+    pub animal_seen: String,
+    /// Whether playback was used ("yes"/"no")
+    pub playback_used: String,
+    /// Temperature
+    pub temp: String,
+    /// Registration number
+    pub regnr: String,
+    /// Automatic recording? ("yes"/"no")
+    pub auto_rec: String,
+    /// Recording device (e.g. "Olympus LS-14")
+    pub dvc: String,
+    /// Microphone (e.g. "Sennheiser ME66")
+    pub mic: String,
+    /// Sample rate (as string from API, e.g. "256000")
+    pub smp: String,
+}
+
+impl XcRecording {
+    /// Parse the ID as a u64 (for numeric contexts like sidecar JSON `xc_id`).
+    pub fn id_num(&self) -> u64 {
+        self.id.parse().unwrap_or(0)
+    }
 }
 
 /// Species summary extracted from recordings.

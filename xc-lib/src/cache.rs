@@ -332,24 +332,41 @@ pub fn build_metadata_json(rec: &XcRecording) -> serde_json::Value {
 
     serde_json::json!({
         "source": "xeno-canto",
-        "xc_id": rec.id,
-        "url": format!("https://www.xeno-canto.org/{}", rec.id),
-        "file_url": rec.file_url,
-        "gen": rec.genus,
-        "sp": rec.sp,
-        "en": rec.en,
-        "rec": rec.rec,
-        "cnt": rec.cnt,
-        "loc": rec.loc,
-        "lat": rec.lat,
-        "lon": rec.lon,
-        "date": rec.date,
-        "time": rec.time,
-        "type": rec.sound_type,
-        "q": rec.q,
-        "length": rec.length,
+        "xc_id": rec.id_num(),
+        "url": &rec.url,
+        "file": &rec.file_url,
+        "file-name": &rec.file_name,
+        "gen": &rec.genus,
+        "sp": &rec.sp,
+        "ssp": &rec.ssp,
+        "en": &rec.en,
+        "grp": &rec.grp,
+        "rec": &rec.rec,
+        "cnt": &rec.cnt,
+        "loc": &rec.loc,
+        "lat": &rec.lat,
+        "lon": &rec.lon,
+        "alt": &rec.alt,
+        "type": &rec.sound_type,
+        "sex": &rec.sex,
+        "stage": &rec.stage,
+        "method": &rec.method,
+        "date": &rec.date,
+        "time": &rec.time,
+        "uploaded": &rec.uploaded,
+        "also": &rec.also,
+        "rmk": &rec.rmk,
+        "animal-seen": &rec.animal_seen,
+        "playback-used": &rec.playback_used,
+        "temp": &rec.temp,
+        "regnr": &rec.regnr,
+        "auto": &rec.auto_rec,
+        "dvc": &rec.dvc,
+        "mic": &rec.mic,
+        "q": &rec.q,
+        "length": &rec.length,
         "smp": rec.smp.parse::<u64>().ok(),
-        "lic": rec.lic,
+        "lic": &rec.lic,
         "attribution": attribution,
         "retrieved": now,
     })
@@ -542,14 +559,15 @@ fn update_index(
         .ok_or("index.json 'sounds' is not an array")?;
 
     // Skip if already present
-    if sounds.iter().any(|s| s["xc_id"].as_u64() == Some(rec.id)) {
+    let id_num = rec.id_num();
+    if sounds.iter().any(|s| s["xc_id"].as_u64() == Some(id_num)) {
         return Ok(());
     }
 
     sounds.push(serde_json::json!({
         "filename": audio_filename,
         "metadata": meta_filename,
-        "xc_id": rec.id,
+        "xc_id": id_num,
         "en": rec.en,
         "species": format!("{} {}", rec.genus, rec.sp),
         "source": "xeno-canto"

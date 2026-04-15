@@ -20,8 +20,8 @@ where
         query.push_str(&format!(" cnt:\"{cnt}\""));
     }
 
-    // Species key -> (en, fam, count)
-    let mut species_map: HashMap<(String, String), (String, String, u32)> = HashMap::new();
+    // Species key -> (en, count)
+    let mut species_map: HashMap<(String, String), (String, u32)> = HashMap::new();
     let mut total_recordings;
 
     let per_page = 500;
@@ -37,9 +37,9 @@ where
         for rec in &result.recordings {
             let key = (rec.genus.clone(), rec.sp.clone());
             let entry = species_map.entry(key).or_insert_with(|| {
-                (rec.en.clone(), rec.fam.clone(), 0)
+                (rec.en.clone(), 0)
             });
-            entry.2 += 1;
+            entry.1 += 1;
         }
 
         if page >= total_pages {
@@ -50,11 +50,11 @@ where
 
     let mut species: Vec<XcSpecies> = species_map
         .into_iter()
-        .map(|((genus, sp), (en, fam, count))| XcSpecies {
+        .map(|((genus, sp), (en, count))| XcSpecies {
             genus,
             sp,
             en,
-            fam,
+            fam: String::new(),
             recording_count: count,
         })
         .collect();

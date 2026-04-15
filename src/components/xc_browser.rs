@@ -123,8 +123,13 @@ fn parse_recordings(val: &JsValue) -> Vec<RecordingInfo> {
             .unwrap_or_default();
         let id = js_sys::Reflect::get(&item, &"id".into())
             .ok()
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as u64;
+            .and_then(|v| {
+                // API v3 returns id as string; handle both string and number
+                v.as_string()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .or_else(|| v.as_f64().map(|n| n as u64))
+            })
+            .unwrap_or(0);
         result.push(RecordingInfo {
             id,
             en: s("en"),

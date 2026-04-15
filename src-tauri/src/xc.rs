@@ -265,12 +265,19 @@ fn recording_to_metadata(rec: &XcRecording) -> Vec<(String, String)> {
         (&rec.date, "Date"),
         (&rec.sound_type, "Sound type"),
         (&rec.q, "Quality"),
+        (&rec.dvc, "Device"),
+        (&rec.mic, "Microphone"),
+        (&rec.method, "Method"),
     ] {
         if !val.is_empty() {
             fields.push((label.into(), val.clone()));
         }
     }
-    fields.push(("URL".into(), format!("https://www.xeno-canto.org/{}", rec.id)));
+    if !rec.url.is_empty() {
+        fields.push(("URL".into(), rec.url.clone()));
+    } else {
+        fields.push(("URL".into(), format!("https://www.xeno-canto.org/{}", rec.id)));
+    }
     fields
 }
 
@@ -328,6 +335,9 @@ fn parse_xc_json_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
         ("date", "Date"),
         ("type", "Sound type"),
         ("q", "Quality"),
+        ("dvc", "Device"),
+        ("mic", "Microphone"),
+        ("method", "Method"),
         ("url", "URL"),
     ] {
         let v = s(key);

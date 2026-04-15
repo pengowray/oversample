@@ -103,6 +103,24 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Re-fetch metadata from the XC API and update .xc.json sidecar files
+    RefreshMetadata {
+        /// Directory containing sounds/ with .xc.json files (default: current directory)
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+
+        /// API key (overrides stored key and XC_API_KEY env var)
+        #[arg(long)]
+        key: Option<String>,
+
+        /// Dry run — show what would change without modifying files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Delay between API requests in seconds (default: 1)
+        #[arg(long, default_value_t = 1)]
+        delay: u64,
+    },
     /// Recompute and add missing hashes (spot_hash_b3, content_hash, etc.) to .xc.json files
     Rehash {
         /// Directory containing sounds/ with .xc.json and audio files (default: current directory)
@@ -409,7 +427,7 @@ async fn main() {
                 // Filter out already-cached recordings
                 let candidates: Vec<_> = candidates
                     .into_iter()
-                    .filter(|r| !cache::is_recording_cached(&cache_root, r.id))
+                    .filter(|r| !cache::is_recording_cached(&cache_root, r.id_num()))
                     .collect();
 
                 if candidates.is_empty() {
@@ -463,6 +481,110 @@ async fn main() {
             eprintln!();
             println!(
                 "Done. Downloaded: {total_downloaded}, Skipped: {total_skipped}, Errors: {total_errors}"
+            );
+        }
+
+        Commands::RefreshMetadata { cache_dir, key, dry_run, delay } => {
+            let api_key = require_api_key(&key);
+            let root = cache_dir.unwrap_or_else(|| PathBuf::from("."));
+            let sounds_dir = root.join("sounds");
+            if !sounds_dir.exists() {
+                eprintln!("No sounds/ directory found at {}", root.display());
+                std::process::exit(1);
+            }
+
+            // Find all .xc.json files and extract XC IDs
+            let json_entries: Vec<_> = std::fs::read_dir(&sounds_dir)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error reading {}: {e}", sounds_dir.display());
+                    std::process::exit(1);
+                })
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".xc.json"))
+                .collect();
+
+            eprintln!("Found {} .xc.json files", json_entries.len());
+
+            let mut updated = 0u32;
+            let mut skipped = 0u32;
+            let mut errors = 0u32;
+
+            for entry in &json_entries {
+                let json_path = entry.path();
+                let json_name = entry.file_name().to_string_lossy().to_string();
+
+                // Extract XC ID from filename (e.g. "XC928094 - ...")
+                let xc_id: u64 = json_name
+                    .strip_prefix("XC")
+                    .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+
+                if xc_id == 0 {
+                    eprintln!("  Skipping {json_name}: can't parse XC ID");
+                    skipped += 1;
+                    continue;
+                }
+
+                // Read existing sidecar to preserve _app hashes
+                let content = match std::fs::read_to_string(&json_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("  Error reading {json_name}: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                };
+                let existing_json: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("  Error parsing {json_name}: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                // Rate-limit
+                if updated > 0 || errors > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                }
+
+                // Fetch fresh metadata from API
+                eprint!("  Fetching XC{xc_id}...");
+                let rec = match api::fetch_recording(&client, &api_key, xc_id).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!(" error: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                // Build new metadata JSON
+                let mut new_json = cache::build_metadata_json(&rec);
+
+                // Preserve existing _app section (hashes, retrieved date, etc.)
+                if let Some(app) = existing_json.get("_app") {
+                    new_json.as_object_mut().unwrap().insert("_app".into(), app.clone());
+                }
+
+                if dry_run {
+                    eprintln!(" would update");
+                } else {
+                    let json_str = serde_json::to_string_pretty(&new_json).unwrap();
+                    if let Err(e) = std::fs::write(&json_path, format!("{json_str}\n")) {
+                        eprintln!(" write error: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                    eprintln!(" updated");
+                }
+                updated += 1;
+            }
+
+            println!(
+                "Done. Updated: {updated}, Skipped: {skipped}, Errors: {errors}{}",
+                if dry_run { " (dry run)" } else { "" }
             );
         }
 
