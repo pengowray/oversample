@@ -421,6 +421,20 @@ pub enum CanvasTool {
     Selection, // drag to select
 }
 
+/// Which entity type currently has interactive focus.
+/// Controls handle visibility, overflow menu display, and drag gating.
+/// Only one entity can be focused at a time, but all entities persist
+/// regardless of focus state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ActiveFocus {
+    /// The transient drag selection (blue rectangle) is focused.
+    TransientSelection,
+    /// One or more annotations are focused (gold rectangles get handles).
+    Annotations,
+    /// The Frequency Focus overlay is focused (amber lines get drag handles).
+    FrequencyFocus,
+}
+
 /// Position of a resize handle on an annotation bounding box.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ResizeHandlePosition {
@@ -1457,6 +1471,14 @@ pub struct AppState {
     pub video_audio_codec: RwSignal<AudioCodecOption>,
     /// Video view mode: static playhead vs scrolling.
     pub video_view_mode: RwSignal<VideoViewMode>,
+
+    // Selection focus
+    /// Which entity type currently has interactive focus (handles, overflow menu).
+    pub active_focus: RwSignal<Option<ActiveFocus>>,
+    /// Whether the transient-selection "..." overflow menu is open.
+    pub selection_overflow_open: RwSignal<bool>,
+    /// Whether an annotation "..." overflow menu is open.
+    pub annotation_overflow_open: RwSignal<bool>,
 }
 
 fn detect_tauri() -> bool {
@@ -1859,6 +1881,10 @@ impl AppState {
             video_codec: RwSignal::new(VideoCodec::default()),
             video_audio_codec: RwSignal::new(AudioCodecOption::default()),
             video_view_mode: RwSignal::new(VideoViewMode::default()),
+
+            active_focus: RwSignal::new(None),
+            selection_overflow_open: RwSignal::new(false),
+            annotation_overflow_open: RwSignal::new(false),
         };
 
         // On mobile, start with sidebar collapsed

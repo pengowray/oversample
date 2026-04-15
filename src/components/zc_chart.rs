@@ -269,6 +269,7 @@ pub fn ZcDotChart() -> impl IntoView {
                 ch, cw,
                 spec_hover, spec_drag,
                 state.is_mobile.get_untracked(),
+                state.active_focus.get_untracked() == Some(crate::state::ActiveFocus::FrequencyFocus),
             );
         }
 

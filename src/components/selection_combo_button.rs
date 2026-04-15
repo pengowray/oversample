@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, LayerPanel};
+use crate::state::{ActiveFocus, AppState, LayerPanel};
 use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Region, generate_uuid, now_iso8601};
 use crate::components::combo_button::ComboButton;
 use crate::components::file_sidebar::settings_panel::{
@@ -14,7 +14,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 }
 
 /// Creates an annotation from the current transient selection.
-fn annotate_selection(state: &AppState) {
+pub(crate) fn annotate_selection(state: &AppState) {
     let selection = state.selection.get_untracked();
     let file_idx = state.current_file_index.get_untracked();
     if let (Some(sel), Some(idx)) = (selection, file_idx) {
@@ -61,6 +61,7 @@ fn annotate_selection(state: &AppState) {
         state.annotations_dirty.set(true);
         state.selection.set(None);
         state.selected_annotation_ids.set(vec![ann_id]);
+        state.active_focus.set(Some(ActiveFocus::Annotations));
         // Auto-enter label editing for the new annotation
         state.annotation_editing.set(true);
         state.annotation_is_new_edit.set(true);
@@ -275,11 +276,17 @@ pub fn SelectionComboButton() -> impl IntoView {
         if state.selection.get_untracked().is_some() {
             state.last_selection.set(state.selection.get_untracked());
             state.selection.set(None);
-            state.selected_annotation_ids.set(vec![]);
+            if state.active_focus.get_untracked() == Some(ActiveFocus::TransientSelection) {
+                state.active_focus.set(None);
+            }
         } else if !state.selected_annotation_ids.get_untracked().is_empty() {
             state.selected_annotation_ids.set(vec![]);
+            if state.active_focus.get_untracked() == Some(ActiveFocus::Annotations) {
+                state.active_focus.set(None);
+            }
         } else if let Some(last) = state.last_selection.get_untracked() {
             state.selection.set(Some(last));
+            state.active_focus.set(Some(ActiveFocus::TransientSelection));
         }
     });
 

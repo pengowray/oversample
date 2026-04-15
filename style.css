@@ -5148,3 +5148,123 @@ body.viewport-zoomed .overview-strip,
 body.viewport-zoomed .bottom-toolbar-drag-handle {
     touch-action: pinch-zoom !important;
 }
+
+/* ── Canvas overflow menus (selection / annotation "..." buttons) ── */
+
+.canvas-overflow-anchor {
+    position: absolute;
+}
+
+button.canvas-overflow-btn {
+    width: 22px;
+    height: 22px;
+    background: rgba(30, 30, 30, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    pointer-events: auto;
+    backdrop-filter: blur(4px);
+}
+
+button.canvas-overflow-btn:hover {
+    color: #ddd;
+    background: rgba(50, 50, 50, 0.9);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.canvas-overflow-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+}
+
+.canvas-overflow-menu {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    background: rgba(26, 26, 26, 0.97);
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    min-width: 160px;
+    padding: 4px 0;
+    backdrop-filter: blur(10px);
+}
+
+.canvas-overflow-info {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #aaa;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.canvas-overflow-btn-row {
+    display: flex;
+    gap: 4px;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+button.canvas-overflow-action-btn {
+    width: 28px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+button.canvas-overflow-action-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+button.canvas-overflow-action-btn:disabled,
+button.canvas-overflow-action-btn.disabled {
+    opacity: 0.25;
+    cursor: default;
+}
+
+.canvas-overflow-item {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    background: none;
+    border: none;
+    color: #ddd;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.canvas-overflow-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.canvas-overflow-item.danger {
+    color: #e66;
+}
+
+.canvas-overflow-item.danger:hover {
+    background: rgba(220, 60, 60, 0.15);
+}
+
+.canvas-overflow-separator {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 2px 0;
+}

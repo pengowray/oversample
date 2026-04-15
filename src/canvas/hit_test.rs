@@ -10,6 +10,7 @@ pub const FF_HANDLE_HALF_WIDTH: f64 = 50.0;
 /// Returns the closest handle within `threshold` pixels of mouse_y, or None.
 /// HET handles take priority over FF when they overlap and HET is manual.
 /// FF hover is full-width; drag zone is checked separately via `is_in_ff_drag_zone`.
+/// FF handles are only hittable when `ff_focused` is true (FF has active focus).
 pub fn hit_test_spec_handles(
     state: &AppState,
     mouse_y: f64,
@@ -17,13 +18,14 @@ pub fn hit_test_spec_handles(
     max_freq: f64,
     canvas_height: f64,
     threshold: f64,
+    ff_focused: bool,
 ) -> Option<SpectrogramHandle> {
     let mut candidates: Vec<(SpectrogramHandle, f64)> = Vec::new();
 
-    // FF handles — hover across full line width, drag only in center zone
+    // FF handles — only hittable when FF has active focus
     let ff_lo = state.ff_freq_lo.get_untracked();
     let ff_hi = state.ff_freq_hi.get_untracked();
-    if ff_hi > ff_lo {
+    if ff_focused && ff_hi > ff_lo {
         let y_upper = spectrogram_renderer::freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
         let y_lower = spectrogram_renderer::freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
         let d_upper = (mouse_y - y_upper).abs();
@@ -271,4 +273,20 @@ pub fn get_annotation_handle_positions(
         scroll_offset, px_per_sec, start_time,
         min_freq, max_freq, canvas_height,
     )
+}
+
+/// Hit-test whether a pixel Y coordinate falls within the FF band.
+/// Used for click-to-select the FF overlay.
+pub fn hit_test_ff_body(
+    px_y: f64,
+    ff_lo: f64,
+    ff_hi: f64,
+    min_freq: f64,
+    max_freq: f64,
+    canvas_height: f64,
+) -> bool {
+    if ff_hi <= ff_lo { return false; }
+    let y_top = spectrogram_renderer::freq_to_y(ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
+    let y_bottom = spectrogram_renderer::freq_to_y(ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
+    px_y >= y_top && px_y <= y_bottom
 }

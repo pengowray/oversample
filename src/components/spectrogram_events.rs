@@ -2,9 +2,9 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
 use crate::canvas::coord::pointer_to_xtf;
-use crate::canvas::hit_test::{hit_test_spec_handles, is_in_ff_drag_zone, hit_test_annotation_handles, hit_test_annotation_body};
+use crate::canvas::hit_test::{hit_test_spec_handles, is_in_ff_drag_zone, hit_test_annotation_handles, hit_test_annotation_body, hit_test_ff_body};
 use crate::canvas::spectrogram_renderer;
-use crate::state::{AppState, CanvasTool, SpectrogramHandle, Selection, UndoEntry};
+use crate::state::{ActiveFocus, AppState, CanvasTool, SpectrogramHandle, Selection, UndoEntry};
 use crate::viewport;
 
 pub const LABEL_AREA_WIDTH: f64 = 60.0;
@@ -64,6 +64,10 @@ pub struct SpectInteraction {
     /// Pending time-axis drag: defers actual drag until pointer moves >3px, allowing tap-to-clear.
     /// Stores (client_x, time, shift_held, anchor_time) when set.
     pub time_axis_pending: RwSignal<Option<(f64, f64, bool, f64)>>,
+    /// Pending FF body click — deferred to mouseup so panning takes priority
+    pub pending_ff_hit: RwSignal<bool>,
+    /// Pending transient selection body click — deferred to mouseup so panning takes priority
+    pub pending_selection_hit: RwSignal<bool>,
 }
 
 impl Default for SpectInteraction {
@@ -95,6 +99,8 @@ impl SpectInteraction {
             corner_drag_saved_selection: RwSignal::new(None),
             pending_annotation_hit: RwSignal::new(None),
             time_axis_pending: RwSignal::new(None),
+            pending_ff_hit: RwSignal::new(false),
+            pending_selection_hit: RwSignal::new(false),
         }
     }
 }
@@ -256,8 +262,7 @@ pub fn select_all_time(state: AppState) {
         freq_low: fl,
         freq_high: fh,
     }));
-    // Mutual exclusion: clear annotation selection
-    state.selected_annotation_ids.set(Vec::new());
+    state.active_focus.set(Some(ActiveFocus::TransientSelection));
 }
 
 /// Finalize axis drag — auto-enable HFR if a meaningful range was selected,
@@ -297,9 +302,9 @@ pub fn finalize_axis_drag(state: AppState) {
             }
         }
     }
-    // Mutual exclusion: clear annotation selection when axis drag creates/modifies FF
+    // Set focus to FF when axis drag creates/modifies FF
     if !was_tap {
-        state.selected_annotation_ids.set(Vec::new());
+        state.active_focus.set(Some(ActiveFocus::FrequencyFocus));
     }
     state.axis_drag_start_freq.set(None);
     state.axis_drag_current_freq.set(None);
@@ -618,22 +623,27 @@ pub fn on_pointerdown(
         }
     }
 
-    // Check for annotation body click-to-select only in Hand mode.
-    // In Selection mode, allow drags to start on top of existing annotations.
+    // Check for annotation body, transient selection body, and FF body clicks.
+    // Priority: annotation > selection > FF. All deferred to pointer-up so panning takes priority.
+    ix.pending_ff_hit.set(false);
+    ix.pending_selection_hit.set(false);
     if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-        if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+        if let Some((px_x, px_y, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+        let files = state.files.get_untracked();
+        let file = files.get(file_idx);
+        let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+        let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
+        let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+
+        // Check annotation body first (highest priority)
+        let mut hit_annotation = false;
         let store = state.annotation_store.get_untracked();
         if let Some(Some(set)) = store.sets.get(file_idx) {
             if let Some(canvas_el) = canvas_ref.get() {
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                 let cw = canvas.width() as f64;
                 let ch = canvas.height() as f64;
-                let files = state.files.get_untracked();
-                let file = files.get(file_idx);
-                let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
                 let scroll = state.scroll_offset.get_untracked();
                 let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let zoom = state.zoom_level.get_untracked();
@@ -642,15 +652,46 @@ pub fn on_pointerdown(
                     set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
                 ) {
                     let ctrl = ev.ctrl_key() || ev.meta_key();
-                    // Defer annotation selection — panning takes priority.
                     ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
+                    hit_annotation = true;
+                }
+            }
+        }
+
+        if !hit_annotation {
+            // Check transient selection body (priority over FF)
+            if let Some(sel) = state.selection.get_untracked() {
+                if point_in_selection(&sel, t, freq) {
+                    ix.pending_selection_hit.set(true);
+                } else {
+                    // Check FF body click
+                    if let Some(canvas_el) = canvas_ref.get() {
+                        let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                        let ch = canvas.height() as f64;
+                        let ff_lo = state.ff_freq_lo.get_untracked();
+                        let ff_hi = state.ff_freq_hi.get_untracked();
+                        if hit_test_ff_body(px_y, ff_lo, ff_hi, min_freq, max_freq, ch) {
+                            ix.pending_ff_hit.set(true);
+                        }
+                    }
+                }
+            } else {
+                // No selection — check FF body click
+                if let Some(canvas_el) = canvas_ref.get() {
+                    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+                    let ch = canvas.height() as f64;
+                    let ff_lo = state.ff_freq_lo.get_untracked();
+                    let ff_hi = state.ff_freq_hi.get_untracked();
+                    if hit_test_ff_body(px_y, ff_lo, ff_hi, min_freq, max_freq, ch) {
+                        ix.pending_ff_hit.set(true);
+                    }
                 }
             }
         }
     }
     }
 
-    // Click on empty area deselects annotations (unless modifier held)
+    // Click on empty area deselects annotations and clears focus (unless modifier held)
     // For Hand tool: defer to mouseup so panning isn't blocked
     if state.canvas_tool.get_untracked() != CanvasTool::Hand
         && !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
@@ -658,6 +699,7 @@ pub fn on_pointerdown(
             if !ids.is_empty() {
                 state.selected_annotation_ids.set(Vec::new());
             }
+            state.active_focus.set(None);
         }
 
     match state.canvas_tool.get_untracked() {
@@ -866,14 +908,16 @@ pub fn on_pointermove(
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let cw = canvas.width() as f64;
                         let ch = canvas.height() as f64;
+                        let ff_focused = state.active_focus.get_untracked() == Some(ActiveFocus::FrequencyFocus);
                         let handle = hit_test_spec_handles(
-                            &state, px_y, min_freq_val, max_freq_val, ch, 8.0,
+                            &state, px_y, min_freq_val, max_freq_val, ch, 8.0, ff_focused,
                         );
                         state.spec_hover_handle.set(handle);
 
-                        // Annotation resize handle hover detection
+                        // Annotation resize handle hover detection (only when annotations have focus)
+                        let annotations_focused = state.active_focus.get_untracked() == Some(ActiveFocus::Annotations);
                         let selected_ids = state.selected_annotation_ids.get_untracked();
-                        if !selected_ids.is_empty() {
+                        if annotations_focused && !selected_ids.is_empty() {
                             let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
                             let store = state.annotation_store.get_untracked();
                             if let Some(Some(set)) = store.sets.get(file_idx) {
@@ -1017,6 +1061,8 @@ pub fn on_pointerup(
                 }
                 // Mutual exclusion: clear annotation selection when time selection is created
                 state.selected_annotation_ids.set(Vec::new());
+                // Focus the new transient selection
+                state.active_focus.set(Some(ActiveFocus::TransientSelection));
             }
         }
         return;
@@ -1044,15 +1090,21 @@ pub fn on_pointerup(
                     state.selected_annotation_ids.set(vec![hit_id.clone()]);
                 }
                 state.last_clicked_annotation_id.set(Some(hit_id));
-                // Mutual exclusion: clear transient selection when annotation is selected
-                state.selection.set(None);
+                state.active_focus.set(Some(ActiveFocus::Annotations));
+            } else if ix.pending_selection_hit.get_untracked() {
+                // Deferred transient selection body click-to-refocus
+                state.active_focus.set(Some(ActiveFocus::TransientSelection));
+            } else if ix.pending_ff_hit.get_untracked() {
+                // Deferred FF body click-to-select
+                state.active_focus.set(Some(ActiveFocus::FrequencyFocus));
             } else {
-                // Click on empty area deselects annotations
+                // Click on empty area deselects annotations and clears focus
                 if !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
                     let ids = state.selected_annotation_ids.get_untracked();
                     if !ids.is_empty() {
                         state.selected_annotation_ids.set(Vec::new());
                     }
+                    state.active_focus.set(None);
                 }
             }
             // Bookmark while playing
@@ -1063,6 +1115,8 @@ pub fn on_pointerup(
         }
 
         ix.pending_annotation_hit.set(None);
+        ix.pending_ff_hit.set(false);
+        ix.pending_selection_hit.set(false);
         return;
     }
     if state.canvas_tool.get_untracked() != CanvasTool::Selection { return; }
@@ -1076,8 +1130,7 @@ pub fn on_pointerup(
         };
         if sel.time_end - sel.time_start > 0.0001 {
             state.selection.set(Some(sel));
-            // Mutual exclusion: clear annotation selection when transient selection is created
-            state.selected_annotation_ids.set(Vec::new());
+            state.active_focus.set(Some(ActiveFocus::TransientSelection));
             if state.annotation_auto_focus.get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {
@@ -1115,6 +1168,21 @@ pub fn on_dblclick(
         }
     }
 
+    // Double-click in main area: clear transient selection if click is outside it
+    if let Some(sel) = state.selection.get_untracked() {
+        if let Some((_, _, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
+            if !point_in_selection(&sel, t, freq) {
+                state.last_selection.set(Some(sel));
+                state.selection.set(None);
+                if state.active_focus.get_untracked() == Some(ActiveFocus::TransientSelection) {
+                    state.active_focus.set(None);
+                }
+                ev.prevent_default();
+                return;
+            }
+        }
+    }
+
     // Double-click on FF handle toggles HFR (label area tap handled by finalize_axis_drag)
     let has_range = state.ff_freq_hi.get_untracked() > state.ff_freq_lo.get_untracked();
     if !has_range { return; }
@@ -1126,6 +1194,17 @@ pub fn on_dblclick(
     if on_handle {
         state.toggle_hfr();
         ev.prevent_default();
+    }
+}
+
+/// Check whether a point (time, freq) falls inside a selection.
+fn point_in_selection(sel: &Selection, t: f64, freq: f64) -> bool {
+    if t < sel.time_start || t > sel.time_end {
+        return false;
+    }
+    match (sel.freq_low, sel.freq_high) {
+        (Some(lo), Some(hi)) => freq >= lo && freq <= hi,
+        _ => true, // time-only segment: any freq is inside
     }
 }
 
@@ -1264,8 +1343,9 @@ pub fn on_touchstart(
             let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
             let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
             let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+            let ff_focused = state.active_focus.get_untracked() == Some(ActiveFocus::FrequencyFocus);
             let handle = hit_test_spec_handles(
-                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, // wider touch target
+                &state, px_y, min_freq_val, max_freq_val, ch, 16.0, ff_focused, // wider touch target
             );
             if let Some(handle) = handle {
                 let is_ff = matches!(handle, SpectrogramHandle::FfUpper | SpectrogramHandle::FfLower | SpectrogramHandle::FfMiddle);
@@ -1638,8 +1718,7 @@ pub fn on_touchend(
                             }));
                         }
                     }
-                    // Mutual exclusion: clear annotation selection when time selection is created
-                    state.selected_annotation_ids.set(Vec::new());
+                    state.active_focus.set(Some(ActiveFocus::TransientSelection));
                 }
             }
             return;

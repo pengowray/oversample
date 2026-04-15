@@ -524,6 +524,7 @@ pub fn draw_ff_overlay(
     hover_handle: Option<SpectrogramHandle>,
     drag_handle: Option<SpectrogramHandle>,
     is_mobile: bool,
+    ff_focused: bool,
 ) {
     if ff_hi <= ff_lo { return; }
 
@@ -549,20 +550,37 @@ pub fn draw_ff_overlay(
     let center_x = canvas_width / 2.0;
     let handle_zone_half = crate::canvas::hit_test::FF_HANDLE_HALF_WIDTH;
 
-    // Amber edge lines (full width) + centered diamond drag handles
+    // Edge lines (full width) + centered diamond drag handles
+    // Focused: dotted yellow lines; Unfocused: solid muted blue-gray lines
     for &(y, handle) in &[(y_top, SpectrogramHandle::FfUpper), (y_bottom, SpectrogramHandle::FfLower)] {
         let active = is_active(handle);
-        let line_alpha = if active { 0.9 } else { 0.4 };
-        let width = if active { 2.0 } else { 1.0 };
-        ctx.set_stroke_style_str(&format!("rgba(255, 180, 60, {:.2})", line_alpha));
-        ctx.set_line_width(width);
+        if ff_focused {
+            // Focused: dotted yellow/amber lines
+            let line_alpha = if active { 0.9 } else { 0.5 };
+            let width = if active { 2.0 } else { 1.5 };
+            ctx.set_stroke_style_str(&format!("rgba(255, 220, 60, {:.2})", line_alpha));
+            ctx.set_line_width(width);
+            let dash = js_sys::Array::new();
+            dash.push(&wasm_bindgen::JsValue::from_f64(6.0));
+            dash.push(&wasm_bindgen::JsValue::from_f64(4.0));
+            let _ = ctx.set_line_dash(&dash);
+        } else {
+            // Unfocused: solid muted teal/blue-gray lines
+            let line_alpha = if active { 0.7 } else { 0.35 };
+            let width = if active { 1.5 } else { 1.0 };
+            ctx.set_stroke_style_str(&format!("rgba(140, 180, 200, {:.2})", line_alpha));
+            ctx.set_line_width(width);
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+        }
         ctx.begin_path();
         ctx.move_to(0.0, y);
         ctx.line_to(canvas_width, y);
         ctx.stroke();
+        // Reset line dash
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
 
-        // Diamond handle at center — visible on hover/drag or always on mobile
-        let show_handle = active || any_ff_active || is_mobile;
+        // Diamond handle at center — visible only when FF is focused
+        let show_handle = ff_focused && (active || any_ff_active || is_mobile);
         if show_handle {
             let handle_size = if active { 8.0 } else if is_mobile { 6.0 } else { 5.0 };
             let handle_alpha = if active { 0.9 } else if is_mobile { 0.5 } else { 0.45 };
@@ -589,7 +607,7 @@ pub fn draw_ff_overlay(
     // Middle handle (diamond at midpoint, centered)
     let mid_y = (y_top + y_bottom) / 2.0;
     let mid_active = is_active(SpectrogramHandle::FfMiddle);
-    let show_mid = mid_active || any_ff_active || is_mobile;
+    let show_mid = ff_focused && (mid_active || any_ff_active || is_mobile);
     if show_mid {
         let mid_size = if mid_active { 7.0 } else if is_mobile { 5.0 } else { 4.0 };
         let mid_alpha = if mid_active { 0.9 } else if is_mobile { 0.4 } else { 0.35 };
@@ -603,8 +621,8 @@ pub fn draw_ff_overlay(
         ctx.fill();
     }
 
-    // FF range labels (only when handles are active): top and bottom frequencies
-    if hover_handle.is_some() || drag_handle.is_some() {
+    // FF range labels (only when FF is focused and handles are active)
+    if ff_focused && (hover_handle.is_some() || drag_handle.is_some()) {
         ctx.set_fill_style_str("rgba(255, 180, 60, 0.8)");
         ctx.set_font("11px sans-serif");
         let label_x = center_x + handle_zone_half + 8.0;
@@ -1312,6 +1330,7 @@ pub fn draw_annotations(
     canvas_width: f64,
     canvas_height: f64,
     is_mobile: bool,
+    annotations_focused: bool,
 ) {
     let visible_time = (canvas_width / zoom) * time_resolution;
     let start_time = scroll_offset;
@@ -1379,9 +1398,8 @@ pub fn draw_annotations(
             let _ = ctx.fill_text(label, x0 + 3.0, y0 + 12.0);
         }
 
-        // Resize handles for selected annotations
-        if is_selected {
-            let locked = sel.is_locked();
+        // Resize handles for selected annotations (only when annotations have focus and not locked)
+        if is_selected && annotations_focused && !sel.is_locked() {
             let handles = crate::canvas::hit_test::get_annotation_handle_positions(
                 sel.time_start, sel.time_end,
                 sel.freq_low, sel.freq_high,
@@ -1398,23 +1416,15 @@ pub fn draw_annotations(
                     if is_mobile { 8.0 } else { 4.0 }
                 } else if is_mobile { 6.0 } else { 3.0 };
 
-                let fill = if locked {
-                    if is_hovered { "rgba(160, 160, 160, 0.9)" } else { "rgba(120, 120, 120, 0.7)" }
-                } else if is_hovered {
+                let fill = if is_hovered {
                     "rgba(255, 220, 100, 1.0)"
                 } else {
                     "rgba(255, 200, 80, 0.9)"
                 };
 
-                let stroke = if locked {
-                    "rgba(80, 80, 80, 0.8)"
-                } else {
-                    "rgba(180, 120, 20, 0.9)"
-                };
-
                 ctx.set_fill_style_str(fill);
                 ctx.fill_rect(hx - size, hy - size, size * 2.0, size * 2.0);
-                ctx.set_stroke_style_str(stroke);
+                ctx.set_stroke_style_str("rgba(180, 120, 20, 0.9)");
                 ctx.set_line_width(1.0);
                 ctx.stroke_rect(hx - size, hy - size, size * 2.0, size * 2.0);
             }

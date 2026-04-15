@@ -184,6 +184,7 @@ pub fn Spectrogram() -> impl IntoView {
         let annotation_store = state.annotation_store.get();
         let selected_annotation_ids = state.selected_annotation_ids.get();
         let annotation_hover_handle = state.annotation_hover_handle.get();
+        let active_focus = state.active_focus.get();
         let _timeline = state.active_timeline.get(); // trigger redraw on timeline change
         pre_rendered.track();
         // Re-read canvas dimensions when sidebar layout changes
@@ -794,6 +795,7 @@ pub fn Spectrogram() -> impl IntoView {
                     display_h as f64, display_w as f64,
                     spec_hover, spec_drag,
                     state.is_mobile.get_untracked(),
+                    active_focus == Some(crate::state::ActiveFocus::FrequencyFocus),
                 );
             }
 
@@ -885,6 +887,7 @@ pub fn Spectrogram() -> impl IntoView {
                             display_w as f64,
                             display_h as f64,
                             state.is_mobile.get_untracked(),
+                            active_focus == Some(crate::state::ActiveFocus::Annotations),
                         );
                     }
                 }
