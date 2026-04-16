@@ -342,6 +342,9 @@ fn parse_xc_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
         ("date", "Date"),
         ("type", "Sound type"),
         ("q", "Quality"),
+        ("dvc", "Device"),
+        ("mic", "Microphone"),
+        ("method", "Method"),
         ("url", "URL"),
     ] {
         let v = s(key);
