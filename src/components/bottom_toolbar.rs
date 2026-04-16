@@ -1067,26 +1067,26 @@ pub fn BottomToolbar() -> impl IntoView {
                             <hr />
                             <div class="layer-panel-title">"Buffer"</div>
                             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                                <button class=move || layer_opt_class(state.listen_context_chunks.get() == 1)
-                                    on:click=move |_| state.listen_context_chunks.set(1)
-                                    title="Minimum buffer (more clicks, lowest latency)"
-                                >"1x"</button>
-                                <button class=move || layer_opt_class(state.listen_context_chunks.get() == 2)
-                                    on:click=move |_| state.listen_context_chunks.set(2)
-                                    title="Small buffer"
-                                >"2x"</button>
-                                <button class=move || layer_opt_class(state.listen_context_chunks.get() == 4)
-                                    on:click=move |_| state.listen_context_chunks.set(4)
-                                    title="Medium buffer (default)"
-                                >"4x"</button>
-                                <button class=move || layer_opt_class(state.listen_context_chunks.get() == 8)
-                                    on:click=move |_| state.listen_context_chunks.set(8)
-                                    title="Large buffer (smoother, more CPU)"
-                                >"8x"</button>
-                                <button class=move || layer_opt_class(state.listen_context_chunks.get() == 16)
-                                    on:click=move |_| state.listen_context_chunks.set(16)
-                                    title="Maximum buffer (smoothest, most CPU)"
-                                >"16x"</button>
+                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
+                                    on:click=move |_| state.listen_context_samples.set(4096)
+                                    title="4096 samples — minimum context (more artifacts, lowest latency)"
+                                >"4K"</button>
+                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 8192)
+                                    on:click=move |_| state.listen_context_samples.set(8192)
+                                    title="8192 samples"
+                                >"8K"</button>
+                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 16384)
+                                    on:click=move |_| state.listen_context_samples.set(16384)
+                                    title="16384 samples (default)"
+                                >"16K"</button>
+                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 32768)
+                                    on:click=move |_| state.listen_context_samples.set(32768)
+                                    title="32768 samples (smoother, more CPU)"
+                                >"32K"</button>
+                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 65536)
+                                    on:click=move |_| state.listen_context_samples.set(65536)
+                                    title="65536 samples (smoothest, most CPU)"
+                                >"64K"</button>
                             </div>
                         </Show>
 
