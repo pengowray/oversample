@@ -313,46 +313,6 @@ pub fn Waveform() -> impl IntoView {
                         max_freq_khz,
                     );
                 }
-            } else if hfr {
-                if let Some(filtered) = hfr_filtered.get().as_ref() {
-                    // For HFR overlay, also window the filtered samples to the visible region
-                    let filtered_region: Vec<f32> = if region_start < filtered.len() {
-                        let end = (region_start + region_len).min(filtered.len());
-                        filtered[region_start..end].to_vec()
-                    } else {
-                        Vec::new()
-                    };
-                    waveform_renderer::draw_waveform_hfr(
-                        &ctx,
-                        &waveform_buf,
-                        &filtered_region,
-                        sr,
-                        buf_scroll,
-                        zoom,
-                        file.spectrogram.time_resolution,
-                        display_w as f64,
-                        display_h as f64,
-                        sel_time,
-                        gain_db,
-                        buf_duration,
-                        region_start,
-                    );
-                } else {
-                    waveform_renderer::draw_waveform(
-                        &ctx,
-                        &waveform_buf,
-                        sr,
-                        buf_scroll,
-                        zoom,
-                        file.spectrogram.time_resolution,
-                        display_w as f64,
-                        display_h as f64,
-                        sel_time,
-                        gain_db,
-                        buf_duration,
-                        region_start,
-                    );
-                }
             } else {
                 // Helper to window a full-file band buffer to the visible region
                 let window_band = |full: &[f32]| -> Vec<f32> {
@@ -366,20 +326,53 @@ pub fn Waveform() -> impl IntoView {
 
                 match waveform_view {
                     WaveformView::Simple => {
-                        waveform_renderer::draw_waveform(
-                            &ctx,
-                            &waveform_buf,
-                            sr,
-                            buf_scroll,
-                            zoom,
-                            file.spectrogram.time_resolution,
-                            display_w as f64,
-                            display_h as f64,
-                            sel_time,
-                            gain_db,
-                            buf_duration,
-                            region_start,
-                        );
+                        if hfr {
+                            if let Some(filtered) = hfr_filtered.get().as_ref() {
+                                let filtered_region: Vec<f32> = if region_start < filtered.len() {
+                                    let end = (region_start + region_len).min(filtered.len());
+                                    filtered[region_start..end].to_vec()
+                                } else {
+                                    Vec::new()
+                                };
+                                waveform_renderer::draw_waveform_hfr(
+                                    &ctx,
+                                    &waveform_buf,
+                                    &filtered_region,
+                                    sr,
+                                    buf_scroll,
+                                    zoom,
+                                    file.spectrogram.time_resolution,
+                                    display_w as f64,
+                                    display_h as f64,
+                                    sel_time,
+                                    gain_db,
+                                    buf_duration,
+                                    region_start,
+                                );
+                            } else {
+                                waveform_renderer::draw_waveform(
+                                    &ctx, &waveform_buf, sr, buf_scroll, zoom,
+                                    file.spectrogram.time_resolution,
+                                    display_w as f64, display_h as f64,
+                                    sel_time, gain_db, buf_duration, region_start,
+                                );
+                            }
+                        } else {
+                            waveform_renderer::draw_waveform(
+                                &ctx,
+                                &waveform_buf,
+                                sr,
+                                buf_scroll,
+                                zoom,
+                                file.spectrogram.time_resolution,
+                                display_w as f64,
+                                display_h as f64,
+                                sel_time,
+                                gain_db,
+                                buf_duration,
+                                region_start,
+                            );
+                        }
                     }
                     WaveformView::Frequency => {
                         if let Some((ref _below, ref selected, ref _above)) = band_data.as_ref() {
