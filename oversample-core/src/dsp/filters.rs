@@ -249,6 +249,96 @@ pub fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: 
     result
 }
 
+/// Split a signal into three brick-wall frequency bands via overlap-add FFT.
+/// Returns (below freq_low, between freq_low..=freq_high, above freq_high).
+pub fn split_three_bands_fft(
+    samples: &[f32],
+    sample_rate: u32,
+    freq_low: f64,
+    freq_high: f64,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    use realfft::num_complex::Complex;
+
+    let len = samples.len();
+    if len == 0 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    let fft_size = 4096usize;
+    let hop_size = fft_size / 2;
+    let window = hann_window(fft_size);
+    let num_bins = fft_size / 2 + 1;
+    let freq_per_bin = sample_rate as f64 / fft_size as f64;
+
+    let (fft_fwd, fft_inv) = FFT_PLANNER.with(|p| {
+        let mut p = p.borrow_mut();
+        (p.plan_fft_forward(fft_size), p.plan_fft_inverse(fft_size))
+    });
+
+    let mut below = vec![0.0f32; len];
+    let mut middle = vec![0.0f32; len];
+    let mut above = vec![0.0f32; len];
+    let mut window_sum = vec![0.0f32; len];
+
+    let mut frame = fft_fwd.make_input_vec();
+    let mut spectrum = fft_fwd.make_output_vec();
+    let mut scratch = fft_fwd.make_output_vec();
+    let mut time_out = fft_inv.make_output_vec();
+    let norm = 1.0 / fft_size as f32;
+    let zero = Complex::new(0.0f32, 0.0f32);
+
+    let lo_bin = (freq_low / freq_per_bin).round() as usize;
+    let hi_bin = (freq_high / freq_per_bin).round() as usize;
+
+    let mut pos = 0;
+    while pos < len {
+        frame.fill(0.0);
+        for (i, &w) in window.iter().enumerate() {
+            if pos + i < len {
+                frame[i] = samples[pos + i] * w;
+            }
+        }
+
+        fft_fwd.process(&mut frame, &mut spectrum).expect("FFT forward failed");
+
+        let emit = |target: &mut [f32], bin_gate: &dyn Fn(usize) -> bool,
+                    scratch: &mut [Complex<f32>], time_out: &mut [f32]| {
+            for bin in 0..num_bins {
+                scratch[bin] = if bin_gate(bin) { spectrum[bin] } else { zero };
+            }
+            fft_inv.process(scratch, time_out).expect("FFT inverse failed");
+            for i in 0..fft_size {
+                if pos + i < len {
+                    target[pos + i] += time_out[i] * norm * window[i];
+                }
+            }
+        };
+
+        emit(&mut below, &|bin| bin < lo_bin, &mut scratch, &mut time_out);
+        emit(&mut middle, &|bin| bin >= lo_bin && bin <= hi_bin, &mut scratch, &mut time_out);
+        emit(&mut above, &|bin| bin > hi_bin, &mut scratch, &mut time_out);
+
+        for i in 0..fft_size {
+            if pos + i < len {
+                window_sum[pos + i] += window[i] * window[i];
+            }
+        }
+
+        pos += hop_size;
+    }
+
+    for i in 0..len {
+        if window_sum[i] > 1e-6 {
+            let inv = 1.0 / window_sum[i];
+            below[i] *= inv;
+            middle[i] *= inv;
+            above[i] *= inv;
+        }
+    }
+
+    (below, middle, above)
+}
+
 /// Simple single-pole IIR low-pass filter (first-order exponential moving average).
 ///
 /// Transfer function: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]

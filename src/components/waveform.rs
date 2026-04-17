@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::waveform_renderer;
-use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, cascaded_lowpass};
+use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, split_three_bands_fft};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, PlaybackMode, WaveformView};
 use crate::audio::source::ChannelView;
@@ -76,17 +76,10 @@ pub fn Waveform() -> impl IntoView {
                 _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize)),
             };
 
-            // Hard frequency separation for band visualisation (independent of the
-            // bandpass EQ gains). 16 cascaded single-pole passes ≈ 96 dB/oct, so each
-            // waveform clearly belongs to its own band with minimal spillover.
-            const BAND_SPLIT_PASSES: usize = 16;
-            let lp_low = cascaded_lowpass(&ch_samples, freq_low, sr, BAND_SPLIT_PASSES);
-            let hp_low: Vec<f32> = ch_samples.iter().zip(lp_low.iter()).map(|(s, l)| s - l).collect();
-
-            let lp_high = cascaded_lowpass(&hp_low, freq_high, sr, BAND_SPLIT_PASSES);
-            let above: Vec<f32> = hp_low.iter().zip(lp_high.iter()).map(|(s, l)| s - l).collect();
-
-            (lp_low, lp_high, above)
+            // Brick-wall band separation via overlap-add FFT. Cascaded IIR
+            // lowpasses had poor passband flatness so content from the middle
+            // band leaked heavily into the 'above' lane.
+            split_three_bands_fft(&ch_samples, sr, freq_low, freq_high)
         })
     });
 
