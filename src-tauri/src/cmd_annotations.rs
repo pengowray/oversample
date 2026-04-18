@@ -88,7 +88,7 @@ pub async fn export_annotations_file(_filename: String, _yaml: String) -> Result
 #[tauri::command]
 pub async fn open_file_dialog() -> Result<Vec<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
-        .add_filter("Audio files", &["wav", "w4v", "flac", "ogg", "mp3"])
+        .add_filter("Audio files", &["wav", "w4v", "flac", "ogg", "mp3", "m4a", "m4b"])
         .add_filter("All files", &["*"])
         .set_title("Open audio files")
         .pick_files()
