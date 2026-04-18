@@ -472,11 +472,13 @@ pub fn App() -> impl IntoView {
             let Some(file) = files.get(idx).cloned() else { return; };
 
             learning.set(true);
-            let total = file.audio.source.total_samples() as usize;
-            let samples = std::sync::Arc::new(
-                file.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total)
-            );
             let sample_rate = file.audio.sample_rate;
+            // Noise-floor learning only looks at the first 500ms — no need to
+            // clone the entire file. Reuse audio.samples (already in-memory
+            // mono-mix) and slice the head out of it.
+            let needed = (0.5 * sample_rate as f64).ceil() as usize;
+            let slice_len = needed.min(file.audio.samples.len());
+            let samples = std::sync::Arc::new(file.audio.samples[..slice_len].to_vec());
 
             wasm_bindgen_futures::spawn_local(async move {
                 crate::canvas::tile_cache::yield_to_browser().await;

@@ -2,7 +2,6 @@ use leptos::prelude::*;
 use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
-use crate::audio::source::ChannelView;
 use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
@@ -71,17 +70,18 @@ pub fn ZcDotChart() -> impl IntoView {
 
         idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
-            let total = file.audio.source.total_samples() as usize;
-            let raw = file.audio.source.read_region(ChannelView::MonoMix, 0, total);
-            let samples = if filter_enabled {
-                match quality {
-                    FilterQuality::Fast => apply_eq_filter_fast(&raw, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
-                    FilterQuality::Spectral => apply_eq_filter(&raw, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
-                }
+            // Use audio.samples directly — read_region would allocate a
+            // duplicate Vec that for multi-hour M4A files OOMs the WASM heap.
+            let raw: &[f32] = file.audio.samples.as_slice();
+            if filter_enabled {
+                let filtered = match quality {
+                    FilterQuality::Fast => apply_eq_filter_fast(raw, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+                    FilterQuality::Spectral => apply_eq_filter(raw, sr, freq_low, freq_high, db_below, db_selected, db_harmonics, db_above, band_mode),
+                };
+                zc_rate_per_bin(&filtered, sr, ZC_BIN_DURATION, filter_enabled)
             } else {
-                raw
-            };
-            zc_rate_per_bin(&samples, sr, ZC_BIN_DURATION, filter_enabled)
+                zc_rate_per_bin(raw, sr, ZC_BIN_DURATION, filter_enabled)
+            }
         })
     });
 
