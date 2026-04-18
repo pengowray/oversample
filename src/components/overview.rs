@@ -616,10 +616,14 @@ pub fn OverviewPanel() -> impl IntoView {
                 }
                 OverviewView::Waveform => {
                     let ov_buf;
+                    // Cap non-MonoMix reads to file.audio.samples.len() so
+                    // streaming sources don't allocate gigabytes for
+                    // multi-hour files.
+                    let read_len = file.audio.samples.len();
                     let ov_samples: &[f32] = match cv {
                         crate::audio::source::ChannelView::MonoMix => &file.audio.samples,
                         _ => {
-                            ov_buf = file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize);
+                            ov_buf = file.audio.source.read_region(cv, 0, read_len);
                             &ov_buf
                         }
                     };

@@ -37,9 +37,13 @@ pub fn Waveform() -> impl IntoView {
 
         idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
+            // For streaming sources, file.audio.samples is only the head (~30s);
+            // match that length for non-MonoMix reads instead of pulling the
+            // whole file (which would OOM on multi-hour m4b/m4a files).
+            let read_len = file.audio.samples.len();
             let ch_samples = match cv {
                 ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
-                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize)),
+                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, read_len)),
             };
             let samples = if filter_enabled {
                 match quality {
@@ -71,9 +75,12 @@ pub fn Waveform() -> impl IntoView {
 
         idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
+            // See zc_bins memo above — cap the read to the in-memory head
+            // length so streaming sources don't try to allocate gigabytes.
+            let read_len = file.audio.samples.len();
             let ch_samples = match cv {
                 ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
-                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, file.audio.source.total_samples() as usize)),
+                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, read_len)),
             };
 
             // Brick-wall band separation via overlap-add FFT. Cascaded IIR
