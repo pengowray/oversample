@@ -947,10 +947,14 @@ pub fn App() -> impl IntoView {
                 }
                 let state = state_drop;
                 let load_id = state.loading_start(&name);
+                let name_for_err = name.clone();
                 leptos::task::spawn_local(async move {
                     match crate::components::file_sidebar::load_native_file(path, state, load_id).await {
                         Ok(()) => {}
-                        Err(e) => log::error!("Failed to load dropped file: {e}"),
+                        Err(e) => {
+                            log::error!("Failed to load {}: {}", name_for_err, e);
+                            state.show_error_toast(&format!("Couldn't open {name_for_err}: {e}"));
+                        }
                     }
                     state.loading_done(load_id);
                 });

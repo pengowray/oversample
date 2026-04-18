@@ -142,11 +142,15 @@ pub(super) fn FilesPanel() -> impl IntoView {
         for i in 0..file_list.length() {
             let Some(file) = file_list.get(i) else { continue };
             let state = state_for_drop;
-            let load_id = state.loading_start(&file.name());
+            let file_name = file.name();
+            let load_id = state.loading_start(&file_name);
             spawn_local(async move {
                 match read_and_load_file(file, state, load_id).await {
                     Ok(()) => {}
-                    Err(e) => log::error!("Failed to load file: {e}"),
+                    Err(e) => {
+                        log::error!("Failed to load {}: {}", file_name, e);
+                        state.show_error_toast(&format!("Couldn't open {file_name}: {e}"));
+                    }
                 }
                 state.loading_done(load_id);
             });
