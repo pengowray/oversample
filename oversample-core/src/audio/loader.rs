@@ -1627,6 +1627,10 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
     }
 
     let mut all_samples: Vec<f32> = Vec::new();
+    // Authoritative from the decoder — mp4a can report pre-SBR/PS values that
+    // don't match what symphonia's AAC decoder actually emits.
+    let mut actual_rate: Option<u32> = None;
+    let mut actual_channels: Option<u32> = None;
     loop {
         let packet = match format.next_packet() {
             Ok(p) => p,
@@ -1638,6 +1642,10 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
+                if actual_rate.is_none() {
+                    actual_rate = Some(spec.rate);
+                    actual_channels = Some(spec.channels.count() as u32);
+                }
                 let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                 buf.copy_interleaved_ref(decoded);
                 all_samples.extend_from_slice(buf.samples());
@@ -1647,6 +1655,8 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
         }
     }
 
+    let sample_rate = actual_rate.unwrap_or(sample_rate);
+    let channels = actual_channels.unwrap_or(channels);
     let (samples, source) = build_source(all_samples, channels, sample_rate);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
 

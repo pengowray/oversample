@@ -1745,6 +1745,11 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     let mut head_frame_count: u64 = 0;
     let mut next_frame: u64 = 0;
     let mut frames_since_yield: u64 = 0;
+    // Authoritative spec filled in from the first successful packet — the
+    // mp4a atom sometimes reports pre-SBR / pre-PS values that don't match
+    // what symphonia's AAC decoder actually outputs.
+    let mut actual_rate: Option<u32> = None;
+    let mut actual_channels: Option<usize> = None;
 
     loop {
         let packet = match format.next_packet() {
@@ -1757,10 +1762,22 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
+                if actual_rate.is_none() {
+                    let dec_ch = spec.channels.count();
+                    if spec.rate != sample_rate as u32 || dec_ch != channels {
+                        log::info!(
+                            "M4A spec mismatch — container said {} ch @ {} Hz, decoder outputs {} ch @ {} Hz",
+                            channels, sample_rate, dec_ch, spec.rate,
+                        );
+                    }
+                    actual_rate = Some(spec.rate);
+                    actual_channels = Some(dec_ch);
+                }
+                let ch = actual_channels.unwrap();
                 let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                 buf.copy_interleaved_ref(decoded);
                 let samples = buf.samples();
-                let n_frames = samples.len() / channels;
+                let n_frames = samples.len() / ch;
                 head_interleaved.extend_from_slice(samples);
                 head_frame_count += n_frames as u64;
                 next_frame += n_frames as u64;
@@ -1780,6 +1797,28 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     if head_frame_count == 0 {
         return Err("No M4A frames decoded".into());
     }
+
+    // Authoritative values from the decoder, now that we've seen real output.
+    // If the container reported a different rate (e.g. mp4a sample_rate of
+    // 22050 for a file the decoder outputs at 44100, or vice versa), scale
+    // total_frames to match actual_rate so duration and seeking stay consistent.
+    let pre_decode_rate = sample_rate;
+    let sample_rate = actual_rate.unwrap_or(sample_rate);
+    let channels = actual_channels.unwrap_or(channels);
+    if pre_decode_rate > sample_rate && pre_decode_rate == sample_rate * 2 {
+        // Container rate is twice the decoder's output rate — classic HE-AAC
+        // SBR signature. symphonia doesn't implement SBR, so content above
+        // ~sample_rate/2 is missing. For voice/audiobooks this is mostly OK.
+        state.show_info_toast(format!(
+            "HE-AAC detected: decoded at {} kHz without SBR (container reports {} kHz).",
+            sample_rate / 1000, pre_decode_rate / 1000,
+        ));
+    }
+    let total_frames = if pre_decode_rate > 0 && pre_decode_rate != sample_rate {
+        ((total_frames as u128 * sample_rate as u128) / pre_decode_rate as u128) as u64
+    } else {
+        total_frames
+    };
 
     let actual_head_frames = head_frame_count.min(head_target_frames) as usize;
     head_interleaved.truncate(actual_head_frames * channels);
