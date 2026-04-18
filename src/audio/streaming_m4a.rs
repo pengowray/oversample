@@ -17,6 +17,13 @@ use symphonia::core::units::Time;
 use crate::audio::source::{AudioSource, ChannelView};
 use super::streaming_source::{FileHandle, ChunkCache, CachedChunk, CHUNK_FRAMES, mix_to_mono};
 
+/// Clears `decoding_in_progress` on scope exit, so an early return or error
+/// path can't leave the source locked forever.
+struct DecodeGuard<'a>(&'a Cell<bool>);
+impl Drop for DecodeGuard<'_> {
+    fn drop(&mut self) { self.0.set(false); }
+}
+
 /// Reader state held across prefetch calls. Not thread-safe — WASM is
 /// single-threaded. `RefCell` gives us interior mutability.
 struct ReaderState {
@@ -43,6 +50,10 @@ pub struct StreamingM4aSource {
     /// Frame up to which all chunks are guaranteed cached (background decode cursor).
     decode_frame_cursor: Cell<u64>,
     fully_decoded: Cell<bool>,
+    /// True while a decode_chunk call is in progress — prevents the background
+    /// decoder and a viewport prefetch from concurrently mutating the shared
+    /// symphonia reader / decoder state across `.await` points.
+    decoding_in_progress: Cell<bool>,
 }
 
 // SAFETY: WASM is single-threaded.
@@ -93,6 +104,7 @@ impl StreamingM4aSource {
             }),
             decode_frame_cursor: Cell::new(initial_next_frame),
             fully_decoded: Cell::new(false),
+            decoding_in_progress: Cell::new(false),
         }
     }
 
@@ -128,6 +140,12 @@ impl StreamingM4aSource {
         };
         if all_cached { return; }
 
+        // If another task is already decoding, bail out — it will make
+        // progress and the next prefetch cycle will pick up where it left off.
+        if self.decoding_in_progress.get() {
+            return;
+        }
+
         for chunk_idx in first_chunk..=last_chunk {
             if self.cache.borrow().contains(chunk_idx) { continue; }
             if self.decode_chunk(chunk_idx).await.is_err() {
@@ -145,6 +163,16 @@ impl StreamingM4aSource {
         let chunk_start = chunk_idx * CHUNK_FRAMES as u64;
         let chunk_end = (chunk_start + CHUNK_FRAMES as u64).min(self.total_frames);
         if chunk_start >= self.total_frames { return Err("Past EOF".into()); }
+
+        // Re-entrance guard: if another task is already decoding, abort. The
+        // caller (prefetch_region) treats Err as "skip this chunk, try again
+        // later", so this behaves like a cooperative mutex across .await
+        // points without holding a RefCell borrow.
+        if self.decoding_in_progress.get() {
+            return Err("decode_chunk already in progress".into());
+        }
+        self.decoding_in_progress.set(true);
+        let _guard = DecodeGuard(&self.decoding_in_progress);
 
         let channels = self.channels as usize;
 
