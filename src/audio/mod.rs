@@ -1,6 +1,7 @@
 // Re-export modules from oversample-core.
 pub use oversample_core::audio::{source, guano, loader};
 
+pub mod browser_decode;
 pub mod export;
 pub mod peak;
 pub mod live_recording;
