@@ -11,7 +11,7 @@ use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::SpectrogramData;
 use std::sync::Arc;
 
-use super::streaming_load::{SilenceCheck, STREAMING_CHECK_SIZE, try_streaming_wav, try_streaming_flac, try_streaming_m4a, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
+use super::streaming_load::{SilenceCheck, try_streaming_wav, try_streaming_flac, try_streaming_m4a, try_streaming_mp3, try_streaming_ogg, build_streaming_overview};
 
 /// Maximum file size the browser can handle for full in-memory decode (~2 GB).
 /// Files above this MUST use the streaming path; if streaming fails, they're rejected.
@@ -60,43 +60,44 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
         );
     };
 
-    // For large files, or once the workspace has accumulated enough opened
-    // files, attempt the streaming path for supported formats.
-    if size > STREAMING_CHECK_SIZE || force_streaming {
-        state.loading_update(load_id, crate::state::LoadingStage::Streaming);
-        match try_streaming_wav(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("WAV streaming not applicable for {}: {}", name, e);
-            }
+    // Always attempt the streaming path — each try_streaming_* probes only
+    // the format header (a few dozen KB) and bails fast via the decoded-size
+    // threshold if in-memory would fit. This catches heavily-compressed audio
+    // (HE-AAC audiobooks, low-bitrate MP3) where compressed size is small but
+    // decoded PCM runs into the gigabytes.
+    state.loading_update(load_id, crate::state::LoadingStage::Streaming);
+    match try_streaming_wav(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("WAV streaming not applicable for {}: {}", name, e);
         }
-        match try_streaming_flac(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("FLAC streaming not applicable for {}: {}", name, e);
-            }
-        }
-        match try_streaming_mp3(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("MP3 streaming not applicable for {}: {}", name, e);
-            }
-        }
-        match try_streaming_ogg(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("OGG streaming not applicable for {}: {}", name, e);
-            }
-        }
-        match try_streaming_m4a(&file, &name, state, force_streaming, load_id).await {
-            Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
-            Err(e) => {
-                log::info!("M4A streaming not applicable for {}: {}", name, e);
-            }
-        }
-        // Streaming didn't apply — fall through to full decode
-        state.loading_update(load_id, crate::state::LoadingStage::Decoding);
     }
+    match try_streaming_flac(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("FLAC streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_mp3(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("MP3 streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_ogg(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("OGG streaming not applicable for {}: {}", name, e);
+        }
+    }
+    match try_streaming_m4a(&file, &name, state, force_streaming, load_id).await {
+        Ok(()) => { finalize_loaded_file(state, last_modified_ms); return Ok(()); }
+        Err(e) => {
+            log::info!("M4A streaming not applicable for {}: {}", name, e);
+        }
+    }
+    // Streaming didn't apply — fall through to full decode
+    state.loading_update(load_id, crate::state::LoadingStage::Decoding);
 
     if size > MAX_FILE_SIZE {
         let msg = format!(

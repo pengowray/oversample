@@ -1211,6 +1211,54 @@ pub fn parse_m4a_chapters(bytes: &[u8], sample_rate: u32) -> Vec<WavMarker> {
         .unwrap_or_default()
 }
 
+/// Read the audio track's duration (in timescale units) from `mdhd`.
+/// For audio tracks the timescale usually equals the sample rate, so the
+/// returned value is roughly the total output-sample count.
+pub fn parse_m4a_track_duration(bytes: &[u8]) -> Option<u64> {
+    let moov = find_top_level_atom(bytes, *b"moov")?;
+    let mut pos = 0usize;
+    while pos + 8 <= moov.len() {
+        let size = u32::from_be_bytes(moov[pos..pos + 4].try_into().ok()?) as u64;
+        let id = &moov[pos + 4..pos + 8];
+        let (body_start, body_end) = mp4_box_body_range(moov, pos, size)?;
+        if id == b"trak" {
+            let trak = &moov[body_start..body_end];
+            if let Some(mdia) = find_child_atom(trak, *b"mdia") {
+                let is_audio = find_child_atom(mdia, *b"hdlr")
+                    .map(|h| h.len() >= 12 && &h[8..12] == b"soun")
+                    .unwrap_or(false);
+                if is_audio {
+                    if let Some(mdhd) = find_child_atom(mdia, *b"mdhd") {
+                        if mdhd.len() >= 4 {
+                            let version = mdhd[0];
+                            if version == 1 && mdhd.len() >= 32 {
+                                let b: [u8; 8] = mdhd[24..32].try_into().ok()?;
+                                return Some(u64::from_be_bytes(b));
+                            } else if version == 0 && mdhd.len() >= 20 {
+                                let b: [u8; 4] = mdhd[16..20].try_into().ok()?;
+                                return Some(u32::from_be_bytes(b) as u64);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = body_end;
+    }
+    None
+}
+
+/// Estimate decoded PCM byte size for an M4A file, given bytes that contain
+/// `moov`. Returns `None` if moov isn't parseable from the provided bytes —
+/// common for files where moov is at the end (read the whole file then).
+/// The estimate is an upper bound (ignores HE-AAC SBR halving), which biases
+/// routing slightly toward streaming — correct behaviour for the gate.
+pub fn estimate_m4a_decoded_bytes(bytes: &[u8]) -> Option<u64> {
+    let (channels, _) = parse_m4a_audio_entry(bytes)?;
+    let duration = parse_m4a_track_duration(bytes)?;
+    Some(duration.saturating_mul(channels as u64).saturating_mul(4))
+}
+
 /// Find the audio-track `mp4a` / `enca` sample entry and return its
 /// `(channel_count, sample_rate)`. Some ffmpeg/Audible files have a malformed
 /// AudioSpecificConfig which leaves symphonia's `codec_params.channels` as

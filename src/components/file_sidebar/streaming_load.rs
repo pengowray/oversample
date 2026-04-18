@@ -13,9 +13,6 @@ pub(super) enum SilenceCheck {
     HighGain(f64),
 }
 
-/// Raw file size above which we attempt the streaming WAV path.
-pub(super) const STREAMING_CHECK_SIZE: f64 = 128.0 * 1024.0 * 1024.0; // 128 MB
-
 /// Decoded size threshold for streaming (512 MB of f32 samples).
 const STREAMING_DECODED_THRESHOLD: u64 = 512 * 1024 * 1024;
 
@@ -1618,14 +1615,21 @@ fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMe
 /// Unlike MP3/OGG, M4A streaming requires the full compressed bytes in RAM
 /// (moov sample table). Refuses files larger than ~1.5 GB compressed.
 pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, force_streaming: bool, load_id: u64) -> Result<(), String> {
-    // Quick sniff from first 64 KB to confirm M4A
-    let sniff_size = 65536.0f64.min(file.size());
-    let sniff_bytes = read_blob_range(file, 0.0, sniff_size).await?;
-    if !is_m4a(&sniff_bytes) {
+    let file_size = file.size() as u64;
+
+    // Fast-path probe: read up to 2 MB to find moov at the start of the file.
+    // If we can estimate decoded size and it's below the streaming threshold
+    // (and we aren't being forced), bail out without reading the whole file.
+    // For Audible/ffmpeg moov-at-end files moov won't be in this peek; we
+    // fall through to the full-file read and the same check happens there.
+    let peek_size = (2 * 1024 * 1024).min(file_size as usize) as f64;
+    let peek_bytes = read_blob_range(file, 0.0, peek_size).await?;
+    if !is_m4a(&peek_bytes) {
         return Err("Not an M4A file".into());
     }
-
-    let file_size = file.size() as u64;
+    if let Some(est_decoded) = crate::audio::loader::estimate_m4a_decoded_bytes(&peek_bytes) {
+        should_stream_from_decoded_size(est_decoded, force_streaming)?;
+    }
 
     // Cap compressed size to stay within WASM's 4 GB address space (we keep
     // the full compressed file in RAM for the streaming reader).
