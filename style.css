@@ -1626,11 +1626,10 @@ body.sidebar-resizing {
 
 .band-gutter canvas {
     width: 100%;
-    /* Reserve the bottom 24px inside the gutter for the "Frequency band"
-       axis title. That matches the waveform-stage's time-gutter height, so
-       the bottom edge of the whole row reads as one continuous labeling
-       band. Must stay in sync with gutter_renderer::TIME_GUTTER_HEIGHT. */
-    height: calc(100% - 24px);
+    /* Full-height canvas so the gutter's tick positions line up 1:1 with
+       the host view's y-axis — any header/footer reservation would offset
+       the mapping. */
+    height: 100%;
     display: block;
     /* Thick-cross `cell` cursor matches the spectrogram's y-axis so the
        two surfaces read as one continuous frequency-selection control. */
@@ -1638,60 +1637,17 @@ body.sidebar-resizing {
 }
 
 /* Subtle top/bottom vignette — detaches the gutter visually from the
-   flat-black wave background so it reads as a distinct "strip". Stops
-   above the footer so the axis title has a clean backdrop. */
+   flat-black wave background so it reads as a distinct "strip". */
 .band-gutter::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 24px;
+    inset: 0;
     pointer-events: none;
     background: linear-gradient(to bottom,
         rgba(0, 0, 0, 0.35) 0%,
         rgba(0, 0, 0, 0) 12%,
         rgba(0, 0, 0, 0) 88%,
         rgba(0, 0, 0, 0.35) 100%);
-}
-
-.band-gutter-header {
-    position: absolute;
-    top: 2px;
-    left: 0;
-    right: 0;
-    text-align: center;
-    font-size: 9px;
-    line-height: 1;
-    color: rgba(200, 200, 200, 0.7);
-    pointer-events: none;
-    z-index: 2;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-}
-
-/* Vertical axis title beneath the gutter canvas. Placed in the reserved
-   24px strip, centered horizontally. Uses small, letter-spaced text so
-   "Frequency band" fits the narrow 64px column without wrapping, and a
-   faint top border to echo the waveform's time-gutter separator so the
-   two bottom strips read as one labeling row. */
-.band-gutter-footer {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 8.5px;
-    line-height: 1;
-    letter-spacing: 0;
-    color: rgba(200, 200, 200, 0.75);
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    pointer-events: none;
-    white-space: nowrap;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-    z-index: 2;
 }
 
 .band-gutter-tooltip {

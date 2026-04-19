@@ -73,10 +73,15 @@ fn pick_div_interval(range_hz: f64) -> f64 {
 /// alpha — mirroring the spectrogram's `axis_drag_in_range` behaviour so
 /// users see the band light up during the first drag even when HFR is off.
 ///
-/// Coordinate mapping: `max_freq` is at y=0 (top), 0 Hz is at y=h (bottom).
+/// Coordinate mapping: `max_freq` is at y=0 (top), `min_freq` is at y=h
+/// (bottom). The gutter mirrors whatever range the host view is currently
+/// displaying — on the spectrogram that's min/max_display_freq, on views
+/// without a display range it's 0..Nyquist — so its ticks line up with
+/// the host's y-axis.
 pub fn draw_band_gutter(
     ctx: &CanvasRenderingContext2d,
     w: f64, h: f64,
+    min_freq: f64,
     max_freq: f64,
     band_lo: f64,
     band_hi: f64,
@@ -99,10 +104,11 @@ pub fn draw_band_gutter(
     let fog_dim = if hfr_on || drag_range.is_some() { 1.0 } else { 0.7 };
     draw_fog(ctx, shield_x, 0.0, shield_w, h, fog_dim);
 
-    // Always draw the passive left-side axis labels + ticks (independent of
-    // selection) so the user can read the frequency scale at a glance.
-    let div_for_labels = pick_div_interval(max_freq);
-    draw_left_axis_labels(ctx, h, max_freq, div_for_labels);
+    // Label divisions use the visible range's span — same adaptive rule as
+    // the spectrogram's own axis labels, so ticks sit at identical y's.
+    let range = (max_freq - min_freq).max(1.0);
+    let div_for_labels = pick_div_interval(range);
+    draw_left_axis_labels(ctx, h, min_freq, max_freq, div_for_labels);
 
     // Pick the range to paint: prefer the live drag range over the stored
     // band, so a fresh drag lights up immediately (before it's committed).
@@ -111,15 +117,17 @@ pub fn draw_band_gutter(
         None => (band_lo, band_hi),
     };
 
-    if max_freq <= 0.0 || draw_hi <= draw_lo || matches!(shield_style, ShieldStyle::Off) {
+    if range <= 0.0 || draw_hi <= draw_lo || matches!(shield_style, ShieldStyle::Off) {
         return;
     }
-    let lo_clamped = draw_lo.max(0.0).min(max_freq);
-    let hi_clamped = draw_hi.max(0.0).min(max_freq);
+    // Clamp to visible range so out-of-view band shields don't leak past
+    // the gutter edges when the spectrogram is zoomed in.
+    let lo_clamped = draw_lo.max(min_freq).min(max_freq);
+    let hi_clamped = draw_hi.max(min_freq).min(max_freq);
     if hi_clamped <= lo_clamped { return; }
 
-    // Match the spectrogram's y-mapping: min_freq=0 at y=h, max_freq at y=0.
-    let freq_y = |f: f64| -> f64 { h - (f / max_freq).clamp(0.0, 1.0) * h };
+    // Match the spectrogram's y-mapping: min_freq at y=h, max_freq at y=0.
+    let freq_y = |f: f64| -> f64 { h - ((f - min_freq) / range).clamp(0.0, 1.0) * h };
 
     let div_interval = div_for_labels;
     // Drag always paints bright; steady state fades when HFR is off so the
@@ -128,8 +136,8 @@ pub fn draw_band_gutter(
     let alpha_active = if hfr_on || is_drag { 0.85 } else { 0.40 };
     let alpha_minor = if hfr_on || is_drag { 0.55 } else { 0.28 };
 
-    // Major divisions ≥ 20 kHz (or the full range if div_interval is small).
-    let first_div = ((0.0_f64 / div_interval).ceil() * div_interval).max(div_interval);
+    // Major divisions from min_freq up to max_freq (aligned to div_interval).
+    let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
     let mut freq = first_div;
     while freq < max_freq {
         let bar_top = (freq + div_interval).min(max_freq);
@@ -163,7 +171,7 @@ pub fn draw_band_gutter(
     // Sub-20 kHz 1 kHz minor bars (matches spectrogram behaviour for the low range).
     if div_interval >= 5_000.0 {
         let minor_interval = 1_000.0;
-        let minor_start = minor_interval;
+        let minor_start = (min_freq / minor_interval).ceil().max(1.0) * minor_interval;
         let minor_end = max_freq.min(20_000.0);
         let mut mf = minor_start;
         while mf < minor_end {
@@ -196,7 +204,7 @@ pub fn draw_band_gutter(
     // every major division, always visible (regardless of selection). Helps
     // the user understand which resistor colours correspond to which
     // frequency without needing a numeric label on every flag.
-    draw_right_edge_ticks(ctx, w, h, max_freq, div_interval);
+    draw_right_edge_ticks(ctx, w, h, min_freq, max_freq, div_interval);
 
     // Dashed outline around the selected range when HFR is off (signals
     // "previously selected — tap to resume listening"). Skipped during an
@@ -256,10 +264,12 @@ pub fn draw_time_gutter_overlay(
 fn draw_left_axis_labels(
     ctx: &CanvasRenderingContext2d,
     h: f64,
+    min_freq: f64,
     max_freq: f64,
     div_interval: f64,
 ) {
-    if max_freq <= 0.0 || h <= 0.0 { return; }
+    let range = (max_freq - min_freq).max(1.0);
+    if h <= 0.0 || range <= 0.0 { return; }
 
     // Tick spans the 4px immediately left of the shield edge; label
     // right-aligned just inside that, with a 2px gap from the tick.
@@ -274,9 +284,10 @@ fn draw_left_axis_labels(
 
     // Skip labels near the very top/bottom so they don't crowd the gutter
     // ends (and so the implicit 0 Hz / Nyquist bounds stay uncluttered).
-    let mut freq = div_interval;
+    let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
+    let mut freq = first_div;
     while freq < max_freq {
-        let y = freq_to_y(freq, max_freq, h);
+        let y = freq_to_y(freq, min_freq, max_freq, h);
         if y < 8.0 || y > h - 6.0 {
             freq += div_interval;
             continue;
@@ -315,15 +326,18 @@ fn draw_left_axis_labels(
 fn draw_right_edge_ticks(
     ctx: &CanvasRenderingContext2d,
     w: f64, h: f64,
+    min_freq: f64,
     max_freq: f64,
     div_interval: f64,
 ) {
-    if max_freq <= 0.0 || h <= 0.0 { return; }
+    let range = (max_freq - min_freq).max(1.0);
+    if h <= 0.0 || range <= 0.0 { return; }
 
     // Major ticks — 4 px, 70% alpha, tinted with the frequency's marker colour.
-    let mut freq = div_interval;
+    let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
+    let mut freq = first_div;
     while freq < max_freq {
-        let y = freq_to_y(freq, max_freq, h);
+        let y = freq_to_y(freq, min_freq, max_freq, h);
         let c = freq_shield_color(freq, div_interval);
         // Lighten toward white so ticks read against dark fog.
         let r = 160 + (c[0] as u16 * 95 / 255) as u8;
@@ -336,14 +350,15 @@ fn draw_right_edge_ticks(
 
     // Minor 1 kHz ticks below 20 kHz (only when major interval is coarse).
     if div_interval >= 5_000.0 {
+        let minor_start = (min_freq / 1_000.0).ceil().max(1.0) * 1_000.0;
         let minor_end = max_freq.min(20_000.0);
-        let mut mf = 1_000.0_f64;
+        let mut mf = minor_start;
         while mf < minor_end {
             // Skip where a major tick already sits
             let ratio = mf / div_interval;
             let is_major = (ratio - ratio.round()).abs() < 0.001;
             if !is_major {
-                let y = freq_to_y(mf, max_freq, h);
+                let y = freq_to_y(mf, min_freq, max_freq, h);
                 ctx.set_fill_style_str("rgba(180,180,180,0.3)");
                 ctx.fill_rect(w - 2.0, y - 0.5, 2.0, 1.0);
             }
@@ -353,16 +368,18 @@ fn draw_right_edge_ticks(
 }
 
 /// Map a frequency (Hz) to a Y pixel in a gutter of height `h` where
-/// `max_freq` is at the top (y=0) and 0 Hz is at the bottom (y=h).
-pub fn freq_to_y(freq: f64, max_freq: f64, h: f64) -> f64 {
-    if max_freq <= 0.0 { return h; }
-    let f = freq.clamp(0.0, max_freq);
-    h - (f / max_freq) * h
+/// `max_freq` is at the top (y=0) and `min_freq` is at the bottom (y=h).
+pub fn freq_to_y(freq: f64, min_freq: f64, max_freq: f64, h: f64) -> f64 {
+    let range = (max_freq - min_freq).max(1.0);
+    let f = freq.clamp(min_freq, max_freq);
+    h - ((f - min_freq) / range) * h
 }
 
-/// Inverse of `freq_to_y`: map a Y pixel to a frequency (Hz).
-pub fn y_to_freq(y: f64, max_freq: f64, h: f64) -> f64 {
-    if h <= 0.0 { return 0.0; }
+/// Inverse of `freq_to_y`: map a Y pixel to a frequency (Hz) within the
+/// visible range.
+pub fn y_to_freq(y: f64, min_freq: f64, max_freq: f64, h: f64) -> f64 {
+    if h <= 0.0 { return min_freq; }
+    let range = (max_freq - min_freq).max(0.0);
     let frac = (1.0 - (y / h)).clamp(0.0, 1.0);
-    frac * max_freq
+    min_freq + frac * range
 }

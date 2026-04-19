@@ -32,6 +32,22 @@ pub fn BandGutter() -> impl IntoView {
     // None while not dragging.
     let tooltip_y = RwSignal::new_local(Option::<f64>::None);
 
+    // Resolve the visible frequency window for the gutter. On the
+    // spectrogram this tracks min/max_display_freq so the gutter ticks
+    // line up 1:1 with the spectrogram's y-axis; on views that don't set
+    // those signals it falls back to 0..Nyquist.
+    let display_range = move || -> (f64, f64) {
+        let files = state.files.get();
+        let idx = state.current_file_index.get();
+        let nyquist = idx
+            .and_then(|i| files.get(i))
+            .map(|f| f.audio.sample_rate as f64 / 2.0)
+            .unwrap_or(0.0);
+        let lo = state.min_display_freq.get().unwrap_or(0.0);
+        let hi = state.max_display_freq.get().unwrap_or(nyquist);
+        (lo, hi)
+    };
+
     // Redraw when any relevant signal changes.
     Effect::new(move |_| {
         let band_lo = state.band_ff_freq_lo.get();
@@ -48,18 +64,12 @@ pub fn BandGutter() -> impl IntoView {
             (Some(s), Some(c)) => Some((s, c)),
             _ => None,
         };
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let (min_freq, max_freq) = display_range();
         let _sidebar = state.sidebar_collapsed.get();
         let _sidebar_width = state.sidebar_width.get();
         let _rsidebar = state.right_sidebar_collapsed.get();
         let _rsidebar_width = state.right_sidebar_width.get();
         let _tile_ready = state.tile_ready_signal.get();
-
-        let max_freq = idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.audio.sample_rate as f64 / 2.0)
-            .unwrap_or(0.0);
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -79,6 +89,7 @@ pub fn BandGutter() -> impl IntoView {
             &ctx,
             display_w as f64,
             display_h as f64,
+            min_freq,
             max_freq,
             band_lo,
             band_hi,
@@ -88,29 +99,27 @@ pub fn BandGutter() -> impl IntoView {
         );
     });
 
-    // Resolve (local_y, canvas_height, file_nyquist) for a pointer event.
-    let pointer_context = move |ev: &web_sys::PointerEvent| -> Option<(f64, f64, f64)> {
+    // Resolve (local_y, canvas_height, min_freq, max_freq) for a pointer
+    // event — frequency bounds reflect the host view's current display
+    // range so drag math uses the same mapping the gutter renders with.
+    let pointer_context = move |ev: &web_sys::PointerEvent| -> Option<(f64, f64, f64, f64)> {
         let canvas_el = canvas_ref.get()?;
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
         let rect = canvas.get_bounding_client_rect();
         let h = rect.height();
         if h <= 0.0 { return None; }
         let y = ev.client_y() as f64 - rect.top();
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
-        let max_freq = idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.audio.sample_rate as f64 / 2.0)?;
-        if max_freq <= 0.0 { return None; }
-        Some((y, h, max_freq))
+        let (min_freq, max_freq) = display_range();
+        if max_freq <= min_freq { return None; }
+        Some((y, h, min_freq, max_freq))
     };
 
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
-        let Some((y, h, max_freq)) = pointer_context(&ev) else { return };
+        let Some((y, h, min_freq, max_freq)) = pointer_context(&ev) else { return };
         ev.prevent_default();
 
-        let freq = gutter_renderer::y_to_freq(y, max_freq, h);
+        let freq = gutter_renderer::y_to_freq(y, min_freq, max_freq, h);
         let shift = ev.shift_key();
         let band_lo = state.band_ff_freq_lo.get_untracked();
         let band_hi = state.band_ff_freq_hi.get_untracked();
@@ -158,9 +167,9 @@ pub fn BandGutter() -> impl IntoView {
 
     let on_pointermove = move |ev: web_sys::PointerEvent| {
         let Some(raw_start) = drag_anchor.get_value() else { return };
-        let Some((y, h, max_freq)) = pointer_context(&ev) else { return };
+        let Some((y, h, min_freq, max_freq)) = pointer_context(&ev) else { return };
         tooltip_y.set(Some(y.clamp(0.0, h)));
-        let freq = gutter_renderer::y_to_freq(y, max_freq, h);
+        let freq = gutter_renderer::y_to_freq(y, min_freq, max_freq, h);
         apply_axis_drag(state, raw_start, freq, ev.shift_key());
     };
 
@@ -196,12 +205,6 @@ pub fn BandGutter() -> impl IntoView {
                 on:pointerup=on_pointerup
                 on:dblclick=on_dblclick
             />
-            // "kHz" header — tiny label at top so the scale orientation is obvious.
-            <div class="band-gutter-header">"kHz"</div>
-            // Vertical axis title beneath the gutter, matching the visual
-            // footprint of the waveform's time-gutter strip so the bottom
-            // edge reads as a single labeling band across the row.
-            <div class="band-gutter-footer">"Frequency band"</div>
             // Drag tooltip: floats next to the pointer while dragging, shows the
             // current lo–hi range. Hidden when not dragging.
             <div
