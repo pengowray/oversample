@@ -250,6 +250,7 @@ pub fn Waveform() -> impl IntoView {
                     gain_db,
                     seg.duration_secs,
                     region_start,
+                    waveform_renderer::WAVEFORM_GREEN,
                 );
 
                 ctx.restore();
@@ -333,6 +334,14 @@ pub fn Waveform() -> impl IntoView {
                     }
                 };
 
+                // Band wave shows the selected band in blue over a dim green
+                // backdrop — but only makes sense when HFR is actually routing
+                // audio through that band. When HFR is off, collapse to a
+                // single blue wave (same shape as Simple, just tinted blue)
+                // so the view still reads as "band mode" without implying an
+                // active filter split.
+                let hfr_on = state.focus_stack.get().hfr_enabled();
+
                 match waveform_view {
                     WaveformView::Simple => {
                         waveform_renderer::draw_waveform(
@@ -348,6 +357,16 @@ pub fn Waveform() -> impl IntoView {
                             gain_db,
                             buf_duration,
                             region_start,
+                            waveform_renderer::WAVEFORM_GREEN,
+                        );
+                    }
+                    WaveformView::Frequency if !hfr_on => {
+                        waveform_renderer::draw_waveform(
+                            &ctx, &waveform_buf, sr, buf_scroll, zoom,
+                            file.spectrogram.time_resolution,
+                            display_w as f64, wave_h,
+                            sel_time, gain_db, buf_duration, region_start,
+                            waveform_renderer::WAVEFORM_BLUE,
                         );
                     }
                     WaveformView::Frequency => {
@@ -376,6 +395,7 @@ pub fn Waveform() -> impl IntoView {
                                 file.spectrogram.time_resolution,
                                 display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,
+                                waveform_renderer::WAVEFORM_GREEN,
                             );
                         }
                     }
@@ -408,6 +428,7 @@ pub fn Waveform() -> impl IntoView {
                                 file.spectrogram.time_resolution,
                                 display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,
+                                waveform_renderer::WAVEFORM_GREEN,
                             );
                         }
                     }

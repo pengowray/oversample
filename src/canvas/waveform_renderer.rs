@@ -159,6 +159,12 @@ fn draw_center_line(ctx: &CanvasRenderingContext2d, mid_y: f64, canvas_width: f6
     ctx.stroke();
 }
 
+/// Default green used for the Simple waveform view.
+pub const WAVEFORM_GREEN: &str = "#6a6";
+/// Blue that matches the Frequency view's selected-band overlay, used as
+/// the single-wave colour when HFR is off in Band-wave mode.
+pub const WAVEFORM_BLUE: &str = "rgba(80, 140, 255, 0.9)";
+
 /// Draw waveform on a canvas context.
 /// Uses min/max envelope at low zoom, individual samples at high zoom.
 pub fn draw_waveform(
@@ -174,6 +180,7 @@ pub fn draw_waveform(
     gain_db: f64,
     total_duration: f64,
     region_start_sample: usize,
+    stroke_color: &str,
 ) {
     ctx.set_fill_style_str("#0a0a0a");
     ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
@@ -186,7 +193,7 @@ pub fn draw_waveform(
     let vp = compute_viewport(total_duration, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height, region_start_sample);
     draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
     draw_center_line(ctx, vp.mid_y, canvas_width);
-    draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, "#6a6", gain_linear);
+    draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, stroke_color, gain_linear);
 }
 
 /// Draw a waveform layer into a vertical sub-region of the canvas.
