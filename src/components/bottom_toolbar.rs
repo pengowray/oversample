@@ -1138,10 +1138,11 @@ pub fn BottomToolbar() -> impl IntoView {
 
             // ── Annotations visibility toggle ──
             // Single-word button — on/off state is carried by the `active`
-            // highlight, so the "ANN" label doesn't need an On/Off value.
+            // highlight. An NBSP placeholder fills the category slot so this
+            // button's baseline lines up with the two-line buttons next to it.
             {move || has_file().then(|| view! {
                 <button
-                    class=move || if state.annotations_visible.get() { "layer-btn layer-btn-solo active" } else { "layer-btn layer-btn-solo" }
+                    class=move || if state.annotations_visible.get() { "layer-btn active" } else { "layer-btn" }
                     on:click=move |_| {
                         let new_visible = !state.annotations_visible.get_untracked();
                         state.annotations_visible.set(new_visible);
@@ -1161,7 +1162,8 @@ pub fn BottomToolbar() -> impl IntoView {
                     }
                     title=move || if state.annotations_visible.get() { "Hide annotations" } else { "Show annotations" }
                 >
-                    <span class="layer-btn-solo-label">"ANN"</span>
+                    <span class="layer-btn-category">"\u{00A0}"</span>
+                    <span class="layer-btn-value">"Anno"</span>
                 </button>
             })}
 

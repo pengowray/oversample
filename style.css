@@ -2656,24 +2656,6 @@ body.sidebar-resizing {
     color: #ddd;
 }
 
-/* Single-label variant for buttons that don't carry a small category
-   (e.g. "ANN") — one big word centred vertically. Renders at the same
-   height as the two-line buttons so the toolbar row stays aligned. */
-.layer-btn.layer-btn-solo {
-    justify-content: center;
-}
-
-.layer-btn-solo-label {
-    font-size: 15px;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: 0.4px;
-    color: #ddd;
-    /* Match the combined height of layer-btn-category (9px) + gap +
-       layer-btn-value (13px line). */
-    padding: 5px 0;
-}
-
 /* Don't force uppercase on combo-left categories (e.g. "with" for DSP) */
 .combo-btn-left .layer-btn-category {
     text-transform: none;
