@@ -11,6 +11,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::canvas::freq_adjustments::compute_freq_adjustments;
 use crate::canvas::spectrogram_renderer::{self, Colormap, ColormapMode, FreqMarkerState, FreqShiftMode, PreRendered, SpectDisplaySettings};
 use crate::components::spectrogram_events::{self, SpectInteraction, LABEL_AREA_WIDTH};
+use crate::components::gutter::BandGutter;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, MainView, PlaybackMode};
 use crate::viewport;
 
@@ -1336,6 +1337,7 @@ pub fn Spectrogram() -> impl IntoView {
                 }
             }
         >
+            <div class="spectrogram-stage">
             <canvas
                 node_ref=canvas_ref
                 style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
@@ -1388,6 +1390,8 @@ pub fn Spectrogram() -> impl IntoView {
                     }
                 })
             }}
+            </div>
+            <BandGutter/>
         </div>
     }
 }

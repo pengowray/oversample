@@ -7,6 +7,7 @@ use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::{AppState, CanvasTool, FilterQuality, SpectrogramHandle};
 use crate::components::spectrogram_events::{freq_snap, apply_axis_drag};
+use crate::components::gutter::BandGutter;
 use crate::viewport;
 
 const ZC_BIN_DURATION: f64 = 0.001; // 1ms bins
@@ -809,39 +810,42 @@ pub fn ZcDotChart() -> impl IntoView {
                 }
             }
         >
-            <canvas
-                node_ref=canvas_ref
-                style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
-                on:wheel=on_wheel
-                on:mousedown=on_mousedown
-                on:mousemove=on_mousemove
-                on:mouseup=on_mouseup
-                on:mouseleave=on_mouseleave
-                on:touchstart=on_touchstart
-                on:touchmove=on_touchmove
-                on:touchend=on_touchend
-            />
-            // DOM playhead overlay
-            <div
-                class="playhead-line"
-                style:transform=move || {
-                    let playhead = state.playhead_time.get();
-                    let scroll = state.scroll_offset.get();
-                    let zoom = state.zoom_level.get();
-                    let cw = state.spectrogram_canvas_width.get();
-                    let files = state.files.get_untracked();
-                    let idx = state.current_file_index.get_untracked();
-                    let time_res = idx.and_then(|i| files.get(i))
-                        .map(|f| f.spectrogram.time_resolution)
-                        .unwrap_or(1.0);
-                    let dot_area_w = (cw - LABEL_AREA_WIDTH).max(0.0);
-                    let visible_time = (dot_area_w / zoom) * time_res;
-                    let px_per_sec = if visible_time > 0.0 { dot_area_w / visible_time } else { 0.0 };
-                    let x = LABEL_AREA_WIDTH + (playhead - scroll) * px_per_sec;
-                    format!("translateX({:.1}px)", x)
-                }
-                style:display=move || if state.is_playing.get() { "block" } else { "none" }
-            />
+            <div class="waveform-stage">
+                <canvas
+                    node_ref=canvas_ref
+                    style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
+                    on:wheel=on_wheel
+                    on:mousedown=on_mousedown
+                    on:mousemove=on_mousemove
+                    on:mouseup=on_mouseup
+                    on:mouseleave=on_mouseleave
+                    on:touchstart=on_touchstart
+                    on:touchmove=on_touchmove
+                    on:touchend=on_touchend
+                />
+                // DOM playhead overlay
+                <div
+                    class="playhead-line"
+                    style:transform=move || {
+                        let playhead = state.playhead_time.get();
+                        let scroll = state.scroll_offset.get();
+                        let zoom = state.zoom_level.get();
+                        let cw = state.spectrogram_canvas_width.get();
+                        let files = state.files.get_untracked();
+                        let idx = state.current_file_index.get_untracked();
+                        let time_res = idx.and_then(|i| files.get(i))
+                            .map(|f| f.spectrogram.time_resolution)
+                            .unwrap_or(1.0);
+                        let dot_area_w = (cw - LABEL_AREA_WIDTH).max(0.0);
+                        let visible_time = (dot_area_w / zoom) * time_res;
+                        let px_per_sec = if visible_time > 0.0 { dot_area_w / visible_time } else { 0.0 };
+                        let x = LABEL_AREA_WIDTH + (playhead - scroll) * px_per_sec;
+                        format!("translateX({:.1}px)", x)
+                    }
+                    style:display=move || if state.is_playing.get() { "block" } else { "none" }
+                />
+            </div>
+            <BandGutter/>
         </div>
     }
 }

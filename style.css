@@ -1577,6 +1577,19 @@ body.sidebar-resizing {
     position: relative;
     min-height: 0;
     background: #000;
+    /* Flex-row so the right-side band gutter sits alongside the canvas
+       (mirroring the waveform's layout). */
+    display: flex;
+    flex-direction: row;
+}
+
+/* Canvas sits in a flex-1 stage wrapper so the band gutter can claim a
+   fixed-width column on the right without compressing the spectrogram. */
+.spectrogram-container .spectrogram-stage {
+    flex: 1 1 auto;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
 }
 
 .spectrogram-container canvas {
@@ -1596,7 +1609,7 @@ body.sidebar-resizing {
     border-top: 1px solid #333;
 }
 
-.waveform-container .band-gutter {
+.band-gutter {
     /* Width = LABEL_COL_WIDTH (22) + two 20px fog cells = 62px of canvas,
        plus ~2px visual breathing room. Must stay in sync with
        gutter_renderer::BAND_GUTTER_WIDTH. */
@@ -1611,7 +1624,7 @@ body.sidebar-resizing {
     touch-action: none;
 }
 
-.waveform-container .band-gutter canvas {
+.band-gutter canvas {
     width: 100%;
     /* Reserve the bottom 24px inside the gutter for the "Frequency band"
        axis title. That matches the waveform-stage's time-gutter height, so
@@ -1627,7 +1640,7 @@ body.sidebar-resizing {
 /* Subtle top/bottom vignette — detaches the gutter visually from the
    flat-black wave background so it reads as a distinct "strip". Stops
    above the footer so the axis title has a clean backdrop. */
-.waveform-container .band-gutter::after {
+.band-gutter::after {
     content: '';
     position: absolute;
     top: 0;
@@ -1642,7 +1655,7 @@ body.sidebar-resizing {
         rgba(0, 0, 0, 0.35) 100%);
 }
 
-.waveform-container .band-gutter-header {
+.band-gutter-header {
     position: absolute;
     top: 2px;
     left: 0;
@@ -1661,7 +1674,7 @@ body.sidebar-resizing {
    "Frequency band" fits the narrow 64px column without wrapping, and a
    faint top border to echo the waveform's time-gutter separator so the
    two bottom strips read as one labeling row. */
-.waveform-container .band-gutter-footer {
+.band-gutter-footer {
     position: absolute;
     left: 0;
     right: 0;
@@ -1681,7 +1694,7 @@ body.sidebar-resizing {
     z-index: 2;
 }
 
-.waveform-container .band-gutter-tooltip {
+.band-gutter-tooltip {
     position: absolute;
     /* Float the tooltip to the left of the gutter (over the waveform) so
        it doesn't spill outside the container now that the gutter is the
