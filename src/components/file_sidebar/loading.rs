@@ -517,6 +517,49 @@ pub(crate) async fn fetch_demo_index() -> Result<Vec<DemoEntry>, String> {
     Ok(entries)
 }
 
+/// Details fetched from an XC metadata sidecar — length + sample rate.
+/// Used by the "Bats For You" suggestions to show duration and max frequency
+/// without decoding the audio file.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DemoDetails {
+    pub duration_secs: Option<f64>,
+    pub sample_rate_hz: Option<u64>,
+}
+
+fn parse_xc_length(s: &str) -> Option<f64> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let nums: Option<Vec<f64>> = parts.iter().map(|p| p.trim().parse::<f64>().ok()).collect();
+    let nums = nums?;
+    match nums.len() {
+        1 => Some(nums[0]),
+        2 => Some(nums[0] * 60.0 + nums[1]),
+        3 => Some(nums[0] * 3600.0 + nums[1] * 60.0 + nums[2]),
+        _ => None,
+    }
+}
+
+/// Fetch the XC metadata sidecar for a demo entry and extract length + sample rate.
+/// Silently returns defaults on failure so callers can render what they have.
+pub(crate) async fn fetch_demo_details(metadata_file: &str) -> DemoDetails {
+    let encoded = js_sys::encode_uri_component(metadata_file);
+    let meta_url = format!(
+        "{}/sounds/{}",
+        DEMO_SOUNDS_BASE,
+        encoded.as_string().unwrap_or_default()
+    );
+    let Ok(text) = fetch_demo_text(&meta_url).await else {
+        return DemoDetails::default();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return DemoDetails::default();
+    };
+    let duration_secs = json["length"].as_str().and_then(parse_xc_length);
+    let sample_rate_hz = json["smp"]
+        .as_u64()
+        .or_else(|| json["smp"].as_f64().map(|f| f as u64));
+    DemoDetails { duration_secs, sample_rate_hz }
+}
+
 pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState, load_id: u64) -> Result<(), String> {
     // Fetch XC metadata sidecar if available
     let (xc_metadata, xc_hashes) = if let Some(meta_file) = &entry.metadata_file {

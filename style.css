@@ -1457,6 +1457,133 @@ body.sidebar-resizing {
     border-color: #666;
 }
 
+.bats-for-you {
+    width: 100%;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bats-for-you-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    color: #bbb;
+    font-size: 0.82em;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.bats-for-you-header:hover {
+    color: #ddd;
+}
+
+.bats-for-you-caret {
+    font-size: 0.9em;
+    width: 12px;
+    display: inline-block;
+    text-align: center;
+    opacity: 0.7;
+}
+
+.bats-for-you-title {
+    flex: 1;
+}
+
+.bats-for-you-refresh {
+    background: transparent;
+    color: #aaa;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 0.95em;
+    line-height: 1;
+}
+
+.bats-for-you-refresh:hover {
+    background: #2a2a2a;
+    color: #fff;
+    border-color: #666;
+}
+
+.bats-for-you-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    width: 100%;
+}
+
+.bats-for-you-empty {
+    grid-column: 1 / -1;
+    padding: 10px;
+    color: #888;
+    font-size: 0.8em;
+    text-align: center;
+    font-style: italic;
+}
+
+.bats-for-you-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    gap: 2px;
+    padding: 6px 8px;
+    background: #232323;
+    color: #ccc;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    min-width: 0;
+}
+
+.bats-for-you-card:hover {
+    background: #323232;
+    border-color: #5a7a9a;
+    color: #fff;
+}
+
+.bats-for-you-card-name {
+    font-size: 0.82em;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bats-for-you-card-species {
+    font-size: 0.72em;
+    font-style: italic;
+    color: #999;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bats-for-you-card-details {
+    font-size: 0.7em;
+    color: #8ab;
+    line-height: 1.2;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bats-for-you-card-placeholder {
+    color: #555;
+}
+
 .file-list {
     list-style: none;
 }

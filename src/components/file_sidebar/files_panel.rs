@@ -13,6 +13,7 @@ use super::file_badges;
 use crate::format_time::format_duration_compact;
 
 use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, load_single_demo};
+use super::suggestions::BatsForYou;
 
 #[component]
 pub(super) fn FilesPanel() -> impl IntoView {
@@ -98,6 +99,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
     let demo_entries: RwSignal<Vec<DemoEntry>> = RwSignal::new(Vec::new());
     let demo_picker_open = RwSignal::new(false);
     let demo_loading = RwSignal::new(false);
+    let bats_expanded = RwSignal::new(true);
 
     let on_demo_click = move |_: web_sys::MouseEvent| {
         if demo_picker_open.get_untracked() {
@@ -269,6 +271,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     view! { <span></span> }.into_any()
                                 }
                             }}
+                            <BatsForYou demo_entries=demo_entries expanded=bats_expanded />
                         </div>
                     }.into_any()
                 } else {

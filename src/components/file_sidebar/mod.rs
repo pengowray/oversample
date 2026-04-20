@@ -14,6 +14,7 @@ pub mod psd_panel;
 pub mod pulse_panel;
 mod loading;
 mod streaming_load;
+mod suggestions;
 pub mod mic_chooser;
 pub mod privacy_settings;
 
