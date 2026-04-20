@@ -1570,6 +1570,10 @@ body.sidebar-resizing {
     background: #181818;
     border-bottom: 1px solid #333;
     flex-shrink: 0;
+    /* Grid items default to min-width: auto (min-content). Without this,
+       a long filename forces the whole toolbar wider than the viewport,
+       pushing the right-side overflow button off-screen on mobile. */
+    min-width: 0;
 }
 
 /* Shared layout for every main chart host (spectrogram, chromagram,
@@ -1705,6 +1709,22 @@ body.sidebar-resizing {
     height: 100%;
     display: block;
     cursor: cell;
+}
+
+/* Mobile: widen the frequency gutter and deepen the time gutter so they
+   present fat-finger drag surfaces. Canvas content auto-adapts (the
+   renderer draws to the actual container size), so only the CSS flex
+   basis needs to grow. The bottom-corner spacer must track the band
+   gutter's total occupation (width + 3px margin) so the corner stays
+   aligned with the column above it. */
+.app.mobile .band-gutter {
+    flex: 0 0 84px;
+}
+.app.mobile .view-bottom-row {
+    flex: 0 0 40px;
+}
+.app.mobile .view-bottom-corner {
+    flex: 0 0 87px;
 }
 
 .band-gutter-tooltip {
@@ -2852,6 +2872,14 @@ body.sidebar-resizing {
     margin-left: 0;
     grid-column: 3;
     grid-row: 2;
+    /* Stretch the flex wrapper to fill the grid cell; without this the
+       inner .combo-btn-row shrinks to the "HF" label width (2 chars) and
+       reads as squished next to neighbours like "Gain"/"Mic". */
+    width: 100%;
+}
+.bottom-toolbar.mobile .hfr-slot > .combo-btn-row {
+    flex: 1;
+    min-width: 0;
 }
 
 .bottom-toolbar.mobile .bottom-toolbar-drag-grip {

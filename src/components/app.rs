@@ -1077,8 +1077,10 @@ pub fn App() -> impl IntoView {
         check_zoom.forget();
     }
 
+    let app_class = move || if state.is_mobile.get() { "app mobile" } else { "app" };
+
     view! {
-        <div class="app" style=grid_style>
+        <div class=app_class style=grid_style>
             <Toolbar />
             <FileSidebar />
             {move || state.is_mobile.get().then(|| view! {
