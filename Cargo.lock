@@ -3211,6 +3211,7 @@ dependencies = [
  "lewton",
  "log",
  "realfft",
+ "resonators",
  "serde",
  "symphonia",
 ]
@@ -4110,6 +4111,15 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "resonators"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4d3a20210e040cb2a587d044535dbe3e415e5c5bb5f2a7b8a5f5bd2bac5aab0"
+dependencies = [
+ "num-complex",
 ]
 
 [[package]]

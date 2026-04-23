@@ -13,3 +13,6 @@ lewton = "0.10"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg", "vorbis", "isomp4", "aac", "alac"] }
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
+# Implementation of Alexandre François's Resonate algorithm.
+# https://github.com/jhartquist/resonators (MIT OR Apache-2.0).
+resonators = "0.1"

@@ -1,43 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
-//! Resonate — a bank of independent complex resonators for spectral analysis.
+//! Thin adapter over the [`resonators`] crate — Alexandre François's Resonate
+//! algorithm.
 //!
-//! Each resonator is a phasor-driven exponential moving average (EMA):
-//!
-//! ```text
-//!   z_k[n] = (1 - alpha_k) * x[n] * e^(-j·2π·f_k·n / sr) + alpha_k * z_k[n-1]
-//! ```
-//!
-//! where `alpha_k = exp(-2π · bandwidth_k / sr)` controls the per-bin
-//! integration time. Output at a given sample is `|z_k|`.
-//!
-//! Unlike STFT, there is no windowing or buffering — each resonator updates
-//! every sample, giving low-latency, per-bin time/frequency tradeoff.
-//!
-//! Based on Alexandre François's Resonate algorithm:
-//! - <https://alexandrefrancois.org/Resonate/>
-//! - <https://github.com/alexandrefrancois/noFFT> (C++ reference)
-//! - <https://github.com/jhartquist/resonators> (Rust reference)
+//! The upstream crate implements the paper faithfully; this module only
+//! reshapes its output into the project's [`SpectrogramColumn`] layout and
+//! scales magnitudes to match STFT brightness so existing gain / floor_db
+//! controls behave identically in Spectrogram and Resonators views.
 //!
 //! # Layout
 //!
-//! For compatibility with the existing spectrogram pipeline, this module uses
-//! a **linear** frequency layout matching the STFT:
-//!   `num_bins = fft_size / 2 + 1`, covering 0..Nyquist with
-//!   `f_k = k · (sr/2) / (num_bins - 1)`.
+//! For compatibility with the existing spectrogram pipeline, we build a
+//! linear-frequency bank of `num_bins = fft_size / 2 + 1` resonators covering
+//! 0..Nyquist with `f_k = k · (sr/2) / (num_bins - 1)`. Downstream code
+//! (row→freq mapping, tile blit, freq markers) needs no special cases.
 //!
-//! This lets the output `SpectrogramColumn`s plug directly into tile caches,
-//! live waterfalls, row→freq mapping, and overlays without any special cases.
+//! # References
 //!
-//! # Warm-up
-//!
-//! Resonator state is stateful (EMA carries history). Each call starts from
-//! zero. For tile-based computation, the caller should pre-pad `samples` with
-//! ~5τ additional samples (τ = 1/(2π·bandwidth)) before `col_start * hop_size`
-//! so the first emitted column reflects a converged EMA. This module does not
-//! manage its own pre-pad — the caller passes raw samples and a `col_start`
-//! offset that skips the warm-up columns.
+//! - Algorithm: <https://alexandrefrancois.org/Resonate/>
+//! - C++ reference: <https://github.com/alexandrefrancois/noFFT>
+//! - Rust reference (this crate): <https://github.com/jhartquist/resonators>
 
 use crate::types::SpectrogramColumn;
+use resonators::{ResonatorBank, ResonatorConfig, alpha_from_tau};
 
 /// Recommended warm-up samples for a given bandwidth.
 ///
@@ -55,16 +39,16 @@ pub fn warmup_samples(sample_rate: u32, bandwidth_hz: f32) -> usize {
 /// - `fft_size` determines `num_bins = fft_size/2 + 1` (frequency resolution).
 /// - `hop_size` is the output column interval in samples.
 /// - `col_start`/`col_count` select which columns to emit (0-based, counted
-///   from sample 0). The resonator still processes samples 0..col_end*hop_size
-///   to build up state, so the caller should generally pass `col_start = 0`
-///   on a pre-padded sample slice and discard warm-up columns afterwards.
+///   from sample 0 of the input slice). A fresh bank is built per call, so
+///   the caller should pre-pad with warm-up samples and pass `col_start` =
+///   the warm-up column count.
 ///
-/// `bandwidth_hz` sets per-bin EMA bandwidth. Typical range 50..2000 Hz:
-/// - Smaller ⇒ sharper frequency bins, slower temporal response.
-/// - Larger ⇒ faster response, wider bins.
+/// `bandwidth_hz` sets per-bin EMA bandwidth (uniform across all bins).
+/// Smaller ⇒ sharper bins, slower tracking.
 ///
-/// Output magnitudes are scaled to roughly match STFT magnitude scale so
-/// existing gain / floor_db settings produce similar on-screen brightness.
+/// Output magnitudes are scaled by `fft_size * 0.5` to match the one-sided
+/// STFT magnitude with Hann coherent gain, so existing brightness controls
+/// work the same way in both views.
 pub fn compute_resonator_columns(
     samples: &[f32],
     sample_rate: u32,
@@ -82,91 +66,62 @@ pub fn compute_resonator_columns(
     let sr_f = sample_rate as f32;
     let nyq = sr_f * 0.5;
     let denom = (num_bins - 1).max(1) as f32;
-    let two_pi = std::f32::consts::TAU;
 
-    // Clamp bandwidth to a stable range.
-    let bw = bandwidth_hz.clamp(1.0, nyq);
-    let alpha = (-two_pi * bw / sr_f).exp();
-    let one_minus_alpha = 1.0 - alpha;
+    // Clamp bandwidth to a stable range and convert to the library's alpha
+    // convention via tau. `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the
+    // library's "alpha large = fast response" is the mirror image of our
+    // prior scalar implementation's "alpha large = slow", so this conversion
+    // hides that difference from the caller.
+    let bw = bandwidth_hz.clamp(0.1, nyq * 0.99);
+    let tau = 1.0 / (std::f32::consts::TAU * bw);
+    let alpha = alpha_from_tau(tau, sr_f);
 
-    // Pre-compute per-bin phase step (cos, sin).
-    let mut step_cos = vec![0.0f32; num_bins];
-    let mut step_sin = vec![0.0f32; num_bins];
-    for k in 0..num_bins {
-        let f_k = k as f32 * nyq / denom;
-        let phi = -two_pi * f_k / sr_f;
-        step_cos[k] = phi.cos();
-        step_sin[k] = phi.sin();
+    // Build one ResonatorConfig per bin. Bin 0 is nominally DC (freq=0) but
+    // the library rejects freq <= 0; use a tiny positive freq so it behaves
+    // as a very-low bandpass (contribution negligible for bat audio).
+    //
+    // beta=1.0 disables the library's second-stage output EWMA so we get a
+    // single-EWMA response matching the prior hand-rolled implementation,
+    // which is what the user has tuned their bandwidth slider against.
+    let configs: Vec<ResonatorConfig> = (0..num_bins)
+        .map(|k| {
+            let f_k = (k as f32 * nyq / denom).max(0.01);
+            ResonatorConfig::new(f_k, alpha, 1.0)
+        })
+        .collect();
+    let mut bank = ResonatorBank::new(&configs, sr_f);
+
+    // Process exactly the samples needed for col_end frames. `resonate`
+    // drops any trailing samples smaller than one hop, so passing more is
+    // harmless but we trim for tidiness.
+    let col_end = col_start + col_count;
+    let need_samples = col_end.saturating_mul(hop_size).min(samples.len());
+    if need_samples < hop_size {
+        return vec![];
+    }
+    let slice = &samples[..need_samples];
+
+    let complex_out = bank.resonate(slice, hop_size);
+    let n_frames = complex_out.len() / num_bins;
+    if n_frames <= col_start {
+        return vec![];
     }
 
-    // Per-bin rotating phasor (starts at 1+0j) and EMA accumulator.
-    let mut phasor_re = vec![1.0f32; num_bins];
-    let mut phasor_im = vec![0.0f32; num_bins];
-    let mut z_re = vec![0.0f32; num_bins];
-    let mut z_im = vec![0.0f32; num_bins];
-
-    let col_end = col_start + col_count;
-    let max_sample = col_end.saturating_mul(hop_size).min(samples.len());
-
-    // Magnitude scale: roughly match one-sided STFT magnitude with Hann
-    // coherent gain, so existing floor_db / gain settings look similar.
+    let first = col_start;
+    let last = (col_start + col_count).min(n_frames);
     let mag_scale = (fft_size as f32) * 0.5;
 
-    let mut out: Vec<SpectrogramColumn> = Vec::with_capacity(col_count);
-    let mut cur_col: usize = 0;
-    let mut next_hop: usize = 0;
-
-    for (n, &x) in samples.iter().enumerate().take(max_sample) {
-        // Rotate every phasor by one sample, then EMA-accumulate x·phasor.
-        for k in 0..num_bins {
-            let pr = phasor_re[k];
-            let pi = phasor_im[k];
-            let new_pr = pr * step_cos[k] - pi * step_sin[k];
-            let new_pi = pr * step_sin[k] + pi * step_cos[k];
-            phasor_re[k] = new_pr;
-            phasor_im[k] = new_pi;
-
-            let demod_re = x * new_pr;
-            let demod_im = x * new_pi;
-
-            z_re[k] = alpha * z_re[k] + one_minus_alpha * demod_re;
-            z_im[k] = alpha * z_im[k] + one_minus_alpha * demod_im;
-        }
-
-        // Emit at each hop boundary.
-        if n == next_hop {
-            if cur_col >= col_start {
-                let mut mags = Vec::with_capacity(num_bins);
-                for k in 0..num_bins {
-                    let m = (z_re[k] * z_re[k] + z_im[k] * z_im[k]).sqrt() * mag_scale;
-                    mags.push(m);
-                }
-                out.push(SpectrogramColumn {
-                    magnitudes: mags,
-                    time_offset: n as f64 / sample_rate as f64,
-                });
-                if out.len() >= col_count {
-                    break;
-                }
-            }
-            cur_col += 1;
-            next_hop = next_hop.saturating_add(hop_size);
-        }
-
-        // Periodically renormalise phasors back to unit length to cancel
-        // accumulated floating-point drift over long signals.
-        if n != 0 && n % 4096 == 0 {
-            for k in 0..num_bins {
-                let m2 = phasor_re[k] * phasor_re[k] + phasor_im[k] * phasor_im[k];
-                if m2 > 0.0 {
-                    let inv = 1.0 / m2.sqrt();
-                    phasor_re[k] *= inv;
-                    phasor_im[k] *= inv;
-                }
-            }
-        }
+    let mut out: Vec<SpectrogramColumn> = Vec::with_capacity(last - first);
+    for frame in first..last {
+        let offset = frame * num_bins;
+        let mags: Vec<f32> = complex_out[offset..offset + num_bins]
+            .iter()
+            .map(|c| (c.re * c.re + c.im * c.im).sqrt() * mag_scale)
+            .collect();
+        // Library emits at the end of each hop; frame 0 = after sample hop-1.
+        let time_offset = ((frame + 1) * hop_size) as f64 / sample_rate as f64;
+        out.push(SpectrogramColumn { magnitudes: mags, time_offset });
     }
-
     out
 }
 
@@ -200,7 +155,6 @@ mod tests {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap();
 
-        // Expected bin: k = f / (nyq/(num_bins-1))
         let nyq = (sr as f32) / 2.0;
         let expected = (f / (nyq / (num_bins - 1) as f32)).round() as usize;
         assert!(
