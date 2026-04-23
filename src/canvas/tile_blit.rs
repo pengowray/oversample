@@ -51,8 +51,11 @@ impl ViewportGeometry {
         let first_tile = (vis_start_lod / TILE_COLS as f64).floor() as usize;
         let last_tile = ((vis_end_lod - 0.001).max(0.0) / TILE_COLS as f64).floor() as usize;
 
-        let fc_lo = freq_crop_lo.max(0.0);
-        let fc_hi = freq_crop_hi.max(0.01);
+        // Keep raw values — downstream (compute_tile_blit_coords) handles
+        // fc_lo < 0 or fc_hi > 1, which can happen in viewport-zoom resonator
+        // mode where the tile doesn't cover the full view range.
+        let fc_lo = freq_crop_lo;
+        let fc_hi = freq_crop_hi.max(freq_crop_lo + 0.001);
 
         Some(Self {
             cw, ch, ideal_lod, ratio, vis_start, vis_end,
@@ -120,19 +123,20 @@ pub fn compute_tile_blit_coords(
     let src_w = (src_x_end - src_x).max(0.0);
     if src_w <= 0.0 { return None; }
 
-    // Vertical crop
+    // Vertical crop — generalized to handle fc_lo < 0 or fc_hi > 1, which
+    // happens when the tile doesn't cover the full view (e.g. viewport-zoom
+    // resonators showing bins only inside a narrow band). Areas of the
+    // canvas outside the tile's range are simply left unfilled (black).
     let th = tile_height;
     let ch = vg.ch;
-    let (src_y, src_h, dst_y, dst_h) = if vg.fc_hi <= 1.0 {
-        let sy = th * (1.0 - vg.fc_hi);
-        let sh = th * (vg.fc_hi - vg.fc_lo).max(0.001);
-        (sy, sh, 0.0, ch)
-    } else {
-        let fc_range = (vg.fc_hi - vg.fc_lo).max(0.001);
-        let data_frac = (1.0 - vg.fc_lo) / fc_range;
-        let sh = th * (1.0 - vg.fc_lo);
-        (0.0, sh, ch * (1.0 - data_frac), ch * data_frac)
-    };
+    let fc_lo_c = vg.fc_lo.max(0.0);
+    let fc_hi_c = vg.fc_hi.min(1.0);
+    if fc_hi_c <= fc_lo_c { return None; }
+    let fc_span = (vg.fc_hi - vg.fc_lo).max(0.001);
+    let src_y = th * (1.0 - fc_hi_c);
+    let src_h = th * (fc_hi_c - fc_lo_c).max(0.001);
+    let dst_y = ch * (1.0 - (fc_hi_c - vg.fc_lo) / fc_span);
+    let dst_h = ch * (fc_hi_c - fc_lo_c) / fc_span;
 
     // Destination on canvas
     let dst_x_raw = (c_start - vg.vis_start) * vg.zoom;

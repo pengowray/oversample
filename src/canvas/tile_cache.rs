@@ -2221,6 +2221,13 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     let reson_fft = state.resonator_fft_mode.get_untracked().fft_for_lod(lod).max(16);
     let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
     let layout = state.resonator_layout.get_untracked();
+    // Viewport-zoom mode: concentrate bins on the committed viewport range
+    // (the debouncer in tile_scheduler updates this signal). `None` keeps
+    // the default full-Nyquist (or full-log) range.
+    let freq_range = state
+        .resonator_viewport_range
+        .get_untracked()
+        .map(|(lo, hi)| (lo as f32, hi as f32));
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -2289,6 +2296,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             TILE_COLS,
             bandwidth_hz,
             layout,
+            freq_range,
         );
 
         RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

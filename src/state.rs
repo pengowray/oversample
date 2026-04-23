@@ -1405,6 +1405,17 @@ pub struct AppState {
     pub resonator_fft_mode: RwSignal<ResonatorFftMode>,
     // Resonator view: frequency-bin spacing (linear or log).
     pub resonator_layout: RwSignal<ResonatorLayout>,
+    // Resonator view: when true, the bank's frequency range is concentrated
+    // on the current visible viewport (min_display_freq..max_display_freq)
+    // instead of covering 0..Nyquist. Gives much higher vertical resolution
+    // than FFTs can offer — at the cost of needing a cache rebuild when the
+    // user's freq range changes.
+    pub resonator_viewport_bins: RwSignal<bool>,
+    // Current freq range of the tiles currently in the resonator cache, if
+    // any, in Hz. `None` means tiles cover the default 0..Nyquist (or the
+    // default log range). Updated after a debounced freq-range change so we
+    // don't rebuild tiles on every frame of a zoom gesture.
+    pub resonator_viewport_range: RwSignal<Option<(f64, f64)>>,
     // Colormap preference used when HFR mode is active
     pub hfr_colormap_preference: RwSignal<Colormap>,
     // When false, the Range button is hidden at full range
@@ -1850,6 +1861,8 @@ impl AppState {
             resonator_bandwidth_hz: RwSignal::new(20.0),
             resonator_fft_mode: RwSignal::new(ResonatorFftMode::Adaptive),
             resonator_layout: RwSignal::new(ResonatorLayout::Linear),
+            resonator_viewport_bins: RwSignal::new(false),
+            resonator_viewport_range: RwSignal::new(None),
             hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 

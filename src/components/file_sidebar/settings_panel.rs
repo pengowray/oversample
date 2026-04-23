@@ -373,12 +373,28 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 </select>
                             </div>
                             <div class="setting-row">
+                                <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                                    title="Concentrate all bins on the currently-visible frequency range for extra vertical detail. Rebuilds ~0.5s after you stop zooming vertically.">
+                                    <input
+                                        type="checkbox"
+                                        prop:checked=move || state.resonator_viewport_bins.get()
+                                        on:change=move |ev: web_sys::Event| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                            state.resonator_viewport_bins.set(input.checked());
+                                        }
+                                    />
+                                    "Viewport zoom"
+                                </label>
+                            </div>
+                            <div class="setting-row">
                                 <button
                                     class="setting-button"
                                     on:click=move |_| {
                                         state.resonator_bandwidth_hz.set(20.0);
                                         state.resonator_fft_mode.set(ResonatorFftMode::Adaptive);
                                         state.resonator_layout.set(ResonatorLayout::Linear);
+                                        state.resonator_viewport_bins.set(false);
                                     }
                                 >"Reset"</button>
                             </div>

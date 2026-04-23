@@ -381,6 +381,10 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 let new_cols = if state.main_view.get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
                     let layout = state.resonator_layout.get_untracked();
+                    let freq_range = state
+                        .resonator_viewport_range
+                        .get_untracked()
+                        .map(|(lo, hi)| (lo as f32, hi as f32));
                     let warmup = warmup_samples(sample_rate, bandwidth_hz);
                     let warmup_cols = warmup.div_ceil(hop_size);
                     let skip_cols = warmup_cols.min(last_processed_col);
@@ -399,6 +403,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                             new_col_count,
                             bandwidth_hz,
                             layout,
+                            freq_range,
                         )
                     }
                 } else {

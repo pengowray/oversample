@@ -91,6 +91,7 @@ pub fn compute_resonator_columns(
     col_count: usize,
     bandwidth_hz: f32,
     layout: ResonatorLayout,
+    freq_range: Option<(f32, f32)>,
 ) -> Vec<SpectrogramColumn> {
     let output_bins = fft_size / 2 + 1;
     if samples.is_empty() || output_bins == 0 || col_count == 0 || hop_size == 0 {
@@ -108,20 +109,30 @@ pub fn compute_resonator_columns(
     let tau = 1.0 / (std::f32::consts::TAU * bw);
     let alpha = alpha_from_tau(tau, sr_f);
 
-    // Build the resonator frequency list per chosen layout. Bin count equals
-    // output_bins so log and linear have comparable compute cost and tile
-    // detail — Log just distributes the same bins across a perceptually
-    // useful axis.
+    // Default frequency range per layout. If the caller passes an explicit
+    // range (e.g. viewport-zoom mode), use that instead — this is the key
+    // resonator advantage over FFTs: we can concentrate all bins into the
+    // user's current viewport for arbitrarily high vertical resolution.
+    let (band_lo, band_hi) = freq_range
+        .map(|(lo, hi)| (lo.max(0.01), hi.min(nyq).max(lo + 0.1)))
+        .unwrap_or_else(|| match layout {
+            ResonatorLayout::Linear => (0.01, nyq),
+            ResonatorLayout::Log => (LOG_MIN_FREQ_HZ.max(0.01), nyq.max(LOG_MIN_FREQ_HZ * 2.0)),
+        });
+
+    // Build the resonator frequency list per chosen layout inside [band_lo,
+    // band_hi]. Bin count equals output_bins so log and linear have
+    // comparable compute cost and detail — layout just distributes the bins.
     let bank_freqs: Vec<f32> = match layout {
         ResonatorLayout::Linear => {
             let denom = (output_bins - 1).max(1) as f32;
             (0..output_bins)
-                .map(|k| (k as f32 * nyq / denom).max(0.01))
+                .map(|k| (band_lo + k as f32 * (band_hi - band_lo) / denom).max(0.01))
                 .collect()
         }
         ResonatorLayout::Log => {
-            let min = LOG_MIN_FREQ_HZ.max(0.01);
-            let max = nyq.max(min * 2.0);
+            let min = band_lo.max(0.01);
+            let max = band_hi.max(min * 2.0);
             if output_bins == 1 {
                 vec![min]
             } else {
@@ -146,9 +157,13 @@ pub fn compute_resonator_columns(
     // For Log layout, pre-compute a bank-bin index for each linear output
     // row so the per-frame loop is a cheap gather. For Linear the mapping
     // is the identity (bank_bins == output_bins).
+    //
+    // The output row axis is linear over the tile's own range [band_lo,
+    // band_hi]; the blit code maps tile rows to canvas y using that same
+    // range, so everything lines up.
     let row_to_bank: Option<Vec<usize>> = match layout {
         ResonatorLayout::Linear => None,
-        ResonatorLayout::Log => Some(build_log_row_map(output_bins, &bank_freqs, nyq)),
+        ResonatorLayout::Log => Some(build_log_row_map(output_bins, &bank_freqs, band_lo, band_hi)),
     };
 
     let mag_scale = (fft_size as f32) * 0.5;
@@ -192,23 +207,26 @@ pub fn compute_resonator_columns(
     out
 }
 
-/// For each linear output row (covering 0..Nyquist uniformly), pick the
-/// closest bank bin in log-frequency distance. Rows below the lowest bank
-/// frequency use the lowest bank bin.
-fn build_log_row_map(output_bins: usize, bank_freqs: &[f32], nyq: f32) -> Vec<usize> {
+/// For each linear output row (covering [band_lo, band_hi] uniformly), pick
+/// the closest bank bin in log-frequency distance. Rows below the lowest
+/// bank frequency use the lowest bank bin.
+fn build_log_row_map(
+    output_bins: usize,
+    bank_freqs: &[f32],
+    band_lo: f32,
+    band_hi: f32,
+) -> Vec<usize> {
     let denom = (output_bins - 1).max(1) as f32;
     let last_bank = bank_freqs.len() - 1;
     (0..output_bins)
         .map(|row| {
-            let row_freq = (row as f32 * nyq / denom).max(0.01);
+            let row_freq = (band_lo + row as f32 * (band_hi - band_lo) / denom).max(0.01);
             if row_freq <= bank_freqs[0] {
                 return 0;
             }
             if row_freq >= bank_freqs[last_bank] {
                 return last_bank;
             }
-            // Binary search for the first bank freq >= row_freq, then pick
-            // whichever of idx-1 and idx is closer in log space.
             let idx = bank_freqs
                 .binary_search_by(|&f| {
                     f.partial_cmp(&row_freq).unwrap_or(std::cmp::Ordering::Equal)
@@ -246,7 +264,7 @@ mod tests {
             .collect();
 
         let cols = compute_resonator_columns(
-            &samples, sr, fft_size, hop, 0, 100, 200.0, ResonatorLayout::Linear,
+            &samples, sr, fft_size, hop, 0, 100, 200.0, ResonatorLayout::Linear, None,
         );
         assert!(!cols.is_empty());
 

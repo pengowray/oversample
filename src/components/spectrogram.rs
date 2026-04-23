@@ -336,6 +336,24 @@ pub fn Spectrogram() -> impl IntoView {
         let freq_crop_lo = min_freq / file_max_freq;
         let freq_crop_hi = (max_freq / file_max_freq).min(1.0);
 
+        // In viewport-zoom Resonators mode, tiles don't cover [0, file_max_freq].
+        // Their frequency axis is the committed `resonator_viewport_range`,
+        // so blitting needs a different (fc_lo, fc_hi) — expressed as
+        // fractions of the tile's own range — to map tile rows to canvas y.
+        let resonator_tile_range = if main_view == MainView::Resonators {
+            state.resonator_viewport_range.get()
+        } else {
+            None
+        };
+        let (reson_freq_crop_lo, reson_freq_crop_hi) = if let Some((tlo, thi)) = resonator_tile_range {
+            let span = (thi - tlo).max(1.0);
+            let lo = ((min_freq - tlo) / span).clamp(-1.0, 2.0);
+            let hi = ((max_freq - tlo) / span).clamp(-1.0, 2.0);
+            (lo, hi)
+        } else {
+            (freq_crop_lo, freq_crop_hi)
+        };
+
         // --- Normal spectrogram mode ---
 
         // Build colormap
@@ -638,9 +656,16 @@ pub fn Spectrogram() -> impl IntoView {
             } else {
                 file.and_then(|f| f.preview.as_ref())
             };
+            // Viewport-zoom resonator tiles cover [tile_lo, tile_hi] rather
+            // than [0, file_max_freq], so pass the tile-relative fractions.
+            let (blit_fc_lo, blit_fc_hi) = if resonators_on && resonator_tile_range.is_some() {
+                (reson_freq_crop_lo, reson_freq_crop_hi)
+            } else {
+                (freq_crop_lo, freq_crop_hi)
+            };
             let drawn = spectrogram_renderer::blit_tiles_viewport(
                 &ctx, display_w as f64, display_h as f64, file_idx_val, total_cols,
-                scroll_col, zoom, freq_crop_lo, freq_crop_hi,
+                scroll_col, zoom, blit_fc_lo, blit_fc_hi,
                 spectrogram_renderer::TileRenderMode::Spectrogram(colormap),
                 &display_settings,
                 freq_adjustments.as_deref(),

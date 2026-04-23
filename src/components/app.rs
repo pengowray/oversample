@@ -1699,6 +1699,19 @@ pub fn MainViewButton() -> impl IntoView {
                             <option value="log">"Log"</option>
                         </select>
                     </div>
+                    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
+                        title="Concentrate all bins on the visible freq range for finer vertical zoom. Rebuilds ~0.5s after you stop zooming vertically.">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.resonator_viewport_bins.get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.resonator_viewport_bins.set(input.checked());
+                            }
+                        />
+                        "Viewport zoom"
+                    </label>
                 }
             })}
 
