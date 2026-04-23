@@ -305,74 +305,79 @@ pub fn setup_cache_clearing_effects(state: AppState) {
     //
     // The debouncer uses a monotonically-increasing generation so every view
     // change invalidates all pending timers; only the most recent timer
-    // gets to commit. This keeps continuous vertical zoom feeling snappy —
-    // tiles stay stretched from the old range until the user stops for 0.5s.
-    {
-        let debounce_gen: RwSignal<u32> = RwSignal::new(0);
-        Effect::new(move || {
-            let enabled = state.resonator_viewport_bins.get();
-            let min = state.min_display_freq.get();
-            let max = state.max_display_freq.get();
-            // Subscribe but don't refresh on the "committed" signal; we
-            // update it after the timer fires.
-            let _current = state.resonator_viewport_range.get_untracked();
+    // gets to commit. The generation lives in a thread-local `Cell` rather
+    // than a leptos `RwSignal` so it's not tied to any component scope —
+    // setTimeout callbacks scheduled by one Spectrogram mount must still
+    // be able to reach their generation check if the component remounts.
+    thread_local! {
+        static VIEWPORT_DEBOUNCE_GEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    Effect::new(move || {
+        let enabled = state.resonator_viewport_bins.get();
+        let min = state.min_display_freq.get();
+        let max = state.max_display_freq.get();
 
-            if !enabled {
-                // Disabling reverts to full-Nyquist bins immediately.
-                if state.resonator_viewport_range.get_untracked().is_some() {
-                    state.resonator_viewport_range.set(None);
-                    crate::canvas::tile_cache::clear_resonator_cache();
-                    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-                }
-                return;
-            }
-
-            // Target range at the moment of this change.
-            let target_lo = min.unwrap_or(0.0);
-            let file_max = state.files.with_untracked(|files| {
-                let idx = state.current_file_index.get_untracked();
-                idx.and_then(|i| files.get(i)).map(|f| f.spectrogram.max_freq).unwrap_or(192_000.0)
-            });
-            let target_hi = max.unwrap_or(file_max).min(file_max);
-            if target_hi <= target_lo + 1.0 {
-                return;
-            }
-            let target = (target_lo, target_hi);
-
-            // Skip if already matches current committed range.
-            if state.resonator_viewport_range.get_untracked() == Some(target) {
-                return;
-            }
-
-            // Bump generation — any in-flight timers are now stale.
-            let my_gen = debounce_gen.get_untracked().wrapping_add(1);
-            debounce_gen.set(my_gen);
-
-            let cb = Closure::once(move || {
-                if debounce_gen.get_untracked() != my_gen { return; }
-                // Verify the viewport is still what we want to commit (the
-                // user might have toggled the feature off mid-debounce).
-                if !state.resonator_viewport_bins.get_untracked() { return; }
-                let min_now = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                let max_now = state.max_display_freq.get_untracked().unwrap_or(file_max).min(file_max);
-                if (min_now - target_lo).abs() > 0.5 || (max_now - target_hi).abs() > 0.5 {
-                    // View shifted after the last settled point — don't
-                    // commit a stale target; the current Effect run will
-                    // schedule a fresh timer for the new value.
-                    return;
-                }
-                state.resonator_viewport_range.set(Some(target));
+        if !enabled {
+            // Disabling reverts to full-Nyquist bins immediately.
+            if state.resonator_viewport_range.get_untracked().is_some() {
+                state.resonator_viewport_range.set(None);
                 crate::canvas::tile_cache::clear_resonator_cache();
                 state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-            });
-
-            if let Some(win) = web_sys::window() {
-                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.as_ref().unchecked_ref(),
-                    500,
-                );
             }
-            cb.forget();
+            // Even with the feature off, bump the generation so any
+            // already-scheduled timer becomes stale.
+            VIEWPORT_DEBOUNCE_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+            return;
+        }
+
+        // Target range at the moment of this change.
+        let target_lo = min.unwrap_or(0.0);
+        let file_max = state.files.with_untracked(|files| {
+            let idx = state.current_file_index.get_untracked();
+            idx.and_then(|i| files.get(i)).map(|f| f.spectrogram.max_freq).unwrap_or(192_000.0)
         });
-    }
+        let target_hi = max.unwrap_or(file_max).min(file_max);
+        if target_hi <= target_lo + 1.0 {
+            return;
+        }
+        let target = (target_lo, target_hi);
+
+        // Skip if already matches current committed range.
+        if state.resonator_viewport_range.get_untracked() == Some(target) {
+            return;
+        }
+
+        // Bump generation — any in-flight timers are now stale.
+        let my_gen = VIEWPORT_DEBOUNCE_GEN.with(|g| {
+            let next = g.get().wrapping_add(1);
+            g.set(next);
+            next
+        });
+
+        let cb = Closure::once(move || {
+            if VIEWPORT_DEBOUNCE_GEN.with(|g| g.get()) != my_gen { return; }
+            // Verify the viewport is still what we want to commit (the
+            // user might have toggled the feature off mid-debounce).
+            if !state.resonator_viewport_bins.get_untracked() { return; }
+            let min_now = state.min_display_freq.get_untracked().unwrap_or(0.0);
+            let max_now = state.max_display_freq.get_untracked().unwrap_or(file_max).min(file_max);
+            if (min_now - target_lo).abs() > 0.5 || (max_now - target_hi).abs() > 0.5 {
+                // View shifted after the last settled point — don't
+                // commit a stale target; the current Effect run will
+                // schedule a fresh timer for the new value.
+                return;
+            }
+            state.resonator_viewport_range.set(Some(target));
+            crate::canvas::tile_cache::clear_resonator_cache();
+            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        });
+
+        if let Some(win) = web_sys::window() {
+            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                500,
+            );
+        }
+        cb.forget();
+    });
 }
