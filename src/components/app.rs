@@ -17,6 +17,7 @@ use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::overview::OverviewPanel;
+use crate::components::hfr_bar::HfrBar;
 use crate::components::play_controls::{ToastDisplay, BookmarkPopup};
 use crate::components::bottom_toolbar::BottomToolbar;
 use crate::components::xc_browser::XcBrowser;
@@ -1221,6 +1222,9 @@ fn MainArea() -> impl IntoView {
                     view! {
                         // Overview strip (top)
                         <OverviewPanel />
+
+                        // HFR bar — operating-state row above the main view
+                        <HfrBar />
 
                         // Main view (takes remaining space)
                         <div class="main-view">

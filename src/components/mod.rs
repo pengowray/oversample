@@ -11,6 +11,7 @@ pub mod analysis_panel;
 pub mod overview;
 pub mod play_controls;
 pub mod hfr_button;
+pub mod hfr_bar;
 pub mod tool_button;
 pub mod bottom_toolbar;
 pub mod freq_range_button;

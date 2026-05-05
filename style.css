@@ -2730,6 +2730,72 @@ body.sidebar-resizing {
     image-rendering: pixelated;
 }
 
+/* ── HFR Bar (between Overview and main view) ──────────────────────────── */
+
+.hfr-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+    padding: 4px 0;
+    background: #181818;
+    border-bottom: 1px solid #333;
+    position: relative;
+    z-index: 6;
+}
+
+/* Leftmost cell: pinned over the band gutter (gutter is 64px wide with
+   3px right margin and 2px right border — match those so the cell aligns
+   exactly above the gutter and the right edge lines up with the canvas). */
+.hfr-bar .hfr-fr-cell {
+    flex: 0 0 64px;
+    margin-right: 3px;
+    border-right: 2px solid #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+/* The HFR/FR ComboButton's left button renders the literal "HFR" string;
+   per-letter brightness is encoded via the wrapper-cell classes:
+     `hfr-fr-cell`            → all dim (HFR off)
+     `hfr-fr-cell.hfr-on`     → all bright
+     `hfr-fr-cell.hfr-on.hfr-h-dim` → F R bright, H dim (band <24 kHz) */
+.hfr-bar .hfr-fr-cell .combo-btn-row {
+    width: 100%;
+    height: 100%;
+    align-items: stretch;
+}
+.hfr-bar .hfr-fr-cell .layer-btn-value {
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #555;                         /* default: dim (HFR off) */
+}
+.hfr-bar .hfr-fr-cell.hfr-on .layer-btn-value           { color: #f0c050; } /* F R bright */
+.hfr-bar .hfr-fr-cell.hfr-on .layer-btn-value::first-letter { color: #f0c050; } /* H bright */
+.hfr-bar .hfr-fr-cell.hfr-on.hfr-h-dim .layer-btn-value::first-letter {
+    color: #555;                         /* H alone dim */
+}
+.hfr-bar .hfr-fr-cell .layer-btn-category { display: none; } /* hide blank category row */
+
+/* Combo-button row — fills remaining width to the right of the gutter cell.
+   No overflow clipping — combo dropdowns must be free to extend below
+   the bar (CSS turns overflow-y to clipped if overflow-x is non-visible). */
+.hfr-bar .hfr-controls {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    min-width: 0;
+}
+
+.hfr-bar .layer-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.1;
+}
+
 /* ── Main view area ─────────────────────────────────────────────────────── */
 
 .main-view {
