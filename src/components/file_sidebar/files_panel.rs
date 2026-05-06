@@ -15,6 +15,67 @@ use crate::format_time::format_duration_compact;
 use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, load_single_demo};
 use super::suggestions::BatsForYou;
 
+/// Remove the file at `idx` from the list and fix up index-tracking signals
+/// (current_file_index, mic_live_file_idx) plus the per-file viewport state
+/// when the closed file was the current one. Stops playback if the closed
+/// file was being played, and clears its tile cache.
+///
+/// Used for the synchronous close-button path and for the post-stop close
+/// path that runs after an async stop_listening / stop_recording.
+fn remove_file_at(state: &AppState, i: usize) {
+    if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
+        playback::stop(state);
+    }
+    tile_cache::clear_file(i);
+    let was_current = state.current_file_index.get_untracked() == Some(i);
+    state.files.update(|files| {
+        if i < files.len() {
+            files.remove(i);
+        }
+    });
+    state.current_file_index.update(|idx| {
+        *idx = match *idx {
+            Some(cur) if cur == i => {
+                let new_len = state.files.get_untracked().len();
+                if new_len == 0 { None }
+                else if i > 0 { Some(i - 1) }
+                else { Some(0) }
+            },
+            Some(cur) if cur > i => Some(cur - 1),
+            other => other,
+        };
+    });
+    state.mic_live_file_idx.update(|idx| {
+        *idx = match *idx {
+            Some(cur) if cur == i => None,
+            Some(cur) if cur > i => Some(cur - 1),
+            other => other,
+        };
+    });
+    // If closing the current file left current_file_index unchanged (e.g.
+    // closing file 0 when file 1 slides into slot 0), the per-file
+    // vertical-zoom sync Effect won't fire — so reload the new current
+    // file's stored viewport manually.
+    if was_current {
+        let new_idx = state.current_file_index.get_untracked();
+        let (min, max) = if let Some(n) = new_idx {
+            state.files.with_untracked(|files| {
+                files.get(n)
+                    .map(|f| (f.min_display_freq, f.max_display_freq))
+                    .unwrap_or((None, None))
+            })
+        } else {
+            (None, None)
+        };
+        if state.min_display_freq.get_untracked() != min {
+            state.min_display_freq.set(min);
+        }
+        if state.max_display_freq.get_untracked() != max {
+            state.max_display_freq.set(max);
+        }
+    }
+}
+
 #[component]
 pub(super) fn FilesPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -385,72 +446,47 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
                         let on_close = move |ev: MouseEvent| {
                             ev.stop_propagation();
-                            // Refuse to close the live doc while it's actively
-                            // listening or recording — user has to stop first
-                            // so finalize_recording / cleanup_listen_file can
-                            // run on the right slot. Closing mid-stream would
-                            // race the async stop path and likely lose data.
+                            // Closing the active live doc while listening or
+                            // recording: stop the mic cleanly first, then
+                            // remove the file. We can't remove synchronously
+                            // because finalize_recording / cleanup_listen_file
+                            // run on the live slot and would race a sync remove.
+                            //
+                            // Capture the file's add_order so we can find it
+                            // again after the await — concurrent file ops or
+                            // finalize_recording could shift its index.
                             let is_live_doc = state.mic_live_file_idx.get_untracked() == Some(i);
                             let mic_active = state.mic_listening.get_untracked()
                                 || state.mic_recording.get_untracked();
                             if is_live_doc && mic_active {
-                                state.show_info_toast(
-                                    "Stop listening or recording before closing this file.",
-                                );
+                                let add_order = state.files.with_untracked(|files| {
+                                    files.get(i).map(|f| f.add_order)
+                                });
+                                spawn_local(async move {
+                                    if state.mic_recording.get_untracked() {
+                                        // Stops + finalizes (saves) the recording.
+                                        // The file stays in the list with the
+                                        // recorded audio after this await.
+                                        crate::audio::microphone::toggle_record(&state).await;
+                                    } else if state.mic_listening.get_untracked() {
+                                        // Stops listening; cleanup_listen_file
+                                        // removes the file from the list.
+                                        crate::audio::microphone::toggle_listen(&state).await;
+                                    }
+                                    // Listening case: file is already gone, no-op.
+                                    // Recording case: finalize kept the file —
+                                    // honor the close by removing it now.
+                                    if let Some(target) = add_order {
+                                        if let Some(idx) = state.files.with_untracked(|files| {
+                                            files.iter().position(|f| f.add_order == target)
+                                        }) {
+                                            remove_file_at(&state, idx);
+                                        }
+                                    }
+                                });
                                 return;
                             }
-                            if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
-                                playback::stop(&state);
-                            }
-                            tile_cache::clear_file(i);
-                            let was_current = state.current_file_index.get_untracked() == Some(i);
-                            state.files.update(|files| { files.remove(i); });
-                            state.current_file_index.update(|idx| {
-                                *idx = match *idx {
-                                    Some(cur) if cur == i => {
-                                        let new_len = state.files.get_untracked().len();
-                                        if new_len == 0 { None }
-                                        else if i > 0 { Some(i - 1) }
-                                        else { Some(0) }
-                                    },
-                                    Some(cur) if cur > i => Some(cur - 1),
-                                    other => other,
-                                };
-                            });
-                            // Keep mic_live_file_idx in sync with the shift.
-                            // If the live doc itself was closed (only possible
-                            // for an armed/empty doc — guard above blocks the
-                            // mic-active case), drop the reference. Otherwise
-                            // decrement when its slot moved.
-                            state.mic_live_file_idx.update(|idx| {
-                                *idx = match *idx {
-                                    Some(cur) if cur == i => None,
-                                    Some(cur) if cur > i => Some(cur - 1),
-                                    other => other,
-                                };
-                            });
-                            // If closing the current file left current_file_index unchanged
-                            // (e.g. closing file 0 when file 1 slides into slot 0), the
-                            // per-file vertical-zoom sync Effect won't fire — so reload
-                            // the new current file's stored viewport manually.
-                            if was_current {
-                                let new_idx = state.current_file_index.get_untracked();
-                                let (min, max) = if let Some(n) = new_idx {
-                                    state.files.with_untracked(|files| {
-                                        files.get(n)
-                                            .map(|f| (f.min_display_freq, f.max_display_freq))
-                                            .unwrap_or((None, None))
-                                    })
-                                } else {
-                                    (None, None)
-                                };
-                                if state.min_display_freq.get_untracked() != min {
-                                    state.min_display_freq.set(min);
-                                }
-                                if state.max_display_freq.get_untracked() != max {
-                                    state.max_display_freq.set(max);
-                                }
-                            }
+                            remove_file_at(&state, i);
                         };
                         let name_dl = name.clone();
                         let on_download = move |_: ()| {
