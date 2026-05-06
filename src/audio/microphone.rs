@@ -364,6 +364,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
 
 /// Start recording with the given backend (mic already open).
 async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
+    warn_if_te_for_live(state);
     let was_listening = state.mic_listening.get_untracked();
     let has_listen_file = was_listening && state.mic_live_file_idx.get_untracked().is_some();
 
@@ -390,6 +391,21 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         }
     } else {
         state.recording_location.set(None);
+    }
+
+    // Detect armed-doc reuse before any backend I/O so we can rename it to the
+    // proper batcap_*.wav name BEFORE start_recording runs. The recovery
+    // sidecar/.wav.part filename is built from the file at mic_live_file_idx
+    // inside build_start_recording_args, so promoting after start_recording
+    // would leave the recovery file with the armed "Live mic (HH:MM:SS)" name.
+    let armed_idx = if !has_listen_file {
+        state.mic_live_file_idx.get_untracked()
+            .filter(|&idx| is_armed_live_doc(state, idx))
+    } else {
+        None
+    };
+    if let Some(idx) = armed_idx {
+        promote_armed_to_recording(state, idx);
     }
 
     if !has_listen_file {
@@ -426,6 +442,13 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
                 // waterfall would discard all accumulated columns and cause a
                 // visible flash/glitch.
                 convert_listen_to_recording(state, sr)
+            } else if let Some(idx) = armed_idx {
+                // Armed doc was renamed before start_recording above; just
+                // start the live processing loop on it.
+                set_live_recording_zoom(state, sr);
+                spawn_live_processing_loop(*state, idx, sr);
+                spawn_smooth_scroll_animation(*state);
+                idx
             } else {
                 let idx = start_live_recording(state, sr);
                 spawn_live_processing_loop(*state, idx, sr);
@@ -441,6 +464,11 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
             if has_listen_file {
                 state.mic_listening.set(false);
                 cleanup_listen_file(state);
+            }
+            // If we promoted an armed doc to recording above, roll it back so
+            // is_armed_live_doc() recognizes it again on the next attempt.
+            if let Some(idx) = armed_idx {
+                revert_recording_to_armed(state, idx);
             }
         }
     }
@@ -530,6 +558,7 @@ async fn do_stop_recording(state: &AppState, backend: ActiveBackend) {
 
 /// Start listening with the given backend (mic already open).
 async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
+    warn_if_te_for_live(state);
     // Reset frequency display so the waterfall shows the full mic range
     // (not a zoomed range from a previously-open high-SR file).
     state.min_display_freq.set(None);
@@ -545,8 +574,19 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     let sr = state.mic_sample_rate.get_untracked();
     // Clear tile caches so previous file's spectrogram doesn't flash
     crate::canvas::tile_cache::clear_all_caches();
-    // Create the transient listening file in the file list
-    let file_idx = start_live_listening(state, sr);
+
+    // Reuse the armed live doc if one exists; otherwise create a new
+    // transient listening file. The armed-doc path lets the user pre-configure
+    // HFR settings before pressing Listen, without spawning a second file.
+    let armed = state.mic_live_file_idx.get_untracked()
+        .filter(|&idx| is_armed_live_doc(state, idx));
+    let file_idx = if let Some(idx) = armed {
+        promote_armed_to_listening(state, idx);
+        idx
+    } else {
+        start_live_listening(state, sr)
+    };
+
     spawn_live_processing_loop(*state, file_idx, sr);
     spawn_smooth_scroll_animation(*state);
 }
@@ -614,6 +654,70 @@ pub async fn toggle_listen(state: &AppState) {
     let backend = ActiveBackend::from(mic_backend);
     state.log_debug("info", format!("toggle_listen: backend={:?}, starting listen", backend));
     do_start_listening(state, backend).await;
+}
+
+/// Reset the DSP state on whichever mic backend is currently active. Use this
+/// when a live-audio parameter change (mode switch, filter knob) would
+/// otherwise leak stale buffer contents into the new mode (PS/PV overlap
+/// buffers, HET filter delay lines, IIR warmup tail).
+pub fn clear_live_dsp_state(state: &AppState) {
+    if let Some(backend) = resolve_active_backend(state) {
+        backend.clear_dsp_state();
+    }
+}
+
+/// Show a one-shot toast if the user starts live audio while PlaybackMode is
+/// TimeExpansion. TE relies on AudioContext sample-rate tricks that can't work
+/// for an unbounded live stream — `process_live_audio` falls through to
+/// passthrough, but the user should know it's doing nothing.
+fn warn_if_te_for_live(state: &AppState) {
+    if state.playback_mode.get_untracked() == crate::state::PlaybackMode::TimeExpansion {
+        state.show_info_toast(
+            "Time-expansion isn't applicable to live audio — playing back at 1:1.",
+        );
+    }
+}
+
+/// Open the mic and create an empty live document — but don't start listening
+/// or recording. Lets the user adjust HFR mode/range/bandpass first, then
+/// press Listen or Record on the armed doc. If a non-empty live doc already
+/// exists, this is a no-op (we don't want to discard in-progress audio).
+///
+/// Triggered from the file panel's "+ New live recording" button.
+pub async fn arm_live_doc(state: &AppState) {
+    // If we already have a live doc that's currently streaming, refuse — don't
+    // step on an in-progress listen or recording session.
+    if state.mic_listening.get_untracked() || state.mic_recording.get_untracked() {
+        state.show_error_toast("Already listening or recording.");
+        return;
+    }
+
+    // If an armed doc already exists, just navigate to it instead of making
+    // a second one. (Pressing the button repeatedly should be idempotent.)
+    if let Some(idx) = state.mic_live_file_idx.get_untracked() {
+        if is_armed_live_doc(state, idx) {
+            state.current_file_index.set(Some(idx));
+            return;
+        }
+    }
+
+    let mic_backend = match acquire_mic(state, MicPendingAction::Arm).await {
+        Some(b) => b,
+        None => {
+            state.log_debug("info", "arm_live_doc: acquire_mic returned None");
+            return;
+        }
+    };
+    let backend = ActiveBackend::from(mic_backend);
+    state.log_debug("info", format!("arm_live_doc: mic acquired ({:?})", backend));
+
+    // Reset DSP state and tile caches so the empty doc starts clean.
+    backend.clear_buffer();
+    backend.clear_dsp_state();
+    crate::canvas::tile_cache::clear_all_caches();
+
+    let sr = state.mic_sample_rate.get_untracked().max(48_000);
+    let _ = start_live_armed(state, sr);
 }
 
 /// Toggle recording on/off. When stopping, finalizes the recording.
@@ -773,7 +877,9 @@ pub fn stop_all(state: &AppState) {
 // Re-export from split modules
 pub use crate::audio::wav_encoder::encode_wav;
 pub(crate) use crate::audio::live_recording::{
-    start_live_recording, start_live_listening,
+    start_live_recording, start_live_listening, start_live_armed,
+    is_armed_live_doc, promote_armed_to_listening, promote_armed_to_recording,
+    revert_recording_to_armed, set_live_recording_zoom,
     cleanup_listen_file, convert_listen_to_recording,
     spawn_live_processing_loop,
     spawn_smooth_scroll_animation, finalize_recording,

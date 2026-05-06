@@ -9,11 +9,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
-use crate::state::{AppState, ListenMode, MicAcquisitionState, MicBackend};
+use crate::state::{AppState, MicAcquisitionState, MicBackend, PlaybackMode};
 use crate::dsp::heterodyne::RealtimeHet;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::zc_divide::zc_divide;
+use crate::audio::playback::snapshot_params;
+use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
 use std::cell::RefCell;
 
@@ -127,7 +129,7 @@ thread_local! {
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
     static WEB_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
     /// Overlap context state for PS/PV live listening (web).
-    static WEB_LISTEN_STATE: RefCell<ListenDspState> = RefCell::new(ListenDspState::new());
+    static WEB_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
 }
 
 // ── Thread-local state: Native mode (shared by cpal AND USB) ────────────
@@ -148,7 +150,7 @@ thread_local! {
     /// Realtime heterodyne processor for native modes.
     static NATIVE_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
     /// Overlap context state for PS/PV live listening (native).
-    static NATIVE_LISTEN_STATE: RefCell<ListenDspState> = RefCell::new(ListenDspState::new());
+    static NATIVE_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -268,52 +270,113 @@ const LISTEN_CONTEXT_FLOOR: usize = 4096;
 /// eliminate any residual boundary discontinuity after overlap-save.
 const LISTEN_CROSSFADE: usize = 256;
 
+/// How many recent input samples to prepend to each chunk before applying
+/// the bandpass/EQ filter. The IIR filters are stateless across calls, so
+/// without warmup the per-chunk transients click at chunk boundaries.
+const FILTER_WARMUP_SAMPLES: usize = 1024;
+
 /// Persistent state for overlap-save PS/PV live processing.
 struct ListenDspState {
     /// Accumulated raw input samples (sliding context window).
     context: Vec<f32>,
     /// Tail of the previous returned chunk, used for crossfade.
     prev_tail: Vec<f32>,
+    /// Recent input samples kept around to seed the IIR bandpass filter
+    /// at the start of each chunk so its transient settles before the
+    /// audible portion. Up to FILTER_WARMUP_SAMPLES long.
+    filter_tail: Vec<f32>,
 }
 
 impl ListenDspState {
     const fn new() -> Self {
-        Self { context: Vec::new(), prev_tail: Vec::new() }
+        Self {
+            context: Vec::new(),
+            prev_tail: Vec::new(),
+            filter_tail: Vec::new(),
+        }
     }
 
     fn clear(&mut self) {
         self.context.clear();
         self.prev_tail.clear();
+        self.filter_tail.clear();
     }
 }
 
-/// Apply the selected listen mode DSP to a chunk of mic input.
-///
-/// For PS/PV, `dsp_state` accumulates raw input so the batch DSP functions
-/// see enough overlap context, then extracts the tail with a crossfade.
-fn process_listen_audio(
+/// Apply the bandpass/EQ filter step with warmup-tail continuity so IIR
+/// transients don't click at chunk boundaries. Returns input unchanged when
+/// no filter is active.
+fn apply_live_filter(
     input: &[f32],
-    mode: ListenMode,
+    sample_rate: u32,
+    params: &PlaybackParams,
+    dsp_state: &mut ListenDspState,
+) -> Vec<f32> {
+    // Fast path: no filter / notch / spectral subtraction enabled at all.
+    if !params.filter_enabled
+        && !params.notch_enabled
+        && !params.noise_reduce_enabled
+    {
+        // Still update the warmup tail in case the filter gets enabled later.
+        let take = input.len().min(FILTER_WARMUP_SAMPLES);
+        dsp_state.filter_tail = input[input.len() - take..].to_vec();
+        return input.to_vec();
+    }
+
+    let warmup_len = dsp_state.filter_tail.len().min(FILTER_WARMUP_SAMPLES);
+    let mut buf = Vec::with_capacity(warmup_len + input.len());
+    if warmup_len > 0 {
+        let start = dsp_state.filter_tail.len() - warmup_len;
+        buf.extend_from_slice(&dsp_state.filter_tail[start..]);
+    }
+    buf.extend_from_slice(input);
+
+    let filtered = apply_filters(&buf, sample_rate, params);
+
+    // Save the new tail (raw input, not filtered — we want the IIR transient
+    // recomputed with each chunk's actual recent past).
+    let take = input.len().min(FILTER_WARMUP_SAMPLES);
+    dsp_state.filter_tail = input[input.len() - take..].to_vec();
+
+    if filtered.len() > warmup_len {
+        filtered[warmup_len..].to_vec()
+    } else {
+        filtered
+    }
+}
+
+/// Apply the live DSP pipeline: bandpass/EQ filter → playback-mode transform.
+///
+/// Reads everything from the unified HFR signals via `params`. `mute_output`
+/// short-circuits to silence (used for "Mic warm-up / Ready" state). Modes
+/// that don't apply to live audio (TimeExpansion) fall through to passthrough.
+fn process_live_audio(
+    input: &[f32],
     sample_rate: u32,
     rt_het: &mut RealtimeHet,
     dsp_state: &mut ListenDspState,
     context_samples: usize,
-    het_freq: f64,
-    het_cutoff: f64,
-    ps_factor: f64,
-    pv_factor: f64,
-    zc_factor: f64,
+    params: &PlaybackParams,
+    mute_output: bool,
 ) -> Vec<f32> {
-    match mode {
-        ListenMode::Heterodyne => {
-            dsp_state.clear();
-            let mut out = vec![0.0f32; input.len()];
-            rt_het.process(input, &mut out, sample_rate, het_freq, het_cutoff);
+    if mute_output {
+        dsp_state.clear();
+        return vec![0.0f32; input.len()];
+    }
+
+    let filtered = apply_live_filter(input, sample_rate, params, dsp_state);
+
+    match params.mode {
+        PlaybackMode::Heterodyne => {
+            dsp_state.context.clear();
+            dsp_state.prev_tail.clear();
+            let mut out = vec![0.0f32; filtered.len()];
+            rt_het.process(&filtered, &mut out, sample_rate, params.het_freq, params.het_cutoff);
             out
         }
-        ListenMode::PitchShift | ListenMode::PhaseVocoder => {
+        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
             // Accumulate input into sliding context window
-            dsp_state.context.extend_from_slice(input);
+            dsp_state.context.extend_from_slice(&filtered);
             let max_ctx = LISTEN_CONTEXT_FLOOR.max(context_samples);
             if dsp_state.context.len() > max_ctx {
                 let excess = dsp_state.context.len() - max_ctx;
@@ -321,10 +384,10 @@ fn process_listen_audio(
             }
 
             // Run the batch DSP on the full context
-            let full_output = if mode == ListenMode::PitchShift {
-                pitch_shift_realtime(&dsp_state.context, ps_factor)
+            let full_output = if params.mode == PlaybackMode::PitchShift {
+                pitch_shift_realtime(&dsp_state.context, params.ps_factor)
             } else {
-                let mut out = phase_vocoder_pitch_shift(&dsp_state.context, pv_factor);
+                let mut out = phase_vocoder_pitch_shift(&dsp_state.context, params.pv_factor);
                 let boost = 10.0f32.powf(
                     crate::audio::streaming_playback::PV_MODE_BOOST_DB as f32 / 20.0,
                 );
@@ -357,17 +420,19 @@ fn process_listen_audio(
 
             result
         }
-        ListenMode::ZeroCrossing => {
-            dsp_state.clear();
-            zc_divide(input, sample_rate, zc_factor as u32, false)
+        PlaybackMode::ZeroCrossing => {
+            dsp_state.context.clear();
+            dsp_state.prev_tail.clear();
+            zc_divide(&filtered, sample_rate, params.zc_factor as u32, params.filter_enabled)
         }
-        ListenMode::Normal => {
-            dsp_state.clear();
-            input.to_vec()
-        }
-        ListenMode::ReadyMic => {
-            dsp_state.clear();
-            vec![0.0f32; input.len()]
+        // Normal and TimeExpansion both pass through. TE is unimplementable
+        // for live audio (it relies on the AudioContext sample rate change,
+        // which would buffer indefinitely). The UI shows a toast when TE is
+        // selected during live listening.
+        PlaybackMode::Normal | PlaybackMode::TimeExpansion => {
+            dsp_state.context.clear();
+            dsp_state.prev_tail.clear();
+            filtered
         }
     }
 }
@@ -739,21 +804,19 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
         // Listen mode: process input through selected DSP and play through speakers
         if state_cb.mic_listening.get_untracked() {
             let sr = state_cb.mic_sample_rate.get_untracked();
-            let mode = state_cb.listen_mode.get_untracked();
+            let params = snapshot_params(&state_cb, None, sr);
+            let mute = state_cb.mic_mute_output.get_untracked();
+            let ctx_samples = state_cb.listen_context_samples.get_untracked();
             let out_data = NATIVE_RT_HET.with(|h| {
                 NATIVE_LISTEN_STATE.with(|s| {
-                    process_listen_audio(
+                    process_live_audio(
                         &input_data,
-                        mode,
                         sr,
                         &mut h.borrow_mut(),
                         &mut s.borrow_mut(),
-                        state_cb.listen_context_samples.get_untracked(),
-                        state_cb.listen_het_frequency.get_untracked(),
-                        state_cb.listen_het_cutoff.get_untracked(),
-                        state_cb.ps_factor.get_untracked(),
-                        state_cb.pv_factor.get_untracked(),
-                        state_cb.zc_factor.get_untracked(),
+                        ctx_samples,
+                        &params,
+                        mute,
                     )
                 })
             });
@@ -945,21 +1008,19 @@ async fn open_web(state: &AppState) -> bool {
 
         if state_cb.mic_listening.get_untracked() {
             let sr = state_cb.mic_sample_rate.get_untracked();
-            let mode = state_cb.listen_mode.get_untracked();
+            let params = snapshot_params(&state_cb, None, sr);
+            let mute = state_cb.mic_mute_output.get_untracked();
+            let ctx_samples = state_cb.listen_context_samples.get_untracked();
             let out_data = WEB_RT_HET.with(|h| {
                 WEB_LISTEN_STATE.with(|s| {
-                    process_listen_audio(
+                    process_live_audio(
                         &input_data,
-                        mode,
                         sr,
                         &mut h.borrow_mut(),
                         &mut s.borrow_mut(),
-                        state_cb.listen_context_samples.get_untracked(),
-                        state_cb.listen_het_frequency.get_untracked(),
-                        state_cb.listen_het_cutoff.get_untracked(),
-                        state_cb.ps_factor.get_untracked(),
-                        state_cb.pv_factor.get_untracked(),
-                        state_cb.zc_factor.get_untracked(),
+                        ctx_samples,
+                        &params,
+                        mute,
                     )
                 })
             });

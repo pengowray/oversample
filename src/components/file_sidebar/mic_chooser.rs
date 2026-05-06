@@ -224,6 +224,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                                     match action {
                                                         MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
                                                         MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                        MicPendingAction::Arm => crate::audio::microphone::arm_live_doc(&state).await,
                                                     }
                                                 });
                                             }
@@ -307,6 +308,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                                     match action {
                                                         MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
                                                         MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                        MicPendingAction::Arm => crate::audio::microphone::arm_live_doc(&state).await,
                                                     }
                                                 }
                                             });
@@ -404,6 +406,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                                     match action {
                                                         MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
                                                         MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                        MicPendingAction::Arm => crate::audio::microphone::arm_live_doc(&state).await,
                                                     }
                                                 });
                                             }
@@ -455,6 +458,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                             match action {
                                                 MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
                                                 MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                MicPendingAction::Arm => crate::audio::microphone::arm_live_doc(&state).await,
                                             }
                                         });
                                     }
@@ -505,6 +509,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                             match action {
                                                 MicPendingAction::Listen => crate::audio::microphone::toggle_listen(&state).await,
                                                 MicPendingAction::Record => crate::audio::microphone::toggle_record(&state).await,
+                                                MicPendingAction::Arm => crate::audio::microphone::arm_live_doc(&state).await,
                                             }
                                         }
                                     });

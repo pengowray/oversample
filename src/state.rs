@@ -975,18 +975,6 @@ pub enum MicMode {
     RawUsb,
 }
 
-/// Playback mode for live listening (like PlaybackMode but without TimeExpansion).
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum ListenMode {
-    #[default]
-    Heterodyne,
-    PitchShift,
-    PhaseVocoder,
-    ZeroCrossing,
-    Normal,
-    ReadyMic,
-}
-
 /// Microphone acquisition strategy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MicStrategy {
@@ -1020,6 +1008,10 @@ pub enum MicAcquisitionState {
 pub enum MicPendingAction {
     Listen,
     Record,
+    /// Open the mic and create an empty live document, but don't start
+    /// streaming yet. The user adjusts HFR settings before pressing Listen
+    /// or Record on the armed doc.
+    Arm,
 }
 
 /// Whether a recording is ready to begin.
@@ -1353,15 +1345,14 @@ pub struct AppState {
     /// Information about the selected mic device.
     pub mic_device_info: RwSignal<Option<MicDeviceInfo>>,
 
-    // Listen mode settings (independent from HFR file playback)
-    pub listen_mode: RwSignal<ListenMode>,
-    pub listen_het_frequency: RwSignal<f64>,
-    pub listen_het_cutoff: RwSignal<f64>,
+    // Live listen settings.
+    // Mode/het/factor/bandpass all reuse the unified HFR signals (playback_mode,
+    // het_frequency, het_cutoff, ps_factor, pv_factor, zc_factor, filter_*).
     /// Context window size in samples for PS/PV overlap-save buffering.
     pub listen_context_samples: RwSignal<usize>,
-    pub listen_bandpass_enabled: RwSignal<bool>,
-    pub listen_bandpass_lo: RwSignal<f64>,
-    pub listen_bandpass_hi: RwSignal<f64>,
+    /// When true, mic input is processed but the speakers stay silent.
+    /// Used as a "mic warm-up / ready" mode and as a manual mute while listening.
+    pub mic_mute_output: RwSignal<bool>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -1842,13 +1833,8 @@ impl AppState {
             mic_max_bit_depth: RwSignal::new(0),
             mic_channel_mode: RwSignal::new(ChannelMode::Mono),
             mic_device_info: RwSignal::new(None),
-            listen_mode: RwSignal::new(ListenMode::default()),
-            listen_het_frequency: RwSignal::new(45_000.0),
-            listen_het_cutoff: RwSignal::new(15_000.0),
             listen_context_samples: RwSignal::new(16384),
-            listen_bandpass_enabled: RwSignal::new(false),
-            listen_bandpass_lo: RwSignal::new(18_000.0),
-            listen_bandpass_hi: RwSignal::new(96_000.0),
+            mic_mute_output: RwSignal::new(false),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
             debug_log_entries: RwSignal::new(Vec::new()),
@@ -2525,20 +2511,56 @@ impl AppState {
         self.sync_focus_outputs();
     }
 
+    /// Public re-sync of focus outputs. Call this when the active Nyquist
+    /// changes (mic opened, listen/record toggled, current file changed) so
+    /// the band-FF output signals re-clamp without losing user intent stored
+    /// in the focus stack.
+    pub fn resync_focus_outputs(&self) {
+        self.sync_focus_outputs();
+    }
+
     /// Sync the focus stack's effective range to the output signals
-    /// (band_ff_freq_lo, band_ff_freq_hi, hfr_enabled).
+    /// (band_ff_freq_lo, band_ff_freq_hi, hfr_enabled). The output is clamped
+    /// to the active Nyquist (mic SR/2 when listening or recording, file SR/2
+    /// otherwise) so the band can never exceed what the source can resolve.
+    /// The unclamped user intent stays in the focus stack and re-applies when
+    /// the source changes back.
     fn sync_focus_outputs(&self) {
         let stack = self.focus_stack.get_untracked();
         let eff = stack.effective_range();
         let hfr = stack.hfr_enabled();
-        if self.band_ff_freq_lo.get_untracked() != eff.lo {
-            self.band_ff_freq_lo.set(eff.lo);
+        let nyq = self.active_nyquist();
+        let clamped_lo = eff.lo.clamp(0.0, nyq);
+        let clamped_hi = eff.hi.clamp(clamped_lo, nyq);
+        if self.band_ff_freq_lo.get_untracked() != clamped_lo {
+            self.band_ff_freq_lo.set(clamped_lo);
         }
-        if self.band_ff_freq_hi.get_untracked() != eff.hi {
-            self.band_ff_freq_hi.set(eff.hi);
+        if self.band_ff_freq_hi.get_untracked() != clamped_hi {
+            self.band_ff_freq_hi.set(clamped_hi);
         }
         if self.hfr_enabled.get_untracked() != hfr {
             self.hfr_enabled.set(hfr);
         }
+    }
+
+    /// Highest frequency the active source can carry. When the current file
+    /// is the live mic document (armed, listening, or recording), this is the
+    /// mic's Nyquist. Otherwise it's the file's spectrogram max_freq. Falls
+    /// back to 96 kHz if neither source has reported a sample rate.
+    pub fn active_nyquist(&self) -> f64 {
+        let cur = self.current_file_index.get_untracked();
+        let live = self.mic_live_file_idx.get_untracked();
+        let is_live_doc = matches!((cur, live), (Some(c), Some(l)) if c == l);
+        if is_live_doc {
+            let sr = self.mic_sample_rate.get_untracked();
+            if sr > 0 {
+                return sr as f64 / 2.0;
+            }
+        }
+        let files = self.files.get_untracked();
+        cur.and_then(|i| files.get(i))
+            .map(|f| f.spectrogram.max_freq)
+            .filter(|m| *m > 0.0)
+            .unwrap_or(96_000.0)
     }
 }

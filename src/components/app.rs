@@ -267,6 +267,51 @@ pub fn App() -> impl IntoView {
         });
     }
 
+    // Live-mode safety: when a playback-mode or filter parameter changes
+    // while listening or recording, clear the live DSP state so PS/PV overlap
+    // buffers, HET filter delay lines, and the IIR bandpass warmup tail don't
+    // carry artefacts from the previous mode into the new one. Also warns the
+    // user when TimeExpansion is selected during live audio — TE falls through
+    // to passthrough for the mic since it relies on AudioContext sample-rate
+    // tricks that can't work for an unbounded live stream.
+    {
+        let first_run = std::cell::Cell::new(true);
+        let prev_mode = std::cell::Cell::new(state.playback_mode.get_untracked());
+        Effect::new(move |_| {
+            let mode = state.playback_mode.get();
+            let _ = state.filter_enabled.get();
+            let _ = state.filter_freq_low.get();
+            let _ = state.filter_freq_high.get();
+            let _ = state.filter_quality.get();
+            let _ = state.filter_band_mode.get();
+            let _ = state.bandpass_mode.get();
+            let _ = state.het_frequency.get();
+            let _ = state.het_cutoff.get();
+
+            if first_run.get() {
+                first_run.set(false);
+                prev_mode.set(mode);
+                return;
+            }
+
+            let live = state.mic_listening.get_untracked()
+                || state.mic_recording.get_untracked();
+            if live {
+                crate::audio::microphone::clear_live_dsp_state(&state);
+
+                if mode == crate::state::PlaybackMode::TimeExpansion
+                    && prev_mode.get() != mode
+                {
+                    state.show_info_toast(
+                        "Time-expansion isn't applicable to live audio — playing back at 1:1.",
+                    );
+                }
+            }
+
+            prev_mode.set(mode);
+        });
+    }
+
     // Auto-save project when dirty (debounced 2s)
     {
         use std::cell::RefCell;
@@ -366,20 +411,21 @@ pub fn App() -> impl IntoView {
     });
 
     // Sync focus_stack → band_ff_freq_lo/hi + hfr_enabled output signals.
-    // This keeps downstream Effects (B, C, D in hfr_button) working unchanged.
+    // The output signals are clamped to the active Nyquist (mic SR/2 when
+    // listening/recording, current file's max_freq otherwise) so the band
+    // can never exceed what the source can resolve. This keeps downstream
+    // Effects (B, C, D in hfr_button) working unchanged.
+    //
+    // We re-run when any input to the clamp changes: focus_stack itself,
+    // current_file_index (file's Nyquist), mic_sample_rate (mic's Nyquist),
+    // and mic_listening / mic_recording (which selects between them).
     Effect::new(move |_| {
-        let stack = state.focus_stack.get();
-        let eff = stack.effective_range();
-        let hfr = stack.hfr_enabled();
-        if state.band_ff_freq_lo.get_untracked() != eff.lo {
-            state.band_ff_freq_lo.set(eff.lo);
-        }
-        if state.band_ff_freq_hi.get_untracked() != eff.hi {
-            state.band_ff_freq_hi.set(eff.hi);
-        }
-        if state.hfr_enabled.get_untracked() != hfr {
-            state.hfr_enabled.set(hfr);
-        }
+        let _ = state.focus_stack.get();
+        let _ = state.current_file_index.get();
+        let _ = state.mic_sample_rate.get();
+        let _ = state.mic_listening.get();
+        let _ = state.mic_recording.get();
+        state.resync_focus_outputs();
     });
 
     // Keep annotation-driven BandFF in sync regardless of whether selection happened

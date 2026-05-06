@@ -32,15 +32,15 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 }
 
 fn nyquist_for_current(state: AppState) -> f64 {
+    // When listening or recording, the live waterfall has the most up-to-date
+    // sample rate (USB devices can re-negotiate after the AppState signal is
+    // first set). Fall back to AppState's view otherwise — that handles the
+    // armed-but-not-streaming case too.
     let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
-        idx.and_then(|i| files.get(i))
-            .map(|f| f.spectrogram.max_freq)
-            .unwrap_or(96_000.0)
+        state.active_nyquist()
     }
 }
 

@@ -151,6 +151,185 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     file_index
 }
 
+/// Create an empty "armed" live document — mic is open and ready, but no
+/// streaming has started yet. Lets the user configure HFR mode/range/bandpass
+/// before they press Listen or Record. The file persists in the list until
+/// closed, listened-to, or recorded-into. Returns the file index.
+pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
+    let now = js_sys::Date::new_0();
+    let name = format!(
+        "Live mic ({:02}:{:02}:{:02})",
+        now.get_hours(),
+        now.get_minutes(),
+        now.get_seconds(),
+    );
+
+    let samples: Arc<Vec<f32>> = Arc::new(Vec::new());
+    let source = Arc::new(InMemorySource {
+        samples: samples.clone(),
+        raw_samples: None,
+        sample_rate,
+        channels: 1,
+    });
+    let audio = AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels: 1,
+        duration_secs: 0.0,
+        metadata: FileMetadata {
+            file_size: 0,
+            format: "MIC",
+            bits_per_sample: state.mic_bits_per_sample.get_untracked(),
+            is_float: false,
+            guano: None,
+            data_offset: None,
+            data_size: None,
+        },
+    };
+
+    let placeholder_spec = SpectrogramData {
+        columns: Arc::new(Vec::new()),
+        total_columns: 0,
+        freq_resolution: sample_rate as f64 / LIVE_FFT as f64,
+        time_resolution: LIVE_HOP as f64 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
+    let mut file_index = 0;
+    state.files.update(|files| {
+        file_index = files.len();
+        files.push(LoadedFile {
+            name,
+            audio,
+            spectrogram: placeholder_spec,
+            preview: None,
+            overview_image: None,
+            xc_metadata: None,
+            xc_hashes: None,
+            is_demo: false,
+            is_recording: false,
+            is_live_listen: false,
+            settings: FileSettings::default(),
+            add_order: file_index,
+            last_modified_ms: None,
+            identity: None,
+            file_handle: None,
+            cached_peak_db: None,
+            cached_full_peak_db: None,
+            read_only: false,
+            had_sidecar: false,
+            verify_outcome: crate::state::VerifyOutcome::Pending,
+            all_hashes_verified: false,
+            wav_markers: Vec::new(),
+            loading_id: None,
+            min_display_freq: None,
+            max_display_freq: None,
+        });
+    });
+
+    state.current_file_index.set(Some(file_index));
+    state.mic_live_file_idx.set(Some(file_index));
+    // Reset display so the gutter immediately picks up the mic Nyquist.
+    state.min_display_freq.set(None);
+    state.max_display_freq.set(None);
+    // Pre-set the live recording zoom + scroll origin so the user sees the
+    // same viewport they'll get once audio actually starts streaming.
+    set_live_recording_zoom(state, sample_rate);
+
+    file_index
+}
+
+/// Apply the standard live-recording zoom (~recording_zoom) and reset
+/// scroll_offset. Shared by start_live_recording, start_live_armed, and the
+/// armed→record promotion path.
+pub(crate) fn set_live_recording_zoom(state: &AppState, sample_rate: u32) {
+    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
+    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.scroll_offset.set(0.0);
+}
+
+/// True when the file at `idx` looks like an armed-but-empty live doc — no
+/// samples written, neither listening nor recording. Used to decide whether
+/// Listen/Record should reuse it instead of creating a new file.
+pub(crate) fn is_armed_live_doc(state: &AppState, idx: usize) -> bool {
+    state.files.with_untracked(|files| {
+        files.get(idx).map_or(false, |f| {
+            !f.is_recording && !f.is_live_listen && f.audio.samples.is_empty()
+        })
+    })
+}
+
+/// Promote an armed live doc to a listening file. Sets the flags the live
+/// processing loop and waveform overview key off without altering the file's
+/// position or name. Use only on a file that satisfies `is_armed_live_doc`.
+pub(crate) fn promote_armed_to_listening(state: &AppState, idx: usize) {
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(idx) {
+            f.is_live_listen = true;
+            // Reuse the recording display path for the live waveform/overview,
+            // matching what start_live_listening sets.
+            f.is_recording = true;
+        }
+    });
+    state.current_file_index.set(Some(idx));
+    let sr = state.files.with_untracked(|files| {
+        files.get(idx).map(|f| f.audio.sample_rate).unwrap_or(48_000)
+    });
+    set_live_recording_zoom(state, sr);
+}
+
+/// Promote an armed live doc to a recording file. Renames it to the standard
+/// recording filename and resets metadata so the recovery sidecar/wav-part
+/// uses the right filename. Use only on a file that satisfies `is_armed_live_doc`.
+///
+/// MUST be called BEFORE `mic_backend::start_recording` so the recovery
+/// sidecar/.wav.part filename (built by `build_start_recording_args` from the
+/// file at `mic_live_file_idx`) picks up the new name.
+pub(crate) fn promote_armed_to_recording(state: &AppState, idx: usize) {
+    let now = js_sys::Date::new_0();
+    let new_name = format!(
+        "batcap_{:04}{:02}{:02}_{:02}{:02}{:02}.wav",
+        now.get_full_year(),
+        now.get_month() + 1,
+        now.get_date(),
+        now.get_hours(),
+        now.get_minutes(),
+        now.get_seconds(),
+    );
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(idx) {
+            f.name = new_name;
+            f.is_recording = true;
+            f.is_live_listen = false;
+            f.audio.metadata.format = "REC";
+        }
+    });
+    state.current_file_index.set(Some(idx));
+}
+
+/// Roll back a recording-promoted file to its armed state. Used when
+/// `start_recording` fails after we've already renamed the armed file.
+pub(crate) fn revert_recording_to_armed(state: &AppState, idx: usize) {
+    let now = js_sys::Date::new_0();
+    let armed_name = format!(
+        "Live mic ({:02}:{:02}:{:02})",
+        now.get_hours(),
+        now.get_minutes(),
+        now.get_seconds(),
+    );
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(idx) {
+            f.name = armed_name;
+            f.is_recording = false;
+            f.is_live_listen = false;
+            f.audio.metadata.format = "MIC";
+        }
+    });
+}
+
 /// Create a transient listening file — appears in the file list, shows the
 /// waterfall / waveform, and is auto-removed when listening stops.
 /// Returns the file index.

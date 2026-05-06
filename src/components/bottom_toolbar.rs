@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{ActiveFocus, AppState, CanvasTool, ChannelMode, LayerPanel, ListenMode, MicAcquisitionState, MicStrategy, PlayStartMode, RecordMode, RecordReadyState};
+use crate::state::{ActiveFocus, AppState, CanvasTool, ChannelMode, LayerPanel, MicAcquisitionState, MicStrategy, PlaybackMode, PlayStartMode, RecordMode, RecordReadyState};
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
 use crate::components::hfr_button::HfrButton;
@@ -699,6 +699,12 @@ pub fn BottomToolbar() -> impl IntoView {
             </ComboButton>
 
             // ── Listen combo button ──
+            //
+            // Mode (HET/PS/PV/ZC/1:1), heterodyne freq/cutoff, factors, and the
+            // bandpass filter all live in the unified HFR menu and gutter. This
+            // menu only carries settings that are listen-specific:
+            //   • Mute output (mic warm-up — process audio without playing it)
+            //   • PS/PV overlap-save buffer size (latency vs smoothness tradeoff)
             {
                 let listen_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode));
 
@@ -724,9 +730,9 @@ pub fn BottomToolbar() -> impl IntoView {
                         "\u{23F8} Rec ready\u{2026}".to_string() // ⏸ Rec ready…
                     } else if state.mic_acquisition_state.get() == MicAcquisitionState::Acquiring {
                         "Readying\u{2026}".to_string()
-                    } else if state.mic_listening.get() && state.listen_mode.get() == ListenMode::ReadyMic {
+                    } else if state.mic_listening.get() && state.mic_mute_output.get() {
                         if state.mic_acquisition_state.get() == MicAcquisitionState::Ready {
-                            "\u{23F8} Ready".to_string() // ⏸ Ready
+                            "\u{23F8} Muted".to_string() // ⏸ Muted
                         } else {
                             "Readying\u{2026}".to_string()
                         }
@@ -736,14 +742,20 @@ pub fn BottomToolbar() -> impl IntoView {
                         "\u{1F3A4} Listen".to_string() // 🎤 Listen
                     }
                 });
+                // Right-button label tracks the unified HFR mode that drives live audio.
                 let listen_right_value = Signal::derive(move || {
-                    match state.listen_mode.get() {
-                        ListenMode::Heterodyne => "HET".to_string(),
-                        ListenMode::PitchShift => "PS".to_string(),
-                        ListenMode::PhaseVocoder => "PV".to_string(),
-                        ListenMode::ZeroCrossing => "ZC".to_string(),
-                        ListenMode::Normal => "1:1".to_string(),
-                        ListenMode::ReadyMic => "RDY".to_string(),
+                    if state.mic_mute_output.get() { return "MUTE".to_string(); }
+                    let hfr_on = state.focus_stack.get().hfr_enabled();
+                    if !hfr_on { return "1:1".to_string(); }
+                    match state.playback_mode.get() {
+                        PlaybackMode::Heterodyne => "HET".to_string(),
+                        PlaybackMode::PitchShift => "PS".to_string(),
+                        PlaybackMode::PhaseVocoder => "PV".to_string(),
+                        PlaybackMode::ZeroCrossing => "ZC".to_string(),
+                        PlaybackMode::Normal => "1:1".to_string(),
+                        // TimeExpansion isn't applicable to live audio (handled
+                        // as passthrough with a toast in process_live_audio).
+                        PlaybackMode::TimeExpansion => "TE\u{2009}!".to_string(),
                     }
                 });
 
@@ -771,129 +783,25 @@ pub fn BottomToolbar() -> impl IntoView {
                         is_open=listen_is_open
                         toggle_menu=listen_toggle_menu
                         left_title="Toggle live listening (L)"
-                        right_title="Listen mode settings"
+                        right_title="Listen settings"
                         menu_direction="above"
                         panel_style="min-width: 220px;"
                     >
-                        // ── Mode selection ──
-                        <div class="layer-panel-title">"Mode"</div>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::Heterodyne)
-                            on:click=move |_| state.listen_mode.set(ListenMode::Heterodyne)
-                        >"HET \u{2014} Heterodyne"</button>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::PitchShift)
-                            on:click=move |_| state.listen_mode.set(ListenMode::PitchShift)
-                        >"PS \u{2014} Pitch Shift"</button>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::PhaseVocoder)
-                            on:click=move |_| state.listen_mode.set(ListenMode::PhaseVocoder)
-                        >"PV \u{2014} Phase Vocoder"</button>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::ZeroCrossing)
-                            on:click=move |_| state.listen_mode.set(ListenMode::ZeroCrossing)
-                        >"ZC \u{2014} Zero Crossing"</button>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::Normal)
-                            on:click=move |_| state.listen_mode.set(ListenMode::Normal)
-                        >"1:1 \u{2014} Normal (passthrough)"</button>
-                        <button class=move || layer_opt_class(state.listen_mode.get() == ListenMode::ReadyMic)
-                            on:click=move |_| state.listen_mode.set(ListenMode::ReadyMic)
-                        >"Ready \u{2014} Mic warm-up (no audio)"</button>
-
-                        // ── Heterodyne settings ──
-                        <Show when=move || state.listen_mode.get() == ListenMode::Heterodyne>
-                            <hr />
-                            <div class="layer-panel-title">"Heterodyne"</div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"Freq"</label>
-                                <span class="het-value">{move || format!("{:.1} kHz", state.listen_het_frequency.get() / 1000.0)}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="10000" max="200000" step="1000"
-                                    prop:value=move || state.listen_het_frequency.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.listen_het_frequency.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"LP cutoff"</label>
-                                <span class="het-value">{move || format!("{:.1} kHz", state.listen_het_cutoff.get() / 1000.0)}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="1000" max="20000" step="500"
-                                    prop:value=move || state.listen_het_cutoff.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.listen_het_cutoff.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                        </Show>
-
-                        // ── Pitch Shift settings ──
-                        <Show when=move || state.listen_mode.get() == ListenMode::PitchShift>
-                            <hr />
-                            <div class="layer-panel-title">"Pitch Shift"</div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"Factor"</label>
-                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.ps_factor.get())}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="2" max="40" step="1"
-                                    prop:value=move || state.ps_factor.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.ps_factor.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                        </Show>
-
-                        // ── Phase Vocoder settings ──
-                        <Show when=move || state.listen_mode.get() == ListenMode::PhaseVocoder>
-                            <hr />
-                            <div class="layer-panel-title">"Phase Vocoder"</div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"Factor"</label>
-                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.pv_factor.get())}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="2" max="40" step="1"
-                                    prop:value=move || state.pv_factor.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.pv_factor.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                        </Show>
-
-                        // ── Zero Crossing settings ──
-                        <Show when=move || state.listen_mode.get() == ListenMode::ZeroCrossing>
-                            <hr />
-                            <div class="layer-panel-title">"Zero Crossing"</div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"Division"</label>
-                                <span class="het-value">{move || format!("\u{00f7}{:.0}", state.zc_factor.get())}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="2" max="32" step="1"
-                                    prop:value=move || state.zc_factor.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.zc_factor.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                        </Show>
+                        // ── Output ──
+                        <div class="layer-panel-title">"Output"</div>
+                        <button class=move || layer_opt_class(!state.mic_mute_output.get())
+                            on:click=move |_| state.mic_mute_output.set(false)
+                            title="Play processed audio through speakers"
+                        >"On"</button>
+                        <button class=move || layer_opt_class(state.mic_mute_output.get())
+                            on:click=move |_| state.mic_mute_output.set(true)
+                            title="Mute speaker output (mic warm-up). Spectrogram still updates."
+                        >"Mute (warm-up)"</button>
 
                         // ── Buffer size (PS/PV only) ──
-                        <Show when=move || matches!(state.listen_mode.get(), ListenMode::PitchShift | ListenMode::PhaseVocoder)>
+                        <Show when=move || matches!(state.playback_mode.get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
                             <hr />
-                            <div class="layer-panel-title">"Buffer"</div>
+                            <div class="layer-panel-title">"PS/PV Buffer"</div>
                             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                                 <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
                                     on:click=move |_| state.listen_context_samples.set(4096)
@@ -918,47 +826,11 @@ pub fn BottomToolbar() -> impl IntoView {
                             </div>
                         </Show>
 
-                        // ── Bandpass filter ──
+                        // ── Hint about where the rest of the controls live ──
                         <hr />
-                        <div class="layer-panel-title">"Bandpass Filter"</div>
-                        <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                            <button class=move || layer_opt_class(!state.listen_bandpass_enabled.get())
-                                on:click=move |_| state.listen_bandpass_enabled.set(false)
-                            >"OFF"</button>
-                            <button class=move || layer_opt_class(state.listen_bandpass_enabled.get())
-                                on:click=move |_| state.listen_bandpass_enabled.set(true)
-                            >"ON"</button>
+                        <div class="layer-panel-hint" style="padding: 4px 8px; font-size: 11px; opacity: 0.65;">
+                            "Mode, frequency range, and bandpass live in the HFR menu and band gutter."
                         </div>
-                        <Show when=move || state.listen_bandpass_enabled.get()>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"Low"</label>
-                                <span class="het-value">{move || format!("{:.1} kHz", state.listen_bandpass_lo.get() / 1000.0)}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="1000" max="200000" step="1000"
-                                    prop:value=move || state.listen_bandpass_lo.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.listen_bandpass_lo.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                            <div class="layer-panel-slider-row het-text-row">
-                                <label>"High"</label>
-                                <span class="het-value">{move || format!("{:.1} kHz", state.listen_bandpass_hi.get() / 1000.0)}</span>
-                            </div>
-                            <div class="layer-panel-slider-row">
-                                <input type="range" min="1000" max="200000" step="1000"
-                                    prop:value=move || state.listen_bandpass_hi.get().to_string()
-                                    on:input=move |ev| {
-                                        if let Ok(val) = event_target_value(&ev).parse::<f64>() {
-                                            state.listen_bandpass_hi.set(val);
-                                        }
-                                    }
-                                />
-                            </div>
-                        </Show>
                     </ComboButton>
                 }
             }

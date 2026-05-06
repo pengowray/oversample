@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::state::{AppState, RightSidebarTab, ListenMode, MicAcquisitionState, RecordReadyState};
+use crate::state::{AppState, RightSidebarTab, MicAcquisitionState, PlaybackMode, RecordReadyState};
 use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_groups;
 use crate::components::file_sidebar::file_badges::{FileBadgeData, FileBadgeRow, parse_cc_license, get_xc_field};
@@ -137,7 +137,9 @@ pub fn Toolbar() -> impl IntoView {
         let listening = state.mic_listening.get();
         let playing = state.is_playing.get();
         let rec_ready = state.record_ready_state.get();
-        let listen_mode = state.listen_mode.get();
+        let muted = state.mic_mute_output.get();
+        let mode = state.playback_mode.get();
+        let hfr_on = state.focus_stack.get().hfr_enabled();
         let acq_state = state.mic_acquisition_state.get();
 
         let mut parts = Vec::new();
@@ -147,8 +149,8 @@ pub fn Toolbar() -> impl IntoView {
             return Some("\u{23F8} Rec ready\u{2026}".to_string()); // ⏸ Rec ready…
         }
 
-        // ReadyMic listen mode
-        if listening && listen_mode == ListenMode::ReadyMic && acq_state == MicAcquisitionState::Ready {
+        // Mic warm-up / muted listen
+        if listening && muted && acq_state == MicAcquisitionState::Ready {
             return Some("\u{23F8} Mic ready\u{2026}".to_string()); // ⏸ Mic ready…
         }
 
@@ -156,10 +158,13 @@ pub fn Toolbar() -> impl IntoView {
             parts.push("\u{1F534}"); // 🔴
         }
         if listening {
-            if listen_mode == ListenMode::Normal || listen_mode == ListenMode::ReadyMic {
-                parts.push("\u{1F3A4}"); // 🎤
-            } else {
+            // Show plain mic when output is muted or HFR is off (1:1 passthrough),
+            // bat-mic when an HFR transform is actually doing something to the audio.
+            let frequency_shifted = hfr_on && !muted && mode != PlaybackMode::Normal;
+            if frequency_shifted {
                 parts.push("\u{1F3A4}\u{1F987}"); // 🎤🦇
+            } else {
+                parts.push("\u{1F3A4}"); // 🎤
             }
         } else if playing && !recording {
             parts.push("\u{25B6}\u{FE0F}"); // ▶️
@@ -322,11 +327,14 @@ pub fn Toolbar() -> impl IntoView {
                             let recording = state.mic_recording.get();
 
                             if listening {
-                                let listen_mode = state.listen_mode.get();
-                                if listen_mode == ListenMode::Normal {
-                                    Some("\u{1F3A4}".to_string())
-                                } else {
+                                let muted = state.mic_mute_output.get();
+                                let mode = state.playback_mode.get();
+                                let hfr_on = state.focus_stack.get().hfr_enabled();
+                                let frequency_shifted = hfr_on && !muted && mode != PlaybackMode::Normal;
+                                if frequency_shifted {
                                     Some("\u{1F3A4}\u{1F987}".to_string())
+                                } else {
+                                    Some("\u{1F3A4}".to_string())
                                 }
                             } else if playing && !recording {
                                 Some("\u{25B6}\u{FE0F}".to_string())

@@ -186,6 +186,17 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             <button class="upload-btn demo-btn" on:click=on_demo_click>
                                 {move || if demo_loading.get() { "Loading..." } else { "Load demo" }}
                             </button>
+                            {move || (state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
+                                <button
+                                    class="upload-btn"
+                                    title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."
+                                    on:click=move |_| {
+                                        spawn_local(async move {
+                                            crate::audio::microphone::arm_live_doc(&state).await;
+                                        });
+                                    }
+                                >"New live recording"</button>
+                            })}
                             {if state.is_tauri {
                                 Some(view! {
                                     <button class="upload-btn xc-btn" on:click=move |_| {
@@ -671,6 +682,17 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 view! { <div>{items}</div> }.into_any()
                             }}
                             <button class="upload-btn add-files-btn" on:click=on_add_click>"+ Open files"</button>
+                            {move || (state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
+                                <button
+                                    class="upload-btn add-files-btn"
+                                    title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."
+                                    on:click=move |_| {
+                                        spawn_local(async move {
+                                            crate::audio::microphone::arm_live_doc(&state).await;
+                                        });
+                                    }
+                                >"+ New live recording"</button>
+                            })}
                         </div>
                     }.into_any()
                 }
