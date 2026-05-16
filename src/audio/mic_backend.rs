@@ -244,7 +244,14 @@ impl TauriRecordingResult {
             .map(|i| samples_array.get(i).as_f64().unwrap_or(0.0) as f32)
             .collect();
 
-        if samples.is_empty() {
+        // A successful recording can legitimately have empty `samples` —
+        // streaming-to-disk mode (Tauri default) writes the WAV during
+        // capture and returns metadata only. The Rust side returns Err
+        // (not Ok) when there's nothing to save, so any Ok with a positive
+        // duration is a real recording. The skip-save / preroll path also
+        // returns empty samples + empty saved_path but with duration > 0;
+        // tauri_result_to_params re-encodes from the WASM buffer.
+        if duration_secs <= 0.0 && samples.is_empty() {
             return None;
         }
 
