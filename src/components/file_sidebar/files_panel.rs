@@ -160,7 +160,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
     let demo_entries: RwSignal<Vec<DemoEntry>> = RwSignal::new(Vec::new());
     let demo_picker_open = RwSignal::new(false);
     let demo_loading = RwSignal::new(false);
-    let bats_expanded = RwSignal::new(true);
+    // Default suggestions panel to expanded when the file list starts empty so
+    // first-run users see "Bats For You"; collapse when files are present so
+    // the panel doesn't push the file list off-screen.
+    let bats_expanded = RwSignal::new(state.files.with_untracked(|f| f.is_empty()));
 
     let on_demo_click = move |_: web_sys::MouseEvent| {
         if demo_picker_open.get_untracked() {
@@ -239,132 +242,28 @@ pub(super) fn FilesPanel() -> impl IntoView {
             {move || {
                 let file_vec = files.get();
                 let loading_empty = loading_files.with(|v| v.is_empty());
-                if file_vec.is_empty() && loading_empty {
-                    view! {
-                        <div class="drop-hint">
-                            {(!state.is_mobile.get_untracked()).then_some("Drop audio files here")}
-                            <button class="upload-btn" on:click=on_upload_click>"Browse files"</button>
-                            <button class="upload-btn demo-btn" on:click=on_demo_click>
-                                {move || if demo_loading.get() { "Loading..." } else { "Load demo" }}
-                            </button>
-                            {move || (state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
-                                <button
-                                    class="upload-btn"
-                                    title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."
-                                    on:click=move |_| {
-                                        spawn_local(async move {
-                                            crate::audio::microphone::arm_live_doc(&state).await;
-                                        });
-                                    }
-                                >"New live recording"</button>
-                            })}
-                            {if state.is_tauri {
-                                Some(view! {
-                                    <button class="upload-btn xc-btn" on:click=move |_| {
-                                        state.xc_browser_open.set(true);
-                                    }>"Explore XC"</button>
-                                })
-                            } else {
-                                None
-                            }}
-                            {move || {
-                                if demo_picker_open.get() {
-                                    let entries = demo_entries.get();
+                let no_files = file_vec.is_empty() && loading_empty;
+                let is_tauri = state.is_tauri;
 
-                                    // "Random bat" button — pick a random bat from the demos
-                                    let bat_entries: Vec<DemoEntry> = entries.iter()
-                                        .filter(|e| e.is_bat())
-                                        .cloned()
-                                        .collect();
-                                    let has_bats = !bat_entries.is_empty();
-                                    let random_bat_btn = if has_bats {
-                                        Some(view! {
-                                            <button
-                                                class="demo-item demo-random-bat"
-                                                on:click=move |_| {
-                                                    let bats = bat_entries.clone();
-                                                    let idx = (js_sys::Math::random() * bats.len() as f64) as usize;
-                                                    let entry = bats[idx.min(bats.len() - 1)].clone();
-                                                    let label = entry.en.clone()
-                                                        .unwrap_or_else(|| entry.filename.clone());
-                                                    let load_id = state.loading_start(&format!("Random bat: {label}"));
-                                                    spawn_local(async move {
-                                                        match load_single_demo(&entry, state, load_id).await {
-                                                            Ok(()) => {}
-                                                            Err(e) => log::error!("Failed to load random bat: {e}"),
-                                                        }
-                                                        state.loading_done(load_id);
-                                                    });
-                                                }
-                                            >
-                                                "Random bat"
-                                            </button>
-                                        })
-                                    } else {
-                                        None
-                                    };
+                // Build the file rows only when there are files. The action
+                // footer + suggestions render in both states from the same code
+                // path below so the menu is identical pre- and post-load.
+                let names: Vec<String> = file_vec.iter().map(|f| f.name.clone()).collect();
+                let group_infos = file_groups::compute_all_groups(&names, &file_vec);
+                let active_group_key: Option<String> = current_idx.get()
+                    .and_then(|idx| group_infos.get(idx))
+                    .and_then(|g| g.track.as_ref())
+                    .map(|ti| ti.group_key.clone());
+                let active_seq_key: Option<(String, String)> = current_idx.get()
+                    .and_then(|idx| group_infos.get(idx))
+                    .and_then(|g| g.sequence.as_ref())
+                    .map(|s| (s.sequence_key.clone(), s.track_label.clone()));
 
-                                    let items: Vec<_> = entries.iter().map(|entry| {
-                                        let entry_clone = entry.clone();
-                                        let display_name = entry.en.clone().unwrap_or_else(|| {
-                                            entry.filename
-                                                .trim_end_matches(".wav")
-                                                .trim_end_matches(".w4v")
-                                                .trim_end_matches(".flac")
-                                                .trim_end_matches(".mp3")
-                                                .to_string()
-                                        });
-                                        view! {
-                                            <button
-                                                class="demo-item"
-                                                on:click=move |_| {
-                                                    let entry = entry_clone.clone();
-                                                    let load_id = state.loading_start(&entry.filename);
-                                                    spawn_local(async move {
-                                                        match load_single_demo(&entry, state, load_id).await {
-                                                            Ok(()) => {}
-                                                            Err(e) => log::error!("Failed to load demo sound: {e}"),
-                                                        }
-                                                        state.loading_done(load_id);
-                                                    });
-                                                }
-                                            >
-                                                {display_name}
-                                            </button>
-                                        }
-                                    }).collect();
-                                    view! {
-                                        <div class="demo-picker">
-                                            {random_bat_btn}
-                                            {items}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }
-                            }}
-                            <BatsForYou demo_entries=demo_entries expanded=bats_expanded />
-                        </div>
-                    }.into_any()
-                } else {
-                    let is_tauri = state.is_tauri;
-                    let names: Vec<String> = file_vec.iter().map(|f| f.name.clone()).collect();
-                    let group_infos = file_groups::compute_all_groups(&names, &file_vec);
-                    let active_group_key: Option<String> = current_idx.get()
-                        .and_then(|idx| group_infos.get(idx))
-                        .and_then(|g| g.track.as_ref())
-                        .map(|ti| ti.group_key.clone());
-                    let active_seq_key: Option<(String, String)> = current_idx.get()
-                        .and_then(|idx| group_infos.get(idx))
-                        .and_then(|g| g.sequence.as_ref())
-                        .map(|s| (s.sequence_key.clone(), s.track_label.clone()));
+                let sort_mode = state.file_sort_mode.get();
+                let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &group_infos);
 
-                    // Compute sorted display order
-                    let sort_mode = state.file_sort_mode.get();
-                    let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &group_infos);
-
-                    let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
-                    for (_pos, &i) in sorted_indices.iter().enumerate() {
+                let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
+                for (_pos, &i) in sorted_indices.iter().enumerate() {
                     {
                         let f = &file_vec[i];
                         let name = f.name.clone();
@@ -633,12 +532,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         }.into_any();
                         items.push(file_view);
                     }}
-                    let on_add_click = move |_: web_sys::MouseEvent| {
-                        if let Some(input) = file_input_ref.get() {
-                            let el: &HtmlInputElement = input.as_ref();
-                            el.click();
-                        }
-                    };
                     let show_sort = file_vec.len() > 1;
 
                     let on_exit_timeline = move |_: web_sys::MouseEvent| {
@@ -653,7 +546,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
                     view! {
                         <div class="file-list">
-                            {move || state.is_mobile.get().then(|| view! {
+                            {state.is_mobile.get().then(|| view! {
                                 <div
                                     style="padding: 12px 12px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;"
                                     on:click=move |_| state.show_about.set(true)
@@ -669,95 +562,171 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 None
                             }}
                             // Active timeline banner
-                            {move || {
-                                if state.active_timeline.with(|t| t.is_some()) {
-                                    let seg_count = state.active_timeline.with(|t| {
-                                        t.as_ref().map(|tv| tv.segments.len()).unwrap_or(0)
-                                    });
-                                    let total_dur = state.active_timeline.with(|t| {
-                                        t.as_ref().map(|tv| tv.total_duration_secs).unwrap_or(0.0)
-                                    });
-                                    view! {
-                                        <div class="timeline-banner">
-                                            <span class="timeline-banner-label">
-                                                {format!("Timeline: {} files, {}", seg_count, format_duration_compact(total_dur))}
-                                            </span>
-                                            <button class="timeline-exit-btn" on:click=on_exit_timeline
-                                                title="Exit timeline view"
-                                            >"\u{00D7}"</button>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
+                            {state.active_timeline.with(|t| t.is_some()).then(|| {
+                                let (seg_count, total_dur) = state.active_timeline.with(|t| {
+                                    t.as_ref().map(|tv| (tv.segments.len(), tv.total_duration_secs))
+                                        .unwrap_or((0, 0.0))
+                                });
+                                view! {
+                                    <div class="timeline-banner">
+                                        <span class="timeline-banner-label">
+                                            {format!("Timeline: {} files, {}", seg_count, format_duration_compact(total_dur))}
+                                        </span>
+                                        <button class="timeline-exit-btn" on:click=on_exit_timeline
+                                            title="Exit timeline view"
+                                        >"\u{00D7}"</button>
+                                    </div>
                                 }
-                            }}
-                            {items}
+                            })}
+                            {(!no_files).then(|| view! {
+                                <div>{items}</div>
+                            })}
                             // Show loading entries that don't yet have a file in the list
                             // (still decoding/streaming before the file is added)
-                            {move || {
+                            {
                                 let entries = loading_files.get();
-                                // Filter out entries that already have a file (shown inline)
                                 let file_loading_ids: Vec<u64> = files.with(|f| {
                                     f.iter().filter_map(|file| file.loading_id).collect()
                                 });
-                                let orphan_entries: Vec<_> = entries.iter()
+                                let orphan_items: Vec<_> = entries.iter()
                                     .filter(|e| !file_loading_ids.contains(&e.id))
-                                    .collect();
-                                if orphan_entries.is_empty() {
-                                    return view! { <span></span> }.into_any();
-                                }
-                                let items: Vec<_> = orphan_entries.iter().map(|entry| {
-                                    let stage_text = match &entry.stage {
-                                        crate::state::LoadingStage::Decoding => "Decoding\u{2026}".to_string(),
-                                        crate::state::LoadingStage::Preview => "Preview\u{2026}".to_string(),
-                                        crate::state::LoadingStage::Spectrogram(pct) => format!("Spectrogram {pct}%"),
-                                        crate::state::LoadingStage::Finalizing => "Finalizing\u{2026}".to_string(),
-                                        crate::state::LoadingStage::Streaming => "Streaming\u{2026}".to_string(),
-                                    };
-                                    let pct = if let crate::state::LoadingStage::Spectrogram(p) = entry.stage { p } else { 0 };
-                                    let show_bar = matches!(entry.stage, crate::state::LoadingStage::Spectrogram(_));
-                                    let short_name = if entry.name.len() > 28 {
-                                        format!("{}\u{2026}", &entry.name[..27])
-                                    } else {
-                                        entry.name.clone()
-                                    };
-                                    view! {
-                                        <div class="file-item loading">
-                                            <div class="loading-spinner"></div>
-                                            <div class="loading-info">
-                                                <span class="loading-name">{short_name}</span>
-                                                <span class="loading-stage">{stage_text}</span>
-                                                {if show_bar {
-                                                    Some(view! {
+                                    .map(|entry| {
+                                        let stage_text = match &entry.stage {
+                                            crate::state::LoadingStage::Decoding => "Decoding\u{2026}".to_string(),
+                                            crate::state::LoadingStage::Preview => "Preview\u{2026}".to_string(),
+                                            crate::state::LoadingStage::Spectrogram(pct) => format!("Spectrogram {pct}%"),
+                                            crate::state::LoadingStage::Finalizing => "Finalizing\u{2026}".to_string(),
+                                            crate::state::LoadingStage::Streaming => "Streaming\u{2026}".to_string(),
+                                        };
+                                        let pct = if let crate::state::LoadingStage::Spectrogram(p) = entry.stage { p } else { 0 };
+                                        let show_bar = matches!(entry.stage, crate::state::LoadingStage::Spectrogram(_));
+                                        let short_name = if entry.name.len() > 28 {
+                                            format!("{}\u{2026}", &entry.name[..27])
+                                        } else {
+                                            entry.name.clone()
+                                        };
+                                        view! {
+                                            <div class="file-item loading">
+                                                <div class="loading-spinner"></div>
+                                                <div class="loading-info">
+                                                    <span class="loading-name">{short_name}</span>
+                                                    <span class="loading-stage">{stage_text}</span>
+                                                    {show_bar.then(|| view! {
                                                         <div class="loading-bar">
                                                             <div class="loading-bar-fill"
                                                                  style=format!("width:{}%", pct)></div>
                                                         </div>
-                                                    })
-                                                } else {
-                                                    None
-                                                }}
+                                                    })}
+                                                </div>
                                             </div>
-                                        </div>
-                                    }
-                                }).collect::<Vec<_>>();
-                                view! { <div>{items}</div> }.into_any()
-                            }}
-                            <button class="upload-btn add-files-btn" on:click=on_add_click>"+ Open files"</button>
-                            {move || (state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
-                                <button
-                                    class="upload-btn add-files-btn"
-                                    title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."
-                                    on:click=move |_| {
-                                        spawn_local(async move {
-                                            crate::audio::microphone::arm_live_doc(&state).await;
-                                        });
-                                    }
-                                >"+ New live recording"</button>
+                                        }
+                                    }).collect::<Vec<_>>();
+                                (!orphan_items.is_empty()).then(|| view! { <div>{orphan_items}</div> })
+                            }
+                            // Drop hint — only when no files (and not mobile, where
+                            // drag-and-drop isn't really a thing).
+                            {(no_files && !state.is_mobile.get_untracked()).then(|| view! {
+                                <div class="files-empty-hint">
+                                    "Drop audio files here, or use the actions below."
+                                </div>
                             })}
+                            // Unified action footer — same buttons available
+                            // whether or not files are loaded. Was previously
+                            // split into "empty state" vs "with files" panels
+                            // with different sets of actions.
+                            <div class="file-actions">
+                                <button class="upload-btn add-files-btn" on:click=on_upload_click>
+                                    "+ Open files"
+                                </button>
+                                {(state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
+                                    <button
+                                        class="upload-btn add-files-btn"
+                                        title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."
+                                        on:click=move |_| {
+                                            spawn_local(async move {
+                                                crate::audio::microphone::arm_live_doc(&state).await;
+                                            });
+                                        }
+                                    >"+ New live recording"</button>
+                                })}
+                                <button class="upload-btn add-files-btn" on:click=on_demo_click>
+                                    {move || if demo_loading.get() { "Loading\u{2026}" } else { "Load demo" }}
+                                </button>
+                                {is_tauri.then(|| view! {
+                                    <button class="upload-btn add-files-btn xc-btn" on:click=move |_| {
+                                        state.xc_browser_open.set(true);
+                                    }>"Explore XC"</button>
+                                })}
+                            </div>
+                            // Demo picker (inline, when triggered)
+                            {move || demo_picker_open.get().then(|| {
+                                let entries = demo_entries.get();
+                                let bat_entries: Vec<DemoEntry> = entries.iter()
+                                    .filter(|e| e.is_bat())
+                                    .cloned()
+                                    .collect();
+                                let has_bats = !bat_entries.is_empty();
+                                let random_bat_btn = has_bats.then(|| view! {
+                                    <button
+                                        class="demo-item demo-random-bat"
+                                        on:click=move |_| {
+                                            let bats = bat_entries.clone();
+                                            let idx = (js_sys::Math::random() * bats.len() as f64) as usize;
+                                            let entry = bats[idx.min(bats.len() - 1)].clone();
+                                            let label = entry.en.clone()
+                                                .unwrap_or_else(|| entry.filename.clone());
+                                            let load_id = state.loading_start(&format!("Random bat: {label}"));
+                                            spawn_local(async move {
+                                                match load_single_demo(&entry, state, load_id).await {
+                                                    Ok(()) => {}
+                                                    Err(e) => log::error!("Failed to load random bat: {e}"),
+                                                }
+                                                state.loading_done(load_id);
+                                            });
+                                        }
+                                    >
+                                        "Random bat"
+                                    </button>
+                                });
+                                let demo_items: Vec<_> = entries.iter().map(|entry| {
+                                    let entry_clone = entry.clone();
+                                    let display_name = entry.en.clone().unwrap_or_else(|| {
+                                        entry.filename
+                                            .trim_end_matches(".wav")
+                                            .trim_end_matches(".w4v")
+                                            .trim_end_matches(".flac")
+                                            .trim_end_matches(".mp3")
+                                            .to_string()
+                                    });
+                                    view! {
+                                        <button
+                                            class="demo-item"
+                                            on:click=move |_| {
+                                                let entry = entry_clone.clone();
+                                                let load_id = state.loading_start(&entry.filename);
+                                                spawn_local(async move {
+                                                    match load_single_demo(&entry, state, load_id).await {
+                                                        Ok(()) => {}
+                                                        Err(e) => log::error!("Failed to load demo sound: {e}"),
+                                                    }
+                                                    state.loading_done(load_id);
+                                                });
+                                            }
+                                        >
+                                            {display_name}
+                                        </button>
+                                    }
+                                }).collect();
+                                view! {
+                                    <div class="demo-picker">
+                                        {random_bat_btn}
+                                        {demo_items}
+                                    </div>
+                                }
+                            })}
+                            <BatsForYou demo_entries=demo_entries expanded=bats_expanded />
                         </div>
                     }.into_any()
-                }
             }}
         </div>
     }

@@ -1626,6 +1626,28 @@ body.sidebar-resizing {
     list-style: none;
 }
 
+/* Empty hint shown above the action footer when no files are loaded. */
+.files-empty-hint {
+    padding: 24px 16px 12px;
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    font-size: 13px;
+}
+
+/* Stack the unified action buttons (Open files / New live recording / Load
+   demo / Explore XC). Visible in both empty and populated states. */
+.file-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px 4px;
+}
+
+.file-actions .add-files-btn {
+    margin-top: 0;
+}
+
 .file-item {
     padding: 8px 16px;
     cursor: pointer;
