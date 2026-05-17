@@ -24,5 +24,13 @@ pub fn main() {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
+    if cfg!(debug_assertions) {
+        log::warn!(
+            "Oversample is running in DEBUG WASM mode. Audio rendering is much \
+             slower and the app can hit spurious WASM panics that don't happen \
+             in release. Run `trunk serve --release` (or `trunk build --release`)."
+        );
+    }
+
     mount_to_body(App);
 }

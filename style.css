@@ -3451,6 +3451,47 @@ body.sidebar-resizing {
     background: rgba(200, 150, 0, 0.95);
 }
 
+/* Debug-build banner — only rendered when cfg!(debug_assertions) is true at
+   compile time. Pinned to bottom-center of the viewport so it overlays whatever
+   view is active without stealing toolbar space. Striking yellow/black stripes
+   to make sure the user can't mistake a debug build for a release build. */
+.debug-build-banner {
+    position: fixed;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    pointer-events: none;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a1a00;
+    background: repeating-linear-gradient(
+        45deg,
+        #ffd23a,
+        #ffd23a 10px,
+        #1a1a1a 10px,
+        #1a1a1a 20px
+    );
+    background-clip: padding-box;
+    border: 2px solid #1a1a1a;
+    text-shadow: 0 0 3px #ffd23a, 0 0 3px #ffd23a, 0 0 3px #ffd23a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+}
+
+.debug-build-banner code {
+    background: rgba(0, 0, 0, 0.7);
+    color: #ffd23a;
+    text-shadow: none;
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-size: 10px;
+    margin-left: 4px;
+}
+
 .app-toast-container {
     position: absolute;
     top: 44px;

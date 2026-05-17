@@ -1233,6 +1233,14 @@ pub fn App() -> impl IntoView {
             <MainArea />
             <RightSidebar />
             {move || state.xc_browser_open.get().then(|| view! { <XcBrowser /> })}
+            {cfg!(debug_assertions).then(|| view! {
+                <div class="debug-build-banner"
+                    title="This is an unoptimised WASM build. It runs slower and can hit spurious panics that don't happen in release builds. Rebuild with `trunk serve --release`."
+                >
+                    "\u{26A0} DEBUG WASM \u{2014} slow & unstable. Use "
+                    <code>"trunk serve --release"</code>
+                </div>
+            })}
         </div>
     }
 }
