@@ -2802,7 +2802,9 @@ body.sidebar-resizing {
 
 /* Combo-button row — fills remaining width to the right of the gutter cell.
    No overflow clipping — combo dropdowns must be free to extend below
-   the bar (CSS turns overflow-y to clipped if overflow-x is non-visible). */
+   the bar (CSS turns overflow-y to clipped if overflow-x is non-visible).
+   flex-wrap so the 4 combos (Band / Bandpass / Notch / Gain) drop onto a
+   second row on narrow screens instead of disappearing off the right edge. */
 .hfr-bar .hfr-controls {
     flex: 1 1 auto;
     display: flex;
@@ -2810,6 +2812,8 @@ body.sidebar-resizing {
     gap: 6px;
     padding: 0 6px;
     min-width: 0;
+    flex-wrap: wrap;
+    row-gap: 4px;
 }
 
 .hfr-bar .layer-btn {
