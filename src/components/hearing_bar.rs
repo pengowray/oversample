@@ -515,8 +515,13 @@ pub fn HearingBar() -> impl IntoView {
         view! { <div class="band-cell-name">"BAND"</div> }.into_any()
     };
     view! {
+        // stop_propagation guards against future plain <button> children
+        // having their panel-open clicks eaten by .main's catch-all.
+        // ComboButton children already handle this themselves.
         <div class="hearing-bar"
             class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Hearing))
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
             <div class="band-cell"
                 class:band-cell-active=move || state.hfr_enabled.get()

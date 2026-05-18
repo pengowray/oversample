@@ -130,8 +130,16 @@ pub fn ViewBar() -> impl IntoView {
     let has_file = move || state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
 
     view! {
+        // Stop clicks/taps inside the bar from bubbling to .main's
+        // "close all panels" handler — without this, opening a custom
+        // button's panel (Tool, etc.) immediately re-closes it.
+        // ComboButton has its own stop_propagation, so the combos in
+        // here used to be fine; the Tool button is a plain <button>
+        // that doesn't, hence the menu was getting eaten.
         <div class="view-bar"
             class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::View))
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
             <span class="bar-label">"VIEW"</span>
             <div class="bar-controls">
