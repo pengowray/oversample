@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -16,7 +16,7 @@ cpal = "0.17"
 hound = "3.5"
 claxon = "0.4"
 lewton = "0.10"
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "isomp4", "aac", "alac"] }
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "isomp4", "aac", "alac", "all-meta"] }
 chrono = "0.4"
 xc-lib = { path = "../xc-lib" }
 oversample-core = { path = "../oversample-core" }

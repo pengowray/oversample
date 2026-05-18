@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use symphonia::core::codecs::Decoder;
+use symphonia::core::codecs::audio::AudioDecoder;
 use symphonia::core::formats::{FormatReader, SeekMode, SeekTo};
 use symphonia::core::units::Time;
 
@@ -28,7 +28,7 @@ impl Drop for DecodeGuard<'_> {
 /// single-threaded. `RefCell` gives us interior mutability.
 struct ReaderState {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     /// Frame index of the next packet the reader will return. Tracks symphonia's
     /// internal position so we can decide when to seek vs. decode sequentially.
@@ -75,7 +75,7 @@ impl StreamingM4aSource {
     pub fn new(
         handle: FileHandle,
         format: Box<dyn FormatReader>,
-        decoder: Box<dyn Decoder>,
+        decoder: Box<dyn AudioDecoder>,
         track_id: u32,
         sample_rate: u32,
         channels: u32,
@@ -151,7 +151,6 @@ impl StreamingM4aSource {
 
     /// Decode one CHUNK_FRAMES-aligned region into the cache.
     async fn decode_chunk(&self, chunk_idx: u64) -> Result<(), String> {
-        use symphonia::core::audio::SampleBuffer;
         use symphonia::core::errors::Error as SymphoniaError;
 
         let chunk_start = chunk_idx * CHUNK_FRAMES as u64;
@@ -194,7 +193,8 @@ impl StreamingM4aSource {
             let need_seek = state.next_frame != chunk_start;
             if need_seek {
                 let secs = chunk_start as f64 / self.sample_rate as f64;
-                let time = Time::new(secs.trunc() as u64, secs.fract());
+                let time = Time::try_from_secs_f64(secs)
+                    .unwrap_or(Time::from_nanos(0));
                 let track_id = state.track_id;
                 match state.format.seek(
                     SeekMode::Accurate,
@@ -234,20 +234,16 @@ impl StreamingM4aSource {
                 let track_id = state.track_id;
                 loop {
                     match state.format.next_packet() {
-                        Ok(p) => {
-                            if p.track_id() == track_id {
+                        Ok(Some(p)) => {
+                            if p.track_id == track_id {
                                 break Some(Ok(p));
                             }
                             continue;
                         }
+                        Ok(None) => break None,
                         Err(SymphoniaError::ResetRequired) => {
                             state.decoder.reset();
                             continue;
-                        }
-                        Err(SymphoniaError::IoError(e))
-                            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                        {
-                            break None;
                         }
                         Err(e) => break Some(Err(format!("M4A packet error: {e}"))),
                     }
@@ -268,10 +264,9 @@ impl StreamingM4aSource {
                 let mut state = self.reader.borrow_mut();
                 match state.decoder.decode(&packet) {
                     Ok(decoded) => {
-                        let spec = *decoded.spec();
-                        let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                        buf.copy_interleaved_ref(decoded);
-                        Ok(Some(buf.samples().to_vec()))
+                        let mut out: Vec<f32> = Vec::new();
+                        decoded.copy_to_vec_interleaved(&mut out);
+                        Ok(Some(out))
                     }
                     Err(SymphoniaError::DecodeError(_)) => Ok(None),
                     Err(e) => Err(format!("M4A decode error: {e}")),

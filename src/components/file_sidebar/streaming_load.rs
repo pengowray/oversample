@@ -693,13 +693,11 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     let initial_bytes = read_blob_range(file, 0.0, initial_read_size as f64).await?;
 
     // Decode head using symphonia
-    use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::{probe::Hint, FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     let cursor = std::io::Cursor::new(initial_bytes);
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
@@ -707,57 +705,56 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     let mut hint = Hint::new();
     hint.with_extension("mp3");
 
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| format!("MP3 probe error: {e}"))?;
 
-    let mut format = probed.format;
-
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .ok_or("No audio track found in MP3")?;
+    let audio_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|cp| cp.audio())
+        .ok_or("MP3 missing audio codec parameters")?;
 
-    let sample_rate = track.codec_params.sample_rate.ok_or("MP3 missing sample rate")?;
-    let channels = track.codec_params.channels.ok_or("MP3 missing channel info")?.count();
+    let sample_rate = audio_params.sample_rate.ok_or("MP3 missing sample rate")?;
+    let channels = audio_params
+        .channels
+        .as_ref()
+        .ok_or("MP3 missing channel info")?
+        .count();
     let track_id = track.id;
 
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("MP3 decoder error: {e}"))?;
 
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
     let mut frames_since_yield: u64 = 0;
+    let mut scratch: Vec<f32> = Vec::new();
 
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(SymphoniaError::ResetRequired) => {
                 decoder.reset();
                 continue;
             }
-            Err(SymphoniaError::IoError(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
             Err(_) => break,
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                let spec = *decoded.spec();
-                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                buf.copy_interleaved_ref(decoded);
-                let samples = buf.samples();
-                let n_frames = samples.len() / channels;
-                head_interleaved.extend_from_slice(samples);
+                decoded.copy_to_vec_interleaved(&mut scratch);
+                let n_frames = scratch.len() / channels;
+                head_interleaved.extend_from_slice(&scratch);
                 head_frame_count += n_frames as u64;
                 frames_since_yield += n_frames as u64;
 
@@ -1086,13 +1083,11 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     let initial_bytes = read_blob_range(file, 0.0, initial_read_size as f64).await?;
 
     // Decode head using symphonia
-    use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::{probe::Hint, FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     let cursor = std::io::Cursor::new(initial_bytes);
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
@@ -1100,57 +1095,56 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     let mut hint = Hint::new();
     hint.with_extension("ogg");
 
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| format!("OGG probe error: {e}"))?;
 
-    let mut format = probed.format;
-
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .ok_or("No audio track found in OGG")?;
+    let audio_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|cp| cp.audio())
+        .ok_or("OGG missing audio codec parameters")?;
 
-    let sample_rate = track.codec_params.sample_rate.ok_or("OGG missing sample rate")?;
-    let channels = track.codec_params.channels.ok_or("OGG missing channel info")?.count();
+    let sample_rate = audio_params.sample_rate.ok_or("OGG missing sample rate")?;
+    let channels = audio_params
+        .channels
+        .as_ref()
+        .ok_or("OGG missing channel info")?
+        .count();
     let track_id = track.id;
 
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("OGG decoder error: {e}"))?;
 
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
     let mut frames_since_yield: u64 = 0;
+    let mut scratch: Vec<f32> = Vec::new();
 
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(SymphoniaError::ResetRequired) => {
                 decoder.reset();
                 continue;
             }
-            Err(SymphoniaError::IoError(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
             Err(_) => break,
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                let spec = *decoded.spec();
-                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                buf.copy_interleaved_ref(decoded);
-                let samples = buf.samples();
-                let n_frames = samples.len() / channels;
-                head_interleaved.extend_from_slice(samples);
+                decoded.copy_to_vec_interleaved(&mut scratch);
+                let n_frames = scratch.len() / channels;
+                head_interleaved.extend_from_slice(&scratch);
                 head_frame_count += n_frames as u64;
                 frames_since_yield += n_frames as u64;
 
@@ -1653,36 +1647,38 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     // Load the whole compressed file.
     let all_bytes = read_blob_range(file, 0.0, file_size as f64).await?;
 
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::audio::Channels;
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
+    use symphonia::core::formats::{probe::Hint, FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     let cursor = std::io::Cursor::new(all_bytes.clone());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     let mut hint = Hint::new();
     hint.with_extension("m4a");
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| format!("M4A probe error: {e}"))?;
 
-    let format_ref = &probed.format;
-    let track = format_ref
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+    let track = format
+        .default_track(TrackType::Audio)
         .ok_or("No audio track in M4A")?;
+    let track_audio = track
+        .codec_params
+        .as_ref()
+        .and_then(|cp| cp.audio())
+        .ok_or("M4A missing audio codec parameters")?;
 
     // Some ffmpeg/Audible-encoded files leave symphonia's codec_params.channels
     // (and sometimes sample_rate) unset. Fall back to reading the mp4a sample
     // entry directly so we can still stream them.
     let atom_entry = crate::audio::loader::parse_m4a_audio_entry(&all_bytes);
-    let sample_rate = track.codec_params.sample_rate
+    let sample_rate = track_audio.sample_rate
         .or_else(|| atom_entry.map(|(_, sr)| sr).filter(|&sr| sr > 0))
         .or_else(|| crate::audio::loader::parse_m4a_sample_rate(&all_bytes))
         .ok_or("M4A missing sample rate")?;
-    let channels = match track.codec_params.channels {
+    let channels = match track_audio.channels.as_ref() {
         Some(c) => c.count(),
         None => atom_entry
             .map(|(c, _)| c as usize)
@@ -1690,7 +1686,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
             .ok_or("M4A missing channel info (not in codec_params nor mp4a atom)")?,
     };
     let track_id = track.id;
-    let total_frames = track.codec_params.n_frames
+    let total_frames = track.num_frames
         .ok_or("M4A missing total frame count (sample table incomplete)")?;
 
     // Decoded size check — only stream if the decoded PCM would be large.
@@ -1728,21 +1724,15 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     // If symphonia's codec_params are missing channels/sample_rate (Audible,
     // some ffmpeg outputs), inject our mp4a-parsed values before creating the
     // decoder — many AAC decoder implementations refuse to initialize without.
-    let mut codec_params = track.codec_params.clone();
-    if codec_params.channels.is_none() {
-        use symphonia::core::audio::Channels;
-        let layout = match channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => Channels::from_bits_truncate((1u32 << channels).saturating_sub(1)),
-        };
-        codec_params.channels = Some(layout);
+    let mut audio_params = track_audio.clone();
+    if audio_params.channels.is_none() {
+        audio_params.channels = Some(Channels::Discrete(channels as u16));
     }
-    if codec_params.sample_rate.is_none() {
-        codec_params.sample_rate = Some(sample_rate);
+    if audio_params.sample_rate.is_none() {
+        audio_params.sample_rate = Some(sample_rate);
     }
     let mut decoder = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("M4A decoder error: {e}"))?;
 
     // Decode head (first ~30s).
@@ -1750,14 +1740,13 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     let head_target_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as u64)
         .min(total_frames);
 
-    use symphonia::core::audio::SampleBuffer;
     use symphonia::core::errors::Error as SymphoniaError;
 
-    let mut format = probed.format;
     let mut head_interleaved: Vec<f32> = Vec::new();
     let mut head_frame_count: u64 = 0;
     let mut next_frame: u64 = 0;
     let mut frames_since_yield: u64 = 0;
+    let mut scratch: Vec<f32> = Vec::new();
     // Authoritative spec filled in from the first successful packet — the
     // mp4a atom sometimes reports pre-SBR / pre-PS values that don't match
     // what symphonia's AAC decoder actually outputs.
@@ -1766,32 +1755,30 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
 
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
-            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(_) => break,
         };
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id != track_id { continue; }
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                let spec = *decoded.spec();
                 if actual_rate.is_none() {
-                    let dec_ch = spec.channels.count();
-                    if spec.rate != sample_rate as u32 || dec_ch != channels {
+                    let spec = decoded.spec();
+                    let dec_ch = spec.channels().count();
+                    if spec.rate() != sample_rate as u32 || dec_ch != channels {
                         log::info!(
                             "M4A spec mismatch — container said {} ch @ {} Hz, decoder outputs {} ch @ {} Hz",
-                            channels, sample_rate, dec_ch, spec.rate,
+                            channels, sample_rate, dec_ch, spec.rate(),
                         );
                     }
-                    actual_rate = Some(spec.rate);
+                    actual_rate = Some(spec.rate());
                     actual_channels = Some(dec_ch);
                 }
                 let ch = actual_channels.unwrap();
-                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                buf.copy_interleaved_ref(decoded);
-                let samples = buf.samples();
-                let n_frames = samples.len() / ch;
-                head_interleaved.extend_from_slice(samples);
+                decoded.copy_to_vec_interleaved(&mut scratch);
+                let n_frames = scratch.len() / ch;
+                head_interleaved.extend_from_slice(&scratch);
                 head_frame_count += n_frames as u64;
                 next_frame += n_frames as u64;
                 frames_since_yield += n_frames as u64;

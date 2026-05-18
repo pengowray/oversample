@@ -116,13 +116,11 @@ impl StreamingOggSource {
 
     /// Decode one window of compressed OGG data (~4 MB), storing results in cache.
     async fn decode_one_window(&self) -> Result<usize, String> {
-        use symphonia::core::audio::SampleBuffer;
-        use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+        use symphonia::core::codecs::audio::AudioDecoderOptions;
         use symphonia::core::errors::Error as SymphoniaError;
-        use symphonia::core::formats::FormatOptions;
+        use symphonia::core::formats::{probe::Hint, FormatOptions, TrackType};
         use symphonia::core::io::MediaSourceStream;
         use symphonia::core::meta::MetadataOptions;
-        use symphonia::core::probe::Hint;
 
         let byte_cursor = *self.decode_byte_cursor.borrow();
         let frame_cursor = *self.decode_frame_cursor.borrow();
@@ -160,20 +158,22 @@ impl StreamingOggSource {
         let mut hint = Hint::new();
         hint.with_extension("ogg");
 
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        let mut format = symphonia::default::get_probe()
+            .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
             .map_err(|e| format!("OGG window probe error: {e}"))?;
 
-        let mut format = probed.format;
         let track = format
-            .tracks()
-            .iter()
-            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .default_track(TrackType::Audio)
             .ok_or("No audio track in OGG window")?;
+        let audio_params = track
+            .codec_params
+            .as_ref()
+            .and_then(|cp| cp.audio())
+            .ok_or("OGG window missing audio codec parameters")?;
         let track_id = track.id;
 
         let mut decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
+            .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
             .map_err(|e| format!("OGG window decoder error: {e}"))?;
 
         let channels = self.channels as usize;
@@ -183,27 +183,24 @@ impl StreamingOggSource {
         let mut window_byte_pos: u64 = 0;
         let mut frames_since_yield = 0usize;
         const YIELD_EVERY_FRAMES: usize = 65_536;
+        let mut scratch: Vec<f32> = Vec::new();
 
         loop {
             let packet = match format.next_packet() {
-                Ok(p) => p,
+                Ok(Some(p)) => p,
+                Ok(None) => break,
                 Err(SymphoniaError::ResetRequired) => {
                     decoder.reset();
                     continue;
                 }
-                Err(SymphoniaError::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    break;
-                }
                 Err(_) => break,
             };
 
-            if packet.track_id() != track_id {
+            if packet.track_id != track_id {
                 continue;
             }
 
-            window_byte_pos += packet.buf().len() as u64;
+            window_byte_pos += packet.data.len() as u64;
 
             // Skip packets that fall within the overlap region (already decoded)
             if window_byte_pos <= overlap_bytes && overlap_bytes > 0 {
@@ -212,10 +209,8 @@ impl StreamingOggSource {
 
             match decoder.decode(&packet) {
                 Ok(decoded) => {
-                    let spec = *decoded.spec();
-                    let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                    buf.copy_interleaved_ref(decoded);
-                    let samples = buf.samples();
+                    decoded.copy_to_vec_interleaved(&mut scratch);
+                    let samples: &[f32] = &scratch;
 
                     let n_frames = samples.len() / channels;
                     pending_interleaved.extend_from_slice(samples);
