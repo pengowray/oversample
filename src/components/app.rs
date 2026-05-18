@@ -17,7 +17,8 @@ use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::overview::OverviewPanel;
-use crate::components::hfr_bar::HfrBar;
+use crate::components::hearing_bar::HearingBar;
+use crate::components::view_bar::ViewBar;
 use crate::components::play_controls::{ToastDisplay, BookmarkPopup};
 use crate::components::bottom_toolbar::BottomToolbar;
 use crate::components::xc_browser::XcBrowser;
@@ -1277,8 +1278,12 @@ fn MainArea() -> impl IntoView {
                         // Overview strip (top)
                         <OverviewPanel />
 
-                        // HFR bar — operating-state row above the main view
-                        <HfrBar />
+                        // Hearing Bar — sound-output / DSP row above the main view
+                        <HearingBar />
+
+                        // View Bar — visualization-layer controls (which view,
+                        // which overlays, canvas tool)
+                        <ViewBar />
 
                         // Main view (takes remaining space)
                         <div class="main-view">
@@ -1635,7 +1640,8 @@ pub fn MainViewButton() -> impl IntoView {
             toggle_menu=toggle_menu
             left_title="Toggle view (Spectrogram / Waveform)"
             right_title="View mode menu"
-            menu_direction="above"
+            menu_direction="below"
+            panel_align="left"
             panel_style="min-width: 240px;"
         >
             <div class="layer-panel-title">"View Mode"</div>

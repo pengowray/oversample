@@ -1,15 +1,23 @@
-// New HFR Bar — sits between the Overview strip and the main view.
+// Hearing Bar — the "what comes out the speakers" strip between the
+// Overview and the main canvas.
 //
-// Leftmost ~64px column lines up over the band gutter and hosts the
-// HFR/FR toggle (a ComboButton with a caret menu). The remaining width
-// hosts the Band Presets combo and (in follow-up iterations) Bandpass+EQ,
-// Notch, and Gain combos that today live in HfrButton, the right sidebar,
-// and the bottom toolbar.
+// Layout:  [HFR ▾ HET] │ [Band] [EQ] [Notch] [Gain] │ [🎤 Listen]
+//
+//          ^brightness   ^DSP filter combos          ^live mic
+//           encoded
+//
+// The HFR cell wraps the full `HfrButton` in a class that drives per-letter
+// brightness on the "HFR" label (H dims when the active band sits entirely
+// below 24 kHz — i.e. an audible-only filter). Listen lives at the right
+// end because its DSP pipeline is unified with HFR. Filter combos in the
+// middle wrap onto a second row on narrow viewports.
 
 use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::combo_button::ComboButton;
+use crate::components::hfr_button::HfrButton;
+use crate::components::listen_button::ListenButton;
 use crate::state::{
     ActiveFocus, AppState, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
     PeakSource, PlaybackMode, RightSidebarTab,
@@ -119,98 +127,6 @@ fn focused_range(state: AppState) -> Option<(f64, f64)> {
             if r.is_active() { Some((r.lo, r.hi)) } else { None }
         }
         None => None,
-    }
-}
-
-/// Leftmost cell: HFR/FR toggle as a ComboButton with caret. Letters
-/// `H F R` brightness-encode current state; click toggles HFR; caret
-/// reveals a small menu.
-#[component]
-fn HfrFrToggle() -> impl IntoView {
-    let state = expect_context::<AppState>();
-
-    let is_open = Signal::derive(move || {
-        state.layer_panel_open.get() == Some(LayerPanel::HfrBarToggle)
-    });
-    let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
-    };
-
-    // The ComboButton renders the literal "HFR" string; per-letter brightness
-    // is encoded via CSS `::first-letter` styling driven by classes on the
-    // outer cell. F and R are dim when HFR is off; H additionally dims when
-    // an active band sits entirely below 24 kHz (filter-only / audible use).
-    let left_value = Signal::derive(|| "HFR".to_string());
-
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left hfr-fr-left disabled"
-        } else if state.hfr_enabled.get() {
-            "layer-btn combo-btn-left hfr-fr-left active"
-        } else {
-            "layer-btn combo-btn-left hfr-fr-left"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-right disabled"
-        } else if is_open.get() {
-            "layer-btn combo-btn-right open"
-        } else {
-            "layer-btn combo-btn-right"
-        }
-    });
-    let right_value = Signal::derive(String::new);
-
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        state.toggle_hfr();
-    });
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::HfrBarToggle);
-    });
-
-    view! {
-        <ComboButton
-            left_label=""
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Toggle HFR (high-frequency reception)"
-            right_title="HFR options"
-            menu_direction="below"
-            panel_align="left"
-            panel_style="min-width: 160px;"
-        >
-            <div class="layer-panel-title">"HFR"</div>
-            <button
-                class=move || layer_opt_class(state.hfr_enabled.get(), false)
-                on:click=move |_| {
-                    if !state.hfr_enabled.get_untracked() { state.toggle_hfr(); }
-                    state.layer_panel_open.set(None);
-                }
-            >"Turn on"</button>
-            <button
-                class=move || layer_opt_class(!state.hfr_enabled.get(), false)
-                on:click=move |_| {
-                    if state.hfr_enabled.get_untracked() { state.toggle_hfr(); }
-                    state.layer_panel_open.set(None);
-                }
-            >"Turn off"</button>
-            <hr/>
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    state.set_band_ff_range(0.0, 0.0);
-                    state.layer_panel_open.set(None);
-                }
-                title="Clear the band selection"
-            >"Clear band"</button>
-        </ComboButton>
     }
 }
 
@@ -915,37 +831,45 @@ fn NotchCombo() -> impl IntoView {
     }
 }
 
-/// New HFR Bar. Mounted between the OverviewPanel and the main view.
+/// Hearing Bar. Mounted between the OverviewPanel and the main view.
+///
+/// Per-letter brightness on the "HFR" cell encodes whether HFR is on, and
+/// (when on) whether the active band is audible-only (H dim) or includes
+/// ultrasound (H bright). The classes are applied to the wrapper div around
+/// `HfrButton` so the existing `.hearing-hfr-cell ... .layer-btn-value`
+/// CSS rules paint it.
 #[component]
-pub fn HfrBar() -> impl IntoView {
+pub fn HearingBar() -> impl IntoView {
     let state = expect_context::<AppState>();
-    // Drives ::first-letter (H) and rest-of-text (F R) brightness via CSS.
-    // - hfr-on        → all three letters bright
-    // - hfr-on hfr-h-dim → only F R bright (band entirely <24 kHz)
-    // - (no class)    → all three dim (HFR off)
     let cell_class = Signal::derive(move || {
         if !state.hfr_enabled.get() {
-            "hfr-fr-cell"
+            "hearing-hfr-cell"
         } else {
             let lo = state.band_ff_freq_lo.get();
             let hi = state.band_ff_freq_hi.get();
             if hi > lo && hi < 24_000.0 {
-                "hfr-fr-cell hfr-on hfr-h-dim"
+                "hearing-hfr-cell hfr-on hfr-h-dim"
             } else {
-                "hfr-fr-cell hfr-on"
+                "hearing-hfr-cell hfr-on"
             }
         }
     });
     view! {
-        <div class="hfr-bar">
-            <div class=move || cell_class.get()>
-                <HfrFrToggle/>
-            </div>
-            <div class="hfr-controls">
+        <div class="hearing-bar"
+            class:panel-open=move || state.layer_panel_open.get().is_some()
+        >
+            <span class="bar-label">"HEARING"</span>
+            <div class="bar-controls">
+                <div class=move || cell_class.get()>
+                    <HfrButton/>
+                </div>
+                <div class="bar-sep"></div>
                 <BandPresetsCombo/>
                 <BandpassCombo/>
                 <NotchCombo/>
                 <GainCombo/>
+                <div class="bar-spacer"></div>
+                <ListenButton/>
             </div>
         </div>
     }

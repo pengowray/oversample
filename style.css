@@ -2754,69 +2754,103 @@ body.sidebar-resizing {
 
 /* ── HFR Bar (between Overview and main view) ──────────────────────────── */
 
-.hfr-bar {
+/* ── Bar primitives — shared between .hearing-bar and .view-bar ──────────
+   These let the two bars stay structurally identical so adding new
+   buttons later is a one-liner. New bars can reuse the same primitives. */
+
+.hearing-bar,
+.view-bar {
     flex-shrink: 0;
     display: flex;
-    align-items: stretch;
-    padding: 4px 0;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
     background: #181818;
     border-bottom: 1px solid #333;
     position: relative;
     z-index: 6;
 }
 
-/* Leftmost cell: pinned over the band gutter (gutter is 64px wide with
-   3px right margin and 2px right border — match those so the cell aligns
-   exactly above the gutter and the right edge lines up with the canvas). */
-.hfr-bar .hfr-fr-cell {
-    flex: 0 0 64px;
-    margin-right: 3px;
-    border-right: 2px solid #2a2a2a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
+/* The view-bar is a half-step lighter and a touch thinner to signal a
+   different conceptual category (visualization, not audio). */
+.view-bar {
+    background: #1d1d1d;
+    padding: 3px 8px;
 }
 
-/* The HFR/FR ComboButton's left button renders the literal "HFR" string;
-   per-letter brightness is encoded via the wrapper-cell classes:
-     `hfr-fr-cell`            → all dim (HFR off)
-     `hfr-fr-cell.hfr-on`     → all bright
-     `hfr-fr-cell.hfr-on.hfr-h-dim` → F R bright, H dim (band <24 kHz) */
-.hfr-bar .hfr-fr-cell .combo-btn-row {
-    width: 100%;
-    height: 100%;
-    align-items: stretch;
+/* When any combo dropdown is open, lift the bar above .main-overlays
+   (z-index: 20) so the panel renders on top of canvas overlays.
+   Matches the .bottom-toolbar.panel-open pattern. */
+.hearing-bar.panel-open,
+.view-bar.panel-open,
+.hearing-bar:has(.combo-btn-row.open),
+.view-bar:has(.combo-btn-row.open) {
+    z-index: 25;
 }
-.hfr-bar .hfr-fr-cell .layer-btn-value {
+
+/* Tiny uppercase label at the start of each bar identifying its
+   conceptual group. Hidden on narrow viewports where vertical space is
+   precious. */
+.bar-label {
+    font-size: 9px;
     font-weight: 700;
-    letter-spacing: 1px;
-    color: #555;                         /* default: dim (HFR off) */
+    letter-spacing: 1.2px;
+    color: #666;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    padding: 0 4px 0 0;
 }
-.hfr-bar .hfr-fr-cell.hfr-on .layer-btn-value           { color: #f0c050; } /* F R bright */
-.hfr-bar .hfr-fr-cell.hfr-on .layer-btn-value::first-letter { color: #f0c050; } /* H bright */
-.hfr-bar .hfr-fr-cell.hfr-on.hfr-h-dim .layer-btn-value::first-letter {
-    color: #555;                         /* H alone dim */
-}
-.hfr-bar .hfr-fr-cell .layer-btn-category { display: none; } /* hide blank category row */
 
-/* Combo-button row — fills remaining width to the right of the gutter cell.
-   No overflow clipping — combo dropdowns must be free to extend below
-   the bar (CSS turns overflow-y to clipped if overflow-x is non-visible).
-   flex-wrap so the 4 combos (Band / Bandpass / Notch / Gain) drop onto a
-   second row on narrow screens instead of disappearing off the right edge. */
-.hfr-bar .hfr-controls {
+/* Main row of buttons inside a bar. Wraps on narrow viewports so new
+   buttons don't shove existing ones off-screen. */
+.bar-controls {
     flex: 1 1 auto;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 6px;
     min-width: 0;
     flex-wrap: wrap;
     row-gap: 4px;
 }
 
-.hfr-bar .layer-btn {
+/* Thin vertical divider between button sub-groups. */
+.bar-sep {
+    width: 1px;
+    height: 22px;
+    background: #2c2c2c;
+    flex-shrink: 0;
+    margin: 0 2px;
+}
+
+/* Flex spacer that pushes subsequent items to the right end of the bar. */
+.bar-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Hearing bar's HFR cell wraps the full HfrButton; per-letter brightness
+   on the literal "HFR" left-value is driven by classes on this wrapper:
+     `hearing-hfr-cell`              → all dim (HFR off)
+     `hearing-hfr-cell.hfr-on`       → all bright
+     `hearing-hfr-cell.hfr-on.hfr-h-dim` → F R bright, H dim (band <24 kHz) */
+.hearing-hfr-cell {
+    display: flex;
+    align-items: stretch;
+    flex-shrink: 0;
+}
+.hearing-hfr-cell .combo-btn-left .layer-btn-value {
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #555;
+}
+.hearing-hfr-cell.hfr-on .combo-btn-left .layer-btn-value           { color: #f0c050; }
+.hearing-hfr-cell.hfr-on .combo-btn-left .layer-btn-value::first-letter { color: #f0c050; }
+.hearing-hfr-cell.hfr-on.hfr-h-dim .combo-btn-left .layer-btn-value::first-letter {
+    color: #555;
+}
+
+.hearing-bar .layer-btn,
+.view-bar .layer-btn {
     padding: 2px 8px;
     font-size: 11px;
     line-height: 1.1;
@@ -3118,30 +3152,23 @@ body.sidebar-resizing {
     height: 14px;
 }
 
-/* HFR sits under the right gutter it controls. On desktop flex, margin-left:
-   auto pushes it to the far-right end. On mobile grid, pin it to the top-right
-   cell (row 2 is the first button row; row 1 is the drag handle). */
-.bottom-toolbar .hfr-slot {
-    margin-left: auto;
-    display: flex;
-}
-.bottom-toolbar.mobile .hfr-slot {
-    margin-left: 0;
-    grid-column: 3;
-    grid-row: 2;
-    /* Stretch the flex wrapper to fill the grid cell; without this the
-       inner .combo-btn-row shrinks to the "HF" label width (2 chars) and
-       reads as squished next to neighbours like "Gain"/"Mic". */
-    width: 100%;
-}
-.bottom-toolbar.mobile .hfr-slot > .combo-btn-row {
-    flex: 1;
-    min-width: 0;
-}
-
 .bottom-toolbar.mobile .bottom-toolbar-drag-grip {
     width: 50px;
     height: 4px;
+}
+
+/* Bar labels (HEARING / VIEW) are hidden on narrow viewports to reclaim
+   horizontal space — the bars themselves carry the conceptual grouping. */
+@media (max-width: 640px) {
+    .bar-label {
+        display: none;
+    }
+    /* Tighten bar padding too — every pixel counts on phone screens. */
+    .hearing-bar,
+    .view-bar {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
 }
 
 /* Popups positioned above multi-row toolbar on mobile */

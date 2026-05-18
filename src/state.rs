@@ -750,13 +750,11 @@ pub enum LayerPanel {
     Channel,
     Gain,
     ListenMode,
-    /// HFR/FR toggle's caret menu in the new HFR bar.
-    HfrBarToggle,
-    /// Band presets dropdown in the new HFR bar.
+    /// Band presets dropdown in the Hearing bar.
     BandPresets,
-    /// Notch combo dropdown in the new HFR bar.
+    /// Notch combo dropdown in the Hearing bar.
     Notch,
-    /// Bandpass+EQ combo dropdown in the new HFR bar.
+    /// Bandpass+EQ combo dropdown in the Hearing bar.
     Bandpass,
 }
 

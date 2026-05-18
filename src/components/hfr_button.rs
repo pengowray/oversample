@@ -294,7 +294,11 @@ pub fn HfrButton() -> impl IntoView {
         } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
     });
 
-    let left_value = Signal::derive(String::new);
+    // Literal "HFR" in left_value so the brightness CSS in style.css
+    // (`.hearing-hfr-cell ... .layer-btn-value`) targets the right span.
+    // Per-letter brightness (H dim when band entirely <24 kHz) is driven by
+    // wrapper-cell classes set in HearingBar.
+    let left_value = Signal::derive(|| "HFR".to_string());
     let right_value = Signal::derive(move || {
         if !state.hfr_enabled.get() {
             "OFF".to_string()
@@ -436,7 +440,7 @@ pub fn HfrButton() -> impl IntoView {
 
     view! {
             <ComboButton
-                left_label="HF"
+                left_label=""
                 left_value=left_value
                 left_click=left_click
                 left_class=left_class
@@ -444,10 +448,10 @@ pub fn HfrButton() -> impl IntoView {
                 right_class=right_class
                 is_open=is_open
                 toggle_menu=toggle_menu
-                left_title="Toggle High Frequency mode"
-                right_title="HF playback mode"
-                menu_direction="above"
-                panel_align="right"
+                left_title="Toggle High-Frequency Reception"
+                right_title="HFR playback mode"
+                menu_direction="below"
+                panel_align="left"
                 panel_style="min-width: 210px;"
             >
                 // ── OFF option ──

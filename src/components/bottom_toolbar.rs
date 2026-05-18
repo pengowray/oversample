@@ -1,11 +1,15 @@
+// Bottom toolbar — transport only: Play, Channel/Track, Record.
+//
+// Hearing-DSP controls (HFR, Band, EQ, Notch, Gain, Listen) live in
+// `HearingBar`. Visualization controls (View, Anno, Book, Tool) live in
+// `ViewBar`. Keep this file focused on capture and playback.
+
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{ActiveFocus, AppState, CanvasTool, ChannelMode, LayerPanel, MicAcquisitionState, MicStrategy, PlaybackMode, PlayStartMode, RecordMode, RecordReadyState};
+use crate::state::{AppState, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, RecordMode};
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
-use crate::components::hfr_button::HfrButton;
 use crate::components::combo_button::ComboButton;
-use crate::components::app::MainViewButton;
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -368,24 +372,34 @@ pub fn BottomToolbar() -> impl IntoView {
                 </ComboButton>
             })}
 
-            // ── Channel / Track selector (stereo+ or timeline multitracks) ──
-            <Show when=move || {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
-                let has_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
-                let has_mt = state.active_timeline.with(|t| {
-                    t.as_ref().map(|tv| !tv.multitrack_groups.is_empty()).unwrap_or(false)
-                });
-                has_stereo || has_mt
-            }>
+            // ── Channel / Track selector ──
+            // Always rendered; greys out and reads "Mono" when there's only one
+            // channel and no multitrack timeline (so its slot is reserved and
+            // users can see the option exists).
+            {
+                let is_multi = move || {
+                    let files = state.files.get();
+                    let idx = state.current_file_index.get();
+                    let has_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
+                    let has_mt = state.active_timeline.with(|t| {
+                        t.as_ref().map(|tv| !tv.multitrack_groups.is_empty()).unwrap_or(false)
+                    });
+                    has_stereo || has_mt
+                };
+                view! {
                 <div style="position:relative">
                     <button
-                        class=move || if state.layer_panel_open.get() == Some(LayerPanel::Channel) { "layer-btn open" } else { "layer-btn" }
-                        on:click=move |_| toggle_panel(&state, LayerPanel::Channel)
-                        title="Channel / Track view"
+                        class=move || {
+                            if !is_multi() { "layer-btn disabled" }
+                            else if state.layer_panel_open.get() == Some(LayerPanel::Channel) { "layer-btn open" }
+                            else { "layer-btn" }
+                        }
+                        on:click=move |_| { if is_multi() { toggle_panel(&state, LayerPanel::Channel); } }
+                        title=move || if is_multi() { "Channel / Track view" } else { "Mono file \u{2014} no channel options" }
                     >
                         <span class="layer-btn-category">"Ch"</span>
                         <span class="layer-btn-value">{move || {
+                            if !is_multi() { return "Mono".to_string(); }
                             // Show active track label if in timeline mode with multitrack
                             if let Some(ref track) = state.active_timeline_track.get() {
                                 return format!("Trk {}", track);
@@ -485,7 +499,8 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                     </Show>
                 </div>
-            </Show>
+                }
+            }
 
             <div class="bottom-toolbar-sep"></div>
 
@@ -697,251 +712,6 @@ pub fn BottomToolbar() -> impl IntoView {
                     </div>
                 </div>
             </ComboButton>
-
-            // ── Listen combo button ──
-            //
-            // Mode (HET/PS/PV/ZC/1:1), heterodyne freq/cutoff, factors, and the
-            // bandpass filter all live in the unified HFR menu and gutter. This
-            // menu only carries settings that are listen-specific:
-            //   • Mute output (mic warm-up — process audio without playing it)
-            //   • PS/PV overlap-save buffer size (latency vs smoothness tradeoff)
-            {
-                let listen_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode));
-
-                let listen_left_class = Signal::derive(move || {
-                    if state.mic_strategy.get() == MicStrategy::None {
-                        return "layer-btn combo-btn-left disabled";
-                    }
-                    let is_listening_ready = state.mic_listening.get()
-                        && state.mic_acquisition_state.get() == MicAcquisitionState::Ready;
-                    let is_rec_ready = state.record_ready_state.get() == RecordReadyState::AwaitingConfirmation;
-                    if is_listening_ready || is_rec_ready {
-                        "layer-btn combo-btn-left mic-armed"
-                    } else {
-                        "layer-btn combo-btn-left"
-                    }
-                });
-                let listen_right_class = Signal::derive(move || {
-                    if listen_is_open.get() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right" }
-                });
-
-                let listen_left_value = Signal::derive(move || {
-                    if state.record_ready_state.get() == RecordReadyState::AwaitingConfirmation {
-                        "\u{23F8} Rec ready\u{2026}".to_string() // ⏸ Rec ready…
-                    } else if state.mic_acquisition_state.get() == MicAcquisitionState::Acquiring {
-                        "Readying\u{2026}".to_string()
-                    } else if state.mic_listening.get() && state.mic_mute_output.get() {
-                        if state.mic_acquisition_state.get() == MicAcquisitionState::Ready {
-                            "\u{23F8} Muted".to_string() // ⏸ Muted
-                        } else {
-                            "Readying\u{2026}".to_string()
-                        }
-                    } else if state.mic_usb_connected.get() && state.mic_backend.get().is_none() && state.is_tauri && !state.mic_listening.get() {
-                        "USB mic".to_string()
-                    } else {
-                        "\u{1F3A4} Listen".to_string() // 🎤 Listen
-                    }
-                });
-                // Right-button label tracks the unified HFR mode that drives live audio.
-                let listen_right_value = Signal::derive(move || {
-                    if state.mic_mute_output.get() { return "MUTE".to_string(); }
-                    let hfr_on = state.focus_stack.get().hfr_enabled();
-                    if !hfr_on { return "1:1".to_string(); }
-                    match state.playback_mode.get() {
-                        PlaybackMode::Heterodyne => "HET".to_string(),
-                        PlaybackMode::PitchShift => "PS".to_string(),
-                        PlaybackMode::PhaseVocoder => "PV".to_string(),
-                        PlaybackMode::ZeroCrossing => "ZC".to_string(),
-                        PlaybackMode::Normal => "1:1".to_string(),
-                        // TimeExpansion isn't applicable to live audio (handled
-                        // as passthrough with a toast in process_live_audio).
-                        PlaybackMode::TimeExpansion => "TE\u{2009}!".to_string(),
-                    }
-                });
-
-                let listen_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-                    if state.mic_strategy.get_untracked() == MicStrategy::None {
-                        return; // greyed out
-                    }
-                    let st = state;
-                    wasm_bindgen_futures::spawn_local(async move {
-                        microphone::toggle_listen(&st).await;
-                    });
-                });
-                let listen_toggle_menu = Callback::new(move |()| {
-                    toggle_panel(&state, LayerPanel::ListenMode);
-                });
-
-                view! {
-                    <ComboButton
-                        left_label="Mic"
-                        left_value=listen_left_value
-                        left_click=listen_left_click
-                        left_class=listen_left_class
-                        right_value=listen_right_value
-                        right_class=listen_right_class
-                        is_open=listen_is_open
-                        toggle_menu=listen_toggle_menu
-                        left_title="Toggle live listening (L)"
-                        right_title="Listen settings"
-                        menu_direction="above"
-                        panel_style="min-width: 220px;"
-                    >
-                        // ── Output ──
-                        <div class="layer-panel-title">"Output"</div>
-                        <button class=move || layer_opt_class(!state.mic_mute_output.get())
-                            on:click=move |_| state.mic_mute_output.set(false)
-                            title="Play processed audio through speakers"
-                        >"On"</button>
-                        <button class=move || layer_opt_class(state.mic_mute_output.get())
-                            on:click=move |_| state.mic_mute_output.set(true)
-                            title="Mute speaker output (mic warm-up). Spectrogram still updates."
-                        >"Mute (warm-up)"</button>
-
-                        // ── Buffer size (PS/PV only) ──
-                        <Show when=move || matches!(state.playback_mode.get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
-                            <hr />
-                            <div class="layer-panel-title">"PS/PV Buffer"</div>
-                            <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
-                                    on:click=move |_| state.listen_context_samples.set(4096)
-                                    title="4096 samples — minimum context (more artifacts, lowest latency)"
-                                >"4K"</button>
-                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 8192)
-                                    on:click=move |_| state.listen_context_samples.set(8192)
-                                    title="8192 samples"
-                                >"8K"</button>
-                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 16384)
-                                    on:click=move |_| state.listen_context_samples.set(16384)
-                                    title="16384 samples (default)"
-                                >"16K"</button>
-                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 32768)
-                                    on:click=move |_| state.listen_context_samples.set(32768)
-                                    title="32768 samples (smoother, more CPU)"
-                                >"32K"</button>
-                                <button class=move || layer_opt_class(state.listen_context_samples.get() == 65536)
-                                    on:click=move |_| state.listen_context_samples.set(65536)
-                                    title="65536 samples (smoothest, most CPU)"
-                                >"64K"</button>
-                            </div>
-                        </Show>
-
-                        // ── Hint about where the rest of the controls live ──
-                        <hr />
-                        <div class="layer-panel-hint" style="padding: 4px 8px; font-size: 11px; opacity: 0.65;">
-                            "Mode, frequency range, and bandpass live in the HFR menu and band gutter."
-                        </div>
-                    </ComboButton>
-                }
-            }
-
-            // ── View combo button (Spec / Wave / XformedSpec + DSP panel) ──
-            <MainViewButton />
-
-            // ── Annotations visibility toggle ──
-            // Single-word button — on/off state is carried by the `active`
-            // highlight. An NBSP placeholder fills the category slot so this
-            // button's baseline lines up with the two-line buttons next to it.
-            {move || has_file().then(|| view! {
-                <button
-                    class=move || if state.annotations_visible.get() { "layer-btn active" } else { "layer-btn" }
-                    on:click=move |_| {
-                        let new_visible = !state.annotations_visible.get_untracked();
-                        state.annotations_visible.set(new_visible);
-                        if !new_visible {
-                            // Drop annotation focus/selection and clear interaction state.
-                            if state.active_focus.get_untracked() == Some(ActiveFocus::Annotations) {
-                                state.active_focus.set(None);
-                            }
-                            if !state.selected_annotation_ids.get_untracked().is_empty() {
-                                state.selected_annotation_ids.set(Vec::new());
-                            }
-                            state.annotation_hover_handle.set(None);
-                            state.annotation_drag_handle.set(None);
-                            state.annotation_editing.set(false);
-                            state.annotation_is_new_edit.set(false);
-                        }
-                    }
-                    title=move || if state.annotations_visible.get() { "Hide annotations" } else { "Show annotations" }
-                >
-                    <span class="layer-btn-category">"\u{00A0}"</span>
-                    <span class="layer-btn-value">"Anno"</span>
-                </button>
-            })}
-
-            // ── Bat book strip toggle ──
-            // Replaces the old edge-tab handle on the right side of the main
-            // view — the strip now lives behind a discoverable toolbar button
-            // next to the other view toggles. Label is always "Bat / Book";
-            // on/off state rides on the `active` highlight.
-            <button
-                class=move || if state.bat_book_open.get() { "layer-btn active" } else { "layer-btn" }
-                on:click=move |_| { state.bat_book_open.update(|v| *v = !*v); }
-                title=move || if state.bat_book_open.get() { "Hide bat book" } else { "Show bat book" }
-            >
-                <span class="layer-btn-category">"Bat"</span>
-                <span class="layer-btn-value">"Book"</span>
-            </button>
-
-            // ── Tool button (Hand / Selection, only when file is open; hidden on mobile) ──
-            {move || (!state.is_mobile.get() && has_file()).then(|| view! {
-                <div class="bottom-toolbar-sep"></div>
-                <ToolButtonInline />
-            })}
-
-            // ── HFR combo button — pinned to the right end so it sits under
-            // the right gutter it controls. On mobile it occupies the top-right
-            // grid cell via `.hfr-slot` rules in style.css. ──
-            {move || has_file().then(|| view! {
-                <div class="hfr-slot"><HfrButton /></div>
-            })}
-        </div>
-    }
-}
-
-/// Tool button adapted for inline use in the bottom toolbar (no absolute positioning).
-#[component]
-fn ToolButtonInline() -> impl IntoView {
-    let state = expect_context::<AppState>();
-    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::Tool);
-    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
-
-    view! {
-        <div style="position: relative;">
-            <button
-                class=move || {
-                    if no_file() { "layer-btn disabled" }
-                    else if is_open() { "layer-btn open" }
-                    else { "layer-btn" }
-                }
-                on:click=move |_| { if !no_file() { toggle_panel(&state, LayerPanel::Tool); } }
-                title="Tool"
-            >
-                <span class="layer-btn-category">"Tool"</span>
-                <span class="layer-btn-value">{move || match state.canvas_tool.get() {
-                    CanvasTool::Hand => "Hand",
-                    CanvasTool::Selection => "Select",
-                }}</span>
-            </button>
-            <Show when=move || is_open()>
-                <div class="layer-panel" style="bottom: calc(100% + 4px); right: 0;">
-                    <div class="layer-panel-title">"Tool"</div>
-                    <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
-                        on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Hand);
-                            state.layer_panel_open.set(None);
-                        }
-                    >"Hand (pan)"</button>
-                    <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
-                        on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Selection);
-                            state.layer_panel_open.set(None);
-                        }
-                    >"Selection"</button>
-                </div>
-            </Show>
         </div>
     }
 }
