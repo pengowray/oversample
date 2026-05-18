@@ -724,10 +724,15 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     </div>
                                 }
                             })}
-                            <BatsForYou demo_entries=demo_entries expanded=bats_expanded />
                         </div>
                     }.into_any()
             }}
+            // Kept outside the reactive closure above so it isn't unmounted +
+            // remounted on every files signal update (e.g. duration_secs
+            // ticking up during listen/record), which would reset its local
+            // signals and re-fetch metadata, causing the per-card details
+            // line to flicker.
+            <BatsForYou demo_entries=demo_entries expanded=bats_expanded />
         </div>
     }
 }
