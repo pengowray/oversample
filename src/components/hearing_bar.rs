@@ -254,18 +254,26 @@ fn BandpassCombo() -> impl IntoView {
         } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
     });
 
-    // Always show the band range when one is set — even with the filter
-    // off, this is the range that AUTO/ON would apply. Previously the
-    // range only showed while active, which made the off state read as
-    // empty/broken.
-    let left_value = Signal::derive(move || {
+    // Left half just labels the button. Right half shows the bandpass
+    // mode (OFF/AUTO/ON); when the configured range *differs* from the
+    // FF/HFR band (i.e. locked to something else), the differing range
+    // appears as a small caption above the mode word.
+    let left_value = Signal::derive(|| "PASS".to_string());
+
+    let range_differs = Signal::derive(move || {
         let lo = state.filter_freq_low.get();
         let hi = state.filter_freq_high.get();
-        if hi > lo {
-            format!("{:.0}\u{2013}{:.0}", lo / 1000.0, hi / 1000.0)
-        } else {
-            String::new()
-        }
+        if hi <= lo { return false; }
+        let ff_lo = state.band_ff_freq_lo.get();
+        let ff_hi = state.band_ff_freq_hi.get();
+        if ff_hi <= ff_lo { return true; } // no FF set, but bandpass has a range
+        (lo - ff_lo).abs() > 50.0 || (hi - ff_hi).abs() > 50.0
+    });
+    let right_label = Signal::derive(move || {
+        if !range_differs.get() { return String::new(); }
+        let lo = state.filter_freq_low.get();
+        let hi = state.filter_freq_high.get();
+        format!("{:.1}\u{2013}{:.1}", lo / 1000.0, hi / 1000.0)
     });
     let right_value = Signal::derive(move || match state.bandpass_mode.get() {
         BandpassMode::Off => "OFF".to_string(),
@@ -328,12 +336,13 @@ fn BandpassCombo() -> impl IntoView {
 
     view! {
         <ComboButton
-            left_label="Bandpass"
+            left_label=""
             left_value=left_value
             left_click=left_click
             left_class=left_class
             right_value=right_value
             right_class=right_class
+            right_label=right_label
             is_open=is_open
             toggle_menu=toggle_menu
             left_title="Toggle bandpass / EQ"
@@ -370,16 +379,21 @@ fn BandpassCombo() -> impl IntoView {
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
                     <button class=move || layer_opt_class_simple(state.bandpass_range.get() == BandpassRange::FollowFocus)
                         on:click=move |_| state.bandpass_range.set(BandpassRange::FollowFocus)
-                    >"Band"</button>
-                    <button class=move || layer_opt_class_simple(state.bandpass_range.get() == BandpassRange::Custom)
-                        on:click=move |_| state.bandpass_range.set(BandpassRange::Custom)
-                    >"Custom"</button>
+                        title="Range tracks the active FF/HFR focus"
+                    >"Follow"</button>
+                    <button class=move || layer_opt_class_simple(state.bandpass_range.get() == BandpassRange::Locked)
+                        on:click=move |_| state.bandpass_range.set(BandpassRange::Locked)
+                        title="Lock the range here \u{2014} won't track focus changes"
+                    >"Locked"</button>
                 </div>
-                <div style="padding: 0 8px 2px; font-size: 10px; opacity: 0.7;">
+                <div class="bandpass-range-readout">
                     {move || format!("{:.1}\u{2013}{:.1} kHz",
                         state.filter_freq_low.get() / 1000.0,
                         state.filter_freq_high.get() / 1000.0
                     )}
+                    <Show when=move || state.bandpass_range.get() == BandpassRange::Locked>
+                        <span class="bandpass-lock-icon" title="Locked">{"\u{00A0}\u{1F512}"}</span>
+                    </Show>
                 </div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
                     <button class=move || layer_opt_class_simple(state.filter_quality.get() == FilterQuality::Fast)
@@ -476,11 +490,26 @@ pub fn HearingBar() -> impl IntoView {
             }
         }
     });
+    // Label reads "HEARING" by default; when HFR is on and a band is
+    // set, it switches to show the active frequency range — gives the
+    // user the numeric answer at a glance.
+    let bar_label = Signal::derive(move || {
+        if state.hfr_enabled.get() {
+            let lo = state.band_ff_freq_lo.get();
+            let hi = state.band_ff_freq_hi.get();
+            if hi > lo {
+                return format!("{:.1}\u{2013}{:.1} kHz", lo / 1000.0, hi / 1000.0);
+            }
+        }
+        "HEARING".to_string()
+    });
     view! {
         <div class="hearing-bar"
             class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Hearing))
         >
-            <span class="bar-label">"HEARING"</span>
+            <span class="bar-label" class:bar-label-range=move || state.hfr_enabled.get()>
+                {move || bar_label.get()}
+            </span>
             <div class="bar-controls">
                 <div class=move || cell_class.get()>
                     <HfrButton/>

@@ -1648,6 +1648,18 @@ body.sidebar-resizing {
     margin-top: 0;
 }
 
+/* Mobile: bump padding so touch targets clear ~44px Apple HIG minimum. */
+.app.mobile .file-actions {
+    gap: 8px;
+    padding: 10px 12px 6px;
+}
+.app.mobile .file-actions .upload-btn,
+.app.mobile .file-actions .add-files-btn {
+    padding: 12px 14px;
+    font-size: 14px;
+    min-height: 44px;
+}
+
 .file-item {
     padding: 8px 16px;
     cursor: pointer;
@@ -2799,6 +2811,44 @@ body.sidebar-resizing {
     text-transform: uppercase;
     flex-shrink: 0;
     padding: 0 4px 0 0;
+}
+
+/* When the HEARING label is showing the active band range instead of
+   the section name, give it more visual weight and color it with the
+   same yellow as HFR brightness. */
+.bar-label.bar-label-range {
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0.3px;
+    color: #f0c050;
+}
+
+/* Mute-blink: the Mode button's right value when listening + muted.
+   step-end makes the color flip cleanly rather than fading (matches the
+   "obvious" blink the user asked for). */
+@keyframes mute-blink-flash {
+    0%, 49.99%  { color: #ffffff; }
+    50%, 100%   { color: #f0c050; }
+}
+.mute-blink .layer-btn-value {
+    animation: mute-blink-flash 1s step-end infinite;
+    font-weight: 700;
+}
+
+/* Bandpass popup range readout — was 10px and gray, now legible. */
+.bandpass-range-readout {
+    padding: 4px 8px 6px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: #ddd;
+    display: flex;
+    align-items: center;
+}
+.bandpass-lock-icon {
+    font-size: 13px;
+    line-height: 1;
+    filter: saturate(2) brightness(1.2);
+    margin-left: 2px;
 }
 
 /* Main row of buttons inside a bar. Wraps on narrow viewports so new

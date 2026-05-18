@@ -126,22 +126,6 @@ pub fn HfrButton() -> impl IntoView {
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::BandPresets));
     let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
 
-    // Friendly name for whatever band range is currently active.
-    let preset_label = Signal::derive(move || {
-        if !state.hfr_enabled.get() {
-            return "None".to_string();
-        }
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
-        if hi <= lo { return "None".to_string(); }
-        let nyq = nyquist_for_current(state);
-        let close = |a: f64, b: f64| (a - b).abs() < 100.0;
-        if close(lo, 0.0) && close(hi, nyq) { return "All".to_string(); }
-        if close(lo, 20_000.0) && close(hi, nyq) { return "Ultrasound".to_string(); }
-        if close(lo, 0.0) && close(hi, 24_000.0) { return "Audible".to_string(); }
-        "Custom".to_string()
-    });
-
     let left_class = Signal::derive(move || {
         if no_file() {
             "layer-btn combo-btn-left disabled"
@@ -162,9 +146,13 @@ pub fn HfrButton() -> impl IntoView {
     });
 
     // "HFR" literal in left_value so the brightness CSS (which targets
-    // `.layer-btn-value`) picks it up. Right side shows the band preset.
+    // `.layer-btn-value`) picks it up. Right side is just ON/OFF — the
+    // active band's friendly name now lives in the HEARING bar label,
+    // and its numeric range is in the bar's heading.
     let left_value = Signal::derive(|| "HFR".to_string());
-    let right_value = Signal::derive(move || preset_label.get());
+    let right_value = Signal::derive(move || {
+        if state.hfr_enabled.get() { "ON".to_string() } else { "OFF".to_string() }
+    });
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if no_file() { return; }

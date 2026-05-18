@@ -109,10 +109,16 @@ fn parse_factor_input(s: &str) -> Option<f64> {
     }
 }
 
-/// Standalone Mode combo button. Left half shows the current playback
-/// mode (HET / TE / PS / PV / ZC / 1:1 / OFF); both halves open the
-/// mode-picker dropdown which also hosts the Listen output On/Mute
-/// toggle.
+/// Standalone Mode combo button.
+///
+///   Left half:  "Mode" label; click toggles HFR on/off (mirrors
+///               HfrButton's left half — same primary toggle in two
+///               natural spots).
+///   Right half: current playback mode (HET / TE / PS / PV / ZC / 1:1),
+///               dimmed "1:1" when HFR is off, blinking "Mute" when
+///               listening with the speaker muted. Click opens the
+///               mode-picker dropdown, which also hosts the Listen
+///               output On/Mute toggle (at the bottom).
 #[component]
 pub fn ModeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -281,6 +287,10 @@ pub fn ModeButton() -> impl IntoView {
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
 
     let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+
+    // "Listening and muted" — drives the blink. Independent of HFR.
+    let muting = Signal::derive(move || state.mic_listening.get() && state.mic_mute_output.get());
+
     let left_class = Signal::derive(move || {
         if no_file() {
             "layer-btn combo-btn-left disabled"
@@ -290,36 +300,45 @@ pub fn ModeButton() -> impl IntoView {
             "layer-btn combo-btn-left"
         }
     });
-    let right_class = Signal::derive(move || {
+    let right_class = Signal::derive(move || -> &'static str {
         if no_file() { return "layer-btn combo-btn-right disabled"; }
-        let dim = if !state.hfr_enabled.get() { " dim" } else { "" };
-        if is_open.get() {
-            if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
-        } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
-    });
-
-    // Left half shows the active mode label; right half is just the caret.
-    let left_value = Signal::derive(move || {
-        if !state.hfr_enabled.get() {
-            "OFF".to_string()
+        let open = is_open.get();
+        if muting.get() {
+            if open { "layer-btn combo-btn-right mute-blink open" }
+            else { "layer-btn combo-btn-right mute-blink" }
+        } else if !state.hfr_enabled.get() {
+            if open { "layer-btn combo-btn-right dim open" }
+            else { "layer-btn combo-btn-right dim" }
         } else {
-            match state.playback_mode.get() {
-                PlaybackMode::Heterodyne   => "HET".to_string(),
-                PlaybackMode::TimeExpansion => "TE".to_string(),
-                PlaybackMode::PitchShift   => "PS".to_string(),
-                PlaybackMode::PhaseVocoder => "PV".to_string(),
-                PlaybackMode::ZeroCrossing => "ZC".to_string(),
-                PlaybackMode::Normal       => "1:1".to_string(),
-            }
+            if open { "layer-btn combo-btn-right open" }
+            else { "layer-btn combo-btn-right" }
         }
     });
-    let right_value = Signal::derive(String::new);
 
-    // Left click also opens the picker — Mode is a "what playback mode?"
-    // selector, not a binary toggle. (HFR enable/disable lives on HfrButton.)
+    let left_value = Signal::derive(|| "Mode".to_string());
+    let right_value = Signal::derive(move || {
+        if muting.get() {
+            return "Mute".to_string();
+        }
+        if !state.hfr_enabled.get() {
+            return "1:1".to_string(); // dimmed via .dim class
+        }
+        match state.playback_mode.get() {
+            PlaybackMode::Heterodyne    => "HET".to_string(),
+            PlaybackMode::TimeExpansion => "TE".to_string(),
+            PlaybackMode::PitchShift    => "PS".to_string(),
+            PlaybackMode::PhaseVocoder  => "PV".to_string(),
+            PlaybackMode::ZeroCrossing  => "ZC".to_string(),
+            PlaybackMode::Normal        => "1:1".to_string(),
+        }
+    });
+
+    // Left click toggles HFR on/off — the same primary action lives on
+    // HfrButton's left half, deliberately duplicated here so the user
+    // can reach it from either combo without travelling.
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if no_file() { return; }
-        toggle_panel(&state, LayerPanel::HfrMode);
+        state.toggle_hfr();
     });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::HfrMode);
@@ -457,23 +476,6 @@ pub fn ModeButton() -> impl IntoView {
                 panel_align="left"
                 panel_style="min-width: 210px;"
             >
-                // ── Listen output (mic warm-up mute) ──
-                // Relocated here from the Listen popup: the toggle affects
-                // audio output as a whole, so it groups naturally with the
-                // mode/transform settings.
-                <div class="layer-panel-title">"Listen output"</div>
-                <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                    <button class=move || layer_opt_class(!state.mic_mute_output.get())
-                        on:click=move |_| state.mic_mute_output.set(false)
-                        title="Play processed audio through speakers"
-                    >"On"</button>
-                    <button class=move || layer_opt_class(state.mic_mute_output.get())
-                        on:click=move |_| state.mic_mute_output.set(true)
-                        title="Mute speaker output (mic warm-up). Spectrogram still updates."
-                    >"Mute (warm-up)"</button>
-                </div>
-                <hr />
-
                 // ── OFF option ──
                 <button class=move || layer_opt_class(!state.hfr_enabled.get())
                     on:click=move |_: web_sys::MouseEvent| {
@@ -748,6 +750,21 @@ pub fn ModeButton() -> impl IntoView {
                     }}
                 </Show>
 
+                // ── Listen output (mic warm-up mute) ──
+                // At the bottom of the menu — it affects audio output as a
+                // whole, but isn't a mode pick, so it sits below the picker.
+                <hr />
+                <div class="layer-panel-title">"Listen output"</div>
+                <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
+                    <button class=move || layer_opt_class(!state.mic_mute_output.get())
+                        on:click=move |_| state.mic_mute_output.set(false)
+                        title="Play processed audio through speakers"
+                    >"On"</button>
+                    <button class=move || layer_opt_class(state.mic_mute_output.get())
+                        on:click=move |_| state.mic_mute_output.set(true)
+                        title="Mute speaker output (mic warm-up). Spectrogram still updates."
+                    >"Mute (warm-up)"</button>
+                </div>
             </ComboButton>
     }
 }

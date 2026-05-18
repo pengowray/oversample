@@ -342,12 +342,13 @@ pub enum BandpassMode {
     On,
 }
 
-/// Whether the bandpass frequency range follows the Focus or is set independently.
+/// Whether the bandpass frequency range follows the Focus or is locked
+/// to an independent range that doesn't track the focus.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum BandpassRange {
     #[default]
     FollowFocus,
-    Custom,
+    Locked,
 }
 
 /// Which spectrogram overlay handle is being dragged / hovered.
