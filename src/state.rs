@@ -296,7 +296,6 @@ pub enum RightSidebarTab {
     Psd,
     Analysis,
     Harmonics,
-    Notch,
     Pulses,
     DebugLog,
 }
@@ -309,7 +308,6 @@ impl RightSidebarTab {
             Self::Psd => "Power spectrum",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
-            Self::Notch => "Noise Filter",
             Self::Pulses => "Pulses",
             Self::DebugLog => "Debug Log",
         }
@@ -321,7 +319,6 @@ impl RightSidebarTab {
         Self::Psd,
         Self::Analysis,
         Self::Harmonics,
-        Self::Notch,
         Self::Pulses,
         Self::DebugLog,
     ];
@@ -754,6 +751,8 @@ pub enum LayerPanel {
     BandPresets,
     /// Notch combo dropdown in the Hearing bar.
     Notch,
+    /// Noise-reduction (spectral subtraction) combo in the Hearing bar.
+    NoiseReduce,
     /// Bandpass+EQ combo dropdown in the Hearing bar.
     Bandpass,
 }
@@ -770,6 +769,7 @@ impl LayerPanel {
             | LayerPanel::BandPresets
             | LayerPanel::Bandpass
             | LayerPanel::Notch
+            | LayerPanel::NoiseReduce
             | LayerPanel::Gain
             | LayerPanel::ListenMode => Bar::Hearing,
             LayerPanel::MainView | LayerPanel::Tool => Bar::View,

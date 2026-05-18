@@ -14,6 +14,7 @@ pub mod hfr_button;
 pub mod mode_button;
 pub mod hearing_bar;
 pub mod listen_button;
+pub mod noise_combos;
 pub mod view_bar;
 pub mod tool_button;
 pub mod bottom_toolbar;

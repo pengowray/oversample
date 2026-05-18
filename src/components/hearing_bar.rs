@@ -1,9 +1,9 @@
 // Hearing Bar — the "what comes out the speakers" strip between the
 // Overview and the main canvas.
 //
-// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [Notch] │ [Listen | …]
+// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [NR] [Notch] │ [Listen | …]
 //
-//          ^HfrButton    ^ModeButton    ^filter combos             ^ListenButton
+//          ^HfrButton    ^ModeButton    ^filter combos                  ^ListenButton
 //
 // The HFR cell wraps `HfrButton` in a class that drives per-letter
 // brightness on the "HFR" label (H dims when the active band sits entirely
@@ -20,9 +20,10 @@ use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::HfrButton;
 use crate::components::listen_button::ListenButton;
 use crate::components::mode_button::ModeButton;
+use crate::components::noise_combos::{NotchCombo, NrCombo};
 use crate::state::{
     AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
-    PeakSource, PlaybackMode, RightSidebarTab,
+    PeakSource, PlaybackMode,
 };
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
@@ -448,102 +449,9 @@ fn BandpassCombo() -> impl IntoView {
     }
 }
 
-/// Notch combo — compact toggle + summary. Full editor stays in the
-/// right sidebar's Notch tab; a button in the dropdown jumps there.
-#[component]
-fn NotchCombo() -> impl IntoView {
-    let state = expect_context::<AppState>();
-
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Notch));
-    let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
-    };
-
-    let band_count = Signal::derive(move || state.notch_bands.get().len());
-    let enabled = Signal::derive(move || state.notch_enabled.get());
-
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left disabled"
-        } else if enabled.get() {
-            "layer-btn combo-btn-left no-annotation active"
-        } else {
-            "layer-btn combo-btn-left no-annotation"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() { return "layer-btn combo-btn-right disabled"; }
-        let dim = if !enabled.get() { " dim" } else { "" };
-        if is_open.get() {
-            if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
-        } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
-    });
-    let left_value = Signal::derive(move || {
-        let n = band_count.get();
-        if n == 0 { String::new() }
-        else if n == 1 { "1 band".to_string() }
-        else { format!("{} bands", n) }
-    });
-    let right_value = Signal::derive(move || if enabled.get() { "ON".to_string() } else { "OFF".to_string() });
-
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        state.notch_enabled.update(|v| *v = !*v);
-    });
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::Notch);
-    });
-
-    view! {
-        <ComboButton
-            left_label="Notch"
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Toggle notch / noise filter"
-            right_title="Notch options"
-            menu_direction="below"
-            panel_align="left"
-            panel_style="min-width: 200px;"
-        >
-            <button
-                class=move || layer_opt_class_simple(state.notch_enabled.get())
-                on:click=move |_| {
-                    state.notch_enabled.set(true);
-                    state.layer_panel_open.set(None);
-                }
-            >"On"</button>
-            <button
-                class=move || layer_opt_class_simple(!state.notch_enabled.get())
-                on:click=move |_| {
-                    state.notch_enabled.set(false);
-                    state.layer_panel_open.set(None);
-                }
-            >"Off"</button>
-            <hr/>
-            <div style="padding: 4px 8px; font-size: 10px; color: #999;">
-                {move || {
-                    let n = band_count.get();
-                    if n == 0 { "No bands defined".to_string() }
-                    else if n == 1 { "1 band defined".to_string() }
-                    else { format!("{} bands defined", n) }
-                }}
-            </div>
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    state.right_sidebar_tab.set(RightSidebarTab::Notch);
-                    state.right_sidebar_collapsed.set(false);
-                    state.layer_panel_open.set(None);
-                }
-            >"Open noise filter editor \u{2192}"</button>
-        </ComboButton>
-    }
-}
+// NotchCombo and NrCombo live in `noise_combos.rs` — they contain the
+// Detect / Sensitivity / Bands / Learn / Strength controls migrated
+// from the deleted right-sidebar Noise Filter tab.
 
 /// Hearing Bar. Mounted between the OverviewPanel and the main view.
 ///
@@ -581,6 +489,7 @@ pub fn HearingBar() -> impl IntoView {
                 <div class="bar-sep"></div>
                 <BandpassCombo/>
                 <GainCombo/>
+                <NrCombo/>
                 <NotchCombo/>
                 <div class="bar-spacer"></div>
                 <ListenButton/>
