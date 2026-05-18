@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, CanvasTool, LayerPanel};
 
 fn layer_opt_class(active: bool) -> &'static str {
@@ -14,7 +15,9 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 #[component]
 pub fn ToolButton() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::Tool);
+    let is_open: Signal<bool> =
+        Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Tool));
+    let anchor = NodeRef::<leptos::html::Div>::new();
 
     view! {
         // Anchored bottom-right of main-overlays
@@ -23,9 +26,9 @@ pub fn ToolButton() -> impl IntoView {
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            <div style="position: relative; pointer-events: auto;">
+            <div node_ref=anchor style="position: relative; pointer-events: auto;">
                 <button
-                    class=move || if is_open() { "layer-btn open" } else { "layer-btn" }
+                    class=move || if is_open.get() { "layer-btn open" } else { "layer-btn" }
                     on:click=move |_| toggle_panel(&state, LayerPanel::Tool)
                     title="Tool"
                 >
@@ -35,25 +38,28 @@ pub fn ToolButton() -> impl IntoView {
                         CanvasTool::Selection => "Select",
                     }}</span>
                 </button>
-                <Show when=move || is_open()>
-                    <div class="layer-panel" style="bottom: 34px; right: 0;">
-                        <div class="layer-panel-title">"Tool"</div>
-                        <button
-                            class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
-                            on:click=move |_| {
-                                state.canvas_tool.set(CanvasTool::Hand);
-                                state.layer_panel_open.set(None);
-                            }
-                        >"Hand (pan)"</button>
-                        <button
-                            class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
-                            on:click=move |_| {
-                                state.canvas_tool.set(CanvasTool::Selection);
-                                state.layer_panel_open.set(None);
-                            }
-                        >"Selection"</button>
-                    </div>
-                </Show>
+                <PopupPanel
+                    is_open=is_open
+                    anchor=anchor
+                    preferred_side=Side::Above
+                    preferred_align=Align::End
+                >
+                    <div class="layer-panel-title">"Tool"</div>
+                    <button
+                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
+                        on:click=move |_| {
+                            state.canvas_tool.set(CanvasTool::Hand);
+                            state.layer_panel_open.set(None);
+                        }
+                    >"Hand (pan)"</button>
+                    <button
+                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
+                        on:click=move |_| {
+                            state.canvas_tool.set(CanvasTool::Selection);
+                            state.layer_panel_open.set(None);
+                        }
+                    >"Selection"</button>
+                </PopupPanel>
             </div>
         </div>
     }

@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
+use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::AppState;
 
 /// Reusable horizontal split button: left side performs an action (toggle),
@@ -52,8 +53,10 @@ pub fn ComboButton(
     /// the dropdown menu.
     #[prop(optional, into)]
     left_long_press: Option<Callback<web_sys::MouseEvent>>,
-    /// Dropdown panel content
-    children: Children,
+    /// Dropdown panel content. Uses `ChildrenFn` (callable multiple times) so
+    /// the panel content can be unmounted / re-mounted when the popup opens
+    /// and closes via the portal.
+    children: ChildrenFn,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
 
@@ -98,21 +101,17 @@ pub fn ComboButton(
         cancel_hold_inner(hold_timer);
     };
 
-    // Pre-render children so we can use FnOnce Children inside a reactive context
-    let panel_content = children();
+    // Convert preference props to popup enums.
+    let preferred_side = if menu_direction == "above" { Side::Above } else { Side::Below };
+    let preferred_align = if panel_align == "right" { Align::End } else { Align::Start };
 
-    // Panel visibility style: hidden when closed, positioned when open
-    let hidden_style = format!("display: none; {panel_style}");
-    let vert = if menu_direction == "above" {
-        "bottom: calc(100% + 2px);"
-    } else {
-        "top: calc(100% + 2px);"
-    };
-    let horiz = if panel_align == "right" { "right: 0;" } else { "left: 0;" };
-    let visible_style = format!("{vert} {horiz} {panel_style}");
+    // NodeRef for the .combo-btn-row container — the PopupPanel uses this as
+    // the anchor for viewport-aware placement.
+    let row_ref = NodeRef::<leptos::html::Div>::new();
 
     view! {
         <div
+            node_ref=row_ref
             class=move || if is_open.get() { "combo-btn-row open" } else { "combo-btn-row" }
             style=move || format!(
                 "pointer-events: {};",
@@ -239,13 +238,24 @@ pub fn ComboButton(
                 <span class="combo-btn-arrow">{"\u{25E2}"}</span>
             </button>
 
-            // ── Dropdown panel (always in DOM, toggled via display) ──
-            <div
-                class="layer-panel"
-                style=move || if is_open.get() { visible_style.clone() } else { hidden_style.clone() }
+            // ── Dropdown panel ──
+            //
+            // Rendered into a portal under <body> via PopupPanel so it
+            // escapes any clipping ancestor (overflow:hidden on the toolbar,
+            // narrow sidebar, etc.) and so we don't have to manually manage
+            // z-index stacking contexts. Placement is computed against the
+            // viewport with flip + shift, so panels that don't fit below or
+            // beside the trigger reflow into the available space instead of
+            // clipping off-screen.
+            <PopupPanel
+                is_open=is_open
+                anchor=row_ref
+                preferred_side=preferred_side
+                preferred_align=preferred_align
+                extra_style=panel_style
             >
-                {panel_content}
-            </div>
+                {children()}
+            </PopupPanel>
         </div>
     }
 }

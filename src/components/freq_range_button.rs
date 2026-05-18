@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, LayerPanel};
 
 fn layer_opt_class(active: bool) -> &'static str {
@@ -26,7 +27,9 @@ fn range_label(min_f: Option<f64>, max_f: Option<f64>, file_max: f64) -> &'stati
 #[component]
 pub fn FreqRangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::FreqRange);
+    let is_open: Signal<bool> =
+        Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::FreqRange));
+    let anchor = NodeRef::<leptos::html::Div>::new();
 
     let file_max = move || {
         let files = state.files.get();
@@ -68,10 +71,13 @@ pub fn FreqRangeButton() -> impl IntoView {
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            <div style=move || format!("position: relative; pointer-events: {};",
-                if state.mouse_in_label_area.get() { "none" } else { "auto" })>
+            <div
+                node_ref=anchor
+                style=move || format!("position: relative; pointer-events: {};",
+                    if state.mouse_in_label_area.get() { "none" } else { "auto" })
+            >
                 <button
-                    class=move || if is_open() { "layer-btn open" } else { "layer-btn" }
+                    class=move || if is_open.get() { "layer-btn open" } else { "layer-btn" }
                     on:click=move |_| toggle_panel(&state, LayerPanel::FreqRange)
                     title="Frequency range (Shift+scroll to zoom)"
                 >
@@ -84,37 +90,41 @@ pub fn FreqRangeButton() -> impl IntoView {
                         )
                     }}</span>
                 </button>
-                <Show when=move || is_open()>
-                    <div class="layer-panel" style="left: 0; top: 34px; min-width: 140px;">
-                        <div class="layer-panel-title">"Freq Range"</div>
-                        <button class=move || {
-                            let cur_max = state.max_display_freq.get();
-                            let fm = file_max();
-                            let full = cur_max.is_none() || cur_max == Some(fm);
-                            layer_opt_class(full)
-                        }
-                            on:click=set_range(None, None)
-                        >"Full"</button>
-                        <button class=move || {
-                            let is_22k = state.max_display_freq.get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
-                            layer_opt_class(is_22k)
-                        }
-                            on:click=set_range(Some(0.0), Some(22_000.0))
-                        >"0 – 22 kHz"</button>
-                        <button class=move || {
-                            let is_50k = state.max_display_freq.get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
-                            layer_opt_class(is_50k)
-                        }
-                            on:click=set_range(Some(0.0), Some(50_000.0))
-                        >"0 – 50 kHz"</button>
-                        <button class=move || {
-                            let is_100k = state.max_display_freq.get().is_some_and(|m| (m - 100_000.0).abs() < 100.0);
-                            layer_opt_class(is_100k)
-                        }
-                            on:click=set_range(Some(0.0), Some(100_000.0))
-                        >"0 – 100 kHz"</button>
-                    </div>
-                </Show>
+                <PopupPanel
+                    is_open=is_open
+                    anchor=anchor
+                    preferred_side=Side::Below
+                    preferred_align=Align::Start
+                    extra_style="min-width: 140px;"
+                >
+                    <div class="layer-panel-title">"Freq Range"</div>
+                    <button class=move || {
+                        let cur_max = state.max_display_freq.get();
+                        let fm = file_max();
+                        let full = cur_max.is_none() || cur_max == Some(fm);
+                        layer_opt_class(full)
+                    }
+                        on:click=set_range(None, None)
+                    >"Full"</button>
+                    <button class=move || {
+                        let is_22k = state.max_display_freq.get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
+                        layer_opt_class(is_22k)
+                    }
+                        on:click=set_range(Some(0.0), Some(22_000.0))
+                    >"0 – 22 kHz"</button>
+                    <button class=move || {
+                        let is_50k = state.max_display_freq.get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
+                        layer_opt_class(is_50k)
+                    }
+                        on:click=set_range(Some(0.0), Some(50_000.0))
+                    >"0 – 50 kHz"</button>
+                    <button class=move || {
+                        let is_100k = state.max_display_freq.get().is_some_and(|m| (m - 100_000.0).abs() < 100.0);
+                        layer_opt_class(is_100k)
+                    }
+                        on:click=set_range(Some(0.0), Some(100_000.0))
+                    >"0 – 100 kHz"</button>
+                </PopupPanel>
             </div>
         </div>
     }

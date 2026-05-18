@@ -1,5 +1,6 @@
 pub mod app;
 pub mod combo_button;
+pub mod popup;
 pub mod slider_row;
 pub mod file_sidebar;
 pub mod right_sidebar;
