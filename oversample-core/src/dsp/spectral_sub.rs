@@ -248,3 +248,97 @@ pub fn apply_spectral_subtraction(
 
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synthetic_floor(fft_size: usize, sample_rate: u32, magnitude: f64) -> NoiseFloor {
+        NoiseFloor {
+            bin_magnitudes: vec![magnitude; fft_size / 2 + 1],
+            fft_size,
+            sample_rate,
+            analysis_duration_secs: 0.5,
+            frame_count: 1,
+        }
+    }
+
+    #[test]
+    fn fft_size_for_rate_picks_8192_above_192k() {
+        assert_eq!(fft_size_for_rate(44_100), 4096);
+        assert_eq!(fft_size_for_rate(96_000), 4096);
+        assert_eq!(fft_size_for_rate(192_000), 8192);
+        assert_eq!(fft_size_for_rate(384_000), 8192);
+    }
+
+    #[test]
+    fn strength_zero_is_passthrough() {
+        let floor = synthetic_floor(4096, 44_100, 1.0);
+        let samples = vec![0.5f32; 4096];
+        let out = apply_spectral_subtraction(&samples, 44_100, &floor, 0.0, 0.1, 0.0);
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn mismatched_sample_rate_is_passthrough() {
+        // Floor learned at 44.1k, audio at 48k → must not be applied.
+        let floor = synthetic_floor(4096, 44_100, 1.0);
+        let samples = vec![0.5f32; 4096];
+        let out = apply_spectral_subtraction(&samples, 48_000, &floor, 1.0, 0.1, 0.0);
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn empty_input_is_empty_output() {
+        let floor = synthetic_floor(4096, 44_100, 1.0);
+        let out = apply_spectral_subtraction(&[], 44_100, &floor, 1.0, 0.1, 0.0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn aggressive_floor_attenuates_signal() {
+        // Build a floor whose magnitude exceeds the test signal magnitude in every bin —
+        // the floor_factor (here 0.1) should clamp output to 10% of original.
+        let sr = 44_100u32;
+        let fft_size = 4096;
+        let floor = synthetic_floor(fft_size, sr, 1e6); // unrealistically loud "noise" floor
+        let n = fft_size * 4;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1, 0.0);
+        // Steady-state region (skip windowing transients at the head/tail).
+        let head = fft_size;
+        let tail = out.len() - fft_size;
+        let in_rms: f64 = (samples[head..tail].iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
+            / (tail - head) as f64).sqrt();
+        let out_rms: f64 = (out[head..tail].iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
+            / (tail - head) as f64).sqrt();
+        // floor_factor=0.1 means output magnitude is capped at 10% per bin, so total
+        // RMS should drop by roughly the same factor (within a few percent slack).
+        assert!(
+            out_rms < in_rms * 0.2,
+            "spectral subtraction should attenuate; in_rms={in_rms}, out_rms={out_rms}",
+        );
+    }
+
+    #[test]
+    fn zero_floor_with_unity_strength_is_near_passthrough() {
+        // Floor of zero everywhere means nothing to subtract — output should track input
+        // closely. (Window overlap-add introduces tiny boundary effects; check the middle.)
+        let sr = 44_100u32;
+        let fft_size = 4096;
+        let floor = synthetic_floor(fft_size, sr, 0.0);
+        let n = fft_size * 4;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 1500.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1, 0.0);
+        let head = fft_size;
+        let tail = out.len() - fft_size;
+        let diff_rms: f64 = (samples[head..tail].iter().zip(out[head..tail].iter())
+            .map(|(a, b)| ((a - b) as f64).powi(2)).sum::<f64>()
+            / (tail - head) as f64).sqrt();
+        assert!(diff_rms < 0.05, "expected near-passthrough, diff_rms={diff_rms}");
+    }
+}

@@ -467,3 +467,104 @@ where
     merge_overlapping(&mut bands);
     bands
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
+
+    fn sine(freq_hz: f32, sample_rate: u32, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| (2.0 * PI * freq_hz * i as f32 / sample_rate as f32).sin())
+            .collect()
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+        (sum_sq / samples.len() as f64).sqrt() as f32
+    }
+
+    #[test]
+    fn empty_bands_returns_passthrough() {
+        let samples = sine(1000.0, 44_100, 1024);
+        let out = apply_notch_filters(&samples, 44_100, &[], 0.0);
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn disabled_bands_returns_passthrough() {
+        let samples = sine(1000.0, 44_100, 1024);
+        let bands = vec![NoiseBand {
+            center_hz: 1000.0,
+            bandwidth_hz: 100.0,
+            q: 10.0,
+            enabled: false,
+            strength_db: 30.0,
+        }];
+        let out = apply_notch_filters(&samples, 44_100, &bands, 0.0);
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn notch_attenuates_tone_at_center() {
+        // 1 kHz sine; notch centered on it should reduce RMS substantially.
+        let sr = 44_100u32;
+        let samples = sine(1000.0, sr, sr as usize); // 1 s
+        let bands = vec![NoiseBand {
+            center_hz: 1000.0,
+            bandwidth_hz: 50.0,
+            q: 20.0,
+            enabled: true,
+            strength_db: 30.0,
+        }];
+        let out = apply_notch_filters(&samples, sr, &bands, 0.0);
+        // Skip the first 2048 samples for the IIR transient.
+        let tail_in = rms(&samples[2048..]);
+        let tail_out = rms(&out[2048..]);
+        assert!(
+            tail_out < tail_in * 0.3,
+            "notch should drop center tone by >10dB; in_rms={tail_in}, out_rms={tail_out}",
+        );
+    }
+
+    #[test]
+    fn notch_skips_bands_above_nyquist() {
+        // Band centred above Nyquist must not destabilise the cascade.
+        let sr = 44_100u32;
+        let samples = sine(500.0, sr, 4096);
+        let bands = vec![NoiseBand {
+            center_hz: 50_000.0,
+            bandwidth_hz: 100.0,
+            q: 10.0,
+            enabled: true,
+            strength_db: 30.0,
+        }];
+        let out = apply_notch_filters(&samples, sr, &bands, 0.0);
+        // With no in-band notch active, output should match input exactly.
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn detect_noise_bands_finds_strong_persistent_tone() {
+        // Strong narrow 5 kHz tone embedded in white-ish noise — should be detected.
+        let sr = 44_100u32;
+        let n = sr as usize * 2; // 2 s
+        // Pseudo-random low-amplitude noise (deterministic — no `rand` dependency).
+        let mut samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let pseudo = ((i.wrapping_mul(2654435761) >> 10) & 0xFFFF) as f32 / 65535.0 - 0.5;
+                pseudo * 0.05
+            })
+            .collect();
+        let tone = sine(5_000.0, sr, n);
+        for (s, t) in samples.iter_mut().zip(tone.iter()) {
+            *s += 0.5 * t;
+        }
+        let bands = detect_noise_bands(&samples, sr, &DetectionConfig::default());
+        assert!(
+            bands.iter().any(|b| (b.center_hz - 5_000.0).abs() < 100.0),
+            "expected a detected band near 5 kHz, got: {:?}",
+            bands.iter().map(|b| b.center_hz).collect::<Vec<_>>(),
+        );
+    }
+}

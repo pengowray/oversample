@@ -215,3 +215,83 @@ pub fn pre_render_chromagram_columns(
 
     PreRendered { width: width as u32, height: height as u32, pixels, db_data: Vec::new(), flow_shifts: Vec::new() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a magnitude column where a single FFT bin is set, at the bin nearest
+    /// `freq_hz`. Returns the full magnitudes vec.
+    fn one_tone_magnitudes(freq_hz: f64, freq_resolution: f64, num_bins: usize, mag: f32) -> Vec<f32> {
+        let mut mags = vec![0.0f32; num_bins];
+        let bin = (freq_hz / freq_resolution).round() as usize;
+        if bin < num_bins {
+            mags[bin] = mag;
+        }
+        mags
+    }
+
+    #[test]
+    fn chroma_rows_scales_with_octaves() {
+        assert_eq!(chroma_rows(1), 12);
+        assert_eq!(chroma_rows(10), 120);
+        assert_eq!(chroma_rows(0), 0);
+    }
+
+    #[test]
+    fn chroma_pixel_height_multiplies_by_render_scale() {
+        assert_eq!(chroma_pixel_height(10), chroma_rows(10) * CHROMA_RENDER_SCALE);
+    }
+
+    #[test]
+    fn a4_lands_in_pitch_class_a() {
+        // A4 = 440 Hz. With 1 Hz/bin resolution we put a tone exactly on the bin.
+        // Pitch class index for "A" is 9 (C=0..B=11).
+        let mags = one_tone_magnitudes(440.0, 1.0, 1024, 1.0);
+        let chroma = stft_to_chromagram(&mags, 1.0, 0, 10);
+        let a_idx = PITCH_CLASS_NAMES.iter().position(|&n| n == "A").unwrap();
+        // The "A" class should be the strongest of the 12.
+        let strongest = chroma.pitch_classes
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(strongest, a_idx, "440 Hz should land in pitch class A");
+        // Energy should be magnitude² = 1.
+        assert!((chroma.pitch_classes[a_idx] - 1.0).abs() < 1e-5);
+        // Octave 4 should hold the energy.
+        assert!((chroma.octave_detail[a_idx][4] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn dc_bin_is_ignored() {
+        // Magnitude at bin 0 (DC) must NOT contribute to any pitch class.
+        let mut mags = vec![0.0f32; 1024];
+        mags[0] = 100.0;
+        let chroma = stft_to_chromagram(&mags, 1.0, 0, 10);
+        assert!(chroma.pitch_classes.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn out_of_range_octaves_skipped() {
+        // 440 Hz (A4) with the analysis range starting above octave 4 — no contribution.
+        let mags = one_tone_magnitudes(440.0, 1.0, 1024, 1.0);
+        let chroma = stft_to_chromagram(&mags, 1.0, 6, 4); // octaves 6..10
+        let a_idx = PITCH_CLASS_NAMES.iter().position(|&n| n == "A").unwrap();
+        assert_eq!(chroma.pitch_classes[a_idx], 0.0);
+    }
+
+    #[test]
+    fn empty_magnitudes_returns_all_zeros() {
+        let chroma = stft_to_chromagram(&[], 1.0, 0, 10);
+        assert!(chroma.pitch_classes.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn pitch_class_names_well_formed() {
+        assert_eq!(PITCH_CLASS_NAMES.len(), NUM_PITCH_CLASSES);
+        assert_eq!(PITCH_CLASS_NAMES[0], "C");
+        assert_eq!(PITCH_CLASS_NAMES[11], "B");
+    }
+}

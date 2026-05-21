@@ -743,3 +743,122 @@ pub fn compute_tile_phase_angle_data(
         flow_shifts,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn col(mags: Vec<f32>) -> SpectrogramColumn {
+        SpectrogramColumn { magnitudes: mags, time_offset: 0.0 }
+    }
+
+    #[test]
+    fn wrap_to_pi_clamps_into_canonical_range() {
+        assert!((wrap_to_pi(0.0) - 0.0).abs() < 1e-6);
+        assert!((wrap_to_pi(PI - 0.01) - (PI - 0.01)).abs() < 1e-5);
+        // 3π/2 → -π/2 after wrap.
+        assert!((wrap_to_pi(1.5 * PI) - (-0.5 * PI)).abs() < 1e-5);
+        // -3π/2 → π/2.
+        assert!((wrap_to_pi(-1.5 * PI) - 0.5 * PI).abs() < 1e-5);
+    }
+
+    #[test]
+    fn mean_f32_handles_empty_and_nonempty() {
+        assert_eq!(mean_f32(&[]), 0.0);
+        assert!((mean_f32(&[1.0, 2.0, 3.0, 4.0]) - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn peak_bin_returns_index_of_max() {
+        assert_eq!(peak_bin(&[0.1, 0.5, 0.3, 0.9, 0.2]), 3);
+        assert_eq!(peak_bin(&[0.0]), 0);
+        assert_eq!(peak_bin(&[]), 0);
+    }
+
+    #[test]
+    fn compute_avg_spectrum_empty_returns_empty() {
+        assert!(compute_avg_spectrum(&[]).is_empty());
+    }
+
+    #[test]
+    fn compute_avg_spectrum_averages_per_bin() {
+        let cols = vec![
+            col(vec![1.0, 2.0, 3.0]),
+            col(vec![3.0, 4.0, 5.0]),
+        ];
+        let avg = compute_avg_spectrum(&cols);
+        assert_eq!(avg, vec![2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn derive_fft_size_clamps_to_minimum_64() {
+        // Pathological inputs (huge resolution / weird rate) → still ≥ 64.
+        assert_eq!(derive_fft_size(44_100, 100_000.0), 64);
+        // Sensible case: 44.1k / 10.77Hz ≈ 4096 bins.
+        let n = derive_fft_size(44_100, 44_100.0 / 4096.0);
+        assert_eq!(n, 4096);
+    }
+
+    #[test]
+    fn derive_hop_size_clamps_to_minimum_1() {
+        assert_eq!(derive_hop_size(44_100, 0.0), 1);
+        // 256 samples at 44.1k ≈ 5.8 ms.
+        let h = derive_hop_size(44_100, 256.0 / 44_100.0);
+        assert_eq!(h, 256);
+    }
+
+    #[test]
+    fn compute_spectral_flux_frames_returns_empty_for_short_inputs() {
+        assert!(compute_spectral_flux_frames(&[]).is_empty());
+        assert!(compute_spectral_flux_frames(&[col(vec![1.0])]).is_empty());
+    }
+
+    #[test]
+    fn compute_spectral_flux_frames_half_wave_rectifies() {
+        // Three columns: rising then falling.
+        // t=0->1: bin 0 rises 0.0->2.0 (positive diff² = 4).
+        // t=1->2: bin 0 falls 2.0->1.0 (negative diff → ignored).
+        let cols = vec![
+            col(vec![0.0]),
+            col(vec![2.0]),
+            col(vec![1.0]),
+        ];
+        let flux = compute_spectral_flux_frames(&cols);
+        assert_eq!(flux.len(), 2);
+        assert!((flux[0] - 2.0).abs() < 1e-5); // sqrt(4)
+        assert_eq!(flux[1], 0.0);
+    }
+
+    #[test]
+    fn detect_fundamental_hps_finds_fundamental_in_synthetic_spectrum() {
+        // Build a spectrum where bin 50 and its harmonics (100, 150, 200) are large.
+        let mut spec = vec![0.0f32; 1024];
+        for &bin in &[50, 100, 150, 200] {
+            spec[bin] = 1.0;
+        }
+        let detected = detect_fundamental_hps(&spec);
+        assert_eq!(detected, Some(50));
+    }
+
+    #[test]
+    fn detect_fundamental_hps_returns_none_for_silent_spectrum() {
+        let spec = vec![0.0f32; 1024];
+        assert_eq!(detect_fundamental_hps(&spec), None);
+    }
+
+    #[test]
+    fn count_preringing_returns_zero_for_empty_flux() {
+        assert_eq!(count_preringing(&[], 1.0), 0);
+        assert_eq!(count_preringing(&[0.5, 0.6, 0.7], 0.0), 0);
+    }
+
+    #[test]
+    fn count_preringing_counts_low_flux_before_onset() {
+        // peak=1.0, onset_threshold=0.4, preflux=[0.12, 0.4).
+        // A frame in [0.12, 0.4) followed within 5 frames by a >0.4 spike counts.
+        let peak = 1.0;
+        let flux = vec![0.0, 0.2, 0.25, 1.0, 0.0, 0.0];
+        // Frames 1 and 2 are in the preflux band, followed by frame 3's onset.
+        assert_eq!(count_preringing(&flux, peak), 2);
+    }
+}

@@ -251,3 +251,90 @@ fn find_peak_frequency(
 
     best_bin as f64 * spectrogram.freq_resolution
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duration_ms_is_difference_times_1000() {
+        let p = DetectedPulse {
+            index: 1,
+            start_time: 0.10,
+            end_time: 0.105,
+            peak_time: 0.102,
+            peak_freq: 40_000.0,
+            snr_db: 18.0,
+            peak_amplitude: 0.5,
+        };
+        assert!((p.duration_ms() - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn estimate_noise_floor_empty_envelope_returns_zero() {
+        assert_eq!(estimate_noise_floor(&[]), 0.0);
+    }
+
+    #[test]
+    fn estimate_noise_floor_takes_tenth_percentile() {
+        // 100 values: 0.0..=0.99 in 0.01 steps. 10th percentile ≈ 0.10.
+        let env: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
+        let floor = estimate_noise_floor(&env);
+        // Step-sampling + sort + index/10 → bucket 10 → 0.10 with f32 jitter.
+        assert!((floor - 0.10).abs() < 0.02, "got {floor}");
+    }
+
+    #[test]
+    fn estimate_noise_floor_clamps_to_tiny_positive_value() {
+        // All zeros → 10th percentile is 0; result clamped to ≥ 1e-10.
+        let env = vec![0.0f32; 50];
+        let floor = estimate_noise_floor(&env);
+        assert!(floor >= 1e-10);
+        assert!(floor < 1e-5);
+    }
+
+    #[test]
+    fn detect_raw_pulses_finds_single_burst() {
+        // Envelope: flat low, then a bump that crosses high, then low again.
+        let mut env = vec![0.01f32; 100];
+        for i in 30..40 {
+            env[i] = 1.0;
+        }
+        let pulses = detect_raw_pulses(&env, 0.5, 0.1, 1);
+        assert_eq!(pulses.len(), 1);
+        let (start, end, peak, amp) = pulses[0];
+        assert_eq!(start, 30);
+        assert!(end >= 40 && end <= 41);
+        assert!(peak >= 30 && peak < 40);
+        assert!((amp - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn detect_raw_pulses_merges_close_bursts() {
+        // Two bursts separated by 2 samples below threshold, min_gap=5 → merge.
+        let mut env = vec![0.01f32; 100];
+        for i in 30..35 { env[i] = 1.0; }
+        for i in 37..42 { env[i] = 0.8; }
+        let pulses = detect_raw_pulses(&env, 0.5, 0.1, 5);
+        assert_eq!(pulses.len(), 1, "close bursts should be merged");
+    }
+
+    #[test]
+    fn detect_raw_pulses_keeps_well_separated_bursts() {
+        let mut env = vec![0.01f32; 100];
+        for i in 10..15 { env[i] = 1.0; }
+        for i in 80..85 { env[i] = 1.0; }
+        let pulses = detect_raw_pulses(&env, 0.5, 0.1, 5);
+        assert_eq!(pulses.len(), 2);
+    }
+
+    #[test]
+    fn detect_raw_pulses_closes_open_pulse_at_end_of_signal() {
+        // Pulse that never falls back below low threshold — should still be reported.
+        let mut env = vec![0.01f32; 100];
+        for i in 90..100 { env[i] = 1.0; }
+        let pulses = detect_raw_pulses(&env, 0.5, 0.1, 1);
+        assert_eq!(pulses.len(), 1);
+        assert_eq!(pulses[0].1, 100); // pulse_end = envelope length
+    }
+}
