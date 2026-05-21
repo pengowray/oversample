@@ -1,8 +1,17 @@
-// Bottom toolbar — transport only: Play, Channel/Track, Record.
+// Bottom toolbar — transport + capture cluster.
 //
-// Hearing-DSP controls (HFR, Band, EQ, Notch, Gain, Listen) live in
-// `HearingBar`. Visualization controls (View, Anno, Book, Tool) live in
-// `ViewBar`. Keep this file focused on capture and playback.
+// Layout:
+//   [Play | Mode] [Channel] │ [ Mic | Record | Listen | + New ]
+//                              └────── capture group ──────┘
+//
+// The capture group visually surrounds Record + Listen with bookends
+// (Mic on the left, "+ New" on the right) to communicate that selecting
+// a mic and starting a fresh recording document are prerequisites for
+// pressing Record or Listen. On mobile (3-column grid) the group flows
+// into row 2: Record / Listen / + New, with Mic on row 1's right slot.
+//
+// Hearing-DSP controls (HFR, Band, EQ, Notch, Gain) live in `HearingBar`.
+// Visualization controls (View, Anno, Book, Tool) live in `ViewBar`.
 
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -10,6 +19,7 @@ use crate::state::{AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStar
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
 use crate::components::combo_button::ComboButton;
+use crate::components::listen_button::ListenButton;
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -507,22 +517,98 @@ pub fn BottomToolbar() -> impl IntoView {
 
             <div class="bottom-toolbar-sep"></div>
 
-            // ── Record combo button ──
-            <ComboButton
-                left_label=""
-                left_value=rec_left_value
-                left_click=rec_left_click
-                left_long_press=rec_long_press
-                left_class=rec_left_class
-                right_value=rec_right_value
-                right_class=rec_right_class
-                is_open=rec_is_open
-                toggle_menu=rec_toggle_menu
-                left_title="Record"
-                right_title="Record settings"
-                menu_direction="above"
-                panel_style="min-width: 280px;"
-            >
+            // ── Capture group: [Mic ▼] [Record] [Listen] [+ New] ──
+            // The bracketing buttons (Mic, +New) frame Record/Listen visually
+            // and walk the user through the prerequisite steps: pick a mic so
+            // we know the frequency range, then either record/listen into the
+            // current doc or "+ New" an empty live document to adjust HFR/band
+            // before capture starts.
+            <div class="capture-group">
+                // ── Mic select button ──
+                {
+                    let mic_class = Signal::derive(move || {
+                        let strat = state.mic_strategy.get();
+                        let modal_open = state.show_mic_chooser.get();
+                        if strat == MicStrategy::None {
+                            "layer-btn mic-select-btn mic-off"
+                        } else if state.mic_device_info.get().is_none() && state.mic_backend.get().is_none() {
+                            if modal_open { "layer-btn mic-select-btn mic-empty open" }
+                            else { "layer-btn mic-select-btn mic-empty" }
+                        } else if modal_open {
+                            "layer-btn mic-select-btn open"
+                        } else if state.mic_listening.get() || state.mic_recording.get() {
+                            "layer-btn mic-select-btn active"
+                        } else {
+                            "layer-btn mic-select-btn"
+                        }
+                    });
+                    let mic_value = Signal::derive(move || {
+                        if state.mic_strategy.get() == MicStrategy::None {
+                            return "Off".to_string();
+                        }
+                        if let Some(info) = state.mic_device_info.get() {
+                            // Truncate long device names to keep the toolbar compact.
+                            let name = &info.name;
+                            if name.len() > 14 {
+                                format!("{}\u{2026}", &name[..13])
+                            } else {
+                                name.clone()
+                            }
+                        } else if state.mic_usb_connected.get() && state.is_tauri {
+                            "USB mic".to_string()
+                        } else {
+                            "Select".to_string()
+                        }
+                    });
+                    let mic_title = Signal::derive(move || {
+                        if state.mic_strategy.get() == MicStrategy::None {
+                            "Mic input is disabled. Click to choose a microphone.".to_string()
+                        } else if let Some(info) = state.mic_device_info.get() {
+                            let rate = info.supported_rates.iter().max().copied().unwrap_or(0);
+                            let rate_str = if rate >= 1000 { format!(" \u{2014} up to {} kHz", rate / 1000) } else { String::new() };
+                            format!("Microphone: {}{}\nClick to change.", info.name, rate_str)
+                        } else {
+                            "Choose a microphone (needed to set the capture sample rate and unlock Record / Listen / +New).".to_string()
+                        }
+                    });
+                    view! {
+                        <button
+                            class=move || mic_class.get()
+                            title=move || mic_title.get()
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                // Opening the chooser from here is a manual pick — don't
+                                // queue any pending action (Listen/Record/Arm), so the
+                                // user just sets the mic and the modal closes.
+                                state.mic_pending_action.set(None);
+                                state.show_mic_chooser.set(true);
+                            }
+                        >
+                            <span class="layer-btn-category">"Mic"</span>
+                            <span class="layer-btn-value">
+                                {move || mic_value.get()}
+                                <span class="mic-chevron">{"\u{25BE}"}</span>
+                            </span>
+                        </button>
+                    }
+                }
+
+                // ── Record combo button ──
+                <ComboButton
+                    left_label=""
+                    left_value=rec_left_value
+                    left_click=rec_left_click
+                    left_long_press=rec_long_press
+                    left_class=rec_left_class
+                    right_value=rec_right_value
+                    right_class=rec_right_class
+                    is_open=rec_is_open
+                    toggle_menu=rec_toggle_menu
+                    left_title="Record"
+                    right_title="Record settings"
+                    menu_direction="above"
+                    panel_style="min-width: 280px;"
+                >
                 // ── Record mode ──
                 <div class="layer-panel-title">"Record mode"</div>
                 <button
@@ -715,6 +801,55 @@ pub fn BottomToolbar() -> impl IntoView {
                     </div>
                 </div>
             </ComboButton>
+
+                // ── Listen combo button (moved from hearing bar) ──
+                <ListenButton/>
+
+                // ── New recording button ──
+                // Creates an empty live document using the current mic; if no
+                // mic is selected, the mic chooser opens first (via
+                // `arm_live_doc` → `acquire_mic`).
+                {
+                    let new_disabled = Signal::derive(move || {
+                        state.mic_strategy.get() == MicStrategy::None
+                            || state.mic_listening.get()
+                            || state.mic_recording.get()
+                    });
+                    let new_class = move || {
+                        if new_disabled.get() {
+                            "layer-btn new-rec-btn disabled"
+                        } else {
+                            "layer-btn new-rec-btn"
+                        }
+                    };
+                    let new_title = move || {
+                        if state.mic_strategy.get() == MicStrategy::None {
+                            "Mic input is disabled — choose a microphone first.".to_string()
+                        } else if state.mic_listening.get() || state.mic_recording.get() {
+                            "Already capturing — stop the current session first.".to_string()
+                        } else {
+                            "Start an empty live recording document. The mic sets the sample rate so you can dial in HFR / band before pressing Record or Listen.".to_string()
+                        }
+                    };
+                    view! {
+                        <button
+                            class=new_class
+                            title=new_title
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                if new_disabled.get_untracked() { return; }
+                                let st = state;
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    microphone::arm_live_doc(&st).await;
+                                });
+                            }
+                        >
+                            <span class="layer-btn-category">"New"</span>
+                            <span class="layer-btn-value">"+ Rec"</span>
+                        </button>
+                    }
+                }
+            </div>
         </div>
     }
 }

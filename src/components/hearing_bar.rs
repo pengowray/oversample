@@ -1,24 +1,25 @@
 // Hearing Bar — the "what comes out the speakers" strip between the
 // Overview and the main canvas.
 //
-// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [NR] [Notch] │ [Listen | …]
+// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [NR] [Notch]
 //
-//          ^HfrButton    ^ModeButton    ^filter combos                  ^ListenButton
+//          ^HfrButton    ^ModeButton    ^filter combos
 //
 // The HFR cell wraps `HfrButton` in a class that drives per-letter
 // brightness on the "HFR" label (H dims when the active band sits entirely
 // below 24 kHz — i.e. an audible-only filter). HfrButton's right half is
 // the band-presets dropdown; ModeButton is a separate combo so each half
-// of HfrButton stays single-purpose. Listen lives at the right end
-// because its DSP pipeline is unified with HFR/Mode. Filter combos in
-// the middle wrap onto a second row on narrow viewports.
+// of HfrButton stays single-purpose. Filter combos wrap onto a second
+// row on narrow viewports.
+//
+// The Listen button lives in the bottom toolbar's capture group alongside
+// Record (and the Mic / New-recording bookends) — see `bottom_toolbar.rs`.
 
 use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::HfrButton;
-use crate::components::listen_button::ListenButton;
 use crate::components::mode_button::ModeButton;
 use crate::components::noise_combos::{NotchCombo, NrCombo};
 use crate::state::{
@@ -544,8 +545,6 @@ pub fn HearingBar() -> impl IntoView {
                 <GainCombo/>
                 <NrCombo/>
                 <NotchCombo/>
-                <div class="bar-spacer"></div>
-                <ListenButton/>
             </div>
         </div>
     }

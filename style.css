@@ -3191,6 +3191,88 @@ body.sidebar-resizing {
     height: 20px;
 }
 
+/* ── Capture group: Mic | Record | Listen | + New ───────────────────────
+   Frames the four capture-related buttons together so Mic on the left
+   and "+ New" on the right read as bookends — the prerequisite steps
+   that gate Record / Listen in the middle. */
+.capture-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 4px;
+    border: 1px dashed rgba(120, 120, 120, 0.3);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+/* When any capture-group descendant is active (recording / listening / armed),
+   the dashed frame brightens to confirm "yes, capture is hot". */
+.capture-group:has(.mic-recording),
+.capture-group:has(.mic-armed),
+.capture-group:has(.mic-select-btn.active) {
+    border-color: rgba(200, 180, 60, 0.45);
+    background: rgba(40, 40, 20, 0.18);
+}
+.capture-group:has(.mic-recording) {
+    border-color: rgba(220, 60, 60, 0.45);
+    background: rgba(60, 20, 20, 0.18);
+}
+
+/* Mic select button — left bookend of the capture group. */
+.mic-select-btn {
+    min-height: 38px;
+    flex-shrink: 0;
+    max-width: 130px;
+}
+.mic-select-btn .layer-btn-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 110px;
+}
+/* "Empty" state — no mic chosen yet: amber/dim border to nudge the user. */
+.mic-select-btn.mic-empty {
+    border-color: rgba(200, 160, 60, 0.5);
+    color: #d9b86b;
+}
+.mic-select-btn.mic-empty .layer-btn-value {
+    color: #e9c878;
+}
+/* "Off" state — mic strategy is explicitly None. Dimmer than empty. */
+.mic-select-btn.mic-off {
+    opacity: 0.55;
+}
+/* Tiny chevron inside the mic name signals "click to open chooser". */
+.mic-select-btn .mic-chevron {
+    font-size: 9px;
+    opacity: 0.5;
+    margin-left: 3px;
+}
+
+/* New-recording button — right bookend of the capture group. */
+.new-rec-btn {
+    min-height: 38px;
+    flex-shrink: 0;
+}
+.new-rec-btn:not(.disabled) {
+    border-color: rgba(80, 140, 200, 0.45);
+    color: #9bd;
+}
+.new-rec-btn:not(.disabled) .layer-btn-value {
+    color: #bcd9f0;
+}
+.new-rec-btn:not(.disabled):hover {
+    background: rgba(30, 50, 80, 0.92);
+    border-color: rgba(120, 180, 230, 0.7);
+    color: #cde;
+}
+
+/* On mobile the capture-group flattens into the 3-col grid so its children
+   land in their own cells, otherwise the whole group would occupy a single
+   1fr slot and bunch the four buttons together. */
+.bottom-toolbar.mobile .capture-group {
+    display: contents;
+}
+
 /* ── Mobile bottom toolbar ─────────────────────────────────────────────── */
 
 .bottom-toolbar.mobile {

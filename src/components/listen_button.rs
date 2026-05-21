@@ -97,7 +97,7 @@ pub fn ListenButton() -> impl IntoView {
             toggle_menu=listen_toggle_menu
             left_title="Toggle live listening (L)"
             right_title="Listen settings"
-            menu_direction="below"
+            menu_direction="above"
             panel_align="right"
             panel_style="min-width: 220px;"
         >
