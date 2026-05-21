@@ -419,6 +419,14 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         // processing loop doesn't exit (it checks `!recording && !listening`).
         // We'll clear it after mic_recording is set to true.
         crate::canvas::tile_cache::clear_all_caches();
+        // Rename the listening file from its placeholder ("Listening") to the
+        // proper batcap_*.wav name BEFORE start_recording — the recovery
+        // sidecar/.wav.part and the Android MediaStore entry are both built
+        // from `mic_live_file_idx`'s current name. With the placeholder, the
+        // MediaStore entry ends up `DISPLAY_NAME=Listening` against MIME
+        // `audio/wav`, which Android either rejects or saves invisibly.
+        let sr = state.mic_sample_rate.get_untracked();
+        rename_listen_to_recording(state, sr);
     }
 
     match backend.start_recording(state).await {
@@ -880,7 +888,7 @@ pub(crate) use crate::audio::live_recording::{
     start_live_recording, start_live_listening, start_live_armed,
     is_armed_live_doc, promote_armed_to_listening, promote_armed_to_recording,
     revert_recording_to_armed, set_live_recording_zoom,
-    cleanup_listen_file, convert_listen_to_recording,
+    cleanup_listen_file, convert_listen_to_recording, rename_listen_to_recording,
     spawn_live_processing_loop,
     spawn_smooth_scroll_animation, finalize_recording,
     cleanup_failed_recording,

@@ -443,12 +443,20 @@ pub(crate) fn cleanup_listen_file(state: &AppState) {
     }
 }
 
-/// Convert the listening file into a recording file (listen → record transition).
-/// Returns the existing file index.  Does NOT clear the audio buffer so the
-/// last ≤10 s of listened audio becomes pre-roll in the recording.
-pub(crate) fn convert_listen_to_recording(state: &AppState, sample_rate: u32) -> usize {
-    let file_index = state.mic_live_file_idx.get_untracked()
-        .expect("convert_listen_to_recording: no live file");
+/// Rename the listening file to its final `batcap_*.wav` name, keeping the
+/// rest of the listening state intact (still `is_live_listen=true`, etc.).
+///
+/// MUST be called BEFORE `mic_backend::start_recording` so the recovery
+/// sidecar/.wav.part filename and any shared-storage MediaStore entry (built
+/// by `build_start_recording_args` / `try_create_shared_fd` from the file at
+/// `mic_live_file_idx`) pick up the new name. If we wait until after the
+/// IPC, the MediaStore entry ends up with `DISPLAY_NAME="Listening"` (no
+/// `.wav`) which Android either rejects outright or hides from file managers
+/// — surfacing as "record succeeded but no file appeared".
+///
+/// Mirrors `promote_armed_to_recording` for the armed-doc path.
+pub(crate) fn rename_listen_to_recording(state: &AppState, sample_rate: u32) {
+    let Some(file_index) = state.mic_live_file_idx.get_untracked() else { return };
 
     // When pre-roll is active, backdate the filename to reflect the actual
     // start of audio data (i.e. the beginning of the pre-roll buffer).
@@ -474,6 +482,22 @@ pub(crate) fn convert_listen_to_recording(state: &AppState, sample_rate: u32) ->
     state.files.update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.name = name;
+        }
+    });
+}
+
+/// Convert the listening file into a recording file (listen → record transition).
+/// Returns the existing file index.  Does NOT clear the audio buffer so the
+/// last ≤10 s of listened audio becomes pre-roll in the recording.
+///
+/// Assumes `rename_listen_to_recording` has already run — this only flips the
+/// listening-state flags and updates metadata.
+pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -> usize {
+    let file_index = state.mic_live_file_idx.get_untracked()
+        .expect("convert_listen_to_recording: no live file");
+
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(file_index) {
             f.is_live_listen = false;
             f.audio.metadata.format = "REC";
             f.audio.metadata.bits_per_sample = state.mic_bits_per_sample.get_untracked();
