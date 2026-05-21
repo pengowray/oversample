@@ -1367,6 +1367,13 @@ pub struct AppState {
     pub mic_pending_action: RwSignal<Option<MicPendingAction>>,
     /// Whether a recording is ready to begin.
     pub record_ready_state: RwSignal<RecordReadyState>,
+    /// True from the moment the user presses Record until the recording is
+    /// either actively running (`mic_recording=true`) or the start attempt
+    /// was abandoned (chooser cancelled, permission denied, dialog cancelled).
+    /// Used to debounce rapid Record taps so a single user gesture doesn't
+    /// kick off two parallel `mic_start_recording` IPCs and produce
+    /// duplicate Android MediaStore entries ("…(1).wav" + a stuck `.pending`).
+    pub mic_starting_recording: RwSignal<bool>,
     /// Whether the mic permission dialog has been shown.
     pub mic_permission_dialog_shown: RwSignal<bool>,
     /// Maximum bit depth for mic recording (0 = auto).
@@ -1860,6 +1867,7 @@ impl AppState {
             mic_acquisition_state: RwSignal::new(MicAcquisitionState::Idle),
             mic_pending_action: RwSignal::new(None),
             record_ready_state: RwSignal::new(RecordReadyState::None),
+            mic_starting_recording: RwSignal::new(false),
             mic_permission_dialog_shown: RwSignal::new(false),
             mic_max_bit_depth: RwSignal::new(0),
             mic_channel_mode: RwSignal::new(ChannelMode::Mono),

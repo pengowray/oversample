@@ -480,6 +480,12 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
             }
         }
     }
+
+    // Release the start-debounce gate so the next Record press is honoured.
+    // Cleared on both Ok and Err paths — `mic_recording` is what really tells
+    // the next press to stop instead of start, but the gate covers the gap
+    // between user gesture and that flag flipping.
+    state.mic_starting_recording.set(false);
 }
 
 /// Convert a Tauri recording result into FinalizeParams.  When pre-roll is
@@ -739,6 +745,19 @@ pub async fn toggle_record(state: &AppState) {
         return;
     }
 
+    // Debounce: ignore the second tap of a rapid double-press. Without this
+    // guard, a user impatient with the "invisible" acquire_mic / IPC phase
+    // could fire two parallel start flows — each calling
+    // `mic_start_recording` and `try_create_shared_fd`, leaving Android with
+    // two MediaStore entries (one stuck IS_PENDING=1 → `.pending`, the other
+    // saved as "…(1).wav").
+    if state.mic_starting_recording.get_untracked() {
+        state.log_debug("info", "toggle_record: ignored — start already in flight");
+        state.show_info_toast("Recording is starting\u{2026}");
+        return;
+    }
+    state.mic_starting_recording.set(true);
+
     // If already listening, the mic is ready — go straight to recording
     if state.mic_listening.get_untracked() {
         if let Some(backend) = resolve_active_backend(state) {
@@ -753,6 +772,7 @@ pub async fn toggle_record(state: &AppState) {
         Some(b) => b,
         None => {
             state.log_debug("info", "toggle_record: acquire_mic returned None (chooser shown or failed)");
+            state.mic_starting_recording.set(false);
             return;
         }
     };
@@ -764,7 +784,9 @@ pub async fn toggle_record(state: &AppState) {
         state.log_debug("info", format!("toggle_record: backend={:?}, permission dialog detected, starting immediately", backend));
         do_start_recording(state, backend).await;
     } else {
-        // Show "Ready to record" dialog — user must confirm
+        // Show "Ready to record" dialog — user must confirm. The flag stays
+        // set so a stray tap during the dialog can't kick off a second flow;
+        // confirm_record_start / cancel_record_start clear it.
         state.log_debug("info", format!("toggle_record: backend={:?}, showing Ready to Record dialog", backend));
         state.record_ready_state.set(crate::state::RecordReadyState::AwaitingConfirmation);
     }
@@ -782,9 +804,18 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
         return;
     }
 
+    // Debounce against rapid double-press (see `toggle_record` for why).
+    if state.mic_starting_recording.get_untracked() {
+        state.log_debug("info", "toggle_record_with_preroll: ignored — start already in flight");
+        return;
+    }
+    state.mic_starting_recording.set(true);
+
     // Must be listening to have a pre-roll buffer
     if !state.mic_listening.get_untracked() {
-        // Not listening — fall back to normal toggle_record
+        // Not listening — fall back to normal toggle_record. Clear our flag
+        // first so toggle_record's own debounce check doesn't bounce.
+        state.mic_starting_recording.set(false);
         toggle_record(state).await;
         return;
     }
@@ -817,6 +848,9 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
     if let Some(backend) = resolve_active_backend(state) {
         log::info!("Long-press record: capturing {} pre-roll samples (raw={}, gesture compensated)", preroll, raw_preroll);
         do_start_recording(state, backend).await;
+    } else {
+        // No backend to start with; do_start_recording won't run to clear the flag.
+        state.mic_starting_recording.set(false);
     }
 }
 
@@ -825,16 +859,24 @@ pub async fn confirm_record_start(state: &AppState) {
     state.record_ready_state.set(crate::state::RecordReadyState::None);
     if let Some(backend) = resolve_active_backend(state) {
         do_start_recording(state, backend).await;
+    } else {
+        // No backend resolvable; do_start_recording won't run to clear the flag.
+        state.mic_starting_recording.set(false);
     }
 }
 
 /// Called by the "Ready to record" dialog's Cancel button.
 pub fn cancel_record_start(state: &AppState) {
     state.record_ready_state.set(crate::state::RecordReadyState::None);
+    state.mic_starting_recording.set(false);
 }
 
 /// Stop both listening and recording, close mic.
 pub fn stop_all(state: &AppState) {
+    // Defensive: clear the start-debounce gate in case stop_all is called
+    // mid-acquisition (e.g. tab close, app teardown, error recovery).
+    state.mic_starting_recording.set(false);
+
     let backend = resolve_active_backend(state).or_else(|| {
         // Legacy: infer from what's open
         if ActiveBackend::RawUsb.is_open() {
