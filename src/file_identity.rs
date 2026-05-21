@@ -619,3 +619,119 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_layer1_only_carries_filename_and_size() {
+        let id = identity_layer1("rec.wav", 12345);
+        assert_eq!(id.filename, "rec.wav");
+        assert_eq!(id.file_size, 12345);
+        assert!(id.spot_hash_b3.is_none());
+        assert!(id.content_hash.is_none());
+        assert!(id.full_blake3.is_none());
+        assert!(id.full_sha256.is_none());
+        assert!(id.data_offset.is_none());
+        assert!(id.data_size.is_none());
+        assert!(id.file_path.is_none());
+    }
+
+    #[test]
+    fn audio_region_defaults_to_whole_file() {
+        assert_eq!(audio_region(1000, None, None), (0, 1000));
+    }
+
+    #[test]
+    fn audio_region_respects_explicit_offset_and_size() {
+        assert_eq!(audio_region(1000, Some(44), Some(800)), (44, 800));
+    }
+
+    #[test]
+    fn audio_region_derives_size_from_offset_when_size_unset() {
+        // file=1000, offset=44 → audio_len = 1000 - 44 = 956
+        assert_eq!(audio_region(1000, Some(44), None), (44, 956));
+    }
+
+    #[test]
+    fn audio_region_saturates_when_offset_exceeds_file() {
+        // Pathological case: offset larger than file_size should not underflow.
+        assert_eq!(audio_region(100, Some(200), None), (200, 0));
+    }
+
+    #[test]
+    fn spot_chunk_positions_empty_audio() {
+        assert!(spot_chunk_positions(0, 0).is_empty());
+    }
+
+    #[test]
+    fn spot_chunk_positions_small_audio_emits_one_chunk() {
+        // audio_len smaller than SPOT_CHUNK_SIZE → exactly one chunk covering it all.
+        let pos = spot_chunk_positions(0, 100_000);
+        assert_eq!(pos.len(), 1);
+        assert_eq!(pos[0], (0, 100_000));
+    }
+
+    #[test]
+    fn spot_chunk_positions_evenly_spaces_chunks() {
+        // 32 MB of audio → 16 chunks of 1 MB, evenly spaced.
+        let audio_len = 32 * SPOT_CHUNK_SIZE;
+        let pos = spot_chunk_positions(0, audio_len);
+        assert_eq!(pos.len(), NUM_SPOT_CHUNKS as usize);
+        let stride = audio_len / NUM_SPOT_CHUNKS;
+        for (i, &(start, len)) in pos.iter().enumerate() {
+            assert_eq!(start, i as u64 * stride);
+            assert_eq!(len, SPOT_CHUNK_SIZE);
+        }
+    }
+
+    #[test]
+    fn finalize_spot_hash_is_deterministic_and_order_sensitive() {
+        let h1 = blake3::hash(b"a");
+        let h2 = blake3::hash(b"b");
+
+        let ab = finalize_spot_hash(&[h1, h2]);
+        let ab_again = finalize_spot_hash(&[h1, h2]);
+        let ba = finalize_spot_hash(&[h2, h1]);
+
+        assert_eq!(ab, ab_again);
+        assert_ne!(ab, ba, "swapping chunk order must change the hash");
+        // BLAKE3 hex digest is 64 characters.
+        assert_eq!(ab.len(), 64);
+    }
+
+    #[test]
+    fn compute_spot_hash_b3_sync_matches_for_identical_bytes() {
+        // Two byte arrays with the same content should hash identically.
+        let mut bytes = vec![0u8; 4 * SPOT_CHUNK_SIZE as usize];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let h1 = compute_spot_hash_b3_sync(&bytes, None, None);
+        let h2 = compute_spot_hash_b3_sync(&bytes, None, None);
+        assert_eq!(h1, h2);
+
+        // Changing a byte inside the audio region must change the hash.
+        let mut tampered = bytes.clone();
+        tampered[100] ^= 0xff;
+        assert_ne!(h1, compute_spot_hash_b3_sync(&tampered, None, None));
+    }
+
+    #[test]
+    fn compute_spot_hash_b3_sync_skips_header_when_data_offset_provided() {
+        // Same audio region, different "header" bytes — hash should be unchanged.
+        let mut a = vec![0u8; 1000];
+        let mut b = vec![0u8; 1000];
+        for (i, byte) in a.iter_mut().enumerate() {
+            *byte = (i % 251) as u8;
+        }
+        b.copy_from_slice(&a);
+        // Vary the first 44 bytes (the "header"); audio starts at offset 44.
+        a[..44].fill(0xAA);
+        b[..44].fill(0x55);
+        let ha = compute_spot_hash_b3_sync(&a, Some(44), Some(956));
+        let hb = compute_spot_hash_b3_sync(&b, Some(44), Some(956));
+        assert_eq!(ha, hb, "header bytes must not affect spot hash");
+    }
+}

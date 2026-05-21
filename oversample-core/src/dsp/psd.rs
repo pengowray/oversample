@@ -395,3 +395,66 @@ fn find_bandwidth(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sine_wave(freq_hz: f64, sample_rate: u32, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                (2.0 * std::f64::consts::PI * freq_hz * (i as f64) / sample_rate as f64).sin()
+                    as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn peak_landed_on_pure_tone() {
+        let sr = 48_000u32;
+        let nfft = 4096;
+        let tone_hz = 4_000.0;
+        let samples = sine_wave(tone_hz, sr, sr as usize); // 1 second
+        let result = compute_psd(&samples, sr, nfft, None);
+
+        assert_eq!(result.power_db.len(), nfft / 2 + 1);
+        assert_eq!(result.sample_rate, sr);
+        assert_eq!(result.nfft, nfft);
+        assert!(result.frame_count > 0);
+        assert!(!result.peaks.is_empty(), "expected at least one detected peak");
+
+        // The strongest peak should be within one bin of the true tone frequency.
+        let top = &result.peaks[0];
+        let bin_hz = sr as f64 / nfft as f64;
+        assert!(
+            (top.freq_hz - tone_hz).abs() < bin_hz,
+            "expected peak near {tone_hz} Hz, got {} Hz (bin width {})",
+            top.freq_hz,
+            bin_hz,
+        );
+    }
+
+    #[test]
+    fn short_input_returns_empty_frames() {
+        // nfft larger than the input → no full frame, zero frames averaged.
+        let result = compute_psd(&[0.1f32; 64], 44_100, 1024, None);
+        assert_eq!(result.frame_count, 0);
+        // Every bin should be the -200 dB "no data" sentinel.
+        assert!(result.power_db.iter().all(|&db| db <= -199.0));
+    }
+
+    #[test]
+    fn peak_search_respects_freq_range() {
+        let sr = 48_000u32;
+        let nfft = 4096;
+        // Mix of 4 kHz and 12 kHz tones at equal amplitude.
+        let s4: Vec<f32> = sine_wave(4_000.0, sr, sr as usize);
+        let s12: Vec<f32> = sine_wave(12_000.0, sr, sr as usize);
+        let samples: Vec<f32> = s4.iter().zip(s12.iter()).map(|(a, b)| (a + b) * 0.5).collect();
+
+        // Restrict to 10-14 kHz — the 12 kHz tone should dominate the peak list.
+        let result = compute_psd(&samples, sr, nfft, Some((10_000.0, 14_000.0)));
+        let top = result.peaks.first().expect("peak in 10-14 kHz band");
+        assert!(top.freq_hz > 10_000.0 && top.freq_hz < 14_000.0);
+    }
+}

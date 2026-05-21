@@ -185,3 +185,57 @@ impl AgcProcessor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peak_abs(samples: &[f32]) -> f32 {
+        samples.iter().fold(0.0_f32, |a, &b| a.max(b.abs()))
+    }
+
+    #[test]
+    fn limiter_clamps_to_ceiling() {
+        // Default ceiling is -1 dBFS ≈ 0.891. Feed a clipping input; output must be bounded.
+        let mut samples = vec![5.0f32; 1024];
+        let mut agc = AgcProcessor::new(AgcConfig::default(), 44_100);
+        agc.process(&mut samples);
+        let ceiling = 10.0_f32.powf(AgcConfig::default().limiter_ceiling_db as f32 / 20.0);
+        assert!(
+            peak_abs(&samples) <= ceiling + 1e-6,
+            "AGC output peak {} exceeded ceiling {}",
+            peak_abs(&samples),
+            ceiling,
+        );
+    }
+
+    #[test]
+    fn boosts_quiet_signal_under_max_boost() {
+        // Quiet sine far above the gate (≈ -40 dBFS at 0.01 amplitude) — should be louder afterwards.
+        let sr = 44_100u32;
+        let amp = 0.01f32;
+        let mut samples: Vec<f32> = (0..sr as usize) // 1 s of audio
+            .map(|i| amp * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let before = peak_abs(&samples);
+        let mut agc = AgcProcessor::new(AgcConfig::default(), sr);
+        agc.process(&mut samples);
+        // Look at the back half after the envelope has converged.
+        let after = peak_abs(&samples[sr as usize / 2..]);
+        assert!(
+            after > before * 2.0,
+            "AGC should have boosted quiet signal: before={}, after={}",
+            before,
+            after,
+        );
+    }
+
+    #[test]
+    fn gate_does_not_boost_silence() {
+        // Pure silence — AGC should not amplify noise, output stays at zero.
+        let mut samples = vec![0.0f32; 4096];
+        let mut agc = AgcProcessor::new(AgcConfig::default(), 44_100);
+        agc.process(&mut samples);
+        assert_eq!(peak_abs(&samples), 0.0);
+    }
+}

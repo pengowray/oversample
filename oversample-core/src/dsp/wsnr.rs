@@ -866,3 +866,36 @@ fn linear_to_db(value: f32) -> f64 {
         20.0 * (value.abs() as f64).log10()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grade_thresholds_match_xc_v38j() {
+        // Thresholds are >49.5 / >34.5 / >19.5 / >4.5 (strict greater-than).
+        assert_eq!(WsnrGrade::from_snr(60.0), WsnrGrade::A);
+        assert_eq!(WsnrGrade::from_snr(49.51), WsnrGrade::A);
+        assert_eq!(WsnrGrade::from_snr(49.5), WsnrGrade::B); // boundary is exclusive
+        assert_eq!(WsnrGrade::from_snr(40.0), WsnrGrade::B);
+        assert_eq!(WsnrGrade::from_snr(25.0), WsnrGrade::C);
+        assert_eq!(WsnrGrade::from_snr(10.0), WsnrGrade::D);
+        assert_eq!(WsnrGrade::from_snr(0.0), WsnrGrade::E);
+        assert_eq!(WsnrGrade::from_snr(-10.0), WsnrGrade::E);
+    }
+
+    #[test]
+    fn grade_labels_round_trip() {
+        for (db, expected) in [(60.0, "A"), (40.0, "B"), (25.0, "C"), (10.0, "D"), (0.0, "E")] {
+            assert_eq!(WsnrGrade::from_snr(db).label(), expected);
+        }
+    }
+
+    #[test]
+    fn analyze_wsnr_too_short_recording_warns() {
+        // <0.6s of audio should land in the "too short" branch.
+        let samples = vec![0.0f32; 1000]; // ~0.023s at 44.1kHz
+        let result = analyze_wsnr(&samples, 44_100);
+        assert!(result.warnings.iter().any(|w| w.contains("Too short")));
+    }
+}

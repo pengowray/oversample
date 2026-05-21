@@ -583,3 +583,51 @@ pub fn is_expected_used(
         bit_pos >= (bits_per_sample - effective_bits) as usize
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float32_labels() {
+        // bit_index 0 maps to the MSB. For float32: 1 sign + 8 exponent + 23 mantissa.
+        assert_eq!(bit_label(0, 32, true), "S");
+        assert_eq!(bit_label(1, 32, true), "E7");
+        assert_eq!(bit_label(8, 32, true), "E0");
+        assert_eq!(bit_label(9, 32, true), "M22");
+        assert_eq!(bit_label(31, 32, true), "M0");
+    }
+
+    #[test]
+    fn int16_labels() {
+        // 16-bit signed: MSB is sign, the rest are the bit position number.
+        assert_eq!(bit_label(0, 16, false), "S");
+        assert_eq!(bit_label(1, 16, false), "14");
+        assert_eq!(bit_label(15, 16, false), "0");
+    }
+
+    #[test]
+    fn int24_labels() {
+        assert_eq!(bit_label(0, 24, false), "S");
+        assert_eq!(bit_label(23, 24, false), "0");
+    }
+
+    #[test]
+    fn analyze_bits_empty_input() {
+        let result = analyze_bits(&[], 16, false, 0.0);
+        assert_eq!(result.total_samples, 0);
+        assert_eq!(result.effective_bits, 0);
+        assert_eq!(result.noise_floor_db, -120.0);
+        assert!(result.warnings.iter().any(|w| w.contains("no audio")));
+    }
+
+    #[test]
+    fn analyze_bits_silent_input_has_low_noise_floor() {
+        // 1000 samples of perfect silence — noise floor should hit the floor sentinel.
+        let samples = vec![0.0f32; 1000];
+        let result = analyze_bits(&samples, 16, false, 0.0);
+        assert_eq!(result.total_samples, 1000);
+        // Pure silence: all RMS windows below -80 dBFS gap, no valid floor measured.
+        assert_eq!(result.noise_floor_db, -120.0);
+    }
+}
