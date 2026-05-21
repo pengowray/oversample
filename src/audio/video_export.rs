@@ -13,6 +13,7 @@ use crate::audio::export::{build_export_params, get_selected_regions, process_re
 use crate::audio::webcodecs_bindings as wc;
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, SpectDisplaySettings, TileSource};
 use crate::state::{AppState, AudioCodecOption, PlaybackMode, VideoCodec, VideoViewMode};
+use crate::web_util::{sleep_ms, yield_now};
 
 /// Frames per second for exported video.
 const FPS: f64 = 30.0;
@@ -33,10 +34,7 @@ struct RenderParams {
     time_res: f64,
     duration: f64,
     start_time: f64,
-    #[allow(dead_code)]
     end_time: f64,
-    #[allow(dead_code)]
-    sample_rate: u32,
     file_max_freq: f64,
     freq_crop_lo: f64,
     freq_crop_hi: f64,
@@ -80,12 +78,7 @@ pub fn start_export(state: &AppState) {
                 // Clear error after 10 seconds
                 let state2 = state;
                 leptos::task::spawn_local(async move {
-                    let promise = js_sys::Promise::new(&mut |resolve, _| {
-                        web_sys::window().unwrap()
-                            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10000)
-                            .unwrap();
-                    });
-                    wasm_bindgen_futures::JsFuture::from(promise).await.ok();
+                    sleep_ms(10_000).await;
                     if state2.video_export_status.get_untracked()
                         .as_ref()
                         .map(|s| s.starts_with("Export failed"))
@@ -217,7 +210,6 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         duration: file.audio.source.duration_secs(),
         start_time,
         end_time,
-        sample_rate,
         file_max_freq,
         freq_crop_lo,
         freq_crop_hi,
@@ -685,13 +677,3 @@ fn normalize_audio_rate(samples: &[f32], rate: u32) -> (Vec<f32>, u32) {
     (out, target_rate)
 }
 
-/// Yield to the browser event loop so the UI can update (setTimeout(0)).
-async fn yield_now() {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window()
-            .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0)
-            .unwrap();
-    });
-    wasm_bindgen_futures::JsFuture::from(promise).await.ok();
-}

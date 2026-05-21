@@ -1,7 +1,7 @@
 use leptos::prelude::*;
-use wasm_bindgen_futures::JsFuture;
 use web_sys::File;
 use std::sync::Arc;
+use crate::web_util::sleep_ms;
 use crate::audio::loader::{id3v2_tag_size, is_m4a, is_mp3, is_ogg, parse_flac_header, parse_m4a_chapters, parse_mp3_header, parse_ogg_header, parse_wav_header_with_file_size};
 use crate::audio::streaming_source::{FileHandle, StreamingFlacSource, StreamingM4aSource, StreamingMp3Source, StreamingOggSource, StreamingWavSource, read_blob_range};
 use crate::dsp::fft::compute_preview;
@@ -592,11 +592,7 @@ async fn background_flac_decode(
     source: Arc<StreamingFlacSource>,
 ) {
     // Initial delay — let the UI settle
-    let p = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window().unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
-    });
-    JsFuture::from(p).await.ok();
+    sleep_ms(200).await;
 
     while !source.is_fully_decoded() {
         // Check file still loaded
@@ -610,11 +606,7 @@ async fn background_flac_decode(
         let is_busy = state.is_playing.get_untracked()
             || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-            });
-            JsFuture::from(p).await.ok();
+            sleep_ms(500).await;
             continue;
         }
 
@@ -623,11 +615,7 @@ async fn background_flac_decode(
         source.prefetch_region(cursor, 262_144).await;
 
         // Yield to browser
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
-        });
-        JsFuture::from(p).await.ok();
+        sleep_ms(20).await;
     }
 
     log::info!("Background FLAC decode complete for {}", expected_name);
@@ -976,11 +964,7 @@ async fn background_mp3_decode(
     use crate::canvas::tile_cache::{self, TILE_COLS};
 
     // Initial delay — let the UI settle
-    let p = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window().unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
-    });
-    JsFuture::from(p).await.ok();
+    sleep_ms(200).await;
 
     let hop_size = 512usize;
     let tile_samples = TILE_COLS * hop_size;
@@ -998,11 +982,7 @@ async fn background_mp3_decode(
         let is_busy = state.is_playing.get_untracked()
             || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-            });
-            JsFuture::from(p).await.ok();
+            sleep_ms(500).await;
             continue;
         }
 
@@ -1024,11 +1004,7 @@ async fn background_mp3_decode(
         }
 
         // Yield to browser
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
-        });
-        JsFuture::from(p).await.ok();
+        sleep_ms(20).await;
     }
 
     log::info!("Background MP3 decode complete for {}", expected_name);
@@ -1362,11 +1338,7 @@ async fn background_ogg_decode(
     source: Arc<StreamingOggSource>,
 ) {
     // Initial delay — let the UI settle
-    let p = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window().unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
-    });
-    JsFuture::from(p).await.ok();
+    sleep_ms(200).await;
 
     while !source.is_fully_decoded() {
         // Check file still loaded
@@ -1380,11 +1352,7 @@ async fn background_ogg_decode(
         let is_busy = state.is_playing.get_untracked()
             || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-            });
-            JsFuture::from(p).await.ok();
+            sleep_ms(500).await;
             continue;
         }
 
@@ -1393,11 +1361,7 @@ async fn background_ogg_decode(
         source.prefetch_region(cursor, 262_144).await;
 
         // Yield to browser
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
-        });
-        JsFuture::from(p).await.ok();
+        sleep_ms(20).await;
     }
 
     log::info!("Background OGG decode complete for {}", expected_name);
@@ -1418,11 +1382,7 @@ pub(super) async fn build_streaming_overview(
     use crate::types::PreviewImage;
 
     // Initial delay — let the UI settle after loading
-    let p = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window().unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-    });
-    JsFuture::from(p).await.ok();
+    sleep_ms(500).await;
 
     let file = match state.files.get_untracked().get(file_index).cloned() {
         Some(f) if f.name == expected_name => f,
@@ -1470,11 +1430,7 @@ pub(super) async fn build_streaming_overview(
             || state.current_file_index.get_untracked() != Some(file_index);
         if is_busy {
             // Sleep 500ms and retry
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-            });
-            JsFuture::from(p).await.ok();
+            sleep_ms(500).await;
             continue;
         }
 
@@ -1507,11 +1463,7 @@ pub(super) async fn build_streaming_overview(
         col = batch_end;
 
         // Yield to browser between batches
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
-        });
-        JsFuture::from(p).await.ok();
+        sleep_ms(20).await;
     }
 
     if all_mags.is_empty() || global_max <= 0.0 { return; }
@@ -2001,11 +1953,7 @@ async fn background_m4a_decode(
     use crate::canvas::tile_cache::{self, TILE_COLS};
 
     // Initial delay.
-    let p = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window().unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 200).unwrap();
-    });
-    JsFuture::from(p).await.ok();
+    sleep_ms(200).await;
 
     let hop_size = 512usize;
     let tile_samples = TILE_COLS * hop_size;
@@ -2029,11 +1977,7 @@ async fn background_m4a_decode(
         let is_busy = state.is_playing.get_untracked()
             || state.loading_files.with_untracked(|v| !v.is_empty());
         if is_busy {
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                web_sys::window().unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500).unwrap();
-            });
-            JsFuture::from(p).await.ok();
+            sleep_ms(500).await;
             continue;
         }
 
@@ -2054,11 +1998,7 @@ async fn background_m4a_decode(
             }
         }
 
-        let p = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window().unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 20).unwrap();
-        });
-        JsFuture::from(p).await.ok();
+        sleep_ms(20).await;
     }
 
     log::info!("Background M4A decode complete for {}", expected_name);

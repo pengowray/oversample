@@ -31,6 +31,7 @@ use crate::components::display_filter_button::DspFilterRow;
 use crate::components::annotation_label_editor::AnnotationLabelEditor;
 use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::viewport;
+use crate::web_util::sleep_ms;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -130,24 +131,14 @@ pub fn App() -> impl IntoView {
     if state.is_tauri && state.mic_strategy.get_untracked() == MicStrategy::Ask {
         wasm_bindgen_futures::spawn_local(async move {
             // Wait 500ms for Tauri plugin system to initialize
-            let p = js_sys::Promise::new(&mut |resolve, _| {
-                if let Some(w) = web_sys::window() {
-                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
-                }
-            });
-            let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+            sleep_ms(500).await;
             // Check USB status without requesting permission
             microphone::check_usb_status(&state).await;
             microphone::query_mic_info(&state).await;
 
             // If no USB found on first try, retry after 2s (device may enumerate slowly)
             if !state.mic_usb_connected.get_untracked() {
-                let p = js_sys::Promise::new(&mut |resolve, _| {
-                    if let Some(w) = web_sys::window() {
-                        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 2000);
-                    }
-                });
-                let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                sleep_ms(2000).await;
                 microphone::check_usb_status(&state).await;
                 microphone::query_mic_info(&state).await;
             }
@@ -161,12 +152,7 @@ pub fn App() -> impl IntoView {
             let mut was_connected = false;
             loop {
                 // Sleep 3 seconds
-                let p = js_sys::Promise::new(&mut |resolve, _| {
-                    if let Some(w) = web_sys::window() {
-                        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 3000);
-                    }
-                });
-                let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                sleep_ms(3000).await;
 
                 // Skip polling when mic is active (recording/listening)
                 if state.mic_listening.get_untracked() || state.mic_recording.get_untracked() {
@@ -194,12 +180,7 @@ pub fn App() -> impl IntoView {
                 if let Some(event) = last_event {
                     if event == "attached" && !was_connected {
                         // Wait 500ms for USB device to fully enumerate
-                        let p = js_sys::Promise::new(&mut |resolve, _| {
-                            if let Some(w) = web_sys::window() {
-                                let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
-                            }
-                        });
-                        let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                        sleep_ms(500).await;
                         microphone::check_usb_status(&state).await;
                         microphone::query_mic_info(&state).await;
                     } else if event == "detached" && was_connected {

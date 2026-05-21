@@ -28,5 +28,12 @@ CLAUDE.md
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
+# Playwright / Node
+/node_modules/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+
 # other
 .env

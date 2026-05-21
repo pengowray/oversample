@@ -15,6 +15,7 @@ pub mod project;
 pub mod project_store;
 pub mod timeline;
 pub mod viewport;
+pub mod web_util;
 
 use leptos::prelude::*;
 use components::app::App;

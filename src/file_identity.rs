@@ -3,6 +3,7 @@ use sha2::{Sha256, Digest};
 use leptos::prelude::{Update, WithUntracked};
 use crate::annotations::FileIdentity;
 use crate::state::AppState;
+use crate::web_util::yield_now;
 
 /// Size of each chunk for the multi-point spot hash (1 MB).
 const SPOT_CHUNK_SIZE: u64 = 1_048_576;
@@ -236,17 +237,6 @@ pub fn reader_from_handle(handle: &crate::audio::streaming_source::FileHandle) -
             Box::new(TauriRangeReader { path: path.clone() })
         }
     }
-}
-
-/// Yield to the browser event loop (setTimeout(0)).
-async fn yield_now() {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        web_sys::window()
-            .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0)
-            .unwrap();
-    });
-    wasm_bindgen_futures::JsFuture::from(promise).await.ok();
 }
 
 /// Threshold: files below this size verify via full blake3; above via spot_hash_b3.

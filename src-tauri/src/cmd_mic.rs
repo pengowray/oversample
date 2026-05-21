@@ -7,7 +7,6 @@ use tauri::Manager;
 /// Get the human-readable cpal audio host name for the current platform.
 /// Returns names like "Oboe", "WASAPI", "ASIO", "CoreAudio", "ALSA", "JACK".
 fn cpal_host_name() -> String {
-    use cpal::traits::HostTrait;
     let raw = format!("{:?}", cpal::default_host().id());
     // Normalize common host names to match GUANO conventions
     match raw.as_str() {

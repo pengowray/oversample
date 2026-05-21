@@ -12,7 +12,7 @@
 //! If a region is not cached, `read_samples()` returns silence for those frames.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::audio::loader::{FlacHeader, WavHeader};
@@ -60,8 +60,11 @@ impl CachedChunk {
 pub(crate) struct ChunkCache {
     /// Decoded chunks keyed by chunk index (frame / CHUNK_FRAMES).
     chunks: HashMap<u64, CachedChunk>,
-    /// LRU order: most recently used at the back.
-    lru: Vec<u64>,
+    /// LRU order: least recently used at the front, most recent at the back.
+    /// `VecDeque` keeps eviction (`pop_front`) O(1); the bounded budget means
+    /// the deque never grows large enough to make the linear `iter().position`
+    /// touch-promotion meaningfully slow.
+    lru: VecDeque<u64>,
     /// Current total memory usage in bytes.
     total_bytes: usize,
 }
@@ -70,7 +73,7 @@ impl ChunkCache {
     pub(crate) fn new() -> Self {
         Self {
             chunks: HashMap::new(),
-            lru: Vec::new(),
+            lru: VecDeque::new(),
             total_bytes: 0,
         }
     }
@@ -80,7 +83,7 @@ impl ChunkCache {
         if let Some(pos) = self.lru.iter().position(|&k| k == chunk_idx) {
             self.lru.remove(pos);
         }
-        self.lru.push(chunk_idx);
+        self.lru.push_back(chunk_idx);
     }
 
     /// Get a cached chunk, updating LRU order.
@@ -106,8 +109,8 @@ impl ChunkCache {
         }
 
         // Evict until we have room
-        while self.total_bytes + size > CACHE_MAX_BYTES && !self.lru.is_empty() {
-            let oldest = self.lru.remove(0);
+        while self.total_bytes + size > CACHE_MAX_BYTES {
+            let Some(oldest) = self.lru.pop_front() else { break; };
             if let Some(removed) = self.chunks.remove(&oldest) {
                 self.total_bytes -= removed.byte_size();
             }
@@ -115,7 +118,7 @@ impl ChunkCache {
 
         self.total_bytes += size;
         self.chunks.insert(chunk_idx, chunk);
-        self.lru.push(chunk_idx);
+        self.lru.push_back(chunk_idx);
     }
 
     /// Update LRU position for a cached chunk (mark as recently used).

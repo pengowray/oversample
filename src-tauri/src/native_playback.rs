@@ -37,7 +37,9 @@ pub struct PlaybackStatus {
 }
 
 /// Wraps cpal::Stream to be Send (cpal::Stream is Send on desktop platforms).
-struct SendStream(cpal::Stream);
+/// The inner stream is only kept alive for its RAII drop side-effect (it stops
+/// playback when dropped); it is never read directly.
+struct SendStream(#[allow(dead_code)] cpal::Stream);
 unsafe impl Send for SendStream {}
 
 #[allow(dead_code)]
