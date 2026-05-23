@@ -1626,12 +1626,33 @@ body.sidebar-resizing {
     list-style: none;
 }
 
-/* Empty hint shown above the action footer when no files are loaded. */
-.files-empty-hint {
-    padding: 24px 16px 12px;
+/* Empty state shown above the action footer when no files are loaded:
+   faded bat logo, headline, and a short hint. */
+.files-empty-state {
+    padding: 28px 16px 16px;
     text-align: center;
-    color: #666;
-    font-style: italic;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.files-empty-logo {
+    width: 96px;
+    height: 96px;
+    display: block;
+    margin: 0 auto 12px auto;
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+.files-empty-title {
+    color: #ddd;
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.files-empty-sub {
+    color: #888;
     font-size: 13px;
 }
 

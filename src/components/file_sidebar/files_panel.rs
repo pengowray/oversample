@@ -623,11 +623,18 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     }).collect::<Vec<_>>();
                                 (!orphan_items.is_empty()).then(|| view! { <div>{orphan_items}</div> })
                             }
-                            // Drop hint — only when no files (and not mobile, where
-                            // drag-and-drop isn't really a thing).
-                            {(no_files && !state.is_mobile.get_untracked()).then(|| view! {
-                                <div class="files-empty-hint">
-                                    "Drop audio files here, or use the actions below."
+                            // Empty state — faded bat + headline + hint when
+                            // the file list (and any in-flight loads) are
+                            // empty. Action buttons below give the user
+                            // somewhere to go on both desktop and mobile.
+                            {no_files.then(|| view! {
+                                <div class="files-empty-state">
+                                    <img class="files-empty-logo"
+                                         src="about-icon.png"
+                                         alt=""
+                                         aria-hidden="true"/>
+                                    <div class="files-empty-title">"No recordings open"</div>
+                                    <div class="files-empty-sub">"Plug in a mic or drop a .wav"</div>
                                 </div>
                             })}
                             // ── Mic detected chip ──
