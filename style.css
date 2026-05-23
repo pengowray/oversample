@@ -3458,6 +3458,75 @@ body.sidebar-resizing {
     }
 }
 
+/* ── Touch-friendly mode menus ─────────────────────────────────────────────
+ * On touch devices (coarse pointer) and narrow viewports, the layer-panel
+ * popups (Mode, Listen, Gain, etc.) need larger tap targets. Defaults are
+ * tuned for mouse precision — too small for fingers in the field.
+ *
+ * Apple HIG recommends 44pt minimum; Material 48dp. We aim ~40px height on
+ * options, ~32px on small inline preset/auto-toggle controls, since the
+ * popups themselves have limited vertical space on phones.
+ */
+@media (pointer: coarse), (max-width: 640px) {
+    /* Wider gap between rows so fingers don't fat-finger neighbors. */
+    .layer-panel {
+        padding: 10px 6px;
+    }
+    .layer-panel hr {
+        margin: 8px 0;
+    }
+    .layer-panel-opt {
+        padding: 10px 12px;
+        font-size: 14px;
+        min-height: 40px;
+        box-sizing: border-box;
+    }
+    .layer-panel-title {
+        font-size: 12px;
+        padding: 4px 10px;
+    }
+    .layer-panel-slider-row {
+        padding: 6px 10px 6px 12px;
+        gap: 8px;
+        min-height: 40px;
+    }
+    .layer-panel-slider-row label {
+        font-size: 13px;
+        min-width: 70px;
+    }
+    .layer-panel-slider-row span {
+        font-size: 13px;
+        min-width: 52px;
+    }
+    .layer-panel-slider-row input[type="range"] {
+        height: 28px; /* taller hit zone for the thumb */
+    }
+    /* Carriers row, factor preset row, etc. — small inline buttons. */
+    .factor-preset {
+        font-size: 13px;
+        padding: 8px 6px;
+        min-height: 32px;
+        min-width: 32px;
+    }
+    .factor-presets {
+        gap: 4px;
+        padding: 4px 10px 6px 12px;
+    }
+    .auto-toggle {
+        width: 32px;
+        height: 32px;
+        font-size: 13px;
+        margin-left: 6px;
+    }
+    .factor-input {
+        font-size: 13px;
+        padding: 6px 6px;
+        min-height: 32px;
+        width: 44px;
+        min-width: 44px;
+    }
+}
+
 /* Popups positioned above multi-row toolbar on mobile */
 /* Panel uses JS-computed bottom via toolbar height; fallback to safe estimate */
 .bottom-toolbar.mobile .layer-panel {

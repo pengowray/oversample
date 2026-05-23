@@ -101,8 +101,24 @@ pub fn ListenButton() -> impl IntoView {
             panel_align="right"
             panel_style="min-width: 220px;"
         >
+            // ── Listen output (speaker on / warm-up mute) ──
+            // Affects live monitoring only — the spectrogram keeps updating
+            // either way. Useful for noise-floor learning before unmuting.
+            <div class="layer-panel-title">"Listen output"</div>
+            <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
+                <button class=move || layer_opt_class(!state.mic_mute_output.get())
+                    on:click=move |_| state.mic_mute_output.set(false)
+                    title="Play processed audio through speakers"
+                >"On"</button>
+                <button class=move || layer_opt_class(state.mic_mute_output.get())
+                    on:click=move |_| state.mic_mute_output.set(true)
+                    title="Mute speaker output (mic warm-up). Spectrogram still updates."
+                >"Mute (warm-up)"</button>
+            </div>
+
             // ── Buffer size (PS/PV only) ──
             <Show when=move || matches!(state.playback_mode.get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
+                <hr />
                 <div class="layer-panel-title">"PS/PV Buffer"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                     <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
@@ -130,7 +146,7 @@ pub fn ListenButton() -> impl IntoView {
 
             <hr />
             <div class="layer-panel-hint" style="padding: 4px 8px; font-size: 11px; opacity: 0.65;">
-                "Mode, output mute, frequency range, and bandpass live in the HFR / Mode buttons."
+                "Mode, frequency range, and bandpass live in the HFR / Mode buttons."
             </div>
         </ComboButton>
     }

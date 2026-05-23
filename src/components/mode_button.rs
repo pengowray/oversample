@@ -168,6 +168,9 @@ pub fn ModeButton() -> impl IntoView {
     Effect::new(move || {
         let band_ff_lo = state.band_ff_freq_lo.get();
         let band_ff_hi = state.band_ff_freq_hi.get();
+        // Subscribe to het_cutoff so comb-auto recomputes when the LP cutoff
+        // changes — the carrier count depends on cutoff via spacing = 2× cutoff.
+        let _het_cutoff_track = state.het_cutoff.get();
 
         if band_ff_hi <= band_ff_lo {
             return;
@@ -181,6 +184,16 @@ pub fn ModeButton() -> impl IntoView {
         }
         if state.het_cutoff_auto.get_untracked() {
             state.het_cutoff.set((band_ff_bandwidth / 2.0).min(15_000.0));
+        }
+
+        // Comb-auto: fit count to band / (2 × cutoff) and snap spacing to 2× cutoff
+        // so adjacent carriers' LP bands touch without overlap (seamless coverage).
+        if state.het_comb_auto.get_untracked() {
+            let cutoff = state.het_cutoff.get_untracked().max(1_000.0);
+            let spacing = (cutoff * 2.0).max(5_000.0);
+            let count = ((band_ff_bandwidth / spacing).ceil() as u32).clamp(1, 5);
+            state.het_comb_spacing.set(spacing);
+            state.het_comb_count.set(count);
         }
 
         if state.te_factor_auto.get_untracked() {
@@ -476,6 +489,23 @@ pub fn ModeButton() -> impl IntoView {
                 panel_align="left"
                 panel_style="min-width: 210px;"
             >
+                // ── Listening-muted notice ──
+                // When live listening is active but the output is muted (warm-up),
+                // surface it here with a one-tap unmute, since the speaker-mute
+                // toggle has moved to the Listen overflow menu (the "…" on Mic).
+                <Show when=move || state.mic_listening.get() && state.mic_mute_output.get()>
+                    <div style="padding: 6px 8px; background: rgba(255, 200, 0, 0.12); border: 1px solid rgba(255, 200, 0, 0.5); border-radius: 4px; margin: 0 4px 6px;">
+                        <div style="font-size: 11px; color: #ffcc00; line-height: 1.3; margin-bottom: 4px;">
+                            "Listening output is muted (warm-up). Spectrogram still updates."
+                        </div>
+                        <button class="layer-panel-opt"
+                            style="width: 100%;"
+                            on:click=move |_| state.mic_mute_output.set(false)
+                            title="Unmute speaker output"
+                        >"Unmute"</button>
+                    </div>
+                </Show>
+
                 // ── OFF option ──
                 <button class=move || layer_opt_class(!state.hfr_enabled.get())
                     on:click=move |_: web_sys::MouseEvent| {
@@ -523,23 +553,8 @@ pub fn ModeButton() -> impl IntoView {
                         let mode = state.playback_mode.get();
                         match mode {
                             PlaybackMode::Heterodyne => view! {
-                                <div class="layer-panel-slider-row het-text-row"
-                                    on:mouseenter=move |_| {
-                                        state.het_interacting.set(true);
-                                        state.spec_hover_handle.set(Some(SpectrogramHandle::HetCenter));
-                                    }
-                                    on:mouseleave=move |_| {
-                                        state.het_interacting.set(false);
-                                        state.spec_hover_handle.set(None);
-                                    }
-                                >
-                                    <label>"Freq"</label>
-                                    <span class="het-value">{move || format!("{:.1} kHz", state.het_frequency.get() / 1000.0)}</span>
-                                    <button class=move || if state.het_freq_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.het_freq_auto.update(|v| *v = !*v)
-                                        title="Toggle auto HET frequency"
-                                    >"A"</button>
-                                </div>
+                                // Het center frequency tracks the FF center (Effect B above).
+                                // Drag the cyan center line on the spectrogram to override.
                                 <div class="layer-panel-slider-row het-text-row"
                                     on:mouseenter=move |_| {
                                         state.het_interacting.set(true);
@@ -550,7 +565,7 @@ pub fn ModeButton() -> impl IntoView {
                                         state.spec_hover_handle.set(None);
                                     }
                                 >
-                                    <label>"LP cutoff"</label>
+                                    <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>
                                     <span class="het-value">{move || format!("{:.1} kHz", state.het_cutoff.get() / 1000.0)}</span>
                                     <button class=move || if state.het_cutoff_auto.get() { "auto-toggle on" } else { "auto-toggle" }
                                         on:click=move |_| state.het_cutoff_auto.update(|v| *v = !*v)
@@ -561,12 +576,22 @@ pub fn ModeButton() -> impl IntoView {
                                 // Carrier count: 1 = classic single-carrier, >1 = comb
                                 // (multiple carriers centered on Freq, summed). Useful for
                                 // surveying a wide ultrasonic range without retuning.
+                                // "A" auto sizes count + spacing to tile the FF band seamlessly.
                                 <div class="layer-panel-slider-row">
-                                    <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range">"Carriers"</label>
+                                    <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range. \"A\" fits as many as needed to cover the focus range.">"Carriers"</label>
                                     {(1u32..=5).map(|n| {
                                         view! {
-                                            <button class=move || if state.het_comb_count.get() == n { "factor-preset sel" } else { "factor-preset" }
-                                                on:click=move |_| state.het_comb_count.set(n)
+                                            <button class=move || {
+                                                let auto = state.het_comb_auto.get();
+                                                let sel = !auto && state.het_comb_count.get() == n;
+                                                if sel { "factor-preset sel" }
+                                                else if auto && state.het_comb_count.get() == n { "factor-preset auto-derived" }
+                                                else { "factor-preset" }
+                                            }
+                                                on:click=move |_| {
+                                                    state.het_comb_auto.set(false);
+                                                    state.het_comb_count.set(n);
+                                                }
                                                 title=match n {
                                                     1 => "1 carrier (single heterodyne)",
                                                     _ => "Comb mode — broader range, slightly muddier",
@@ -574,6 +599,10 @@ pub fn ModeButton() -> impl IntoView {
                                             >{n.to_string()}</button>
                                         }
                                     }).collect::<Vec<_>>()}
+                                    <button class=move || if state.het_comb_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                        on:click=move |_| state.het_comb_auto.update(|v| *v = !*v)
+                                        title="Auto-fit carrier count + spacing to the focus range"
+                                    >"A"</button>
                                 </div>
                                 <Show when=move || { state.het_comb_count.get() > 1 }>
                                     <div class="layer-panel-slider-row het-text-row">
@@ -583,6 +612,8 @@ pub fn ModeButton() -> impl IntoView {
                                             prop:value=move || (state.het_comb_spacing.get() / 1000.0).round().to_string()
                                             on:input=move |ev| {
                                                 let v: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(30.0);
+                                                // Manual spacing edit disengages comb-auto.
+                                                state.het_comb_auto.set(false);
                                                 state.het_comb_spacing.set(v * 1000.0);
                                             }
                                             on:dblclick=move |_| {
@@ -786,21 +817,6 @@ pub fn ModeButton() -> impl IntoView {
                     }}
                 </Show>
 
-                // ── Listen output (mic warm-up mute) ──
-                // At the bottom of the menu — it affects audio output as a
-                // whole, but isn't a mode pick, so it sits below the picker.
-                <hr />
-                <div class="layer-panel-title">"Listen output"</div>
-                <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                    <button class=move || layer_opt_class(!state.mic_mute_output.get())
-                        on:click=move |_| state.mic_mute_output.set(false)
-                        title="Play processed audio through speakers"
-                    >"On"</button>
-                    <button class=move || layer_opt_class(state.mic_mute_output.get())
-                        on:click=move |_| state.mic_mute_output.set(true)
-                        title="Mute speaker output (mic warm-up). Spectrogram still updates."
-                    >"Mute (warm-up)"</button>
-                </div>
             </ComboButton>
     }
 }

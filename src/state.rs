@@ -1175,6 +1175,10 @@ pub struct AppState {
     /// Spacing (Hz) between adjacent comb carriers. Roughly 2× `het_cutoff`
     /// gives near-seamless coverage with minimal image overlap.
     pub het_comb_spacing: RwSignal<f64>,
+    /// When true, `het_comb_count` and `het_comb_spacing` are derived from
+    /// the BandFF width and the LP cutoff so the carriers tile the focus
+    /// range with seamless coverage.
+    pub het_comb_auto: RwSignal<bool>,
     pub sidebar_collapsed: RwSignal<bool>,
     pub sidebar_width: RwSignal<f64>,
     // Gain
@@ -1772,6 +1776,8 @@ impl AppState {
             // Default spacing ~ 2× cutoff so initial comb mode covers cleanly.
             het_comb_count: RwSignal::new(1),
             het_comb_spacing: RwSignal::new(30_000.0),
+            // Off by default — opt-in via the "A" toggle in the Carriers row.
+            het_comb_auto: RwSignal::new(false),
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),

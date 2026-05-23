@@ -171,6 +171,8 @@ pub fn Spectrogram() -> impl IntoView {
         let dragging = state.is_dragging.get();
         let het_freq = state.het_frequency.get();
         let het_cutoff = state.het_cutoff.get();
+        let het_comb_count = state.het_comb_count.get();
+        let het_comb_spacing = state.het_comb_spacing.get();
         let te_factor = state.te_factor.get();
         let ps_factor = state.ps_factor.get();
         let pv_factor = state.pv_factor.get();
@@ -938,6 +940,8 @@ pub fn Spectrogram() -> impl IntoView {
                     &ctx,
                     het_freq,
                     het_cutoff,
+                    het_comb_count,
+                    het_comb_spacing,
                     min_freq,
                     max_freq,
                     display_h as f64,

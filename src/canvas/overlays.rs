@@ -664,10 +664,14 @@ pub fn draw_band_ff_overlay(
 }
 
 /// Draw the heterodyne frequency overlay: cyan center + band edge lines (no dimming — BandFF handles that).
+/// When `comb_count > 1`, secondary carriers (everything except `het_freq` itself)
+/// are drawn as thinner dim lines at `het_freq ± k·spacing`.
 pub fn draw_het_overlay(
     ctx: &CanvasRenderingContext2d,
     het_freq: f64,
     het_cutoff: f64,
+    comb_count: u32,
+    comb_spacing: f64,
     min_freq: f64,
     max_freq: f64,
     canvas_height: f64,
@@ -683,6 +687,64 @@ pub fn draw_het_overlay(
     let y_center = freq_to_y(het_freq, min_freq, max_freq, canvas_height);
     let y_band_top = freq_to_y(band_high, min_freq, max_freq, canvas_height);
     let y_band_bottom = freq_to_y(band_low, min_freq, max_freq, canvas_height);
+
+    // ── Secondary carriers (comb mode) ──
+    // Drawn first so the primary carrier renders on top. Each gets a dim
+    // center line + faint LP-cutoff edges so the user can see what's covered.
+    if comb_count > 1 && comb_spacing > 0.0 {
+        let n = comb_count as i32;
+        let start = -(n - 1) as f64 / 2.0;
+        for i in 0..n {
+            let offset = (start + i as f64) * comb_spacing;
+            if offset.abs() < 0.5 {
+                // This is the primary carrier — drawn below.
+                continue;
+            }
+            let carrier_freq = het_freq + offset;
+            if carrier_freq < min_freq || carrier_freq > max_freq {
+                // Still draw the line if it's within range; skip if fully outside.
+                continue;
+            }
+            let y = freq_to_y(carrier_freq, min_freq, max_freq, canvas_height);
+            let y_top = freq_to_y(
+                (carrier_freq + cutoff).min(max_freq),
+                min_freq, max_freq, canvas_height,
+            );
+            let y_bot = freq_to_y(
+                (carrier_freq - cutoff).max(min_freq),
+                min_freq, max_freq, canvas_height,
+            );
+
+            // LP cutoff edges around this secondary carrier
+            ctx.set_stroke_style_str("rgba(0, 200, 255, 0.18)");
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(0.0, y_top);
+            ctx.line_to(canvas_width, y_top);
+            ctx.move_to(0.0, y_bot);
+            ctx.line_to(canvas_width, y_bot);
+            ctx.stroke();
+
+            // Center line for secondary carrier (dashed, dim)
+            ctx.set_stroke_style_str("rgba(0, 230, 255, 0.45)");
+            ctx.set_line_width(1.0);
+            let _ = ctx.set_line_dash(&js_sys::Array::of2(
+                &wasm_bindgen::JsValue::from_f64(4.0),
+                &wasm_bindgen::JsValue::from_f64(4.0),
+            ));
+            ctx.begin_path();
+            ctx.move_to(0.0, y);
+            ctx.line_to(canvas_width, y);
+            ctx.stroke();
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+            // Small label so the user knows what frequency this is
+            ctx.set_fill_style_str("rgba(0, 230, 255, 0.55)");
+            ctx.set_font("10px sans-serif");
+            let label = format!("{:.0}", carrier_freq / 1000.0);
+            let _ = ctx.fill_text(&label, canvas_width - 32.0, y - 3.0);
+        }
+    }
 
     // Opacity multiplier: lower when non-interactive (auto mode without hover)
     let op = if interactive { 1.0 } else { 0.5 };
