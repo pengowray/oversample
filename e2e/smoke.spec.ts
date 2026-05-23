@@ -120,6 +120,44 @@ test.describe("Oversample web smoke", () => {
     failOnFatal(errors);
   });
 
+  test("loading a demo bat + clicking HFR does not hang", async ({ page }) => {
+    // Regression guard for the HFR-click freeze where Effect B subscribed to
+    // het_cutoff while also writing it, looping until the page locked up.
+    test.setTimeout(60_000);
+    const errors = attachErrorRecorder(page);
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+
+    // Open the demo picker, then load a random bat.
+    const loadDemo = page.locator("button.add-files-btn", { hasText: "Load demo" });
+    await expect(loadDemo).toBeVisible({ timeout: 15_000 });
+    await loadDemo.click();
+    const randomBat = page.locator(".demo-random-bat").first();
+    await expect(randomBat).toBeVisible({ timeout: 10_000 });
+    await randomBat.click();
+
+    // Spectrogram should mount after decode (canvas inside the container).
+    await expect(page.locator(".spectrogram-container").first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // The HFR combo's left half shows literal "HFR" in its .layer-btn-value.
+    const hfr = page
+      .locator("button .layer-btn-value", { hasText: /^HFR$/ })
+      .first();
+    await expect(hfr).toBeVisible({ timeout: 5_000 });
+    await hfr.click();
+
+    // Probe page responsiveness: a hung WASM event loop would block
+    // waitForFunction's polling. The explicit timeout fails the test rather
+    // than hanging the runner forever.
+    await page.waitForFunction(() => Date.now() > 0, undefined, {
+      timeout: 5_000,
+    });
+
+    failOnFatal(errors);
+  });
+
   test("debug-build banner is absent in release build", async ({ page }) => {
     // The dev-helper banner only renders when cfg!(debug_assertions); the
     // webServer in playwright.config.ts launches trunk with --release, so this
