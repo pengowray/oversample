@@ -168,9 +168,6 @@ pub fn ModeButton() -> impl IntoView {
     Effect::new(move || {
         let band_ff_lo = state.band_ff_freq_lo.get();
         let band_ff_hi = state.band_ff_freq_hi.get();
-        // Subscribe to het_cutoff so comb-auto recomputes when the LP cutoff
-        // changes — the carrier count depends on cutoff via spacing = 2× cutoff.
-        let _het_cutoff_track = state.het_cutoff.get();
 
         if band_ff_hi <= band_ff_lo {
             return;
@@ -186,16 +183,6 @@ pub fn ModeButton() -> impl IntoView {
             state.het_cutoff.set((band_ff_bandwidth / 2.0).min(15_000.0));
         }
 
-        // Comb-auto: fit count to band / (2 × cutoff) and snap spacing to 2× cutoff
-        // so adjacent carriers' LP bands touch without overlap (seamless coverage).
-        if state.het_comb_auto.get_untracked() {
-            let cutoff = state.het_cutoff.get_untracked().max(1_000.0);
-            let spacing = (cutoff * 2.0).max(5_000.0);
-            let count = ((band_ff_bandwidth / spacing).ceil() as u32).clamp(1, 5);
-            state.het_comb_spacing.set(spacing);
-            state.het_comb_count.set(count);
-        }
-
         if state.te_factor_auto.get_untracked() {
             let te = smart_auto_factor(band_ff_lo, band_ff_hi, 40.0);
             state.te_factor.set(te);
@@ -207,6 +194,33 @@ pub fn ModeButton() -> impl IntoView {
         if state.pv_factor_auto.get_untracked() {
             let pv = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
             state.pv_factor.set(pv);
+        }
+    });
+
+    // ── Effect B2: Comb-auto recompute ──
+    // Lives in its own Effect (rather than B) so the subscription to het_cutoff
+    // doesn't form a feedback loop with B's own writes to het_cutoff.
+    // Writes only to het_comb_spacing + het_comb_count.
+    Effect::new(move || {
+        if !state.het_comb_auto.get() {
+            return;
+        }
+        let band_ff_lo = state.band_ff_freq_lo.get();
+        let band_ff_hi = state.band_ff_freq_hi.get();
+        let cutoff = state.het_cutoff.get();
+
+        if band_ff_hi <= band_ff_lo {
+            return;
+        }
+        let band_ff_bandwidth = band_ff_hi - band_ff_lo;
+        let cutoff = cutoff.max(1_000.0);
+        let spacing = (cutoff * 2.0).max(5_000.0);
+        let count = ((band_ff_bandwidth / spacing).ceil() as u32).clamp(1, 5);
+        if (state.het_comb_spacing.get_untracked() - spacing).abs() > 0.5 {
+            state.het_comb_spacing.set(spacing);
+        }
+        if state.het_comb_count.get_untracked() != count {
+            state.het_comb_count.set(count);
         }
     });
 

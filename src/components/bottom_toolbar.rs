@@ -543,15 +543,22 @@ pub fn BottomToolbar() -> impl IntoView {
                             "mic-led idle"
                         }
                     });
-                    let mic_class = Signal::derive(move || {
+                    let mic_left_class = Signal::derive(move || {
                         if state.mic_strategy.get() == MicStrategy::None {
-                            "layer-btn mic-select-btn mic-off"
-                        } else if mic_is_open.get() {
-                            "layer-btn mic-select-btn open"
+                            "layer-btn combo-btn-left mic-select-btn mic-off"
                         } else if state.mic_listening.get() || state.mic_recording.get() {
-                            "layer-btn mic-select-btn active"
+                            "layer-btn combo-btn-left mic-select-btn active"
                         } else {
-                            "layer-btn mic-select-btn"
+                            "layer-btn combo-btn-left mic-select-btn"
+                        }
+                    });
+                    let mic_right_class = Signal::derive(move || {
+                        if mic_is_open.get() {
+                            "layer-btn combo-btn-right mic-options-btn open"
+                        } else if state.mic_listening.get() || state.mic_recording.get() {
+                            "layer-btn combo-btn-right mic-options-btn active"
+                        } else {
+                            "layer-btn combo-btn-right mic-options-btn"
                         }
                     });
                     let mic_value = Signal::derive(move || {
@@ -576,22 +583,39 @@ pub fn BottomToolbar() -> impl IntoView {
                             "Choose a microphone and capture settings.".to_string()
                         }
                     });
+                    // Combo layout:
+                    //   Left half  = the mic identity chip (icon + LED + name).
+                    //                Click opens the full chooser modal so the
+                    //                user can pick a specific device.
+                    //   Right half = caret. Click toggles the options popup
+                    //                (strategy + capture format).
                     view! {
-                        <div style="position:relative">
+                        <div class=move || if mic_is_open.get() { "combo-btn-row mic-combo-row open" } else { "combo-btn-row mic-combo-row" } style="position:relative">
                             <button
-                                class=move || mic_class.get()
+                                class=move || mic_left_class.get()
                                 title=move || mic_title.get()
+                                on:click=move |ev: web_sys::MouseEvent| {
+                                    ev.stop_propagation();
+                                    // Close the options popup if it happens to be open,
+                                    // then surface the chooser modal.
+                                    state.layer_panel_open.set(None);
+                                    state.mic_pending_action.set(None);
+                                    state.show_mic_chooser.set(true);
+                                }
+                            >
+                                <span class="mic-icon" aria-hidden="true">{"\u{1F3A4}"}</span>
+                                <span class=move || led_class.get() aria-hidden="true"></span>
+                                <span class="layer-btn-value">{move || mic_value.get()}</span>
+                            </button>
+                            <button
+                                class=move || mic_right_class.get()
+                                title="Microphone options (strategy, capture format)"
                                 on:click=move |ev: web_sys::MouseEvent| {
                                     ev.stop_propagation();
                                     toggle_panel(&state, LayerPanel::Mic);
                                 }
                             >
-                                <span class="mic-icon" aria-hidden="true">{"\u{1F3A4}"}</span>
-                                <span class=move || led_class.get() aria-hidden="true"></span>
-                                <span class="layer-btn-value">
-                                    {move || mic_value.get()}
-                                    <span class="mic-chevron">{"\u{25BE}"}</span>
-                                </span>
+                                <span class="combo-btn-arrow">{"\u{25E2}"}</span>
                             </button>
                             <Show when=move || mic_is_open.get()>
                                 <div class="layer-panel" style="bottom: calc(100% + 4px); left: 0; min-width: 260px;">
@@ -662,13 +686,6 @@ pub fn BottomToolbar() -> impl IntoView {
                                                     }.into_any()
                                                 }
                                             }}
-                                            <button class="layer-panel-opt"
-                                                on:click=move |_| {
-                                                    state.mic_pending_action.set(None);
-                                                    state.show_mic_chooser.set(true);
-                                                    state.layer_panel_open.set(None);
-                                                }
-                                            >{move || if state.mic_device_info.get().is_some() { "Change\u{2026}" } else { "Select mic\u{2026}" }}</button>
                                         </div>
                                     </Show>
 

@@ -3269,6 +3269,29 @@ body.sidebar-resizing {
     margin-left: 3px;
 }
 
+/* Right half of the Mic combo: narrow caret-only button hosting the
+   options popup. Visually lighter than the left identity chip. */
+.mic-options-btn {
+    min-width: 20px;
+    padding: 4px 6px 5px 6px;
+    min-height: 38px;
+    flex-shrink: 0;
+}
+.mic-options-btn .combo-btn-arrow {
+    position: static;
+    font-size: 9px;
+    opacity: 0.6;
+}
+.mic-options-btn.open .combo-btn-arrow {
+    opacity: 1;
+    color: #6da;
+}
+
+/* Joint highlight when listening / recording — match left half's tint. */
+.mic-options-btn.active {
+    border-color: rgba(200, 180, 60, 0.45);
+}
+
 /* Mic icon (microphone glyph) — small and dim so the chip stays less
    prominent than Record / Listen. */
 .mic-select-btn .mic-icon {
