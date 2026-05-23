@@ -342,6 +342,24 @@ pub fn App() -> impl IntoView {
         state.flow_enabled.set(is_flow);
     });
 
+    // Toast when a USB mic gets plugged in (transition false → true). Pair this
+    // with re-showing the file-panel "Mic detected" chip — the user might have
+    // dismissed a previous one, but a fresh connect is worth surfacing again.
+    {
+        let prev_usb: StoredValue<bool> = StoredValue::new(false);
+        Effect::new(move |_| {
+            let now = state.mic_usb_connected.get();
+            let was = prev_usb.get_value();
+            prev_usb.set_value(now);
+            if now && !was {
+                state.mic_chip_dismissed.set(false);
+                let name = state.mic_device_name.get_untracked()
+                    .unwrap_or_else(|| "USB mic".to_string());
+                state.show_info_toast(format!("Mic detected: {name}"));
+            }
+        });
+    }
+
     // Keep scroll valid for the active file/timeline when the viewport, zoom,
     // or target duration changes. Without this, switching to a shorter file or
     // resizing while a non-spectrogram view is active can leave scroll outside

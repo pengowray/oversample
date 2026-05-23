@@ -61,9 +61,9 @@ pub fn ListenButton() -> impl IntoView {
             } else {
                 "Readying\u{2026}".to_string()
             }
-        } else if state.mic_usb_connected.get() && state.mic_backend.get().is_none() && state.is_tauri && !state.mic_listening.get() {
-            "USB mic".to_string()
         } else {
+            // Button label is stable — USB mic detection is communicated via
+            // the toast + file-panel chip + green LED on the Mic button.
             "\u{1F3A4} Listen".to_string()
         }
     });

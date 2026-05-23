@@ -3248,6 +3248,97 @@ body.sidebar-resizing {
     margin-left: 3px;
 }
 
+/* Mic icon (microphone glyph) — small and dim so the chip stays less
+   prominent than Record / Listen. */
+.mic-select-btn .mic-icon {
+    font-size: 12px;
+    opacity: 0.7;
+    margin-right: 4px;
+}
+
+/* LED dot — small status pip rendered next to the mic icon. Color tells
+   the user whether the mic is ready, listening, or recording, without
+   any text label changing. */
+.mic-led {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #555;
+    margin-right: 4px;
+    vertical-align: middle;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3) inset;
+}
+.mic-led.ready {
+    background: #2ec46b;
+    box-shadow: 0 0 4px rgba(46, 196, 107, 0.55);
+}
+.mic-led.listening {
+    background: #38d6ff;
+    box-shadow: 0 0 4px rgba(56, 214, 255, 0.6);
+    animation: mic-led-pulse 1.4s ease-in-out infinite;
+}
+.mic-led.rec {
+    background: #e44;
+    box-shadow: 0 0 4px rgba(228, 68, 68, 0.7);
+    animation: mic-led-pulse 0.9s ease-in-out infinite;
+}
+.mic-led.off,
+.mic-led.idle {
+    background: #555;
+    opacity: 0.55;
+}
+@keyframes mic-led-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+/* "Mic detected" chip in the file panel — appears when a USB mic is
+   plugged in but not yet selected. Subtle, dismissable, clickable. */
+.mic-detected-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    margin: 6px 8px 4px;
+    background: rgba(46, 196, 107, 0.08);
+    border: 1px solid rgba(46, 196, 107, 0.35);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #cfe;
+    user-select: none;
+    transition: background 0.12s ease;
+}
+.mic-detected-chip:hover {
+    background: rgba(46, 196, 107, 0.14);
+}
+.mic-detected-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mic-detected-hint {
+    opacity: 0.7;
+    font-size: 11px;
+}
+.mic-detected-close {
+    background: transparent;
+    border: none;
+    color: #cfe;
+    opacity: 0.6;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.mic-detected-close:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.08);
+}
+
 /* On mobile the capture-group flattens into the 3-col grid so its children
    land in their own cells, otherwise the whole group would occupy a single
    1fr slot and bunch the buttons together. */

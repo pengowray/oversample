@@ -756,6 +756,8 @@ pub enum LayerPanel {
     NoiseReduce,
     /// Bandpass+EQ combo dropdown in the Hearing bar.
     Bandpass,
+    /// Mic settings dropdown in the Transport bar (strategy + device + capture format).
+    Mic,
 }
 
 impl LayerPanel {
@@ -774,7 +776,7 @@ impl LayerPanel {
             | LayerPanel::Gain
             | LayerPanel::ListenMode => Bar::Hearing,
             LayerPanel::MainView | LayerPanel::Tool => Bar::View,
-            LayerPanel::PlayMode | LayerPanel::RecordMode | LayerPanel::Channel => Bar::Transport,
+            LayerPanel::PlayMode | LayerPanel::RecordMode | LayerPanel::Channel | LayerPanel::Mic => Bar::Transport,
             // FreqRange floats over the canvas — not anchored to a bar.
             LayerPanel::FreqRange => Bar::Floating,
         }
@@ -1357,13 +1359,14 @@ pub struct AppState {
     /// Rightmost spectrogram column with actual data during recording.
     /// Used to clip the canvas so partial tiles don't show black padding.
     pub mic_live_data_cols: RwSignal<usize>,
-    /// True when a USB audio device is detected but lacks permission.
-    /// Used to change Record/Listen button labels to "Allow USB mic".
-    pub mic_needs_permission: RwSignal<bool>,
     /// User's preferred device name for mic input. None = use system default.
     pub mic_selected_device: RwSignal<Option<String>>,
     /// Whether the mic chooser modal dialog is visible.
     pub show_mic_chooser: RwSignal<bool>,
+    /// User has dismissed the "Mic detected" chip in the file panel for this
+    /// session. Resets to false whenever a new USB mic appears so a fresh
+    /// connect re-shows the chip.
+    pub mic_chip_dismissed: RwSignal<bool>,
     /// Whether the privacy settings modal dialog is visible.
     pub show_privacy_settings: RwSignal<bool>,
     /// Whether the about dialog is visible.
@@ -1874,9 +1877,9 @@ impl AppState {
             mic_recording_target_scroll: RwSignal::new(0.0),
             mic_scroll_user_pan_until: RwSignal::new(0.0),
             mic_live_data_cols: RwSignal::new(0),
-            mic_needs_permission: RwSignal::new(false),
             mic_selected_device: RwSignal::new(None),
             show_mic_chooser: RwSignal::new(false),
+            mic_chip_dismissed: RwSignal::new(false),
             show_privacy_settings: RwSignal::new(false),
             show_about: RwSignal::new(false),
             mic_peak_level: RwSignal::new(0.0),

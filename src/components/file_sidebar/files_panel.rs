@@ -630,6 +630,50 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     "Drop audio files here, or use the actions below."
                                 </div>
                             })}
+                            // ── Mic detected chip ──
+                            // Shows when a USB mic is connected but no backend
+                            // is set yet (i.e. the user hasn't picked it). Click
+                            // opens the chooser; X dismisses for the session.
+                            // Reappears on the next USB-connect transition.
+                            {move || {
+                                let usb = state.mic_usb_connected.get();
+                                let has_backend = state.mic_backend.get().is_some();
+                                let dismissed = state.mic_chip_dismissed.get();
+                                let strat = state.mic_strategy.get();
+                                let show = state.is_tauri
+                                    && usb
+                                    && !has_backend
+                                    && !dismissed
+                                    && strat != crate::state::MicStrategy::None;
+                                show.then(|| {
+                                    let name = state.mic_device_name.get_untracked()
+                                        .unwrap_or_else(|| "USB mic".to_string());
+                                    view! {
+                                        <div class="mic-detected-chip"
+                                            role="button"
+                                            tabindex="0"
+                                            on:click=move |_| {
+                                                state.mic_pending_action.set(None);
+                                                state.show_mic_chooser.set(true);
+                                            }
+                                        >
+                                            <span class="mic-led ready" aria-hidden="true"></span>
+                                            <span class="mic-detected-text">
+                                                {format!("Mic detected: {name}")}
+                                                <span class="mic-detected-hint">"\u{00A0}\u{2014} tap to use"</span>
+                                            </span>
+                                            <button
+                                                class="mic-detected-close"
+                                                title="Dismiss"
+                                                on:click=move |ev: web_sys::MouseEvent| {
+                                                    ev.stop_propagation();
+                                                    state.mic_chip_dismissed.set(true);
+                                                }
+                                            >{"\u{00D7}"}</button>
+                                        </div>
+                                    }
+                                })
+                            }}
                             // Unified action footer — same buttons available
                             // whether or not files are loaded. Was previously
                             // split into "empty state" vs "with files" panels
