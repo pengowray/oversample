@@ -86,6 +86,45 @@ pub fn NotchCombo() -> impl IntoView {
 
     // ── Detect noise bands ──
     let on_detect = move |_: web_sys::MouseEvent| {
+        // While live, detect from the circular buffer so the bands reflect
+        // current ambient noise rather than stale file content.
+        let is_live = state.mic_listening.get_untracked() || state.mic_recording.get_untracked();
+        if is_live {
+            let is_tauri = state.is_tauri;
+            let sample_rate = state.mic_sample_rate.get_untracked();
+            let snapshot = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.to_vec());
+            if sample_rate == 0 || snapshot.is_empty() {
+                state.show_error_toast("Not enough live audio yet");
+                return;
+            }
+            state.notch_detecting.set(true);
+            let threshold = sensitivity.get_untracked();
+            let samples = Arc::new(snapshot);
+            spawn_local(async move {
+                yield_to_browser().await;
+                let duration = samples.len() as f64 / sample_rate as f64;
+                let config = DetectionConfig {
+                    analysis_duration_secs: duration.min(10.0),
+                    prominence_threshold: threshold,
+                    ..DetectionConfig::default()
+                };
+                let bands = notch::detect_noise_bands_async(
+                    &samples, sample_rate, &config,
+                    crate::canvas::tile_cache::yield_to_browser,
+                ).await;
+                let count = bands.len();
+                state.notch_bands.set(bands);
+                if count > 0 {
+                    state.notch_enabled.set(true);
+                    state.show_info_toast(format!("Found {} noise band{} from live", count, if count == 1 { "" } else { "s" }));
+                } else {
+                    state.show_info_toast("No persistent noise bands detected");
+                }
+                state.notch_detecting.set(false);
+            });
+            return;
+        }
+
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let Some(file) = idx.and_then(|i| files.get(i).cloned()) else {
@@ -189,9 +228,17 @@ pub fn NotchCombo() -> impl IntoView {
                     class="layer-panel-opt"
                     style="flex: 1;"
                     on:click=on_detect
-                    disabled=move || state.notch_detecting.get() || state.current_file_index.get().is_none()
+                    disabled=move || {
+                        if state.notch_detecting.get() { return true; }
+                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        !live && state.current_file_index.get().is_none()
+                    }
                 >
-                    {move || if state.notch_detecting.get() { "Detecting\u{2026}" } else { "Detect Noise" }}
+                    {move || {
+                        if state.notch_detecting.get() { return "Detecting\u{2026}".to_string(); }
+                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        if live { "Detect from Live".to_string() } else { "Detect Noise".to_string() }
+                    }}
                 </button>
             </div>
             <div class="layer-panel-slider-row">
@@ -348,6 +395,40 @@ pub fn NrCombo() -> impl IntoView {
     });
 
     let on_learn_floor = move |_: web_sys::MouseEvent| {
+        // While live, source samples from the circular capture buffer rather
+        // than the file (which lags the buffer by the periodic snapshot
+        // interval, and is short on history right after Listen starts).
+        let is_live = state.mic_listening.get_untracked() || state.mic_recording.get_untracked();
+        if is_live {
+            let is_tauri = state.is_tauri;
+            let sample_rate = state.mic_sample_rate.get_untracked();
+            let snapshot = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.to_vec());
+            if sample_rate == 0 || snapshot.is_empty() {
+                state.show_error_toast("Not enough live audio yet");
+                return;
+            }
+            let samples = Arc::new(snapshot);
+            state.noise_reduce_learning.set(true);
+            spawn_local(async move {
+                yield_to_browser().await;
+                let duration = samples.len() as f64 / sample_rate as f64;
+                let analysis_secs = duration.min(10.0);
+                let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
+                    &samples, sample_rate, analysis_secs,
+                    crate::canvas::tile_cache::yield_to_browser,
+                ).await;
+                if let Some(f) = floor {
+                    state.noise_reduce_floor.set(Some(f));
+                    state.noise_reduce_enabled.set(true);
+                    state.show_info_toast("Noise floor learned from live");
+                } else {
+                    state.show_error_toast("Not enough live audio to learn noise floor");
+                }
+                state.noise_reduce_learning.set(false);
+            });
+            return;
+        }
+
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let Some(file) = idx.and_then(|i| files.get(i).cloned()) else {
@@ -419,9 +500,17 @@ pub fn NrCombo() -> impl IntoView {
                     class="layer-panel-opt"
                     style="flex: 1;"
                     on:click=on_learn_floor
-                    disabled=move || state.noise_reduce_learning.get() || state.current_file_index.get().is_none()
+                    disabled=move || {
+                        if state.noise_reduce_learning.get() { return true; }
+                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        !live && state.current_file_index.get().is_none()
+                    }
                 >
-                    {move || if state.noise_reduce_learning.get() { "Learning\u{2026}" } else { "Learn Noise Floor" }}
+                    {move || {
+                        if state.noise_reduce_learning.get() { return "Learning\u{2026}".to_string(); }
+                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        if live { "Learn from Live".to_string() } else { "Learn Noise Floor".to_string() }
+                    }}
                 </button>
             </div>
 

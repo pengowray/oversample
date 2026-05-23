@@ -557,6 +557,42 @@ pub fn ModeButton() -> impl IntoView {
                                         title="Toggle auto LP cutoff"
                                     >"A"</button>
                                 </div>
+                                // ── Comb controls ──
+                                // Carrier count: 1 = classic single-carrier, >1 = comb
+                                // (multiple carriers centered on Freq, summed). Useful for
+                                // surveying a wide ultrasonic range without retuning.
+                                <div class="layer-panel-slider-row">
+                                    <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range">"Carriers"</label>
+                                    {(1u32..=5).map(|n| {
+                                        view! {
+                                            <button class=move || if state.het_comb_count.get() == n { "factor-preset sel" } else { "factor-preset" }
+                                                on:click=move |_| state.het_comb_count.set(n)
+                                                title=match n {
+                                                    1 => "1 carrier (single heterodyne)",
+                                                    _ => "Comb mode — broader range, slightly muddier",
+                                                }
+                                            >{n.to_string()}</button>
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                                <Show when=move || { state.het_comb_count.get() > 1 }>
+                                    <div class="layer-panel-slider-row het-text-row">
+                                        <label title="Spacing between adjacent carriers (Hz). About 2x the LP cutoff gives near-seamless coverage.">"Spacing"</label>
+                                        <span class="het-value">{move || format!("{:.0} kHz", state.het_comb_spacing.get() / 1000.0)}</span>
+                                        <input type="range" min="5" max="100" step="1"
+                                            prop:value=move || (state.het_comb_spacing.get() / 1000.0).round().to_string()
+                                            on:input=move |ev| {
+                                                let v: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(30.0);
+                                                state.het_comb_spacing.set(v * 1000.0);
+                                            }
+                                            on:dblclick=move |_| {
+                                                // Snap to roughly 2× current cutoff for clean coverage.
+                                                let two_cutoff = (state.het_cutoff.get_untracked() * 2.0).clamp(5_000.0, 100_000.0);
+                                                state.het_comb_spacing.set(two_cutoff);
+                                            }
+                                        />
+                                    </div>
+                                </Show>
                             }.into_any(),
 
                             PlaybackMode::TimeExpansion => view! {

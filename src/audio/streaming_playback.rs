@@ -14,7 +14,7 @@ use crate::audio::source::{AudioSource, ChannelView};
 use crate::audio::streaming_source;
 use crate::state::{PlaybackMode, FilterQuality, GainMode};
 use crate::dsp::agc::{AgcConfig, AgcProcessor};
-use crate::dsp::heterodyne::heterodyne_mix;
+use crate::dsp::heterodyne::{heterodyne_comb_mix, heterodyne_mix};
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
@@ -84,6 +84,10 @@ pub(crate) struct PlaybackParams {
     pub mode: PlaybackMode,
     pub het_freq: f64,
     pub het_cutoff: f64,
+    /// Heterodyne carrier count (1 = single, >1 = comb).
+    pub het_comb_count: u32,
+    /// Spacing (Hz) between comb carriers.
+    pub het_comb_spacing: f64,
     pub te_factor: f64,
     pub ps_factor: f64,
     pub pv_factor: f64,
@@ -92,6 +96,9 @@ pub(crate) struct PlaybackParams {
     pub gain_db: f64,
     pub gain_mode: GainMode,
     pub auto_peak_gain_db: f64,
+    /// Manual gain (dB) for live monitoring. Applied at the tail of the
+    /// live DSP pipeline; ignored by file playback.
+    pub live_gain_db: f64,
     pub filter_enabled: bool,
     pub filter_freq_low: f64,
     pub filter_freq_high: f64,
@@ -608,6 +615,21 @@ pub(crate) fn apply_filters(samples: &[f32], sample_rate: u32, params: &Playback
     result
 }
 
+/// Compute the carrier frequencies for the heterodyne mode. With count = 1
+/// this is just `[center]` (classic single-carrier). With count > 1, returns
+/// N carriers symmetrically arranged around `center` at `spacing` Hz apart,
+/// so increasing the count expands coverage in both directions without
+/// shifting the user's tuned center frequency.
+pub(crate) fn het_carriers(center: f64, spacing: f64, count: u32) -> Vec<f64> {
+    let n = count.max(1);
+    if n == 1 || spacing <= 0.0 {
+        return vec![center];
+    }
+    let n_f = n as f64;
+    let start = -(n_f - 1.0) / 2.0;
+    (0..n).map(|i| center + (start + i as f64) * spacing).collect()
+}
+
 pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
     match params.mode {
         PlaybackMode::Normal => samples.to_vec(),
@@ -619,7 +641,12 @@ pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &Playbac
                 } else {
                     params.het_freq
                 };
-            heterodyne_mix(samples, sample_rate, effective_lo, params.het_cutoff)
+            if params.het_comb_count <= 1 {
+                heterodyne_mix(samples, sample_rate, effective_lo, params.het_cutoff)
+            } else {
+                let carriers = het_carriers(effective_lo, params.het_comb_spacing, params.het_comb_count);
+                heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff)
+            }
         }
         PlaybackMode::TimeExpansion => {
             // Rate change handled by AudioContext sample rate, not sample transform

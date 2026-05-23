@@ -1165,12 +1165,25 @@ pub struct AppState {
     pub filter_hovering_band: RwSignal<Option<u8>>,
     pub filter_quality: RwSignal<FilterQuality>,
     pub het_cutoff: RwSignal<f64>,
+    /// Number of heterodyne carriers (1 = classic single-carrier, >1 = comb).
+    /// Comb mode mixes N evenly-spaced carriers centered on `het_frequency`
+    /// and sums the difference tones, covering a wider ultrasonic range
+    /// without retuning.
+    pub het_comb_count: RwSignal<u32>,
+    /// Spacing (Hz) between adjacent comb carriers. Roughly 2× `het_cutoff`
+    /// gives near-seamless coverage with minimal image overlap.
+    pub het_comb_spacing: RwSignal<f64>,
     pub sidebar_collapsed: RwSignal<bool>,
     pub sidebar_width: RwSignal<f64>,
     // Gain
     pub gain_db: RwSignal<f64>,
     /// Stashed gain_db for the other HFR state (swapped on HFR toggle).
     pub gain_db_stash: RwSignal<f64>,
+    /// Manual gain (dB) applied while live listening / recording. Kept
+    /// separate from `gain_db` so the user can tune live monitoring
+    /// independently of file playback — switching between them doesn't
+    /// require remembering and resetting the slider.
+    pub live_gain_db: RwSignal<f64>,
     pub auto_gain: RwSignal<bool>,
     pub gain_mode: RwSignal<GainMode>,
     /// Remembers last auto-gain mode so toggle restores it (default: Adaptive).
@@ -1752,10 +1765,15 @@ impl AppState {
             filter_hovering_band: RwSignal::new(None),
             filter_quality: RwSignal::new(FilterQuality::Spectral),
             het_cutoff: RwSignal::new(15_000.0),
+            // Default: single carrier — comb engages only when the user opts in.
+            // Default spacing ~ 2× cutoff so initial comb mode covers cleanly.
+            het_comb_count: RwSignal::new(1),
+            het_comb_spacing: RwSignal::new(30_000.0),
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
             gain_db_stash: RwSignal::new(0.0),
+            live_gain_db: RwSignal::new(0.0),
             auto_gain: RwSignal::new(false),
             gain_mode: RwSignal::new(GainMode::Off),
             gain_mode_last_auto: RwSignal::new(GainMode::AutoPeak),

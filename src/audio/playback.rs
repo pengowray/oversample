@@ -449,6 +449,8 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
         mode: state.playback_mode.get_untracked(),
         het_freq: state.het_frequency.get_untracked(),
         het_cutoff: state.het_cutoff.get_untracked(),
+        het_comb_count: state.het_comb_count.get_untracked().max(1),
+        het_comb_spacing: state.het_comb_spacing.get_untracked(),
         te_factor: state.te_factor.get_untracked(),
         ps_factor: state.ps_factor.get_untracked(),
         pv_factor: state.pv_factor.get_untracked(),
@@ -461,6 +463,7 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
         } else {
             0.0
         },
+        live_gain_db: state.live_gain_db.get_untracked(),
         filter_enabled: state.filter_enabled.get_untracked(),
         filter_freq_low: state.filter_freq_low.get_untracked(),
         filter_freq_high: state.filter_freq_high.get_untracked(),

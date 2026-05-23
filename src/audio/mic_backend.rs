@@ -10,11 +10,11 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioContext;
 use crate::state::{AppState, MicAcquisitionState, MicBackend, PlaybackMode};
-use crate::dsp::heterodyne::RealtimeHet;
+use crate::dsp::heterodyne::RealtimeCombHet;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::zc_divide::zc_divide;
-use crate::audio::playback::snapshot_params;
+use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
 use std::cell::RefCell;
@@ -127,7 +127,7 @@ thread_local! {
     static MIC_PROCESSOR: RefCell<Option<web_sys::ScriptProcessorNode>> = const { RefCell::new(None) };
     static MIC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
-    static WEB_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
+    static WEB_RT_HET: RefCell<RealtimeCombHet> = RefCell::new(RealtimeCombHet::new());
     /// Overlap context state for PS/PV live listening (web).
     static WEB_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
 }
@@ -148,7 +148,7 @@ thread_local! {
     /// Accumulated recording samples on the frontend for native modes (cpal/USB).
     static NATIVE_REC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// Realtime heterodyne processor for native modes.
-    static NATIVE_RT_HET: RefCell<RealtimeHet> = RefCell::new(RealtimeHet::new());
+    static NATIVE_RT_HET: RefCell<RealtimeCombHet> = RefCell::new(RealtimeCombHet::new());
     /// Overlap context state for PS/PV live listening (native).
     static NATIVE_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
 }
@@ -360,7 +360,7 @@ fn apply_live_filter(
 fn process_live_audio(
     input: &[f32],
     sample_rate: u32,
-    rt_het: &mut RealtimeHet,
+    rt_het: &mut RealtimeCombHet,
     dsp_state: &mut ListenDspState,
     context_samples: usize,
     params: &PlaybackParams,
@@ -373,12 +373,17 @@ fn process_live_audio(
 
     let filtered = apply_live_filter(input, sample_rate, params, dsp_state);
 
-    match params.mode {
+    let mut result = match params.mode {
         PlaybackMode::Heterodyne => {
             dsp_state.context.clear();
             dsp_state.prev_tail.clear();
+            let carriers = crate::audio::streaming_playback::het_carriers(
+                params.het_freq,
+                params.het_comb_spacing,
+                params.het_comb_count,
+            );
             let mut out = vec![0.0f32; filtered.len()];
-            rt_het.process(&filtered, &mut out, sample_rate, params.het_freq, params.het_cutoff);
+            rt_het.process(&filtered, &mut out, sample_rate, &carriers, params.het_cutoff);
             out
         }
         PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
@@ -441,7 +446,13 @@ fn process_live_audio(
             dsp_state.prev_tail.clear();
             filtered
         }
-    }
+    };
+
+    // Live monitoring gain — separate from playback gain so the user can
+    // tune live volume independently. AGC/AutoPeak don't apply here (no
+    // file to scan, and a live AGC pass would be a future feature).
+    apply_gain(&mut result, params.live_gain_db);
+    result
 }
 
 // ── Public API on ActiveBackend ─────────────────────────────────────────

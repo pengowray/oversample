@@ -48,13 +48,25 @@ fn GainCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Gain));
+    // Live monitoring uses `live_gain_db` (separate from file-playback gain).
+    // When live is active, the slider rebinds and the AGC/AutoPeak modes are
+    // ignored — the user wanted a simple slider for monitoring.
+    let is_live = move || state.mic_listening.get() || state.mic_recording.get();
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        !is_live()
+            && state.current_file_index.get().is_none()
+            && state.active_timeline.get().is_none()
     };
 
     let left_class = Signal::derive(move || {
         if no_file() {
             "layer-btn combo-btn-left disabled"
+        } else if is_live() {
+            if state.live_gain_db.get().abs() > 0.001 {
+                "layer-btn combo-btn-left active"
+            } else {
+                "layer-btn combo-btn-left"
+            }
         } else if state.gain_mode.get() != GainMode::Off {
             "layer-btn combo-btn-left active"
         } else {
@@ -63,13 +75,18 @@ fn GainCombo() -> impl IntoView {
     });
     let right_class = Signal::derive(move || {
         if no_file() { return "layer-btn combo-btn-right disabled"; }
-        let dim = if state.gain_mode.get() == GainMode::Off { " dim" } else { "" };
+        // While live, the mode label has no effect on the audio path — dim it.
+        let dim = if is_live() || state.gain_mode.get() == GainMode::Off { " dim" } else { "" };
         if is_open.get() {
             if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
         } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
     });
 
     let left_value = Signal::derive(move || {
+        if is_live() {
+            let db = state.live_gain_db.get();
+            return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
+        }
         let mode = state.gain_mode.get();
         let manual_db = state.gain_db.get();
         let pv_boost = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
@@ -98,6 +115,7 @@ fn GainCombo() -> impl IntoView {
         }
     });
     let right_value = Signal::derive(move || {
+        if is_live() { return "LIVE".to_string(); }
         match state.gain_mode.get() {
             GainMode::Off => "OFF".to_string(),
             mode => mode.label().to_string(),
@@ -105,6 +123,12 @@ fn GainCombo() -> impl IntoView {
     });
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+        if is_live() {
+            // In live mode, the left half just opens/closes the panel — the
+            // mode toggle is meaningless because live ignores gain_mode.
+            toggle_panel(&state, LayerPanel::Gain);
+            return;
+        }
         let mode = state.gain_mode.get_untracked();
         if mode == GainMode::Off {
             let last = state.gain_mode_last_auto.get_untracked();
@@ -197,8 +221,12 @@ fn GainCombo() -> impl IntoView {
                 </div>
             </Show>
             <div class="layer-panel-slider-row" style="margin-top: 6px;">
-                <span class="slider-label">"Boost"</span>
+                <span class="slider-label">{move || if is_live() { "Live" } else { "Boost" }}</span>
                 <label>{move || {
+                    if is_live() {
+                        let db = state.live_gain_db.get();
+                        return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
+                    }
                     let db = state.gain_db.get();
                     let pv = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
                     let total = db + pv;
@@ -206,16 +234,28 @@ fn GainCombo() -> impl IntoView {
                     else { format!("{:.0}dB", total) }
                 }}</label>
                 <input type="range" min="-12" max="60" step="1"
-                    prop:value=move || state.gain_db.get().to_string()
+                    prop:value=move || if is_live() {
+                        state.live_gain_db.get().to_string()
+                    } else {
+                        state.gain_db.get().to_string()
+                    }
                     on:input=move |ev| {
                         let val: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(0.0);
-                        state.gain_db.set(val);
-                        if state.gain_mode.get_untracked() == GainMode::Off && val > 0.0 {
-                            state.gain_mode.set(GainMode::Manual);
+                        if is_live() {
+                            state.live_gain_db.set(val);
+                        } else {
+                            state.gain_db.set(val);
+                            if state.gain_mode.get_untracked() == GainMode::Off && val > 0.0 {
+                                state.gain_mode.set(GainMode::Manual);
+                            }
                         }
                     }
                     on:dblclick=move |_| {
-                        state.gain_db.set(0.0);
+                        if is_live() {
+                            state.live_gain_db.set(0.0);
+                        } else {
+                            state.gain_db.set(0.0);
+                        }
                     }
                 />
             </div>
