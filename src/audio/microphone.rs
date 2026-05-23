@@ -605,14 +605,17 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     spawn_smooth_scroll_animation(*state);
 }
 
-/// Stop listening.
+/// Stop listening. Leaves the live file in place as an empty "armed" doc
+/// (mic stays open) so the user can adjust HFR / band and press Listen or
+/// Record again without re-acquiring the mic or creating a new entry.
 async fn do_stop_listening(state: &AppState, backend: ActiveBackend) {
     state.mic_listening.set(false);
     crate::canvas::live_waterfall::clear();
-    cleanup_listen_file(state);
+    convert_listen_to_armed(state);
     backend.clear_buffer();
     backend.set_listening(state, false).await;
-    backend.maybe_close(state).await;
+    // Intentionally not calling backend.maybe_close — keep the mic warm
+    // for the armed doc.
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -930,7 +933,8 @@ pub(crate) use crate::audio::live_recording::{
     start_live_recording, start_live_listening, start_live_armed,
     is_armed_live_doc, promote_armed_to_listening, promote_armed_to_recording,
     revert_recording_to_armed, set_live_recording_zoom,
-    cleanup_listen_file, convert_listen_to_recording, rename_listen_to_recording,
+    cleanup_listen_file, convert_listen_to_armed, convert_listen_to_recording,
+    rename_listen_to_recording,
     spawn_live_processing_loop,
     spawn_smooth_scroll_animation, finalize_recording,
     cleanup_failed_recording,

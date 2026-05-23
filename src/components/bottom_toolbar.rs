@@ -1,14 +1,16 @@
 // Bottom toolbar — transport + capture cluster.
 //
 // Layout:
-//   [Play | Mode] [Channel] │ [ Mic | Record | Listen | + New ]
-//                              └────── capture group ──────┘
+//   [Play | Mode] [Channel] │ [ Mic | Record | Listen ]
+//                              └─── capture group ───┘
 //
-// The capture group visually surrounds Record + Listen with bookends
-// (Mic on the left, "+ New" on the right) to communicate that selecting
-// a mic and starting a fresh recording document are prerequisites for
-// pressing Record or Listen. On mobile (3-column grid) the group flows
-// into row 2: Record / Listen / + New, with Mic on row 1's right slot.
+// The Mic button on the left bookends Record + Listen to communicate
+// that selecting a mic is a prerequisite for either. Stopping Listen
+// leaves the live document in place as an empty "armed" doc — the user
+// can adjust HFR / band, then press Listen or Record again to reuse
+// it. (The file panel's "+ New live recording" button creates one
+// from scratch.) On mobile the capture group flattens into the grid so
+// each button gets its own cell.
 //
 // Hearing-DSP controls (HFR, Band, EQ, Notch, Gain) live in `HearingBar`.
 // Visualization controls (View, Anno, Book, Tool) live in `ViewBar`.
@@ -517,12 +519,10 @@ pub fn BottomToolbar() -> impl IntoView {
 
             <div class="bottom-toolbar-sep"></div>
 
-            // ── Capture group: [Mic ▼] [Record] [Listen] [+ New] ──
-            // The bracketing buttons (Mic, +New) frame Record/Listen visually
-            // and walk the user through the prerequisite steps: pick a mic so
-            // we know the frequency range, then either record/listen into the
-            // current doc or "+ New" an empty live document to adjust HFR/band
-            // before capture starts.
+            // ── Capture group: [Mic ▼] [Record] [Listen] ──
+            // The Mic button on the left walks the user through the
+            // prerequisite of picking a mic (sets the frequency range) before
+            // pressing Record or Listen.
             <div class="capture-group">
                 // ── Mic select button ──
                 {
@@ -568,7 +568,7 @@ pub fn BottomToolbar() -> impl IntoView {
                             let rate_str = if rate >= 1000 { format!(" \u{2014} up to {} kHz", rate / 1000) } else { String::new() };
                             format!("Microphone: {}{}\nClick to change.", info.name, rate_str)
                         } else {
-                            "Choose a microphone (needed to set the capture sample rate and unlock Record / Listen / +New).".to_string()
+                            "Choose a microphone (needed to set the capture sample rate and unlock Record / Listen).".to_string()
                         }
                     });
                     view! {
@@ -804,51 +804,6 @@ pub fn BottomToolbar() -> impl IntoView {
 
                 // ── Listen combo button (moved from hearing bar) ──
                 <ListenButton/>
-
-                // ── New recording button ──
-                // Creates an empty live document using the current mic; if no
-                // mic is selected, the mic chooser opens first (via
-                // `arm_live_doc` → `acquire_mic`).
-                {
-                    let new_disabled = Signal::derive(move || {
-                        state.mic_strategy.get() == MicStrategy::None
-                            || state.mic_listening.get()
-                            || state.mic_recording.get()
-                    });
-                    let new_class = move || {
-                        if new_disabled.get() {
-                            "layer-btn new-rec-btn disabled"
-                        } else {
-                            "layer-btn new-rec-btn"
-                        }
-                    };
-                    let new_title = move || {
-                        if state.mic_strategy.get() == MicStrategy::None {
-                            "Mic input is disabled — choose a microphone first.".to_string()
-                        } else if state.mic_listening.get() || state.mic_recording.get() {
-                            "Already capturing — stop the current session first.".to_string()
-                        } else {
-                            "Start an empty live recording document. The mic sets the sample rate so you can dial in HFR / band before pressing Record or Listen.".to_string()
-                        }
-                    };
-                    view! {
-                        <button
-                            class=new_class
-                            title=new_title
-                            on:click=move |ev: web_sys::MouseEvent| {
-                                ev.stop_propagation();
-                                if new_disabled.get_untracked() { return; }
-                                let st = state;
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    microphone::arm_live_doc(&st).await;
-                                });
-                            }
-                        >
-                            <span class="layer-btn-category">"New"</span>
-                            <span class="layer-btn-value">"+ Rec"</span>
-                        </button>
-                    }
-                }
             </div>
         </div>
     }

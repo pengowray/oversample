@@ -412,6 +412,62 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
     file_index
 }
 
+/// Convert the transient listening file into an empty "armed" live doc.
+/// Keeps the entry in the file list (so the user isn't dropped back into "no
+/// file") and resets it to the same shape `start_live_armed` produces, so a
+/// subsequent Listen/Record can reuse it via the armed-doc promotion path.
+/// No-op if there's no live file or the file isn't a listen entry.
+pub(crate) fn convert_listen_to_armed(state: &AppState) {
+    let Some(idx) = state.mic_live_file_idx.get_untracked() else { return };
+    let is_listen = state.files.with_untracked(|files| {
+        files.get(idx).map_or(false, |f| f.is_live_listen)
+    });
+    if !is_listen { return; }
+
+    let now = js_sys::Date::new_0();
+    let armed_name = format!(
+        "Live mic ({:02}:{:02}:{:02})",
+        now.get_hours(),
+        now.get_minutes(),
+        now.get_seconds(),
+    );
+
+    state.files.update(|files| {
+        if let Some(f) = files.get_mut(idx) {
+            let sr = f.audio.sample_rate;
+            let empty: Arc<Vec<f32>> = Arc::new(Vec::new());
+            let source = Arc::new(InMemorySource {
+                samples: empty.clone(),
+                raw_samples: None,
+                sample_rate: sr,
+                channels: 1,
+            });
+            f.name = armed_name;
+            f.is_live_listen = false;
+            f.is_recording = false;
+            f.audio.samples = empty;
+            f.audio.source = source;
+            f.audio.duration_secs = 0.0;
+            f.audio.metadata.format = "MIC";
+            f.spectrogram = SpectrogramData {
+                columns: Arc::new(Vec::new()),
+                total_columns: 0,
+                freq_resolution: sr as f64 / LIVE_FFT as f64,
+                time_resolution: LIVE_HOP as f64 / sr as f64,
+                max_freq: sr as f64 / 2.0,
+                sample_rate: sr,
+            };
+            f.preview = None;
+            f.overview_image = None;
+            f.wav_markers.clear();
+        }
+    });
+
+    state.current_file_index.set(Some(idx));
+    state.min_display_freq.set(None);
+    state.max_display_freq.set(None);
+}
+
 /// Remove the transient listening file and fix indices.
 pub(crate) fn cleanup_listen_file(state: &AppState) {
     let live_idx = state.mic_live_file_idx.get_untracked();
