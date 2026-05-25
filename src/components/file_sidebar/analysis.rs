@@ -4,7 +4,15 @@ use wasm_bindgen_futures::spawn_local;
 use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
 use crate::state::{AppState, RightSidebarTab};
 use crate::dsp::bit_analysis::{self, BitAnalysis, BitCaution};
+use crate::dsp::lsb_autocorr::{self, LsbAutocorrResult, LsbVerdict};
+use crate::dsp::pipistrelle::{self, PipistrelleResult, PipistrelleVerdict};
 use crate::dsp::wsnr;
+use oversample_core::dsp::audiomoth::{self, AudioMothResult};
+use oversample_core::dsp::effective_nyquist::{self, EffectiveNyquistResult};
+use oversample_core::device_hint::{
+    self, DeviceHint, HintConfidence, MetadataMatch, PIPISTRELLE_FAMILY,
+};
+use oversample_core::bit_depth_certainty::{self, BitDepthCertainty, CertaintyLevel};
 use std::sync::Arc;
 
 #[component]
@@ -14,6 +22,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     // Async analysis results — None means "not yet computed" or "computing"
     let analysis: RwSignal<Option<BitAnalysis>> = RwSignal::new(None);
     let wsnr_result: RwSignal<Option<wsnr::WsnrResult>> = RwSignal::new(None);
+    let lsb_result: RwSignal<Option<LsbAutocorrResult>> = RwSignal::new(None);
+    let pipistrelle_result: RwSignal<Option<PipistrelleResult>> = RwSignal::new(None);
+    let nyquist_result: RwSignal<Option<EffectiveNyquistResult>> = RwSignal::new(None);
+    let audiomoth_result: RwSignal<Option<AudioMothResult>> = RwSignal::new(None);
     let is_computing = RwSignal::new(false);
     let last_computed_idx: RwSignal<Option<usize>> = RwSignal::new(None);
     let compute_gen = RwSignal::new(0u32);
@@ -31,6 +43,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
         analysis.set(None);
         wsnr_result.set(None);
+        lsb_result.set(None);
+        pipistrelle_result.set(None);
+        nyquist_result.set(None);
+        audiomoth_result.set(None);
         is_computing.set(true);
         last_computed_idx.set(idx);
         analysis_is_full.set(full_file);
@@ -75,6 +91,42 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             if compute_gen.get_untracked() != generation { return; }
             wsnr_result.set(Some(wsnr_res));
 
+            yield_to_browser().await;
+            if compute_gen.get_untracked() != generation { return; }
+
+            let lsb_res = lsb_autocorr::analyze_lsb_autocorr(
+                &samples, bits_per_sample, is_float,
+            );
+            if compute_gen.get_untracked() != generation { return; }
+            lsb_result.set(Some(lsb_res));
+
+            yield_to_browser().await;
+            if compute_gen.get_untracked() != generation { return; }
+
+            let pipi_res = pipistrelle::detect(&samples, sample_rate, bits_per_sample, is_float);
+            if compute_gen.get_untracked() != generation { return; }
+            pipistrelle_result.set(Some(pipi_res));
+
+            yield_to_browser().await;
+            if compute_gen.get_untracked() != generation { return; }
+
+            let nyq_res = effective_nyquist::detect(&samples, sample_rate);
+            if compute_gen.get_untracked() != generation { return; }
+            nyquist_result.set(Some(nyq_res));
+
+            yield_to_browser().await;
+            if compute_gen.get_untracked() != generation { return; }
+
+            let lsb_is_zero_padded = matches!(
+                lsb_result.get_untracked().as_ref().map(|l| &l.verdict),
+                Some(oversample_core::dsp::lsb_autocorr::LsbVerdict::ZeroPaddedNBit { .. }),
+            );
+            let am_res = audiomoth::detect(
+                &samples, sample_rate, bits_per_sample, is_float, lsb_is_zero_padded,
+            );
+            if compute_gen.get_untracked() != generation { return; }
+            audiomoth_result.set(Some(am_res));
+
             is_computing.set(false);
         });
     };
@@ -99,6 +151,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         if file.is_none() {
             analysis.set(None);
             wsnr_result.set(None);
+            lsb_result.set(None);
+            pipistrelle_result.set(None);
+            nyquist_result.set(None);
+            audiomoth_result.set(None);
             last_computed_idx.set(None);
             is_computing.set(false);
             return;
@@ -195,7 +251,32 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             }
         }
 
-        // Bit analysis
+        // Tiered effective-bit-depth verdict (composed from bit / lsb / pip / am)
+        if let (Some(ref a), Some(ref lsb), Some(ref f)) = (
+            analysis.get(), lsb_result.get(), file.as_ref(),
+        ) {
+            let pip = pipistrelle_result.get();
+            let am = audiomoth_result.get();
+            let bdc = bit_depth_certainty::compose(
+                f.audio.metadata.bits_per_sample,
+                f.audio.metadata.is_float,
+                f.audio.metadata.format,
+                a, lsb, pip.as_ref(), am.as_ref(),
+            );
+            report.push_str("\nBit Depth\n");
+            report.push_str(&format!("  {}\n", bdc.headline));
+            report.push_str(&format!("  ({})\n", bdc.certainty.label()));
+            for fact in &bdc.facts {
+                let prefix = match fact.certainty {
+                    CertaintyLevel::Certain => "  ✓ ",
+                    CertaintyLevel::HighConfidence => "  ● ",
+                    CertaintyLevel::Suggestive => "  ○ ",
+                };
+                report.push_str(&format!("{}{}\n", prefix, fact.statement));
+            }
+        }
+
+        // Bit analysis (detailed per-bit breakdown)
         if let Some(ref a) = analysis.get() {
             let total = a.total_samples;
             let pos_total = a.positive_total;
@@ -262,6 +343,121 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 .collect();
             if !caution_list.is_empty() {
                 report.push_str(&format!("  Cautions: {}\n", caution_list.join("; ")));
+            }
+        }
+
+        // LSB autocorrelation
+        if let Some(ref l) = lsb_result.get() {
+            report.push_str("\nLSB Autocorrelation\n");
+            let verdict_text = match &l.verdict {
+                LsbVerdict::NotApplicable => "Not applicable",
+                LsbVerdict::ZeroPaddedNBit { .. } => "Zero-padded (whole file)",
+                LsbVerdict::QuietSectionZeroPadded { .. } => "Zero-padded in quiet sections only (noise-gated)",
+                LsbVerdict::DspPaddedLowBitDepth { .. } => "DSP-padded / IIR residue",
+                LsbVerdict::ConsistentWithClaimedBitDepth => "Consistent with claimed bit depth",
+                LsbVerdict::Inconclusive => "Inconclusive (noise floor too high)",
+            };
+            report.push_str(&format!("  Verdict: {}\n", verdict_text));
+            if !matches!(l.verdict, LsbVerdict::NotApplicable) {
+                report.push_str(&format!("  Quietest window: stdev {:.1} LSB at sample {}\n",
+                    l.quietest_window_stdev, l.quietest_window_idx));
+                report.push_str(&format!(
+                    "  Low {}-bit: chi\u{00B2}={:.0}, lag-1 ACF={:+.3}, lag-256 ACF={:+.3}, nonzero {:.1}%\n",
+                    l.n_low, l.quiet_lsb_chi2, l.quiet_lsb_lag1_acf, l.quiet_lsb_lag256_acf,
+                    l.quiet_lsb_nonzero_frac * 100.0,
+                ));
+                if l.gcd_nonzero > 1 {
+                    report.push_str(&format!("  GCD of nonzero samples: {}\n", l.gcd_nonzero));
+                }
+            }
+            if !l.explanation.is_empty() {
+                report.push_str(&format!("  {}\n", l.explanation));
+            }
+        }
+
+        // Mic firmware signatures (Pipistrelle family)
+        if let Some(ref p) = pipistrelle_result.get() {
+            report.push_str("\nFirmware fingerprint (Pipistrelle family)\n");
+            let verdict_text = match p.verdict {
+                PipistrelleVerdict::Match => "match",
+                PipistrelleVerdict::Possible => "possible",
+                PipistrelleVerdict::NoMatch => "no match",
+                PipistrelleVerdict::NotApplicable => "not applicable",
+            };
+            report.push_str(&format!("  Verdict: {}\n", verdict_text));
+            if !matches!(p.verdict, PipistrelleVerdict::NotApplicable) && !p.per_preset.is_empty() {
+                if let Some(db) = p.best_db_cut {
+                    report.push_str(&format!(
+                        "  Best preset: dBcut={}  residual={:.2}%  in-range={:.1}%\n",
+                        db, p.best_normalized_residual * 100.0, p.best_in_range_frac * 100.0,
+                    ));
+                    report.push_str(&format!(
+                        "  Near-integer recovered samples: {}/{} = {:.1}% (uniform baseline 20%)\n",
+                        p.best_near_integer_match, p.best_near_integer_total,
+                        p.best_near_integer_frac * 100.0,
+                    ));
+                    report.push_str(&format!(
+                        "  Mean |fractional part| of recovered: {:.3} (uniform baseline 0.25)\n",
+                        p.best_mean_abs_frac,
+                    ));
+                }
+                let scores: Vec<String> = p.per_preset.iter().map(|s| {
+                    format!("dBcut={}: {:.2}%", s.db_cut, s.normalized_residual * 100.0)
+                }).collect();
+                report.push_str(&format!("  All presets (residual): {}\n", scores.join("; ")));
+                report.push_str(&format!(
+                    "  Windows analyzed: {} (skipped {} as silent)\n",
+                    p.windows_used, p.windows_skipped_silent,
+                ));
+            }
+            if !p.explanation.is_empty() {
+                report.push_str(&format!("  {}\n", p.explanation));
+            }
+        }
+
+        // Device hints + metadata comparison
+        if let (Some(ref f), Some(ref bit), Some(ref lsb), Some(ref pip)) = (
+            file.as_ref(), analysis.get(), lsb_result.get(), pipistrelle_result.get(),
+        ) {
+            let nyq = nyquist_result.get();
+            let am = audiomoth_result.get();
+            let hints = device_hint::infer_device_hints(
+                f.audio.sample_rate,
+                f.audio.metadata.bits_per_sample,
+                f.audio.metadata.is_float,
+                bit, lsb, pip, nyq.as_ref(), am.as_ref(),
+            );
+            let guano = f.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
+            let xc = f.xc_metadata.clone();
+            let m = device_hint::compare_to_metadata(&hints, xc.as_deref(), guano.as_deref());
+            if !hints.is_empty() || !matches!(m, MetadataMatch::NoClaim) {
+                report.push_str("\nDevice hints\n");
+                for h in &hints {
+                    let conf = match h.confidence {
+                        HintConfidence::Strong => "strong",
+                        HintConfidence::Likely => "likely",
+                        HintConfidence::Possible => "possible",
+                    };
+                    report.push_str(&format!("  [{}] {}\n", conf, h.label));
+                    if !h.candidates.is_empty() {
+                        report.push_str(&format!(
+                            "       candidates: {}\n",
+                            h.candidates.join(", "),
+                        ));
+                    }
+                }
+                match m {
+                    MetadataMatch::NoClaim => {}
+                    MetadataMatch::ClaimNoAnalysis { claim } => {
+                        report.push_str(&format!("  metadata says: {} (no analysis hints to compare)\n", claim));
+                    }
+                    MetadataMatch::Match { claim, matched_candidate } => {
+                        report.push_str(&format!("  metadata: {} \u{2014} matches ({})\n", claim, matched_candidate));
+                    }
+                    MetadataMatch::Mismatch { claim, hint_summary } => {
+                        report.push_str(&format!("  ! metadata: {} \u{2014} does NOT match analysis ({})\n", claim, hint_summary));
+                    }
+                }
             }
         }
 
@@ -651,61 +847,125 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         let noise_floor_text = format!("Noise floor: {:.1} dBFS (~{:.1} bits)", noise_floor_db, nf_bits);
                         let noise_floor_tooltip = "Minimum RMS level of 512-sample windows above digital silence (−80 dBFS); converted to equivalent bit depth at 6 dB/bit".to_string();
 
+                        // Compose the tiered effective-bit-depth verdict from
+                        // all the analyses we have so far. Lead with the
+                        // strongest single claim; fold the existing stats.
+                        let lsb_ref = lsb_result.get();
+                        let pip_ref = pipistrelle_result.get();
+                        let am_ref = audiomoth_result.get();
+                        let bit_clone = a.clone();
+                        let format_str: &'static str = {
+                            let files = state.files.get();
+                            let idx = state.current_file_index.get();
+                            idx.and_then(|i| files.get(i).map(|f| f.audio.metadata.format))
+                                .unwrap_or("WAV")
+                        };
+                        let bdc_opt: Option<BitDepthCertainty> = lsb_ref.as_ref().map(|lsb| {
+                            bit_depth_certainty::compose(
+                                bits_per_sample,
+                                is_float,
+                                format_str,
+                                &bit_clone,
+                                lsb,
+                                pip_ref.as_ref(),
+                                am_ref.as_ref(),
+                            )
+                        });
+                        let headline_class = match bdc_opt.as_ref().map(|b| b.certainty) {
+                            Some(CertaintyLevel::Certain) => "bit-depth-stat bit-depth-primary",
+                            Some(CertaintyLevel::HighConfidence) => "bit-depth-stat bit-depth-primary",
+                            _ => "bit-depth-stat",
+                        };
+                        let headline_text = bdc_opt.as_ref()
+                            .map(|b| b.headline.clone())
+                            .unwrap_or_else(|| {
+                                if is_float {
+                                    format!("{}-bit float", bits_per_sample)
+                                } else {
+                                    format!("Effective bit depth: {} bits", effective_depth)
+                                }
+                            });
+                        let certainty_label = bdc_opt.as_ref()
+                            .map(|b| b.certainty.label().to_string());
+                        let fact_views: Vec<_> = bdc_opt.as_ref()
+                            .map(|b| b.facts.iter().map(|f| {
+                                let cls = match f.certainty {
+                                    CertaintyLevel::Certain => "bit-depth-stat",
+                                    CertaintyLevel::HighConfidence => "bit-depth-stat",
+                                    CertaintyLevel::Suggestive => "wsnr-detail",
+                                };
+                                let prefix = match f.certainty {
+                                    CertaintyLevel::Certain => "\u{2713} ",
+                                    CertaintyLevel::HighConfidence => "\u{25CF} ",
+                                    CertaintyLevel::Suggestive => "\u{25CB} ",
+                                };
+                                let text = format!("{}{}", prefix, f.statement);
+                                view! { <div class=cls>{text}</div> }
+                            }).collect())
+                            .unwrap_or_default();
+
                         view! {
                             <div class="setting-group">
-                                <div class="setting-group-title">"Bit Usage"</div>
-                                // Stats block at top — effective depth first, then breakdown
-                                {if !is_float {
-                                    let summary_class = if effective_bits < bits_per_sample { "bit-warning" } else { "bit-depth-stat" };
-                                    view! {
-                                        <div>
-                                            <div class="bit-depth-stat bit-depth-primary">{format!("Effective bit depth: {} bits", effective_depth)}</div>
-                                            <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
-                                            {if headroom_bits > 0 {
-                                                view! { <div class="bit-depth-stat">{format!("Headroom: {} bit{} ({:.1} dB)", headroom_bits, if headroom_bits == 1 { "" } else { "s" }, headroom_db)}</div> }.into_any()
-                                            } else { view! { <span></span> }.into_any() }}
-                                            {if zero_padding > 0 {
-                                                view! { <div class="bit-depth-stat">{format!("Zero padding: {} bit{}", zero_padding, if zero_padding == 1 { "" } else { "s" })}</div> }.into_any()
-                                            } else { view! { <span></span> }.into_any() }}
-                                            {match value_coverage {
-                                                Some(ref vc) => {
-                                                    let coverage_text = format!("Value coverage: {:.1}% ({} of {})",
-                                                        vc.coverage_pct, vc.unique_count, vc.value_space);
-                                                    let coverage_tooltip = format!("{} distinct sample values observed out of {} possible for {}-bit audio",
-                                                        vc.unique_count, vc.value_space, bits_per_sample);
-                                                    let resolution_text = format!("Value resolution: ~{:.1} bits ", vc.resolution_bits);
-                                                    let resolution_tooltip = format!("log\u{2082}({}) = {:.2} — equivalent bit depth based on number of distinct values used",
-                                                        vc.unique_count, vc.resolution_bits);
-                                                    let ceiled = vc.resolution_bits.ceil() as u16;
-                                                    let notable = (bits_per_sample == 16 && ceiled <= 12)
-                                                        || (bits_per_sample == 24 && ceiled <= 16);
-                                                    let suffix_text = format!("({}-bit)", ceiled);
-                                                    let suffix_class = if notable { "bit-warning-inline" } else { "" };
-                                                    view! {
-                                                        <div>
-                                                            <div class="bit-depth-stat" title=coverage_tooltip>{coverage_text}</div>
-                                                            <div class="bit-depth-stat" title=resolution_tooltip>
-                                                                {resolution_text}
-                                                                <span class=suffix_class>{suffix_text}</span>
-                                                            </div>
-                                                        </div>
-                                                    }.into_any()
-                                                }
-                                                None => view! { <span></span> }.into_any(),
-                                            }}
-                                            <div class=summary_class>{summary}</div>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div>
-                                            <div class="bit-depth-stat">{summary}</div>
-                                            <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
-                                        </div>
-                                    }.into_any()
-                                }}
-                                <div class="bit-depth-stat" title=noise_floor_tooltip>{noise_floor_text}</div>
+                                <div class="setting-group-title" title="Combines value-coverage counting, LSB stride analysis, autocorrelation tests and firmware-family inverse-filter detectors into a single best-guess effective bit depth, ranked by certainty.">
+                                    "Bit depth"
+                                </div>
+                                // Headline (strongest single claim)
+                                <div class=headline_class>{headline_text}</div>
+                                {certainty_label.map(|c| view! {
+                                    <div class="wsnr-detail" style="font-style: italic;">
+                                        {format!("({})", c)}
+                                    </div>
+                                })}
+                                // Supporting facts, strongest-first, visible by default
+                                {fact_views}
                                 <div class=if is_asymmetric { "bit-warning" } else { "bit-depth-stat" } title=split_tooltip>{split_text}</div>
+                                // Existing detail stats — fold so they don't dominate.
+                                <details class="bit-depth-stat">
+                                    <summary>"Bit-usage details"</summary>
+                                    {if !is_float {
+                                        let summary_class = if effective_bits < bits_per_sample { "bit-warning" } else { "bit-depth-stat" };
+                                        view! {
+                                            <div>
+                                                <div class="bit-depth-stat">{format!("Per-bit-analysis effective depth: {} bits", effective_depth)}</div>
+                                                <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
+                                                {if headroom_bits > 0 {
+                                                    view! { <div class="bit-depth-stat">{format!("Headroom: {} bit{} ({:.1} dB)", headroom_bits, if headroom_bits == 1 { "" } else { "s" }, headroom_db)}</div> }.into_any()
+                                                } else { view! { <span></span> }.into_any() }}
+                                                {if zero_padding > 0 {
+                                                    view! { <div class="bit-depth-stat">{format!("Zero padding: {} bit{}", zero_padding, if zero_padding == 1 { "" } else { "s" })}</div> }.into_any()
+                                                } else { view! { <span></span> }.into_any() }}
+                                                {match value_coverage {
+                                                    Some(ref vc) => {
+                                                        let coverage_text = format!("Value coverage: {:.1}% ({} of {})",
+                                                            vc.coverage_pct, vc.unique_count, vc.value_space);
+                                                        let coverage_tooltip = format!("{} distinct sample values observed out of {} possible for {}-bit audio",
+                                                            vc.unique_count, vc.value_space, bits_per_sample);
+                                                        let resolution_text = format!("Value resolution: ~{:.1} bits ", vc.resolution_bits);
+                                                        let resolution_tooltip = format!("log\u{2082}({}) = {:.2}", vc.unique_count, vc.resolution_bits);
+                                                        let ceiled = vc.resolution_bits.ceil() as u16;
+                                                        let suffix_text = format!("({}-bit)", ceiled);
+                                                        view! {
+                                                            <div>
+                                                                <div class="bit-depth-stat" title=coverage_tooltip>{coverage_text}</div>
+                                                                <div class="bit-depth-stat" title=resolution_tooltip>{resolution_text}{suffix_text}</div>
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                    None => view! { <span></span> }.into_any(),
+                                                }}
+                                                <div class=summary_class>{summary}</div>
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <div>
+                                                <div class="bit-depth-stat">{summary}</div>
+                                                <div class="bit-depth-stat" title=entropy_tooltip>{entropy_text}</div>
+                                            </div>
+                                        }.into_any()
+                                    }}
+                                    <div class="bit-depth-stat" title=noise_floor_tooltip>{noise_floor_text}</div>
+                                </details>
                                 {warning_items}
                                 <div class="bit-sign-header" title=pos_tooltip>{format!("Samples above zero ({})", pos_pct)}</div>
                                 <div class="bit-grid" style=format!("grid-template-columns: repeat({}, 1fr);", cols)>
@@ -721,8 +981,345 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     }
                 }
             }}
+            // LSB Autocorrelation section
+            {move || {
+                match lsb_result.get().as_ref() {
+                    None => view! { <span></span> }.into_any(),
+                    Some(l) if matches!(l.verdict, LsbVerdict::NotApplicable) => {
+                        view! { <span></span> }.into_any()
+                    }
+                    Some(l) => render_lsb_section(l).into_any()
+                }
+            }}
+            // Mic Signatures section (Pipistrelle-family firmware detection)
+            {move || {
+                match pipistrelle_result.get().as_ref() {
+                    None => view! { <span></span> }.into_any(),
+                    Some(p) if matches!(p.verdict, PipistrelleVerdict::NotApplicable | PipistrelleVerdict::NoMatch) => {
+                        view! { <span></span> }.into_any()
+                    }
+                    Some(p) => render_pipistrelle_section(p).into_any(),
+                }
+            }}
+            // Device hints + metadata comparison
+            {move || {
+                let files = state.files.get();
+                let idx = state.current_file_index.get();
+                let file = idx.and_then(|i| files.get(i).cloned());
+                let (Some(file), Some(bit), Some(lsb), Some(pip)) = (
+                    file,
+                    analysis.get(),
+                    lsb_result.get(),
+                    pipistrelle_result.get(),
+                ) else { return view! { <span></span> }.into_any() };
+                let sr = file.audio.sample_rate;
+                let bits = file.audio.metadata.bits_per_sample;
+                let is_float = file.audio.metadata.is_float;
+                let nyq_opt = nyquist_result.get();
+                let am_opt = audiomoth_result.get();
+                let hints = device_hint::infer_device_hints(
+                    sr, bits, is_float, &bit, &lsb, &pip, nyq_opt.as_ref(), am_opt.as_ref(),
+                );
+                let guano = file.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
+                let xc = file.xc_metadata.clone();
+                let metadata_match = device_hint::compare_to_metadata(
+                    &hints,
+                    xc.as_deref(),
+                    guano.as_deref(),
+                );
+                if hints.is_empty() && matches!(metadata_match, MetadataMatch::NoClaim) {
+                    return view! { <span></span> }.into_any();
+                }
+                render_device_hints_section(hints, metadata_match).into_any()
+            }}
         </div>
     }
+}
+
+// ============================================================================
+// Helper renderers for the analysis subsections.
+// Pulled out of the main view so each can be edited without grappling with
+// the giant `view! { ... }` block.
+// ============================================================================
+
+fn render_lsb_section(l: &LsbAutocorrResult) -> impl IntoView {
+    // Human-readable lead line per verdict.
+    let (verdict_text, verdict_class) = match &l.verdict {
+        LsbVerdict::ZeroPaddedNBit { effective_bits, padding_bits } => (
+            format!(
+                "Effective {}-bit \u{2014} low {} bit{} of every sample are literally zero",
+                effective_bits, padding_bits, if *padding_bits == 1 { "" } else { "s" },
+            ),
+            "bit-depth-stat bit-depth-primary",
+        ),
+        LsbVerdict::QuietSectionZeroPadded { effective_bits_in_quiet, padding_bits } => (
+            format!(
+                "Quiet sections drop to {}-bit (low {} bits zeroed in silence; \
+                 full depth elsewhere) \u{2014} typical of noise-gated firmware",
+                effective_bits_in_quiet, padding_bits,
+            ),
+            "bit-warning",
+        ),
+        LsbVerdict::DspPaddedLowBitDepth { effective_bits_guess } => (
+            format!(
+                "Low bits look deterministic \u{2014} probably a ~{}-bit ADC plus \
+                 on-device DSP padded into the {}-bit container",
+                effective_bits_guess, l.n_low + 4,
+            ),
+            "bit-warning",
+        ),
+        LsbVerdict::ConsistentWithClaimedBitDepth => (
+            "Low bits look like analog noise \u{2014} bit-depth claim is plausible".into(),
+            "bit-depth-stat",
+        ),
+        LsbVerdict::Inconclusive => (
+            format!(
+                "Inconclusive \u{2014} even the quietest spot in the file is too \
+                 noisy (stdev {:.1} LSB) for the LSB tests to discriminate",
+                l.quietest_window_stdev,
+            ),
+            "wsnr-detail",
+        ),
+        LsbVerdict::NotApplicable => ("Not applicable".into(), "wsnr-detail"),
+    };
+
+    // Pattern length (if any short repeating period was found in the low bits).
+    let pattern_line = l.low_bit_period.and_then(|p| {
+        // Hide the trivial "period 1" for the zero-padded case; the lead line
+        // already says the bits are literally zero.
+        if p == 1 && matches!(l.verdict, LsbVerdict::ZeroPaddedNBit { .. }) {
+            return None;
+        }
+        Some(format!(
+            "Low bits repeat every {} sample{} ({:.0}% match)",
+            p, if p == 1 { "" } else { "s" }, l.low_bit_period_match * 100.0,
+        ))
+    });
+
+    // Detail lines for the fold-down.
+    let chi2_text = format!(
+        "Low {}-bit stats (quietest 4096-sample window): chi\u{00B2} = {:.0}, lag-1 = {:+.3}, lag-256 = {:+.3}",
+        l.n_low, l.quiet_lsb_chi2, l.quiet_lsb_lag1_acf, l.quiet_lsb_lag256_acf,
+    );
+    let chi2_tooltip = format!(
+        "chi\u{00B2} (df=15): >37.7 is significant at p<0.001 \u{2014} large values mean \
+         the low bits don't look uniform.\n\
+         lag-1 / lag-256: autocorrelation of the signed-centered low bits. Real ADC \
+         noise is uncorrelated (~0); DSP residue is correlated (further from 0).\n\
+         Quietest window starts at sample {}.",
+        l.quietest_window_idx,
+    );
+    let nf_text = format!(
+        "Quietest window stdev: {:.1} LSB, {:.1}% of samples have nonzero low bits",
+        l.quietest_window_stdev, l.quiet_lsb_nonzero_frac * 100.0,
+    );
+    let nf_tooltip = "Stdev of the quietest 4096-sample window in raw integer LSB units. \
+        Noise floor above ~16 LSB dithers out any DSP signature in the low bits, so we \
+        can't tell DSP-padded from true full-bit-depth above that.";
+    let gcd_line = if l.gcd_nonzero > 1 {
+        Some(format!("All nonzero samples are multiples of {}", l.gcd_nonzero))
+    } else { None };
+    let explanation = l.explanation.clone();
+
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title" title="Tests whether the lowest few bits look like analog noise or like padding from a lower-bit-depth source.">
+                "Low-bit analysis"
+            </div>
+            <div class=verdict_class>{verdict_text}</div>
+            {pattern_line.map(|p| view! { <div class="bit-warning">{p}</div> })}
+            <details class="bit-depth-stat">
+                <summary>"Stats"</summary>
+                <div class="bit-depth-stat" title=chi2_tooltip>{chi2_text}</div>
+                <div class="bit-depth-stat" title=nf_tooltip>{nf_text}</div>
+                {gcd_line.map(|g| view! { <div class="bit-depth-stat">{g}</div> })}
+                {if !explanation.is_empty() {
+                    view! { <div class="wsnr-detail">{explanation}</div> }.into_any()
+                } else { view! { <span></span> }.into_any() }}
+            </details>
+        </div>
+    }
+}
+
+fn render_pipistrelle_section(p: &PipistrelleResult) -> impl IntoView {
+    let family_tooltip = format!(
+        "The Pipistrelle-family RP2040 firmware is open source and ships in \
+         multiple devices: {}. We can only narrow this down to the family, not \
+         the specific product.",
+        PIPISTRELLE_FAMILY.join(", "),
+    );
+
+    let (lead_text, lead_class) = match p.verdict {
+        PipistrelleVerdict::Match => (
+            format!(
+                "Pipistrelle-family firmware detected (dBcut={}, {:.2}% reconstruction error)",
+                p.best_db_cut.unwrap_or(0),
+                p.best_normalized_residual * 100.0,
+            ),
+            "bit-depth-stat bit-depth-primary",
+        ),
+        PipistrelleVerdict::Possible => (
+            format!(
+                "Possibly Pipistrelle-family firmware (dBcut={}, {:.2}% reconstruction error)",
+                p.best_db_cut.unwrap_or(0),
+                p.best_normalized_residual * 100.0,
+            ),
+            "bit-warning",
+        ),
+        PipistrelleVerdict::NoMatch => (
+            "No Pipistrelle-family firmware signature".into(),
+            "wsnr-detail",
+        ),
+        PipistrelleVerdict::NotApplicable => (
+            "Pipistrelle-family detection skipped (wrong sample rate / format)".into(),
+            "wsnr-detail",
+        ),
+    };
+
+    // Caveat line for Possible matches — make sure the user understands this
+    // is not conclusive.
+    let caveat = matches!(p.verdict, PipistrelleVerdict::Possible).then(|| {
+        "Note: many bandlimited 16-bit ultrasonic recordings give similarly-low \
+         reconstruction errors, so a 'possible' verdict is far from conclusive.".to_string()
+    });
+
+    // Detail lines.
+    let near_int_text = format!(
+        "Recovered ADC samples landing within \u{00B1}0.1 of an integer: {}/{} = {:.1}% \
+         (uniform baseline 20%)",
+        p.best_near_integer_match, p.best_near_integer_total,
+        p.best_near_integer_frac * 100.0,
+    );
+    let near_int_tooltip = "After inverse-filtering the firmware's DSP chain in float, \
+        the recovered ADC values should be integers (modulo firmware truncation noise). \
+        Real Pipistrelle recordings cluster on integers; unrelated signals look uniform.";
+    let mean_frac_text = format!(
+        "Mean |fractional part| = {:.3} (uniform baseline 0.25)",
+        p.best_mean_abs_frac,
+    );
+    let in_range_text = format!(
+        "{:.1}% of recovered values fall inside the 12-bit ADC range [0, 4095]",
+        p.best_in_range_frac * 100.0,
+    );
+    let windows_text = format!(
+        "{} window{} analysed, {} skipped (below silence gate)",
+        p.windows_used, if p.windows_used == 1 { "" } else { "s" },
+        p.windows_skipped_silent,
+    );
+    let preset_lines: Vec<_> = p.per_preset.iter().map(|s| {
+        let line = format!(
+            "dBcut={}: residual {:.2}%, near-integer {:.1}%, in-range {:.1}%",
+            s.db_cut,
+            s.normalized_residual * 100.0,
+            s.near_integer_frac * 100.0,
+            s.in_range_frac * 100.0,
+        );
+        view! { <div class="bit-depth-stat">{line}</div> }
+    }).collect();
+
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title" title=family_tooltip>
+                "Firmware fingerprint (Pipistrelle family)"
+            </div>
+            <div class=lead_class>{lead_text}</div>
+            {caveat.map(|c| view! { <div class="wsnr-detail">{c}</div> })}
+            <details class="bit-depth-stat">
+                <summary>"Stats"</summary>
+                <div class="bit-depth-stat" title=near_int_tooltip>{near_int_text}</div>
+                <div class="bit-depth-stat">{mean_frac_text}</div>
+                <div class="bit-depth-stat">{in_range_text}</div>
+                <div class="wsnr-detail">{windows_text}</div>
+                <details>
+                    <summary>"Per-preset"</summary>
+                    {preset_lines}
+                </details>
+            </details>
+        </div>
+    }
+}
+
+fn render_device_hints_section(
+    hints: Vec<DeviceHint>,
+    metadata_match: MetadataMatch,
+) -> impl IntoView {
+    // Skip the section entirely if there's literally nothing to show.
+    let any_strong_or_likely_hint = hints.iter().any(|h| matches!(
+        h.confidence, HintConfidence::Strong | HintConfidence::Likely
+    ));
+    let show_section = any_strong_or_likely_hint
+        || !matches!(metadata_match, MetadataMatch::NoClaim);
+
+    if !show_section {
+        return view! { <span></span> }.into_any();
+    }
+
+    let hint_rows: Vec<_> = hints.iter().map(|h| {
+        let class = match h.confidence {
+            HintConfidence::Strong => "bit-depth-stat bit-depth-primary",
+            HintConfidence::Likely => "bit-warning",
+            HintConfidence::Possible => "wsnr-detail",
+        };
+        let candidates = if h.candidates.is_empty() {
+            String::new()
+        } else {
+            h.candidates.join(", ")
+        };
+        let detail = h.detail.clone();
+        let label = h.label.clone();
+        let candidates_view = if !candidates.is_empty() {
+            view! {
+                <div class="wsnr-detail" style="margin-left: 1em;">
+                    {format!("Candidates: {}", candidates)}
+                </div>
+            }.into_any()
+        } else {
+            view! { <span></span> }.into_any()
+        };
+        view! {
+            <div>
+                <div class=class title=detail>{label}</div>
+                {candidates_view}
+            </div>
+        }
+    }).collect();
+
+    let metadata_view = match metadata_match {
+        MetadataMatch::NoClaim => view! { <span></span> }.into_any(),
+        MetadataMatch::ClaimNoAnalysis { claim } => view! {
+            <div class="wsnr-detail">
+                {format!("File metadata says: {}", claim)}
+                " — analysis did not produce any device fingerprints to compare against."
+            </div>
+        }.into_any(),
+        MetadataMatch::Match { claim, matched_candidate } => view! {
+            <div class="bit-depth-stat" title="Metadata-claimed device matches one of the analysis candidates.">
+                "\u{2713} Metadata says "
+                <strong>{claim}</strong>
+                " — matches analysis ("
+                {matched_candidate}
+                ")"
+            </div>
+        }.into_any(),
+        MetadataMatch::Mismatch { claim, hint_summary } => view! {
+            <div class="bit-warning" title="Metadata-claimed device does NOT match what the analysis suggests. The file may have been mis-tagged, post-processed, or the analysis hint may be wrong.">
+                "\u{26A0} Metadata says "
+                <strong>{claim}</strong>
+                " — but analysis suggests: "
+                {hint_summary}
+            </div>
+        }.into_any(),
+    };
+
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title" title="Best-guess device candidates combining bit-depth analysis, low-bit signature, and firmware-fingerprint tests. Compared against any device claim in the file's XC or GUANO metadata.">
+                "Device hints"
+            </div>
+            {hint_rows}
+            {metadata_view}
+        </div>
+    }.into_any()
 }
 
 /// Yield once to the browser event loop via a zero-duration setTimeout.

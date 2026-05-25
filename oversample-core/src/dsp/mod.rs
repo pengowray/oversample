@@ -15,3 +15,7 @@ pub mod chromagram;
 pub mod psd;
 pub mod pulse_detect;
 pub mod resonators;
+pub mod lsb_autocorr;
+pub mod pipistrelle;
+pub mod audiomoth;
+pub mod effective_nyquist;

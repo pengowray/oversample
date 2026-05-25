@@ -780,15 +780,32 @@ fn normalize_riff(bytes: &[u8]) -> Option<Vec<u8>> {
     let fmt = fmt_data?;
     let data = audio_data?;
 
+    // Hound rejects fmt chunks that aren't exactly 16 / 18 / 40 bytes.
+    // Some recorders (e.g. certain Wildlife Acoustics files in the field)
+    // tack non-standard text metadata onto the end of the fmt chunk; for
+    // standard PCM (format tag 1) the first 16 bytes are well-formed and
+    // the trailer is garbage. Strip it.
+    let fmt_normalized: &[u8] = if fmt.len() >= 16 && fmt.len() != 16 && fmt.len() != 18 && fmt.len() != 40 {
+        let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+        if format_tag == 1 || format_tag == 3 {
+            // PCM int / float — first 16 bytes are the standard header, rest is junk.
+            &fmt[..16]
+        } else {
+            fmt
+        }
+    } else {
+        fmt
+    };
+
     // WAVE + fmt chunk header + fmt body + data chunk header + data body
-    let riff_body_len = 4 + 8 + fmt.len() + 8 + data.len();
+    let riff_body_len = 4 + 8 + fmt_normalized.len() + 8 + data.len();
     let mut out = Vec::with_capacity(12 + riff_body_len - 4);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(riff_body_len as u32).to_le_bytes());
     out.extend_from_slice(b"WAVE");
     out.extend_from_slice(b"fmt ");
-    out.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
-    out.extend_from_slice(fmt);
+    out.extend_from_slice(&(fmt_normalized.len() as u32).to_le_bytes());
+    out.extend_from_slice(fmt_normalized);
     out.extend_from_slice(b"data");
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(data);
