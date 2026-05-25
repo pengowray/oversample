@@ -575,6 +575,15 @@ pub(crate) async fn fetch_demo_details(metadata_file: &str) -> DemoDetails {
     DemoDetails { duration_secs, sample_rate_hz }
 }
 
+/// If a demo with this filename is already open, return its index in `state.files`.
+/// Used to jump-to-existing instead of opening a duplicate when the user clicks
+/// the same demo bat suggestion twice.
+pub(crate) fn find_open_demo(state: AppState, filename: &str) -> Option<usize> {
+    state.files.with_untracked(|files| {
+        files.iter().position(|f| f.is_demo && f.name == filename)
+    })
+}
+
 pub(crate) async fn load_single_demo(entry: &DemoEntry, state: AppState, load_id: u64) -> Result<(), String> {
     // Fetch XC metadata sidecar if available
     let (xc_metadata, xc_hashes) = if let Some(meta_file) = &entry.metadata_file {

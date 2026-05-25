@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::state::AppState;
-use super::loading::{DemoDetails, DemoEntry, fetch_demo_details, fetch_demo_index, load_single_demo};
+use super::loading::{DemoDetails, DemoEntry, fetch_demo_details, fetch_demo_index, find_open_demo, load_single_demo};
 
 const PICK_COUNT: usize = 3;
 
@@ -208,6 +208,10 @@ pub(super) fn BatsForYou(
             let species = entry_for_title.species.clone();
             let on_click = move |_: web_sys::MouseEvent| {
                 let entry = entry_for_click.clone();
+                if let Some(idx) = find_open_demo(state, &entry.filename) {
+                    state.current_file_index.set(Some(idx));
+                    return;
+                }
                 let label = entry.en.clone().unwrap_or_else(|| entry.filename.clone());
                 let load_id = state.loading_start(&label);
                 spawn_local(async move {
