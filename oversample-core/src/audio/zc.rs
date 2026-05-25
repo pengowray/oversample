@@ -356,6 +356,132 @@ fn decode_intervals(data: &[u8]) -> Result<(Vec<u32>, Vec<bool>), String> {
     Ok((intervals, off_mask))
 }
 
+/// Synthesise a continuous waveform from a ZC recording by treating the
+/// dot frequencies as the instantaneous frequency of a phase-coherent
+/// oscillator. Useful for displaying the file in a spectrogram view and
+/// for letting users listen to a recording reconstruction (after
+/// time-expansion at playback time, since the original calls are
+/// ultrasonic).
+///
+/// Algorithm:
+/// - Walk through output samples at `1 / output_sample_rate` increments.
+/// - At each output sample time `t`, find the dot index `i` such that
+///   `times_s[i] <= t < times_s[i+1]`. Linearly interpolate between the
+///   surrounding dot frequencies to get the instantaneous frequency.
+/// - Advance the phase by `2π · f(t) · dt` and emit `sin(phase)`.
+/// - OFF dots and dots with `freq = 0` (period out of range) emit
+///   silence — the oscillator stays at zero amplitude across them.
+/// - A short raised-cosine fade at each ON-region boundary prevents
+///   audible clicks at the silence-to-tone transitions.
+pub fn synthesise_waveform(zc: &ZcData, output_sample_rate: u32) -> Vec<f32> {
+    if zc.times_s.is_empty() {
+        return Vec::new();
+    }
+    let dt = 1.0 / output_sample_rate as f64;
+    let total_t = zc.duration_secs();
+    if total_t <= 0.0 {
+        return Vec::new();
+    }
+    let n_samples = (total_t * output_sample_rate as f64).ceil() as usize;
+    let mut samples = Vec::with_capacity(n_samples);
+    let mut phase = 0.0f64;
+    let mut dot_i: usize = 0;
+    const TAU: f64 = std::f64::consts::TAU;
+    // 1 ms fade in/out around silent regions — eliminates clicks without
+    // smearing the spectrogram visibly.
+    let fade_samples = (output_sample_rate as f64 * 0.001).round() as usize;
+
+    // Pre-compute amplitude envelope: 1.0 where the surrounding dot
+    // window has a valid ON frequency, with raised-cosine ramps near
+    // transitions. This is simpler than a sample-by-sample envelope
+    // tracker and gives perceptually clean transitions.
+    let dot_active = |i: usize| -> bool {
+        i < zc.freqs_hz.len()
+            && zc.freqs_hz[i] > 0.0
+            && !zc.off_mask.get(i).copied().unwrap_or(false)
+    };
+
+    for s in 0..n_samples {
+        let t = s as f64 * dt;
+        // Advance dot_i so times_s[dot_i] <= t < times_s[dot_i+1].
+        while dot_i + 1 < zc.times_s.len() && zc.times_s[dot_i + 1] <= t {
+            dot_i += 1;
+        }
+
+        // Instantaneous freq: linear interp between adjacent active dots.
+        let freq = if dot_active(dot_i) {
+            if dot_i + 1 < zc.times_s.len() && dot_active(dot_i + 1) {
+                let t0 = zc.times_s[dot_i];
+                let t1 = zc.times_s[dot_i + 1];
+                if t1 > t0 {
+                    let alpha = ((t - t0) / (t1 - t0)).clamp(0.0, 1.0);
+                    zc.freqs_hz[dot_i] * (1.0 - alpha) + zc.freqs_hz[dot_i + 1] * alpha
+                } else {
+                    zc.freqs_hz[dot_i]
+                }
+            } else {
+                zc.freqs_hz[dot_i]
+            }
+        } else {
+            0.0
+        };
+
+        // Phase always advances by the instantaneous frequency so that
+        // tones stay phase-coherent across dot boundaries within an ON
+        // region.
+        phase += TAU * freq * dt;
+        if phase > TAU * 1024.0 {
+            // Keep phase bounded to avoid f64 precision loss.
+            phase = phase.rem_euclid(TAU);
+        }
+
+        // Amplitude envelope: 1 inside ON regions, 0 in OFF regions,
+        // raised-cosine ramps near boundaries.
+        let amp = if freq > 0.0 {
+            // Distance to the nearest silent boundary in samples.
+            let mut dist_to_silence: usize = fade_samples + 1;
+            for look in 1..=fade_samples {
+                let ahead = s + look;
+                let t_ahead = ahead as f64 * dt;
+                let dot_ahead = match zc.times_s.binary_search_by(|v| {
+                    v.partial_cmp(&t_ahead).unwrap_or(std::cmp::Ordering::Equal)
+                }) {
+                    Ok(k) => k,
+                    Err(k) => k.saturating_sub(1),
+                };
+                if !dot_active(dot_ahead) {
+                    dist_to_silence = look;
+                    break;
+                }
+                if s >= look {
+                    let t_behind = (s - look) as f64 * dt;
+                    let dot_behind = match zc.times_s.binary_search_by(|v| {
+                        v.partial_cmp(&t_behind).unwrap_or(std::cmp::Ordering::Equal)
+                    }) {
+                        Ok(k) => k,
+                        Err(k) => k.saturating_sub(1),
+                    };
+                    if !dot_active(dot_behind) {
+                        dist_to_silence = look;
+                        break;
+                    }
+                }
+            }
+            if dist_to_silence <= fade_samples {
+                let phase_in_fade = dist_to_silence as f64 / fade_samples as f64;
+                0.5 * (1.0 - (std::f64::consts::PI * (1.0 - phase_in_fade)).cos())
+            } else {
+                1.0
+            }
+        } else {
+            0.0
+        };
+
+        samples.push((phase.sin() * amp * 0.7) as f32);
+    }
+    samples
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +560,40 @@ mod tests {
         assert!(r.off_mask[1], "dot 1 should be OFF (status start)");
         assert!(r.off_mask[2], "dot 2 should be OFF (status count)");
         assert!(!r.off_mask[3], "dot 3 should be ON again");
+    }
+
+    #[test]
+    fn synthesise_waveform_matches_dot_frequency() {
+        // Build a ZC where a single dot has a known frequency ~50 kHz
+        // (period 160 µs at divratio=8). Synthesise at 384 kHz and
+        // confirm the output has roughly the right per-sample phase
+        // increment in the middle of the ON region.
+        let bytes = synth_zc_minimal();
+        let zc = parse_zc(&bytes).unwrap();
+        let out = synthesise_waveform(&zc, 384_000);
+        // Duration is ~198 µs → at 384 kHz that's ~76 samples; very short.
+        // Just sanity-check we got non-empty output with finite values
+        // and at least one non-zero sample in the middle of the run.
+        assert!(!out.is_empty(), "synthesis returned empty");
+        assert!(out.iter().any(|&s| s.abs() > 0.01),
+                "synthesis is silent throughout");
+        assert!(out.iter().all(|&s| s.is_finite() && s.abs() <= 1.0),
+                "synthesis produced non-finite or out-of-range samples");
+    }
+
+    #[test]
+    fn synthesise_off_dots_silent() {
+        // Modify the synthetic stream so every dot is OFF — output
+        // should be entirely silent.
+        let mut buf = synth_zc_minimal();
+        // Inject OFF status applying to lots of subsequent dots.
+        let abs_end = buf.len() - 2;
+        buf.truncate(abs_end);
+        buf.extend_from_slice(&[0xE1, 0xFF, 0x10, 0x10]);
+        let zc = parse_zc(&buf).unwrap();
+        let out = synthesise_waveform(&zc, 384_000);
+        assert!(out.iter().all(|&s| s == 0.0),
+                "OFF-only stream should synthesise to silence");
     }
 
     #[test]

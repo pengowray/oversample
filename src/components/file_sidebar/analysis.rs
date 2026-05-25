@@ -62,6 +62,16 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             return;
         }
 
+        // ZC files have no meaningful continuous waveform — the audio
+        // placeholder is silent. Skip the bit-depth / LSB / firmware /
+        // wSNR analyses (they'd just measure the silent placeholder)
+        // and let the view layer render a dedicated ZC stats section
+        // from file.audio.metadata.zc_data instead.
+        if file.audio.metadata.zc_data.is_some() {
+            is_computing.set(false);
+            return;
+        }
+
         let max_samples = (DEFAULT_ANALYSIS_WINDOW_SECS * sample_rate as f64) as usize;
         let is_long = total > max_samples;
         file_is_long.set(is_long);
@@ -181,6 +191,58 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         let file = idx.and_then(|i| files.get(i).cloned());
 
         let mut report = "=== Audio Analysis ===\n".to_string();
+
+        // ZC files: skip the audio-specific sections (their analyses
+        // weren't run) and emit a dedicated ZC summary instead.
+        if let Some(ref f) = file {
+            if let Some(zc) = f.audio.metadata.zc_data.as_ref() {
+                let md = &zc.metadata;
+                let total = zc.times_s.len();
+                let on = zc.on_dot_count();
+                let off = total.saturating_sub(on);
+                let off_pct = if total > 0 { off as f64 * 100.0 / total as f64 } else { 0.0 };
+                let mut freqs: Vec<f64> = zc.freqs_hz.iter().zip(&zc.off_mask)
+                    .filter_map(|(&f, &of)| (!of && f > 0.0).then_some(f))
+                    .collect();
+                freqs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let dur_text = crate::format_time::format_duration(zc.duration_secs(), 3);
+                report.push_str("=== Anabat ZC Recording ===\n");
+                report.push_str(&format!("  File type: {}\n", md.file_type));
+                report.push_str(&format!("  Dots: {} total ({} ON, {} OFF — {:.1}%)\n",
+                    total, on, off, off_pct));
+                if let (Some(&min), Some(&max)) = (freqs.first(), freqs.last()) {
+                    let mean = freqs.iter().sum::<f64>() / freqs.len() as f64;
+                    let median = freqs[freqs.len() / 2];
+                    report.push_str(&format!(
+                        "  Frequency: {:.1}\u{2013}{:.1} kHz, mean {:.1} kHz, median {:.1} kHz ({} ON dots with valid freq)\n",
+                        min / 1000.0, max / 1000.0, mean / 1000.0, median / 1000.0, freqs.len(),
+                    ));
+                }
+                report.push_str(&format!("  Duration: {}\n", dur_text));
+                report.push_str(&format!("  divratio: {}, vres: {}, res1: {} Hz\n",
+                    md.divratio, md.vres, md.res1));
+                if let Some(ts) = md.timestamp {
+                    report.push_str(&format!("  Recorded: {:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}\n",
+                        ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, ts.microseconds_total));
+                }
+                if !md.location.is_empty() { report.push_str(&format!("  Location: {}\n", md.location)); }
+                if !md.species.is_empty()  { report.push_str(&format!("  Species:  {}\n", md.species)); }
+                if !md.tape.is_empty()     { report.push_str(&format!("  Tape:     {}\n", md.tape)); }
+                if !md.date.is_empty()     { report.push_str(&format!("  Date:     {}\n", md.date)); }
+                if !md.spec.is_empty()     { report.push_str(&format!("  Spec:     {}\n", md.spec)); }
+                if !md.note1.is_empty()    { report.push_str(&format!("  Note 1:   {}\n", md.note1)); }
+                if !md.note2.is_empty()    { report.push_str(&format!("  Note 2:   {}\n", md.note2)); }
+                if !md.id_code.is_empty()  { report.push_str(&format!("  ID:       {}\n", md.id_code)); }
+                if !md.gps.is_empty()      { report.push_str(&format!("  GPS:      {}\n", md.gps)); }
+                if !md.guano.is_empty() {
+                    report.push_str("\nGUANO metadata:\n");
+                    for (k, v) in &md.guano {
+                        report.push_str(&format!("  {} = {}\n", k, v));
+                    }
+                }
+                return report;
+            }
+        }
 
         if let Some(ref f) = file {
             let meta = &f.audio.metadata;
@@ -496,6 +558,9 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     None => view! {
                         <div class="sidebar-panel-empty">"No file selected"</div>
                     }.into_any(),
+                    Some(f) if f.audio.metadata.zc_data.is_some() => {
+                        render_zc_file_info(f).into_any()
+                    }
                     Some(f) => {
                         let meta = &f.audio.metadata;
                         let sr = f.audio.sample_rate;
@@ -1041,6 +1106,151 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 // Pulled out of the main view so each can be edited without grappling with
 // the giant `view! { ... }` block.
 // ============================================================================
+
+/// Render the analysis panel's File-info area for an Anabat .zc file.
+/// The audio side of these recordings is a silent placeholder, so the
+/// normal File / Signal / wSNR / Bit-Usage / LSB / Mic-Signatures
+/// sections don't apply — we replace them with a ZC-specific view that
+/// surfaces the dot count, frequency range, header metadata, and any
+/// embedded GUANO key/values.
+fn render_zc_file_info(f: &crate::state::LoadedFile) -> impl IntoView {
+    let Some(zc) = f.audio.metadata.zc_data.as_ref() else {
+        return view! { <span></span> }.into_any();
+    };
+    let md = &zc.metadata;
+
+    // ── Top-level facts ────────────────────────────────────────────────
+    let total = zc.times_s.len();
+    let on = zc.on_dot_count();
+    let off = total.saturating_sub(on);
+    let duration = zc.duration_secs();
+    let dur_text = crate::format_time::format_duration(duration, 3);
+
+    // Compute frequency stats over ON dots with valid frequency.
+    let mut freqs: Vec<f64> = zc.freqs_hz.iter().zip(&zc.off_mask)
+        .filter_map(|(&f, &off)| (!off && f > 0.0).then_some(f))
+        .collect();
+    freqs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let freq_range = if freqs.is_empty() {
+        None
+    } else {
+        let min = freqs[0];
+        let max = freqs[freqs.len() - 1];
+        let mean = freqs.iter().sum::<f64>() / freqs.len() as f64;
+        let median = freqs[freqs.len() / 2];
+        Some((min, max, mean, median))
+    };
+
+    // ── Build the header-metadata rows ─────────────────────────────────
+    let mut header_rows: Vec<(String, String)> = Vec::new();
+    if !md.location.is_empty() { header_rows.push(("Location".into(), md.location.clone())); }
+    if !md.species.is_empty()  { header_rows.push(("Species".into(),  md.species.clone()));  }
+    if !md.tape.is_empty()     { header_rows.push(("Tape".into(),     md.tape.clone()));     }
+    if !md.date.is_empty()     { header_rows.push(("Date".into(),     md.date.clone()));     }
+    if !md.spec.is_empty()     { header_rows.push(("Spec".into(),     md.spec.clone()));     }
+    if !md.note1.is_empty()    { header_rows.push(("Note 1".into(),   md.note1.clone()));    }
+    if !md.note2.is_empty()    { header_rows.push(("Note 2".into(),   md.note2.clone()));    }
+    if !md.id_code.is_empty()  { header_rows.push(("ID".into(),       md.id_code.clone()));  }
+    if !md.gps.is_empty()      { header_rows.push(("GPS".into(),      md.gps.clone()));      }
+    if let Some(ts) = md.timestamp {
+        header_rows.push((
+            "Recorded".into(),
+            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
+                ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, ts.microseconds_total),
+        ));
+    }
+    let header_views: Vec<_> = header_rows.into_iter().map(|(k, v)| {
+        view! {
+            <div class="bit-depth-stat">
+                <strong>{format!("{}: ", k)}</strong> {v}
+            </div>
+        }
+    }).collect();
+
+    let guano_views: Vec<_> = md.guano.iter().map(|(k, v)| {
+        view! {
+            <div class="bit-depth-stat" style="margin-left: 1em;">
+                {format!("{} = {}", k, v)}
+            </div>
+        }
+    }).collect();
+    let has_guano = !md.guano.is_empty();
+
+    let off_pct = if total > 0 { off as f64 * 100.0 / total as f64 } else { 0.0 };
+    let dot_summary = format!(
+        "{} dots ({} ON, {} OFF — {:.1}%)",
+        total, on, off, off_pct,
+    );
+    let freq_lines: Vec<_> = freq_range.map(|(min, max, mean, median)| {
+        vec![
+            view! {
+                <div class="bit-depth-stat bit-depth-primary">
+                    {format!("Frequency range: {:.1} – {:.1} kHz (mean {:.1} kHz)",
+                        min / 1000.0, max / 1000.0, mean / 1000.0)}
+                </div>
+            }.into_any(),
+            view! {
+                <div class="bit-depth-stat">
+                    {format!("Median {:.1} kHz \u{2014} sorted across {} valid-frequency ON dots",
+                        median / 1000.0, freqs.len())}
+                </div>
+            }.into_any(),
+        ]
+    }).unwrap_or_default();
+
+    let divratio = md.divratio;
+    let divratio_explanation = format!(
+        "divratio = {} \u{2014} the recorder's frequency-divider ratio. \
+         Dot frequency is computed as divratio × 10\u{2076} / (\u{0394}t in \u{00B5}s).",
+        divratio,
+    );
+    let file_type_text = format!(
+        "ZC file type {} \u{2014} {}",
+        md.file_type,
+        if md.file_type >= 132 { "modern (v132+) with embedded timestamp and GUANO" }
+        else { "legacy (pre-v132) without embedded timestamp" },
+    );
+
+    view! {
+        <div>
+            <div class="setting-group">
+                <div class="setting-group-title" title="Anabat zero-crossing recording — no continuous waveform, just dot timing.">
+                    "ZC Recording"
+                </div>
+                <div class="bit-depth-stat bit-depth-primary">{dot_summary}</div>
+                {freq_lines}
+                <div class="bit-depth-stat">
+                    {format!("Duration: {}", dur_text)}
+                </div>
+                <div class="wsnr-detail">{file_type_text}</div>
+                <div class="bit-depth-stat" title=divratio_explanation>
+                    {format!("divratio: {}, vres: {}, res1: {} Hz",
+                        md.divratio, md.vres, md.res1)}
+                </div>
+            </div>
+
+            {if !header_views.is_empty() {
+                view! {
+                    <div class="setting-group">
+                        <div class="setting-group-title">"Header metadata"</div>
+                        {header_views}
+                    </div>
+                }.into_any()
+            } else { view! { <span></span> }.into_any() }}
+
+            {if has_guano {
+                view! {
+                    <div class="setting-group">
+                        <div class="setting-group-title" title="GUANO key/value metadata embedded in the .zc file (Anabat Insight, Roostlogger, etc. all write this).">
+                            "GUANO metadata"
+                        </div>
+                        {guano_views}
+                    </div>
+                }.into_any()
+            } else { view! { <span></span> }.into_any() }}
+        </div>
+    }.into_any()
+}
 
 fn render_lsb_section(l: &LsbAutocorrResult) -> impl IntoView {
     // Human-readable lead line per verdict.

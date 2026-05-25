@@ -67,4 +67,18 @@ fn main() {
         shown += 1;
         if shown >= 10 { break; }
     }
+
+    // Synthesised waveform stats.
+    println!();
+    let synth = zc::synthesise_waveform(&data, 384_000);
+    let peak = synth.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+    let rms = if !synth.is_empty() {
+        (synth.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / synth.len() as f64).sqrt() as f32
+    } else { 0.0 };
+    let nonzero = synth.iter().filter(|&&s| s.abs() > 0.001).count();
+    println!("Synthesised waveform at 384 kHz: {} samples ({:.3}s, peak {:.3}, RMS {:.3}, {}/{} non-silent samples = {:.1}%)",
+        synth.len(),
+        synth.len() as f64 / 384_000.0,
+        peak, rms, nonzero, synth.len(),
+        if synth.is_empty() { 0.0 } else { nonzero as f64 * 100.0 / synth.len() as f64 });
 }

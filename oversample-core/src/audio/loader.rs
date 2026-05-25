@@ -437,21 +437,23 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
 }
 
 /// Load a `.zc` Anabat zero-crossing file as `AudioData` with the
-/// parsed `ZcData` attached. The continuous-waveform side of
-/// `AudioData` gets a silent placeholder (1 sample of zero); renderers
-/// should check `metadata.zc_data.is_some()` and switch to a dot-plot
-/// view rather than spectrogram. ZC ↔ WAV synthesis is a separate step.
+/// parsed `ZcData` attached. A continuous waveform is also synthesised
+/// from the dot frequencies so the spectrogram view and audio-playback
+/// path work — the synthesised audio is phase-coherent with a 1 ms
+/// raised-cosine fade at each ON-region boundary to avoid click
+/// artefacts. The dot-plot view is the authoritative visualisation;
+/// the synthesised audio is a reconstruction for context, not source data.
 fn load_zc(bytes: &[u8]) -> Result<AudioData, String> {
     let zc = super::zc::parse_zc(bytes)?;
     let duration_secs = zc.duration_secs();
-    // Placeholder rate: dot plots have no continuous sample rate. Use a
-    // common ultrasonic rate so any code that touches `sample_rate`
-    // before we route it through ZC-aware paths doesn't behave too
-    // weirdly. (Real synth will replace this.)
-    let sample_rate: u32 = 250_000;
+    // 384 kHz output covers the full ultrasonic range that ZC recorders
+    // typically capture (up to ~192 kHz Nyquist). Higher rates aren't
+    // useful — the dot frequencies don't exceed divratio*250 µs⁻¹.
+    let sample_rate: u32 = 384_000;
     let channels: u32 = 1;
-    let placeholder_samples: Vec<f32> = vec![0.0];
-    let (samples, source) = build_source(placeholder_samples, channels, sample_rate);
+    let synth = super::zc::synthesise_waveform(&zc, sample_rate);
+    let synth_samples = if synth.is_empty() { vec![0.0_f32] } else { synth };
+    let (samples, source) = build_source(synth_samples, channels, sample_rate);
     let metadata = FileMetadata {
         file_size: bytes.len(),
         format: "ZC",
