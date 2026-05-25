@@ -417,6 +417,14 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
         return Err("File too small".into());
     }
 
+    // Anabat zero-crossing files lack a magic-byte prefix but have a
+    // consistent header layout (file_type byte at offset 3, range
+    // 129..=132). Check before the RIFF dispatch because the header
+    // could accidentally start with the same characters.
+    if super::zc::is_zc(bytes) {
+        return load_zc(bytes);
+    }
+
     match &bytes[0..4] {
         b"RIFF" | b"RF64" if is_w4v(bytes) => load_w4v(bytes),
         b"RIFF" | b"RF64" => load_wav(bytes),
@@ -424,8 +432,44 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
         b"OggS" => load_ogg(bytes),
         _ if is_m4a(bytes) => load_m4a(bytes),
         _ if is_mp3(bytes) => load_mp3(bytes),
-        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, MP3, or M4A)".into()),
+        _ => Err("Unknown file format (expected WAV, W4V, FLAC, OGG, MP3, M4A, or ZC)".into()),
     }
+}
+
+/// Load a `.zc` Anabat zero-crossing file as `AudioData` with the
+/// parsed `ZcData` attached. The continuous-waveform side of
+/// `AudioData` gets a silent placeholder (1 sample of zero); renderers
+/// should check `metadata.zc_data.is_some()` and switch to a dot-plot
+/// view rather than spectrogram. ZC ↔ WAV synthesis is a separate step.
+fn load_zc(bytes: &[u8]) -> Result<AudioData, String> {
+    let zc = super::zc::parse_zc(bytes)?;
+    let duration_secs = zc.duration_secs();
+    // Placeholder rate: dot plots have no continuous sample rate. Use a
+    // common ultrasonic rate so any code that touches `sample_rate`
+    // before we route it through ZC-aware paths doesn't behave too
+    // weirdly. (Real synth will replace this.)
+    let sample_rate: u32 = 250_000;
+    let channels: u32 = 1;
+    let placeholder_samples: Vec<f32> = vec![0.0];
+    let (samples, source) = build_source(placeholder_samples, channels, sample_rate);
+    let metadata = FileMetadata {
+        file_size: bytes.len(),
+        format: "ZC",
+        bits_per_sample: 16,
+        is_float: false,
+        guano: None,
+        data_offset: None,
+        data_size: None,
+        zc_data: Some(std::sync::Arc::new(zc)),
+    };
+    Ok(AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels,
+        duration_secs,
+        metadata,
+    })
 }
 
 pub fn is_mp3(bytes: &[u8]) -> bool {
@@ -835,6 +879,7 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
             guano: header.guano,
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
+            zc_data: None,
         },
     })
 }
@@ -894,6 +939,7 @@ fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
             guano,
             data_offset: orig_data_offset,
             data_size: orig_data_size,
+            zc_data: None,
         },
     })
 }
@@ -935,6 +981,7 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
             guano: None,
             data_offset: flac_data_offset,
             data_size: flac_data_size,
+            zc_data: None,
         },
     })
 }
@@ -1033,6 +1080,7 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
             guano: None,
             data_offset: ogg_page_region(bytes).0,
             data_size: ogg_page_region(bytes).1,
+            zc_data: None,
         },
     })
 }
@@ -1141,6 +1189,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
                     .saturating_sub(mp3_data_offset)
                     .saturating_sub(mp3_trailer_size(bytes)),
             ),
+            zc_data: None,
         },
     })
 }
@@ -1718,6 +1767,7 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
             guano: if tags.fields.is_empty() { None } else { Some(tags) },
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     })
 }

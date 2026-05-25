@@ -89,6 +89,7 @@ pub async fn decode_via_audio_context(
             guano: None,
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     })
 }

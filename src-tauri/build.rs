@@ -32,6 +32,10 @@ fn main() {
                     "getWifiSsid",
                     "getDeviceModel",
                 ]),
+            )
+            .plugin(
+                "zoom",
+                tauri_build::InlinedPlugin::new().commands(&["reset"]),
             ),
     )
     .expect("failed to run tauri-build");

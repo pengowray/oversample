@@ -158,6 +158,26 @@ test.describe("Oversample web smoke", () => {
     failOnFatal(errors);
   });
 
+  test("zoom-out button is hidden when not pinch-zoomed", async ({ page }) => {
+    // Sanity check: the `.zoom-out-btn` only renders when
+    // `state.viewport_zoomed.get()` is true, which is gated on
+    // `visualViewport.scale > 1.05`. In headless Chromium that never
+    // happens (no real touch input), so the button must be absent.
+    //
+    // We can't write a richer test for the actual unzoom click — pinch
+    // can't be simulated in Playwright, and `visualViewport.scale` is
+    // read-only so we have no way to *force* the button to appear from
+    // JS. Real-device verification is required for the click behaviour.
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".zoom-out-btn")).toHaveCount(0);
+    // And: the `viewport-zoomed` body class must not be present either.
+    const hasClass = await page.evaluate(() =>
+      document.body.classList.contains("viewport-zoomed"),
+    );
+    expect(hasClass).toBe(false);
+  });
+
   test("debug-build banner is absent in release build", async ({ page }) => {
     // The dev-helper banner only renders when cfg!(debug_assertions); the
     // webServer in playwright.config.ts launches trunk with --release, so this

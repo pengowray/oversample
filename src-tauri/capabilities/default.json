@@ -18,6 +18,7 @@
     "media-store:allow-exportFile",
     "geolocation:allow-getCurrentLocation",
     "geolocation:allow-getWifiSsid",
-    "geolocation:allow-getDeviceModel"
+    "geolocation:allow-getDeviceModel",
+    "zoom:allow-reset"
   ]
 }

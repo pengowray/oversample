@@ -461,6 +461,7 @@ mod tests {
                 guano: None,
                 data_offset: None,
                 data_size: None,
+                zc_data: None,
             },
         }
     }

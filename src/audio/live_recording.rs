@@ -94,6 +94,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             guano: None,
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     };
 
@@ -185,6 +186,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
             guano: None,
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     };
 
@@ -355,6 +357,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
             guano: None,
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     };
 
@@ -1202,6 +1205,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
             guano: Some(meta.guano),
             data_offset: Some(44),
             data_size: Some(audio_data_size),
+            zc_data: None,
         },
     };
 
@@ -1356,6 +1360,7 @@ async fn finalize_streaming_tauri_recording(
             guano,
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
+            zc_data: None,
         },
     };
     let audio_for_stft = audio.clone();

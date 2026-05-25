@@ -137,8 +137,22 @@ pub fn ZcDotChart() -> impl IntoView {
         ctx.fill_rect(0.0, 0.0, cw, ch);
 
         let Some(file) = idx.and_then(|i| files.get(i)) else { return };
-        let Some(bins) = zc_bins.get().as_ref().cloned() else { return };
-        if bins.is_empty() { return; }
+
+        // ── Native Anabat .zc dots branch ─────────────────────────────
+        // When the file is an Anabat ZC recording, render its actual
+        // dots (one per zero-crossing event) instead of binning the
+        // WAV-derived rate. The two paths share the axes / grid logic
+        // below; only the dot iteration differs.
+        let zc_anabat = file.audio.metadata.zc_data.clone();
+
+        let bins: Vec<(f64, bool)> = if zc_anabat.is_none() {
+            let Some(b) = zc_bins.get().as_ref().cloned() else { return };
+            if b.is_empty() { return; }
+            b
+        } else {
+            // Sentinel — we won't actually iterate this path for ZC files.
+            Vec::new()
+        };
 
         let time_res = file.spectrogram.time_resolution;
         let total_duration = file.audio.duration_secs;
@@ -146,14 +160,21 @@ pub fn ZcDotChart() -> impl IntoView {
 
         // Display frequency range (respects zoom/focus)
         let min_freq = display_min_freq.unwrap_or(0.0);
-        let max_freq = display_max_freq.unwrap_or(file_max_freq);
+        let max_freq = display_max_freq.unwrap_or(file_max_freq.max(120_000.0));
         let freq_range = max_freq - min_freq;
         if freq_range <= 0.0 { return; }
 
         // Dot area is to the right of the label area
         let dot_area_w = (cw - LABEL_AREA_WIDTH).max(0.0);
 
-        let visible_time = viewport::visible_time(dot_area_w, zoom, time_res);
+        // Anabat ZC files have no per-sample time_resolution; fall back
+        // to a sensible default so the viewport math doesn't divide by zero.
+        let effective_time_res = if zc_anabat.is_some() && time_res <= 0.0 {
+            1e-4  // 100 µs default
+        } else {
+            time_res
+        };
+        let visible_time = viewport::visible_time(dot_area_w, zoom, effective_time_res);
         let Some((start_time, end_time, data_x, _data_width)) = viewport::data_region_px(
             scroll,
             visible_time,
@@ -196,6 +217,45 @@ pub fn ZcDotChart() -> impl IntoView {
             ctx.line_to(cw, y);
             ctx.stroke();
             freq_khz += interval;
+        }
+
+        // ── Native Anabat .zc dot rendering ────────────────────────────
+        // Plot one dot per zero-crossing event from the parsed .zc file.
+        // Frequencies of 0 (out-of-band periods) and OFF-masked dots are
+        // skipped. Dot size doesn't scale with zoom for ZC — each dot is
+        // a single discrete event, not a rate bin.
+        if let Some(zc) = zc_anabat.as_ref() {
+            let r_on = 1.5_f64;
+            let r_off = 0.8_f64;
+            // ON dots — bright green.
+            ctx.set_fill_style_str("rgba(120, 220, 120, 0.95)");
+            ctx.begin_path();
+            for (i, (&t, &f)) in zc.times_s.iter().zip(&zc.freqs_hz).enumerate() {
+                if zc.off_mask.get(i).copied().unwrap_or(false) { continue; }
+                if f <= 0.0 || t < start_time || t > end_time { continue; }
+                if f < min_freq || f > max_freq { continue; }
+                let x = LABEL_AREA_WIDTH + data_x + (t - start_time) * px_per_sec;
+                let y = spectrogram_renderer::freq_to_y(f, min_freq, max_freq, ch);
+                ctx.move_to(x + r_on, y);
+                let _ = ctx.arc(x, y, r_on, 0.0, TAU);
+            }
+            ctx.fill();
+            // OFF dots — dim grey-green, so the user can see them but
+            // they're visually deprioritised.
+            ctx.set_fill_style_str("rgba(80, 110, 80, 0.40)");
+            ctx.begin_path();
+            for (i, (&t, &f)) in zc.times_s.iter().zip(&zc.freqs_hz).enumerate() {
+                if !zc.off_mask.get(i).copied().unwrap_or(false) { continue; }
+                if f <= 0.0 || t < start_time || t > end_time { continue; }
+                if f < min_freq || f > max_freq { continue; }
+                let x = LABEL_AREA_WIDTH + data_x + (t - start_time) * px_per_sec;
+                let y = spectrogram_renderer::freq_to_y(f, min_freq, max_freq, ch);
+                ctx.move_to(x + r_off, y);
+                let _ = ctx.arc(x, y, r_off, 0.0, TAU);
+            }
+            ctx.fill();
+            ctx.restore();
+            return;
         }
 
         // Dot size scaling based on zoom

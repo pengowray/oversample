@@ -1398,21 +1398,60 @@ fn MainArea() -> impl IntoView {
                             let left = off_left + vp_w - btn_size - margin;
                             format!("top:{top}px;left:{left}px;")
                         }
-                        on:click=move |_| {
-                            // Reset viewport zoom via meta viewport trick
-                            if let Some(window) = web_sys::window() {
-                                if let Some(doc) = window.document() {
-                                    if let Some(meta) = doc.query_selector("meta[name=viewport]").ok().flatten() {
-                                        let original = meta.get_attribute("content").unwrap_or_default();
-                                        meta.set_attribute("content", &format!("{}, maximum-scale=1", original)).ok();
-                                        let meta_clone = meta.clone();
-                                        let orig_clone = original.clone();
-                                        let cb = wasm_bindgen::closure::Closure::once(move || {
-                                            meta_clone.set_attribute("content", &orig_clone).ok();
-                                        });
-                                        window.request_animation_frame(cb.as_ref().unchecked_ref()).ok();
-                                        cb.forget();
-                                    }
+                        on:click={
+                            let state = state.clone();
+                            move |_| {
+                                // On Tauri (Android), call the native zoom plugin —
+                                // it's the only thing that actually works.
+                                // Android WebView ignores all JS-side meta viewport /
+                                // documentElement.style.zoom tricks for resetting
+                                // the visual viewport scale after page load.
+                                if state.is_tauri {
+                                    wasm_bindgen_futures::spawn_local(async {
+                                        use crate::tauri_bridge::tauri_invoke_no_args;
+                                        if let Err(e) = tauri_invoke_no_args("plugin:zoom|reset").await {
+                                            log::warn!("plugin:zoom|reset failed: {}", e);
+                                        }
+                                    });
+                                    return;
+                                }
+                                // Web fallback: try meta viewport replace + Chromium
+                                // documentElement.style.zoom. These work on desktop
+                                // browsers some of the time but are unreliable on
+                                // mobile web. (Most users hit this code path through
+                                // the Android app, which uses the native plugin above.)
+                                let Some(window) = web_sys::window() else { return };
+                                let Some(doc) = window.document() else { return };
+                                if let Some(html_el) = doc
+                                    .document_element()
+                                    .and_then(|h| h.dyn_into::<web_sys::HtmlElement>().ok())
+                                {
+                                    let _ = html_el.style().set_property("zoom", "1");
+                                }
+                                if let Some(meta) = doc.query_selector("meta[name=viewport]")
+                                    .ok().flatten()
+                                {
+                                    let original = meta.get_attribute("content").unwrap_or_default();
+                                    let _ = meta.set_attribute(
+                                        "content",
+                                        "width=device-width, initial-scale=1, \
+                                         maximum-scale=1, user-scalable=no",
+                                    );
+                                    let meta_clone = meta.clone();
+                                    let doc_clone = doc.clone();
+                                    let cb = wasm_bindgen::closure::Closure::once(move || {
+                                        let _ = meta_clone.set_attribute("content", &original);
+                                        if let Some(html_el) = doc_clone
+                                            .document_element()
+                                            .and_then(|h| h.dyn_into::<web_sys::HtmlElement>().ok())
+                                        {
+                                            let _ = html_el.style().remove_property("zoom");
+                                        }
+                                    });
+                                    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                                        cb.as_ref().unchecked_ref(), 120,
+                                    );
+                                    cb.forget();
                                 }
                             }
                         }

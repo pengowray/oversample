@@ -12,7 +12,7 @@ use super::file_groups;
 use super::file_badges;
 use crate::format_time::format_duration_compact;
 
-use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, load_single_demo};
+use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, find_open_demo, load_single_demo};
 use super::suggestions::BatsForYou;
 
 /// Remove the file at `idx` from the list and fix up index-tracking signals
@@ -234,7 +234,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
             <input
                 node_ref=file_input_ref
                 type="file"
-                accept=".wav,.w4v,.flac,.mp3,.ogg,.m4a,.m4b"
+                accept=".wav,.w4v,.flac,.mp3,.ogg,.m4a,.m4b,.zc"
                 multiple=true
                 style="display:none"
                 on:change=on_file_input_change
@@ -721,9 +721,19 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     <button
                                         class="demo-item demo-random-bat"
                                         on:click=move |_| {
-                                            let bats = bat_entries.clone();
-                                            let idx = (js_sys::Math::random() * bats.len() as f64) as usize;
-                                            let entry = bats[idx.min(bats.len() - 1)].clone();
+                                            // Prefer a bat that isn't already open; if all are
+                                            // open, fall back to the full pool and jump-to-existing.
+                                            let unopened: Vec<DemoEntry> = bat_entries.iter()
+                                                .filter(|e| find_open_demo(state, &e.filename).is_none())
+                                                .cloned()
+                                                .collect();
+                                            let pool = if unopened.is_empty() { bat_entries.clone() } else { unopened };
+                                            let idx = (js_sys::Math::random() * pool.len() as f64) as usize;
+                                            let entry = pool[idx.min(pool.len() - 1)].clone();
+                                            if let Some(open_idx) = find_open_demo(state, &entry.filename) {
+                                                state.current_file_index.set(Some(open_idx));
+                                                return;
+                                            }
                                             let label = entry.en.clone()
                                                 .unwrap_or_else(|| entry.filename.clone());
                                             let load_id = state.loading_start(&format!("Random bat: {label}"));
@@ -754,6 +764,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             class="demo-item"
                                             on:click=move |_| {
                                                 let entry = entry_clone.clone();
+                                                if let Some(idx) = find_open_demo(state, &entry.filename) {
+                                                    state.current_file_index.set(Some(idx));
+                                                    demo_picker_open.set(false);
+                                                    return;
+                                                }
                                                 let load_id = state.loading_start(&entry.filename);
                                                 spawn_local(async move {
                                                     match load_single_demo(&entry, state, load_id).await {

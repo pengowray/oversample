@@ -247,6 +247,19 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         file_index = idx;
     }
 
+    // Auto-switch main_view to ZcChart for Anabat .zc files. The
+    // recording has no continuous waveform, so the Spectrogram view
+    // would render a blank canvas; the dot plot is the only correct
+    // visualisation. Honour an existing ZcChart selection too.
+    let is_zc_file = state.files.with_untracked(|files| {
+        files.get(file_index)
+            .and_then(|f| f.audio.metadata.zc_data.as_ref())
+            .is_some()
+    });
+    if is_zc_file && state.main_view.get_untracked() != crate::state::MainView::ZcChart {
+        state.main_view.set(crate::state::MainView::ZcChart);
+    }
+
     // Compute file identity (Layer 1 + Layer 2 with bytes available)
     let (data_offset, data_size) = state.files.with_untracked(|files| {
         files.get(file_index)

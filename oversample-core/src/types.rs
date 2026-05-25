@@ -1,10 +1,13 @@
 use crate::audio::guano::GuanoMetadata;
 use crate::audio::source::AudioSource;
+use crate::audio::zc::ZcData;
 use std::sync::Arc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FileMetadata {
     pub file_size: usize,
+    /// Container format tag: WAV / FLAC / OGG / MP3 / M4A / W4V / ZC.
+    /// Empty string when constructed via `Default::default()`.
     pub format: &'static str,
     pub bits_per_sample: u16,
     pub is_float: bool,
@@ -13,6 +16,12 @@ pub struct FileMetadata {
     pub data_offset: Option<u64>,
     /// Byte length of audio data region. None for non-WAV.
     pub data_size: Option<u64>,
+    /// Anabat zero-crossing dot data. Populated for `.zc` files only.
+    /// When `Some`, the file is a dot-plot recording (no continuous
+    /// waveform); the `samples` field on `AudioData` may be a
+    /// synthesised placeholder, and the renderer should switch to a
+    /// `ZcPlot` view.
+    pub zc_data: Option<Arc<ZcData>>,
 }
 
 #[derive(Clone)]

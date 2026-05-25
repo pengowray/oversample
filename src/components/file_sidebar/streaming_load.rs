@@ -146,6 +146,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
             guano,
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
+            zc_data: None,
         },
     };
 
@@ -443,6 +444,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
             guano: None,
             data_offset: Some(header.first_frame_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.first_frame_offset)),
+            zc_data: None,
         },
     };
 
@@ -813,6 +815,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
             guano: None,
             data_offset: Some(header.data_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.data_offset)),
+            zc_data: None,
         },
     };
 
@@ -1190,6 +1193,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
             guano: None,
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     };
 
@@ -1819,6 +1823,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
             guano: if tags.fields.is_empty() { None } else { Some(tags) },
             data_offset: None,
             data_size: None,
+            zc_data: None,
         },
     };
 
