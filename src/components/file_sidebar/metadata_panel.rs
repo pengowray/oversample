@@ -93,6 +93,53 @@ fn hash_row(label: &str, hash: &str, reference: Option<&str>, from_reference: bo
     }
 }
 
+/// Render the Anabat .zc fixed-header text fields (location, species,
+/// tape, date, spec, notes, id, gps, recording timestamp). These come
+/// from the binary header at file load time and don't change. Returns
+/// an empty <span> if the file isn't a .zc recording or every field is
+/// blank.
+fn zc_header_section(f: &crate::state::LoadedFile) -> impl IntoView {
+    let Some(zc) = f.audio.metadata.zc_data.as_ref() else {
+        return view! { <span></span> }.into_any();
+    };
+    let md = &zc.metadata;
+
+    let mut rows: Vec<(String, String)> = Vec::new();
+    if !md.location.is_empty() { rows.push(("Location".into(), md.location.clone())); }
+    if !md.species.is_empty()  { rows.push(("Species".into(),  md.species.clone()));  }
+    if !md.tape.is_empty()     { rows.push(("Tape".into(),     md.tape.clone()));     }
+    if !md.date.is_empty()     { rows.push(("Date".into(),     md.date.clone()));     }
+    if !md.spec.is_empty()     { rows.push(("Spec".into(),     md.spec.clone()));     }
+    if !md.note1.is_empty()    { rows.push(("Note 1".into(),   md.note1.clone()));    }
+    if !md.note2.is_empty()    { rows.push(("Note 2".into(),   md.note2.clone()));    }
+    if !md.id_code.is_empty()  { rows.push(("ID".into(),       md.id_code.clone()));  }
+    if !md.gps.is_empty()      { rows.push(("GPS".into(),      md.gps.clone()));      }
+    if let Some(ts) = md.timestamp {
+        rows.push((
+            "Recorded".into(),
+            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
+                ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, ts.microseconds_total),
+        ));
+    }
+
+    if rows.is_empty() {
+        return view! { <span></span> }.into_any();
+    }
+
+    let items: Vec<_> = rows.into_iter()
+        .map(|(k, v)| metadata_row(k, v, None).into_any())
+        .collect();
+
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title" title="Fixed-header text fields embedded in the Anabat .zc binary (location, species, notes, recording timestamp, etc.).">
+                "Header metadata"
+            </div>
+            {items}
+        </div>
+    }.into_any()
+}
+
 fn format_file_size(bytes: usize) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)
@@ -304,6 +351,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {metadata_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
                                 {metadata_row(size_label, size_str, None)}
                             </div>
+                            {zc_header_section(f)}
                             {if has_xc {
                                 let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
                                     metadata_row(label, value, None).into_any()

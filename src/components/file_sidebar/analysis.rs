@@ -1141,31 +1141,8 @@ fn render_zc_file_info(f: &crate::state::LoadedFile) -> impl IntoView {
         Some((min, max, mean, median))
     };
 
-    // ── Build the header-metadata rows ─────────────────────────────────
-    let mut header_rows: Vec<(String, String)> = Vec::new();
-    if !md.location.is_empty() { header_rows.push(("Location".into(), md.location.clone())); }
-    if !md.species.is_empty()  { header_rows.push(("Species".into(),  md.species.clone()));  }
-    if !md.tape.is_empty()     { header_rows.push(("Tape".into(),     md.tape.clone()));     }
-    if !md.date.is_empty()     { header_rows.push(("Date".into(),     md.date.clone()));     }
-    if !md.spec.is_empty()     { header_rows.push(("Spec".into(),     md.spec.clone()));     }
-    if !md.note1.is_empty()    { header_rows.push(("Note 1".into(),   md.note1.clone()));    }
-    if !md.note2.is_empty()    { header_rows.push(("Note 2".into(),   md.note2.clone()));    }
-    if !md.id_code.is_empty()  { header_rows.push(("ID".into(),       md.id_code.clone()));  }
-    if !md.gps.is_empty()      { header_rows.push(("GPS".into(),      md.gps.clone()));      }
-    if let Some(ts) = md.timestamp {
-        header_rows.push((
-            "Recorded".into(),
-            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
-                ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, ts.microseconds_total),
-        ));
-    }
-    let header_views: Vec<_> = header_rows.into_iter().map(|(k, v)| {
-        view! {
-            <div class="bit-depth-stat">
-                <strong>{format!("{}: ", k)}</strong> {v}
-            </div>
-        }
-    }).collect();
+    // (Header-metadata rows moved to the Info/Metadata tab —
+    // see `zc_header_section()` in metadata_panel.rs.)
 
     let guano_views: Vec<_> = md.guano.iter().map(|(k, v)| {
         view! {
@@ -1228,15 +1205,6 @@ fn render_zc_file_info(f: &crate::state::LoadedFile) -> impl IntoView {
                         md.divratio, md.vres, md.res1)}
                 </div>
             </div>
-
-            {if !header_views.is_empty() {
-                view! {
-                    <div class="setting-group">
-                        <div class="setting-group-title">"Header metadata"</div>
-                        {header_views}
-                    </div>
-                }.into_any()
-            } else { view! { <span></span> }.into_any() }}
 
             {if has_guano {
                 view! {

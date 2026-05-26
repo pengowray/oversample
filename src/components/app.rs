@@ -342,6 +342,17 @@ pub fn App() -> impl IntoView {
         state.flow_enabled.set(is_flow);
     });
 
+    // When the user navigates onto a .zc file while sitting on a view that
+    // would run DSP on the synthesised reconstruction (Resonators, Flow,
+    // Chromagram, transformed spec), bounce back to the dot plot. The
+    // initial-load path in loading.rs only catches first-load; this covers
+    // file-list switching, project navigation, etc.
+    Effect::new(move |_| {
+        if state.current_is_zc() && !state.main_view.get().is_sensible_for_zc() {
+            state.main_view.set(MainView::ZcChart);
+        }
+    });
+
     // Toast when a USB mic gets plugged in (transition false → true). Pair this
     // with re-showing the file-panel "Mic detected" chip — the user might have
     // dismissed a previous one, but a fresh connect is worth surfacing again.
@@ -1594,9 +1605,21 @@ pub fn MainViewButton() -> impl IntoView {
     };
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        let new_view = match state.main_view.get_untracked() {
-            MainView::Spectrogram | MainView::XformedSpec => MainView::Waveform,
-            _ => MainView::Spectrogram,
+        let cur = state.main_view.get_untracked();
+        // For .zc files the meaningful pair is ZcChart ↔ Spectrogram —
+        // both visualise the same recording (dots vs. synthesised STFT).
+        // Cycling to Waveform would just show the synth amplitude, which
+        // is misleading.
+        let new_view = if state.current_is_zc() {
+            match cur {
+                MainView::ZcChart => MainView::Spectrogram,
+                _ => MainView::ZcChart,
+            }
+        } else {
+            match cur {
+                MainView::Spectrogram | MainView::XformedSpec => MainView::Waveform,
+                _ => MainView::Spectrogram,
+            }
         };
         switch_view(new_view);
     });
@@ -1683,16 +1706,24 @@ pub fn MainViewButton() -> impl IntoView {
             panel_style="min-width: 240px;"
         >
             <div class="layer-panel-title">"View Mode"</div>
-            {MainView::ALL.iter().map(|&mode| {
-                view! {
-                    <button
-                        class=move || layer_opt_class(state.main_view.get() == mode)
-                        on:click=set_view(mode)
-                    >
-                        {mode.label()}
-                    </button>
-                }
-            }).collect_view()}
+            {move || {
+                // ZC files store dot-plot data; the synthesised waveform is
+                // only a reconstruction, so hide views whose DSP would
+                // measure the synth rather than the recording.
+                let is_zc = state.current_is_zc();
+                MainView::ALL.iter()
+                    .filter(move |m| !is_zc || m.is_sensible_for_zc())
+                    .map(|&mode| {
+                        view! {
+                            <button
+                                class=move || layer_opt_class(state.main_view.get() == mode)
+                                on:click=set_view(mode)
+                            >
+                                {mode.label()}
+                            </button>
+                        }
+                    }).collect_view()
+            }}
 
             // Waveform sub-view (when Waveform is the active main view)
             {move || (state.main_view.get() == MainView::Waveform).then(|| {

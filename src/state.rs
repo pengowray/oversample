@@ -504,6 +504,15 @@ impl MainView {
         matches!(self, Self::Spectrogram | Self::XformedSpec | Self::Flow | Self::Chromagram | Self::Resonators)
     }
 
+    /// Views that make sense for an Anabat .zc file. The recording has no
+    /// continuous waveform — `audio.samples` is a synthesised reconstruction
+    /// from the dot frequencies, so anything that does heavy DSP on the
+    /// samples (transformed spec, flow, chromagram, resonators) just
+    /// measures the synth and would mislead the user.
+    pub fn is_sensible_for_zc(self) -> bool {
+        matches!(self, Self::ZcChart | Self::Spectrogram | Self::Waveform)
+    }
+
     pub const ALL: &'static [MainView] = &[
         Self::Spectrogram,
         Self::XformedSpec,
@@ -2107,6 +2116,19 @@ impl AppState {
         let files = self.files.get();
         let idx = self.current_file_index.get()?;
         files.get(idx).cloned()
+    }
+
+    /// True when the currently selected file is an Anabat zero-crossing
+    /// (`.zc`) recording. Reactive — subscribes to `files` and
+    /// `current_file_index`. Use to gate options/views that don't make
+    /// sense on a dot-plot recording (the underlying samples are a
+    /// synthesised reconstruction, not the original data).
+    pub fn current_is_zc(&self) -> bool {
+        let files = self.files.get();
+        let Some(idx) = self.current_file_index.get() else { return false };
+        files.get(idx)
+            .map(|f| f.audio.metadata.zc_data.is_some())
+            .unwrap_or(false)
     }
 
     /// Push current scroll/zoom onto the navigation history stack.
