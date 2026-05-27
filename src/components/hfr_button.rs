@@ -1,19 +1,20 @@
-// HFR button — the leftmost combo on the Hearing Bar.
+// Range dropdown button — sits to the right of the BAND/HFR cell on the
+// Hearing Bar.
 //
-//   Left half:  "HFR" (brightness-encoded by `.hearing-hfr-cell` wrapper
-//               in HearingBar — H dims when band entirely <24 kHz, all
-//               dim when HFR off). Click toggles HFR on/off.
-//   Right half: current band preset ("Ultrasound" / "Audible" / "Custom"
-//               / species name / "None"). Click opens the band-presets
-//               picker.
+//   • When HFR is off, shows "OFF" in dim grey (matches the dim "HFR" on
+//     the toggle cell).
+//   • When HFR is on, shows the active band range (e.g. "45.0–120.0 kHz"
+//     — the text that used to live in the BAND cell itself).
+//   • Clicking opens the band-presets dropdown (All, bat-book file
+//     species, bat-book selected species, focus/selection/annotation,
+//     Ultrasound, Audible, None).
 //
-// The mode-picker dropdown (HET/TE/PS/PV/ZC/1:1 + sliders) moved out of
-// here into `ModeButton` so each half of this button has a single,
-// related purpose.
+// Replaces the previous `HfrButton` combo, whose left half (the HFR
+// toggle) has moved to the BAND cell — see [BandHfrCell] in hearing_bar.rs.
 
 use leptos::prelude::*;
 
-use crate::components::combo_button::ComboButton;
+use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{ActiveFocus, AppState, LayerPanel};
 
 fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
@@ -30,6 +31,17 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.layer_panel_open.update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
+}
+
+/// Format Hz as a kHz string for the Range button label: drop ".0" for
+/// whole-kHz values (40 kHz, not 40.0 kHz); keep one decimal otherwise.
+fn fmt_khz(hz: f64) -> String {
+    let khz = hz / 1000.0;
+    if (khz - khz.round()).abs() < 0.05 {
+        format!("{}", khz.round() as i32)
+    } else {
+        format!("{:.1}", khz)
+    }
 }
 
 /// Nyquist for the *currently relevant* signal source. When listening or
@@ -120,180 +132,176 @@ fn focused_range(state: AppState) -> Option<(f64, f64)> {
 }
 
 #[component]
-pub fn HfrButton() -> impl IntoView {
+pub fn RangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::BandPresets));
     let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
 
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left disabled"
-        } else if state.hfr_enabled.get() {
-            "layer-btn combo-btn-left active"
-        } else {
-            "layer-btn combo-btn-left"
-        }
+    let btn_class = Signal::derive(move || {
+        let mut s = String::from("layer-btn range-btn lock-grow");
+        if state.hfr_enabled.get() { s.push_str(" hfr-on"); } else { s.push_str(" hfr-off"); }
+        if is_open.get() { s.push_str(" open"); }
+        if no_file() { s.push_str(" disabled"); }
+        s
     });
-    let right_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-right disabled"
-        } else if is_open.get() {
-            "layer-btn combo-btn-right open"
+
+    let label = Signal::derive(move || {
+        if !state.hfr_enabled.get() {
+            return "OFF".to_string();
+        }
+        let lo = state.band_ff_freq_lo.get();
+        let hi = state.band_ff_freq_hi.get();
+        if hi > lo {
+            format!("{}\u{2013}{} kHz", fmt_khz(lo), fmt_khz(hi))
         } else {
-            "layer-btn combo-btn-right"
+            "\u{2014}".to_string() // em-dash placeholder
         }
     });
 
-    // "HFR" literal in left_value so the brightness CSS (which targets
-    // `.layer-btn-value`) picks it up. Right side is just ON/OFF — the
-    // active band's friendly name now lives in the HEARING bar label,
-    // and its numeric range is in the bar's heading.
-    let left_value = Signal::derive(|| "HFR".to_string());
-    let right_value = Signal::derive(move || {
-        if state.hfr_enabled.get() { "ON".to_string() } else { "OFF".to_string() }
-    });
-
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        state.toggle_hfr();
-    });
-    let toggle_menu = Callback::new(move |()| {
+    let toggle = move |_: web_sys::MouseEvent| {
         if no_file() { return; }
         toggle_panel(&state, LayerPanel::BandPresets);
-    });
+    };
+
+    let row_ref = NodeRef::<leptos::html::Div>::new();
 
     view! {
-        <ComboButton
-            left_label=""
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Toggle High-Frequency Reception"
-            right_title="Band presets"
-            menu_direction="below"
-            panel_align="left"
-            panel_style="min-width: 220px;"
+        <div node_ref=row_ref class="range-btn-row"
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            <div class="layer-panel-title">"Band presets"</div>
+            <button class=move || btn_class.get()
+                title="Band range / presets"
+                on:click=toggle
+            >
+                <span class="range-btn-label">{move || label.get()}</span>
+                <span class="combo-btn-arrow">{"\u{25E2}"}</span>
+            </button>
 
-            // ── All ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    let nyq = nyquist_for_current(state);
-                    apply_band(state, 0.0, nyq);
-                }
-            >"All"</button>
+            <PopupPanel
+                is_open=is_open
+                anchor=row_ref
+                preferred_side=Side::Below
+                preferred_align=Align::Start
+                extra_style="min-width: 220px;"
+            >
+                <div class="layer-panel-title">"Band presets"</div>
 
-            // ── Bat book: file species ──
-            {move || {
-                let r = file_species_range(state);
-                let label = match &r {
-                    Some((name, lo, hi)) => format!(
-                        "Bat book: {} ({:.0}\u{2013}{:.0} kHz)",
-                        name, lo / 1000.0, hi / 1000.0,
-                    ),
-                    None => "Bat book: file species".to_string(),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((_, lo, hi)) = file_species_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}</button>
-                }
-            }}
-
-            // ── Bat book: selected species ──
-            {move || {
-                let r = selected_species_range(state);
-                let label = match r {
-                    Some((lo, hi)) => format!(
-                        "Bat book: selected ({:.0}\u{2013}{:.0} kHz)",
-                        lo / 1000.0, hi / 1000.0,
-                    ),
-                    None => "Bat book: selected species".to_string(),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((lo, hi)) = selected_species_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}</button>
-                }
-            }}
-
-            // ── Selection / annotation / focus ──
-            {move || {
-                let r = focused_range(state);
-                let (label, hint) = match (state.active_focus.get(), &r) {
-                    (Some(ActiveFocus::TransientSelection), Some((lo, hi))) => (
-                        "Selection".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    (Some(ActiveFocus::Annotations), Some((lo, hi))) => (
-                        "Annotation".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    (Some(ActiveFocus::FrequencyFocus), Some((lo, hi))) => (
-                        "Focus".to_string(),
-                        format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
-                    ),
-                    _ => ("Selection / annotation".to_string(), String::new()),
-                };
-                let disabled = r.is_none();
-                view! {
-                    <button
-                        class=move || layer_opt_class(false, disabled)
-                        disabled=disabled
-                        on:click=move |_| {
-                            if let Some((lo, hi)) = focused_range(state) {
-                                apply_band(state, lo, hi);
-                            }
-                        }
-                    >{label}{hint}</button>
-                }
-            }}
-
-            // ── Ultrasound ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| {
-                    let nyq = nyquist_for_current(state);
-                    if nyq > 20_000.0 {
-                        apply_band(state, 20_000.0, nyq);
+                // ── All ──
+                <button
+                    class="layer-panel-opt"
+                    on:click=move |_| {
+                        let nyq = nyquist_for_current(state);
+                        apply_band(state, 0.0, nyq);
                     }
-                }
-            >"Ultrasound (\u{2265}20 kHz)"</button>
+                >"All"</button>
 
-            // ── Audible ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| { apply_band(state, 0.0, 24_000.0); }
-            >"Audible (\u{2264}24 kHz)"</button>
+                // ── Bat book: file species ──
+                {move || {
+                    let r = file_species_range(state);
+                    let label = match &r {
+                        Some((name, lo, hi)) => format!(
+                            "Bat book: {} ({:.0}\u{2013}{:.0} kHz)",
+                            name, lo / 1000.0, hi / 1000.0,
+                        ),
+                        None => "Bat book: file species".to_string(),
+                    };
+                    let disabled = r.is_none();
+                    view! {
+                        <button
+                            class=move || layer_opt_class(false, disabled)
+                            disabled=disabled
+                            on:click=move |_| {
+                                if let Some((_, lo, hi)) = file_species_range(state) {
+                                    apply_band(state, lo, hi);
+                                }
+                            }
+                        >{label}</button>
+                    }
+                }}
 
-            <hr/>
+                // ── Bat book: selected species ──
+                {move || {
+                    let r = selected_species_range(state);
+                    let label = match r {
+                        Some((lo, hi)) => format!(
+                            "Bat book: selected ({:.0}\u{2013}{:.0} kHz)",
+                            lo / 1000.0, hi / 1000.0,
+                        ),
+                        None => "Bat book: selected species".to_string(),
+                    };
+                    let disabled = r.is_none();
+                    view! {
+                        <button
+                            class=move || layer_opt_class(false, disabled)
+                            disabled=disabled
+                            on:click=move |_| {
+                                if let Some((lo, hi)) = selected_species_range(state) {
+                                    apply_band(state, lo, hi);
+                                }
+                            }
+                        >{label}</button>
+                    }
+                }}
 
-            // ── None ──
-            <button
-                class="layer-panel-opt"
-                on:click=move |_| { clear_band(state); }
-            >"None"</button>
-        </ComboButton>
+                // ── Selection / annotation / focus ──
+                {move || {
+                    let r = focused_range(state);
+                    let (label, hint) = match (state.active_focus.get(), &r) {
+                        (Some(ActiveFocus::TransientSelection), Some((lo, hi))) => (
+                            "Selection".to_string(),
+                            format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
+                        ),
+                        (Some(ActiveFocus::Annotations), Some((lo, hi))) => (
+                            "Annotation".to_string(),
+                            format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
+                        ),
+                        (Some(ActiveFocus::FrequencyFocus), Some((lo, hi))) => (
+                            "Focus".to_string(),
+                            format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),
+                        ),
+                        _ => ("Selection / annotation".to_string(), String::new()),
+                    };
+                    let disabled = r.is_none();
+                    view! {
+                        <button
+                            class=move || layer_opt_class(false, disabled)
+                            disabled=disabled
+                            on:click=move |_| {
+                                if let Some((lo, hi)) = focused_range(state) {
+                                    apply_band(state, lo, hi);
+                                }
+                            }
+                        >{label}{hint}</button>
+                    }
+                }}
+
+                // ── Ultrasound ──
+                <button
+                    class="layer-panel-opt"
+                    on:click=move |_| {
+                        let nyq = nyquist_for_current(state);
+                        if nyq > 20_000.0 {
+                            apply_band(state, 20_000.0, nyq);
+                        }
+                    }
+                >"Ultrasound (\u{2265}20 kHz)"</button>
+
+                // ── Audible ──
+                <button
+                    class="layer-panel-opt"
+                    on:click=move |_| { apply_band(state, 0.0, 24_000.0); }
+                >"Audible (\u{2264}24 kHz)"</button>
+
+                <hr/>
+
+                // ── None ──
+                <button
+                    class="layer-panel-opt"
+                    on:click=move |_| { clear_band(state); }
+                >"None"</button>
+            </PopupPanel>
+        </div>
     }
 }

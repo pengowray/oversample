@@ -543,13 +543,22 @@ pub fn BottomToolbar() -> impl IntoView {
                             "mic-led idle"
                         }
                     });
+                    // The mic chip never adopts the green "active" tint —
+                    // that would compete with Record/Listen for attention.
+                    // Listening/recording state is conveyed by the LED dot
+                    // (next to the mic icon), which animates on its own.
+                    //
+                    // "Browser default" counts as a chosen mic (the user
+                    // explicitly picked Browser strategy), so it gets the
+                    // low-key capsule rather than the amber "empty" nudge.
                     let mic_left_class = Signal::derive(move || {
-                        if state.mic_strategy.get() == MicStrategy::None {
+                        let strat = state.mic_strategy.get();
+                        if strat == MicStrategy::None {
                             "layer-btn combo-btn-left mic-select-btn mic-off"
-                        } else if state.mic_listening.get() || state.mic_recording.get() {
-                            "layer-btn combo-btn-left mic-select-btn active"
+                        } else if state.mic_device_info.get().is_some() || strat == MicStrategy::Browser {
+                            "layer-btn combo-btn-left mic-select-btn mic-chosen"
                         } else {
-                            "layer-btn combo-btn-left mic-select-btn"
+                            "layer-btn combo-btn-left mic-select-btn mic-empty"
                         }
                     });
                     let mic_right_class = Signal::derive(move || {
@@ -562,14 +571,18 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                     });
                     let mic_value = Signal::derive(move || {
-                        if state.mic_strategy.get() == MicStrategy::None {
-                            return "Off".to_string();
-                        }
-                        if let Some(info) = state.mic_device_info.get() {
-                            let name = &info.name;
-                            if name.len() > 14 { format!("{}\u{2026}", &name[..13]) } else { name.clone() }
-                        } else {
-                            "Mic".to_string()
+                        match state.mic_strategy.get() {
+                            MicStrategy::None => "Off".to_string(),
+                            MicStrategy::Browser if state.mic_device_info.get().is_none() => {
+                                "Browser default".to_string()
+                            }
+                            _ => {
+                                if let Some(info) = state.mic_device_info.get() {
+                                    info.name.clone()
+                                } else {
+                                    "No mic selected".to_string()
+                                }
+                            }
                         }
                     });
                     let mic_title = Signal::derive(move || {
@@ -603,9 +616,11 @@ pub fn BottomToolbar() -> impl IntoView {
                                     state.show_mic_chooser.set(true);
                                 }
                             >
-                                <span class="mic-icon" aria-hidden="true">{"\u{1F3A4}"}</span>
+                                <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                                    <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zm5 9a1 1 0 0 0-2 0 3 3 0 0 1-6 0 1 1 0 0 0-2 0 5 5 0 0 0 4 4.9V18H8a1 1 0 0 0 0 2h8a1 1 0 0 0 0-2h-3v-2.1A5 5 0 0 0 17 11z"/>
+                                </svg>
                                 <span class=move || led_class.get() aria-hidden="true"></span>
-                                <span class="layer-btn-value">{move || mic_value.get()}</span>
+                                <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || mic_value.get()}</span>
                             </button>
                             <button
                                 class=move || mic_right_class.get()

@@ -1,16 +1,23 @@
 // Hearing Bar — the "what comes out the speakers" strip between the
 // Overview and the main canvas.
 //
-// Layout:  [HFR | Band] [Mode | HET] │ [Bandpass] [Gain] [NR] [Notch]
+// Layout:
 //
-//          ^HfrButton    ^ModeButton    ^filter combos
+//   ┌─── band-affected overline ─────────────────────────────────┐ │
+//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [NR] [Notch]
+//   └────────────────────────────────────────────────────────────┘ │
+//        ^band-cell HFR toggle (above the band gutter)
 //
-// The HFR cell wraps `HfrButton` in a class that drives per-letter
-// brightness on the "HFR" label (H dims when the active band sits entirely
-// below 24 kHz — i.e. an audible-only filter). HfrButton's right half is
-// the band-presets dropdown; ModeButton is a separate combo so each half
-// of HfrButton stays single-purpose. Filter combos wrap onto a second
-// row on narrow viewports.
+// • The BAND cell (above the gutter) is the HFR on/off toggle, with
+//   per-letter brightness on "HFR": grey when off, amber when on, with
+//   the leading "H" dimmed when the active band sits entirely below
+//   24 kHz (audible-only filter).
+// • Range dropdown shows the current band range or "OFF"; it hosts the
+//   band-presets picker.
+// • Mode radio group selects playback algorithm. Clicking the already-
+//   selected mode opens its settings panel (corner indicator).
+// • PASS (BandpassCombo) is part of the band-affected group; the overline
+//   above its slot turns grey when its range is locked (not following).
 //
 // The Listen button lives in the bottom toolbar's capture group alongside
 // Record (and the Mic / New-recording bookends) — see `bottom_toolbar.rs`.
@@ -19,8 +26,8 @@ use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::combo_button::ComboButton;
-use crate::components::hfr_button::HfrButton;
-use crate::components::mode_button::ModeButton;
+use crate::components::hfr_button::RangeButton;
+use crate::components::mode_button::ModeRadioGroup;
 use crate::components::noise_combos::{NotchCombo, NrCombo};
 use crate::state::{
     AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
@@ -311,6 +318,17 @@ fn BandpassCombo() -> impl IntoView {
         (lo - ff_lo).abs() > 50.0 || (hi - ff_hi).abs() > 50.0
     });
     let right_label = Signal::derive(move || {
+        // Hide the range caption when:
+        //   (A) bandpass is off — nothing to describe,
+        //   (B) the filter isn't actually active (e.g. Auto+HET, which
+        //       leaves filter_enabled = false even though bandpass_mode
+        //       is Auto — showing the stale filter range here looked
+        //       like "Follow is broken" because it didn't update with
+        //       the HFR band),
+        //   (C) the range tracks the HFR band exactly — redundant with
+        //       the Range dropdown.
+        if state.bandpass_mode.get() == BandpassMode::Off { return String::new(); }
+        if !state.filter_enabled.get() { return String::new(); }
         if !range_differs.get() { return String::new(); }
         let lo = state.filter_freq_low.get();
         let hi = state.filter_freq_high.get();
@@ -508,58 +526,71 @@ fn BandpassCombo() -> impl IntoView {
 // Detect / Sensitivity / Bands / Learn / Strength controls migrated
 // from the deleted right-sidebar Noise Filter tab.
 
+/// The BAND cell that sits above the band gutter is now an HFR on/off
+/// toggle. The cell's label is the literal "HFR" with per-letter brightness
+/// driven by classes on the cell itself (formerly applied to a wrapper
+/// around the old HfrButton's left half).
+#[component]
+fn BandHfrCell() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let no_file = move || {
+        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+    };
+
+    let cell_class = Signal::derive(move || {
+        let on = state.hfr_enabled.get();
+        let h_dim = on && {
+            let lo = state.band_ff_freq_lo.get();
+            let hi = state.band_ff_freq_hi.get();
+            hi > lo && hi < 24_000.0
+        };
+        let mut s = String::from("band-cell band-cell-hfr");
+        if on { s.push_str(" hfr-on"); }
+        if h_dim { s.push_str(" hfr-h-dim"); }
+        if no_file() { s.push_str(" disabled"); }
+        s
+    });
+
+    let title = Signal::derive(move || {
+        if state.hfr_enabled.get() {
+            "High-frequency reception is ON — click to disable.".to_string()
+        } else {
+            "Enable high-frequency reception — process and listen to the band selected on the gutter below.".to_string()
+        }
+    });
+
+    view! {
+        <button class=move || cell_class.get()
+            title=move || title.get()
+            on:click=move |_: web_sys::MouseEvent| {
+                if !no_file() { state.toggle_hfr(); }
+            }
+        >
+            <span class="band-cell-hfr-label">"HFR"</span>
+        </button>
+    }
+}
+
+/// Whether the bandpass is currently "locked" (range is fixed regardless
+/// of the active HFR band). Drives the grey overline above PASS.
+fn pass_is_locked(state: AppState) -> bool {
+    match state.bandpass_mode.get() {
+        BandpassMode::Off => false,
+        _ => state.bandpass_range.get() == BandpassRange::Locked,
+    }
+}
+
 /// Hearing Bar. Mounted between the OverviewPanel and the main view.
-///
-/// Per-letter brightness on the "HFR" cell encodes whether HFR is on, and
-/// (when on) whether the active band is audible-only (H dim) or includes
-/// ultrasound (H bright). The classes are applied to the wrapper div around
-/// `HfrButton` so the existing `.hearing-hfr-cell ... .layer-btn-value`
-/// CSS rules paint it.
 #[component]
 pub fn HearingBar() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let cell_class = Signal::derive(move || {
-        if !state.hfr_enabled.get() {
-            "hearing-hfr-cell"
-        } else {
-            let lo = state.band_ff_freq_lo.get();
-            let hi = state.band_ff_freq_hi.get();
-            if hi > lo && hi < 24_000.0 {
-                "hearing-hfr-cell hfr-on hfr-h-dim"
-            } else {
-                "hearing-hfr-cell hfr-on"
-            }
-        }
+    let overline_class = Signal::derive(move || {
+        let on = state.hfr_enabled.get();
+        let mut s = String::from("band-affected-row");
+        if on { s.push_str(" band-on"); } else { s.push_str(" band-off"); }
+        if pass_is_locked(state) { s.push_str(" pass-locked"); }
+        s
     });
-    // "BAND" cell — a column the width of the band gutter below it, so the
-    // hearing bar's leftmost slot reads as a continuation of the gutter
-    // column. Shows "BAND" by default; when HFR is on with a range set,
-    // the range fills the cell on two lines (lo on top, hi+units below).
-    let cell_title = Signal::derive(move || {
-        if state.hfr_enabled.get() {
-            "Band — the active high-frequency reception range. Drag on the gutter below to adjust; click HFR to disable.".to_string()
-        } else {
-            "Band — the slice of spectrum to focus on, filter, and listen to. Turn HFR on (or drag on the gutter below) to set a range.".to_string()
-        }
-    });
-    let cell_content = move || {
-        // Show the range whenever HFR is on, OR while the user is
-        // actively dragging on the band gutter (HFR will be enabled on
-        // pointer-up, so showing the in-progress range gives a live
-        // preview of what's about to be selected).
-        let show_range = state.hfr_enabled.get() || state.band_ff_dragging.get();
-        if show_range {
-            let lo = state.band_ff_freq_lo.get();
-            let hi = state.band_ff_freq_hi.get();
-            if hi > lo {
-                return view! {
-                    <div class="band-cell-lo">{format!("{:.1}\u{2013}", lo / 1000.0)}</div>
-                    <div class="band-cell-hi">{format!("{:.1} kHz", hi / 1000.0)}</div>
-                }.into_any();
-            }
-        }
-        view! { <div class="band-cell-name">"BAND"</div> }.into_any()
-    };
     view! {
         // stop_propagation guards against future plain <button> children
         // having their panel-open clicks eaten by .main's catch-all.
@@ -569,19 +600,17 @@ pub fn HearingBar() -> impl IntoView {
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            <div class="band-cell"
-                class:band-cell-active=move || state.hfr_enabled.get()
-                title=move || cell_title.get()
-            >
-                {cell_content}
-            </div>
-            <div class="bar-controls">
-                <div class=move || cell_class.get()>
-                    <HfrButton/>
+            // Band-affected group — overline border-top spans these four.
+            <div class=move || overline_class.get()>
+                <BandHfrCell/>
+                <div class="bar-controls band-affected-controls">
+                    <RangeButton/>
+                    <ModeRadioGroup/>
+                    <BandpassCombo/>
                 </div>
-                <ModeButton/>
-                <div class="bar-sep"></div>
-                <BandpassCombo/>
+            </div>
+            <div class="bar-sep"></div>
+            <div class="bar-controls">
                 <GainCombo/>
                 <NrCombo/>
                 <NotchCombo/>

@@ -1,10 +1,25 @@
-use leptos::prelude::*;
-use crate::state::{AppState, BandpassMode, BandpassRange, FilterQuality, LayerPanel, PlaybackMode, SpectrogramHandle};
-use crate::components::combo_button::ComboButton;
+// Mode radio group — 5 joined buttons selecting playback algorithm.
+//
+//   [1:1] [HET] [TE] [PS] [ZC]
+//
+// • First click on a non-selected button: select that mode (and turn HFR
+//   on if it was off — except for 1:1, which is the "no-op" mode).
+// • Second click on the already-selected button: open that mode's
+//   settings popup. The settings panel only contains controls relevant
+//   to the chosen mode (no more giant mode picker inside).
+// • The selected button shows a small corner indicator (◢) when it has
+//   a settings popup available (HET/TE/PS/ZC). 1:1 has no settings.
+// • PS is a bucket: both PitchShift and PhaseVocoder live under it. The
+//   PS settings popup has an "Algorithm" toggle to switch between them.
+//
+// The cross-cutting Effects (focus-stack default range, smart-auto
+// factor, ZC display save/restore, bandpass driving filter settings) all
+// live in this component because they're playback-mode-coupled. They
+// were previously inside `ModeButton`.
 
-fn layer_opt_class(active: bool) -> &'static str {
-    if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
-}
+use leptos::prelude::*;
+use crate::components::popup::{Align, PopupPanel, Side};
+use crate::state::{AppState, BandpassMode, BandpassRange, FilterQuality, LayerPanel, PlaybackMode, SpectrogramHandle};
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.layer_panel_open.update(|p| {
@@ -24,7 +39,6 @@ fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
     if shifting_down {
         let ideal = band_ff_center / target;
 
-        // Check preferred factors in order: 8, then other 2^n, then 10
         let preferred: &[f64] = &[8.0, 4.0, 16.0, 2.0, 32.0, 10.0];
         let comfortable = |f: f64| {
             let out = band_ff_center / f;
@@ -35,14 +49,10 @@ fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
             if f <= max_factor && comfortable(f) { return f; }
         }
 
-        // Best integer
         let best_int = ideal.round().clamp(2.0, max_factor);
         if comfortable(best_int) { return best_int; }
-
-        // Exact ratio
         ideal.clamp(2.0, max_factor)
     } else {
-        // Sub-audible: need to pitch up (negative factor)
         let ideal = target / band_ff_center;
         let preferred: &[f64] = &[8.0, 4.0, 16.0, 2.0, 32.0, 10.0];
         let comfortable = |f: f64| {
@@ -61,15 +71,12 @@ fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
     }
 }
 
-/// Compute output frequency given input frequency and factor.
-/// Positive factor = divide (shift down), negative = multiply (shift up).
 fn output_freq(input: f64, factor: f64) -> f64 {
     if factor > 0.0 { input / factor }
     else if factor < 0.0 { input * factor.abs() }
     else { input }
 }
 
-/// Format a frequency for display (e.g. "45.0k", "1.8k", "800").
 fn format_freq_khz(f: f64) -> String {
     if f >= 1000.0 {
         let khz = f / 1000.0;
@@ -83,7 +90,6 @@ fn format_freq_khz(f: f64) -> String {
     }
 }
 
-/// Format a factor value for display in the text input.
 fn format_factor_value(f: f64) -> String {
     let abs = f.abs();
     let num = if (abs - abs.round()).abs() < 0.001 {
@@ -92,50 +98,88 @@ fn format_factor_value(f: f64) -> String {
         format!("{:.1}", abs)
     };
     if f < -1.0 {
-        format!("\u{00f7}{}", num) // ÷N
+        format!("\u{00f7}{}", num)
     } else {
         num
     }
 }
 
-/// Parse a user-entered factor string. Accepts "10", "10.5", "-2", "÷2", etc.
 fn parse_factor_input(s: &str) -> Option<f64> {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix('\u{00f7}') {
-        // ÷N → negative factor
         rest.trim().parse::<f64>().ok().map(|v| -v.abs())
     } else {
         s.parse::<f64>().ok()
     }
 }
 
-/// Standalone Mode combo button.
-///
-///   Left half:  "Mode" label; click toggles HFR on/off (mirrors
-///               HfrButton's left half — same primary toggle in two
-///               natural spots).
-///   Right half: current playback mode (HET / TE / PS / PV / ZC / 1:1),
-///               dimmed "1:1" when HFR is off, blinking "Mute" when
-///               listening with the speaker muted. Click opens the
-///               mode-picker dropdown, which also hosts the Listen
-///               output On/Mute toggle (at the bottom).
+/// Logical "bucket" for the mode radio group. PS bucket spans the
+/// PitchShift and PhaseVocoder playback modes; everything else maps 1:1.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ModeBucket {
+    Normal,
+    Het,
+    Te,
+    Ps,
+    Zc,
+}
+
+impl ModeBucket {
+    fn from_mode(m: PlaybackMode) -> Self {
+        match m {
+            PlaybackMode::Normal => ModeBucket::Normal,
+            PlaybackMode::Heterodyne => ModeBucket::Het,
+            PlaybackMode::TimeExpansion => ModeBucket::Te,
+            PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => ModeBucket::Ps,
+            PlaybackMode::ZeroCrossing => ModeBucket::Zc,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            ModeBucket::Normal => "1:1",
+            ModeBucket::Het => "HET",
+            ModeBucket::Te => "TE",
+            ModeBucket::Ps => "PS",
+            ModeBucket::Zc => "ZC",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            ModeBucket::Normal => "1:1 — Normal playback",
+            ModeBucket::Het => "HET — Heterodyne",
+            ModeBucket::Te => "TE — Time Expansion",
+            ModeBucket::Ps => "PS — Pitch Shift / Phase Vocoder",
+            ModeBucket::Zc => "ZC — Zero Crossing",
+        }
+    }
+    /// Whether this mode has a settings popup. 1:1 has nothing useful to show.
+    fn has_settings(self) -> bool {
+        !matches!(self, ModeBucket::Normal)
+    }
+    /// Default playback mode when this bucket is freshly selected.
+    fn default_mode(self) -> PlaybackMode {
+        match self {
+            ModeBucket::Normal => PlaybackMode::Normal,
+            ModeBucket::Het => PlaybackMode::Heterodyne,
+            ModeBucket::Te => PlaybackMode::TimeExpansion,
+            ModeBucket::Ps => PlaybackMode::PitchShift,
+            ModeBucket::Zc => PlaybackMode::ZeroCrossing,
+        }
+    }
+}
+
+/// Mode radio-button group on the Hearing Bar. Replaces the old `ModeButton`
+/// combo (a single button that hosted both the mode toggle and its settings).
 #[component]
-pub fn ModeButton() -> impl IntoView {
+pub fn ModeRadioGroup() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    // Effect A (HFR toggle) has been removed — its logic now lives in
-    // AppState::toggle_hfr() and the focus stack sync Effect in app.rs.
-
-    // ── Ensure default user range when HFR is first enabled with no range ──
-    // If the focus stack has no user range set yet when HFR turns on,
-    // check for a species in the file's metadata and use its frequency range.
-    // Falls back to 18kHz–Nyquist if no species match.
+    // ── Effect A: Ensure a default user range when HFR is first enabled ──
     Effect::new(move || {
         let stack = state.focus_stack.get();
         if stack.hfr_enabled() {
             let eff = stack.effective_range();
             if !eff.is_active() {
-                // No range set yet — try species from metadata, then fall back
                 let files = state.files.get();
                 let idx = state.current_file_index.get();
                 let file = idx.and_then(|i| files.get(i));
@@ -198,9 +242,6 @@ pub fn ModeButton() -> impl IntoView {
     });
 
     // ── Effect B2: Comb-auto recompute ──
-    // Lives in its own Effect (rather than B) so the subscription to het_cutoff
-    // doesn't form a feedback loop with B's own writes to het_cutoff.
-    // Writes only to het_comb_spacing + het_comb_count.
     Effect::new(move || {
         if !state.het_comb_auto.get() {
             return;
@@ -253,8 +294,6 @@ pub fn ModeButton() -> impl IntoView {
                 state.display_eq.set(state.zc_saved_display_eq.get_untracked());
                 state.display_noise_filter.set(state.zc_saved_display_noise_filter.get_untracked());
             }
-            // Note: display_filter_enabled and per-stage modes persist across ZC transitions
-            // (they are not reset — the resolution Effect re-applies them automatically).
         });
     }
 
@@ -310,79 +349,111 @@ pub fn ModeButton() -> impl IntoView {
         }
     });
 
-    // ── ComboButton setup ──
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
-
+    // ── Settings popup state ──
+    let settings_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
     let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
-
-    // "Listening and muted" — drives the blink. Independent of HFR.
     let muting = Signal::derive(move || state.mic_listening.get() && state.mic_mute_output.get());
 
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left disabled"
-        } else if state.hfr_enabled.get() {
-            "layer-btn combo-btn-left active"
-        } else {
-            "layer-btn combo-btn-left"
-        }
-    });
-    let right_class = Signal::derive(move || -> &'static str {
-        if no_file() { return "layer-btn combo-btn-right disabled"; }
-        let open = is_open.get();
-        if muting.get() {
-            if open { "layer-btn combo-btn-right mute-blink open" }
-            else { "layer-btn combo-btn-right mute-blink" }
-        } else if !state.hfr_enabled.get() {
-            if open { "layer-btn combo-btn-right dim open" }
-            else { "layer-btn combo-btn-right dim" }
-        } else {
-            if open { "layer-btn combo-btn-right open" }
-            else { "layer-btn combo-btn-right" }
-        }
-    });
+    let row_ref = NodeRef::<leptos::html::Div>::new();
 
-    let left_value = Signal::derive(|| "Mode".to_string());
-    let right_value = Signal::derive(move || {
-        if muting.get() {
-            return "Mute".to_string();
-        }
-        if !state.hfr_enabled.get() {
-            return "1:1".to_string(); // dimmed via .dim class
-        }
-        match state.playback_mode.get() {
-            PlaybackMode::Heterodyne    => "HET".to_string(),
-            PlaybackMode::TimeExpansion => "TE".to_string(),
-            PlaybackMode::PitchShift    => "PS".to_string(),
-            PlaybackMode::PhaseVocoder  => "PV".to_string(),
-            PlaybackMode::ZeroCrossing  => "ZC".to_string(),
-            PlaybackMode::Normal        => "1:1".to_string(),
-        }
-    });
-
-    // Left click toggles HFR on/off — the same primary action lives on
-    // HfrButton's left half, deliberately duplicated here so the user
-    // can reach it from either combo without travelling.
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+    let select_bucket = move |bucket: ModeBucket| {
         if no_file() { return; }
-        state.toggle_hfr();
-    });
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::HfrMode);
-    });
-
-    // ── Dropdown closures (from hfr_mode_button) ──
-    let set_mode = |state: AppState, mode: PlaybackMode| {
-        move |_: web_sys::MouseEvent| {
-            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
-            if !state.focus_stack.get_untracked().hfr_enabled() {
-                state.toggle_hfr(); // enables HFR with saved mode
+        let current = ModeBucket::from_mode(state.playback_mode.get_untracked());
+        if current == bucket {
+            // Second click on selected bucket — toggle its settings popup
+            // (1:1 has no settings, so just close any open panel).
+            if bucket.has_settings() {
+                toggle_panel(&state, LayerPanel::HfrMode);
+            } else {
+                state.layer_panel_open.set(None);
             }
-            state.playback_mode.set(mode);
+            return;
+        }
+        // Selecting a different bucket: turn HFR on (for non-Normal modes)
+        // and set the playback mode to that bucket's default.
+        let mode = bucket.default_mode();
+        if bucket != ModeBucket::Normal && !state.focus_stack.get_untracked().hfr_enabled() {
+            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
+            state.toggle_hfr();
+        } else {
+            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
+        }
+        state.playback_mode.set(mode);
+        // Closing the panel on switch keeps the UX simple: "first click
+        // selects, second click opens settings".
+        state.layer_panel_open.set(None);
+    };
+
+    let mode_button = move |bucket: ModeBucket| {
+        let label = bucket.label();
+        let title = bucket.title();
+        let class_sig = Signal::derive(move || {
+            let current = ModeBucket::from_mode(state.playback_mode.get());
+            let on = state.hfr_enabled.get();
+            let mut s = String::from("layer-btn mode-radio-btn");
+            // 1:1 is selected when HFR is off, OR when HFR is on but mode is Normal.
+            // Other buckets are selected only when HFR is on AND mode matches.
+            let is_selected = if bucket == ModeBucket::Normal {
+                !on || current == ModeBucket::Normal
+            } else {
+                on && current == bucket
+            };
+            if is_selected {
+                s.push_str(" selected");
+                if bucket.has_settings() {
+                    s.push_str(" has-settings");
+                }
+                if settings_open.get() && bucket.has_settings() {
+                    s.push_str(" open");
+                }
+            }
+            if muting.get() && is_selected && bucket != ModeBucket::Normal {
+                s.push_str(" mute-blink");
+            }
+            if no_file() { s.push_str(" disabled"); }
+            s
+        });
+        view! {
+            <button class=move || class_sig.get()
+                title=title
+                on:click=move |_: web_sys::MouseEvent| select_bucket(bucket)
+            >
+                <span class="mode-radio-label">{label}</span>
+                <span class="mode-radio-corner">{"\u{25E2}"}</span>
+            </button>
         }
     };
 
-    // ── Slider change handlers ──
+    // Settings popup content is keyed off the current playback mode.
+    view! {
+        <div node_ref=row_ref class="mode-radio-group"
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
+        >
+            {mode_button(ModeBucket::Normal)}
+            {mode_button(ModeBucket::Het)}
+            {mode_button(ModeBucket::Te)}
+            {mode_button(ModeBucket::Ps)}
+            {mode_button(ModeBucket::Zc)}
+
+            <PopupPanel
+                is_open=settings_open
+                anchor=row_ref
+                preferred_side=Side::Below
+                preferred_align=Align::Start
+                extra_style="min-width: 220px;"
+            >
+                <ModeSettingsBody/>
+            </PopupPanel>
+        </div>
+    }
+}
+
+/// The body of the mode settings popup — switches content by current playback mode.
+#[component]
+fn ModeSettingsBody() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
     let on_te_change = move |ev: web_sys::Event| {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -422,7 +493,6 @@ pub fn ModeButton() -> impl IntoView {
         }
     };
 
-    // ── Text input change handlers ──
     let on_te_text = move |ev: web_sys::Event| {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -450,7 +520,6 @@ pub fn ModeButton() -> impl IntoView {
         }
     };
 
-    // ── Preset click helpers ──
     let make_preset_click = move |factor_signal: RwSignal<f64>, auto_signal: RwSignal<bool>, mode: PlaybackMode, value: f64| {
         move |_: web_sys::MouseEvent| {
             auto_signal.set(false);
@@ -459,7 +528,6 @@ pub fn ModeButton() -> impl IntoView {
         }
     };
 
-    // Preset values: ÷2, 2, 4, 8, 10, 16
     let preset_values: [(f64, &str); 6] = [
         (-2.0, "\u{00f7}2x"),
         (2.0, "2x"),
@@ -469,7 +537,6 @@ pub fn ModeButton() -> impl IntoView {
         (16.0, "16x"),
     ];
 
-    // ── Output freq hover helpers ──
     let set_output_highlight = move |factor_signal: RwSignal<f64>| {
         move |_: web_sys::MouseEvent| {
             let f = factor_signal.get_untracked();
@@ -488,349 +555,286 @@ pub fn ModeButton() -> impl IntoView {
     };
 
     view! {
-            <ComboButton
-                left_label="Mode"
-                left_value=left_value
-                left_click=left_click
-                left_class=left_class
-                right_value=right_value
-                right_class=right_class
-                is_open=is_open
-                toggle_menu=toggle_menu
-                left_title="Playback mode"
-                right_title="Playback mode"
-                menu_direction="below"
-                panel_align="left"
-                panel_style="min-width: 210px;"
-            >
-                // ── Listening-muted notice ──
-                // When live listening is active but the output is muted (warm-up),
-                // surface it here with a one-tap unmute, since the speaker-mute
-                // toggle has moved to the Listen overflow menu (the "…" on Mic).
-                <Show when=move || state.mic_listening.get() && state.mic_mute_output.get()>
-                    <div style="padding: 6px 8px; background: rgba(255, 200, 0, 0.12); border: 1px solid rgba(255, 200, 0, 0.5); border-radius: 4px; margin: 0 4px 6px;">
-                        <div style="font-size: 11px; color: #ffcc00; line-height: 1.3; margin-bottom: 4px;">
-                            "Listening output is muted (warm-up). Spectrogram still updates."
-                        </div>
-                        <button class="layer-panel-opt"
-                            style="width: 100%;"
-                            on:click=move |_| state.mic_mute_output.set(false)
-                            title="Unmute speaker output"
-                        >"Unmute"</button>
+        <>
+            // ── Listening-muted notice (unchanged from old ModeButton) ──
+            <Show when=move || state.mic_listening.get() && state.mic_mute_output.get()>
+                <div style="padding: 6px 8px; background: rgba(255, 200, 0, 0.12); border: 1px solid rgba(255, 200, 0, 0.5); border-radius: 4px; margin: 0 4px 6px;">
+                    <div style="font-size: 11px; color: #ffcc00; line-height: 1.3; margin-bottom: 4px;">
+                        "Listening output is muted (warm-up). Spectrogram still updates."
                     </div>
-                </Show>
+                    <button class="layer-panel-opt"
+                        style="width: 100%;"
+                        on:click=move |_| state.mic_mute_output.set(false)
+                        title="Unmute speaker output"
+                    >"Unmute"</button>
+                </div>
+            </Show>
 
-                // ── OFF option ──
-                <button class=move || layer_opt_class(!state.hfr_enabled.get())
-                    on:click=move |_: web_sys::MouseEvent| {
-                        if state.focus_stack.get_untracked().hfr_enabled() {
-                            state.toggle_hfr();
-                        }
-                        state.layer_panel_open.set(None);
-                    }
-                >"OFF"</button>
-                <hr />
-                // ── Mode selection ──
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::Normal)
-                    on:click=set_mode(state, PlaybackMode::Normal)
-                >"1:1 \u{2014} Normal"</button>
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::Heterodyne)
-                    on:click=set_mode(state, PlaybackMode::Heterodyne)
-                >"HET \u{2014} Heterodyne"</button>
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::TimeExpansion)
-                    on:click=set_mode(state, PlaybackMode::TimeExpansion)
-                >"TE \u{2014} Time Expansion"</button>
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::PitchShift)
-                    on:click=set_mode(state, PlaybackMode::PitchShift)
-                >"PS \u{2014} Pitch Shift"</button>
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::PhaseVocoder)
-                    on:click=set_mode(state, PlaybackMode::PhaseVocoder)
-                >"PV \u{2014} Phase Vocoder"</button>
-                <button class=move || layer_opt_class(state.hfr_enabled.get() && state.playback_mode.get() == PlaybackMode::ZeroCrossing)
-                    on:click=set_mode(state, PlaybackMode::ZeroCrossing)
-                >"ZC \u{2014} Zero Crossing"</button>
-
-                // ── Inaudible notice ──
-                {move || (state.playback_mode.get() == PlaybackMode::Normal && state.band_ff_freq_lo.get() >= 20_000.0).then(|| {
-                    view! {
-                        <div style="padding: 4px 8px; font-size: 10px; color: #e0a030; line-height: 1.3;">
-                            "Band is above human hearing. 1:1 mode won\u{2019}t make it audible"
+            // ── Body: per-mode controls ──
+            {move || {
+                let mode = state.playback_mode.get();
+                match mode {
+                    PlaybackMode::Heterodyne => view! {
+                        <div class="layer-panel-title">"Heterodyne"</div>
+                        <div class="layer-panel-slider-row het-text-row"
+                            on:mouseenter=move |_| {
+                                state.het_interacting.set(true);
+                                state.spec_hover_handle.set(Some(SpectrogramHandle::HetBandUpper));
+                            }
+                            on:mouseleave=move |_| {
+                                state.het_interacting.set(false);
+                                state.spec_hover_handle.set(None);
+                            }
+                        >
+                            <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>
+                            <span class="het-value">{move || format!("{:.1} kHz", state.het_cutoff.get() / 1000.0)}</span>
+                            <button class=move || if state.het_cutoff_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.het_cutoff_auto.update(|v| *v = !*v)
+                                title="Toggle auto LP cutoff"
+                            >"A"</button>
                         </div>
-                    }
-                })}
-
-                // ── Adjustment ──
-                <Show when=move || state.playback_mode.get() != PlaybackMode::Normal>
-                    <hr />
-                    <div class="layer-panel-title">"Adjustment"</div>
-                    {move || {
-                        let mode = state.playback_mode.get();
-                        match mode {
-                            PlaybackMode::Heterodyne => view! {
-                                // Het center frequency tracks the FF center (Effect B above).
-                                // Drag the cyan center line on the spectrogram to override.
-                                <div class="layer-panel-slider-row het-text-row"
-                                    on:mouseenter=move |_| {
-                                        state.het_interacting.set(true);
-                                        state.spec_hover_handle.set(Some(SpectrogramHandle::HetBandUpper));
+                        <div class="layer-panel-slider-row">
+                            <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range.">"Carriers"</label>
+                            {(1u32..=5).map(|n| {
+                                view! {
+                                    <button class=move || {
+                                        let auto = state.het_comb_auto.get();
+                                        let sel = !auto && state.het_comb_count.get() == n;
+                                        if sel { "factor-preset sel" }
+                                        else if auto && state.het_comb_count.get() == n { "factor-preset auto-derived" }
+                                        else { "factor-preset" }
                                     }
-                                    on:mouseleave=move |_| {
-                                        state.het_interacting.set(false);
-                                        state.spec_hover_handle.set(None);
-                                    }
-                                >
-                                    <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>
-                                    <span class="het-value">{move || format!("{:.1} kHz", state.het_cutoff.get() / 1000.0)}</span>
-                                    <button class=move || if state.het_cutoff_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.het_cutoff_auto.update(|v| *v = !*v)
-                                        title="Toggle auto LP cutoff"
-                                    >"A"</button>
-                                </div>
-                                // ── Comb controls ──
-                                // Carrier count: 1 = classic single-carrier, >1 = comb
-                                // (multiple carriers centered on Freq, summed). Useful for
-                                // surveying a wide ultrasonic range without retuning.
-                                // "A" auto sizes count + spacing to tile the FF band seamlessly.
-                                <div class="layer-panel-slider-row">
-                                    <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range. \"A\" fits as many as needed to cover the focus range.">"Carriers"</label>
-                                    {(1u32..=5).map(|n| {
-                                        view! {
-                                            <button class=move || {
-                                                let auto = state.het_comb_auto.get();
-                                                let sel = !auto && state.het_comb_count.get() == n;
-                                                if sel { "factor-preset sel" }
-                                                else if auto && state.het_comb_count.get() == n { "factor-preset auto-derived" }
-                                                else { "factor-preset" }
-                                            }
-                                                on:click=move |_| {
-                                                    state.het_comb_auto.set(false);
-                                                    state.het_comb_count.set(n);
-                                                }
-                                                title=match n {
-                                                    1 => "1 carrier (single heterodyne)",
-                                                    _ => "Comb mode — broader range, slightly muddier",
-                                                }
-                                            >{n.to_string()}</button>
+                                        on:click=move |_| {
+                                            state.het_comb_auto.set(false);
+                                            state.het_comb_count.set(n);
                                         }
-                                    }).collect::<Vec<_>>()}
-                                    <button class=move || if state.het_comb_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.het_comb_auto.update(|v| *v = !*v)
-                                        title="Auto-fit carrier count + spacing to the focus range"
-                                    >"A"</button>
-                                </div>
-                                <Show when=move || { state.het_comb_count.get() > 1 }>
-                                    <div class="layer-panel-slider-row het-text-row">
-                                        <label title="Spacing between adjacent carriers (Hz). About 2x the LP cutoff gives near-seamless coverage.">"Spacing"</label>
-                                        <span class="het-value">{move || format!("{:.0} kHz", state.het_comb_spacing.get() / 1000.0)}</span>
-                                        <input type="range" min="5" max="100" step="1"
-                                            prop:value=move || (state.het_comb_spacing.get() / 1000.0).round().to_string()
-                                            on:input=move |ev| {
-                                                let v: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(30.0);
-                                                // Manual spacing edit disengages comb-auto.
-                                                state.het_comb_auto.set(false);
-                                                state.het_comb_spacing.set(v * 1000.0);
-                                            }
-                                            on:dblclick=move |_| {
-                                                // Snap to roughly 2× current cutoff for clean coverage.
-                                                let two_cutoff = (state.het_cutoff.get_untracked() * 2.0).clamp(5_000.0, 100_000.0);
-                                                state.het_comb_spacing.set(two_cutoff);
-                                            }
+                                    >{n.to_string()}</button>
+                                }
+                            }).collect::<Vec<_>>()}
+                            <button class=move || if state.het_comb_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.het_comb_auto.update(|v| *v = !*v)
+                                title="Auto-fit carrier count + spacing to the focus range"
+                            >"A"</button>
+                        </div>
+                        <Show when=move || { state.het_comb_count.get() > 1 }>
+                            <div class="layer-panel-slider-row het-text-row">
+                                <label title="Spacing between adjacent carriers (Hz).">"Spacing"</label>
+                                <span class="het-value">{move || format!("{:.0} kHz", state.het_comb_spacing.get() / 1000.0)}</span>
+                                <input type="range" min="5" max="100" step="1"
+                                    prop:value=move || (state.het_comb_spacing.get() / 1000.0).round().to_string()
+                                    on:input=move |ev| {
+                                        let v: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(30.0);
+                                        state.het_comb_auto.set(false);
+                                        state.het_comb_spacing.set(v * 1000.0);
+                                    }
+                                    on:dblclick=move |_| {
+                                        let two_cutoff = (state.het_cutoff.get_untracked() * 2.0).clamp(5_000.0, 100_000.0);
+                                        state.het_comb_spacing.set(two_cutoff);
+                                    }
+                                />
+                            </div>
+                        </Show>
+                    }.into_any(),
+
+                    PlaybackMode::TimeExpansion => view! {
+                        <div class="layer-panel-title">"Time Expansion"</div>
+                        <div class="layer-panel-slider-row">
+                            <label>"Factor"</label>
+                            <input type="range" min="-40" max="40" step="1"
+                                prop:value=move || (state.te_factor.get() as i32).to_string()
+                                on:input=on_te_change
+                            />
+                            <input type="text" class="factor-input"
+                                prop:value=move || format_factor_value(state.te_factor.get())
+                                on:change=on_te_text
+                                on:focus=move |ev: web_sys::FocusEvent| {
+                                    use wasm_bindgen::JsCast;
+                                    if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                        input.select();
+                                    }
+                                }
+                                title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
+                            />
+                            <button class=move || if state.te_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.te_factor_auto.update(|v| *v = !*v)
+                                title="Auto: picks best factor for audible output"
+                            >"A"</button>
+                        </div>
+                        <div class="factor-presets">
+                            {preset_values.iter().map(|&(val, label)| {
+                                let on_click = make_preset_click(state.te_factor, state.te_factor_auto, PlaybackMode::TimeExpansion, val);
+                                let is_sel = move || (state.te_factor.get() - val).abs() < 0.01 && !state.te_factor_auto.get();
+                                view! {
+                                    <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                        on:click=on_click
+                                    >{label}</button>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </div>
+                        <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
+                            <div class="freq-summary">
+                                <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
+                                <div class="freq-summary-output"
+                                    on:mouseenter=set_output_highlight(state.te_factor)
+                                    on:mouseleave=clear_output_highlight
+                                >"Output: "{move || {
+                                    let f = state.te_factor.get();
+                                    let lo = output_freq(state.band_ff_freq_lo.get(), f);
+                                    let hi = output_freq(state.band_ff_freq_hi.get(), f);
+                                    let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
+                                    format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
+                                }}</div>
+                            </div>
+                        </Show>
+                    }.into_any(),
+
+                    PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
+                        // PS bucket — shared settings panel for PitchShift +
+                        // PhaseVocoder, with an Algorithm toggle at the top.
+                        view! {
+                            <div class="layer-panel-title">"Pitch Shift"</div>
+                            <div class="layer-panel-slider-row algo-row">
+                                <label>"Algorithm"</label>
+                                <button class=move || if state.playback_mode.get() == PlaybackMode::PitchShift { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.playback_mode.set(PlaybackMode::PitchShift)
+                                    title="Standard pitch shift — lower latency"
+                                >"PS"</button>
+                                <button class=move || if state.playback_mode.get() == PlaybackMode::PhaseVocoder { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.playback_mode.set(PlaybackMode::PhaseVocoder)
+                                    title="Phase Vocoder — preserves transients better, higher quality"
+                                >"PV"</button>
+                            </div>
+                            {move || if state.playback_mode.get() == PlaybackMode::PhaseVocoder {
+                                view! {
+                                    <div class="layer-panel-slider-row">
+                                        <label>"Factor"</label>
+                                        <input type="range" min="-20" max="20" step="1"
+                                            prop:value=move || (state.pv_factor.get() as i32).to_string()
+                                            on:input=on_pv_change
                                         />
-                                    </div>
-                                </Show>
-                            }.into_any(),
-
-                            PlaybackMode::TimeExpansion => view! {
-                                <div class="layer-panel-slider-row">
-                                    <label>"Factor"</label>
-                                    <input type="range" min="-40" max="40" step="1"
-                                        prop:value=move || (state.te_factor.get() as i32).to_string()
-                                        on:input=on_te_change
-                                    />
-                                    <input type="text" class="factor-input"
-                                        prop:value=move || format_factor_value(state.te_factor.get())
-                                        on:change=on_te_text
-                                        on:focus=move |ev: web_sys::FocusEvent| {
-                                            use wasm_bindgen::JsCast;
-                                            if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                input.select();
+                                        <input type="text" class="factor-input"
+                                            prop:value=move || format_factor_value(state.pv_factor.get())
+                                            on:change=on_pv_text
+                                            on:focus=move |ev: web_sys::FocusEvent| {
+                                                use wasm_bindgen::JsCast;
+                                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                                    input.select();
+                                                }
                                             }
-                                        }
-                                        title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
-                                    />
-                                    <button class=move || if state.te_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.te_factor_auto.update(|v| *v = !*v)
-                                        title="Auto: picks best factor for audible output"
-                                    >"A"</button>
-                                </div>
-                                <div class="factor-presets">
-                                    {preset_values.iter().map(|&(val, label)| {
-                                        let on_click = make_preset_click(state.te_factor, state.te_factor_auto, PlaybackMode::TimeExpansion, val);
-                                        let is_sel = move || (state.te_factor.get() - val).abs() < 0.01 && !state.te_factor_auto.get();
-                                        view! {
-                                            <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
-                                                on:click=on_click
-                                            >{label}</button>
-                                        }
-                                    }).collect::<Vec<_>>()}
-                                </div>
-                                // Frequency summary
-                                <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
-                                    <div class="freq-summary">
-                                        <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
-                                        <div class="freq-summary-output"
-                                            on:mouseenter=set_output_highlight(state.te_factor)
-                                            on:mouseleave=clear_output_highlight
-                                        >"Output: "{move || {
-                                            let f = state.te_factor.get();
-                                            let lo = output_freq(state.band_ff_freq_lo.get(), f);
-                                            let hi = output_freq(state.band_ff_freq_hi.get(), f);
-                                            let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
-                                            format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
-                                        }}</div>
+                                            title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
+                                        />
+                                        <button class=move || if state.pv_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                            on:click=move |_| state.pv_factor_auto.update(|v| *v = !*v)
+                                            title="Auto: picks best factor for audible output"
+                                        >"A"</button>
                                     </div>
-                                </Show>
-                            }.into_any(),
-
-                            PlaybackMode::PitchShift => view! {
-                                <div class="layer-panel-slider-row">
-                                    <label>"Factor"</label>
-                                    <input type="range" min="-20" max="20" step="1"
-                                        prop:value=move || (state.ps_factor.get() as i32).to_string()
-                                        on:input=on_ps_change
-                                    />
-                                    <input type="text" class="factor-input"
-                                        prop:value=move || format_factor_value(state.ps_factor.get())
-                                        on:change=on_ps_text
-                                        on:focus=move |ev: web_sys::FocusEvent| {
-                                            use wasm_bindgen::JsCast;
-                                            if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                input.select();
+                                    <div class="factor-presets">
+                                        {preset_values.iter().map(|&(val, label)| {
+                                            let on_click = make_preset_click(state.pv_factor, state.pv_factor_auto, PlaybackMode::PhaseVocoder, val);
+                                            let is_sel = move || (state.pv_factor.get() - val).abs() < 0.01 && !state.pv_factor_auto.get();
+                                            view! {
+                                                <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                                    on:click=on_click
+                                                >{label}</button>
                                             }
-                                        }
-                                        title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
-                                    />
-                                    <button class=move || if state.ps_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.ps_factor_auto.update(|v| *v = !*v)
-                                        title="Auto: picks best factor for audible output"
-                                    >"A"</button>
-                                </div>
-                                <div class="factor-presets">
-                                    {preset_values.iter().map(|&(val, label)| {
-                                        let on_click = make_preset_click(state.ps_factor, state.ps_factor_auto, PlaybackMode::PitchShift, val);
-                                        let is_sel = move || (state.ps_factor.get() - val).abs() < 0.01 && !state.ps_factor_auto.get();
-                                        view! {
-                                            <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
-                                                on:click=on_click
-                                            >{label}</button>
-                                        }
-                                    }).collect::<Vec<_>>()}
-                                </div>
-                                <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
-                                    <div class="freq-summary">
-                                        <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
-                                        <div class="freq-summary-output"
-                                            on:mouseenter=set_output_highlight(state.ps_factor)
-                                            on:mouseleave=clear_output_highlight
-                                        >"Output: "{move || {
-                                            let f = state.ps_factor.get();
-                                            let lo = output_freq(state.band_ff_freq_lo.get(), f);
-                                            let hi = output_freq(state.band_ff_freq_hi.get(), f);
-                                            let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
-                                            format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
-                                        }}</div>
+                                        }).collect::<Vec<_>>()}
                                     </div>
-                                </Show>
-                                <div class="layer-panel-slider-row">
-                                    <label>"Quality"</label>
-                                    <button class=move || if !state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.pv_hq.set(false)
-                                        title="Standard mode \u{2014} uses filter warmup to reduce boundary clicks"
-                                    >"Std"</button>
-                                    <button class=move || if state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.pv_hq.set(true)
-                                        title="HQ mode \u{2014} overlapping crossfade eliminates boundary clicks"
-                                    >"HQ"</button>
-                                </div>
-                            }.into_any(),
-
-                            PlaybackMode::PhaseVocoder => view! {
-                                <div class="layer-panel-slider-row">
-                                    <label>"Factor"</label>
-                                    <input type="range" min="-20" max="20" step="1"
-                                        prop:value=move || (state.pv_factor.get() as i32).to_string()
-                                        on:input=on_pv_change
-                                    />
-                                    <input type="text" class="factor-input"
-                                        prop:value=move || format_factor_value(state.pv_factor.get())
-                                        on:change=on_pv_text
-                                        on:focus=move |ev: web_sys::FocusEvent| {
-                                            use wasm_bindgen::JsCast;
-                                            if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                input.select();
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="layer-panel-slider-row">
+                                        <label>"Factor"</label>
+                                        <input type="range" min="-20" max="20" step="1"
+                                            prop:value=move || (state.ps_factor.get() as i32).to_string()
+                                            on:input=on_ps_change
+                                        />
+                                        <input type="text" class="factor-input"
+                                            prop:value=move || format_factor_value(state.ps_factor.get())
+                                            on:change=on_ps_text
+                                            on:focus=move |ev: web_sys::FocusEvent| {
+                                                use wasm_bindgen::JsCast;
+                                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                                    input.select();
+                                                }
                                             }
-                                        }
-                                        title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
-                                    />
-                                    <button class=move || if state.pv_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.pv_factor_auto.update(|v| *v = !*v)
-                                        title="Auto: picks best factor for audible output"
-                                    >"A"</button>
-                                </div>
-                                <div class="factor-presets">
-                                    {preset_values.iter().map(|&(val, label)| {
-                                        let on_click = make_preset_click(state.pv_factor, state.pv_factor_auto, PlaybackMode::PhaseVocoder, val);
-                                        let is_sel = move || (state.pv_factor.get() - val).abs() < 0.01 && !state.pv_factor_auto.get();
-                                        view! {
-                                            <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
-                                                on:click=on_click
-                                            >{label}</button>
-                                        }
-                                    }).collect::<Vec<_>>()}
-                                </div>
-                                <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
-                                    <div class="freq-summary">
-                                        <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
-                                        <div class="freq-summary-output"
-                                            on:mouseenter=set_output_highlight(state.pv_factor)
-                                            on:mouseleave=clear_output_highlight
-                                        >"Output: "{move || {
-                                            let f = state.pv_factor.get();
-                                            let lo = output_freq(state.band_ff_freq_lo.get(), f);
-                                            let hi = output_freq(state.band_ff_freq_hi.get(), f);
-                                            let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
-                                            format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
-                                        }}</div>
+                                            title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
+                                        />
+                                        <button class=move || if state.ps_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
+                                            on:click=move |_| state.ps_factor_auto.update(|v| *v = !*v)
+                                            title="Auto: picks best factor for audible output"
+                                        >"A"</button>
                                     </div>
-                                </Show>
-                                <div class="layer-panel-slider-row">
-                                    <label>"Quality"</label>
-                                    <button class=move || if !state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.pv_hq.set(false)
-                                        title="Standard mode \u{2014} uses filter warmup to reduce boundary clicks"
-                                    >"Std"</button>
-                                    <button class=move || if state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                        on:click=move |_| state.pv_hq.set(true)
-                                        title="HQ mode \u{2014} overlapping crossfade eliminates boundary clicks"
-                                    >"HQ"</button>
+                                    <div class="factor-presets">
+                                        {preset_values.iter().map(|&(val, label)| {
+                                            let on_click = make_preset_click(state.ps_factor, state.ps_factor_auto, PlaybackMode::PitchShift, val);
+                                            let is_sel = move || (state.ps_factor.get() - val).abs() < 0.01 && !state.ps_factor_auto.get();
+                                            view! {
+                                                <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                                    on:click=on_click
+                                                >{label}</button>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                }.into_any()
+                            }}
+                            <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
+                                <div class="freq-summary">
+                                    <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
+                                    <div class="freq-summary-output"
+                                        on:mouseenter=move |ev: web_sys::MouseEvent| {
+                                            let factor = if state.playback_mode.get_untracked() == PlaybackMode::PhaseVocoder { state.pv_factor } else { state.ps_factor };
+                                            set_output_highlight(factor)(ev);
+                                        }
+                                        on:mouseleave=clear_output_highlight
+                                    >"Output: "{move || {
+                                        let mode = state.playback_mode.get();
+                                        let f = if mode == PlaybackMode::PhaseVocoder { state.pv_factor.get() } else { state.ps_factor.get() };
+                                        let lo = output_freq(state.band_ff_freq_lo.get(), f);
+                                        let hi = output_freq(state.band_ff_freq_hi.get(), f);
+                                        let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
+                                        format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
+                                    }}</div>
                                 </div>
-                            }.into_any(),
+                            </Show>
+                            <div class="layer-panel-slider-row">
+                                <label>"Quality"</label>
+                                <button class=move || if !state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.pv_hq.set(false)
+                                    title="Standard mode — uses filter warmup to reduce boundary clicks"
+                                >"Std"</button>
+                                <button class=move || if state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.pv_hq.set(true)
+                                    title="HQ mode — overlapping crossfade eliminates boundary clicks"
+                                >"HQ"</button>
+                            </div>
+                        }.into_any()
+                    },
 
-                            PlaybackMode::ZeroCrossing => view! {
-                                <div class="layer-panel-slider-row">
-                                    <label>"Division"</label>
-                                    <input type="range" min="2" max="32" step="1"
-                                        prop:value=move || (state.zc_factor.get() as u32).to_string()
-                                        on:input=on_zc_change
-                                    />
-                                    <span>{move || format!("\u{00f7}{}", state.zc_factor.get() as u32)}</span>
+                    PlaybackMode::ZeroCrossing => view! {
+                        <div class="layer-panel-title">"Zero Crossing"</div>
+                        <div class="layer-panel-slider-row">
+                            <label>"Division"</label>
+                            <input type="range" min="2" max="32" step="1"
+                                prop:value=move || (state.zc_factor.get() as u32).to_string()
+                                on:input=on_zc_change
+                            />
+                            <span>{move || format!("\u{00f7}{}", state.zc_factor.get() as u32)}</span>
+                        </div>
+                    }.into_any(),
+
+                    PlaybackMode::Normal => view! {
+                        // 1:1 has no settings. The inaudible-band warning,
+                        // when applicable, is the only thing worth showing.
+                        {move || (state.band_ff_freq_lo.get() >= 20_000.0).then(|| {
+                            view! {
+                                <div style="padding: 8px 10px; font-size: 11px; color: #e0a030; line-height: 1.35;">
+                                    "Band is above human hearing. 1:1 mode won\u{2019}t make it audible — try HET, TE, or PS."
                                 </div>
-                            }.into_any(),
-                            PlaybackMode::Normal => view! { <span></span> }.into_any(),
-                        }
-                    }}
-                </Show>
-
-            </ComboButton>
+                            }
+                        })}
+                    }.into_any(),
+                }
+            }}
+        </>
     }
 }

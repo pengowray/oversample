@@ -122,7 +122,7 @@ pub fn ComboButton(
         >
             // ── Left button ──
             <button
-                class=move || left_class.get()
+                class=move || format!("{} lock-grow", left_class.get())
                 title=left_title
                 on:click=move |ev: web_sys::MouseEvent| {
                     cancel_hold();
@@ -165,7 +165,7 @@ pub fn ComboButton(
                 on:contextmenu=move |ev: web_sys::MouseEvent| ev.prevent_default()
             >
                 <span class="combo-btn-text combo-btn-text-left">
-                    <span class="layer-btn-category">{move || {
+                    <span class="layer-btn-category fit-text" data-fit-max="9" data-fit-min="7">{move || {
                         let value = left_value.get();
                         if value.is_empty() || left_label.is_empty() {
                             "\u{00A0}".to_string()
@@ -173,7 +173,7 @@ pub fn ComboButton(
                             left_label.to_string()
                         }
                     }}</span>
-                    <span class="layer-btn-value">{move || {
+                    <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || {
                         let value = left_value.get();
                         if !value.is_empty() {
                             value
@@ -188,7 +188,7 @@ pub fn ComboButton(
 
             // ── Right button ──
             <button
-                class=move || right_class.get()
+                class=move || format!("{} lock-grow", right_class.get())
                 title=right_title
                 on:click=move |_: web_sys::MouseEvent| {
                     cancel_hold();
@@ -224,7 +224,7 @@ pub fn ComboButton(
                 on:contextmenu=move |ev: web_sys::MouseEvent| ev.prevent_default()
             >
                 <span class="combo-btn-text combo-btn-text-right">
-                    <span class="layer-btn-category">{move || {
+                    <span class="layer-btn-category fit-text" data-fit-max="9" data-fit-min="7">{move || {
                         match right_label {
                             Some(sig) => {
                                 let v = sig.get();
@@ -233,7 +233,7 @@ pub fn ComboButton(
                             None => "\u{00A0}".to_string(),
                         }
                     }}</span>
-                    <span class="layer-btn-value">{move || right_value.get()}</span>
+                    <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || right_value.get()}</span>
                 </span>
                 <span class="combo-btn-arrow">{"\u{25E2}"}</span>
             </button>

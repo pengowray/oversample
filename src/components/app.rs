@@ -1547,16 +1547,10 @@ fn layer_opt_class(active: bool) -> &'static str {
 /// view modes + DSP settings. Rendered in the bottom toolbar.
 #[component]
 pub fn MainViewButton() -> impl IntoView {
-    use crate::components::combo_button::ComboButton;
+    use crate::components::popup::{Align, PopupPanel, Side};
     let state = expect_context::<AppState>();
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::MainView));
-
-    let left_class = Signal::derive(move || {
-        "layer-btn combo-btn-left"
-    });
-    let right_class = Signal::derive(move || {
-        if is_open.get() { "layer-btn combo-btn-right dim open" } else { "layer-btn combo-btn-right dim" }
-    });
+    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
 
     // Helper: handle all side-effects of a view switch synchronously,
     // so the spectrogram render Effect always sees consistent state.
@@ -1604,38 +1598,18 @@ pub fn MainViewButton() -> impl IntoView {
         state.main_view.set(new_view);
     };
 
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+    // Click on a non-selected view: switch to it. Click on the
+    // already-selected view: toggle its settings popup. Mirrors the
+    // playback mode radio group's "click again to open settings".
+    let select_view = move |new_view: MainView| {
+        if no_file() { return; }
         let cur = state.main_view.get_untracked();
-        // For .zc files the meaningful pair is ZcChart ↔ Spectrogram —
-        // both visualise the same recording (dots vs. synthesised STFT).
-        // Cycling to Waveform would just show the synth amplitude, which
-        // is misleading.
-        let new_view = if state.current_is_zc() {
-            match cur {
-                MainView::ZcChart => MainView::Spectrogram,
-                _ => MainView::ZcChart,
-            }
-        } else {
-            match cur {
-                MainView::Spectrogram | MainView::XformedSpec => MainView::Waveform,
-                _ => MainView::Spectrogram,
-            }
-        };
-        switch_view(new_view);
-    });
-
-    let left_value = Signal::derive(move || state.main_view.get().short_label().to_string());
-    let right_value = Signal::derive(move || "View".to_string());
-
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::MainView);
-    });
-
-    let set_view = move |mode: MainView| {
-        move |_: web_sys::MouseEvent| {
-            switch_view(mode);
-            state.layer_panel_open.set(None);
+        if cur == new_view {
+            toggle_panel(&state, LayerPanel::MainView);
+            return;
         }
+        switch_view(new_view);
+        state.layer_panel_open.set(None);
     };
 
     // Playback active indicators (for DSP rows)
@@ -1689,41 +1663,59 @@ pub fn MainViewButton() -> impl IntoView {
         state.main_view.get() == MainView::XformedSpec && state.display_filter_decimate.get() == DisplayFilterMode::Custom
     });
 
+    let row_ref = NodeRef::<leptos::html::Div>::new();
+
+    // Per-view-button class (radio-group look, reused from .mode-radio-*).
+    let view_btn_class = move |view: MainView| {
+        Signal::derive(move || {
+            let is_sel = state.main_view.get() == view;
+            let mut s = String::from("layer-btn mode-radio-btn");
+            if is_sel {
+                s.push_str(" selected has-settings");
+                if is_open.get() { s.push_str(" open"); }
+            }
+            if no_file() { s.push_str(" disabled"); }
+            s
+        })
+    };
+
     view! {
-        <ComboButton
-            left_label=""
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Toggle view (Spectrogram / Waveform)"
-            right_title="View mode menu"
-            menu_direction="below"
-            panel_align="left"
-            panel_style="min-width: 240px;"
+        // Reuses .mode-radio-group styling for visual consistency with the
+        // playback Mode radio group on the Hearing Bar.
+        <div node_ref=row_ref class="mode-radio-group view-radio-group"
+            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            <div class="layer-panel-title">"View Mode"</div>
             {move || {
-                // ZC files store dot-plot data; the synthesised waveform is
-                // only a reconstruction, so hide views whose DSP would
+                // ZC files store dot-plot data; the synthesised waveform
+                // is only a reconstruction, so hide views whose DSP would
                 // measure the synth rather than the recording.
                 let is_zc = state.current_is_zc();
                 MainView::ALL.iter()
                     .filter(move |m| !is_zc || m.is_sensible_for_zc())
-                    .map(|&mode| {
+                    .map(|&view| {
+                        let class_sig = view_btn_class(view);
+                        let title = view.label();
                         view! {
-                            <button
-                                class=move || layer_opt_class(state.main_view.get() == mode)
-                                on:click=set_view(mode)
+                            <button class=move || class_sig.get()
+                                title=title
+                                on:click=move |_: web_sys::MouseEvent| select_view(view)
                             >
-                                {mode.label()}
+                                <span class="mode-radio-label">{view.short_label()}</span>
+                                <span class="mode-radio-corner">{"\u{25E2}"}</span>
                             </button>
                         }
                     }).collect_view()
             }}
+
+            <PopupPanel
+                is_open=is_open
+                anchor=row_ref
+                preferred_side=Side::Below
+                preferred_align=Align::Start
+                extra_style="min-width: 240px;"
+            >
+                <div class="layer-panel-title">{move || state.main_view.get().label()}</div>
 
             // Waveform sub-view (when Waveform is the active main view)
             {move || (state.main_view.get() == MainView::Waveform).then(|| {
@@ -2514,7 +2506,8 @@ pub fn MainViewButton() -> impl IntoView {
                     </div>
                 }
             })}
-        </ComboButton>
+            </PopupPanel>
+        </div>
     }
 }
 

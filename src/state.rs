@@ -1785,8 +1785,10 @@ impl AppState {
             // Default spacing ~ 2× cutoff so initial comb mode covers cleanly.
             het_comb_count: RwSignal::new(1),
             het_comb_spacing: RwSignal::new(30_000.0),
-            // Off by default — opt-in via the "A" toggle in the Carriers row.
-            het_comb_auto: RwSignal::new(false),
+            // On by default — auto-fit carrier count + spacing to the
+            // focus range. Toggle "A" off in the Carriers row to pick a
+            // fixed count manually.
+            het_comb_auto: RwSignal::new(true),
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
             gain_db: RwSignal::new(0.0),
