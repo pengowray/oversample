@@ -6782,8 +6782,37 @@ button.canvas-overflow-action-btn.disabled {
     margin: 2px 0;
 }
 
-/* ── Output Range combo popup ───────────────────────────────────────────
-   Two-column layout: mode-aware controls on the left, vertical 0–2000 Hz
+/* ── Output Range button (single, with dropdown chevron) ───────────────
+   Skinnier than the combo split-button — it's a single trigger that
+   opens the popup; nothing to toggle on the left half. */
+.out-range-btn-wrap {
+    display: inline-flex;
+    align-items: stretch;
+}
+.out-range-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 2px 8px;
+}
+.out-range-btn-label {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.1;
+    min-width: 0;
+}
+.out-range-btn .combo-btn-arrow {
+    margin-left: 2px;
+    opacity: 0.6;
+    font-size: 8px;
+}
+.out-range-btn.open .combo-btn-arrow {
+    opacity: 1;
+}
+
+/* ── Output Range popup ────────────────────────────────────────────────
+   Two-column layout: mode-aware controls on the left, vertical 0–10 kHz
    gutter on the right. Mirrors how the existing mode popups feel but
    adds the output-side gutter visualisation. */
 .output-range-popup {
@@ -6807,6 +6836,12 @@ button.canvas-overflow-action-btn.disabled {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     padding: 4px 4px 2px;
+    cursor: help;
+}
+.output-range-help {
+    margin-left: 4px;
+    opacity: 0.5;
+    font-size: 9px;
 }
 .output-range-presets {
     display: flex;

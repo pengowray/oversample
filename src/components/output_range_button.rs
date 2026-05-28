@@ -24,17 +24,23 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::components::combo_button::ComboButton;
 use crate::components::mode_button::{format_factor_value, format_freq_khz, output_freq};
+use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, LayerPanel, OutputSnap, PlaybackMode};
 
-/// Top of the gutter scale (Hz). Bottom is always 0.
-const GUTTER_MAX_HZ: f64 = 2000.0;
+/// Top of the gutter scale (Hz). Bottom is always 0. Larger than typical
+/// human-listening max so we cover the "audible-ish" output range bats
+/// often land in after a divide.
+const GUTTER_MAX_HZ: f64 = 10_000.0;
+
+/// Tick marks on the gutter (Hz). Sparse enough to stay readable inside
+/// the popup but dense enough to read pin positions at a glance.
+const GUTTER_TICKS: [i32; 6] = [0, 2_000, 4_000, 6_000, 8_000, 10_000];
 
 /// Canonical divide factors for the Standard snap mode.
-const STANDARD_FACTORS: [f64; 6] = [2.0, 4.0, 8.0, 10.0, 16.0, 32.0];
+const STANDARD_FACTORS: [f64; 8] = [2.0, 4.0, 8.0, 10.0, 16.0, 32.0, 64.0, 128.0];
 /// Equal-chroma snap: powers of 2 only (preserves pitch class).
-const CHROMA_FACTORS: [f64; 5] = [2.0, 4.0, 8.0, 16.0, 32.0];
+const CHROMA_FACTORS: [f64; 7] = [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
 
 /// Carrier snap step (Hz) for heterodyne mode when Snap is on.
 const HET_SNAP_STEP_HZ: f64 = 5_000.0;
@@ -201,51 +207,47 @@ pub fn OutputRangeCombo() -> impl IntoView {
     };
 
     let mode = Signal::derive(move || state.playback_mode.get());
+    let anchor_ref = NodeRef::<leptos::html::Div>::new();
 
-    let left_class = Signal::derive(move || {
-        if no_file() { "layer-btn combo-btn-left disabled" }
-        else { "layer-btn combo-btn-left no-annotation active" }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() { return "layer-btn combo-btn-right disabled"; }
-        if is_open.get() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right" }
-    });
-
-    let left_value = Signal::derive(move || mapping_shorthand(&state, mode.get()));
-
-    let right_value = Signal::derive(move || {
-        match current_output_range(&state, mode.get()) {
-            Some((lo, hi)) => format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi)),
-            None => "\u{2014}".into(),
-        }
-    });
-
-    // Left click: identical to right click for now — opens the popup. The
-    // mode-specific actions live inside.
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+    let on_click = move |_: web_sys::MouseEvent| {
         if no_file() { return; }
         toggle_panel(&state, LayerPanel::OutputRange);
-    });
-    let toggle_menu = Callback::new(move |()| {
-        toggle_panel(&state, LayerPanel::OutputRange);
-    });
+    };
+
+    let btn_class = move || {
+        let mut cls = String::from("layer-btn out-range-btn");
+        if no_file() {
+            cls.push_str(" disabled");
+        } else {
+            cls.push_str(" no-annotation active");
+        }
+        if is_open.get() { cls.push_str(" open"); }
+        cls
+    };
 
     view! {
-        <ComboButton
-            left_label="OUT"
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            is_open=is_open
-            toggle_menu=toggle_menu
-            left_title="Output range — how input frequencies are mapped to audible output"
-            right_title="Output range settings"
-            panel_style="min-width: 320px;"
-        >
-            <OutputRangePopup/>
-        </ComboButton>
+        <div node_ref=anchor_ref class="out-range-btn-wrap">
+            <button
+                class=btn_class
+                on:click=on_click
+                title="Output range \u{2014} how input frequencies are mapped to audible output"
+            >
+                <span class="out-range-btn-label">
+                    <span class="layer-btn-category">"OUT"</span>
+                    <span class="layer-btn-value">{move || mapping_shorthand(&state, mode.get())}</span>
+                </span>
+                <span class="combo-btn-arrow">{"\u{25E2}"}</span>
+            </button>
+            <PopupPanel
+                is_open=is_open
+                anchor=anchor_ref
+                preferred_side=Side::Below
+                preferred_align=Align::Start
+                extra_style="min-width: 320px;"
+            >
+                <OutputRangePopup/>
+            </PopupPanel>
+        </div>
     }
 }
 
@@ -283,13 +285,15 @@ fn OutputRangePopup() -> impl IntoView {
 fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let preset_values: [(f64, &str); 6] = [
+    let preset_values: [(f64, &str); 8] = [
         (2.0, "\u{00f7}2"),
         (4.0, "\u{00f7}4"),
         (8.0, "\u{00f7}8"),
         (10.0, "\u{00f7}10"),
         (16.0, "\u{00f7}16"),
         (32.0, "\u{00f7}32"),
+        (64.0, "\u{00f7}64"),
+        (128.0, "\u{00f7}128"),
     ];
 
     let click_preset = move |value: f64| {
@@ -347,13 +351,16 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                 }
             };
             view! {
-                <div class="output-range-section-label">"Pre-shift"</div>
+                <div class="output-range-section-label"
+                    title="Heterodyne shift applied before pitch shifting. Compound mapping: out = |in − shift| / factor. Useful for bringing a high band into the audible range cleanly: e.g. 30–50 kHz with −20k shift becomes 10–30 kHz, then ÷8 lands it at 1.25–3.75 kHz."
+                >"Pre-shift"<span class="output-range-help">"\u{2139}"</span></div>
                 <div class="output-range-shift-row">
                     <input type="number"
                         class="output-range-num"
                         min="0" max="500" step="0.5"
                         prop:value=move || format!("{:.1}", state.ps_shift_hz.get() / 1000.0)
                         on:input=on_shift_input
+                        title="Subtract this many kHz from each input frequency before the pitch divide"
                     />
                     <span class="output-range-num-suffix">"kHz"</span>
                     <button
@@ -444,15 +451,38 @@ fn BandSummary() -> impl IntoView {
     view! {
         <div class="output-range-summary">
             <div>
-                <span class="dim">"in  "</span>
+                <span class="dim">"in   "</span>
                 {move || {
                     let (lo, hi) = band(&state);
                     if hi > lo { format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi)) }
                     else { "\u{2014}".into() }
                 }}
             </div>
+            // Intermediate "after shift, before divide" range — only
+            // shown for PS/PV when a pre-shift is active, so the user
+            // can see why the output band shrinks/grows / folds back on
+            // itself when shift sweeps through the input band.
+            {move || {
+                let mode = state.playback_mode.get();
+                if !supports_shift(mode) { return view! { <span></span> }.into_any(); }
+                let shift = state.ps_shift_hz.get();
+                if shift.abs() < 100.0 { return view! { <span></span> }.into_any(); }
+                let (in_lo, in_hi) = band(&state);
+                if in_hi <= in_lo { return view! { <span></span> }.into_any(); }
+                let a = (in_lo - shift).abs();
+                let b = (in_hi - shift).abs();
+                let (mlo, mhi) = if a < b { (a, b) } else { (b, a) };
+                let folded = (in_lo - shift) * (in_hi - shift) < 0.0;
+                let suffix = if folded { " (folded)" } else { "" };
+                view! {
+                    <div>
+                        <span class="dim">"mid  "</span>
+                        {format!("{}\u{2013}{}{}", format_freq_khz(mlo), format_freq_khz(mhi), suffix)}
+                    </div>
+                }.into_any()
+            }}
             <div>
-                <span class="dim">"out "</span>
+                <span class="dim">"out  "</span>
                 {move || {
                     let mode = state.playback_mode.get();
                     match current_output_range(&state, mode) {
@@ -614,7 +644,7 @@ fn OutputGutter() -> impl IntoView {
                 on:pointerdown=on_gutter_down
             >
                 <div class="output-gutter-ticks">
-                    {[0i32, 500, 1000, 1500, 2000].iter().map(|&hz| {
+                    {GUTTER_TICKS.iter().map(|&hz| {
                         let pct = hz as f64 / GUTTER_MAX_HZ * 100.0;
                         let label = if hz >= 1000 {
                             format!("{}k", hz / 1000)
