@@ -918,6 +918,31 @@ impl ChromaRange {
     ];
 }
 
+/// Backend used to compute chromagram columns.
+///
+/// `Resonators` (default) uses a constant-Q resonator bank with one resonator
+/// per note — uniform pitch selectivity from sub-bass to ultrasound. `Fft`
+/// re-bins linear STFT magnitudes into notes, which is fast and shares cached
+/// STFT columns with the spectrogram but coarsens at low frequencies (one bin
+/// can span several semitones) and blurs at high ones.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ChromaSource {
+    #[default]
+    Resonators,
+    Fft,
+}
+
+impl ChromaSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Resonators => "Resonators",
+            Self::Fft => "FFT",
+        }
+    }
+
+    pub const ALL: &'static [ChromaSource] = &[Self::Resonators, Self::Fft];
+}
+
 /// Style for frequency shield/flag color bars on the spectrogram edge.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ShieldStyle {
@@ -1476,6 +1501,8 @@ pub struct AppState {
     pub chroma_gamma: RwSignal<f32>,
     // Chromagram frequency range preset
     pub chroma_range: RwSignal<ChromaRange>,
+    // Chromagram compute backend (resonator bank vs FFT re-binning).
+    pub chroma_source: RwSignal<ChromaSource>,
 
     // Resonator view: per-bin EMA bandwidth in Hz (controls time-frequency tradeoff)
     pub resonator_bandwidth_hz: RwSignal<f32>,
@@ -1943,6 +1970,7 @@ impl AppState {
             chroma_gain: RwSignal::new(0.0),
             chroma_gamma: RwSignal::new(1.0),
             chroma_range: RwSignal::new(ChromaRange::Full),
+            chroma_source: RwSignal::new(ChromaSource::Resonators),
             resonator_bandwidth_hz: RwSignal::new(20.0),
             resonator_fft_mode: RwSignal::new(ResonatorFftMode::Single(512)),
             resonator_layout: RwSignal::new(ResonatorLayout::Linear),

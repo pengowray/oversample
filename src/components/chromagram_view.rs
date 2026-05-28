@@ -17,13 +17,15 @@ pub fn ChromagramView() -> impl IntoView {
     let hand_drag_start = RwSignal::new((0.0f64, 0.0f64));
     let pinch_state: RwSignal<Option<crate::components::pinch::PinchState>> = RwSignal::new(None);
 
-    // Clear chromagram cache when file, range, or gain changes
-    // (gain is baked into tiles at pre-render time for full dynamic range)
+    // Clear chromagram cache when file, range, gain, or source changes
+    // (gain is baked into tiles at pre-render time for full dynamic range;
+    // source determines whether tiles came from the resonator bank or FFT)
     Effect::new(move || {
         let _files = state.files.get();
         let _idx = state.current_file_index.get();
         let _range = state.chroma_range.get();
         let _gain = state.chroma_gain.get();
+        let _source = state.chroma_source.get();
         tile_cache::clear_chroma_cache();
     });
 
@@ -34,6 +36,7 @@ pub fn ChromagramView() -> impl IntoView {
         let zoom = state.zoom_level.get();
         let chroma_colormap = state.chroma_colormap.get();
         let _chroma_gain = state.chroma_gain.get(); // triggers re-render after cache clear
+        let _chroma_source = state.chroma_source.get(); // same — re-render after source-swap cache clear
         let chroma_gamma = state.chroma_gamma.get();
         let chroma_range = state.chroma_range.get();
         let (_min_octave, num_octaves) = chroma_range.octave_params();

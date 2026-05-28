@@ -1804,21 +1804,63 @@ pub fn clear_chroma_cache() {
     CHROMA_GLOBAL_MAX.with(|m| m.borrow_mut().clear());
 }
 
+/// Clear rendered chroma tiles for a single file while preserving the
+/// running global-max cache. Used by the resonator chroma path when a
+/// freshly-computed tile raises the global max enough that previously
+/// rendered (over-bright) tiles need to be redone with the new max.
+/// In-flight requests are left alone — they'll overwrite when they finish
+/// and any still-stale tiles will be caught by the next growth event.
+fn clear_chroma_tiles_for_file_keep_max(file_idx: usize) {
+    CHROMA_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        let keys: Vec<_> = cache.tiles.keys().copied().filter(|k| k.0 == file_idx).collect();
+        for key in keys {
+            if let Some(evicted) = cache.tiles.remove(&key) {
+                cache.total_bytes = cache.total_bytes.saturating_sub(evicted.rendered.byte_len());
+            }
+        }
+    });
+}
+
 /// Schedule a chromagram tile for background generation (baseline LOD).
+///
+/// The compute source is selected by `state.chroma_source`:
+/// - [`ChromaSource::Fft`] re-bins linear STFT magnitudes into notes,
+///   reusing cached STFT columns from `spectral_store` when available.
+/// - [`ChromaSource::Resonators`] (default) builds a constant-Q resonator
+///   bank with one resonator per note and reads its magnitudes directly,
+///   giving uniform pitch selectivity from sub-bass to ultrasound.
 pub fn schedule_chroma_tile(
     state: AppState,
     file_idx: usize,
     tile_idx: usize,
 ) {
-    use crate::canvas::spectral_store;
-    use crate::dsp::chromagram;
-    use crate::dsp::fft::compute_stft_columns;
+    use crate::state::ChromaSource;
 
     let key = (file_idx, tile_idx);
     if CHROMA_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
     if CHROMA_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
     CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
+
+    match state.chroma_source.get_untracked() {
+        ChromaSource::Fft => schedule_chroma_tile_fft(state, file_idx, tile_idx, key),
+        ChromaSource::Resonators => schedule_chroma_tile_resonator(state, file_idx, tile_idx, key),
+    }
+}
+
+/// FFT-sourced chromagram tile: re-bins linear STFT magnitudes into notes.
+/// Reuses `spectral_store` columns when present, falls back to file-embedded
+/// columns, then to on-demand STFT computation from audio samples.
+fn schedule_chroma_tile_fft(
+    state: AppState,
+    file_idx: usize,
+    tile_idx: usize,
+    key: (usize, usize),
+) {
+    use crate::canvas::spectral_store;
+    use crate::dsp::chromagram;
+    use crate::dsp::fft::compute_stft_columns;
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -1914,6 +1956,145 @@ pub fn schedule_chroma_tile(
         };
 
         let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note, min_octave, num_octaves, gain_db);
+
+        CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
+        CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    });
+}
+
+/// Resonator-sourced chromagram tile: one constant-Q resonator per note.
+///
+/// Pre-pads with warm-up samples derived from the lowest in-range note's
+/// bandwidth so the EMA has converged by the first emitted column (same
+/// pattern as [`schedule_resonator_tile`]). Warm-up is capped at 0.25 s of
+/// audio so the deepest octaves don't make every tile prohibitively
+/// expensive — they remain usable, just not fully converged.
+///
+/// The global normalisation max is tracked progressively: each new tile may
+/// raise it, and a large jump (≥1.5×) invalidates previously rendered tiles
+/// so they get re-normalised to the new ceiling. Convergence is fast because
+/// the max only grows.
+fn schedule_chroma_tile_resonator(
+    state: AppState,
+    file_idx: usize,
+    tile_idx: usize,
+    key: (usize, usize),
+) {
+    use crate::dsp::chromagram::{
+        self, compute_chroma_columns_resonators, compute_chroma_max_from_columns,
+        CHROMA_RESONATOR_Q, CHROMA_RESONATOR_TAU_MAX_SECS,
+    };
+    use crate::dsp::resonators::warmup_samples;
+
+    spawn_local(async move {
+        yield_to_browser().await;
+
+        let is_current = is_current_file(&state, file_idx);
+        if !is_current {
+            for _ in 0..3 { yield_to_browser().await; }
+        }
+
+        let audio = state.files.with_untracked(|files| {
+            files.get(file_idx).map(|f| f.audio.clone())
+        });
+        let Some(audio) = audio else {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
+
+        let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
+        let gain_db = state.chroma_gain.get_untracked();
+        let cv = state.channel_view.get_untracked();
+        let sr = audio.sample_rate;
+        let hop_size = BASELINE_HOP;
+
+        // Warm-up: dominated by the slowest resonator in the bank, which is
+        // the lowest in-range note — but its bandwidth is floored by the τ
+        // cap in `compute_chroma_columns_resonators`, so warm-up follows the
+        // floored bandwidth (not the unbounded constant-Q value). This keeps
+        // every tile a sane size regardless of how low the range goes.
+        let low_note_freq = {
+            let midi = ((min_octave + 1) * 12) as f32; // pitch class 0 = C
+            440.0_f32 * 2.0_f32.powf((midi - 69.0) / 12.0)
+        }.max(1.0);
+        let bw_floor = 1.0 / (std::f32::consts::TAU * CHROMA_RESONATOR_TAU_MAX_SECS);
+        let low_bw = (low_note_freq / CHROMA_RESONATOR_Q).max(bw_floor);
+        let warmup = warmup_samples(sr, low_bw);
+        let warmup_cols = warmup.div_ceil(hop_size);
+        let warmup_samples_aligned = warmup_cols * hop_size;
+
+        let tile_sample_start = tile_idx * TILE_COLS * hop_size;
+        let padded_start = tile_sample_start.saturating_sub(warmup_samples_aligned);
+        let pre_pad_cols = (tile_sample_start - padded_start) / hop_size;
+        let padded_len = (pre_pad_cols + TILE_COLS) * hop_size;
+
+        streaming_source::prefetch_streaming(
+            audio.source.as_ref(),
+            padded_start as u64,
+            padded_len,
+        ).await;
+
+        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
+        if !still_loaded {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        let samples = audio.source.read_region(cv, padded_start as u64, padded_len);
+        if samples.is_empty() {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        yield_to_browser().await;
+
+        let chromas = compute_chroma_columns_resonators(
+            &samples,
+            sr,
+            hop_size,
+            pre_pad_cols,
+            TILE_COLS,
+            min_octave,
+            num_octaves,
+            CHROMA_RESONATOR_Q,
+        );
+
+        if chromas.is_empty() {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        // Progressive global max: merge this tile's local max into the
+        // per-file running max. The tile is always rendered against the
+        // most-recent (largest) max so it's never over-bright; if the
+        // running max jumped notably, evict earlier (over-bright) tiles
+        // so they get redone with the new ceiling.
+        let local = compute_chroma_max_from_columns(&chromas, min_octave, num_octaves);
+        let prev = CHROMA_GLOBAL_MAX.with(|m| m.borrow().get(&file_idx).copied());
+        let merged_class = prev.map(|p| p.0.max(local.0)).unwrap_or(local.0);
+        let merged_note = prev.map(|p| p.1.max(local.1)).unwrap_or(local.1);
+        let merged = (merged_class, merged_note);
+
+        let grew_significantly = match prev {
+            None => merged_class > 0.0,
+            Some((pc, pn)) => {
+                let pc = pc.max(f32::MIN_POSITIVE);
+                let pn = pn.max(f32::MIN_POSITIVE);
+                (merged_class / pc) >= 1.5 || (merged_note / pn) >= 1.5
+            }
+        };
+
+        if merged_class > 0.0 {
+            CHROMA_GLOBAL_MAX.with(|m| m.borrow_mut().insert(file_idx, merged));
+        }
+        if grew_significantly && prev.is_some() {
+            clear_chroma_tiles_for_file_keep_max(file_idx);
+        }
+
+        let rendered = chromagram::pre_render_chroma_from_columns(
+            &chromas, merged.0, merged.1, min_octave, num_octaves, gain_db,
+        );
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

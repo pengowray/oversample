@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::{
-    AppState, ChromaColormap, ChromaRange, DisplayFilterMode, FftMode, FileSettings,
+    AppState, ChromaColormap, ChromaRange, ChromaSource, DisplayFilterMode, FftMode, FileSettings,
     FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy,
     MicAcquisitionState, PlayStartMode, PlaybackMode, ResonatorFftMode, ResonatorLayout,
     SpectrogramDisplay, WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider,
@@ -2454,6 +2454,19 @@ pub fn MainViewButton() -> impl IntoView {
                                 on:click=move |_| state.chroma_range.set(range)
                             >
                                 {range.label()}
+                            </button>
+                        }
+                    }).collect_view()}
+
+                    <hr />
+                    <div class="layer-panel-title">"Source"</div>
+                    {ChromaSource::ALL.iter().map(|&src| {
+                        view! {
+                            <button
+                                class=move || layer_opt_class(state.chroma_source.get() == src)
+                                on:click=move |_| state.chroma_source.set(src)
+                            >
+                                {src.label()}
                             </button>
                         }
                     }).collect_view()}

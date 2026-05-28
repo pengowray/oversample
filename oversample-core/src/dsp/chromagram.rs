@@ -145,20 +145,39 @@ pub fn pre_render_chromagram_columns(
     num_octaves: usize,
     gain_db: f32,
 ) -> crate::types::PreRendered {
-    use crate::types::PreRendered;
-
-    if stft_columns.is_empty() {
-        return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };
-    }
-
-    let width = stft_columns.len();
-    let height = chroma_pixel_height(num_octaves);
-    let mut pixels = vec![0u8; width * height * 4];
-
-    // Compute all chromagram columns
+    // Compute all chromagram columns from the STFT, then hand off to the
+    // shared pixel renderer (also used by the resonator path).
     let chromas: Vec<ChromagramColumn> = stft_columns.iter()
         .map(|col| stft_to_chromagram(&col.magnitudes, freq_resolution, min_octave, num_octaves))
         .collect();
+    pre_render_chroma_from_columns(&chromas, max_class, max_note, min_octave, num_octaves, gain_db)
+}
+
+/// Render pre-computed chromagram columns to a greyscale RGBA tile.
+///
+/// This is the rendering half of [`pre_render_chromagram_columns`], split out
+/// so the resonator chromagram path (which builds `ChromagramColumn`s directly
+/// from a note-tuned resonator bank rather than from STFT bins) can reuse the
+/// exact same pixel layout, flow encoding, gain, and normalisation.
+///
+/// See [`pre_render_chromagram_columns`] for the channel packing details.
+pub fn pre_render_chroma_from_columns(
+    chromas: &[ChromagramColumn],
+    max_class: f32,
+    max_note: f32,
+    min_octave: usize,
+    num_octaves: usize,
+    gain_db: f32,
+) -> crate::types::PreRendered {
+    use crate::types::PreRendered;
+
+    if chromas.is_empty() {
+        return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };
+    }
+
+    let width = chromas.len();
+    let height = chroma_pixel_height(num_octaves);
+    let mut pixels = vec![0u8; width * height * 4];
 
     if max_class <= 0.0 || max_note <= 0.0 {
         return PreRendered { width: width as u32, height: height as u32, pixels, db_data: Vec::new(), flow_shifts: Vec::new() };
@@ -214,6 +233,155 @@ pub fn pre_render_chromagram_columns(
     }
 
     PreRendered { width: width as u32, height: height as u32, pixels, db_data: Vec::new(), flow_shifts: Vec::new() }
+}
+
+/// Default quality factor for the note-aligned resonator chromagram.
+///
+/// In this code's convention `bandwidth = f / q` is the resonator's −3 dB
+/// half-width, so the −3 dB FWHM is `2·f/q`. q = 24 ⇒ FWHM ≈ f/12, i.e.
+/// roughly one semitone wide at every frequency — matching the classic
+/// "one bin per semitone" constant-Q chromagram. Lower q overlaps adjacent
+/// notes (every broadband click then lights up all of them); higher q
+/// narrows them but slows the EMA's time response at low frequencies.
+pub const CHROMA_RESONATOR_Q: f32 = 24.0;
+
+/// Cap on the per-resonator EMA time constant, in seconds.
+///
+/// Constant-Q would give τ = q/(2π·f), so at 16 Hz with q=24, τ would be
+/// ~240 ms — long enough that a single broadband bat click sits in the
+/// low-octave resonators for a quarter-second, dominating the per-pitch
+/// class sums and washing the chromagram into uniform brightness across
+/// all 12 notes. Capping τ at 30 ms keeps transient events visible as
+/// transients; below the cap the low-frequency resonators trade pitch
+/// selectivity for time response (which doesn't matter for bat work and
+/// is only mildly relevant for sub-bass musical use).
+pub const CHROMA_RESONATOR_TAU_MAX_SECS: f32 = 0.030;
+
+/// Frequency in Hz of a chromagram note. `pc` = pitch class (0=C..11=B),
+/// `octave` = chromagram octave (0 = C0 ≈ 16.35 Hz). Matches the
+/// `(midi/12 - 1)` octave indexing used by [`stft_to_chromagram`].
+fn note_freq_hz(pc: usize, octave: usize) -> f64 {
+    let midi = ((octave + 1) * 12 + pc) as f64;
+    440.0 * 2.0f64.powf((midi - 69.0) / 12.0)
+}
+
+/// Compute chromagram columns directly from a constant-Q resonator bank with
+/// one resonator tuned to each note in the active octave range.
+///
+/// Unlike [`stft_to_chromagram`] — which re-bins linear FFT bins into notes,
+/// giving coarse resolution at low frequencies (one bin spans several
+/// semitones) and blurry attribution at high frequencies — every note gets a
+/// dedicated resonator at its exact frequency, so pitch selectivity is
+/// uniform across the whole range.
+///
+/// Parameters mirror [`crate::dsp::resonators::compute_resonator_columns`]:
+/// a fresh bank is built per call, so the caller should pre-pad `samples`
+/// with warm-up and pass `col_start` = warm-up column count.
+///
+/// `q` is the per-resonator quality factor (bandwidth = f/q). Use
+/// [`CHROMA_RESONATOR_Q`] for the default.
+pub fn compute_chroma_columns_resonators(
+    samples: &[f32],
+    sample_rate: u32,
+    hop_size: usize,
+    col_start: usize,
+    col_count: usize,
+    min_octave: usize,
+    num_octaves: usize,
+    q: f32,
+) -> Vec<ChromagramColumn> {
+    use resonators::{alpha_from_tau, ResonatorBank, ResonatorConfig};
+
+    let empty_col = || ChromagramColumn {
+        pitch_classes: [0.0; NUM_PITCH_CLASSES],
+        octave_detail: [[0.0; MAX_OCTAVES]; NUM_PITCH_CLASSES],
+    };
+
+    if samples.is_empty() || col_count == 0 || hop_size == 0 {
+        return Vec::new();
+    }
+
+    let sr_f = sample_rate as f32;
+    let nyq = sr_f * 0.5;
+    let q = q.max(0.5);
+    let max_octave = (min_octave + num_octaves).min(MAX_OCTAVES);
+    // Bandwidth floor that enforces the τ cap (see CHROMA_RESONATOR_TAU_MAX_SECS).
+    let bw_floor = 1.0 / (std::f32::consts::TAU * CHROMA_RESONATOR_TAU_MAX_SECS);
+
+    // One resonator per in-range note whose frequency is below Nyquist.
+    // `bin_map[i] = (pc, octave)` tells the per-frame loop where bin i's
+    // magnitude belongs in the output `ChromagramColumn`.
+    let mut configs: Vec<ResonatorConfig> = Vec::new();
+    let mut bin_map: Vec<(usize, usize)> = Vec::new();
+    for octave in min_octave..max_octave {
+        for pc in 0..NUM_PITCH_CLASSES {
+            let f = note_freq_hz(pc, octave) as f32;
+            if f <= 0.0 || f >= nyq * 0.999 { continue; }
+            // Constant-Q at audible+ frequencies; widen below the τ cap so
+            // low notes don't hold broadband click energy for hundreds of ms.
+            let bw = (f / q).max(bw_floor).clamp(0.1, nyq * 0.99);
+            let tau = 1.0 / (std::f32::consts::TAU * bw);
+            let alpha = alpha_from_tau(tau, sr_f);
+            // beta=1.0 disables the library's second-stage output EWMA to
+            // match the single-EWMA response of the rest of the project.
+            configs.push(ResonatorConfig::new(f, alpha, 1.0));
+            bin_map.push((pc, octave));
+        }
+    }
+
+    if configs.is_empty() {
+        return (0..col_count).map(|_| empty_col()).collect();
+    }
+
+    let mut bank = ResonatorBank::new(&configs, sr_f);
+    let col_end = col_start + col_count;
+    let total_samples = samples.len();
+    let mut out: Vec<ChromagramColumn> = Vec::with_capacity(col_count);
+
+    // Stream hop-by-hop to avoid the upstream `resonate()` allocation, same
+    // pattern as `compute_resonator_columns`.
+    let mut pos = 0usize;
+    for frame in 0..col_end {
+        let next = pos + hop_size;
+        if next > total_samples { break; }
+        bank.process_samples(&samples[pos..next]);
+        pos = next;
+        if frame < col_start { continue; }
+
+        let mut col = empty_col();
+        for (k, &(pc, octave)) in bin_map.iter().enumerate() {
+            let mag = bank.magnitude(k);
+            let energy = mag * mag;
+            col.pitch_classes[pc] += energy;
+            col.octave_detail[pc][octave] += energy;
+        }
+        out.push(col);
+    }
+
+    out
+}
+
+/// Compute `(max_class, max_note)` over a slice of already-computed
+/// chromagram columns. Used by the resonator chroma path for progressive
+/// global-max tracking (the STFT path uses [`compute_chroma_max`] which
+/// builds the columns from STFT magnitudes on the fly).
+pub fn compute_chroma_max_from_columns(
+    chromas: &[ChromagramColumn],
+    min_octave: usize,
+    num_octaves: usize,
+) -> (f32, f32) {
+    let mut max_class = 0.0f32;
+    let mut max_note = 0.0f32;
+    let max_octave = (min_octave + num_octaves).min(MAX_OCTAVES);
+    for ch in chromas {
+        for &v in &ch.pitch_classes { max_class = max_class.max(v); }
+        for octaves in &ch.octave_detail {
+            for &v in &octaves[min_octave..max_octave] {
+                max_note = max_note.max(v);
+            }
+        }
+    }
+    (max_class, max_note)
 }
 
 #[cfg(test)]
@@ -286,6 +454,54 @@ mod tests {
     fn empty_magnitudes_returns_all_zeros() {
         let chroma = stft_to_chromagram(&[], 1.0, 0, 10);
         assert!(chroma.pitch_classes.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn resonator_chroma_peaks_at_tone_note() {
+        // 440 Hz (A4) sine for 1 second through the note-aligned resonator
+        // bank should put its peak energy in pitch class A, octave 4.
+        let sr = 48_000u32;
+        let f = 440.0f32;
+        let samples: Vec<f32> = (0..sr as usize)
+            .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
+            .collect();
+        let hop = 512;
+        // Warm-up so the EMA has converged before we read columns.
+        let warmup_cols = 64;
+        let total_cols = warmup_cols + 16;
+        let cols = compute_chroma_columns_resonators(
+            &samples, sr, hop, warmup_cols, total_cols - warmup_cols,
+            0, 10, CHROMA_RESONATOR_Q,
+        );
+        assert!(!cols.is_empty(), "should emit columns past warm-up");
+        let last = cols.last().unwrap();
+        let a_idx = PITCH_CLASS_NAMES.iter().position(|&n| n == "A").unwrap();
+        let strongest = last.pitch_classes
+            .iter().enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+        assert_eq!(strongest, a_idx, "440 Hz should land in pitch class A");
+        // Among octaves of A, octave 4 should win.
+        let a_oct = (0..MAX_OCTAVES)
+            .max_by(|&i, &j| last.octave_detail[a_idx][i]
+                .partial_cmp(&last.octave_detail[a_idx][j]).unwrap()).unwrap();
+        assert_eq!(a_oct, 4, "440 Hz is A4");
+    }
+
+    #[test]
+    fn chroma_max_from_columns_matches_stft_path() {
+        // A single STFT-derived chromagram column passed through
+        // `compute_chroma_max_from_columns` must equal what
+        // `compute_chroma_max` produces from the same STFT input.
+        use crate::types::SpectrogramColumn;
+        let mags = one_tone_magnitudes(440.0, 1.0, 1024, 2.0);
+        let col = SpectrogramColumn { magnitudes: mags, time_offset: 0.0 };
+        let (stft_max_class, stft_max_note) =
+            compute_chroma_max(std::slice::from_ref(&col), 1.0, 0, 10);
+        let chroma = stft_to_chromagram(&col.magnitudes, 1.0, 0, 10);
+        let (col_max_class, col_max_note) =
+            compute_chroma_max_from_columns(std::slice::from_ref(&chroma), 0, 10);
+        assert!((stft_max_class - col_max_class).abs() < 1e-6);
+        assert!((stft_max_note - col_max_note).abs() < 1e-6);
     }
 
     #[test]
