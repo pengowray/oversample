@@ -1503,6 +1503,14 @@ pub struct AppState {
     pub chroma_range: RwSignal<ChromaRange>,
     // Chromagram compute backend (resonator bank vs FFT re-binning).
     pub chroma_source: RwSignal<ChromaSource>,
+    // Local-AGC strength: 0 = global normalisation, 1 = per-column smoothed
+    // local max. Lifts quiet passages so relative note brightness stays
+    // visible even when overall loudness varies.
+    pub chroma_adapt: RwSignal<f32>,
+    // Hard dB floor below the (possibly adapt-adjusted) effective max — energy
+    // ratios below this map to black. -80 dB ≈ off; raise toward 0 to sharpen
+    // contrast and keep the AGC from amplifying noise during silence.
+    pub chroma_floor_db: RwSignal<f32>,
 
     // Resonator view: per-bin EMA bandwidth in Hz (controls time-frequency tradeoff)
     pub resonator_bandwidth_hz: RwSignal<f32>,
@@ -1971,6 +1979,8 @@ impl AppState {
             chroma_gamma: RwSignal::new(1.0),
             chroma_range: RwSignal::new(ChromaRange::Full),
             chroma_source: RwSignal::new(ChromaSource::Resonators),
+            chroma_adapt: RwSignal::new(0.0),
+            chroma_floor_db: RwSignal::new(-80.0),
             resonator_bandwidth_hz: RwSignal::new(20.0),
             resonator_fft_mode: RwSignal::new(ResonatorFftMode::Single(512)),
             resonator_layout: RwSignal::new(ResonatorLayout::Linear),

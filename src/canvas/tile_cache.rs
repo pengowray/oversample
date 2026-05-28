@@ -1884,6 +1884,8 @@ fn schedule_chroma_tile_fft(
 
         let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
         let gain_db = state.chroma_gain.get_untracked();
+        let adapt = state.chroma_adapt.get_untracked();
+        let floor_db = state.chroma_floor_db.get_untracked();
 
         // Try spectral_store first, then file columns, then compute on-demand from audio
         let cols_from_store = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _| {
@@ -1955,7 +1957,7 @@ fn schedule_chroma_tile_fft(
             gm
         };
 
-        let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note, min_octave, num_octaves, gain_db);
+        let rendered = chromagram::pre_render_chromagram_columns(&stft_cols, freq_res, max_class, max_note, min_octave, num_octaves, gain_db, adapt, floor_db);
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
@@ -2005,6 +2007,8 @@ fn schedule_chroma_tile_resonator(
 
         let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
         let gain_db = state.chroma_gain.get_untracked();
+        let adapt = state.chroma_adapt.get_untracked();
+        let floor_db = state.chroma_floor_db.get_untracked();
         let cv = state.channel_view.get_untracked();
         let sr = audio.sample_rate;
         let hop_size = BASELINE_HOP;
@@ -2093,7 +2097,7 @@ fn schedule_chroma_tile_resonator(
         }
 
         let rendered = chromagram::pre_render_chroma_from_columns(
-            &chromas, merged.0, merged.1, min_octave, num_octaves, gain_db,
+            &chromas, merged.0, merged.1, min_octave, num_octaves, gain_db, adapt, floor_db,
         );
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));

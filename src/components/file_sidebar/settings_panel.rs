@@ -534,6 +534,8 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     on:click=move |_| {
                                         state.chroma_gain.set(0.0);
                                         state.chroma_gamma.set(1.0);
+                                        state.chroma_adapt.set(0.0);
+                                        state.chroma_floor_db.set(-80.0);
                                     }
                                 >"Reset"</button>
                             </div>

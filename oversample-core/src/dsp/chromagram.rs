@@ -144,13 +144,46 @@ pub fn pre_render_chromagram_columns(
     min_octave: usize,
     num_octaves: usize,
     gain_db: f32,
+    adapt: f32,
+    floor_db: f32,
 ) -> crate::types::PreRendered {
     // Compute all chromagram columns from the STFT, then hand off to the
     // shared pixel renderer (also used by the resonator path).
     let chromas: Vec<ChromagramColumn> = stft_columns.iter()
         .map(|col| stft_to_chromagram(&col.magnitudes, freq_resolution, min_octave, num_octaves))
         .collect();
-    pre_render_chroma_from_columns(&chromas, max_class, max_note, min_octave, num_octaves, gain_db)
+    pre_render_chroma_from_columns(&chromas, max_class, max_note, min_octave, num_octaves, gain_db, adapt, floor_db)
+}
+
+/// Time constant (in columns) used by the per-column local-max smoother that
+/// drives the `adapt` slider. At the baseline 512-sample hop this is ≈0.34 s
+/// at 48 kHz audio — long enough to be perceptually a "passage" rather than
+/// a single transient.
+const ADAPT_TAU_COLS: f32 = 32.0;
+
+/// Two-pass (forward + reverse) EMA giving a symmetric/centred smoothing.
+/// Used on the per-column peak energy to estimate "local loudness level"
+/// without lag.
+fn smooth_two_pass_ema(input: &[f32], tau_cols: f32) -> Vec<f32> {
+    let n = input.len();
+    if n == 0 { return Vec::new(); }
+    let alpha = if tau_cols > 0.5 {
+        1.0 - (-1.0 / tau_cols).exp()
+    } else {
+        1.0
+    };
+    let mut out = vec![0.0_f32; n];
+    let mut s = input[0];
+    for i in 0..n {
+        s = (1.0 - alpha) * s + alpha * input[i];
+        out[i] = s;
+    }
+    let mut s = out[n - 1];
+    for i in (0..n).rev() {
+        s = (1.0 - alpha) * s + alpha * out[i];
+        out[i] = s;
+    }
+    out
 }
 
 /// Render pre-computed chromagram columns to a greyscale RGBA tile.
@@ -160,6 +193,21 @@ pub fn pre_render_chromagram_columns(
 /// from a note-tuned resonator bank rather than from STFT bins) can reuse the
 /// exact same pixel layout, flow encoding, gain, and normalisation.
 ///
+/// # Contrast controls
+///
+/// - `gain_db`: amplifies everything (lowers the normalisation divisor) —
+///   makes the whole image brighter without changing relative note balance.
+/// - `adapt` (0..=1): blends the global max with a per-column smoothed local
+///   max for the divisor. At 0, behaves identically to a global-max-only
+///   chromagram. At 1, every column is normalised to its own neighbourhood,
+///   so a soft passage is as visible as a loud one (AGC).
+/// - `floor_db` (≤ 0, e.g. -80..0): hard dB floor below the (possibly
+///   adapt-adjusted) effective max. Energy ratios below this are crushed to
+///   black. Defaults to a value so negative it has no effect; raise it to
+///   sharpen contrast and to prevent `adapt` from amplifying noise during
+///   silence (a stability floor keeps the local-max divisor from collapsing
+///   toward zero in quiet sections).
+///
 /// See [`pre_render_chromagram_columns`] for the channel packing details.
 pub fn pre_render_chroma_from_columns(
     chromas: &[ChromagramColumn],
@@ -168,6 +216,8 @@ pub fn pre_render_chroma_from_columns(
     min_octave: usize,
     num_octaves: usize,
     gain_db: f32,
+    adapt: f32,
+    floor_db: f32,
 ) -> crate::types::PreRendered {
     use crate::types::PreRendered;
 
@@ -194,18 +244,81 @@ pub fn pre_render_chroma_from_columns(
     let eff_max_class = max_class / gain_factor;
     let eff_max_note = max_note / gain_factor;
 
-    let max_octave = min_octave + num_octaves;
+    let max_octave = (min_octave + num_octaves).min(MAX_OCTAVES);
+
+    let adapt = adapt.clamp(0.0, 1.0);
+    let floor_db = floor_db.min(0.0);
+    // Energy-domain floor ratio. floor_db=0 → 1.0 (everything below max is
+    // floored — extreme); floor_db=-80 → 1e-8 (effectively off).
+    let floor_lin = 10.0_f32.powf(floor_db / 10.0);
+    // Keep the AGC divisor from collapsing in silence: the smoothed local max
+    // is clamped to at least `floor_lin × global` so a quiet stretch doesn't
+    // get amplified into solid white noise.
+    let agc_min_class = floor_lin * eff_max_class;
+    let agc_min_note = floor_lin * eff_max_note;
+
+    // Per-column peak energy (max over the active pitch classes / octaves) —
+    // the substrate the local-AGC slider smooths over.
+    let (smoothed_class, smoothed_note) = if adapt > 0.0 {
+        let local_class: Vec<f32> = chromas.iter()
+            .map(|ch| ch.pitch_classes.iter().cloned().fold(0.0_f32, f32::max))
+            .collect();
+        let local_note: Vec<f32> = chromas.iter()
+            .map(|ch| {
+                let mut m = 0.0_f32;
+                for octs in &ch.octave_detail {
+                    for &v in &octs[min_octave..max_octave] {
+                        m = m.max(v);
+                    }
+                }
+                m
+            })
+            .collect();
+        (
+            smooth_two_pass_ema(&local_class, ADAPT_TAU_COLS),
+            smooth_two_pass_ema(&local_note, ADAPT_TAU_COLS),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    // Per-pixel: map an energy value via the (possibly AGC-blended) divisor
+    // and the hard dB floor, returning an amplitude-domain norm in [0, 1].
+    #[inline]
+    fn map_norm(energy: f32, eff_max_c: f32, floor_lin: f32) -> f32 {
+        if eff_max_c <= 0.0 { return 0.0; }
+        let ratio = (energy / eff_max_c).min(1.0);
+        if ratio <= floor_lin { return 0.0; }
+        // Remap [floor_lin, 1] → [0, 1] linearly in energy, then sqrt for the
+        // amplitude-domain perceptual curve (matches the pre-Adapt behaviour).
+        let denom = (1.0 - floor_lin).max(f32::MIN_POSITIVE);
+        ((ratio - floor_lin) / denom).sqrt()
+    }
 
     // Render pixels with flow data in B channel
     for (col_idx, chroma) in chromas.iter().enumerate() {
-        for pc in 0..NUM_PITCH_CLASSES {
-            let class_norm = (chroma.pitch_classes[pc] / eff_max_class).sqrt().min(1.0);
-            let class_byte = (class_norm * 255.0) as u8;
+        // Effective per-column divisors. With adapt=0 these collapse to the
+        // global eff_max_*; with adapt>0 we lerp toward the smoothed local
+        // max, floored by agc_min_* so AGC can't divide by ~0 in silence.
+        let eff_max_class_c = if adapt > 0.0 {
+            let local = smoothed_class[col_idx].max(agc_min_class);
+            (1.0 - adapt) * eff_max_class + adapt * local
+        } else {
+            eff_max_class
+        };
+        let eff_max_note_c = if adapt > 0.0 {
+            let local = smoothed_note[col_idx].max(agc_min_note);
+            (1.0 - adapt) * eff_max_note + adapt * local
+        } else {
+            eff_max_note
+        };
 
-            for oct_abs in min_octave..max_octave.min(MAX_OCTAVES) {
+        for pc in 0..NUM_PITCH_CLASSES {
+            let class_byte = (map_norm(chroma.pitch_classes[pc], eff_max_class_c, floor_lin) * 255.0) as u8;
+
+            for oct_abs in min_octave..max_octave {
                 let oct_rel = oct_abs - min_octave; // relative index for row layout
-                let note_norm = (chroma.octave_detail[pc][oct_abs] / eff_max_note).sqrt().min(1.0);
-                let note_byte = (note_norm * 255.0) as u8;
+                let note_byte = (map_norm(chroma.octave_detail[pc][oct_abs], eff_max_note_c, floor_lin) * 255.0) as u8;
 
                 // B channel: energy flow between consecutive columns
                 let flow_byte = if col_idx == 0 {

@@ -2516,6 +2516,48 @@ pub fn MainViewButton() -> impl IntoView {
                                 if g == 1.0 { "linear".to_string() } else { format!("{:.2}", g) }
                             }}</span>
                         </div>
+                        <div class="dsp-custom-slider-row">
+                            <span class="dsp-slider-label">"Adapt"</span>
+                            <input
+                                type="range"
+                                class="setting-range"
+                                min="0" max="100" step="1"
+                                prop:value=move || (state.chroma_adapt.get() * 100.0).round().to_string()
+                                on:input=move |ev: web_sys::Event| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                    if let Ok(v) = input.value().parse::<f32>() {
+                                        state.chroma_adapt.set((v / 100.0).clamp(0.0, 1.0));
+                                    }
+                                }
+                                on:dblclick=move |_| state.chroma_adapt.set(0.0)
+                            />
+                            <span class="dsp-custom-value">{move || {
+                                let pct = (state.chroma_adapt.get() * 100.0).round() as i32;
+                                if pct == 0 { "off".to_string() } else { format!("{}%", pct) }
+                            }}</span>
+                        </div>
+                        <div class="dsp-custom-slider-row">
+                            <span class="dsp-slider-label">"Floor"</span>
+                            <input
+                                type="range"
+                                class="setting-range"
+                                min="-80" max="0" step="1"
+                                prop:value=move || state.chroma_floor_db.get().round().to_string()
+                                on:input=move |ev: web_sys::Event| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                    if let Ok(v) = input.value().parse::<f32>() {
+                                        state.chroma_floor_db.set(v.clamp(-80.0, 0.0));
+                                    }
+                                }
+                                on:dblclick=move |_| state.chroma_floor_db.set(-80.0)
+                            />
+                            <span class="dsp-custom-value">{move || {
+                                let db = state.chroma_floor_db.get().round() as i32;
+                                if db <= -80 { "off".to_string() } else { format!("{} dB", db) }
+                            }}</span>
+                        </div>
                     </div>
                 }
             })}
