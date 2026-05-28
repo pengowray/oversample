@@ -455,7 +455,20 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
         ps_factor: state.ps_factor.get_untracked(),
         pv_factor: state.pv_factor.get_untracked(),
         pv_hq: state.pv_hq.get_untracked(),
-        ps_shift_hz: state.ps_shift_hz.get_untracked(),
+        ps_shift_hz: {
+            // Clamp stored shift to the post-divide low edge so the
+            // heterodyne stage never folds output below zero. The user's
+            // stored value stays unchanged; we just bound what the DSP
+            // actually uses.
+            let stored = state.ps_shift_hz.get_untracked();
+            let band_lo = state.band_ff_freq_lo.get_untracked();
+            let f = match state.playback_mode.get_untracked() {
+                crate::state::PlaybackMode::PitchShift => state.ps_factor.get_untracked(),
+                crate::state::PlaybackMode::PhaseVocoder => state.pv_factor.get_untracked(),
+                _ => 1.0,
+            };
+            crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)
+        },
         zc_factor: state.zc_factor.get_untracked(),
         gain_db: state.gain_db.get_untracked(),
         gain_mode: state.gain_mode.get_untracked(),

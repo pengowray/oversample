@@ -212,6 +212,10 @@ pub fn App() -> impl IntoView {
             let _ = state.pv_factor.get();
             let _ = state.pv_hq.get();
             let _ = state.ps_shift_hz.get();
+            // BandFF lower edge affects the effective output shift clamp
+            // for PS / PV; retrigger replay so the DSP picks up the
+            // newly-bounded shift even when bandpass is off.
+            let _ = state.band_ff_freq_lo.get();
             let _ = state.zc_factor.get();
             let _ = state.het_frequency.get();
             let _ = state.het_cutoff.get();

@@ -107,6 +107,24 @@ fn supports_shift(mode: PlaybackMode) -> bool {
     matches!(mode, PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)
 }
 
+/// Clamp the user's stored output-shift to the post-divide low edge so
+/// the compound mapping `out = |in/factor − shift|` never folds below
+/// zero. Callers (UI math + DSP snapshot) all funnel through this so
+/// the visualisation and the actual audio stay in sync.
+///
+/// `band_lo` of 0 means there's no lower bound to clamp to (e.g. user
+/// hasn't set a frequency focus) — in that case we leave the stored
+/// value alone and accept that folding can happen.
+pub(crate) fn effective_ps_shift(stored: f64, band_lo: f64, factor: f64) -> f64 {
+    let s = stored.max(0.0);
+    let f = factor.abs().max(1.0);
+    if band_lo <= 0.0 {
+        return s;
+    }
+    let div_lo = band_lo / f;
+    s.min(div_lo)
+}
+
 /// Compute the current effective output range derived from the active
 /// mode + its parameters + the BandFF input range. Returns None when
 /// there's no meaningful range to draw (e.g. BandFF is empty).
@@ -118,10 +136,12 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
         Style::Passthrough => Some((in_lo, in_hi)),
         Style::Divide => {
             let f = factor_signal(state, mode)?.get();
-            // Optional output-side shift for PS/PV: divide first, then
-            // subtract shift. `|x − shift|` folds at zero so the abs()
-            // matters when shift > out_lo.
-            let shift = if supports_shift(mode) { state.ps_shift_hz.get() } else { 0.0 };
+            // Optional output-side shift for PS/PV — divide first, then
+            // subtract. Clamped to the post-divide low edge so the
+            // output band never folds below zero.
+            let shift = if supports_shift(mode) {
+                effective_ps_shift(state.ps_shift_hz.get(), in_lo, f)
+            } else { 0.0 };
             let a = (output_freq(in_lo, f) - shift).abs();
             let b = (output_freq(in_hi, f) - shift).abs();
             Some(if a < b { (a, b) } else { (b, a) })
@@ -461,14 +481,16 @@ fn BandSummary() -> impl IntoView {
                 }}
             </div>
             // Intermediate "after divide, before output shift" range —
-            // only shown for PS / PV when a shift is active. Lets the
-            // user see why the output band folds when shift sweeps
-            // through the post-divide range.
+            // only shown for PS / PV when a shift is active. With the
+            // effective-shift clamp the post-shift output never folds
+            // below zero, but if the user's stored shift exceeds what
+            // the current factor/BandFF allows, we annotate "(capped)"
+            // so they can see why the value isn't fully in play.
             {move || {
                 let mode = state.playback_mode.get();
                 if !supports_shift(mode) { return view! { <span></span> }.into_any(); }
-                let shift = state.ps_shift_hz.get();
-                if shift.abs() < 50.0 { return view! { <span></span> }.into_any(); }
+                let stored_shift = state.ps_shift_hz.get();
+                if stored_shift.abs() < 50.0 { return view! { <span></span> }.into_any(); }
                 let (in_lo, in_hi) = band(&state);
                 if in_hi <= in_lo { return view! { <span></span> }.into_any(); }
                 let Some(f_sig) = factor_signal(&state, mode) else {
@@ -478,8 +500,10 @@ fn BandSummary() -> impl IntoView {
                 let post_lo = output_freq(in_lo, f);
                 let post_hi = output_freq(in_hi, f);
                 let (mlo, mhi) = if post_lo < post_hi { (post_lo, post_hi) } else { (post_hi, post_lo) };
-                let folded = (mlo - shift) * (mhi - shift) < 0.0;
-                let suffix = if folded { " (folded)" } else { "" };
+                let effective = effective_ps_shift(stored_shift, in_lo, f);
+                let suffix = if (effective - stored_shift).abs() > 1.0 {
+                    format!(" (cap {})", format_freq_khz(effective))
+                } else { String::new() };
                 view! {
                     <div>
                         <span class="dim">"div  "</span>
@@ -568,9 +592,12 @@ fn OutputGutter() -> impl IntoView {
                     //   target = |anchor/factor − shift|   (post-shift)
                     // Solve for factor in the unfolded branch:
                     //   factor = anchor / (target + shift)
-                    let shift = if supports_shift(mode) {
+                    let stored_shift = if supports_shift(mode) {
                         state.ps_shift_hz.get_untracked()
                     } else { 0.0 };
+                    let band_lo = state.band_ff_freq_lo.get_untracked();
+                    let current_f = f_sig.get_untracked();
+                    let shift = effective_ps_shift(stored_shift, band_lo, current_f);
                     let denom = (target + shift).max(1.0);
                     let raw = anchor / denom;
                     f_sig.set(snap_factor(raw, snap));
