@@ -92,6 +92,9 @@ pub(crate) struct PlaybackParams {
     pub ps_factor: f64,
     pub pv_factor: f64,
     pub pv_hq: bool,
+    /// Additive frequency pre-shift (Hz) applied before pitch shifting
+    /// in PS / PV modes. 0 = no shift (pure multiplicative).
+    pub ps_shift_hz: f64,
     pub zc_factor: f64,
     pub gain_db: f64,
     pub gain_mode: GainMode,
@@ -630,6 +633,25 @@ pub(crate) fn het_carriers(center: f64, spacing: f64, count: u32) -> Vec<f64> {
     (0..n).map(|i| center + (start + i as f64) * spacing).collect()
 }
 
+/// Heterodyne pre-shift stage for the PitchShift / PhaseVocoder modes.
+/// When `ps_shift_hz` is non-zero, mixes the input down (or up) by that
+/// amount before the pitch shifter runs, giving a true scale+shift
+/// affine mapping `out = |in − shift| / factor`.
+///
+/// LP cutoff is auto-derived from the active bandpass upper edge so the
+/// sum image (`f_in + shift`) is suppressed while the difference band
+/// (`|f_in − shift|`) passes through cleanly.
+fn ps_pre_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
+    let shift = params.ps_shift_hz.abs();
+    if shift < 1.0 {
+        return samples.to_vec();
+    }
+    let nyquist = sample_rate as f64 * 0.5;
+    let cutoff = (params.filter_freq_high - shift + 5_000.0)
+        .clamp(20_000.0, nyquist * 0.9);
+    heterodyne_mix(samples, sample_rate, shift, cutoff)
+}
+
 pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
     match params.mode {
         PlaybackMode::Normal => samples.to_vec(),
@@ -652,8 +674,14 @@ pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &Playbac
             // Rate change handled by AudioContext sample rate, not sample transform
             samples.to_vec()
         }
-        PlaybackMode::PitchShift => pitch_shift_realtime(samples, params.ps_factor),
-        PlaybackMode::PhaseVocoder => crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(samples, params.pv_factor),
+        PlaybackMode::PitchShift => {
+            let shifted = ps_pre_shift(samples, sample_rate, params);
+            pitch_shift_realtime(&shifted, params.ps_factor)
+        }
+        PlaybackMode::PhaseVocoder => {
+            let shifted = ps_pre_shift(samples, sample_rate, params);
+            crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(&shifted, params.pv_factor)
+        }
         PlaybackMode::ZeroCrossing => {
             zc_divide(samples, sample_rate, params.zc_factor as u32, params.filter_enabled)
         }

@@ -211,6 +211,7 @@ pub fn App() -> impl IntoView {
             let _ = state.ps_factor.get();
             let _ = state.pv_factor.get();
             let _ = state.pv_hq.get();
+            let _ = state.ps_shift_hz.get();
             let _ = state.zc_factor.get();
             let _ = state.het_frequency.get();
             let _ = state.het_cutoff.get();
@@ -269,6 +270,7 @@ pub fn App() -> impl IntoView {
             let _ = state.bandpass_mode.get();
             let _ = state.het_frequency.get();
             let _ = state.het_cutoff.get();
+            let _ = state.ps_shift_hz.get();
 
             if first_run.get() {
                 first_run.set(false);

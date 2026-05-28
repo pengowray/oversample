@@ -93,6 +93,14 @@ fn band(state: &AppState) -> (f64, f64) {
     (state.band_ff_freq_lo.get(), state.band_ff_freq_hi.get())
 }
 
+/// Whether this mode supports a compound scale + shift mapping.
+/// Only the PS bucket (PitchShift / PhaseVocoder) does today — the
+/// `ps_shift_hz` signal is honoured by `apply_dsp_mode`'s PS/PV
+/// branches via a heterodyne pre-shift stage.
+fn supports_shift(mode: PlaybackMode) -> bool {
+    matches!(mode, PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)
+}
+
 /// Compute the current effective output range derived from the active
 /// mode + its parameters + the BandFF input range. Returns None when
 /// there's no meaningful range to draw (e.g. BandFF is empty).
@@ -104,8 +112,14 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
         Style::Passthrough => Some((in_lo, in_hi)),
         Style::Divide => {
             let f = factor_signal(state, mode)?.get();
-            let a = output_freq(in_lo, f);
-            let b = output_freq(in_hi, f);
+            // Optional pre-shift for PS/PV: apply additive shift first,
+            // then divide. `|in - shift|` folds at zero so the abs() is
+            // important when shift > in_lo.
+            let shift = if supports_shift(mode) { state.ps_shift_hz.get() } else { 0.0 };
+            let post_a = (in_lo - shift).abs();
+            let post_b = (in_hi - shift).abs();
+            let a = output_freq(post_a, f);
+            let b = output_freq(post_b, f);
             Some(if a < b { (a, b) } else { (b, a) })
         }
         Style::LinearShift => {
@@ -117,20 +131,25 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
     }
 }
 
+fn divide_shorthand(f: f64) -> String {
+    let s = format_factor_value(f);
+    if s.starts_with('\u{00f7}') { s } else { format!("\u{00f7}{s}") }
+}
+
 /// Short mapping label for the toolbar button left side.
 fn mapping_shorthand(state: &AppState, mode: PlaybackMode) -> String {
     match style_for(mode) {
         Style::Passthrough => "1:1".into(),
         Style::Divide => {
-            if let Some(sig) = factor_signal(state, mode) {
-                let f = sig.get();
-                // Reuse mode_button's formatter: prints `÷N` for f < -1,
-                // bare `N` for f >= 1.
-                let s = format_factor_value(f);
-                if s.starts_with('\u{00f7}') { s } else { format!("\u{00f7}{s}") }
-            } else {
-                "\u{2014}".into()
+            let Some(sig) = factor_signal(state, mode) else { return "\u{2014}".into(); };
+            let div = divide_shorthand(sig.get());
+            if supports_shift(mode) {
+                let shift = state.ps_shift_hz.get();
+                if shift.abs() >= 100.0 {
+                    return format!("{div} \u{2212}{}", format_freq_khz(shift));
+                }
             }
+            div
         }
         Style::LinearShift => {
             let c = state.het_frequency.get();
@@ -314,6 +333,58 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                 }
             }).collect::<Vec<_>>()}
         </div>
+        // ── Optional pre-shift (PS / PV only) ──
+        // Lets the user offset the input band before the divide stage,
+        // turning the pitch shift into a true scale + shift mapping
+        // (out = |in − shift| / factor).
+        {move || {
+            if !supports_shift(mode.get()) { return view! { <span></span> }.into_any(); }
+            let on_shift_input = move |ev: web_sys::Event| {
+                use wasm_bindgen::JsCast;
+                let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+                if let Ok(khz) = el.value().parse::<f64>() {
+                    state.ps_shift_hz.set((khz * 1000.0).max(0.0));
+                }
+            };
+            view! {
+                <div class="output-range-section-label">"Pre-shift"</div>
+                <div class="output-range-shift-row">
+                    <input type="number"
+                        class="output-range-num"
+                        min="0" max="500" step="0.5"
+                        prop:value=move || format!("{:.1}", state.ps_shift_hz.get() / 1000.0)
+                        on:input=on_shift_input
+                    />
+                    <span class="output-range-num-suffix">"kHz"</span>
+                    <button
+                        class="auto-toggle"
+                        on:click=move |_| state.ps_shift_hz.set(0.0)
+                        title="Clear pre-shift (back to pure divide)"
+                    >"0"</button>
+                </div>
+                <div class="output-range-presets">
+                    {[0.0, 10.0, 20.0, 40.0, 80.0].iter().map(|&khz| {
+                        let click = move |_: web_sys::MouseEvent| {
+                            state.ps_shift_hz.set(khz * 1000.0);
+                        };
+                        let sel = Signal::derive(move || {
+                            (state.ps_shift_hz.get() - khz * 1000.0).abs() < 100.0
+                        });
+                        let label = if khz == 0.0 {
+                            "0".to_string()
+                        } else {
+                            format!("\u{2212}{}k", khz as i32)
+                        };
+                        view! {
+                            <button
+                                class=move || if sel.get() { "factor-preset sel" } else { "factor-preset" }
+                                on:click=click
+                            >{label}</button>
+                        }
+                    }).collect::<Vec<_>>()}
+                </div>
+            }.into_any()
+        }}
     }
 }
 
@@ -445,22 +516,7 @@ fn OutputGutter() -> impl IntoView {
         )
     };
 
-    let band_label = move || {
-        let mode = state.playback_mode.get();
-        match style_for(mode) {
-            Style::Passthrough => "1:1".to_string(),
-            Style::Divide => {
-                if let Some(sig) = factor_signal(&state, mode) {
-                    let f = sig.get();
-                    let s = format_factor_value(f);
-                    if s.starts_with('\u{00f7}') { s } else { format!("\u{00f7}{s}") }
-                } else { String::new() }
-            }
-            Style::LinearShift => {
-                format!("\u{2212}{}", format_freq_khz(state.het_frequency.get()))
-            }
-        }
-    };
+    let band_label = move || mapping_shorthand(&state, state.playback_mode.get());
 
     let pin_input_to = move |target_hz: f64, anchor: f64| {
         let mode = state.playback_mode.get_untracked();
@@ -471,7 +527,13 @@ fn OutputGutter() -> impl IntoView {
             Style::Divide => {
                 if let Some(f_sig) = factor_signal(&state, mode) {
                     if let Some(a_sig) = auto_signal(&state, mode) { a_sig.set(false); }
-                    let raw = anchor / target;
+                    // Honour any active pre-shift so the back-solve
+                    // matches the compound mapping the user sees.
+                    let shift = if supports_shift(mode) {
+                        state.ps_shift_hz.get_untracked()
+                    } else { 0.0 };
+                    let post_shift = (anchor - shift).abs().max(1.0);
+                    let raw = post_shift / target;
                     f_sig.set(snap_factor(raw, snap));
                 }
             }
