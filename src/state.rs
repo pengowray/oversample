@@ -324,6 +324,19 @@ impl RightSidebarTab {
     ];
 }
 
+/// How the Info / Metadata panel renders values.
+///
+/// - `Formatted` pretty-prints JSON blobs, localizes dates (with a
+///   humanized "X ago" hint), and shows temperatures with their °F
+///   conversion in brackets.
+/// - `Original` shows the raw value exactly as it appeared in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum MetadataView {
+    #[default]
+    Formatted,
+    Original,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum FilterQuality {
     #[default]
@@ -1184,6 +1197,7 @@ pub struct AppState {
     pub right_sidebar_collapsed: RwSignal<bool>,
     pub right_sidebar_width: RwSignal<f64>,
     pub right_sidebar_dropdown_open: RwSignal<bool>,
+    pub metadata_view: RwSignal<MetadataView>,
     pub flow_intensity_gate: RwSignal<f32>,
     pub flow_gate: RwSignal<f32>,
     pub flow_opacity: RwSignal<f32>,
@@ -1802,6 +1816,7 @@ impl AppState {
             right_sidebar_collapsed: RwSignal::new(true),
             right_sidebar_width: RwSignal::new(220.0),
             right_sidebar_dropdown_open: RwSignal::new(false),
+            metadata_view: RwSignal::new(MetadataView::default()),
             flow_intensity_gate: RwSignal::new(0.5),
             flow_gate: RwSignal::new(0.75),
             flow_opacity: RwSignal::new(0.75),

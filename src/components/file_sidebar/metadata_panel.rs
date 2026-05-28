@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::state::AppState;
+use crate::state::{AppState, MetadataView};
 
 /// Returns (section, display_key) for a GUANO field.
 /// Known fields return "GUANO" as section; unknown pipe-separated keys
@@ -35,7 +35,6 @@ fn categorize_guano_key(key: &str) -> (String, String) {
     if let Some(display) = known {
         return ("GUANO".into(), display.into());
     }
-    // Unknown key: split on last pipe to get section prefix and short name
     if let Some(pos) = key.rfind('|') {
         let prefix = &key[..pos];
         let short = &key[pos + 1..];
@@ -45,7 +44,261 @@ fn categorize_guano_key(key: &str) -> (String, String) {
     }
 }
 
-fn metadata_row(label: String, value: String, label_title: Option<String>) -> impl IntoView {
+/// Classify a metadata field by its display label. Drives formatted-mode
+/// transforms (humanized dates, °F conversion, coordinate parsing, JSON
+/// expansion) and is robust to both GUANO and XC field name variants.
+#[derive(Clone, Copy, PartialEq)]
+enum FieldKind {
+    Date,
+    Temperature,
+    GpsPosition,
+    License,
+    None,
+}
+
+fn classify(label: &str) -> FieldKind {
+    let l = label.to_ascii_lowercase();
+    if l == "date" || l == "recorded" || l == "timestamp" || l == "datetime" {
+        FieldKind::Date
+    } else if l.contains("temp") {
+        FieldKind::Temperature
+    } else if l == "gps position" || l == "coordinates" || l == "gps" || l == "loc position" {
+        FieldKind::GpsPosition
+    } else if l == "license" || l == "licence" || l == "lic" {
+        FieldKind::License
+    } else {
+        FieldKind::None
+    }
+}
+
+/// Parse a value into (lat, lon). Accepts "lat lon", "lat,lon",
+/// "lat, lon", with optional trailing junk. Returns None if anything
+/// doesn't look like a decimal coordinate pair.
+fn parse_lat_lon(value: &str) -> Option<(f64, f64)> {
+    let s = value.trim();
+    // Try comma split first, then whitespace
+    let parts: Vec<&str> = if s.contains(',') {
+        s.split(',').collect()
+    } else {
+        s.split_whitespace().collect()
+    };
+    if parts.len() < 2 { return None; }
+    let lat: f64 = parts[0].trim().parse().ok()?;
+    let lon: f64 = parts[1].trim().parse().ok()?;
+    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+        return None;
+    }
+    Some((lat, lon))
+}
+
+/// Parse a temperature value (string) into degrees Celsius.
+/// Accepts e.g. "25", "25.5", "25C", "25 °C", "25°C". If the value
+/// already contains "F", we assume Fahrenheit was intended and skip
+/// the conversion.
+fn parse_temp_c(value: &str) -> Option<f64> {
+    let v = value.trim();
+    if v.is_empty() { return None; }
+    let lower = v.to_ascii_lowercase();
+    if lower.contains('f') && !lower.contains('c') {
+        return None;
+    }
+    // Strip non-numeric trailing characters
+    let num: String = v.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == '.' || *c == '+')
+        .collect();
+    num.parse().ok()
+}
+
+/// Parse an ISO-ish date/time string into a JS epoch ms. Falls back to
+/// js_sys::Date::parse which handles ISO 8601, RFC 2822, and a number
+/// of looser shapes (incl. "2024-03-15").
+fn parse_date_ms(value: &str) -> Option<f64> {
+    let v = value.trim();
+    if v.is_empty() { return None; }
+    let ms = js_sys::Date::parse(v);
+    if ms.is_nan() { None } else { Some(ms) }
+}
+
+/// Extract the UTC offset (in minutes) explicitly written in the
+/// original timestamp string. Recognizes trailing `Z`, `+HH:MM`,
+/// `-HH:MM`, `+HHMM`, `-HHMM`. Returns None if no offset is present.
+fn extract_tz_offset_minutes(value: &str) -> Option<i32> {
+    let v = value.trim();
+    if v.ends_with('Z') || v.ends_with('z') { return Some(0); }
+    // Only look at the time portion (after `T` or space), since negative
+    // dates like "2024-03-15" would otherwise confuse the sign scan.
+    let time_start = v.find('T').or_else(|| v.find(' ')).map(|i| i + 1).unwrap_or(0);
+    let tail = &v[time_start..];
+    let sign_idx = tail.rfind(|c: char| c == '+' || c == '-')?;
+    let sign_char = tail.as_bytes()[sign_idx] as char;
+    let off = &tail[sign_idx + 1..];
+    let (h, m) = if let Some((h, m)) = off.split_once(':') {
+        (h.parse::<i32>().ok()?, m.parse::<i32>().ok()?)
+    } else if off.len() == 4 {
+        (off[..2].parse::<i32>().ok()?, off[2..].parse::<i32>().ok()?)
+    } else if off.len() == 2 {
+        (off.parse::<i32>().ok()?, 0)
+    } else {
+        return None;
+    };
+    let total = h * 60 + m;
+    Some(if sign_char == '-' { -total } else { total })
+}
+
+fn format_tz_offset(minutes: i32) -> String {
+    if minutes == 0 { return "UTC".into(); }
+    let sign = if minutes < 0 { '-' } else { '+' };
+    let m = minutes.unsigned_abs();
+    format!("UTC{sign}{:02}:{:02}", m / 60, m % 60)
+}
+
+/// Render a JS Date in a long, locale-sensitive format.
+/// `tz_minutes`: if Some, render the date in that fixed UTC offset (so
+/// the displayed wall-clock time matches the original timestamp string);
+/// if None, render in the user's local time zone.
+fn format_date_long(ms: f64, had_time: bool, tz_minutes: Option<i32>) -> String {
+    let opts = js_sys::Object::new();
+    if had_time {
+        let _ = js_sys::Reflect::set(&opts, &"dateStyle".into(), &"long".into());
+        let _ = js_sys::Reflect::set(&opts, &"timeStyle".into(), &"medium".into());
+    } else {
+        let _ = js_sys::Reflect::set(&opts, &"dateStyle".into(), &"long".into());
+    }
+    let shifted_ms = match tz_minutes {
+        Some(off) => {
+            // Adjust the epoch so that the UTC reading at this offset
+            // matches the wall-clock time in the original zone, then
+            // force the formatter into UTC.
+            let _ = js_sys::Reflect::set(&opts, &"timeZone".into(), &"UTC".into());
+            ms + (off as f64) * 60_000.0
+        }
+        None => ms,
+    };
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(shifted_ms));
+    d.to_locale_string("default", &opts).as_string().unwrap_or_default()
+}
+
+/// "4 days ago" / "in 2 hours" style relative time.
+fn humanize_relative(ms: f64) -> String {
+    let now = js_sys::Date::now();
+    let delta_secs = (now - ms) / 1000.0;
+    let abs = delta_secs.abs();
+    let future = delta_secs < 0.0;
+    let (n, unit) = if abs < 60.0 {
+        (abs as i64, "second")
+    } else if abs < 3600.0 {
+        ((abs / 60.0) as i64, "minute")
+    } else if abs < 86_400.0 {
+        ((abs / 3600.0) as i64, "hour")
+    } else if abs < 30.0 * 86_400.0 {
+        ((abs / 86_400.0) as i64, "day")
+    } else if abs < 365.0 * 86_400.0 {
+        ((abs / (30.0 * 86_400.0)) as i64, "month")
+    } else {
+        ((abs / (365.0 * 86_400.0)) as i64, "year")
+    };
+    let plural = if n == 1 { "" } else { "s" };
+    if future {
+        format!("in {n} {unit}{plural}")
+    } else if n == 0 {
+        "just now".into()
+    } else {
+        format!("{n} {unit}{plural} ago")
+    }
+}
+
+/// Try to extract a balanced JSON array/object from a string that may
+/// contain a prefix or trailing junk. Returns the parsed Value if the
+/// extracted slice round-trips through serde_json.
+fn extract_json(value: &str) -> Option<serde_json::Value> {
+    let s = value.trim();
+    let start = s.find(|c: char| c == '[' || c == '{')?;
+    // Find the matching closing bracket using simple depth tracking
+    // (good enough for the well-behaved JSON we see in GUANO).
+    let bytes = s.as_bytes();
+    let open = bytes[start] as char;
+    let close = if open == '[' { ']' } else { '}' };
+    let mut depth = 0i32;
+    let mut end = None;
+    let mut in_str = false;
+    let mut esc = false;
+    for (i, b) in bytes.iter().enumerate().skip(start) {
+        let c = *b as char;
+        if in_str {
+            if esc { esc = false; }
+            else if c == '\\' { esc = true; }
+            else if c == '"' { in_str = false; }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            x if x == open => depth += 1,
+            x if x == close => {
+                depth -= 1;
+                if depth == 0 { end = Some(i + 1); break; }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    serde_json::from_str(&s[start..end]).ok()
+}
+
+/// Render an extracted JSON value as a small nested "k: v" block.
+fn json_block(json: &serde_json::Value) -> impl IntoView {
+    fn line(key: String, val: String) -> impl IntoView {
+        view! {
+            <div class="metadata-json-line">
+                <span class="metadata-json-key">{key}</span>
+                <span class="metadata-json-sep">": "</span>
+                <span class="metadata-json-val">{val}</span>
+            </div>
+        }
+    }
+    fn flatten_value(v: &serde_json::Value) -> String {
+        match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null => "null".into(),
+            other => other.to_string(),
+        }
+    }
+    let entries: Vec<_> = match json {
+        serde_json::Value::Array(arr) => arr.iter()
+            .flat_map(|v| match v {
+                serde_json::Value::Object(map) => map.iter()
+                    .map(|(k, v)| line(k.clone(), flatten_value(v)).into_any())
+                    .collect::<Vec<_>>(),
+                other => vec![line(String::new(), flatten_value(other)).into_any()],
+            })
+            .collect(),
+        serde_json::Value::Object(map) => map.iter()
+            .map(|(k, v)| line(k.clone(), flatten_value(v)).into_any())
+            .collect(),
+        other => vec![line(String::new(), flatten_value(other)).into_any()],
+    };
+    view! { <div class="metadata-json-block">{entries}</div> }
+}
+
+/// Parse a temperature value and return (°C string, °F string).
+/// Both formatted to 0 dp when near-integer, otherwise 1 dp.
+fn format_temp_c_f(value: &str) -> Option<(String, String)> {
+    let c = parse_temp_c(value)?;
+    let f = c * 9.0 / 5.0 + 32.0;
+    let fmt = |n: f64| if (n - n.round()).abs() < 0.05 {
+        format!("{n:.0}")
+    } else {
+        format!("{n:.1}")
+    };
+    Some((
+        format!("{}\u{00B0}C", fmt(c)),
+        format!("{}\u{00B0}F", fmt(f)),
+    ))
+}
+
+/// Inline (single-line) metadata row — used by the File section.
+fn inline_row(label: String, value: String, label_title: Option<String>) -> impl IntoView {
     let value_for_copy = value.clone();
     let value_for_title = value.clone();
     let on_copy = move |ev: web_sys::MouseEvent| {
@@ -53,7 +306,7 @@ fn metadata_row(label: String, value: String, label_title: Option<String>) -> im
         super::copy_to_clipboard(&value_for_copy);
     };
     view! {
-        <div class="setting-row metadata-row">
+        <div class="setting-row metadata-row metadata-row-inline">
             <span class="setting-label" title=label_title.unwrap_or_default()>{label}</span>
             <span class="setting-value metadata-value" title=value_for_title>{value}</span>
             <button class="copy-btn" on:click=on_copy title="Copy">{"\u{2398}"}</button>
@@ -61,44 +314,201 @@ fn metadata_row(label: String, value: String, label_title: Option<String>) -> im
     }
 }
 
-/// Metadata row for hash values with a match/mismatch indicator next to the copy button.
-/// `reference`: if Some, compares hash against it and shows tick/cross. None = no indicator.
-/// `from_reference`: if true, the value is from metadata (not computed locally) — dimmed style.
-fn hash_row(label: &str, hash: &str, reference: Option<&str>, from_reference: bool) -> impl IntoView {
+/// Spacious row (key on its own line, value beneath). Used for all
+/// sections other than the File summary. Honors the Formatted/Original
+/// view mode for value rendering.
+fn spacious_row(
+    label: String,
+    value: String,
+    label_title: Option<String>,
+    view_mode: MetadataView,
+) -> impl IntoView {
+    let kind = classify(&label);
+    let value_for_copy = value.clone();
+    let on_copy = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        super::copy_to_clipboard(&value_for_copy);
+    };
+
+    let body = render_value_body(&label, &value, kind, view_mode);
+
+    view! {
+        <div class="metadata-row metadata-row-spacious">
+            <div class="metadata-key-line">
+                <span class="metadata-key" title=label_title.unwrap_or_default()>{label}</span>
+                <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+            </div>
+            {body}
+        </div>
+    }
+}
+
+/// Render the value portion of a spacious row according to view mode
+/// and detected field kind.
+fn render_value_body(
+    label: &str,
+    value: &str,
+    kind: FieldKind,
+    view_mode: MetadataView,
+) -> leptos::tachys::view::any_view::AnyView {
+    let raw = || view! {
+        <div class="metadata-value-block" title=value.to_string()>{value.to_string()}</div>
+    }.into_any();
+
+    if view_mode == MetadataView::Original {
+        return raw();
+    }
+
+    match kind {
+        FieldKind::Date => date_block(value).into_any(),
+        FieldKind::Temperature => {
+            if let Some((c, f)) = format_temp_c_f(value) {
+                view! {
+                    <div class="metadata-value-block">
+                        {c}
+                        " "
+                        <span class="metadata-temp-f">"("{f}")"</span>
+                    </div>
+                }.into_any()
+            } else {
+                raw()
+            }
+        }
+        FieldKind::GpsPosition => {
+            if let Some((lat, lon)) = parse_lat_lon(value) {
+                gps_block(lat, lon, value.to_string()).into_any()
+            } else {
+                raw()
+            }
+        }
+        FieldKind::License => {
+            if let Some(short) = super::file_badges::parse_cc_license(value) {
+                view! {
+                    <div class="metadata-value-block">{short}</div>
+                    <div class="metadata-value-subtle" title=value.to_string()>{value.to_string()}</div>
+                }.into_any()
+            } else {
+                raw()
+            }
+        }
+        FieldKind::None => {
+            // Try JSON expansion (e.g. Wildlife Acoustics "Audio settings")
+            if value.trim_start().starts_with('[') || value.trim_start().starts_with('{') {
+                if let Some(j) = extract_json(value) {
+                    return view! {
+                        <div class="metadata-value-block metadata-value-json">
+                            {json_block(&j)}
+                        </div>
+                    }.into_any();
+                }
+            }
+            let _ = label;
+            raw()
+        }
+    }
+}
+
+/// Render a parsed date with the original UTC offset, a localized
+/// "Local: ..." line if the local interpretation differs, and a
+/// humanized relative-time hint.
+fn date_block(value: &str) -> impl IntoView {
+    let Some(ms) = parse_date_ms(value) else {
+        return view! {
+            <div class="metadata-value-block" title=value.to_string()>{value.to_string()}</div>
+        }.into_any();
+    };
+    let had_time = value.contains('T') || value.contains(':');
+    let orig_tz = extract_tz_offset_minutes(value);
+    let rel = humanize_relative(ms);
+
+    let primary_str = match orig_tz {
+        Some(off) => format!("{} {}", format_date_long(ms, had_time, Some(off)), format_tz_offset(off)),
+        None => format_date_long(ms, had_time, None),
+    };
+
+    // Show "Local: ..." only when the original timestamp pinned a
+    // specific tz AND that tz differs from the user's local tz.
+    let local_line = orig_tz.and_then(|off| {
+        let local_offset = -(js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms))
+            .get_timezone_offset() as i32);
+        if local_offset == off { return None; }
+        Some(format!(
+            "Local: {} {}",
+            format_date_long(ms, had_time, None),
+            format_tz_offset(local_offset),
+        ))
+    });
+
+    view! {
+        <div class="metadata-value-block">{primary_str}</div>
+        {local_line.map(|s| view! { <div class="metadata-value-local">{s}</div> })}
+        <div class="metadata-value-relative">{rel}</div>
+    }.into_any()
+}
+
+/// World-map block with a pin and out-links. Coordinates are in WGS84
+/// decimal degrees. The map asset lives at `/world-map.png` and is
+/// expected to be an equirectangular projection (lon −180→+180 maps
+/// linearly across width, lat +90→−90 across height).
+fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
+    let pin_left_pct = (lon + 180.0) / 360.0 * 100.0;
+    let pin_top_pct = (90.0 - lat) / 180.0 * 100.0;
+    let osm = format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=10/{lat}/{lon}");
+    let gmaps = format!("https://www.google.com/maps?q={lat},{lon}");
+    let coord_text = format!("{lat:.5}, {lon:.5}");
+    view! {
+        <div class="metadata-value-block">{coord_text}</div>
+        <div class="metadata-map-wrap">
+            <img class="metadata-map-img" src="/world-map.png" alt="World map" />
+            <div class="metadata-map-pin"
+                 style=format!("left: {pin_left_pct:.3}%; top: {pin_top_pct:.3}%;")
+                 title=raw_value.clone()></div>
+        </div>
+        <div class="metadata-map-links">
+            <a href=osm target="_blank" rel="noopener noreferrer">"OpenStreetMap"</a>
+            <span class="metadata-map-link-sep">"\u{00B7}"</span>
+            <a href=gmaps target="_blank" rel="noopener noreferrer">"Google Maps"</a>
+        </div>
+    }
+}
+
+/// Hash row with match indicator. Spacious layout.
+fn hash_row(
+    label: &str,
+    hash: &str,
+    reference: Option<&str>,
+    from_reference: bool,
+) -> impl IntoView {
     let hash_for_copy = hash.to_string();
-    let hash_for_title = hash.to_string();
-    let hash_display = hash.to_string();
     let label = label.to_string();
     let on_copy = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
         super::copy_to_clipboard(&hash_for_copy);
     };
     let (indicator, indicator_class) = match reference {
-        Some(expected) if expected == hash => ("\u{2713}", "hash-indicator match"),
-        Some(_) => ("\u{2717}", "hash-indicator mismatch"),
-        None => ("", "hash-indicator"),
+        Some(expected) if expected == hash => ("\u{2713}", "hash-indicator-inline match"),
+        Some(_) => ("\u{2717}", "hash-indicator-inline mismatch"),
+        None => ("", "hash-indicator-inline"),
     };
     let value_class = if from_reference {
-        "setting-value metadata-value hash-from-ref"
+        "metadata-value-block metadata-hash hash-from-ref"
     } else {
-        "setting-value metadata-value"
+        "metadata-value-block metadata-hash"
     };
+    let hash_display = hash.to_string();
     view! {
-        <div class="setting-row metadata-row">
-            <span class="setting-label">{label}</span>
-            <span class=value_class title=hash_for_title>{hash_display}</span>
-            <span class=indicator_class>{indicator}</span>
-            <button class="copy-btn" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+        <div class="metadata-row metadata-row-spacious">
+            <div class="metadata-key-line">
+                <span class="metadata-key">{label}</span>
+                <span class=indicator_class>{indicator}</span>
+                <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+            </div>
+            <div class=value_class>{hash_display}</div>
         </div>
     }
 }
 
-/// Render the Anabat .zc fixed-header text fields (location, species,
-/// tape, date, spec, notes, id, gps, recording timestamp). These come
-/// from the binary header at file load time and don't change. Returns
-/// an empty <span> if the file isn't a .zc recording or every field is
-/// blank.
-fn zc_header_section(f: &crate::state::LoadedFile) -> impl IntoView {
+fn zc_header_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl IntoView {
     let Some(zc) = f.audio.metadata.zc_data.as_ref() else {
         return view! { <span></span> }.into_any();
     };
@@ -127,12 +537,13 @@ fn zc_header_section(f: &crate::state::LoadedFile) -> impl IntoView {
     }
 
     let items: Vec<_> = rows.into_iter()
-        .map(|(k, v)| metadata_row(k, v, None).into_any())
+        .map(|(k, v)| spacious_row(k, v, None, view_mode).into_any())
         .collect();
 
     view! {
         <div class="setting-group">
-            <div class="setting-group-title" title="Fixed-header text fields embedded in the Anabat .zc binary (location, species, notes, recording timestamp, etc.).">
+            <div class="setting-group-title setting-group-title-major"
+                 title="Fixed-header text fields embedded in the Anabat .zc binary.">
                 "Header metadata"
             </div>
             {items}
@@ -150,12 +561,6 @@ fn format_file_size(bytes: usize) -> String {
     }
 }
 
-/// Render the file identity / hash section.
-///
-/// Verification strategy: only one hash is auto-verified per file:
-/// - Small files (<10MB): blake3
-/// - Large files (>=10MB): spot_hash
-/// Other hashes are shown without indicators unless user clicks [Calculate all hashes].
 fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     let state = expect_context::<AppState>();
     let identity = f.identity.clone();
@@ -163,7 +568,6 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     let verify_outcome = f.verify_outcome.clone();
     let all_verified = f.all_hashes_verified;
 
-    // Merge reference hashes from XC sidecar + annotation store sidecar
     let file_idx = state.current_file_index.get_untracked();
     let sidecar_identity = file_idx.and_then(|idx| {
         state.annotation_store.with_untracked(|store| {
@@ -190,7 +594,6 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     let display_size = actual_size.or(ref_file_size);
     let is_small = display_size.map(|s| s < crate::file_identity::SMALL_FILE_THRESHOLD).unwrap_or(true);
 
-    // File size with match indicator (always compare if reference exists)
     if let Some(size) = display_size {
         if size > 0 {
             let size_ref = match (actual_size, ref_file_size) {
@@ -206,32 +609,20 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     }
 
     if let Some(ref id) = identity {
-        // Spot hash — indicator only for large files (primary) or all_verified
         if let Some(ref hash) = id.spot_hash_b3 {
-            let reference = if !is_small || all_verified {
-                ref_spot.as_deref()
-            } else {
-                None
-            };
+            let reference = if !is_small || all_verified { ref_spot.as_deref() } else { None };
             items.push(hash_row("Spot hash", hash, reference, false).into_any());
         } else {
-            items.push(metadata_row("Spot hash".into(), "computing...".into(), None).into_any());
+            items.push(spacious_row("Spot hash".into(), "computing...".into(), None, MetadataView::Original).into_any());
         }
 
-        // Full BLAKE3 — indicator only for small files (primary) or all_verified
         if let Some(ref hash) = id.full_blake3 {
-            let reference = if is_small || all_verified {
-                ref_blake3.as_deref()
-            } else {
-                None
-            };
+            let reference = if is_small || all_verified { ref_blake3.as_deref() } else { None };
             items.push(hash_row("Full BLAKE3", hash, reference, false).into_any());
         } else if let Some(ref known) = ref_blake3 {
-            // Show known hash from reference (not computed locally)
             items.push(hash_row("Full BLAKE3", known, None, true).into_any());
         }
 
-        // Content hash — indicator if fallback triggered (ContentMatch) or all_verified
         if let Some(ref hash) = id.content_hash {
             let reference = if verify_outcome == crate::state::VerifyOutcome::ContentMatch || all_verified {
                 ref_content.as_deref()
@@ -243,7 +634,6 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
             items.push(hash_row("Content hash", known, None, true).into_any());
         }
 
-        // Full SHA-256 — indicator only if all_verified
         if let Some(ref hash) = id.full_sha256 {
             let reference = if all_verified { ref_sha256.as_deref() } else { None };
             items.push(hash_row("Full SHA-256", hash, reference, false).into_any());
@@ -251,7 +641,6 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
             items.push(hash_row("Full SHA-256", known, None, true).into_any());
         }
     } else {
-        // No identity computed yet — show known hashes from reference
         if let Some(ref known) = ref_spot {
             items.push(hash_row("Spot hash", known, None, true).into_any());
         }
@@ -266,18 +655,14 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
         }
     }
 
-    // Content match note
     if verify_outcome == crate::state::VerifyOutcome::ContentMatch {
         items.push(view! {
-            <div class="setting-row metadata-row">
-                <span class="setting-label hash-note">
-                    "Header changed \u{2014} audio content verified"
-                </span>
+            <div class="metadata-row metadata-row-spacious">
+                <div class="hash-note">"Header changed \u{2014} audio content verified"</div>
             </div>
         }.into_any());
     }
 
-    // [Calculate all hashes] button
     if has_file_handle && !all_verified {
         let computing = state.hash_computing.get();
         let on_calc_all = move |_: web_sys::MouseEvent| {
@@ -287,7 +672,7 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
         };
         let label = if computing { "Computing..." } else { "Calculate all hashes" };
         items.push(view! {
-            <div class="setting-row metadata-row">
+            <div class="metadata-row metadata-row-spacious">
                 <button class="hash-calc-btn" on:click=on_calc_all disabled=computing>{label}</button>
             </div>
         }.into_any());
@@ -298,7 +683,7 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     } else {
         view! {
             <div class="setting-group">
-                <div class="setting-group-title">"File Identity"</div>
+                <div class="setting-group-title setting-group-title-major">"File Identity"</div>
                 {items}
             </div>
         }.into_any()
@@ -308,13 +693,39 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
 #[component]
 pub(crate) fn MetadataPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let view_mode = state.metadata_view;
 
     view! {
         <div class="sidebar-panel">
+            <div class="metadata-view-toggle">
+                <button
+                    class=move || if view_mode.get() == MetadataView::Formatted {
+                        "psd-btn psd-btn-active"
+                    } else {
+                        "psd-btn"
+                    }
+                    on:click=move |_| view_mode.set(MetadataView::Formatted)
+                    title="Pretty-print JSON, localize dates, show \u{00B0}F"
+                >
+                    "Formatted"
+                </button>
+                <button
+                    class=move || if view_mode.get() == MetadataView::Original {
+                        "psd-btn psd-btn-active"
+                    } else {
+                        "psd-btn"
+                    }
+                    on:click=move |_| view_mode.set(MetadataView::Original)
+                    title="Show raw values as stored in the file"
+                >
+                    "Original"
+                </button>
+            </div>
             {move || {
                 let files = state.files.get();
                 let idx = state.current_file_index.get();
                 let file = idx.and_then(|i| files.get(i));
+                let view_mode = view_mode.get();
 
                 match file {
                     None => view! {
@@ -322,7 +733,6 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                     }.into_any(),
                     Some(f) => {
                         let meta = &f.audio.metadata;
-                        // File size: use actual if available, otherwise estimate WAV size from samples
                         let (size_str, size_label) = if meta.file_size > 0 {
                             (format_file_size(meta.file_size), "File size".to_string())
                         } else if f.audio.duration_secs > 0.0 {
@@ -342,23 +752,23 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 
                         view! {
                             <div class="setting-group">
-                                <div class="setting-group-title">"File"</div>
-                                {metadata_row("Name".into(), f.name.clone(), None)}
-                                {metadata_row("Format".into(), meta.format.to_string(), None)}
-                                {metadata_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
-                                {metadata_row("Sample rate".into(), format!("{} kHz", f.audio.sample_rate / 1000), None)}
-                                {metadata_row("Channels".into(), f.audio.channels.to_string(), None)}
-                                {metadata_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
-                                {metadata_row(size_label, size_str, None)}
+                                <div class="setting-group-title setting-group-title-major">"File"</div>
+                                {inline_row("Name".into(), f.name.clone(), None)}
+                                {inline_row("Format".into(), meta.format.to_string(), None)}
+                                {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
+                                {inline_row("Sample rate".into(), format!("{} kHz", f.audio.sample_rate / 1000), None)}
+                                {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
+                                {inline_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
+                                {inline_row(size_label, size_str, None)}
                             </div>
-                            {zc_header_section(f)}
+                            {zc_header_section(f, view_mode)}
                             {if has_xc {
                                 let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
-                                    metadata_row(label, value, None).into_any()
+                                    spacious_row(label, value, None, view_mode).into_any()
                                 }).collect();
                                 view! {
                                     <div class="setting-group">
-                                        <div class="setting-group-title">"Xeno-canto"</div>
+                                        <div class="setting-group-title setting-group-title-major">"Xeno-canto"</div>
                                         {items}
                                     </div>
                                 }.into_any()
@@ -374,6 +784,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 };
                                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
                                 let mut current_section: Option<String> = None;
+                                let mut first_heading = true;
                                 for (k, v) in guano_fields {
                                     let (section, display_key) = if is_guano_source {
                                         let (s, d) = categorize_guano_key(&k);
@@ -385,8 +796,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                     if current_section.as_ref() != Some(&section) {
                                         let heading = section.clone();
                                         let show_badge = is_guano_source && heading != default_section;
+                                        let heading_class = if first_heading {
+                                            "setting-group-title setting-group-title-major"
+                                        } else {
+                                            "setting-group-title setting-group-title-sub"
+                                        };
                                         items.push(view! {
-                                            <div class="setting-group-title">
+                                            <div class=heading_class>
                                                 {heading}
                                                 {if show_badge {
                                                     view! { <span class="metadata-source-badge">"GUANO"</span> }.into_any()
@@ -396,8 +812,9 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                             </div>
                                         }.into_any());
                                         current_section = Some(section);
+                                        first_heading = false;
                                     }
-                                    items.push(metadata_row(display_key, v, Some(k)).into_any());
+                                    items.push(spacious_row(display_key, v, Some(k), view_mode).into_any());
                                 }
                                 view! {
                                     <div class="setting-group">
@@ -407,7 +824,6 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             } else {
                                 view! { <span></span> }.into_any()
                             }}
-                            // File Identity / Hash section — hidden while recording in progress
                             {if !f.is_recording {
                                 file_identity_section(f).into_any()
                             } else {

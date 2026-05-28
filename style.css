@@ -1316,6 +1316,200 @@ body.sidebar-resizing {
     vertical-align: middle;
 }
 
+/* ── Info / Metadata panel ──────────────────────────────────────────────── */
+/* Major section headings (File, Xeno-canto, Guano metadata, File Identity,
+   Header metadata) — promoted to yellow so they stand out from sub-sections
+   like "BatGizmo App" inside GUANO. */
+.setting-group-title-major {
+    color: #e6c84a;
+    font-size: 12px;
+}
+/* GUANO sub-section headings (kept dim, like the original style). */
+.setting-group-title-sub {
+    color: #888;
+}
+
+/* Formatted/Original toggle at the top of the Info panel. */
+.metadata-view-toggle {
+    display: flex;
+    gap: 0;
+    padding: 8px 12px 4px;
+}
+.metadata-view-toggle .psd-btn {
+    flex: 1;
+    text-align: center;
+    border-radius: 0;
+}
+.metadata-view-toggle .psd-btn:first-child {
+    border-radius: 3px 0 0 3px;
+}
+.metadata-view-toggle .psd-btn:last-child {
+    border-radius: 0 3px 3px 0;
+}
+.metadata-view-toggle .psd-btn + .psd-btn {
+    margin-left: -1px;
+}
+
+/* Spacious row — key on its own line, value(s) below. Used everywhere
+   except the File summary section. */
+.metadata-row-spacious {
+    display: block;
+    padding: 6px 16px 8px;
+    position: relative;
+}
+.metadata-key-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 16px;
+}
+.metadata-key {
+    font-size: 11px;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex: 1;
+    min-width: 0;
+}
+.metadata-value-block {
+    font-size: 13px;
+    color: #ddd;
+    word-break: break-word;
+    line-height: 1.35;
+    padding-top: 2px;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.metadata-value-block.metadata-hash {
+    font-family: monospace;
+    font-size: 11px;
+    word-break: break-all;
+    color: #bbb;
+}
+.metadata-value-relative {
+    font-size: 11px;
+    color: #888;
+    font-style: italic;
+    padding-top: 1px;
+}
+/* "Local: ..." line beneath a date when the original tz differs from
+   the user's local zone. Italic, slightly dimmer than the main value. */
+.metadata-value-local {
+    font-size: 12px;
+    color: #aaa;
+    font-style: italic;
+    padding-top: 1px;
+}
+/* Generic "secondary detail" line — used e.g. for the raw license URL
+   beneath a shortened "CC BY-NC-SA 4.0" label. */
+.metadata-value-subtle {
+    font-size: 11px;
+    color: #777;
+    word-break: break-all;
+    padding-top: 1px;
+}
+/* Fahrenheit conversion next to the primary °C value — dimmer so the
+   primary unit reads first. */
+.metadata-temp-f {
+    color: #888;
+}
+
+/* Copy button in spacious rows: sits inline next to the key, fades in
+   on row hover (matches the inline-row pattern). */
+.copy-btn-spacious {
+    display: none;
+    position: static;
+    transform: none;
+    flex-shrink: 0;
+}
+.metadata-row-spacious:hover .copy-btn-spacious {
+    display: inline-block;
+}
+
+/* Inline match/mismatch indicator in the key line. */
+.hash-indicator-inline {
+    font-size: 13px;
+    line-height: 1;
+    color: transparent;
+    flex-shrink: 0;
+}
+.hash-indicator-inline.match { color: #4caf50; }
+.hash-indicator-inline.mismatch { color: #e53935; }
+
+/* JSON expansion block (e.g. Wildlife Acoustics "Audio settings"). */
+.metadata-value-json {
+    padding-top: 4px;
+}
+.metadata-json-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 2px solid #444;
+    border-radius: 0 3px 3px 0;
+    font-family: monospace;
+    font-size: 11px;
+}
+.metadata-json-line {
+    display: flex;
+    gap: 0;
+    line-height: 1.4;
+}
+.metadata-json-key { color: #8cf; }
+.metadata-json-sep { color: #666; }
+.metadata-json-val { color: #ddd; word-break: break-word; }
+
+/* GPS world-map block — equirectangular projection, pin positioned by
+   percentage. The world-map.png asset is loaded from the site root. */
+.metadata-map-wrap {
+    position: relative;
+    margin-top: 6px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    overflow: hidden;
+    background: #0a0a0a;
+    aspect-ratio: 2 / 1;
+}
+.metadata-map-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    /* Source PNG is white ocean / grey land; invert so it reads as
+       light land on dark ocean against the dark UI. */
+    filter: invert(0.9) brightness(0.7);
+}
+.metadata-map-pin {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    margin-left: -5px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: #ff4444;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 4px rgba(255, 68, 68, 0.8), 0 0 2px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
+}
+.metadata-map-links {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 4px;
+    font-size: 11px;
+}
+.metadata-map-links a {
+    color: #8cf;
+    text-decoration: none;
+}
+.metadata-map-links a:hover {
+    text-decoration: underline;
+}
+.metadata-map-link-sep {
+    color: #555;
+}
+
 .drop-zone {
     flex: 1;
     display: flex;
