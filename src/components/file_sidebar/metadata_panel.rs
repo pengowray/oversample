@@ -447,8 +447,10 @@ fn date_block(value: &str) -> impl IntoView {
 }
 
 /// World-map block with a pin and out-links. Coordinates are in WGS84
-/// decimal degrees. The map asset lives at `/world-map.png` and is
-/// expected to be an equirectangular projection (lon −180→+180 maps
+/// decimal degrees. The map asset lives at `world-map.png` (declared
+/// as a Trunk `copy-file` in index.html, relative path so it works
+/// under both the root domain and the /oversample/ subpath build) and
+/// is expected to be an equirectangular projection (lon −180→+180 maps
 /// linearly across width, lat +90→−90 across height).
 fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
     let pin_left_pct = (lon + 180.0) / 360.0 * 100.0;
@@ -459,7 +461,7 @@ fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
     view! {
         <div class="metadata-value-block">{coord_text}</div>
         <div class="metadata-map-wrap">
-            <img class="metadata-map-img" src="/world-map.png" alt="World map" />
+            <img class="metadata-map-img" src="world-map.png" alt="World map" />
             <div class="metadata-map-pin"
                  style=format!("left: {pin_left_pct:.3}%; top: {pin_top_pct:.3}%;")
                  title=raw_value.clone()></div>
