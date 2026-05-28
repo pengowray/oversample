@@ -68,6 +68,11 @@ pub fn ComboButton(
     let hold_start_ms: RwSignal<f64> = RwSignal::new(0.0);
     // Initial touch position for movement threshold
     let touch_start_xy: RwSignal<(f64, f64)> = RwSignal::new((0.0, 0.0));
+    // True once a touch has moved far enough to count as a drag/scroll
+    // (rather than a tap). When set, touchend does NOT fire the button
+    // action and does NOT preventDefault — letting the parent's
+    // horizontal scroll (mobile toolbars) proceed naturally.
+    let touch_dragging: RwSignal<bool> = RwSignal::new(false);
 
     let start_hold = move || {
         cancel_hold_inner(hold_timer);
@@ -134,7 +139,10 @@ pub fn ComboButton(
                 on:mousedown=move |_| start_hold()
                 on:mouseup=move |_| cancel_hold()
                 on:touchstart=move |ev: web_sys::TouchEvent| {
-                    ev.prevent_default();
+                    // Do NOT preventDefault — that blocks the parent's
+                    // horizontal scroll on mobile toolbars. Tap vs. drag
+                    // is resolved in touchmove / touchend below.
+                    touch_dragging.set(false);
                     if let Some(touch) = ev.touches().get(0) {
                         touch_start_xy.set((touch.client_x() as f64, touch.client_y() as f64));
                     }
@@ -142,22 +150,26 @@ pub fn ComboButton(
                 }
                 on:touchend=move |ev: web_sys::TouchEvent| {
                     cancel_hold();
-                    // Short tap: fire the primary action (click is suppressed by preventDefault)
-                    if !hold_fired.get_untracked() {
-                        // Synthesize a MouseEvent for the callback
+                    // Fire the primary action only for a genuine tap (no
+                    // drag, no long-press). preventDefault here suppresses
+                    // the synthetic mouse click that would otherwise
+                    // double-fire on:click. For a drag we do neither, so
+                    // the scroll the browser just performed stands.
+                    if !touch_dragging.get_untracked() && !hold_fired.get_untracked() {
                         let me = web_sys::MouseEvent::new("click").unwrap();
                         left_click.run(me);
+                        ev.prevent_default();
                     }
-                    ev.prevent_default();
                 }
                 on:touchmove=move |ev: web_sys::TouchEvent| {
-                    // Only cancel hold if finger moved more than 10px (prevents
-                    // accidental cancellation from natural finger jitter on mobile)
+                    // >10px movement = drag/scroll: cancel the hold timer
+                    // and mark this gesture so touchend won't fire the tap.
                     if let Some(touch) = ev.touches().get(0) {
                         let (sx, sy) = touch_start_xy.get_untracked();
                         let dx = touch.client_x() as f64 - sx;
                         let dy = touch.client_y() as f64 - sy;
                         if (dx * dx + dy * dy) > 100.0 {
+                            touch_dragging.set(true);
                             cancel_hold();
                         }
                     }
@@ -197,7 +209,8 @@ pub fn ComboButton(
                 on:mousedown=move |_| start_hold()
                 on:mouseup=move |_| cancel_hold()
                 on:touchstart=move |ev: web_sys::TouchEvent| {
-                    ev.prevent_default();
+                    // Do NOT preventDefault — preserves parent scroll.
+                    touch_dragging.set(false);
                     if let Some(touch) = ev.touches().get(0) {
                         touch_start_xy.set((touch.client_x() as f64, touch.client_y() as f64));
                     }
@@ -205,11 +218,12 @@ pub fn ComboButton(
                 }
                 on:touchend=move |ev: web_sys::TouchEvent| {
                     cancel_hold();
-                    // Short tap: toggle the menu (click is suppressed by preventDefault)
-                    if !hold_fired.get_untracked() {
+                    // Genuine tap only: toggle the menu and suppress the
+                    // synthetic click. A drag scrolls instead.
+                    if !touch_dragging.get_untracked() && !hold_fired.get_untracked() {
                         toggle_menu.run(());
+                        ev.prevent_default();
                     }
-                    ev.prevent_default();
                 }
                 on:touchmove=move |ev: web_sys::TouchEvent| {
                     if let Some(touch) = ev.touches().get(0) {
@@ -217,6 +231,7 @@ pub fn ComboButton(
                         let dx = touch.client_x() as f64 - sx;
                         let dy = touch.client_y() as f64 - sy;
                         if (dx * dx + dy * dy) > 100.0 {
+                            touch_dragging.set(true);
                             cancel_hold();
                         }
                     }

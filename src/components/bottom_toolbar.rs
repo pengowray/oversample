@@ -17,11 +17,12 @@
 
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
-use crate::state::{AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, RecordMode};
+use crate::state::{AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, PlaybackMode, RecordMode};
 use crate::audio::{microphone, playback};
 use crate::audio::source::ChannelView;
 use crate::components::combo_button::ComboButton;
 use crate::components::listen_button::ListenButton;
+use crate::components::mode_button::ModeBucket;
 
 fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
@@ -68,6 +69,17 @@ pub fn BottomToolbar() -> impl IntoView {
 
     // ── Play ComboButton setup ──
     let play_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::PlayMode));
+
+    // True when current mode is 1:1 (Normal) AND the active band is
+    // entirely above human hearing — same warning state surfaced as the
+    // amber underline on the 1:1 mode radio button.
+    let play_inaudible = Signal::derive(move || {
+        use crate::state::PlaybackMode;
+        if state.playback_mode.get() != PlaybackMode::Normal { return false; }
+        let lo = state.band_ff_freq_lo.get();
+        let hi = state.band_ff_freq_hi.get();
+        hi > lo && lo >= 20_000.0
+    });
 
     let play_left_class = Signal::derive(move || {
         let no_file = state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
@@ -134,6 +146,78 @@ pub fn BottomToolbar() -> impl IntoView {
         val
     });
 
+    // Restore HFR after playback ends if we paused it for a 1:1 play
+    // inside a multi-selection. Watches `is_playing` — when it
+    // transitions to false and `paused_hfr_for_normal` is set, flip HFR
+    // back on. Switching mid-play via another ▶ button also relies on
+    // this (do_play_in_mode calls stop() before swapping modes).
+    Effect::new(move || {
+        let playing = state.is_playing.get();
+        if !playing && state.paused_hfr_for_normal.get_untracked() {
+            state.paused_hfr_for_normal.set(false);
+            if !state.hfr_enabled.get_untracked() {
+                state.toggle_hfr();
+            }
+        }
+    });
+
+    // Decide which "start position" rule to apply (Auto / All / Here /
+    // Sel) and dispatch to the right playback helper. Used by both the
+    // primary Play button and the per-mode Play buttons in the
+    // multi-mode row.
+    let do_start_playback = move || {
+        match state.play_start_mode.get_untracked() {
+            PlayStartMode::All => playback::play_from_start(&state),
+            PlayStartMode::FromHere => playback::play_from_here(&state),
+            PlayStartMode::Selected => {
+                if playback::effective_selection(&state).is_some() {
+                    playback::play(&state);
+                } else {
+                    playback::play_from_start(&state);
+                }
+            }
+            PlayStartMode::Auto => {
+                if let Some(sel) = playback::effective_selection(&state) {
+                    if playback::is_selection_in_viewport(&state, &sel) {
+                        playback::play(&state);
+                    } else if state.scroll_offset.get_untracked() <= 0.0 {
+                        playback::play_from_start(&state);
+                    } else {
+                        playback::play_from_here(&state);
+                    }
+                } else if state.scroll_offset.get_untracked() <= 0.0 {
+                    playback::play_from_start(&state);
+                } else {
+                    playback::play_from_here(&state);
+                }
+            }
+        }
+    };
+
+    // "Play in this mode": stop any current playback (which triggers
+    // the HFR-restore Effect if we'd previously paused HFR), then swap
+    // playback_mode, handle the special "1:1 needs HFR off" case, and
+    // start playback.
+    let do_play_in_mode = move |mode: PlaybackMode| {
+        let no_file = state.current_file_index.get_untracked().is_none() && state.active_timeline.get_untracked().is_none();
+        let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
+        if no_file || recording_and_listening { return; }
+        // Stop anything currently playing (lets the HFR-restore Effect
+        // unpause HFR if we'd paused it for a previous 1:1 play).
+        if state.is_playing.get_untracked() {
+            playback::stop(&state);
+        }
+        state.playback_mode.set(mode);
+        // 1:1 inside a multi-selection that includes HFR modes: HFR is
+        // on but 1:1 itself doesn't want it. Pause HFR for the duration
+        // of this playback; the Effect above restores it on stop.
+        if mode == PlaybackMode::Normal && state.hfr_enabled.get_untracked() {
+            state.paused_hfr_for_normal.set(true);
+            state.toggle_hfr();
+        }
+        do_start_playback();
+    };
+
     let play_left_click = Callback::new(move |_: web_sys::MouseEvent| {
         let no_file = state.current_file_index.get_untracked().is_none() && state.active_timeline.get_untracked().is_none();
         let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
@@ -141,32 +225,7 @@ pub fn BottomToolbar() -> impl IntoView {
         if state.is_playing.get_untracked() {
             playback::stop(&state);
         } else {
-            match state.play_start_mode.get_untracked() {
-                PlayStartMode::All => playback::play_from_start(&state),
-                PlayStartMode::FromHere => playback::play_from_here(&state),
-                PlayStartMode::Selected => {
-                    if playback::effective_selection(&state).is_some() {
-                        playback::play(&state);
-                    } else {
-                        playback::play_from_start(&state);
-                    }
-                }
-                PlayStartMode::Auto => {
-                    if let Some(sel) = playback::effective_selection(&state) {
-                        if playback::is_selection_in_viewport(&state, &sel) {
-                            playback::play(&state);
-                        } else if state.scroll_offset.get_untracked() <= 0.0 {
-                            playback::play_from_start(&state);
-                        } else {
-                            playback::play_from_here(&state);
-                        }
-                    } else if state.scroll_offset.get_untracked() <= 0.0 {
-                        playback::play_from_start(&state);
-                    } else {
-                        playback::play_from_here(&state);
-                    }
-                }
-            }
+            do_start_playback();
         }
     });
     let play_toggle_menu = Callback::new(move |()| {
@@ -324,8 +383,62 @@ pub fn BottomToolbar() -> impl IntoView {
                 <div class="bottom-toolbar-drag-grip"></div>
             </div>
 
+            // ── Extra per-mode Play buttons (multi-mode selection) ──
+            // When the user has ctrl-clicked additional modes in the
+            // Mode radio group, render one small ▶ button per *extra*
+            // selected mode, immediately before the primary Play combo.
+            // Clicking one switches `playback_mode` to that mode and
+            // starts playback (stopping any current playback first).
+            //
+            // 1:1 has the same audible-warning underline treatment as
+            // the primary button. If 1:1 is among the extras while HFR
+            // is on, clicking ▶ 1:1 will temporarily turn HFR off (and
+            // restore it on stop) via the Effect above.
+            {move || {
+                if !has_file() { return None; }
+                let extras = state.playback_modes_extra.get();
+                if extras.is_empty() { return None; }
+                let buttons = extras.into_iter().map(|mode| {
+                    let bucket = ModeBucket::from_mode(mode);
+                    let label = bucket.label();
+                    let is_band_inaudible = mode == PlaybackMode::Normal && {
+                        let lo = state.band_ff_freq_lo.get_untracked();
+                        let hi = state.band_ff_freq_hi.get_untracked();
+                        hi > lo && lo >= 20_000.0
+                    };
+                    let extra_btn_class = Signal::derive(move || {
+                        let mut s = String::from("layer-btn play-mode-extra");
+                        if state.is_playing.get() && state.playback_mode.get() == mode {
+                            s.push_str(" active");
+                        }
+                        if is_band_inaudible {
+                            s.push_str(" inaudible-warning");
+                        }
+                        s
+                    });
+                    let title = format!("Play in {} mode", bucket.label());
+                    view! {
+                        <button class=move || extra_btn_class.get()
+                            title=title
+                            on:click=move |_: web_sys::MouseEvent| do_play_in_mode(mode)
+                        >
+                            <span class="layer-btn-value">{"\u{25B6}"}</span>
+                            <span class="play-mode-extra-label">{label}</span>
+                        </button>
+                    }
+                }).collect_view();
+                Some(view! { {buttons} })
+            }}
+
             // ── Play combo button ──
+            // The wrapping div carries the `.inaudible-warning` class when
+            // the current mode is 1:1 and the active band sits entirely
+            // above human hearing. CSS uses it to underline the ▶ glyph
+            // (same amber underline as the warning on the 1:1 mode radio
+            // button), reminding the user that pressing Play right now
+            // won't produce anything audible.
             {move || has_file().then(|| view! {
+                <div class:inaudible-warning=move || play_inaudible.get() style="display: contents;">
                 <ComboButton
                     left_label=""
                     left_value=play_left_value
@@ -381,6 +494,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                     >"Selected \u{2014} Play selection"</button>
                 </ComboButton>
+                </div>
             })}
 
             // ── Channel / Track selector ──

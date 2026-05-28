@@ -1121,6 +1121,18 @@ pub struct AppState {
     pub selection: RwSignal<Option<Selection>>,
     pub last_selection: RwSignal<Option<Selection>>,
     pub playback_mode: RwSignal<PlaybackMode>,
+    /// Modes selected via ctrl+click in the Mode radio group, in addition
+    /// to `playback_mode`. When non-empty, the bottom toolbar renders one
+    /// Play button per selected mode (in addition to `playback_mode`).
+    /// `playback_mode` is always implicitly part of the selection — only
+    /// extras are stored here so the simple "no ctrl-clicks yet" case
+    /// stays a no-op.
+    pub playback_modes_extra: RwSignal<Vec<PlaybackMode>>,
+    /// Set when the user clicked ▶ on a 1:1 button while HFR was on (in a
+    /// multi-selection containing both 1:1 and an HFR-only mode). HFR is
+    /// turned off for the duration of that playback and restored when
+    /// playback stops or the user switches to another mode.
+    pub paused_hfr_for_normal: RwSignal<bool>,
     pub het_frequency: RwSignal<f64>,
     pub te_factor: RwSignal<f64>,
     pub zoom_level: RwSignal<f64>,
@@ -1730,6 +1742,8 @@ impl AppState {
             selection: RwSignal::new(None),
             last_selection: RwSignal::new(None),
             playback_mode: RwSignal::new(PlaybackMode::Normal),
+            playback_modes_extra: RwSignal::new(Vec::new()),
+            paused_hfr_for_normal: RwSignal::new(false),
             het_frequency: RwSignal::new(45_000.0),
             te_factor: RwSignal::new(10.0),
             zoom_level: RwSignal::new(1.0),

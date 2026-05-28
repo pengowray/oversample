@@ -3144,6 +3144,65 @@ body.sidebar-resizing {
     cursor: default;
     pointer-events: none;
 }
+/* Inaudible-band warning — amber wavy underline on the 1:1 label when
+   the active band sits entirely above human hearing (so playing in
+   Normal mode would produce nothing audible). Matches the underline
+   the Play button gets in the same situation. */
+.mode-radio-btn.inaudible-warning .mode-radio-label {
+    text-decoration: underline wavy rgba(240, 160, 60, 0.9);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1.5px;
+}
+/* Same treatment on the Play button's ▶ glyph when current playback
+   mode is 1:1 with an ultrasound-only band. Applied via a wrapping div
+   with the .inaudible-warning class. */
+.inaudible-warning .combo-btn-left .layer-btn-value,
+.layer-btn.play-mode-extra.inaudible-warning .layer-btn-value {
+    text-decoration: underline wavy rgba(240, 160, 60, 0.9);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1.5px;
+}
+
+/* Multi-selected (but not the live mode) — the bucket appears in the
+   user's ctrl-click selection but isn't what's currently playing.
+   Lighter green tint than .selected.active-mode so the live mode
+   stays the obvious focal point. */
+.mode-radio-btn.multi-selected:not(.active-mode) {
+    background: rgba(26, 60, 40, 0.45);
+    color: #9d9;
+}
+.mode-radio-btn.multi-selected:not(.active-mode):hover {
+    background: rgba(32, 72, 50, 0.6);
+}
+
+/* Per-mode Play button (rendered before the main Play combo when the
+   user has ctrl-clicked extra modes). Compact ▶ + label glyph. */
+.layer-btn.play-mode-extra {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px 5px;
+    min-height: 38px;
+}
+.layer-btn.play-mode-extra .layer-btn-value {
+    font-size: 12px;
+    line-height: 1;
+}
+.layer-btn.play-mode-extra .play-mode-extra-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: #c8c8c8;
+}
+.layer-btn.play-mode-extra.active {
+    background: rgba(26, 60, 40, 0.92);
+    border-color: rgba(80, 180, 130, 0.6);
+    color: #8fc;
+}
+.layer-btn.play-mode-extra.active .play-mode-extra-label {
+    color: #8fc;
+}
 .mode-radio-label {
     font-size: 12px;
     font-weight: 700;
@@ -3738,6 +3797,72 @@ body.sidebar-resizing {
     .view-bar {
         padding-left: 4px;
         padding-right: 4px;
+    }
+
+    /* ── Mobile: horizontal-scroll the dense button rows ──────────────
+       On phones the hearing bar (HFR · Range · modes · PASS · Gain · NR
+       · Notch) and the view radio row are wider than the viewport. Rather
+       than wrap (which eats vertical space the spectrogram needs) or clip
+       (PASS scrolling off-screen), let each row scroll sideways. */
+    .hearing-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none; /* Firefox — hide the bar, swipe to scroll */
+    }
+    .hearing-bar::-webkit-scrollbar { height: 0; width: 0; }
+    /* Gain/NR/Notch group rides the same horizontal scroll. */
+    .hearing-bar .bar-controls {
+        flex-wrap: nowrap;
+    }
+    /* The band-affected group no longer needs its trailing margin to
+       separate from Gain on a wrapped row — the sep handles it inline. */
+    .band-affected-row {
+        margin-right: 6px;
+    }
+
+    .view-bar .bar-controls {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .view-bar .bar-controls::-webkit-scrollbar { height: 0; width: 0; }
+    /* The flex spacer that right-aligns the Tool combo on desktop would
+       expand oddly inside a scroll container — neutralise it on mobile. */
+    .view-bar .bar-spacer {
+        flex: 0 0 6px;
+        min-width: 6px;
+    }
+
+    /* Bigger touch targets for the radio buttons on phones. */
+    .mode-radio-btn {
+        min-height: 38px;
+        min-width: 44px;
+    }
+
+    /* Horizontal drag anywhere in these rows — including starting on a
+       button — pans the scroller. Without `touch-action: pan-x` the
+       browser treats a drag that begins on a button (or inside the
+       mode-radio-group, whose `overflow: hidden` makes it a scroll
+       boundary) as a tap-in-progress and the row feels "sticky" /
+       refuses to scroll. pan-x keeps taps working (a stationary touch
+       still fires click) while routing horizontal drags to the parent
+       scroll container. Popups are portalled to <body>, so their
+       sliders are unaffected by this. */
+    .hearing-bar,
+    .view-bar .bar-controls,
+    .band-affected-row,
+    .band-affected-controls,
+    .mode-radio-group,
+    .range-btn-row,
+    .hearing-bar .layer-btn,
+    .hearing-bar .mode-radio-btn,
+    .view-bar .bar-controls .layer-btn,
+    .view-bar .mode-radio-btn {
+        touch-action: pan-x;
     }
 }
 

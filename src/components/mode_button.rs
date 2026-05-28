@@ -116,7 +116,7 @@ fn parse_factor_input(s: &str) -> Option<f64> {
 /// Logical "bucket" for the mode radio group. PS bucket spans the
 /// PitchShift and PhaseVocoder playback modes; everything else maps 1:1.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum ModeBucket {
+pub enum ModeBucket {
     Normal,
     Het,
     Te,
@@ -125,7 +125,7 @@ enum ModeBucket {
 }
 
 impl ModeBucket {
-    fn from_mode(m: PlaybackMode) -> Self {
+    pub fn from_mode(m: PlaybackMode) -> Self {
         match m {
             PlaybackMode::Normal => ModeBucket::Normal,
             PlaybackMode::Heterodyne => ModeBucket::Het,
@@ -134,7 +134,7 @@ impl ModeBucket {
             PlaybackMode::ZeroCrossing => ModeBucket::Zc,
         }
     }
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             ModeBucket::Normal => "1:1",
             ModeBucket::Het => "HET",
@@ -157,7 +157,7 @@ impl ModeBucket {
         !matches!(self, ModeBucket::Normal)
     }
     /// Default playback mode when this bucket is freshly selected.
-    fn default_mode(self) -> PlaybackMode {
+    pub fn default_mode(self) -> PlaybackMode {
         match self {
             ModeBucket::Normal => PlaybackMode::Normal,
             ModeBucket::Het => PlaybackMode::Heterodyne,
@@ -165,6 +165,11 @@ impl ModeBucket {
             ModeBucket::Ps => PlaybackMode::PitchShift,
             ModeBucket::Zc => PlaybackMode::ZeroCrossing,
         }
+    }
+    /// Whether this bucket requires HFR to be on for playback (i.e.
+    /// any mode other than Normal/1:1).
+    pub fn needs_hfr(self) -> bool {
+        !matches!(self, ModeBucket::Normal)
     }
 }
 
@@ -356,12 +361,52 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
 
-    let select_bucket = move |bucket: ModeBucket| {
+    // Whether a bucket is part of the user's current selection (the
+    // active playback mode, plus any extras added via ctrl+click).
+    let bucket_is_selected = move |bucket: ModeBucket| -> bool {
+        let active = ModeBucket::from_mode(state.playback_mode.get());
+        if active == bucket { return true; }
+        let extras = state.playback_modes_extra.get();
+        extras.iter().any(|m| ModeBucket::from_mode(*m) == bucket)
+    };
+
+    let select_bucket = move |bucket: ModeBucket, multi: bool| {
         if no_file() { return; }
-        let current = ModeBucket::from_mode(state.playback_mode.get_untracked());
-        if current == bucket {
-            // Second click on selected bucket — toggle its settings popup
-            // (1:1 has no settings, so just close any open panel).
+        let active = ModeBucket::from_mode(state.playback_mode.get_untracked());
+
+        if multi {
+            // Ctrl+click: toggle this bucket in/out of the multi-selection.
+            // The active playback_mode bucket can't be removed by
+            // ctrl-clicking it (we'd be left with nothing to play) —
+            // ctrl-click on the active bucket is a no-op in that case.
+            let bucket_mode = bucket.default_mode();
+            let mut extras = state.playback_modes_extra.get_untracked();
+            let extras_has = extras.iter().any(|m| ModeBucket::from_mode(*m) == bucket);
+            if bucket == active {
+                if extras_has {
+                    // Already deduped — clean up just in case.
+                    extras.retain(|m| ModeBucket::from_mode(*m) != bucket);
+                    state.playback_modes_extra.set(extras);
+                }
+                return;
+            }
+            if extras_has {
+                extras.retain(|m| ModeBucket::from_mode(*m) != bucket);
+            } else {
+                extras.push(bucket_mode);
+                // Selecting an HFR-requiring bucket turns HFR on so the
+                // mode is actually playable.
+                if bucket.needs_hfr() && !state.focus_stack.get_untracked().hfr_enabled() {
+                    state.focus_stack.update(|s| s.set_saved_playback_mode(Some(bucket_mode)));
+                    state.toggle_hfr();
+                }
+            }
+            state.playback_modes_extra.set(extras);
+            return;
+        }
+
+        // Plain click on the already-active bucket → open settings popup.
+        if active == bucket {
             if bucket.has_settings() {
                 toggle_panel(&state, LayerPanel::HfrMode);
             } else {
@@ -369,54 +414,91 @@ pub fn ModeRadioGroup() -> impl IntoView {
             }
             return;
         }
-        // Selecting a different bucket: turn HFR on (for non-Normal modes)
-        // and set the playback mode to that bucket's default.
+        // Plain click on a different bucket: replace the entire selection.
         let mode = bucket.default_mode();
-        if bucket != ModeBucket::Normal && !state.focus_stack.get_untracked().hfr_enabled() {
+        if bucket.needs_hfr() && !state.focus_stack.get_untracked().hfr_enabled() {
             state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
             state.toggle_hfr();
         } else {
             state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
         }
         state.playback_mode.set(mode);
-        // Closing the panel on switch keeps the UX simple: "first click
-        // selects, second click opens settings".
+        // A plain click clears any extras the user had added; if they
+        // want multi-select they need to ctrl-click.
+        state.playback_modes_extra.set(Vec::new());
         state.layer_panel_open.set(None);
     };
+
+    // True when the active band is entirely above human hearing — picking
+    // 1:1 in that case would leave nothing audible. Drives the warning
+    // badge on the 1:1 button (and an underline on the Play button via
+    // bottom_toolbar.rs).
+    let band_inaudible = Signal::derive(move || {
+        let lo = state.band_ff_freq_lo.get();
+        let hi = state.band_ff_freq_hi.get();
+        hi > lo && lo >= 20_000.0
+    });
 
     let mode_button = move |bucket: ModeBucket| {
         let label = bucket.label();
         let title = bucket.title();
         let class_sig = Signal::derive(move || {
-            let current = ModeBucket::from_mode(state.playback_mode.get());
+            let active = ModeBucket::from_mode(state.playback_mode.get());
             let on = state.hfr_enabled.get();
             let mut s = String::from("layer-btn mode-radio-btn");
-            // 1:1 is selected when HFR is off, OR when HFR is on but mode is Normal.
-            // Other buckets are selected only when HFR is on AND mode matches.
-            let is_selected = if bucket == ModeBucket::Normal {
-                !on || current == ModeBucket::Normal
+            // Active bucket: same logic as before — Normal is "active"
+            // when HFR is off or mode is Normal; others when HFR is on
+            // and matches.
+            let is_active = if bucket == ModeBucket::Normal {
+                !on || active == ModeBucket::Normal
             } else {
-                on && current == bucket
+                on && active == bucket
             };
+            // Selected = active OR present in the multi-selection extras.
+            let is_selected = is_active || bucket_is_selected(bucket);
             if is_selected {
                 s.push_str(" selected");
-                if bucket.has_settings() {
-                    s.push_str(" has-settings");
-                }
-                if settings_open.get() && bucket.has_settings() {
-                    s.push_str(" open");
+                if is_active {
+                    // Only the active mode gets the corner-arrow indicator
+                    // (clicking it again opens its settings popup).
+                    s.push_str(" active-mode");
+                    if bucket.has_settings() {
+                        s.push_str(" has-settings");
+                    }
+                    if settings_open.get() && bucket.has_settings() {
+                        s.push_str(" open");
+                    }
+                } else {
+                    // Multi-selected but not the live mode — paint it
+                    // dimmer to make the "playing right now" mode obvious.
+                    s.push_str(" multi-selected");
                 }
             }
-            if muting.get() && is_selected && bucket != ModeBucket::Normal {
+            if muting.get() && is_active && bucket != ModeBucket::Normal {
                 s.push_str(" mute-blink");
+            }
+            // Warning badge on 1:1 when the band is ultrasound-only.
+            if bucket == ModeBucket::Normal && band_inaudible.get() {
+                s.push_str(" inaudible-warning");
             }
             if no_file() { s.push_str(" disabled"); }
             s
         });
+        let dyn_title = Signal::derive(move || {
+            let base = if bucket == ModeBucket::Normal && band_inaudible.get() {
+                "1:1 — Normal playback. Warning: band is above human hearing; this mode won\u{2019}t make it audible.".to_string()
+            } else {
+                title.to_string()
+            };
+            format!("{}\n(Ctrl-click to add/remove from multi-play selection)", base)
+        });
         view! {
             <button class=move || class_sig.get()
-                title=title
-                on:click=move |_: web_sys::MouseEvent| select_bucket(bucket)
+                title=move || dyn_title.get()
+                on:click=move |ev: web_sys::MouseEvent| {
+                    let multi = ev.ctrl_key() || ev.meta_key();
+                    select_bucket(bucket, multi);
+                }
             >
                 <span class="mode-radio-label">{label}</span>
                 <span class="mode-radio-corner">{"\u{25E2}"}</span>
