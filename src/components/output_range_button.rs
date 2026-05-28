@@ -26,13 +26,15 @@ use wasm_bindgen::JsCast;
 
 use crate::components::combo_button::ComboButton;
 use crate::components::mode_button::{format_factor_value, format_freq_khz, output_freq};
-use crate::state::{AppState, LayerPanel, PlaybackMode};
+use crate::state::{AppState, LayerPanel, OutputSnap, PlaybackMode};
 
 /// Top of the gutter scale (Hz). Bottom is always 0.
 const GUTTER_MAX_HZ: f64 = 2000.0;
 
-/// Canonical divide factors (Standard / Equal-Chroma snap targets).
+/// Canonical divide factors for the Standard snap mode.
 const STANDARD_FACTORS: [f64; 6] = [2.0, 4.0, 8.0, 10.0, 16.0, 32.0];
+/// Equal-chroma snap: powers of 2 only (preserves pitch class).
+const CHROMA_FACTORS: [f64; 5] = [2.0, 4.0, 8.0, 16.0, 32.0];
 
 /// Carrier snap step (Hz) for heterodyne mode when Snap is on.
 const HET_SNAP_STEP_HZ: f64 = 5_000.0;
@@ -138,30 +140,35 @@ fn mapping_shorthand(state: &AppState, mode: PlaybackMode) -> String {
     }
 }
 
-/// Snap a free-form factor to the nearest canonical preset, but only
-/// when Snap is on. Otherwise round to one decimal place.
-fn snap_factor(raw: f64, snap: bool) -> f64 {
+/// Snap a free-form factor according to the current snap policy.
+fn snap_factor(raw: f64, snap: OutputSnap) -> f64 {
     let abs = raw.abs().max(1.5);
-    if snap {
-        let nearest = STANDARD_FACTORS
+    let snapped_abs = match snap {
+        OutputSnap::Free => ((abs * 10.0).round() / 10.0).clamp(1.5, 64.0),
+        OutputSnap::Standard => STANDARD_FACTORS
             .iter()
             .copied()
             .min_by(|a, b| (a - abs).abs().partial_cmp(&(b - abs).abs()).unwrap())
-            .unwrap_or(8.0);
-        if raw < 0.0 { -nearest } else { nearest }
-    } else {
-        let rounded = (abs * 10.0).round() / 10.0;
-        let clamped = rounded.clamp(1.5, 64.0);
-        if raw < 0.0 { -clamped } else { clamped }
-    }
+            .unwrap_or(8.0),
+        OutputSnap::EqualChroma => CHROMA_FACTORS
+            .iter()
+            .copied()
+            .min_by(|a, b| (a - abs).abs().partial_cmp(&(b - abs).abs()).unwrap())
+            .unwrap_or(8.0),
+    };
+    if raw < 0.0 { -snapped_abs } else { snapped_abs }
 }
 
-fn snap_carrier(raw_hz: f64, snap: bool) -> f64 {
+fn snap_carrier(raw_hz: f64, snap: OutputSnap) -> f64 {
     let clamped = raw_hz.max(0.0);
-    if snap {
-        (clamped / HET_SNAP_STEP_HZ).round() * HET_SNAP_STEP_HZ
-    } else {
-        (clamped / 100.0).round() * 100.0
+    match snap {
+        OutputSnap::Free => (clamped / 100.0).round() * 100.0,
+        // Both Standard and EqualChroma snap carriers to 5 kHz — there's
+        // no meaningful "musical interval" quantisation for an additive
+        // shift, so EqualChroma falls back to the same step.
+        OutputSnap::Standard | OutputSnap::EqualChroma => {
+            (clamped / HET_SNAP_STEP_HZ).round() * HET_SNAP_STEP_HZ
+        }
     }
 }
 
@@ -245,19 +252,7 @@ fn OutputRangePopup() -> impl IntoView {
                         Style::LinearShift => view! { <LinearShiftControls/> }.into_any(),
                     }
                 }}
-                <div class="output-range-snap-row">
-                    <label>
-                        <input type="checkbox"
-                            prop:checked=move || state.output_snap.get()
-                            on:change=move |ev| {
-                                use wasm_bindgen::JsCast;
-                                let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-                                state.output_snap.set(el.checked());
-                            }
-                        />
-                        " Snap to standard"
-                    </label>
-                </div>
+                <SnapPicker/>
                 <BandSummary/>
             </div>
             <OutputGutter/>
@@ -399,6 +394,39 @@ fn BandSummary() -> impl IntoView {
     }
 }
 
+/// Which input frequency the drag pins to the cursor's output Hz.
+/// Lo / Hi anchor a single endpoint; Center moves the whole band.
+#[derive(Copy, Clone)]
+enum DragAnchor { Lo, Hi, Center }
+
+#[component]
+fn SnapPicker() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let opts: [(OutputSnap, &str, &str); 3] = [
+        (OutputSnap::Free, "Free", "No snap \u{2014} continuous factor / carrier"),
+        (OutputSnap::Standard, "Std", "Snap to standard factors (\u{00f7}2 \u{00f7}4 \u{00f7}8 \u{00f7}10 \u{00f7}16 \u{00f7}32) or 5 kHz carrier steps"),
+        (OutputSnap::EqualChroma, "Chroma", "Snap to powers of 2 only \u{2014} preserves pitch intervals"),
+    ];
+    view! {
+        <div class="output-range-snap-row">
+            <span class="output-range-snap-label">"Snap"</span>
+            <div class="output-range-snap-group">
+                {opts.iter().map(|&(val, label, title)| {
+                    let sel = Signal::derive(move || state.output_snap.get() == val);
+                    let click = move |_: web_sys::MouseEvent| state.output_snap.set(val);
+                    view! {
+                        <button
+                            class=move || if sel.get() { "snap-btn sel" } else { "snap-btn" }
+                            on:click=click
+                            title=title
+                        >{label}</button>
+                    }
+                }).collect::<Vec<_>>()}
+            </div>
+        </div>
+    }
+}
+
 #[component]
 fn OutputGutter() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -411,17 +439,30 @@ fn OutputGutter() -> impl IntoView {
         };
         let lo_pct = (lo.clamp(0.0, GUTTER_MAX_HZ) / GUTTER_MAX_HZ * 100.0).min(100.0);
         let hi_pct = (hi.clamp(0.0, GUTTER_MAX_HZ) / GUTTER_MAX_HZ * 100.0).min(100.0);
-        // Bottom = lo%, height = (hi - lo)%
         format!(
             "bottom: {lo_pct:.2}%; height: {:.2}%;",
             (hi_pct - lo_pct).max(0.5)
         )
     };
 
+    let band_label = move || {
+        let mode = state.playback_mode.get();
+        match style_for(mode) {
+            Style::Passthrough => "1:1".to_string(),
+            Style::Divide => {
+                if let Some(sig) = factor_signal(&state, mode) {
+                    let f = sig.get();
+                    let s = format_factor_value(f);
+                    if s.starts_with('\u{00f7}') { s } else { format!("\u{00f7}{s}") }
+                } else { String::new() }
+            }
+            Style::LinearShift => {
+                format!("\u{2212}{}", format_freq_khz(state.het_frequency.get()))
+            }
+        }
+    };
+
     let pin_input_to = move |target_hz: f64, anchor: f64| {
-        // Adjust the active mode's mapping so that `anchor` (input Hz)
-        // lands at `target_hz` (output Hz). Both endpoints move together
-        // for divide (single factor) and linear shift (single carrier).
         let mode = state.playback_mode.get_untracked();
         let snap = state.output_snap.get_untracked();
         let target = target_hz.clamp(1.0, GUTTER_MAX_HZ);
@@ -442,73 +483,73 @@ fn OutputGutter() -> impl IntoView {
         }
     };
 
-    let on_pointer_down = {
-        let gutter_ref = gutter_ref;
-        move |ev: web_sys::PointerEvent| {
-            ev.prevent_default();
-            ev.stop_propagation();
-            let Some(el) = gutter_ref.get_untracked() else { return; };
-            let rect = el.get_bounding_client_rect();
-            let height = rect.height().max(1.0);
-            let top = rect.top();
+    let start_drag = move |ev: web_sys::PointerEvent, which: DragAnchor| {
+        ev.prevent_default();
+        ev.stop_propagation();
+        let Some(el) = gutter_ref.get_untracked() else { return; };
+        let rect = el.get_bounding_client_rect();
+        let height = rect.height().max(1.0);
+        let top = rect.top();
 
-            let (in_lo, in_hi) = band(&state);
-            if in_hi <= in_lo { return; }
-            // Drag from the band centre by default — single DOF that
-            // tracks both endpoints.
-            let anchor = (in_lo + in_hi) / 2.0;
+        let (in_lo, in_hi) = band(&state);
+        if in_hi <= in_lo { return; }
+        let anchor = match which {
+            DragAnchor::Lo => in_lo,
+            DragAnchor::Hi => in_hi,
+            DragAnchor::Center => (in_lo + in_hi) / 2.0,
+        };
 
-            let hz_from_client_y = move |client_y: f64| -> f64 {
-                let rel = ((client_y - top) / height).clamp(0.0, 1.0);
-                (1.0 - rel) * GUTTER_MAX_HZ
-            };
+        let hz_from_client_y = move |client_y: f64| -> f64 {
+            let rel = ((client_y - top) / height).clamp(0.0, 1.0);
+            (1.0 - rel) * GUTTER_MAX_HZ
+        };
 
-            pin_input_to(hz_from_client_y(ev.client_y() as f64), anchor);
+        pin_input_to(hz_from_client_y(ev.client_y() as f64), anchor);
 
-            // Track move + up on window so the drag survives leaving the
-            // gutter rect.
-            let win = web_sys::window().unwrap();
-            let move_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::PointerEvent)>>>> =
-                Rc::new(RefCell::new(None));
-            let up_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::PointerEvent)>>>> =
-                Rc::new(RefCell::new(None));
+        let win = web_sys::window().unwrap();
+        let move_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::PointerEvent)>>>> =
+            Rc::new(RefCell::new(None));
+        let up_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::PointerEvent)>>>> =
+            Rc::new(RefCell::new(None));
 
-            let move_cb = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |e: web_sys::PointerEvent| {
-                pin_input_to(hz_from_client_y(e.client_y() as f64), anchor);
-            });
-            let win_clone = win.clone();
-            let move_slot_clone = Rc::clone(&move_slot);
-            let up_slot_clone = Rc::clone(&up_slot);
-            let up_cb = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |_: web_sys::PointerEvent| {
-                if let Some(m) = move_slot_clone.borrow_mut().take() {
-                    let _ = win_clone.remove_event_listener_with_callback(
-                        "pointermove",
-                        m.as_ref().unchecked_ref(),
-                    );
-                }
-                if let Some(u) = up_slot_clone.borrow_mut().take() {
-                    let _ = win_clone.remove_event_listener_with_callback(
-                        "pointerup",
-                        u.as_ref().unchecked_ref(),
-                    );
-                }
-            });
-            let _ = win.add_event_listener_with_callback(
-                "pointermove", move_cb.as_ref().unchecked_ref(),
-            );
-            let _ = win.add_event_listener_with_callback(
-                "pointerup", up_cb.as_ref().unchecked_ref(),
-            );
-            *move_slot.borrow_mut() = Some(move_cb);
-            *up_slot.borrow_mut() = Some(up_cb);
-        }
+        let move_cb = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |e: web_sys::PointerEvent| {
+            pin_input_to(hz_from_client_y(e.client_y() as f64), anchor);
+        });
+        let win_clone = win.clone();
+        let move_slot_clone = Rc::clone(&move_slot);
+        let up_slot_clone = Rc::clone(&up_slot);
+        let up_cb = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |_: web_sys::PointerEvent| {
+            if let Some(m) = move_slot_clone.borrow_mut().take() {
+                let _ = win_clone.remove_event_listener_with_callback(
+                    "pointermove", m.as_ref().unchecked_ref(),
+                );
+            }
+            if let Some(u) = up_slot_clone.borrow_mut().take() {
+                let _ = win_clone.remove_event_listener_with_callback(
+                    "pointerup", u.as_ref().unchecked_ref(),
+                );
+            }
+        });
+        let _ = win.add_event_listener_with_callback(
+            "pointermove", move_cb.as_ref().unchecked_ref(),
+        );
+        let _ = win.add_event_listener_with_callback(
+            "pointerup", up_cb.as_ref().unchecked_ref(),
+        );
+        *move_slot.borrow_mut() = Some(move_cb);
+        *up_slot.borrow_mut() = Some(up_cb);
     };
+
+    let on_gutter_down = move |ev: web_sys::PointerEvent| start_drag(ev, DragAnchor::Center);
+    let on_lo_down = move |ev: web_sys::PointerEvent| start_drag(ev, DragAnchor::Lo);
+    let on_hi_down = move |ev: web_sys::PointerEvent| start_drag(ev, DragAnchor::Hi);
+    let on_band_down = move |ev: web_sys::PointerEvent| start_drag(ev, DragAnchor::Center);
 
     view! {
         <div class="output-gutter-wrap">
             <div class="output-gutter"
                 node_ref=gutter_ref
-                on:pointerdown=on_pointer_down
+                on:pointerdown=on_gutter_down
             >
                 <div class="output-gutter-ticks">
                     {[0i32, 500, 1000, 1500, 2000].iter().map(|&hz| {
@@ -525,9 +566,19 @@ fn OutputGutter() -> impl IntoView {
                         }
                     }).collect::<Vec<_>>()}
                 </div>
-                <div class="output-gutter-band" style=highlight_style>
-                    <div class="output-gutter-handle output-gutter-handle-hi"></div>
-                    <div class="output-gutter-handle output-gutter-handle-lo"></div>
+                <div class="output-gutter-band"
+                    style=highlight_style
+                    on:pointerdown=on_band_down
+                >
+                    <span class="output-gutter-band-label">{band_label}</span>
+                    <div class="output-gutter-handle output-gutter-handle-hi"
+                        on:pointerdown=on_hi_down
+                        title="Drag to anchor the high end of the input band to this output Hz"
+                    ></div>
+                    <div class="output-gutter-handle output-gutter-handle-lo"
+                        on:pointerdown=on_lo_down
+                        title="Drag to anchor the low end of the input band to this output Hz"
+                    ></div>
                 </div>
             </div>
         </div>

@@ -6841,17 +6841,49 @@ button.canvas-overflow-action-btn.disabled {
     color: #777;
 }
 .output-range-snap-row {
-    padding: 6px 6px 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 6px 4px;
     font-size: 11px;
     color: #aaa;
 }
-.output-range-snap-row label {
-    cursor: pointer;
-    user-select: none;
+.output-range-snap-label {
+    font-size: 10px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
-.output-range-snap-row input {
-    margin-right: 6px;
-    vertical-align: middle;
+.output-range-snap-group {
+    display: inline-flex;
+    gap: 0;
+}
+.snap-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: #999;
+    cursor: pointer;
+    margin-left: -1px;
+    font-family: inherit;
+}
+.snap-btn:first-of-type {
+    border-radius: 3px 0 0 3px;
+    margin-left: 0;
+}
+.snap-btn:last-of-type {
+    border-radius: 0 3px 3px 0;
+}
+.snap-btn:hover {
+    background: #252525;
+    color: #ccc;
+}
+.snap-btn.sel {
+    background: #2a3a4a;
+    color: #8cf;
+    border-color: #4a6a8a;
+    z-index: 1;
 }
 .output-range-summary {
     margin-top: auto;
@@ -6919,21 +6951,39 @@ button.canvas-overflow-action-btn.disabled {
     background: rgba(140, 200, 255, 0.18);
     border-top: 1px solid rgba(140, 200, 255, 0.6);
     border-bottom: 1px solid rgba(140, 200, 255, 0.6);
-    pointer-events: none;
+    cursor: grab;
     box-sizing: border-box;
+}
+.output-gutter-band:active { cursor: grabbing; }
+.output-gutter-band-label {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: rgba(220, 240, 255, 0.85);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    white-space: nowrap;
+    text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
 }
 .output-gutter-handle {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    width: 18px;
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(180, 220, 255, 0.85);
-    pointer-events: none;
+    width: 26px;
+    height: 8px;
+    border-radius: 3px;
+    background: rgba(180, 220, 255, 0.9);
+    cursor: ns-resize;
+    z-index: 2;
 }
-.output-gutter-handle-hi { top: -2px; }
-.output-gutter-handle-lo { bottom: -2px; }
+.output-gutter-handle:hover {
+    background: rgba(220, 240, 255, 1.0);
+    box-shadow: 0 0 4px rgba(140, 200, 255, 0.7);
+}
+.output-gutter-handle-hi { top: -4px; }
+.output-gutter-handle-lo { bottom: -4px; }
 .output-gutter:hover .output-gutter-band {
     background: rgba(140, 200, 255, 0.26);
 }

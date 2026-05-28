@@ -324,6 +324,18 @@ impl RightSidebarTab {
     ];
 }
 
+/// Snap policy for the Output Range gutter.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum OutputSnap {
+    /// Continuous — factor at 0.1 resolution, carrier at 100 Hz.
+    Free,
+    /// Powers of 2 + 10 for divide; multiples of 5 kHz for carrier.
+    #[default]
+    Standard,
+    /// Powers of 2 only — preserves pitch-class / musical intervals.
+    EqualChroma,
+}
+
 /// How the Info / Metadata panel renders values.
 ///
 /// - `Formatted` pretty-prints JSON blobs, localizes dates (with a
@@ -1364,10 +1376,10 @@ pub struct AppState {
 
     /// Output frequency range to highlight on spectrogram (set by hover in HFR panel).
     pub output_freq_highlight: RwSignal<Option<(f64, f64)>>,
-    /// When true, dragging the Output Range gutter snaps to canonical
-    /// mappings — powers of 2 / 10 for divide modes, multiples of 5 kHz
-    /// for heterodyne carrier shifts.
-    pub output_snap: RwSignal<bool>,
+    /// Snap policy for the Output Range gutter when dragging.
+    /// Free = continuous, Standard = powers of 2 + 10 / 5 kHz multiples,
+    /// EqualChroma = powers of 2 only (preserves musical intervals).
+    pub output_snap: RwSignal<OutputSnap>,
 
     // Microphone (independent listen + record)
     pub mic_listening: RwSignal<bool>,
@@ -1915,7 +1927,7 @@ impl AppState {
             ps_factor_auto: RwSignal::new(true),
             pv_factor_auto: RwSignal::new(true),
             output_freq_highlight: RwSignal::new(None),
-            output_snap: RwSignal::new(true),
+            output_snap: RwSignal::new(OutputSnap::Standard),
             mic_listening: RwSignal::new(false),
             mic_recording: RwSignal::new(false),
             mic_sample_rate: RwSignal::new(0),
