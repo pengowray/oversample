@@ -1203,9 +1203,10 @@ pub struct AppState {
     pub ps_factor: RwSignal<f64>,
     pub pv_factor: RwSignal<f64>,
     pub pv_hq: RwSignal<bool>,
-    /// Additive frequency pre-shift (Hz) applied before pitch shifting in
-    /// PitchShift / PhaseVocoder modes. Combined output mapping is
-    /// `out = |in − ps_shift_hz| / ps_factor`. Zero means pure
+    /// Output-side shift (Hz) applied AFTER pitch shifting in PS / PV
+    /// modes. Compound mapping is `out = |in/ps_factor − ps_shift_hz|`.
+    /// Value lives in output-Hz space, so it's small (typically 0–5 kHz)
+    /// and intuitive to set from the gutter. Zero means pure
     /// multiplicative pitch shift (the original behaviour).
     pub ps_shift_hz: RwSignal<f64>,
     pub zc_factor: RwSignal<f64>,

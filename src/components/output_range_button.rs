@@ -118,14 +118,12 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
         Style::Passthrough => Some((in_lo, in_hi)),
         Style::Divide => {
             let f = factor_signal(state, mode)?.get();
-            // Optional pre-shift for PS/PV: apply additive shift first,
-            // then divide. `|in - shift|` folds at zero so the abs() is
-            // important when shift > in_lo.
+            // Optional output-side shift for PS/PV: divide first, then
+            // subtract shift. `|x − shift|` folds at zero so the abs()
+            // matters when shift > out_lo.
             let shift = if supports_shift(mode) { state.ps_shift_hz.get() } else { 0.0 };
-            let post_a = (in_lo - shift).abs();
-            let post_b = (in_hi - shift).abs();
-            let a = output_freq(post_a, f);
-            let b = output_freq(post_b, f);
+            let a = (output_freq(in_lo, f) - shift).abs();
+            let b = (output_freq(in_hi, f) - shift).abs();
             Some(if a < b { (a, b) } else { (b, a) })
         }
         Style::LinearShift => {
@@ -151,7 +149,7 @@ fn mapping_shorthand(state: &AppState, mode: PlaybackMode) -> String {
             let div = divide_shorthand(sig.get());
             if supports_shift(mode) {
                 let shift = state.ps_shift_hz.get();
-                if shift.abs() >= 100.0 {
+                if shift.abs() >= 50.0 {
                     return format!("{div} \u{2212}{}", format_freq_khz(shift));
                 }
             }
@@ -337,10 +335,12 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                 }
             }).collect::<Vec<_>>()}
         </div>
-        // ── Optional pre-shift (PS / PV only) ──
-        // Lets the user offset the input band before the divide stage,
-        // turning the pitch shift into a true scale + shift mapping
-        // (out = |in − shift| / factor).
+        // ── Optional output-side shift (PS / PV only) ──
+        // The user thinks/sets in output-Hz space ("shift the output
+        // down by 500 Hz"); the DSP applies it as a post-pitch
+        // heterodyne, which keeps the LP cutoff small and well-behaved.
+        // Equivalent input-side shift would be `shift × factor`, but
+        // we never ask the user to convert.
         {move || {
             if !supports_shift(mode.get()) { return view! { <span></span> }.into_any(); }
             let on_shift_input = move |ev: web_sys::Event| {
@@ -352,33 +352,35 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
             };
             view! {
                 <div class="output-range-section-label"
-                    title="Heterodyne shift applied before pitch shifting. Compound mapping: out = |in − shift| / factor. Useful for bringing a high band into the audible range cleanly: e.g. 30–50 kHz with −20k shift becomes 10–30 kHz, then ÷8 lands it at 1.25–3.75 kHz."
-                >"Pre-shift"<span class="output-range-help">"\u{2139}"</span></div>
+                    title="Subtract a fixed offset from the OUTPUT frequency, applied after the pitch divide. Compound mapping: out = |in/factor − shift|. Example: input 30–50 kHz ÷8 lands at 3.75–6.25 kHz; setting Output shift to 3 kHz brings it down to 0.75–3.25 kHz."
+                >"Output shift"<span class="output-range-help">"\u{2139}"</span></div>
                 <div class="output-range-shift-row">
                     <input type="number"
                         class="output-range-num"
-                        min="0" max="500" step="0.5"
-                        prop:value=move || format!("{:.1}", state.ps_shift_hz.get() / 1000.0)
+                        min="0" max="20" step="0.1"
+                        prop:value=move || format!("{:.2}", state.ps_shift_hz.get() / 1000.0)
                         on:input=on_shift_input
-                        title="Subtract this many kHz from each input frequency before the pitch divide"
+                        title="Subtract this many kHz from the output (after pitch divide)"
                     />
                     <span class="output-range-num-suffix">"kHz"</span>
                     <button
                         class="auto-toggle"
                         on:click=move |_| state.ps_shift_hz.set(0.0)
-                        title="Clear pre-shift (back to pure divide)"
+                        title="Clear output shift (back to pure divide)"
                     >"0"</button>
                 </div>
                 <div class="output-range-presets">
-                    {[0.0, 10.0, 20.0, 40.0, 80.0].iter().map(|&khz| {
+                    {[0.0, 0.5, 1.0, 2.0, 3.0, 5.0].iter().map(|&khz| {
                         let click = move |_: web_sys::MouseEvent| {
                             state.ps_shift_hz.set(khz * 1000.0);
                         };
                         let sel = Signal::derive(move || {
-                            (state.ps_shift_hz.get() - khz * 1000.0).abs() < 100.0
+                            (state.ps_shift_hz.get() - khz * 1000.0).abs() < 50.0
                         });
                         let label = if khz == 0.0 {
                             "0".to_string()
+                        } else if khz < 1.0 {
+                            format!("\u{2212}{:.1}k", khz)
                         } else {
                             format!("\u{2212}{}k", khz as i32)
                         };
@@ -458,25 +460,29 @@ fn BandSummary() -> impl IntoView {
                     else { "\u{2014}".into() }
                 }}
             </div>
-            // Intermediate "after shift, before divide" range — only
-            // shown for PS/PV when a pre-shift is active, so the user
-            // can see why the output band shrinks/grows / folds back on
-            // itself when shift sweeps through the input band.
+            // Intermediate "after divide, before output shift" range —
+            // only shown for PS / PV when a shift is active. Lets the
+            // user see why the output band folds when shift sweeps
+            // through the post-divide range.
             {move || {
                 let mode = state.playback_mode.get();
                 if !supports_shift(mode) { return view! { <span></span> }.into_any(); }
                 let shift = state.ps_shift_hz.get();
-                if shift.abs() < 100.0 { return view! { <span></span> }.into_any(); }
+                if shift.abs() < 50.0 { return view! { <span></span> }.into_any(); }
                 let (in_lo, in_hi) = band(&state);
                 if in_hi <= in_lo { return view! { <span></span> }.into_any(); }
-                let a = (in_lo - shift).abs();
-                let b = (in_hi - shift).abs();
-                let (mlo, mhi) = if a < b { (a, b) } else { (b, a) };
-                let folded = (in_lo - shift) * (in_hi - shift) < 0.0;
+                let Some(f_sig) = factor_signal(&state, mode) else {
+                    return view! { <span></span> }.into_any();
+                };
+                let f = f_sig.get();
+                let post_lo = output_freq(in_lo, f);
+                let post_hi = output_freq(in_hi, f);
+                let (mlo, mhi) = if post_lo < post_hi { (post_lo, post_hi) } else { (post_hi, post_lo) };
+                let folded = (mlo - shift) * (mhi - shift) < 0.0;
                 let suffix = if folded { " (folded)" } else { "" };
                 view! {
                     <div>
-                        <span class="dim">"mid  "</span>
+                        <span class="dim">"div  "</span>
                         {format!("{}\u{2013}{}{}", format_freq_khz(mlo), format_freq_khz(mhi), suffix)}
                     </div>
                 }.into_any()
@@ -557,13 +563,16 @@ fn OutputGutter() -> impl IntoView {
             Style::Divide => {
                 if let Some(f_sig) = factor_signal(&state, mode) {
                     if let Some(a_sig) = auto_signal(&state, mode) { a_sig.set(false); }
-                    // Honour any active pre-shift so the back-solve
-                    // matches the compound mapping the user sees.
+                    // Honour any active output shift so the back-solve
+                    // matches the compound mapping the user sees:
+                    //   target = |anchor/factor − shift|   (post-shift)
+                    // Solve for factor in the unfolded branch:
+                    //   factor = anchor / (target + shift)
                     let shift = if supports_shift(mode) {
                         state.ps_shift_hz.get_untracked()
                     } else { 0.0 };
-                    let post_shift = (anchor - shift).abs().max(1.0);
-                    let raw = post_shift / target;
+                    let denom = (target + shift).max(1.0);
+                    let raw = anchor / denom;
                     f_sig.set(snap_factor(raw, snap));
                 }
             }

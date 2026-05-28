@@ -92,8 +92,10 @@ pub(crate) struct PlaybackParams {
     pub ps_factor: f64,
     pub pv_factor: f64,
     pub pv_hq: bool,
-    /// Additive frequency pre-shift (Hz) applied before pitch shifting
-    /// in PS / PV modes. 0 = no shift (pure multiplicative).
+    /// Output-side heterodyne shift (Hz) applied AFTER pitch shifting
+    /// in PS / PV modes. Compound mapping: `out = |in/factor − shift|`.
+    /// Stored in output-Hz space (typically 0–5 kHz) so the LP cutoff
+    /// stays narrow. 0 = no shift (pure multiplicative pitch divide).
     pub ps_shift_hz: f64,
     pub zc_factor: f64,
     pub gain_db: f64,
@@ -633,21 +635,30 @@ pub(crate) fn het_carriers(center: f64, spacing: f64, count: u32) -> Vec<f64> {
     (0..n).map(|i| center + (start + i as f64) * spacing).collect()
 }
 
-/// Heterodyne pre-shift stage for the PitchShift / PhaseVocoder modes.
-/// When `ps_shift_hz` is non-zero, mixes the input down (or up) by that
-/// amount before the pitch shifter runs, giving a true scale+shift
-/// affine mapping `out = |in − shift| / factor`.
+/// Post-pitch heterodyne shift for PS / PV modes. The shift value is
+/// expressed in OUTPUT-Hz space, so it's small (typically 0–5 kHz) and
+/// the LP cutoff stays narrow, which keeps the 4-pole IIR well-behaved.
 ///
-/// LP cutoff is auto-derived from the active bandpass upper edge so the
-/// sum image (`f_in + shift`) is suppressed while the difference band
-/// (`|f_in − shift|`) passes through cleanly.
-fn ps_pre_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
+/// Mathematically equivalent to a pre-pitch shift of `shift × factor`:
+///     `|in/factor − shift_out| ≡ |in − shift_out·factor| / factor`
+/// We pick the post-pitch ordering because the LP cutoff (just above the
+/// final output band) is much smaller and easier to design than the
+/// pre-pitch ordering's wide-band LP near Nyquist.
+fn ps_post_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> Vec<f32> {
     let shift = params.ps_shift_hz.abs();
     if shift < 1.0 {
         return samples.to_vec();
     }
+    let factor = match params.mode {
+        PlaybackMode::PitchShift => params.ps_factor,
+        PlaybackMode::PhaseVocoder => params.pv_factor,
+        _ => return samples.to_vec(),
+    }.abs().max(1.0);
+    // Cutoff just above the final output band (= bandpass upper edge / factor)
+    // with safety margin. The post-pitch signal already has its spectrum
+    // compressed by `factor`, so 20 kHz is usually plenty.
     let nyquist = sample_rate as f64 * 0.5;
-    let cutoff = (params.filter_freq_high - shift + 5_000.0)
+    let cutoff = (params.filter_freq_high / factor + 5_000.0)
         .clamp(20_000.0, nyquist * 0.9);
     heterodyne_mix(samples, sample_rate, shift, cutoff)
 }
@@ -675,12 +686,12 @@ pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &Playbac
             samples.to_vec()
         }
         PlaybackMode::PitchShift => {
-            let shifted = ps_pre_shift(samples, sample_rate, params);
-            pitch_shift_realtime(&shifted, params.ps_factor)
+            let pitched = pitch_shift_realtime(samples, params.ps_factor);
+            ps_post_shift(&pitched, sample_rate, params)
         }
         PlaybackMode::PhaseVocoder => {
-            let shifted = ps_pre_shift(samples, sample_rate, params);
-            crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(&shifted, params.pv_factor)
+            let pitched = crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(samples, params.pv_factor);
+            ps_post_shift(&pitched, sample_rate, params)
         }
         PlaybackMode::ZeroCrossing => {
             zc_divide(samples, sample_rate, params.zc_factor as u32, params.filter_enabled)
