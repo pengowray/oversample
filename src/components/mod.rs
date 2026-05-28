@@ -13,6 +13,7 @@ pub mod overview;
 pub mod play_controls;
 pub mod hfr_button;
 pub mod mode_button;
+pub mod output_range_button;
 pub mod hearing_bar;
 pub mod listen_button;
 pub mod noise_combos;

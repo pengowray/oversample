@@ -780,6 +780,10 @@ pub enum LayerPanel {
     Bandpass,
     /// Mic settings dropdown in the Transport bar (strategy + device + capture format).
     Mic,
+    /// Output range dropdown in the Hearing bar — visualises and edits how
+    /// the active playback mode maps input frequencies into the 0–2000 Hz
+    /// target listening range.
+    OutputRange,
 }
 
 impl LayerPanel {
@@ -796,7 +800,8 @@ impl LayerPanel {
             | LayerPanel::Notch
             | LayerPanel::NoiseReduce
             | LayerPanel::Gain
-            | LayerPanel::ListenMode => Bar::Hearing,
+            | LayerPanel::ListenMode
+            | LayerPanel::OutputRange => Bar::Hearing,
             LayerPanel::MainView | LayerPanel::Tool => Bar::View,
             LayerPanel::PlayMode | LayerPanel::RecordMode | LayerPanel::Channel | LayerPanel::Mic => Bar::Transport,
             // FreqRange floats over the canvas — not anchored to a bar.
@@ -1359,6 +1364,10 @@ pub struct AppState {
 
     /// Output frequency range to highlight on spectrogram (set by hover in HFR panel).
     pub output_freq_highlight: RwSignal<Option<(f64, f64)>>,
+    /// When true, dragging the Output Range gutter snaps to canonical
+    /// mappings — powers of 2 / 10 for divide modes, multiples of 5 kHz
+    /// for heterodyne carrier shifts.
+    pub output_snap: RwSignal<bool>,
 
     // Microphone (independent listen + record)
     pub mic_listening: RwSignal<bool>,
@@ -1906,6 +1915,7 @@ impl AppState {
             ps_factor_auto: RwSignal::new(true),
             pv_factor_auto: RwSignal::new(true),
             output_freq_highlight: RwSignal::new(None),
+            output_snap: RwSignal::new(true),
             mic_listening: RwSignal::new(false),
             mic_recording: RwSignal::new(false),
             mic_sample_rate: RwSignal::new(0),

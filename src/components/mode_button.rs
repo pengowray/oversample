@@ -71,13 +71,13 @@ fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
     }
 }
 
-fn output_freq(input: f64, factor: f64) -> f64 {
+pub(crate) fn output_freq(input: f64, factor: f64) -> f64 {
     if factor > 0.0 { input / factor }
     else if factor < 0.0 { input * factor.abs() }
     else { input }
 }
 
-fn format_freq_khz(f: f64) -> String {
+pub(crate) fn format_freq_khz(f: f64) -> String {
     if f >= 1000.0 {
         let khz = f / 1000.0;
         if (khz - khz.round()).abs() < 0.05 {
@@ -90,7 +90,7 @@ fn format_freq_khz(f: f64) -> String {
     }
 }
 
-fn format_factor_value(f: f64) -> String {
+pub(crate) fn format_factor_value(f: f64) -> String {
     let abs = f.abs();
     let num = if (abs - abs.round()).abs() < 0.001 {
         format!("{}", abs.round() as i32)

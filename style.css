@@ -6781,3 +6781,159 @@ button.canvas-overflow-action-btn.disabled {
     background: rgba(255, 255, 255, 0.08);
     margin: 2px 0;
 }
+
+/* ── Output Range combo popup ───────────────────────────────────────────
+   Two-column layout: mode-aware controls on the left, vertical 0–2000 Hz
+   gutter on the right. Mirrors how the existing mode popups feel but
+   adds the output-side gutter visualisation. */
+.output-range-popup {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 10px;
+    padding: 6px 8px 8px;
+    min-height: 220px;
+}
+.output-range-controls {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.output-range-section-label {
+    font-size: 10px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 4px 2px;
+}
+.output-range-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 4px;
+}
+.output-range-presets .factor-preset.auto.on {
+    background: rgba(80, 160, 255, 0.18);
+    border-color: rgba(80, 160, 255, 0.5);
+    color: #8cf;
+}
+.output-range-shift-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 6px;
+}
+.output-range-num {
+    width: 60px;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #ddd;
+    font-size: 12px;
+    padding: 2px 6px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+.output-range-num-suffix {
+    font-size: 11px;
+    color: #777;
+}
+.output-range-snap-row {
+    padding: 6px 6px 2px;
+    font-size: 11px;
+    color: #aaa;
+}
+.output-range-snap-row label {
+    cursor: pointer;
+    user-select: none;
+}
+.output-range-snap-row input {
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.output-range-summary {
+    margin-top: auto;
+    padding: 6px 6px 2px;
+    font-size: 11px;
+    color: #bbb;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+}
+.output-range-summary .dim {
+    color: #666;
+    margin-right: 6px;
+}
+.output-range-empty {
+    padding: 8px 6px;
+    font-size: 11px;
+    color: #888;
+    line-height: 1.5;
+}
+
+/* ── Vertical 0–2000 Hz "output gutter" ─────────────────────────────────
+   Coordinate system: 0 Hz at bottom, GUTTER_MAX_HZ at top. The .band
+   uses `bottom` + `height` percentages so it grows upward like the
+   spectrogram's frequency axis. */
+.output-gutter-wrap {
+    flex: 0 0 90px;
+    display: flex;
+    align-items: stretch;
+}
+.output-gutter {
+    position: relative;
+    flex: 1;
+    background: linear-gradient(to top, #111 0%, #181818 100%);
+    border: 1px solid #333;
+    border-radius: 3px;
+    cursor: ns-resize;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+.output-gutter-ticks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.output-gutter-tick {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.output-gutter-tick-label {
+    position: absolute;
+    left: 4px;
+    bottom: 1px;
+    font-size: 9px;
+    color: #666;
+    font-variant-numeric: tabular-nums;
+}
+.output-gutter-band {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(140, 200, 255, 0.18);
+    border-top: 1px solid rgba(140, 200, 255, 0.6);
+    border-bottom: 1px solid rgba(140, 200, 255, 0.6);
+    pointer-events: none;
+    box-sizing: border-box;
+}
+.output-gutter-handle {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 18px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(180, 220, 255, 0.85);
+    pointer-events: none;
+}
+.output-gutter-handle-hi { top: -2px; }
+.output-gutter-handle-lo { bottom: -2px; }
+.output-gutter:hover .output-gutter-band {
+    background: rgba(140, 200, 255, 0.26);
+}

@@ -606,6 +606,7 @@ pub fn HearingBar() -> impl IntoView {
                 <div class="bar-controls band-affected-controls">
                     <RangeButton/>
                     <ModeRadioGroup/>
+                    <crate::components::output_range_button::OutputRangeCombo/>
                     <BandpassCombo/>
                 </div>
             </div>
