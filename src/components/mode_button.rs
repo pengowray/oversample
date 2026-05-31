@@ -222,14 +222,25 @@ pub fn ModeRadioGroup() -> impl IntoView {
             return;
         }
 
-        let band_ff_center = (band_ff_lo + band_ff_hi) / 2.0;
         let band_ff_bandwidth = band_ff_hi - band_ff_lo;
 
-        if state.het_freq_auto.get_untracked() {
-            state.het_frequency.set(band_ff_center);
-        }
+        // Auto LP cutoff: half the focus band, capped. Computed first so the
+        // carrier anchor below can sit one cutoff above the band's low edge.
+        let auto_cutoff = (band_ff_bandwidth / 2.0).min(15_000.0);
         if state.het_cutoff_auto.get_untracked() {
-            state.het_cutoff.set((band_ff_bandwidth / 2.0).min(15_000.0));
+            state.het_cutoff.set(auto_cutoff);
+        }
+        if state.het_freq_auto.get_untracked() {
+            // Anchor the comb at the BOTTOM of the focus band: the lowest
+            // carrier's lower LP edge lands on band_lo, and any comb teeth tile
+            // upward from there. For a single full-band carrier this equals the
+            // band centre, so single-carrier auto behaviour is unchanged.
+            let cutoff = if state.het_cutoff_auto.get_untracked() {
+                auto_cutoff
+            } else {
+                state.het_cutoff.get_untracked()
+            };
+            state.het_frequency.set(band_ff_lo + cutoff);
         }
 
         if state.te_factor_auto.get_untracked() {
@@ -676,7 +687,7 @@ fn ModeSettingsBody() -> impl IntoView {
                             >"A"</button>
                         </div>
                         <div class="layer-panel-slider-row">
-                            <label title="Number of heterodyne carriers — 1 is classic, higher values cover a wider range.">"Carriers"</label>
+                            <label title="Number of heterodyne carriers — 1 is classic; more carriers tile upward from the low edge to cover a wider band.">"Carriers"</label>
                             {(1u32..=5).map(|n| {
                                 view! {
                                     <button class=move || {

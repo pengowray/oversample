@@ -620,19 +620,18 @@ pub(crate) fn apply_filters(samples: &[f32], sample_rate: u32, params: &Playback
     result
 }
 
-/// Compute the carrier frequencies for the heterodyne mode. With count = 1
-/// this is just `[center]` (classic single-carrier). With count > 1, returns
-/// N carriers symmetrically arranged around `center` at `spacing` Hz apart,
-/// so increasing the count expands coverage in both directions without
-/// shifting the user's tuned center frequency.
-pub(crate) fn het_carriers(center: f64, spacing: f64, count: u32) -> Vec<f64> {
+/// Compute the carrier frequencies for the heterodyne mode. `base` is the
+/// LOWEST carrier; the comb tiles UPWARD from it:
+/// `base, base + spacing, …, base + (count-1)·spacing`. With count = 1 this is
+/// just `[base]` (classic single-carrier). Anchoring at the bottom — rather
+/// than centering on `base` — lets the user tune the low edge and grow the
+/// comb up to cover the focus band from below.
+pub(crate) fn het_carriers(base: f64, spacing: f64, count: u32) -> Vec<f64> {
     let n = count.max(1);
     if n == 1 || spacing <= 0.0 {
-        return vec![center];
+        return vec![base];
     }
-    let n_f = n as f64;
-    let start = -(n_f - 1.0) / 2.0;
-    (0..n).map(|i| center + (start + i as f64) * spacing).collect()
+    (0..n).map(|i| base + i as f64 * spacing).collect()
 }
 
 /// Post-pitch heterodyne shift for PS / PV modes. The shift value is
@@ -667,17 +666,21 @@ pub(crate) fn apply_dsp_mode(samples: &[f32], sample_rate: u32, params: &Playbac
     match params.mode {
         PlaybackMode::Normal => samples.to_vec(),
         PlaybackMode::Heterodyne => {
-            let effective_lo =
-                if params.has_selection && (params.sel_freq_low > 0.0 || params.sel_freq_high > 0.0)
-                {
+            let has_sel = params.has_selection
+                && (params.sel_freq_low > 0.0 || params.sel_freq_high > 0.0);
+            if params.het_comb_count <= 1 {
+                // Single carrier: tune to the selection centre (or het_freq).
+                let lo = if has_sel {
                     (params.sel_freq_low + params.sel_freq_high) / 2.0
                 } else {
                     params.het_freq
                 };
-            if params.het_comb_count <= 1 {
-                heterodyne_mix(samples, sample_rate, effective_lo, params.het_cutoff)
+                heterodyne_mix(samples, sample_rate, lo, params.het_cutoff)
             } else {
-                let carriers = het_carriers(effective_lo, params.het_comb_spacing, params.het_comb_count);
+                // Comb: tile upward from the BOTTOM of the target band — the
+                // selection's low edge, or the tuned het_freq anchor.
+                let base = if has_sel { params.sel_freq_low } else { params.het_freq };
+                let carriers = het_carriers(base, params.het_comb_spacing, params.het_comb_count);
                 heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff)
             }
         }
@@ -743,4 +746,31 @@ async fn sleep(ms: u32) {
         }
     });
     let _ = JsFuture::from(promise).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::het_carriers;
+
+    #[test]
+    fn het_carriers_single_is_just_base() {
+        assert_eq!(het_carriers(45_000.0, 30_000.0, 1), vec![45_000.0]);
+        // Zero count clamps to 1; zero/non-positive spacing collapses to one carrier.
+        assert_eq!(het_carriers(45_000.0, 30_000.0, 0), vec![45_000.0]);
+        assert_eq!(het_carriers(45_000.0, 0.0, 4), vec![45_000.0]);
+    }
+
+    #[test]
+    fn het_carriers_tile_upward_from_base() {
+        // Bottom-anchored: the first carrier is the base, the rest tile upward.
+        assert_eq!(
+            het_carriers(20_000.0, 10_000.0, 3),
+            vec![20_000.0, 30_000.0, 40_000.0]
+        );
+        assert_eq!(het_carriers(30_000.0, 12_000.0, 2), vec![30_000.0, 42_000.0]);
+        // The base is always the lowest carrier — the comb never dips below it.
+        let c = het_carriers(30_000.0, 12_000.0, 4);
+        let lowest = c.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert_eq!(lowest, 30_000.0);
+    }
 }

@@ -1251,9 +1251,9 @@ pub struct AppState {
     pub filter_quality: RwSignal<FilterQuality>,
     pub het_cutoff: RwSignal<f64>,
     /// Number of heterodyne carriers (1 = classic single-carrier, >1 = comb).
-    /// Comb mode mixes N evenly-spaced carriers centered on `het_frequency`
-    /// and sums the difference tones, covering a wider ultrasonic range
-    /// without retuning.
+    /// Comb mode mixes N evenly-spaced carriers tiled UPWARD from
+    /// `het_frequency` (the lowest carrier) and sums the difference tones,
+    /// covering a wider ultrasonic range without retuning.
     pub het_comb_count: RwSignal<u32>,
     /// Spacing (Hz) between adjacent comb carriers. Roughly 2× `het_cutoff`
     /// gives near-seamless coverage with minimal image overlap.

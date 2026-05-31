@@ -681,70 +681,8 @@ pub fn draw_het_overlay(
     interactive: bool,
 ) {
     let cutoff = het_cutoff;
-    let band_low = (het_freq - cutoff).max(min_freq);
-    let band_high = (het_freq + cutoff).min(max_freq);
-
-    let y_center = freq_to_y(het_freq, min_freq, max_freq, canvas_height);
-    let y_band_top = freq_to_y(band_high, min_freq, max_freq, canvas_height);
-    let y_band_bottom = freq_to_y(band_low, min_freq, max_freq, canvas_height);
-
-    // ── Secondary carriers (comb mode) ──
-    // Drawn first so the primary carrier renders on top. Each gets a dim
-    // center line + faint LP-cutoff edges so the user can see what's covered.
-    if comb_count > 1 && comb_spacing > 0.0 {
-        let n = comb_count as i32;
-        let start = -(n - 1) as f64 / 2.0;
-        for i in 0..n {
-            let offset = (start + i as f64) * comb_spacing;
-            if offset.abs() < 0.5 {
-                // This is the primary carrier — drawn below.
-                continue;
-            }
-            let carrier_freq = het_freq + offset;
-            if carrier_freq < min_freq || carrier_freq > max_freq {
-                // Still draw the line if it's within range; skip if fully outside.
-                continue;
-            }
-            let y = freq_to_y(carrier_freq, min_freq, max_freq, canvas_height);
-            let y_top = freq_to_y(
-                (carrier_freq + cutoff).min(max_freq),
-                min_freq, max_freq, canvas_height,
-            );
-            let y_bot = freq_to_y(
-                (carrier_freq - cutoff).max(min_freq),
-                min_freq, max_freq, canvas_height,
-            );
-
-            // LP cutoff edges around this secondary carrier
-            ctx.set_stroke_style_str("rgba(0, 200, 255, 0.18)");
-            ctx.set_line_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(0.0, y_top);
-            ctx.line_to(canvas_width, y_top);
-            ctx.move_to(0.0, y_bot);
-            ctx.line_to(canvas_width, y_bot);
-            ctx.stroke();
-
-            // Center line for secondary carrier (dashed, dim)
-            ctx.set_stroke_style_str("rgba(0, 230, 255, 0.45)");
-            ctx.set_line_width(1.0);
-            let _ = ctx.set_line_dash(&js_sys::Array::of2(
-                &wasm_bindgen::JsValue::from_f64(4.0),
-                &wasm_bindgen::JsValue::from_f64(4.0),
-            ));
-            ctx.begin_path();
-            ctx.move_to(0.0, y);
-            ctx.line_to(canvas_width, y);
-            ctx.stroke();
-            let _ = ctx.set_line_dash(&js_sys::Array::new());
-
-            // Small label so the user knows what frequency this is
-            ctx.set_fill_style_str("rgba(0, 230, 255, 0.55)");
-            ctx.set_font("10px sans-serif");
-            let label = format!("{:.0}", carrier_freq / 1000.0);
-            let _ = ctx.fill_text(&label, canvas_width - 32.0, y - 3.0);
-        }
-    }
+    let n = comb_count.max(1);
+    let spacing = comb_spacing;
 
     // Opacity multiplier: lower when non-interactive (auto mode without hover)
     let op = if interactive { 1.0 } else { 0.5 };
@@ -753,7 +691,69 @@ pub fn draw_het_overlay(
         drag_handle == Some(handle) || hover_handle == Some(handle)
     };
 
-    // Band edge lines
+    // Draw one carrier exactly like every other: faint LP-cutoff edges + a
+    // dashed cyan centre line + a small kHz label. Used for the comb teeth so
+    // the whole comb reads as one uniform structure. The anchor below reuses
+    // this same styling and only adds the interactive handles + text label.
+    let draw_carrier = |freq: f64| {
+        if freq < min_freq || freq > max_freq {
+            return;
+        }
+        let y = freq_to_y(freq, min_freq, max_freq, canvas_height);
+        let y_top = freq_to_y((freq + cutoff).min(max_freq), min_freq, max_freq, canvas_height);
+        let y_bot = freq_to_y((freq - cutoff).max(min_freq), min_freq, max_freq, canvas_height);
+
+        // LP cutoff edges
+        ctx.set_stroke_style_str(&format!("rgba(0, 200, 255, {:.2})", 0.3 * op));
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(0.0, y_top);
+        ctx.line_to(canvas_width, y_top);
+        ctx.move_to(0.0, y_bot);
+        ctx.line_to(canvas_width, y_bot);
+        ctx.stroke();
+
+        // Dashed centre line
+        ctx.set_stroke_style_str(&format!("rgba(0, 230, 255, {:.2})", 0.8 * op));
+        ctx.set_line_width(1.5);
+        let _ = ctx.set_line_dash(&js_sys::Array::of2(
+            &wasm_bindgen::JsValue::from_f64(6.0),
+            &wasm_bindgen::JsValue::from_f64(4.0),
+        ));
+        ctx.begin_path();
+        ctx.move_to(0.0, y);
+        ctx.line_to(canvas_width, y);
+        ctx.stroke();
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+        // Small kHz label at the right edge
+        ctx.set_fill_style_str(&format!("rgba(0, 230, 255, {:.2})", 0.7 * op));
+        ctx.set_font("10px sans-serif");
+        let label = format!("{:.0}", freq / 1000.0);
+        let _ = ctx.fill_text(&label, canvas_width - 32.0, y - 3.0);
+    };
+
+    // ── Comb teeth ──
+    // The comb tiles UPWARD from het_freq (the anchor / lowest carrier):
+    // het_freq, het_freq + spacing, … . Drawn before the anchor so the
+    // anchor's handles render on top. Every tooth uses identical styling —
+    // no tooth is visually privileged.
+    if n > 1 && spacing > 0.0 {
+        for i in 1..n {
+            draw_carrier(het_freq + i as f64 * spacing);
+        }
+    }
+
+    // ── Anchor carrier (het_freq) ──
+    // Same band + centre styling as the teeth, plus the interactive drag
+    // handles and the text label, because this is the carrier the user tunes.
+    let band_low = (het_freq - cutoff).max(min_freq);
+    let band_high = (het_freq + cutoff).min(max_freq);
+    let y_center = freq_to_y(het_freq, min_freq, max_freq, canvas_height);
+    let y_band_top = freq_to_y(band_high, min_freq, max_freq, canvas_height);
+    let y_band_bottom = freq_to_y(band_low, min_freq, max_freq, canvas_height);
+
+    // Anchor band edge lines (brighten + thicken when their handle is active)
     for &(y, handle) in &[(y_band_top, SpectrogramHandle::HetBandUpper), (y_band_bottom, SpectrogramHandle::HetBandLower)] {
         let active = interactive && is_active(handle);
         let alpha = (if active { 0.7 } else { 0.3 }) * op;
@@ -779,34 +779,27 @@ pub fn draw_het_overlay(
         }
     }
 
-    // Center line at het_freq
+    // Anchor centre line — same dashed cyan as the teeth, brighter/thicker
+    // when hovered or dragged.
     let center_active = interactive && is_active(SpectrogramHandle::HetCenter);
-    let center_dragging = interactive && drag_handle == Some(SpectrogramHandle::HetCenter);
-    if center_dragging {
+    if center_active {
         ctx.set_stroke_style_str("rgba(0, 230, 255, 1.0)");
         ctx.set_line_width(2.0);
-    } else if center_active {
-        ctx.set_stroke_style_str("rgba(0, 230, 255, 1.0)");
-        ctx.set_line_width(2.0);
-        let _ = ctx.set_line_dash(&js_sys::Array::of2(
-            &wasm_bindgen::JsValue::from_f64(6.0),
-            &wasm_bindgen::JsValue::from_f64(4.0),
-        ));
     } else {
-        ctx.set_stroke_style_str(&format!("rgba(0, 230, 255, {:.1})", 0.8 * op));
+        ctx.set_stroke_style_str(&format!("rgba(0, 230, 255, {:.2})", 0.8 * op));
         ctx.set_line_width(1.5);
-        let _ = ctx.set_line_dash(&js_sys::Array::of2(
-            &wasm_bindgen::JsValue::from_f64(6.0),
-            &wasm_bindgen::JsValue::from_f64(4.0),
-        ));
     }
+    let _ = ctx.set_line_dash(&js_sys::Array::of2(
+        &wasm_bindgen::JsValue::from_f64(6.0),
+        &wasm_bindgen::JsValue::from_f64(4.0),
+    ));
     ctx.begin_path();
     ctx.move_to(0.0, y_center);
     ctx.line_to(canvas_width, y_center);
     ctx.stroke();
     let _ = ctx.set_line_dash(&js_sys::Array::new());
 
-    // Center handle triangle (only when interactive)
+    // Anchor centre handle triangle (only when interactive)
     if interactive {
         let handle_size = if center_active { 10.0 } else { 6.0 };
         let handle_alpha = if center_active { 0.9 } else { 0.5 };
@@ -819,10 +812,15 @@ pub fn draw_het_overlay(
         ctx.fill();
     }
 
-    // Label at center line
+    // Text label on the anchor line. For a comb, show the span it covers.
     ctx.set_fill_style_str(&format!("rgba(0, 230, 255, {:.1})", 0.9 * op));
     ctx.set_font("bold 12px sans-serif");
-    let label = format!("HET {:.1} kHz", het_freq / 1000.0);
+    let label = if n > 1 && spacing > 0.0 {
+        let top = het_freq + (n - 1) as f64 * spacing;
+        format!("HET {:.0}-{:.0} kHz", het_freq / 1000.0, top / 1000.0)
+    } else {
+        format!("HET {:.1} kHz", het_freq / 1000.0)
+    };
     let _ = ctx.fill_text(&label, 55.0, y_center - 5.0);
 
     // LP cutoff label near band edges (show when any HET handle is active)
