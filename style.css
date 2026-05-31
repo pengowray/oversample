@@ -3885,6 +3885,18 @@ body.sidebar-resizing {
     display: contents;
 }
 
+/* Portrait packs 5 buttons into 3 columns, which auto-flows as
+   [Play][Channel][Mic] / [Record][Listen] — stranding the Mic chip up on
+   the Play/Channel row, away from the Record/Listen actions it gates.
+   Force the Mic chip (first capture-group child) onto a fresh grid row so
+   the three capture buttons share the bottom row: [Play][Channel][·] /
+   [Mic][Record][Listen]. Record + Listen auto-flow into the cells beside
+   it. Landscape/desktop use the wrapping flex layout (no .mobile), so this
+   only affects the narrow portrait grid. */
+.bottom-toolbar.mobile .mic-combo-row {
+    grid-column-start: 1;
+}
+
 /* Mobile mic chip — stay pill-shaped, single row. Match touch target
    height of other mobile buttons (48px) but keep the rounded radius. */
 .bottom-toolbar.mobile .mic-select-btn {
