@@ -103,15 +103,30 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let play_left_value = Signal::derive(move || "\u{25B6}".to_string()); // ▶
-    let play_right_label = Signal::derive(move || {
-        match state.play_start_mode.get() {
-            PlayStartMode::Auto => "Auto".to_string(),
-            _ => String::new(),
+
+    // Mode label shown on the Play button face (e.g. "HET", "TE"). Shown
+    // for every selected mode so the main button and the per-mode extras
+    // read consistently. The one exception is a lone, audible 1:1 (Normal
+    // with no extras and no inaudible-band warning): there the label is
+    // suppressed so just a plain ▶ shows.
+    let play_mode_label = Signal::derive(move || {
+        let mode = state.playback_mode.get();
+        let lone = state.playback_modes_extra.get().is_empty();
+        if mode == PlaybackMode::Normal && lone && !play_inaudible.get() {
+            String::new()
+        } else {
+            ModeBucket::from_mode(mode).label().to_string()
         }
     });
+
+    // Empty big-value for the Play combo's right half — the start-position
+    // selector now shows only as a small caption above the dropdown caret.
+    let play_empty = Signal::derive(move || String::new());
+
     let play_right_frozen: StoredValue<Option<String>> = StoredValue::new(None);
-    let play_right_value = Signal::derive(move || {
-        // Freeze the label while playing so scrolling doesn't flicker it
+    let play_pos_label = Signal::derive(move || {
+        // Start-position caption (Auto / All / Here / Sel) above the caret.
+        // Freeze while playing so scrolling doesn't flicker it.
         if state.is_playing.get() {
             if let Some(frozen) = play_right_frozen.get_value() {
                 return frozen;
@@ -206,6 +221,22 @@ pub fn BottomToolbar() -> impl IntoView {
         // unpause HFR if we'd paused it for a previous 1:1 play).
         if state.is_playing.get_untracked() {
             playback::stop(&state);
+        }
+        // Swap: the clicked mode becomes the live (main-button) mode and
+        // the previously-live mode moves into the extras. This keeps the
+        // full multi-selection set intact and guarantees exactly one
+        // labelled play button per selected mode (no mode shown twice on
+        // the main button AND an extra).
+        let old_active = state.playback_mode.get_untracked();
+        let new_bucket = ModeBucket::from_mode(mode);
+        let old_bucket = ModeBucket::from_mode(old_active);
+        if new_bucket != old_bucket {
+            state.playback_modes_extra.update(|extras| {
+                extras.retain(|m| ModeBucket::from_mode(*m) != new_bucket);
+                if !extras.iter().any(|m| ModeBucket::from_mode(*m) == old_bucket) {
+                    extras.push(old_active);
+                }
+            });
         }
         state.playback_mode.set(mode);
         // 1:1 inside a multi-selection that includes HFR modes: HFR is
@@ -422,8 +453,10 @@ pub fn BottomToolbar() -> impl IntoView {
                             title=title
                             on:click=move |_: web_sys::MouseEvent| do_play_in_mode(mode)
                         >
-                            <span class="layer-btn-value">{"\u{25B6}"}</span>
-                            <span class="play-mode-extra-label">{label}</span>
+                            <span class="combo-btn-text">
+                                <span class="layer-btn-category">{label}</span>
+                                <span class="layer-btn-value">{"\u{25B6}"}</span>
+                            </span>
                         </button>
                     }
                 }).collect_view();
@@ -441,16 +474,17 @@ pub fn BottomToolbar() -> impl IntoView {
                 <div class:inaudible-warning=move || play_inaudible.get() style="display: contents;">
                 <ComboButton
                     left_label=""
+                    left_label_dyn=play_mode_label
                     left_value=play_left_value
                     left_click=play_left_click
                     left_class=play_left_class
-                    right_value=play_right_value
+                    right_value=play_empty
                     right_class=play_right_class
-                    right_label=play_right_label
+                    right_label=play_pos_label
                     is_open=play_is_open
                     toggle_menu=play_toggle_menu
                     left_title="Play / Stop"
-                    right_title="Play mode"
+                    right_title="Play start position"
                     menu_direction="above"
                     panel_style="min-width: 180px;"
                 >

@@ -11,6 +11,11 @@ use crate::state::AppState;
 pub fn ComboButton(
     /// Category label on the left button (e.g. "View", "HF")
     left_label: &'static str,
+    /// Optional reactive override for the left category label. When set, it
+    /// takes precedence over the static `left_label`. Used by the Play
+    /// button to show the current playback mode (e.g. "HET", "TE").
+    #[prop(optional, into)]
+    left_label_dyn: Option<Signal<String>>,
     /// Value text on the left button (e.g. "ON"/"OFF"); empty string hides it
     #[prop(into)]
     left_value: Signal<String>,
@@ -179,20 +184,20 @@ pub fn ComboButton(
                 <span class="combo-btn-text combo-btn-text-left">
                     <span class="layer-btn-category fit-text" data-fit-max="9" data-fit-min="7">{move || {
                         let value = left_value.get();
-                        if value.is_empty() || left_label.is_empty() {
+                        let label = left_label_dyn.map(|s| s.get()).unwrap_or_else(|| left_label.to_string());
+                        if value.is_empty() || label.is_empty() {
                             "\u{00A0}".to_string()
                         } else {
-                            left_label.to_string()
+                            label
                         }
                     }}</span>
                     <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || {
                         let value = left_value.get();
                         if !value.is_empty() {
                             value
-                        } else if !left_label.is_empty() {
-                            left_label.to_string()
                         } else {
-                            "\u{00A0}".to_string()
+                            let label = left_label_dyn.map(|s| s.get()).unwrap_or_else(|| left_label.to_string());
+                            if !label.is_empty() { label } else { "\u{00A0}".to_string() }
                         }
                     }}</span>
                 </span>

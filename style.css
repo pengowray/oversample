@@ -3370,31 +3370,28 @@ body.sidebar-resizing {
 }
 
 /* Per-mode Play button (rendered before the main Play combo when the
-   user has ctrl-clicked extra modes). Compact ▶ + label glyph. */
+   user has ctrl-clicked extra modes). Uses the same stacked face as the
+   main Play combo's left half — mode label (small) over the ▶ glyph — so
+   the whole play cluster reads as one consistent set of buttons. */
 .layer-btn.play-mode-extra {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px 5px;
+    padding: 4px 9px 5px;
     min-height: 38px;
 }
-.layer-btn.play-mode-extra .layer-btn-value {
-    font-size: 12px;
-    line-height: 1;
-}
-.layer-btn.play-mode-extra .play-mode-extra-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
+/* Don't uppercase the mode label, matching .combo-btn-left. */
+.layer-btn.play-mode-extra .layer-btn-category {
+    text-transform: none;
     color: #c8c8c8;
+}
+.layer-btn.play-mode-extra .layer-btn-value {
+    font-size: 13px;
+    line-height: 1;
 }
 .layer-btn.play-mode-extra.active {
     background: rgba(26, 60, 40, 0.92);
     border-color: rgba(80, 180, 130, 0.6);
     color: #8fc;
 }
-.layer-btn.play-mode-extra.active .play-mode-extra-label {
+.layer-btn.play-mode-extra.active .layer-btn-category {
     color: #8fc;
 }
 .mode-radio-label {
