@@ -199,6 +199,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_owned.clone(),
                 audio,
                 spectrogram,
@@ -496,6 +497,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_owned.clone(),
                 audio,
                 spectrogram,
@@ -867,6 +869,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_owned.clone(),
                 audio,
                 spectrogram,
@@ -1245,6 +1248,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_owned.clone(),
                 audio,
                 spectrogram,
@@ -1868,6 +1872,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_owned.clone(),
                 audio,
                 spectrogram,

@@ -111,6 +111,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     state.files.update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
+            id: crate::state::next_file_id(),
             name,
             audio,
             spectrogram: placeholder_spec,
@@ -203,6 +204,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
     state.files.update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
+            id: crate::state::next_file_id(),
             name,
             audio,
             spectrogram: placeholder_spec,
@@ -253,20 +255,76 @@ pub(crate) fn set_live_recording_zoom(state: &AppState, sample_rate: u32) {
     state.scroll_offset.set(0.0);
 }
 
-/// True when the file at `idx` looks like an armed-but-empty live doc — no
-/// samples written, neither listening nor recording. Used to decide whether
-/// Listen/Record should reuse it instead of creating a new file.
-pub(crate) fn is_armed_live_doc(state: &AppState, idx: usize) -> bool {
+/// True when `f` is a throwaway live-mic placeholder with no recorded content
+/// behind it — an armed doc OR a (possibly stale) listen entry. Such entries
+/// have the synthetic "MIC" format, no real samples, and no backing file, so
+/// they're safe to reuse or prune. Distinguished from a saved recording (which
+/// has samples / a "REC" format) and from a loaded file (real format + samples
+/// or a file handle).
+pub(crate) fn is_empty_live_placeholder(f: &crate::state::LoadedFile) -> bool {
+    f.audio.samples.is_empty()
+        && f.file_handle.is_none()
+        && f.audio.metadata.format == "MIC"
+}
+
+/// True when the file at `idx` is a reusable live-mic placeholder — an armed
+/// (idle, empty) doc OR a stale listen entry (its `is_live_listen`/
+/// `is_recording` flags still set but carrying no recorded audio). Used to
+/// decide whether Listen/Record/+New can reuse the existing live entry rather
+/// than spawning a second one.
+pub(crate) fn is_reusable_live_doc(state: &AppState, idx: usize) -> bool {
     state.files.with_untracked(|files| {
-        files.get(idx).map_or(false, |f| {
-            !f.is_recording && !f.is_live_listen && f.audio.samples.is_empty()
-        })
+        files.get(idx).map_or(false, is_empty_live_placeholder)
     })
+}
+
+/// Remove stale, empty live-mic placeholders from the file list, keeping at
+/// most the one at `keep_idx` (the active live entry / reuse candidate). This
+/// stops the list from accumulating more than one empty "Live mic" / stopped
+/// "Listening" entry. Real recordings and loaded files are never touched
+/// (they have samples or a backing file). `current_file_index` and
+/// `mic_live_file_idx` are fixed up for the removals.
+pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<usize>) {
+    let victims: Vec<usize> = state.files.with_untracked(|files| {
+        files.iter().enumerate()
+            .filter(|&(i, f)| Some(i) != keep_idx && is_empty_live_placeholder(f))
+            .map(|(i, _)| i)
+            .collect()
+    });
+    if victims.is_empty() { return; }
+
+    // Remove from the back so earlier indices stay valid mid-loop.
+    state.files.update(|files| {
+        for &i in victims.iter().rev() {
+            if i < files.len() { files.remove(i); }
+        }
+    });
+
+    // How many removed entries sat strictly below `idx` (so it shifts down).
+    let below = |idx: usize| victims.iter().filter(|&&v| v < idx).count();
+    let new_len = state.files.with_untracked(|f| f.len());
+
+    state.current_file_index.update(|ci| {
+        if let Some(c) = *ci {
+            *ci = if victims.contains(&c) {
+                // The viewed file itself was pruned — clamp into range.
+                if new_len == 0 { None } else { Some(c.saturating_sub(below(c)).min(new_len - 1)) }
+            } else {
+                Some(c - below(c))
+            };
+        }
+    });
+    state.mic_live_file_idx.update(|mi| {
+        if let Some(m) = *mi {
+            if victims.contains(&m) { *mi = None; }
+            else { *mi = Some(m - below(m)); }
+        }
+    });
 }
 
 /// Promote an armed live doc to a listening file. Sets the flags the live
 /// processing loop and waveform overview key off without altering the file's
-/// position or name. Use only on a file that satisfies `is_armed_live_doc`.
+/// position or name. Use only on a file that satisfies `is_reusable_live_doc`.
 pub(crate) fn promote_armed_to_listening(state: &AppState, idx: usize) {
     state.files.update(|files| {
         if let Some(f) = files.get_mut(idx) {
@@ -285,7 +343,7 @@ pub(crate) fn promote_armed_to_listening(state: &AppState, idx: usize) {
 
 /// Promote an armed live doc to a recording file. Renames it to the standard
 /// recording filename and resets metadata so the recovery sidecar/wav-part
-/// uses the right filename. Use only on a file that satisfies `is_armed_live_doc`.
+/// uses the right filename. Use only on a file that satisfies `is_reusable_live_doc`.
 ///
 /// MUST be called BEFORE `mic_backend::start_recording` so the recovery
 /// sidecar/.wav.part filename (built by `build_start_recording_args` from the
@@ -374,6 +432,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
     state.files.update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
+            id: crate::state::next_file_id(),
             name: "Listening".to_string(),
             audio,
             spectrogram: placeholder_spec,
@@ -1022,6 +1081,7 @@ fn update_or_create_file(
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name: name_clone,
                 audio,
                 spectrogram: placeholder_spec,

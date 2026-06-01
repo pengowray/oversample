@@ -880,9 +880,10 @@ pub fn App() -> impl IntoView {
                 let sel_ids = state_kb.selected_annotation_ids.get_untracked();
                 if let (false, Some(idx)) = (sel_ids.is_empty(), state_kb.current_file_index.get_untracked()) {
                     ev.prevent_default();
+                    let file_id = state_kb.current_file_id();
                     // Check if all selected annotations are regions (have freq bounds)
                     let store = state_kb.annotation_store.get_untracked();
-                    let all_have_freq = if let Some(Some(ref set)) = store.sets.get(idx) {
+                    let all_have_freq = if let Some(set) = file_id.and_then(|id| store.get(id)) {
                         sel_ids.iter().all(|id| {
                             set.annotations.iter().find(|a| &a.id == id).is_some_and(|a| {
                                 matches!(&a.kind, crate::annotations::AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some())
@@ -896,7 +897,7 @@ pub fn App() -> impl IntoView {
                     if all_have_freq {
                         // Region → Segment: strip freq bounds, don't reset BandFF
                         state_kb.annotation_store.update(|store| {
-                            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                            if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
                                 for ann in set.annotations.iter_mut() {
                                     if sel_ids.contains(&ann.id) {
                                         if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {
@@ -922,7 +923,7 @@ pub fn App() -> impl IntoView {
                              state_kb.max_display_freq.get_untracked().unwrap_or(file_max))
                         };
                         state_kb.annotation_store.update(|store| {
-                            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+                            if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
                                 for ann in set.annotations.iter_mut() {
                                     if sel_ids.contains(&ann.id) {
                                         if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {

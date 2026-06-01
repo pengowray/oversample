@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
-use crate::audio::export::{build_export_params, get_selected_regions, process_region, trigger_browser_download};
+use crate::audio::export::{build_export_params, get_selected_regions, process_region, save_export_bytes};
 use crate::audio::webcodecs_bindings as wc;
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, SpectDisplaySettings, TileSource};
 use crate::state::{AppState, AudioCodecOption, PlaybackMode, VideoCodec, VideoViewMode};
@@ -573,7 +573,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         .trim_end_matches(".m4b").trim_end_matches(".M4B");
     let filename = format!("{base_name}.mp4");
 
-    trigger_browser_download(&mp4_bytes, &filename);
+    save_export_bytes(state, mp4_bytes, filename, true);
     Ok(())
 }
 

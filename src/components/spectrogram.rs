@@ -983,7 +983,7 @@ pub fn Spectrogram() -> impl IntoView {
             // Draw saved annotation selections (skip in xform view or when hidden via toolbar toggle)
             if !xform_on && annotations_visible {
                 if let Some(file_idx_val) = idx {
-                    if let Some(Some(set)) = annotation_store.sets.get(file_idx_val) {
+                    if let Some(set) = state.file_id_at(file_idx_val).and_then(|id| annotation_store.get(id)) {
                         let hover_ref = annotation_hover_handle.as_ref()
                             .map(|(id, pos)| (id.as_str(), *pos));
                         spectrogram_renderer::draw_annotations(
@@ -1028,7 +1028,7 @@ pub fn Spectrogram() -> impl IntoView {
                         }
                     }
                     // User annotation markers (AnnotationKind::Marker).
-                    if let Some(Some(set)) = annotation_store.sets.get(file_idx_val) {
+                    if let Some(set) = state.file_id_at(file_idx_val).and_then(|id| annotation_store.get(id)) {
                         let ann_markers: Vec<(f64, Option<String>)> = set.annotations.iter()
                             .filter_map(|a| match &a.kind {
                                 crate::annotations::AnnotationKind::Marker(m) => {

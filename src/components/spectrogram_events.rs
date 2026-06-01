@@ -262,9 +262,9 @@ pub fn apply_annotation_resize(
 ) {
     use crate::state::ResizeHandlePosition::*;
 
-    let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+    let Some(file_id) = state.current_file_id() else { return };
     state.annotation_store.update(|store| {
-        if let Some(Some(set)) = store.sets.get_mut(file_idx) {
+        if let Some(set) = store.get_mut(file_id) {
             if let Some(ann) = set.annotations.iter_mut().find(|a| a.id == ann_id) {
                 if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {
                     match handle {
@@ -346,10 +346,9 @@ pub fn on_pointerdown(
     if state.annotations_visible.get_untracked() {
     if let Some((ref ann_id, handle_pos)) = state.annotation_hover_handle.get_untracked() {
         // Check if the annotation is locked
-        let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+        let Some(file_id) = state.current_file_id() else { return };
         let store = state.annotation_store.get_untracked();
-        let locked = store.sets.get(file_idx)
-            .and_then(|s| s.as_ref())
+        let locked = store.get(file_id)
             .and_then(|set| set.annotations.iter().find(|a| a.id == *ann_id))
             .and_then(|a| match &a.kind {
                 crate::annotations::AnnotationKind::Region(r) => Some(r.is_locked()),
@@ -359,12 +358,12 @@ pub fn on_pointerdown(
 
         if !locked {
             // Snapshot for undo
-            let snapshot = store.sets.get(file_idx).and_then(|s| s.clone());
+            let snapshot = store.get(file_id).cloned();
             state.undo_stack.update(|stack| {
-                stack.push_undo(UndoEntry { file_idx, snapshot });
+                stack.push_undo(UndoEntry { file_id, snapshot });
             });
             // Store original bounds
-            if let Some(set) = store.sets.get(file_idx).and_then(|s| s.as_ref()) {
+            if let Some(set) = store.get(file_id) {
                 if let Some(a) = set.annotations.iter().find(|a| a.id == *ann_id) {
                     if let crate::annotations::AnnotationKind::Region(ref r) = a.kind {
                         state.annotation_drag_original.set(Some((r.time_start, r.time_end, r.freq_low, r.freq_high)));
@@ -448,7 +447,7 @@ pub fn on_pointerdown(
         let mut hit_annotation = false;
         if state.annotations_visible.get_untracked() {
             let store = state.annotation_store.get_untracked();
-            if let Some(Some(set)) = store.sets.get(file_idx) {
+            if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                 if let Some(canvas_el) = canvas_ref.get() {
                     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                     let cw = canvas.width() as f64;
@@ -625,7 +624,7 @@ pub fn on_pointermove(
                         if annotations_focused && !selected_ids.is_empty() {
                             let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
                             let store = state.annotation_store.get_untracked();
-                            if let Some(Some(set)) = store.sets.get(file_idx) {
+                            if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                                 let scroll = state.scroll_offset.get_untracked();
                                 let files = state.files.get_untracked();
                                 let time_res = files.get(file_idx)
@@ -709,15 +708,16 @@ pub fn on_pointerup(
 
     // End annotation resize handle drag
     if let Some((ref ann_id, _)) = state.annotation_drag_handle.get_untracked() {
-        let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-        let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
-        state.annotation_store.update(|store| {
-            if let Some(Some(set)) = store.sets.get_mut(file_idx) {
-                if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
-                    a.modified_at = now;
+        if let Some(file_id) = state.current_file_id() {
+            let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+            state.annotation_store.update(|store| {
+                if let Some(set) = store.get_mut(file_id) {
+                    if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
+                        a.modified_at = now;
+                    }
                 }
-            }
-        });
+            });
+        }
         state.annotations_dirty.set(true);
         state.annotation_drag_handle.set(None);
         state.annotation_drag_original.set(None);
@@ -855,7 +855,7 @@ pub fn on_dblclick(
                 let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let zoom = state.zoom_level.get_untracked();
                 let store = state.annotation_store.get_untracked();
-                if let Some(Some(set)) = store.sets.get(file_idx) {
+                if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                     if let Some(hit_id) = hit_test_annotation_body(
                         set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
                     ) {
@@ -987,7 +987,8 @@ pub fn on_touchstart(
                 let scroll = state.scroll_offset.get_untracked();
                 let time_res = files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let zoom = state.zoom_level.get_untracked();
-                if let Some(Some(set)) = store.sets.get(file_idx) {
+                let file_id = state.file_id_at(file_idx);
+                if let Some(set) = file_id.and_then(|id| store.get(id)) {
                     let ann_handle = hit_test_annotation_handles(
                         set, &selected_ids,
                         px_x, px_y,
@@ -1004,10 +1005,12 @@ pub fn on_touchstart(
                             })
                             .unwrap_or(false);
                         if !locked {
-                            // Snapshot for undo
-                            let snapshot = store.sets.get(file_idx).and_then(|s| s.clone());
+                            // Snapshot for undo. file_id is Some here (the set was
+                            // found via it above), so unwrap_or(0) never triggers.
+                            let file_id = file_id.unwrap_or(0);
+                            let snapshot = store.get(file_id).cloned();
                             state.undo_stack.update(|stack| {
-                                stack.push_undo(UndoEntry { file_idx, snapshot });
+                                stack.push_undo(UndoEntry { file_id, snapshot });
                             });
                             // Store original bounds
                             if let Some(a) = set.annotations.iter().find(|a| a.id == *ann_id) {
@@ -1208,15 +1211,16 @@ pub fn on_touchend(
         }
         // End annotation resize handle drag
         if let Some((ref ann_id, _)) = state.annotation_drag_handle.get_untracked() {
-            let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-            let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
-            state.annotation_store.update(|store| {
-                if let Some(Some(set)) = store.sets.get_mut(file_idx) {
-                    if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
-                        a.modified_at = now;
+            if let Some(file_id) = state.current_file_id() {
+                let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                state.annotation_store.update(|store| {
+                    if let Some(set) = store.get_mut(file_id) {
+                        if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
+                            a.modified_at = now;
+                        }
                     }
-                }
-            });
+                });
+            }
             state.annotations_dirty.set(true);
             state.annotation_drag_handle.set(None);
             state.annotation_drag_original.set(None);

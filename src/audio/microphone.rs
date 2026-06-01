@@ -399,12 +399,20 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     // inside build_start_recording_args, so promoting after start_recording
     // would leave the recovery file with the armed "Live mic (HH:MM:SS)" name.
     let armed_idx = if !has_listen_file {
+        // Fresh record (not converting an active listen): collapse stale empty
+        // live placeholders and reuse the surviving one (armed doc or a stale
+        // listen entry) instead of spawning a second recording file.
+        let keep = state.mic_live_file_idx.get_untracked();
+        prune_empty_live_placeholders(state, keep);
         state.mic_live_file_idx.get_untracked()
-            .filter(|&idx| is_armed_live_doc(state, idx))
+            .filter(|&idx| is_reusable_live_doc(state, idx))
     } else {
         None
     };
     if let Some(idx) = armed_idx {
+        // Reset a stale listen entry's accumulated display state before turning
+        // it into a recording (no-op for an already-armed doc).
+        convert_listen_to_armed(state);
         promote_armed_to_recording(state, idx);
     }
 
@@ -474,7 +482,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
                 cleanup_listen_file(state);
             }
             // If we promoted an armed doc to recording above, roll it back so
-            // is_armed_live_doc() recognizes it again on the next attempt.
+            // is_reusable_live_doc() recognizes it again on the next attempt.
             if let Some(idx) = armed_idx {
                 revert_recording_to_armed(state, idx);
             }
@@ -589,12 +597,23 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     // Clear tile caches so previous file's spectrogram doesn't flash
     crate::canvas::tile_cache::clear_all_caches();
 
-    // Reuse the armed live doc if one exists; otherwise create a new
-    // transient listening file. The armed-doc path lets the user pre-configure
-    // HFR settings before pressing Listen, without spawning a second file.
-    let armed = state.mic_live_file_idx.get_untracked()
-        .filter(|&idx| is_armed_live_doc(state, idx));
-    let file_idx = if let Some(idx) = armed {
+    // Collapse any stale, empty live-mic placeholders so the file list never
+    // accumulates more than one. Keep the current live entry (if any) as the
+    // reuse candidate; prune fixes up mic_live_file_idx for any removals.
+    let keep = state.mic_live_file_idx.get_untracked();
+    prune_empty_live_placeholders(state, keep);
+    // Reuse the existing live placeholder — an armed doc OR a stale listen
+    // entry that wasn't cleanly converted — if one is present; otherwise
+    // create a new transient listening file. The reuse path lets the user
+    // pre-configure HFR settings before pressing Listen, without spawning a
+    // second file.
+    let reuse = state.mic_live_file_idx.get_untracked()
+        .filter(|&idx| is_reusable_live_doc(state, idx));
+    let file_idx = if let Some(idx) = reuse {
+        // If it's a stale listen entry, reset its accumulated display state
+        // (spectrogram/overview/duration) to a clean armed shape first — a
+        // no-op for an already-armed doc.
+        convert_listen_to_armed(state);
         promote_armed_to_listening(state, idx);
         idx
     } else {
@@ -709,10 +728,16 @@ pub async fn arm_live_doc(state: &AppState) {
         return;
     }
 
-    // If an armed doc already exists, just navigate to it instead of making
-    // a second one. (Pressing the button repeatedly should be idempotent.)
+    // Collapse stale empty live placeholders; keep the current one (if any)
+    // as the reuse candidate.
+    let keep = state.mic_live_file_idx.get_untracked();
+    prune_empty_live_placeholders(state, keep);
+    // If a reusable live placeholder already exists, reset it to the idle
+    // "armed" shape (a stale listen entry gets cleared) and navigate to it
+    // instead of making a second one — pressing +New repeatedly is idempotent.
     if let Some(idx) = state.mic_live_file_idx.get_untracked() {
-        if is_armed_live_doc(state, idx) {
+        if is_reusable_live_doc(state, idx) {
+            convert_listen_to_armed(state); // no-op unless it's a stale listen entry
             state.current_file_index.set(Some(idx));
             return;
         }
@@ -931,7 +956,8 @@ pub fn stop_all(state: &AppState) {
 pub use crate::audio::wav_encoder::encode_wav;
 pub(crate) use crate::audio::live_recording::{
     start_live_recording, start_live_listening, start_live_armed,
-    is_armed_live_doc, promote_armed_to_listening, promote_armed_to_recording,
+    is_reusable_live_doc, prune_empty_live_placeholders,
+    promote_armed_to_listening, promote_armed_to_recording,
     revert_recording_to_armed, set_live_recording_zoom,
     cleanup_listen_file, convert_listen_to_armed, convert_listen_to_recording,
     rename_listen_to_recording,

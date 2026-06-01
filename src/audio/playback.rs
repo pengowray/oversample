@@ -89,9 +89,9 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
     if ids.is_empty() {
         return None;
     }
-    let idx = state.current_file_index.get_untracked()?;
+    let id = state.current_file_id()?;
     let store = state.annotation_store.get_untracked();
-    let set = store.sets.get(idx)?.as_ref()?;
+    let set = store.get(id)?;
 
     let mut time_start = f64::MAX;
     let mut time_end = f64::MIN;

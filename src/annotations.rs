@@ -361,25 +361,50 @@ impl AnnotationSet {
     }
 }
 
-/// In-memory annotation store, indexed parallel to AppState::files.
+/// In-memory annotation store, keyed by each `LoadedFile`'s stable `id`
+/// (a process-unique, never-reused u64 — NOT the file's list position).
+/// Keying by id means annotations always track their own file across list
+/// reordering, insertion, and removal, instead of silently shifting onto a
+/// neighbouring file when the list changes (the old parallel-Vec design did
+/// the latter, which let annotations leak between recordings).
 #[derive(Clone, Debug, Default)]
 pub struct AnnotationStore {
-    pub sets: Vec<Option<AnnotationSet>>,
+    pub sets: std::collections::HashMap<u64, AnnotationSet>,
 }
 
 impl AnnotationStore {
-    /// Ensure the store has at least `len` slots (push None for new files).
-    pub fn ensure_len(&mut self, len: usize) {
-        while self.sets.len() < len {
-            self.sets.push(None);
-        }
+    /// The annotation set for file `id`, if any.
+    pub fn get(&self, id: u64) -> Option<&AnnotationSet> {
+        self.sets.get(&id)
     }
 
-    /// Remove the entry at `index`, shifting subsequent entries.
-    pub fn remove(&mut self, index: usize) {
-        if index < self.sets.len() {
-            self.sets.remove(index);
-        }
+    /// Mutable annotation set for file `id`, if any.
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut AnnotationSet> {
+        self.sets.get_mut(&id)
+    }
+
+    /// Whether file `id` has an annotation set.
+    pub fn contains(&self, id: u64) -> bool {
+        self.sets.contains_key(&id)
+    }
+
+    /// Insert/replace the annotation set for file `id`.
+    pub fn insert(&mut self, id: u64, set: AnnotationSet) {
+        self.sets.insert(id, set);
+    }
+
+    /// Remove (and return) the annotation set for file `id`.
+    pub fn remove(&mut self, id: u64) -> Option<AnnotationSet> {
+        self.sets.remove(&id)
+    }
+
+    /// Get the set for file `id`, inserting one built by `f` if absent.
+    pub fn entry_or_insert_with(
+        &mut self,
+        id: u64,
+        f: impl FnOnce() -> AnnotationSet,
+    ) -> &mut AnnotationSet {
+        self.sets.entry(id).or_insert_with(f)
     }
 }
 

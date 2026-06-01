@@ -75,8 +75,31 @@ impl Default for FileSettings {
     }
 }
 
+thread_local! {
+    /// Monotonic source of stable per-file ids. Starts at 1 so 0 can be a
+    /// sentinel if ever needed. Never reused, so a removed file's id can't
+    /// collide with a later one (WASM is single-threaded, so a plain Cell
+    /// is sufficient).
+    static NEXT_FILE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+}
+
+/// Mint a fresh, process-unique stable id for a `LoadedFile`. Used as the
+/// annotation-store key so annotations track their file across list
+/// reordering and removal. Call once per `LoadedFile` at construction.
+pub fn next_file_id() -> u64 {
+    NEXT_FILE_ID.with(|c| {
+        let id = c.get();
+        c.set(id.wrapping_add(1));
+        id
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadedFile {
+    /// Stable, process-unique id (minted via `next_file_id()` at
+    /// construction). Used as the annotation-store key so annotations stay
+    /// bound to this exact file regardless of its position in `files`.
+    pub id: u64,
     pub name: String,
     pub audio: AudioData,
     pub spectrogram: SpectrogramData,
@@ -842,7 +865,9 @@ pub struct NavEntry {
 /// A snapshot of a file's annotation set for undo/redo.
 #[derive(Clone, Debug)]
 pub struct UndoEntry {
-    pub file_idx: usize,
+    /// Stable id (`LoadedFile.id`) of the file this snapshot belongs to, so
+    /// undo/redo restores onto the correct file even after the list changes.
+    pub file_id: u64,
     pub snapshot: Option<crate::annotations::AnnotationSet>,
 }
 
@@ -1509,6 +1534,13 @@ pub struct AppState {
     // Platform detection
     pub is_mobile: RwSignal<bool>,
     pub is_tauri: bool,
+    /// Stable "running on a mobile platform" flag, fixed at startup from the
+    /// user-agent only (NOT viewport width). Unlike `is_mobile` — which is a
+    /// layout signal that flips when a desktop window is narrowed below the
+    /// mobile breakpoint — this stays put, so it's the correct discriminator
+    /// for platform-specific behaviour like Android MediaStore vs a desktop
+    /// save dialog.
+    pub is_mobile_platform: bool,
 
     /// True when the browser viewport is pinch-zoomed in (visualViewport.scale > 1).
     /// Used to show a zoom-out button and disable custom pinch handlers.
@@ -2010,6 +2042,7 @@ impl AppState {
             debug_log_entries: RwSignal::new(Vec::new()),
             is_mobile: RwSignal::new(detect_mobile()),
             is_tauri: detect_tauri(),
+            is_mobile_platform: detect_mobile_ua(),
             viewport_zoomed: RwSignal::new(false),
             visual_viewport_rect: RwSignal::new((0.0, 0.0, 0.0, 1.0)),
             xc_browser_open: RwSignal::new(false),
@@ -2250,17 +2283,60 @@ impl AppState {
         self.nav_index.set(new_len.saturating_sub(1));
     }
 
+    /// Stable annotation key for the file at list position `idx` (untracked).
+    pub fn file_id_at(&self, idx: usize) -> Option<u64> {
+        self.files.with_untracked(|files| files.get(idx).map(|f| f.id))
+    }
+
+    /// List position of the file with stable id `id`, if it's still loaded.
+    pub fn file_idx_for_id(&self, id: u64) -> Option<usize> {
+        self.files.with_untracked(|files| files.iter().position(|f| f.id == id))
+    }
+
+    /// Stable annotation key for the currently-selected file (untracked).
+    pub fn current_file_id(&self) -> Option<u64> {
+        let idx = self.current_file_index.get_untracked()?;
+        self.file_id_at(idx)
+    }
+
+    /// Reactive variant of [`current_file_id`] — tracks `files` and
+    /// `current_file_index` so callers inside Effects/views re-run when the
+    /// active file changes.
+    pub fn current_file_id_tracked(&self) -> Option<u64> {
+        let idx = self.current_file_index.get()?;
+        self.files.with(|files| files.get(idx).map(|f| f.id))
+    }
+
+    /// Apply a snapshot to the annotation store: `Some` inserts/replaces,
+    /// `None` clears the file's entry. Used by undo/redo restore.
+    fn restore_annotation_snapshot(&self, file_id: u64, snapshot: Option<crate::annotations::AnnotationSet>) {
+        self.annotation_store.update(|store| {
+            match snapshot {
+                Some(set) => store.insert(file_id, set),
+                None => { store.remove(file_id); }
+            }
+        });
+        // Persist the file we actually mutated. The global autosave Effect only
+        // saves the currently-DISPLAYED file, so undoing/redoing a change on a
+        // file the user has since switched away from would otherwise never reach
+        // disk. If that file is no longer loaded, skip — its orphaned snapshot
+        // can't be persisted meaningfully.
+        if let Some(idx) = self.file_idx_for_id(file_id) {
+            crate::opfs::save_annotations(*self, idx);
+        }
+    }
+
     /// Snapshot the current file's annotation set onto the undo stack.
     /// Call this BEFORE making any annotation mutation.
     pub fn snapshot_annotations(&self) {
-        let idx = match self.current_file_index.get_untracked() {
-            Some(i) => i,
+        let file_id = match self.current_file_id() {
+            Some(id) => id,
             None => return,
         };
         let store = self.annotation_store.get_untracked();
-        let snapshot = store.sets.get(idx).cloned().flatten();
+        let snapshot = store.get(file_id).cloned();
         self.undo_stack.update(|stack| {
-            stack.push_undo(UndoEntry { file_idx: idx, snapshot });
+            stack.push_undo(UndoEntry { file_id, snapshot });
         });
     }
 
@@ -2279,16 +2355,13 @@ impl AppState {
 
         // Save current state to redo before restoring
         let store = self.annotation_store.get_untracked();
-        let current = store.sets.get(entry.file_idx).cloned().flatten();
+        let current = store.get(entry.file_id).cloned();
         self.undo_stack.update(|stack| {
-            stack.redo.push(UndoEntry { file_idx: entry.file_idx, snapshot: current });
+            stack.redo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot
-        self.annotation_store.update(|store| {
-            store.ensure_len(entry.file_idx + 1);
-            store.sets[entry.file_idx] = entry.snapshot;
-        });
+        self.restore_annotation_snapshot(entry.file_id, entry.snapshot);
         self.annotations_dirty.set(true);
     }
 
@@ -2307,16 +2380,13 @@ impl AppState {
 
         // Save current state to undo before restoring
         let store = self.annotation_store.get_untracked();
-        let current = store.sets.get(entry.file_idx).cloned().flatten();
+        let current = store.get(entry.file_id).cloned();
         self.undo_stack.update(|stack| {
-            stack.undo.push(UndoEntry { file_idx: entry.file_idx, snapshot: current });
+            stack.undo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot
-        self.annotation_store.update(|store| {
-            store.ensure_len(entry.file_idx + 1);
-            store.sets[entry.file_idx] = entry.snapshot;
-        });
+        self.restore_annotation_snapshot(entry.file_id, entry.snapshot);
         self.annotations_dirty.set(true);
     }
 
@@ -2588,14 +2658,14 @@ impl AppState {
 
     /// Frequency bounds implied by the current annotation selection, if any.
     pub fn selected_annotation_focus_range(&self) -> Option<(f64, f64)> {
-        let idx = self.current_file_index.get_untracked()?;
+        let file_id = self.current_file_id()?;
         let ids = self.selected_annotation_ids.get_untracked();
         if ids.is_empty() {
             return None;
         }
 
         let store = self.annotation_store.get_untracked();
-        let set = store.sets.get(idx)?.as_ref()?;
+        let set = store.get(file_id)?;
 
         let mut freq_lo = f64::MAX;
         let mut freq_hi = f64::MIN;

@@ -40,9 +40,9 @@ pub fn AnalysisPanel() -> impl IntoView {
     let annotation_dims = move || {
         let ids = state.selected_annotation_ids.get();
         if ids.is_empty() { return None; }
-        let idx = state.current_file_index.get()?;
+        let id = state.current_file_id_tracked()?;
         let store = state.annotation_store.get();
-        let set = store.sets.get(idx)?.as_ref()?;
+        let set = store.get(id)?;
         // Show dims for single selected annotation
         if ids.len() == 1 {
             let ann = set.annotations.iter().find(|a| a.id == ids[0])?;

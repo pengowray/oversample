@@ -216,6 +216,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         state.files.update(|files| {
             idx = files.len();
             files.push(LoadedFile {
+                id: crate::state::next_file_id(),
                 name,
                 audio,
                 spectrogram: placeholder_spec,

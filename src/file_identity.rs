@@ -338,10 +338,10 @@ fn get_merged_reference(state: AppState, file_index: usize) -> crate::state::Sid
     let xc_hashes = state.files.with_untracked(|files| {
         files.get(file_index).and_then(|f| f.xc_hashes.clone())
     });
-    let sidecar_id = state.annotation_store.with_untracked(|store| {
-        store.sets.get(file_index)
-            .and_then(|s| s.as_ref())
-            .map(|set| set.file_identity.clone())
+    let sidecar_id = state.file_id_at(file_index).and_then(|id| {
+        state.annotation_store.with_untracked(|store| {
+            store.get(id).map(|set| set.file_identity.clone())
+        })
     });
     merge_references(&xc_hashes, &sidecar_id)
 }

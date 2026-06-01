@@ -20,8 +20,9 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
         if ids.len() != 1 { return None; }
         let id = ids[0].clone();
         let idx = state.current_file_index.get()?;
+        let file_id = state.current_file_id_tracked()?;
         let store = state.annotation_store.get();
-        let set = store.sets.get(idx)?.as_ref()?;
+        let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| a.id == id)?;
         let region = match &ann.kind {
             AnnotationKind::Region(r) => r,

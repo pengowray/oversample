@@ -251,27 +251,25 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 }
             }
 
-            state.annotation_store.update(|store| {
-                store.ensure_len(idx + 1);
-                if store.sets[idx].is_none() {
-                    let new_set = state.files.with_untracked(|files| {
-                        files.get(idx).map(|f| {
-                            let id = f.identity.clone().unwrap_or_else(|| {
-                                crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
-                            });
-                            AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
+            if let Some(file_id) = state.file_id_at(idx) {
+                state.annotation_store.update(|store| {
+                    let set = store.entry_or_insert_with(file_id, || {
+                        state.files.with_untracked(|files| {
+                            files.get(idx).map(|f| {
+                                let id = f.identity.clone().unwrap_or_else(|| {
+                                    crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+                                });
+                                AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
+                            })
+                        }).unwrap_or_else(|| {
+                            AnnotationSet::new(crate::file_identity::identity_layer1("", 0))
                         })
                     });
-                    if let Some(set) = new_set {
-                        store.sets[idx] = Some(set);
-                    }
-                }
-                if let Some(ref mut set) = store.sets[idx] {
                     for ann in annotations {
                         set.annotations.push(ann);
                     }
-                }
-            });
+                });
+            }
             state.annotations_dirty.set(true);
             state.annotations_visible.set(true);
             state.show_info_toast("PSD peaks annotated");

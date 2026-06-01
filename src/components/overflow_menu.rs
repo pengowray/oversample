@@ -18,24 +18,21 @@ pub fn annotate_selection(state: &AppState) {
     let file_idx = state.current_file_index.get_untracked();
     if let (Some(sel), Some(idx)) = (selection, file_idx) {
         let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
+        let Some(file_id) = state.file_id_at(idx) else { return; };
+        let new_set = state.files.with_untracked(|files| {
+            files.get(idx).map(|f| {
+                let id = f.identity.clone().unwrap_or_else(|| {
+                    crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+                });
+                AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
+            })
+        });
+        let Some(new_set) = new_set else { return; };
         state.snapshot_annotations();
         let ann_id = generate_uuid();
         state.annotation_store.update(|store| {
-            store.ensure_len(idx + 1);
-            if store.sets[idx].is_none() {
-                let new_set = state.files.with_untracked(|files| {
-                    files.get(idx).map(|f| {
-                        let id = f.identity.clone().unwrap_or_else(|| {
-                            crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
-                        });
-                        AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
-                    })
-                });
-                if let Some(set) = new_set {
-                    store.sets[idx] = Some(set);
-                }
-            }
-            if let Some(ref mut set) = store.sets[idx] {
+            let set = store.entry_or_insert_with(file_id, || new_set);
+            {
                 let mut kind = AnnotationKind::Region(Region {
                     time_start: sel.time_start,
                     time_end: sel.time_end,
@@ -84,24 +81,21 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
     if duration <= 0.0 { return; }
     let time = time.clamp(0.0, duration);
 
+    let Some(file_id) = state.file_id_at(idx) else { return; };
+    let new_set = state.files.with_untracked(|files| {
+        files.get(idx).map(|f| {
+            let id = f.identity.clone().unwrap_or_else(|| {
+                crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+            });
+            AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
+        })
+    });
+    let Some(new_set) = new_set else { return; };
     state.snapshot_annotations();
     let ann_id = generate_uuid();
     state.annotation_store.update(|store| {
-        store.ensure_len(idx + 1);
-        if store.sets[idx].is_none() {
-            let new_set = state.files.with_untracked(|files| {
-                files.get(idx).map(|f| {
-                    let id = f.identity.clone().unwrap_or_else(|| {
-                        crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
-                    });
-                    AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
-                })
-            });
-            if let Some(set) = new_set {
-                store.sets[idx] = Some(set);
-            }
-        }
-        if let Some(ref mut set) = store.sets[idx] {
+        let set = store.entry_or_insert_with(file_id, || new_set);
+        {
             let mut kind = AnnotationKind::Marker(Marker {
                 time,
                 label: None,
@@ -483,8 +477,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let ids = state.selected_annotation_ids.get();
         if ids.is_empty() { return None; }
         let idx = state.current_file_index.get()?;
+        let file_id = state.current_file_id_tracked()?;
         let store = state.annotation_store.get();
-        let set = store.sets.get(idx)?.as_ref()?;
+        let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| ids.contains(&a.id))?;
 
         let region = match &ann.kind {
@@ -520,9 +515,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
     let ann_info = Signal::derive(move || {
         let ids = state.selected_annotation_ids.get();
         if ids.len() != 1 { return None; }
-        let idx = state.current_file_index.get()?;
+        let file_id = state.current_file_id_tracked()?;
         let store = state.annotation_store.get();
-        let set = store.sets.get(idx)?.as_ref()?;
+        let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| a.id == ids[0])?;
         let is_default = ann.label_default.unwrap_or(false);
         match &ann.kind {
@@ -563,9 +558,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let (tlo, thi) = get_freq_bounds(&state);
         if thi <= tlo { return false; }
         // Re-read annotation freq
-        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return false };
+        let file_id = match state.current_file_id() { Some(i) => i, None => return false };
         let store = state.annotation_store.get_untracked();
-        let set = match store.sets.get(idx).and_then(|s| s.as_ref()) { Some(s) => s, None => return false };
+        let set = match store.get(file_id) { Some(s) => s, None => return false };
         let ann = match set.annotations.iter().find(|a| a.id == info.0) { Some(a) => a, None => return false };
         if let AnnotationKind::Region(r) = &ann.kind {
             if let (Some(fl), Some(fh)) = (r.freq_low, r.freq_high) {
@@ -582,11 +577,11 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     let on_expand = Callback::new(move |_: ()| {
         let ids = state.selected_annotation_ids.get_untracked();
-        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return };
+        let file_id = match state.current_file_id() { Some(i) => i, None => return };
         if ids.is_empty() { return; }
         state.snapshot_annotations();
         state.annotation_store.update(|store| {
-            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+            if let Some(set) = store.get_mut(file_id) {
                 for ann in set.annotations.iter_mut() {
                     if ids.contains(&ann.id) {
                         if let AnnotationKind::Region(ref mut r) = ann.kind {
@@ -603,13 +598,13 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     let on_contract = Callback::new(move |_: ()| {
         let ids = state.selected_annotation_ids.get_untracked();
-        let idx = match state.current_file_index.get_untracked() { Some(i) => i, None => return };
+        let file_id = match state.current_file_id() { Some(i) => i, None => return };
         if ids.is_empty() { return; }
         let (lo, hi) = get_freq_bounds(&state);
         if hi <= lo { return; }
         state.snapshot_annotations();
         state.annotation_store.update(|store| {
-            if let Some(Some(ref mut set)) = store.sets.get_mut(idx) {
+            if let Some(set) = store.get_mut(file_id) {
                 for ann in set.annotations.iter_mut() {
                     if ids.contains(&ann.id) {
                         if let AnnotationKind::Region(ref mut r) = ann.kind {

@@ -1,7 +1,7 @@
 //! WAV export: process audio regions through the DSP pipeline and download as WAV files.
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 
 use crate::annotations::{Annotation, AnnotationKind, Region};
 use crate::audio::microphone::encode_wav;
@@ -209,7 +209,7 @@ pub(crate) fn export_one_region(
     filename: &str,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
-) {
+) -> Vec<u8> {
     let samples = process_region(source, sample_rate, start_time, end_time, params);
 
     // Determine output sample rate — TimeExpansion slows playback by changing rate
@@ -229,7 +229,157 @@ pub(crate) fn export_one_region(
     );
     crate::audio::guano::append_guano_chunk(&mut wav_data, &guano.to_text());
 
-    trigger_browser_download(&wav_data, filename);
+    wav_data
+}
+
+/// Outcome of saving one exported file.
+enum ExportSave {
+    Saved(String),
+    Cancelled,
+    Failed,
+}
+
+/// Save exported file bytes to the right place for the current platform.
+///
+/// - **Browser**: a blob download per file (a real browser honours them).
+/// - **Android**: each file written into the shared MediaStore (visible in the
+///   gallery / Files app) — WAV → `Recordings/Oversample/exports`,
+///   MP4 → `Movies/Oversample/exports`. The Tauri WebView silently drops
+///   `<a download>` blobs, which is why exports previously vanished.
+/// - **Desktop**: a native "Save As" dialog per file.
+///
+/// On Tauri the saves run SEQUENTIALLY (one awaited at a time) so a first-run
+/// Android permission prompt isn't raced by N concurrent invokes, and desktop
+/// dialogs appear one after another instead of all stacked at once. Platform is
+/// decided by `is_mobile_platform` (a stable startup flag), NOT the
+/// viewport-width `is_mobile` signal — otherwise narrowing a desktop window
+/// would wrongly try the Android-only MediaStore plugin.
+pub(crate) fn save_exports(state: &AppState, items: Vec<(String, Vec<u8>)>, is_video: bool) {
+    if items.is_empty() {
+        return;
+    }
+    if !state.is_tauri {
+        for (name, data) in &items {
+            trigger_browser_download(data, name);
+        }
+        return;
+    }
+
+    let mobile = state.is_mobile_platform;
+    let st = *state;
+    wasm_bindgen_futures::spawn_local(async move {
+        let (relative_path, mime) = if is_video {
+            ("Movies/Oversample/exports", "video/mp4")
+        } else {
+            ("Recordings/Oversample/exports", "audio/wav")
+        };
+        let total = items.len();
+        let mut saved = 0usize;
+        let mut failed = 0usize;
+        let mut last = String::new();
+        for (name, data) in &items {
+            let outcome = if mobile {
+                save_export_to_media_store(data, name, relative_path, mime).await
+            } else {
+                save_export_via_dialog(data, name).await
+            };
+            match outcome {
+                ExportSave::Saved(p) => { saved += 1; last = p; }
+                ExportSave::Failed => { failed += 1; }
+                ExportSave::Cancelled => {}
+            }
+        }
+        if saved > 0 {
+            if total == 1 {
+                st.show_info_toast(format!("Exported: {}", short_path(&last)));
+            } else if mobile {
+                st.show_info_toast(format!("Exported {saved}/{total} to {relative_path}"));
+            } else {
+                st.show_info_toast(format!("Exported {saved}/{total} files"));
+            }
+        } else if failed > 0 {
+            st.show_error_toast("Export failed to save");
+        }
+        // saved == 0 && failed == 0 → everything cancelled: stay silent.
+    });
+}
+
+/// Single-file convenience wrapper (used by the video export path).
+pub(crate) fn save_export_bytes(state: &AppState, data: Vec<u8>, filename: String, is_video: bool) {
+    save_exports(state, vec![(filename, data)], is_video);
+}
+
+/// Android: write export bytes into the shared MediaStore via the media-store
+/// plugin (collection chosen by MIME type + relative path).
+async fn save_export_to_media_store(
+    data: &[u8],
+    filename: &str,
+    relative_path: &str,
+    mime: &str,
+) -> ExportSave {
+    use crate::tauri_bridge::tauri_invoke;
+    let args = js_sys::Object::new();
+    js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
+    js_sys::Reflect::set(&args, &JsValue::from_str("relativePath"), &JsValue::from_str(relative_path)).ok();
+    js_sys::Reflect::set(&args, &JsValue::from_str("mimeType"), &JsValue::from_str(mime)).ok();
+    let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
+    array.copy_from(data);
+    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
+
+    match tauri_invoke("plugin:media-store|saveExportBytes", &args.into()).await {
+        Ok(result) => {
+            let path = js_sys::Reflect::get(&result, &JsValue::from_str("path"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            if path.is_empty() {
+                // e.g. pre-Q first run: storage permission was just granted and
+                // nothing is written yet (the plugin asks the UI to retry). Don't
+                // report this as a successful save.
+                log::warn!("Export not saved (permission/retry) — needs another tap");
+                ExportSave::Cancelled
+            } else {
+                log::info!("Export saved to shared storage: {}", path);
+                ExportSave::Saved(path)
+            }
+        }
+        Err(e) => {
+            log::error!("Export save failed: {}", e);
+            ExportSave::Failed
+        }
+    }
+}
+
+/// Desktop: write export bytes through a native "Save As" dialog.
+async fn save_export_via_dialog(data: &[u8], filename: &str) -> ExportSave {
+    use crate::tauri_bridge::tauri_invoke;
+    let args = js_sys::Object::new();
+    js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
+    let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
+    array.copy_from(data);
+    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
+
+    match tauri_invoke("save_export_file", &args.into()).await {
+        Ok(result) => {
+            let path = result.as_string().unwrap_or_default();
+            if path.is_empty() {
+                log::info!("Export cancelled");
+                ExportSave::Cancelled
+            } else {
+                log::info!("Export saved to: {}", path);
+                ExportSave::Saved(path)
+            }
+        }
+        Err(e) => {
+            log::error!("Export save failed: {}", e);
+            ExportSave::Failed
+        }
+    }
+}
+
+/// Trim a path/URI down to its trailing component for a compact toast.
+fn short_path(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 /// Build GUANO metadata for an exported WAV file.
@@ -345,9 +495,9 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
 
     // Count selected annotations that are regions/segments (have time bounds)
     let (region_count, region_duration_sum) = if !selected_ids.is_empty() {
-        if let Some(idx) = state.current_file_index.get() {
+        if let Some(id) = state.current_file_id_tracked() {
             let store = state.annotation_store.get();
-            if let Some(Some(set)) = store.sets.get(idx) {
+            if let Some(set) = store.get(id) {
                 let mut count = 0usize;
                 let mut dur = 0.0f64;
                 for a in &set.annotations {
@@ -424,12 +574,12 @@ pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
     if selected_ids.is_empty() {
         return Vec::new();
     }
-    let idx = match state.current_file_index.get_untracked() {
+    let id = match state.current_file_id() {
         Some(i) => i,
         None => return Vec::new(),
     };
     let store = state.annotation_store.get_untracked();
-    let set = match store.sets.get(idx).and_then(|s| s.as_ref()) {
+    let set = match store.get(id) {
         Some(s) => s,
         None => return Vec::new(),
     };
@@ -475,6 +625,11 @@ pub fn export_selected(state: &AppState) {
 
     let regions = get_selected_regions(state);
 
+    // Collect every region's WAV bytes first, then hand them to save_exports
+    // as a batch so multi-region exports are saved one-at-a-time (no stacked
+    // dialogs / racing permission prompts) and reported with a single toast.
+    let mut exports: Vec<(String, Vec<u8>)> = Vec::new();
+
     if !regions.is_empty() {
         // Export selected annotation regions
         for (i, (_annotation, region)) in regions.iter().enumerate() {
@@ -492,33 +647,38 @@ pub fn export_selected(state: &AppState) {
                 }
             };
             let filename = format!("{base_name}{suffix}.wav");
-            export_one_region(
+            let wav_data = export_one_region(
                 source.as_ref(), sample_rate,
                 region.time_start, region.time_end,
                 &params, &filename,
                 source_filename, source_guano,
             );
+            exports.push((filename, wav_data));
         }
     } else if let Some(sel) = state.selection.get_untracked() {
         // Export current selection
         let params = build_export_params(state, None, false, sample_rate);
         let filename = format!("{base_name}_selection.wav");
-        export_one_region(
+        let wav_data = export_one_region(
             source.as_ref(), sample_rate,
             sel.time_start, sel.time_end,
             &params, &filename,
             source_filename, source_guano,
         );
+        exports.push((filename, wav_data));
     } else {
         // No selection — export the whole file
         let params = build_export_params(state, None, false, sample_rate);
         let duration = file.audio.source.duration_secs();
         let filename = format!("{base_name}_export.wav");
-        export_one_region(
+        let wav_data = export_one_region(
             source.as_ref(), sample_rate,
             0.0, duration,
             &params, &filename,
             source_filename, source_guano,
         );
+        exports.push((filename, wav_data));
     }
+
+    save_exports(state, exports, false);
 }

@@ -183,9 +183,15 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         return;
     }
 
+    // Resolve the in-memory list index to the file's stable id (untracked).
+    let file_id = match state.file_id_at(file_idx) {
+        Some(id) => id,
+        None => return,
+    };
+
     // Sync file identity, noise profile, and touch modified_at before saving
     state.annotation_store.update(|store| {
-        if let Some(Some(ref mut set)) = store.sets.get_mut(file_idx) {
+        if let Some(set) = store.get_mut(file_id) {
             // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
             if let Some(id) = state.files.with_untracked(|files| {
                 files.get(file_idx).and_then(|f| f.identity.clone())
@@ -199,7 +205,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     });
 
     let store = state.annotation_store.get_untracked();
-    let set = match store.sets.get(file_idx).and_then(|s| s.as_ref()) {
+    let set = match store.get(file_id) {
         Some(s) => s.clone(),
         None => return,
     };
@@ -259,24 +265,32 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         None => { state.show_error_toast("No file path — file was not opened from disk"); return; }
     };
 
+    // Resolve the in-memory list index to the file's stable id (untracked).
+    let file_id = match state.file_id_at(file_idx) {
+        Some(id) => id,
+        None => { state.show_error_toast("Failed to create annotation set"); return; }
+    };
+
     // Ensure an AnnotationSet exists, creating one if needed
     state.annotation_store.update(|store| {
-        store.ensure_len(file_idx + 1);
-        if store.sets[file_idx].is_none() {
-            let new_set = state.files.with_untracked(|files| {
+        // Build a fresh set from the LoadedFile only if one isn't already stored.
+        let new_set = if store.contains(file_id) {
+            None
+        } else {
+            state.files.with_untracked(|files| {
                 files.get(file_idx).map(|f| {
                     let id = f.identity.clone().unwrap_or_else(|| {
                         crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
                     });
                     crate::annotations::AnnotationSet::new_with_metadata(id, &f.audio, f.cached_peak_db, f.cached_full_peak_db)
                 })
-            });
-            if let Some(set) = new_set {
-                store.sets[file_idx] = Some(set);
-            }
+            })
+        };
+        if let Some(set) = new_set {
+            store.insert(file_id, set);
         }
         // Sync file identity and noise profile, touch modified_at
-        if let Some(Some(ref mut set)) = store.sets.get_mut(file_idx) {
+        if let Some(set) = store.get_mut(file_id) {
             if let Some(id) = state.files.with_untracked(|files| {
                 files.get(file_idx).and_then(|f| f.identity.clone())
             }) {
@@ -288,7 +302,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     });
 
     let store = state.annotation_store.get_untracked();
-    let set = match store.sets.get(file_idx).and_then(|s| s.as_ref()) {
+    let set = match store.get(file_id) {
         Some(s) => s.clone(),
         None => { state.show_error_toast("Failed to create annotation set"); return; }
     };
@@ -316,8 +330,15 @@ pub fn save_annotations_to_opfs(state: crate::state::AppState, file_idx: usize) 
 }
 
 /// Apply a loaded sidecar to the annotation store and restore NR profile to file settings.
-fn apply_loaded_sidecar(state: crate::state::AppState, file_idx: usize, loaded: crate::annotations::AnnotationSet) {
+/// Keyed by the file's STABLE id; the list position is re-resolved here because
+/// an async load may have completed after the list changed.
+fn apply_loaded_sidecar(state: crate::state::AppState, file_id: u64, loaded: crate::annotations::AnnotationSet) {
     use leptos::prelude::Update;
+
+    // Re-resolve the file's CURRENT position from its stable id. If it's gone
+    // (closed during the load), drop the loaded set rather than applying it to
+    // whatever file now sits at the old index.
+    let Some(file_idx) = state.file_idx_for_id(file_id) else { return; };
 
     // If the sidecar has a noise profile, store it in the file's per-file settings.
     // Also restore cached peak values from sidecar metadata if not yet computed.
@@ -353,18 +374,21 @@ fn apply_loaded_sidecar(state: crate::state::AppState, file_idx: usize, loaded: 
     }
 
     state.annotation_store.update(|store| {
-        store.ensure_len(file_idx + 1);
-        store.sets[file_idx] = Some(loaded);
+        store.insert(file_id, loaded);
     });
 }
 
 /// Try to load annotations for a file (OPFS on browser, central store + sidecar on Tauri).
-/// If found, merges into the annotation store at the given index.
+/// If found, merges into the annotation store for that file.
 pub fn load_annotations(state: crate::state::AppState, file_idx: usize, identity: crate::annotations::FileIdentity) {
+    // Bind to the file's STABLE id at call time. The async load below can
+    // outlive list changes; resolving the id only at completion would risk
+    // applying these annotations to whatever file later occupies `file_idx`.
+    let Some(file_id) = state.file_id_at(file_idx) else { return; };
     if state.is_tauri {
-        load_annotations_tauri(state, file_idx, identity);
+        load_annotations_tauri(state, file_id, identity);
     } else {
-        load_annotations_opfs(state, file_idx, identity);
+        load_annotations_opfs(state, file_id, identity);
     }
 }
 
@@ -374,7 +398,7 @@ pub fn load_annotations_from_opfs(state: crate::state::AppState, file_idx: usize
 }
 
 /// Browser: try OPFS with fallback key chain.
-fn load_annotations_opfs(state: crate::state::AppState, file_idx: usize, identity: crate::annotations::FileIdentity) {
+fn load_annotations_opfs(state: crate::state::AppState, file_id: u64, identity: crate::annotations::FileIdentity) {
     use leptos::prelude::GetUntracked;
 
     let key = opfs_key(&identity);
@@ -402,16 +426,15 @@ fn load_annotations_opfs(state: crate::state::AppState, file_idx: usize, identit
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
-                            let already_has = state.annotation_store.get_untracked()
-                                .sets.get(file_idx)
-                                .and_then(|s| s.as_ref())
-                                .is_some();
+                            let already_has = state.annotation_store.get_untracked().contains(file_id);
                             if !already_has {
-                                apply_loaded_sidecar(state, file_idx, loaded);
-                                log::debug!("OPFS loaded annotations for file {file_idx}: {try_key}");
+                                apply_loaded_sidecar(state, file_id, loaded);
+                                log::debug!("OPFS loaded annotations for file id {file_id}: {try_key}");
                                 // If found via fallback key, re-save under primary key
                                 if i > 0 {
-                                    save_annotations(state, file_idx);
+                                    if let Some(idx) = state.file_idx_for_id(file_id) {
+                                        save_annotations(state, idx);
+                                    }
                                 }
                             }
                         }
@@ -428,7 +451,7 @@ fn load_annotations_opfs(state: crate::state::AppState, file_idx: usize, identit
 
 /// Tauri: try central annotations store, then file-adjacent sidecar.
 /// Also probes for file-adjacent sidecar existence and sets `had_sidecar` flag.
-fn load_annotations_tauri(state: crate::state::AppState, file_idx: usize, identity: crate::annotations::FileIdentity) {
+fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity: crate::annotations::FileIdentity) {
     use leptos::prelude::{GetUntracked, Update};
 
     let key = opfs_key(&identity);
@@ -445,11 +468,13 @@ fn load_annotations_tauri(state: crate::state::AppState, file_idx: usize, identi
             None
         };
         if sidecar_yaml.is_some() {
-            state.files.update(|files| {
-                if let Some(f) = files.get_mut(file_idx) {
-                    f.had_sidecar = true;
-                }
-            });
+            if let Some(idx) = state.file_idx_for_id(file_id) {
+                state.files.update(|files| {
+                    if let Some(f) = files.get_mut(idx) {
+                        f.had_sidecar = true;
+                    }
+                });
+            }
         }
 
         // Try central annotations store first
@@ -464,15 +489,14 @@ fn load_annotations_tauri(state: crate::state::AppState, file_idx: usize, identi
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
-                            let already_has = state.annotation_store.get_untracked()
-                                .sets.get(file_idx)
-                                .and_then(|s| s.as_ref())
-                                .is_some();
+                            let already_has = state.annotation_store.get_untracked().contains(file_id);
                             if !already_has {
-                                apply_loaded_sidecar(state, file_idx, loaded);
-                                log::debug!("Tauri loaded central annotations for file {file_idx}: {try_key}");
+                                apply_loaded_sidecar(state, file_id, loaded);
+                                log::debug!("Tauri loaded central annotations for file id {file_id}: {try_key}");
                                 if i > 0 {
-                                    save_annotations(state, file_idx);
+                                    if let Some(idx) = state.file_idx_for_id(file_id) {
+                                        save_annotations(state, idx);
+                                    }
                                 }
                             }
                         }
@@ -490,15 +514,14 @@ fn load_annotations_tauri(state: crate::state::AppState, file_idx: usize, identi
             let path = file_path.as_ref().unwrap();
             match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                 Ok(loaded) => {
-                    let already_has = state.annotation_store.get_untracked()
-                        .sets.get(file_idx)
-                        .and_then(|s| s.as_ref())
-                        .is_some();
+                    let already_has = state.annotation_store.get_untracked().contains(file_id);
                     if !already_has {
-                        apply_loaded_sidecar(state, file_idx, loaded);
-                        log::debug!("Tauri loaded sidecar for file {file_idx}: {path}.batm");
+                        apply_loaded_sidecar(state, file_id, loaded);
+                        log::debug!("Tauri loaded sidecar for file id {file_id}: {path}.batm");
                         // Re-save to central store so it's found faster next time
-                        save_annotations(state, file_idx);
+                        if let Some(idx) = state.file_idx_for_id(file_id) {
+                            save_annotations(state, idx);
+                        }
                     }
                 }
                 Err(e) => log::warn!("Tauri sidecar deserialize error: {e}"),
