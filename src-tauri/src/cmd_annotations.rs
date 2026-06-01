@@ -83,6 +83,33 @@ pub async fn export_annotations_file(_filename: String, _yaml: String) -> Result
     Err("File export dialog not supported on Android".into())
 }
 
+/// Show a native save dialog and write exported audio/video bytes (WAV/MP4)
+/// to the chosen path. Desktop only — Android routes exports through the
+/// MediaStore plugin instead. Returns the saved path, or empty if cancelled.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub async fn save_export_file(filename: String, data: Vec<u8>) -> Result<String, String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name(&filename)
+        .set_title("Export")
+        .save_file()
+        .await;
+    match handle {
+        Some(file) => {
+            std::fs::write(file.path(), &data)
+                .map_err(|e| format!("Failed to write export: {e}"))?;
+            Ok(file.path().to_string_lossy().to_string())
+        }
+        None => Ok(String::new()), // cancelled
+    }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn save_export_file(_filename: String, _data: Vec<u8>) -> Result<String, String> {
+    Err("Native save dialog not supported on Android".into())
+}
+
 /// Show a native file-open dialog and return the selected paths.
 #[cfg(not(target_os = "android"))]
 #[tauri::command]

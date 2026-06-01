@@ -12,6 +12,7 @@
     "usb-audio:allow-closeUsbDevice",
     "media-store:allow-saveToSharedStorage",
     "media-store:allow-saveWavBytes",
+    "media-store:allow-saveExportBytes",
     "media-store:allow-createRecordingEntry",
     "media-store:allow-finalizeRecordingEntry",
     "media-store:allow-cancelRecordingEntry",

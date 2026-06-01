@@ -83,6 +83,7 @@ pub fn run() {
             cmd_annotations::read_central_annotations,
             cmd_annotations::write_central_annotations,
             cmd_annotations::export_annotations_file,
+            cmd_annotations::save_export_file,
             cmd_annotations::open_file_dialog,
         ])
         .run(tauri::generate_context!())

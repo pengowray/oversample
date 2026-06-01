@@ -39,6 +39,14 @@ data class CreateRecordingEntryArgs(val filename: String = "")
 @InvokeArg
 data class ExportFileArgs(val internalPath: String = "", val suggestedName: String = "")
 
+@InvokeArg
+data class SaveExportBytesArgs(
+    val filename: String = "",
+    val data: ByteArray = ByteArray(0),
+    val mimeType: String = "application/octet-stream",
+    val relativePath: String = "",
+)
+
 @TauriPlugin
 class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
 
@@ -132,6 +140,44 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(result)
         } catch (e: Exception) {
             Log.e(TAG, "saveWavBytes failed", e)
+            invoke.reject("Failed to save: ${e.message}")
+        }
+    }
+
+    /**
+     * Save exported file bytes (WAV / MP4 / etc) to shared storage at a
+     * given relative path, choosing the MediaStore collection from the MIME
+     * type (audio/* → Audio collection, video/* → Video, else Downloads).
+     *
+     * Unlike a <a download> blob, which the Tauri WebView silently drops,
+     * this writes a real file visible in the gallery / Files app. Used by
+     * the WAV/MP4 export buttons so exports land somewhere findable.
+     */
+    @Command
+    fun saveExportBytes(invoke: Invoke) {
+        val args = invoke.parseArgs(SaveExportBytesArgs::class.java)
+        if (args.data.isEmpty()) {
+            invoke.reject("No data provided")
+            return
+        }
+        val filename = args.filename.ifEmpty { "export" }
+
+        try {
+            val resultPath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveExportViaMediaStore(args.data, filename, args.mimeType, args.relativePath)
+            } else {
+                if (!hasWritePermission()) {
+                    pendingPermissionInvoke = invoke
+                    requestWritePermission()
+                    return
+                }
+                saveExportViaDirectFile(args.data, filename, args.mimeType, args.relativePath)
+            }
+            val result = JSObject()
+            result.put("path", resultPath)
+            invoke.resolve(result)
+        } catch (e: Exception) {
+            Log.e(TAG, "saveExportBytes failed", e)
             invoke.reject("Failed to save: ${e.message}")
         }
     }
@@ -540,6 +586,70 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
         )
 
         Log.i(TAG, "Saved bytes to file: ${destFile.absolutePath}")
+        return destFile.absolutePath
+    }
+
+    /** Pick the MediaStore collection that matches a MIME type. */
+    private fun collectionUriFor(mimeType: String): Uri {
+        return when {
+            mimeType.startsWith("video/") ->
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            mimeType.startsWith("audio/") ->
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            else ->
+                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        }
+    }
+
+    /** API 29+: Save raw export bytes via MediaStore into the collection/folder
+     *  implied by the MIME type and relative path. */
+    private fun saveExportViaMediaStore(
+        data: ByteArray,
+        displayName: String,
+        mimeType: String,
+        relativePath: String,
+    ): String {
+        val resolver = activity.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            if (relativePath.isNotEmpty()) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            }
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val collection = collectionUriFor(mimeType)
+        val uri = resolver.insert(collection, values)
+            ?: throw Exception("Failed to create MediaStore entry for $displayName")
+        resolver.openOutputStream(uri)?.use { it.write(data) }
+            ?: throw Exception("Failed to open output stream for $displayName")
+        values.clear()
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        Log.i(TAG, "Saved export bytes to MediaStore: $displayName -> $uri")
+        return uri.toString()
+    }
+
+    /** API 24-28: Save raw export bytes via direct file I/O into a shared folder. */
+    @Suppress("DEPRECATION")
+    private fun saveExportViaDirectFile(
+        data: ByteArray,
+        displayName: String,
+        mimeType: String,
+        relativePath: String,
+    ): String {
+        val rel = relativePath.ifEmpty { "Download/$SUBFOLDER/exports" }
+        val baseDir = File(Environment.getExternalStorageDirectory(), rel)
+        baseDir.mkdirs()
+        val destFile = File(baseDir, displayName)
+        destFile.writeBytes(data)
+        MediaScannerConnection.scanFile(
+            activity,
+            arrayOf(destFile.absolutePath),
+            arrayOf(mimeType),
+            null
+        )
+        Log.i(TAG, "Saved export bytes to file: ${destFile.absolutePath}")
         return destFile.absolutePath
     }
 
