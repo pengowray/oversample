@@ -297,6 +297,52 @@ async fn stop_foreground_service(state: &AppState) {
     }
 }
 
+/// Persist that we've surfaced the notification-permission rationale so it never
+/// re-prompts. Shared by the rationale modal and the no-op fast path below.
+pub(crate) fn mark_notif_asked(state: &AppState) {
+    state.notif_perm_asked.set(true);
+    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = ls.set_item("oversample_notif_perm_asked", "true");
+    }
+}
+
+/// Invoke the native POST_NOTIFICATIONS request (called after the in-app
+/// rationale, so the OS prompt is never shown cold). No-op off mobile Tauri.
+pub(crate) async fn request_notification_permission(state: &AppState) {
+    if !state.is_tauri || !state.is_mobile.get_untracked() {
+        return;
+    }
+    let _ = tauri_invoke_no_args("plugin:audio-service|requestNotificationPermission").await;
+}
+
+/// During mic setup on mobile Tauri, decide whether to surface the notification
+/// rationale before the OS asks. We ask the plugin whether a runtime request is
+/// needed (API 33+) and not yet granted; only then do we show the rationale.
+/// Persists `notif_perm_asked` so this happens at most once. Best-effort.
+async fn maybe_prompt_notifications(state: &AppState) {
+    if !state.is_tauri || !state.is_mobile.get_untracked() {
+        return;
+    }
+    if state.notif_perm_asked.get_untracked() {
+        return;
+    }
+    let result = match tauri_invoke_no_args("plugin:audio-service|isNotificationPermissionGranted").await {
+        Ok(v) => v,
+        Err(_) => return, // plugin unavailable — leave the Listen-time path as-is
+    };
+    let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
+        .ok().and_then(|v| v.as_bool()).unwrap_or(true);
+    let runtime_required = js_sys::Reflect::get(&result, &JsValue::from_str("runtimeRequired"))
+        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+    if !runtime_required || granted {
+        // Older Android (no runtime permission) or already granted — nothing to
+        // ask; record it so we don't re-check on every acquisition.
+        mark_notif_asked(state);
+        return;
+    }
+    state.show_notif_rationale.set(true);
+}
+
 // ── Backend resolution ──────────────────────────────────────────────────
 
 /// Convert `state.mic_backend` to `ActiveBackend`.
@@ -342,6 +388,8 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                 state.mic_permission_dialog_shown.set(elapsed > 1500.0);
                 state.mic_backend.set(Some(MicBackend::Browser));
                 state.mic_acquisition_state.set(MicAcquisitionState::Ready);
+                let st = *state;
+                wasm_bindgen_futures::spawn_local(async move { maybe_prompt_notifications(&st).await; });
                 Some(MicBackend::Browser)
             } else {
                 state.mic_acquisition_state.set(MicAcquisitionState::Failed);
@@ -361,6 +409,8 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                     let elapsed = js_sys::Date::now() - t0;
                     state.mic_permission_dialog_shown.set(elapsed > 1500.0);
                     state.mic_acquisition_state.set(MicAcquisitionState::Ready);
+                    let st = *state;
+                    wasm_bindgen_futures::spawn_local(async move { maybe_prompt_notifications(&st).await; });
                     return Some(backend);
                 } else {
                     state.mic_strategy.set(MicStrategy::Ask);

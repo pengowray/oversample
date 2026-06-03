@@ -32,11 +32,10 @@ data class StartAudioArgs(val mode: String = "recording") // "listening" | "reco
 @TauriPlugin
 class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
 
-    private var pendingNotifInvoke: Invoke? = null
-    private var pendingStartMode: String = "recording"
+    private var pendingNotifPermInvoke: Invoke? = null
 
     companion object {
-        const val REQUEST_POST_NOTIFICATIONS = 1101
+        const val REQUEST_NOTIF_PERM = 1102
     }
 
     /** Start the foreground audio service. Must be invoked while the Activity is
@@ -56,25 +55,51 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
 
-        // On API 33+, request POST_NOTIFICATIONS so the ongoing FGS notification
-        // is visible. The service still runs if denied, so we start it either way.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED) {
-            pendingNotifInvoke = invoke
-            pendingStartMode = args.mode
-            ActivityCompat.requestPermissions(
-                activity,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                REQUEST_POST_NOTIFICATIONS,
-            )
-            return
-        }
-
+        // Notification permission (POST_NOTIFICATIONS) is requested separately
+        // and proactively during mic setup (requestNotificationPermission), with
+        // an in-app rationale — so we never trigger an OS prompt here at
+        // Listen/Record time. The FGS runs regardless; if notifications are
+        // denied the ongoing notification is simply suppressed by the OS.
         ForegroundAudioService.start(activity, args.mode)
         val result = JSObject()
         result.put("started", true)
         invoke.resolve(result)
+    }
+
+    /** Report whether the notification permission is granted, and whether a
+     *  runtime request is even needed (API 33+). Lets the frontend decide
+     *  whether to show the rationale before requesting. */
+    @Command
+    fun isNotificationPermissionGranted(invoke: Invoke) {
+        val runtimeRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val granted = !runtimeRequired ||
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        val result = JSObject()
+        result.put("granted", granted)
+        result.put("runtimeRequired", runtimeRequired)
+        invoke.resolve(result)
+    }
+
+    /** Request POST_NOTIFICATIONS (API 33+). Resolves immediately as granted on
+     *  older OSes or if already granted. Called after the in-app rationale so the
+     *  user understands why the OS prompt appears. */
+    @Command
+    fun requestNotificationPermission(invoke: Invoke) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED) {
+            val result = JSObject()
+            result.put("granted", true)
+            invoke.resolve(result)
+            return
+        }
+        pendingNotifPermInvoke = invoke
+        ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_NOTIF_PERM,
+        )
     }
 
     /** Update the running service's notification mode (listening <-> recording).
@@ -127,18 +152,16 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /** Called from MainActivity.onRequestPermissionsResult (mirrors UsbAudioPlugin).
-     *  Starts the service regardless of the notification-permission outcome. */
+     *  Resolves the pending requestNotificationPermission call with the outcome. */
     fun handlePermissionResult(requestCode: Int, grantResults: IntArray) {
-        if (requestCode != REQUEST_POST_NOTIFICATIONS) return
-        val invoke = pendingNotifInvoke ?: return
-        pendingNotifInvoke = null
+        if (requestCode != REQUEST_NOTIF_PERM) return
+        val invoke = pendingNotifPermInvoke ?: return
+        pendingNotifPermInvoke = null
 
-        ForegroundAudioService.start(activity, pendingStartMode)
         val granted = grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
         val result = JSObject()
-        result.put("started", true)
-        result.put("notificationsGranted", granted)
+        result.put("granted", granted)
         invoke.resolve(result)
     }
 }

@@ -46,6 +46,8 @@ fn main() {
                     "stopForegroundAudio",
                     "isIgnoringBatteryOptimizations",
                     "requestDisableBatteryOptimization",
+                    "isNotificationPermissionGranted",
+                    "requestNotificationPermission",
                 ]),
             ),
     )

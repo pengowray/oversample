@@ -1640,6 +1640,27 @@ fn MainArea() -> impl IntoView {
                     </div>
                 }
             })}
+
+            // Notification-permission rationale (Android; shown during mic setup
+            // before the OS POST_NOTIFICATIONS prompt so the user understands why).
+            {move || state.show_notif_rationale.get().then(|| {
+                view! {
+                    <div class="xc-modal-overlay" on:click=move |_: web_sys::MouseEvent| dismiss_notif_rationale(&state, false)>
+                        <div class="xc-modal" style="width: min(92vw, 380px);" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
+                            <div style="padding: 20px 18px 8px;">
+                                <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">"Allow notifications?"</div>
+                                <div style="font-size: 13px; color: #bbb; line-height: 1.5;">
+                                    "While listening or recording, Oversample shows an ongoing notification so Android keeps capturing audio when the app is in the background or the screen is off. Next, Android will ask permission to show it — this app never sends promotional messages."
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; justify-content: flex-end; padding: 8px 16px 16px;">
+                                <button class="setting-btn" style="padding: 6px 16px;" on:click=move |_: web_sys::MouseEvent| dismiss_notif_rationale(&state, false)>"Not now"</button>
+                                <button class="setting-btn" style="padding: 6px 16px; background: #46c; color: #fff; font-weight: 600;" on:click=move |_: web_sys::MouseEvent| dismiss_notif_rationale(&state, true)>"Continue"</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            })}
         </div>
     }
 }
@@ -1657,6 +1678,20 @@ fn dismiss_background_hint(state: &AppState) {
     state.background_hint_dismissed.set(true);
     if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = ls.set_item("oversample_bg_audio_hint_dismissed", "true");
+    }
+}
+
+/// Dismiss the notification-permission rationale (persisting that we've asked so
+/// it never re-prompts). When `enable`, kick off the native POST_NOTIFICATIONS
+/// request — the OS prompt now appears with the user already knowing why.
+fn dismiss_notif_rationale(state: &AppState, enable: bool) {
+    state.show_notif_rationale.set(false);
+    crate::audio::microphone::mark_notif_asked(state);
+    if enable {
+        let st = *state;
+        wasm_bindgen_futures::spawn_local(async move {
+            crate::audio::microphone::request_notification_permission(&st).await;
+        });
     }
 }
 

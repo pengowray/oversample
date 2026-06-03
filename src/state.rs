@@ -1532,6 +1532,14 @@ pub struct AppState {
     /// audio guidance, so we don't nag again. Stored in localStorage under
     /// `oversample_bg_audio_hint_dismissed`.
     pub background_hint_dismissed: RwSignal<bool>,
+    /// True when the in-app "we'll ask for notification permission, here's why"
+    /// rationale modal should show (Android, before the OS POST_NOTIFICATIONS
+    /// prompt for the foreground-service notification).
+    pub show_notif_rationale: RwSignal<bool>,
+    /// Persisted flag: we've already surfaced the notification rationale (and
+    /// requested or the user declined), so we don't prompt again. Stored under
+    /// `oversample_notif_perm_asked`.
+    pub notif_perm_asked: RwSignal<bool>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -2051,6 +2059,14 @@ impl AppState {
                 web_sys::window()
                     .and_then(|w| w.local_storage().ok().flatten())
                     .and_then(|ls| ls.get_item("oversample_bg_audio_hint_dismissed").ok().flatten())
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+            }),
+            show_notif_rationale: RwSignal::new(false),
+            notif_perm_asked: RwSignal::new({
+                web_sys::window()
+                    .and_then(|w| w.local_storage().ok().flatten())
+                    .and_then(|ls| ls.get_item("oversample_notif_perm_asked").ok().flatten())
                     .map(|v| v == "true")
                     .unwrap_or(false)
             }),

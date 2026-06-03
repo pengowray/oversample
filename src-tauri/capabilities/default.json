@@ -25,6 +25,8 @@
     "audio-service:allow-updateForegroundAudio",
     "audio-service:allow-stopForegroundAudio",
     "audio-service:allow-isIgnoringBatteryOptimizations",
-    "audio-service:allow-requestDisableBatteryOptimization"
+    "audio-service:allow-requestDisableBatteryOptimization",
+    "audio-service:allow-isNotificationPermissionGranted",
+    "audio-service:allow-requestNotificationPermission"
   ]
 }
