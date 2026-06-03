@@ -177,6 +177,66 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-isIgnoringBatteryOptimizations",
+          "markdownDescription": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestDisableBatteryOptimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-requestDisableBatteryOptimization",
+          "markdownDescription": "Enables the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the startForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-startForegroundAudio",
+          "markdownDescription": "Enables the startForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stopForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-stopForegroundAudio",
+          "markdownDescription": "Enables the stopForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the updateForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-updateForegroundAudio",
+          "markdownDescription": "Enables the updateForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-isIgnoringBatteryOptimizations",
+          "markdownDescription": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestDisableBatteryOptimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-requestDisableBatteryOptimization",
+          "markdownDescription": "Denies the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the startForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-startForegroundAudio",
+          "markdownDescription": "Denies the startForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stopForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-stopForegroundAudio",
+          "markdownDescription": "Denies the stopForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the updateForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-updateForegroundAudio",
+          "markdownDescription": "Denies the updateForegroundAudio command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

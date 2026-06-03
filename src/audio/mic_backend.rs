@@ -17,6 +17,7 @@ use crate::dsp::zc_divide::zc_divide;
 use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
 use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
+use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use std::cell::RefCell;
 
 /// Build IPC args for `mic_start_recording` / `usb_start_recording`.
@@ -139,8 +140,16 @@ thread_local! {
     static NATIVE_MIC_OPEN: RefCell<Option<NativeMode>> = const { RefCell::new(None) };
     /// AudioContext for HET playback (output only, no mic input).
     static HET_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
-    /// Next scheduled playback time for HET audio buffers.
+    /// Next scheduled playback time for HET audio buffers (the schedule cursor).
     static HET_NEXT_TIME: RefCell<f64> = const { RefCell::new(0.0) };
+    /// Scheduled live-playback sources paired with their scheduled end time, so
+    /// `stop_het_playback` can stop them instantly on Stop / skip-ahead and we
+    /// can prune ended ones. Without this, already-scheduled buffers keep
+    /// sounding for seconds after the user presses Stop.
+    static HET_SOURCES: RefCell<Vec<(web_sys::AudioBufferSourceNode, f64)>> = const { RefCell::new(Vec::new()) };
+    /// Count of skip-ahead (dropped-backlog) events since last read — a coarse
+    /// signal that live playback is being throttled (e.g. app backgrounded).
+    static HET_SKIP_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Keep the event listener closure alive.
     static TAURI_EVENT_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
     /// Unlisten function returned by Tauri event subscription.
@@ -786,9 +795,73 @@ async fn setup_het_context(state: &AppState) -> bool {
     }
     HET_CTX.with(|c| *c.borrow_mut() = Some(het_ctx));
     HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
+    HET_SOURCES.with(|s| s.borrow_mut().clear());
     NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
     NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
     true
+}
+
+/// Stop and drop all tracked live-playback sources. Does not touch the schedule
+/// cursor — used internally by the skip-ahead path (which resets the cursor via
+/// the normal scheduling math) and by `stop_het_playback`.
+// `AudioBufferSourceNode::stop_with_when` is marked deprecated in web-sys (the
+// canonical method lives on the AudioScheduledSourceNode parent), but it's the
+// available binding and works; the parallel `start_with_when` we already use is
+// not flagged. Allow it rather than pulling in another web-sys feature.
+#[allow(deprecated)]
+fn stop_het_sources() {
+    HET_SOURCES.with(|sources| {
+        for (source, _end) in sources.borrow_mut().drain(..) {
+            // `when = 0` is in the past, so playback stops immediately.
+            let _ = source.stop_with_when(0.0);
+            let _ = source.disconnect();
+        }
+    });
+}
+
+/// Stop all scheduled live playback immediately and reset the schedule cursor.
+/// Call on every stop/disable path and at each listen start so a previous
+/// session's backlog can neither keep sounding nor carry over into a new one.
+pub fn stop_het_playback() {
+    stop_het_sources();
+    HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
+}
+
+/// Resume the live-playback (HET) and browser-mic AudioContexts if the OS
+/// suspended or interrupted them (e.g. after the app was backgrounded). Safe to
+/// call when they're already running or absent.
+pub fn resume_playback_context() {
+    HET_CTX.with(|c| {
+        if let Some(ctx) = c.borrow().as_ref() {
+            if ctx.state() != web_sys::AudioContextState::Running {
+                let _ = ctx.resume();
+            }
+        }
+    });
+    MIC_CTX.with(|c| {
+        if let Some(ctx) = c.borrow().as_ref() {
+            if ctx.state() != web_sys::AudioContextState::Running {
+                let _ = ctx.resume();
+            }
+        }
+    });
+}
+
+/// Read and reset the live-playback skip-ahead counter. A nonzero value means
+/// playback fell behind and had to drop a backlog (throttling signal).
+pub fn take_het_skip_count() -> u32 {
+    HET_SKIP_COUNT.with(|c| {
+        let n = c.get();
+        c.set(0);
+        n
+    })
+}
+
+/// Current time of the live-playback (HET) AudioContext, if one exists. The
+/// background watchdog compares this across a hide/show interval to tell whether
+/// audible output kept advancing (vs. the OS having suspended the context).
+pub fn het_context_time() -> Option<f64> {
+    HET_CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.current_time()))
 }
 
 /// Create the chunk handler closure used by both cpal and USB native backends.
@@ -839,24 +912,58 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
                 })
             });
 
-            // Schedule playback via AudioBuffer
+            // Schedule playback via AudioBuffer with bounded look-ahead so a
+            // backgrounded-then-resumed burst of queued chunks can't build a
+            // multi-second backlog (which would lag real time and keep sounding
+            // after Stop). See `plan_live_schedule`.
             let out_len = out_data.len();
             HET_CTX.with(|ctx_cell| {
                 let ctx_ref = ctx_cell.borrow();
                 let Some(ctx) = ctx_ref.as_ref() else { return };
+
+                // If the OS suspended/interrupted the context (e.g. the app was
+                // backgrounded), its clock is frozen — scheduling against it would
+                // pile up and never play. Kick a resume and drop this chunk;
+                // subsequent chunks schedule normally once it's running again.
+                if ctx.state() != web_sys::AudioContextState::Running {
+                    let _ = ctx.resume();
+                    return;
+                }
+
+                let current_time = ctx.current_time();
+                let next_time = HET_NEXT_TIME.with(|t| *t.borrow());
+                let decision = plan_live_schedule(current_time, next_time, DEFAULT_MAX_LOOKAHEAD_SECS);
+
+                if decision.dropped_backlog {
+                    // Fell behind (throttled): stop the stale scheduled tail so it
+                    // never sounds, jump to "now", and count the skip. Within a
+                    // synchronous burst the context clock is frozen, so sources
+                    // stopped before control returns never produce audio — the
+                    // audible result is "jump to the newest chunk ≈ now".
+                    stop_het_sources();
+                    HET_SKIP_COUNT.with(|c| c.set(c.get().saturating_add(1)));
+                }
+
                 let Ok(buffer) = ctx.create_buffer(1, out_len as u32, sr as f32) else { return };
                 let _ = buffer.copy_to_channel(&out_data, 0);
                 let Ok(source) = ctx.create_buffer_source() else { return };
                 source.set_buffer(Some(&buffer));
                 let _ = source.connect_with_audio_node(&ctx.destination());
 
-                let current_time = ctx.current_time();
-                let next_time = HET_NEXT_TIME.with(|t| *t.borrow());
-                let start = if next_time > current_time { next_time } else { current_time };
+                let start = decision.start;
                 let _ = source.start_with_when(start);
 
                 let duration = out_len as f64 / sr as f64;
-                HET_NEXT_TIME.with(|t| *t.borrow_mut() = start + duration);
+                let end_time = start + duration;
+                HET_NEXT_TIME.with(|t| *t.borrow_mut() = end_time);
+
+                // Track the source so Stop can silence it instantly; drop refs to
+                // ones that have already finished playing.
+                HET_SOURCES.with(|sources| {
+                    let mut v = sources.borrow_mut();
+                    v.retain(|(_, end)| *end > current_time);
+                    v.push((source, end_time));
+                });
             });
         }
     })
@@ -867,6 +974,9 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
 /// signals dynamically and is reused across mic open/close cycles.
 fn cleanup_native_state() {
     TAURI_UNLISTEN.with(|u| { u.borrow_mut().take(); });
+
+    // Stop any still-scheduled live playback before tearing down the context.
+    stop_het_playback();
 
     HET_CTX.with(|c| {
         if let Some(ctx) = c.borrow_mut().take() {
@@ -1418,7 +1528,8 @@ async fn open_usb(state: &AppState) -> bool {
             }
         }
 
-        // Clean up HET context
+        // Clean up HET context (stop scheduled playback first)
+        stop_het_playback();
         HET_CTX.with(|c| {
             if let Some(ctx) = c.borrow_mut().take() {
                 let _ = ctx.close();

@@ -11,6 +11,7 @@ class MainActivity : TauriActivity() {
   private var mediaStorePlugin: MediaStorePlugin? = null
   private var geolocationPlugin: GeolocationPlugin? = null
   private var zoomPlugin: ZoomPlugin? = null
+  private var audioServicePlugin: AudioServicePlugin? = null
 
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     // Enable native pinch-to-zoom so users can zoom in to read text
@@ -42,6 +43,10 @@ class MainActivity : TauriActivity() {
     zoomPlugin = zPlugin
     pluginManager.load(null, "zoom", zPlugin, "{}")
 
+    val audioSvcPlugin = AudioServicePlugin(this)
+    audioServicePlugin = audioSvcPlugin
+    pluginManager.load(null, "audio-service", audioSvcPlugin, "{}")
+
     super.onCreate(savedInstanceState)
     // Note: We do NOT override the WebChromeClient. The generated RustWebChromeClient
     // already handles RESOURCE_AUDIO_CAPTURE by requesting RECORD_AUDIO + MODIFY_AUDIO_SETTINGS
@@ -60,6 +65,7 @@ class MainActivity : TauriActivity() {
     usbAudioPlugin?.handlePermissionResult(requestCode, grantResults)
     mediaStorePlugin?.handlePermissionResult(requestCode, grantResults)
     geolocationPlugin?.handlePermissionResult(requestCode, grantResults)
+    audioServicePlugin?.handlePermissionResult(requestCode, grantResults)
   }
 
   @Suppress("DEPRECATION")

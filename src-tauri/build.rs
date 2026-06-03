@@ -37,6 +37,16 @@ fn main() {
             .plugin(
                 "zoom",
                 tauri_build::InlinedPlugin::new().commands(&["reset"]),
+            )
+            .plugin(
+                "audio-service",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "startForegroundAudio",
+                    "updateForegroundAudio",
+                    "stopForegroundAudio",
+                    "isIgnoringBatteryOptimizations",
+                    "requestDisableBatteryOptimization",
+                ]),
             ),
     )
     .expect("failed to run tauri-build");

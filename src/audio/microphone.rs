@@ -269,6 +269,34 @@ pub async fn check_usb_status(state: &AppState) {
     state.mic_usb_connected.set(false);
 }
 
+// ── Android foreground audio service ─────────────────────────────────────
+
+/// Start (or update the notification of) the Android foreground audio service so
+/// capture/monitoring survive the app being backgrounded. `mode` is "listening"
+/// or "recording". No-op off mobile Tauri; best-effort (logged, not surfaced).
+/// MUST be reached from a foreground user gesture — Android 14+ forbids starting
+/// a microphone foreground service from the background.
+async fn start_foreground_service(state: &AppState, mode: &str) {
+    if !state.is_tauri || !state.is_mobile.get_untracked() {
+        return;
+    }
+    let args = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&args, &JsValue::from_str("mode"), &JsValue::from_str(mode));
+    if let Err(e) = tauri_invoke("plugin:audio-service|startForegroundAudio", &args.into()).await {
+        state.log_debug("warn", format!("startForegroundAudio failed: {}", e));
+    }
+}
+
+/// Stop the Android foreground audio service. No-op off mobile Tauri.
+async fn stop_foreground_service(state: &AppState) {
+    if !state.is_tauri || !state.is_mobile.get_untracked() {
+        return;
+    }
+    if let Err(e) = tauri_invoke_no_args("plugin:audio-service|stopForegroundAudio").await {
+        state.log_debug("warn", format!("stopForegroundAudio failed: {}", e));
+    }
+}
+
 // ── Backend resolution ──────────────────────────────────────────────────
 
 /// Convert `state.mic_backend` to `ActiveBackend`.
@@ -447,6 +475,8 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
             // Now safe to clear listening — recording is active, loop won't exit.
             state.mic_listening.set(false);
             state.mic_recording_start_time.set(Some(js_sys::Date::now()));
+            // Keep capturing if the app is backgrounded (Android foreground service).
+            start_foreground_service(state, "recording").await;
             let sr = state.mic_sample_rate.get_untracked();
 
             let file_idx = if has_listen_file {
@@ -572,9 +602,11 @@ async fn do_stop_recording(state: &AppState, backend: ActiveBackend) {
         // cleared mic_live_file_idx, which causes the processing loop to exit
         // and leaves listening "on" but with no live file or waterfall. Kick
         // off a fresh listen session to restore the live visualization.
+        // (do_start_listening re-issues the foreground service as "listening".)
         do_start_listening(state, backend).await;
     } else {
         backend.maybe_close(state).await;
+        stop_foreground_service(state).await;
     }
 }
 
@@ -586,9 +618,12 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     state.min_display_freq.set(None);
     state.max_display_freq.set(None);
     // Clear buffer and DSP state BEFORE enabling listening to prevent stale
-    // audio from a previous listen session leaking into the new one.
+    // audio from a previous listen session leaking into the new one. Also stop
+    // any still-scheduled playback and reset the schedule cursor so a backlog
+    // from a previous (possibly backgrounded) session can't carry over.
     backend.clear_buffer();
     backend.clear_dsp_state();
+    crate::audio::mic_backend::stop_het_playback();
     // Set the frontend signal early so the chunk handler accepts data
     // as soon as the native side starts streaming.
     state.mic_listening.set(true);
@@ -622,6 +657,8 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
 
     spawn_live_processing_loop(*state, file_idx, sr);
     spawn_smooth_scroll_animation(*state);
+    // Keep monitoring alive if the app is backgrounded (Android foreground service).
+    start_foreground_service(state, "listening").await;
 }
 
 /// Stop listening. Leaves the live file in place as an empty "armed" doc
@@ -629,10 +666,16 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
 /// Record again without re-acquiring the mic or creating a new entry.
 async fn do_stop_listening(state: &AppState, backend: ActiveBackend) {
     state.mic_listening.set(false);
+    // Stop scheduled playback immediately so Stop is instant (no backlog tail).
+    crate::audio::mic_backend::stop_het_playback();
     crate::canvas::live_waterfall::clear();
     convert_listen_to_armed(state);
     backend.clear_buffer();
     backend.set_listening(state, false).await;
+    // Tear down the foreground service unless a recording is still running.
+    if !state.mic_recording.get_untracked() {
+        stop_foreground_service(state).await;
+    }
     // Intentionally not calling backend.maybe_close — keep the mic warm
     // for the armed doc.
 }
@@ -657,6 +700,9 @@ pub async fn toggle_listen(state: &AppState) {
             if enabling {
                 // Reset HET state so we don't hear stale audio from a prior session
                 backend.clear_dsp_state();
+            } else {
+                // Stop the listen overlay's scheduled playback immediately.
+                crate::audio::mic_backend::stop_het_playback();
             }
             state.mic_listening.set(enabling);
             backend.set_listening(state, enabling).await;
@@ -905,6 +951,10 @@ pub fn stop_all(state: &AppState) {
     // mid-acquisition (e.g. tab close, app teardown, error recovery).
     state.mic_starting_recording.set(false);
 
+    // Silence any scheduled live playback synchronously so Stop is instant,
+    // independent of the async close that follows.
+    crate::audio::mic_backend::stop_het_playback();
+
     let backend = resolve_active_backend(state).or_else(|| {
         // Legacy: infer from what's open
         if ActiveBackend::RawUsb.is_open() {
@@ -935,6 +985,7 @@ pub fn stop_all(state: &AppState) {
                 }
                 crate::canvas::live_waterfall::clear();
                 b.close(&state_copy).await;
+                stop_foreground_service(&state_copy).await;
                 state_copy.mic_acquisition_state.set(MicAcquisitionState::Idle);
             });
         }
@@ -946,6 +997,7 @@ pub fn stop_all(state: &AppState) {
             state.mic_recording_start_time.set(None);
             wasm_bindgen_futures::spawn_local(async move {
                 ActiveBackend::Browser.close(&state_copy).await;
+                stop_foreground_service(&state_copy).await;
                 state_copy.mic_acquisition_state.set(MicAcquisitionState::Idle);
             });
         }

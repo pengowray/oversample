@@ -1090,6 +1090,95 @@ pub fn App() -> impl IntoView {
         on_drop.forget();
     }
 
+    // Live-audio lifecycle across app background/foreground (Page Visibility API).
+    // On hide during a live session we snapshot wall-clock + capture + audio-clock
+    // state. On show we resume the (possibly OS-suspended) playback context and
+    // reset the schedule cursor so listening jumps back to "now" rather than
+    // replaying a multi-second backlog — then check whether capture / audible
+    // output actually kept flowing while hidden and, if not, surface a one-time
+    // battery-optimization hint.
+    {
+        use std::rc::Rc;
+        use std::cell::Cell;
+
+        /// Raise the one-time background-audio guidance hint when capture
+        /// (recording) or audible output (listening) demonstrably stalled while
+        /// the app was hidden. `het_now`/`het_hide` are the HET AudioContext clock
+        /// at show/hide; a frozen clock means audible monitoring was suspended.
+        fn maybe_warn_background_throttle(
+            state: &AppState,
+            wall_hide: f64,
+            samples_hide: usize,
+            het_now: Option<f64>,
+            het_hide: f64,
+        ) {
+            // Only meaningful on mobile Tauri, and only nag once.
+            if !state.is_tauri || !state.is_mobile.get_untracked() { return; }
+            if state.background_hint_dismissed.get_untracked() { return; }
+            if state.show_background_audio_hint.get_untracked() { return; }
+
+            let wall_elapsed = (js_sys::Date::now() - wall_hide) / 1000.0;
+            // Need a non-trivial interval to judge — avoids false positives on a
+            // quick app-switch where throttling never had time to bite.
+            if wall_elapsed < 5.0 { return; }
+
+            let sr = state.mic_sample_rate.get_untracked().max(1) as f64;
+            let mut throttled = false;
+
+            // Capture check (recording only — mic_samples_recorded isn't advanced
+            // during listen-only): did samples keep pace with wall time?
+            if state.mic_recording.get_untracked() {
+                let actual = state.mic_samples_recorded.get_untracked().saturating_sub(samples_hide) as f64;
+                if actual < wall_elapsed * sr * 0.5 { throttled = true; }
+            }
+
+            // Audible-output check (listening): did the audio clock advance?
+            if state.mic_listening.get_untracked() {
+                if let Some(now) = het_now {
+                    if now - het_hide < wall_elapsed * 0.5 { throttled = true; }
+                }
+            }
+
+            if throttled {
+                state.show_background_audio_hint.set(true);
+            }
+        }
+
+        let state_vis = state;
+        // (wall_ms_at_hide, recorded_samples_at_hide, het_clock_at_hide)
+        let snapshot: Rc<Cell<Option<(f64, usize, f64)>>> = Rc::new(Cell::new(None));
+        let doc_vis = web_sys::window().unwrap().document().unwrap();
+        let on_visibility = Closure::<dyn Fn()>::new(move || {
+            let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+            let live = state_vis.mic_listening.get_untracked() || state_vis.mic_recording.get_untracked();
+            if doc.hidden() {
+                if live {
+                    let het = crate::audio::mic_backend::het_context_time().unwrap_or(0.0);
+                    snapshot.set(Some((
+                        js_sys::Date::now(),
+                        state_vis.mic_samples_recorded.get_untracked(),
+                        het,
+                    )));
+                } else {
+                    snapshot.set(None);
+                }
+            } else {
+                // Capture the audio clock BEFORE resume so it reflects the hidden
+                // interval (resume is async and won't have advanced it yet).
+                let het_now = crate::audio::mic_backend::het_context_time();
+                crate::audio::mic_backend::resume_playback_context();
+                if state_vis.mic_listening.get_untracked() {
+                    crate::audio::mic_backend::stop_het_playback();
+                }
+                if let Some((wall_hide, samples_hide, het_hide)) = snapshot.take() {
+                    maybe_warn_background_throttle(&state_vis, wall_hide, samples_hide, het_now, het_hide);
+                }
+            }
+        });
+        let _ = doc_vis.add_event_listener_with_callback("visibilitychange", on_visibility.as_ref().unchecked_ref());
+        on_visibility.forget();
+    }
+
     // Tauri: listen for native file drag-drop events (provides real filesystem paths)
     if state.is_tauri {
         let state_drop = state;
@@ -1522,6 +1611,35 @@ fn MainArea() -> impl IntoView {
                     </div>
                 }
             })}
+
+            // Background-audio throttling guidance (one-time; raised by the
+            // visibility watchdog when capture/monitoring stalled while hidden).
+            {move || state.show_background_audio_hint.get().then(|| {
+                let on_settings = move |_: web_sys::MouseEvent| {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = crate::tauri_bridge::tauri_invoke_no_args(
+                            "plugin:audio-service|requestDisableBatteryOptimization",
+                        ).await;
+                    });
+                    dismiss_background_hint(&state);
+                };
+                view! {
+                    <div class="xc-modal-overlay" on:click=move |_: web_sys::MouseEvent| dismiss_background_hint(&state)>
+                        <div class="xc-modal" style="width: min(92vw, 380px);" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
+                            <div style="padding: 20px 18px 8px;">
+                                <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">"Background audio was interrupted"</div>
+                                <div style="font-size: 13px; color: #bbb; line-height: 1.5;">
+                                    "Android paused audio while the app was in the background. To keep listening and recording running when you switch apps or the screen turns off, allow unrestricted background activity for Oversample."
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; justify-content: flex-end; padding: 8px 16px 16px;">
+                                <button class="setting-btn" style="padding: 6px 16px;" on:click=move |_: web_sys::MouseEvent| dismiss_background_hint(&state)>"Not now"</button>
+                                <button class="setting-btn" style="padding: 6px 16px; background: #46c; color: #fff; font-weight: 600;" on:click=on_settings>"Open settings"</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            })}
         </div>
     }
 }
@@ -1530,6 +1648,16 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.layer_panel_open.update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
+}
+
+/// Dismiss the background-audio guidance hint and persist that the user has seen
+/// it (so it never auto-shows again). Shared by both modal buttons.
+fn dismiss_background_hint(state: &AppState) {
+    state.show_background_audio_hint.set(false);
+    state.background_hint_dismissed.set(true);
+    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = ls.set_item("oversample_bg_audio_hint_dismissed", "true");
+    }
 }
 
 /// Current effective sample rate for the Resonators readouts — the live

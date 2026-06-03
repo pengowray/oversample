@@ -3,7 +3,7 @@ members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core"]
 
 [package]
 name = "oversample"
-version = "0.4.63"
+version = "0.4.64"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -19,6 +19,7 @@ web-sys = { version = "0.3", features = [
     "CanvasGradient",
     "ImageData",
     "AudioContext",
+    "AudioContextState",
     "AudioContextOptions",
     "AudioBuffer",
     "AudioBufferSourceNode",

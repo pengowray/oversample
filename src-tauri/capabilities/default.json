@@ -20,6 +20,11 @@
     "geolocation:allow-getCurrentLocation",
     "geolocation:allow-getWifiSsid",
     "geolocation:allow-getDeviceModel",
-    "zoom:allow-reset"
+    "zoom:allow-reset",
+    "audio-service:allow-startForegroundAudio",
+    "audio-service:allow-updateForegroundAudio",
+    "audio-service:allow-stopForegroundAudio",
+    "audio-service:allow-isIgnoringBatteryOptimizations",
+    "audio-service:allow-requestDisableBatteryOptimization"
   ]
 }

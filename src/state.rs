@@ -1523,6 +1523,15 @@ pub struct AppState {
     /// When true, mic input is processed but the speakers stay silent.
     /// Used as a "mic warm-up / ready" mode and as a manual mute while listening.
     pub mic_mute_output: RwSignal<bool>,
+    /// True when we've detected that background audio (capture or audible
+    /// monitoring) was throttled by the OS while the app was backgrounded, and
+    /// want to surface the one-time battery-optimization guidance. Cleared when
+    /// the user acts on or dismisses it.
+    pub show_background_audio_hint: RwSignal<bool>,
+    /// Persisted flag: the user has already seen and dismissed the background-
+    /// audio guidance, so we don't nag again. Stored in localStorage under
+    /// `oversample_bg_audio_hint_dismissed`.
+    pub background_hint_dismissed: RwSignal<bool>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -2037,6 +2046,14 @@ impl AppState {
             mic_device_info: RwSignal::new(None),
             listen_context_samples: RwSignal::new(65536),
             mic_mute_output: RwSignal::new(false),
+            show_background_audio_hint: RwSignal::new(false),
+            background_hint_dismissed: RwSignal::new({
+                web_sys::window()
+                    .and_then(|w| w.local_storage().ok().flatten())
+                    .and_then(|ls| ls.get_item("oversample_bg_audio_hint_dismissed").ok().flatten())
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+            }),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
             debug_log_entries: RwSignal::new(Vec::new()),

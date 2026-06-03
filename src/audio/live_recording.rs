@@ -1228,6 +1228,44 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         return;
     }
 
+    // The WAV encode below is O(N) over the whole recording and, for a long
+    // pre-roll capture, blocked the UI thread for seconds at Stop. Defer the
+    // encode + preview + file update + identity + spectrogram into a yielding
+    // async task so the UI stays responsive. Capture the live file's stable id
+    // so the task can re-resolve its index even if the list shifts (e.g. a
+    // follow-on listen session prunes placeholders) before it runs.
+    let live_id = live_idx.and_then(|i| state.files.with_untracked(|f| f.get(i).map(|f| f.id)));
+    state.show_info_toast("Saving recording\u{2026}");
+    wasm_bindgen_futures::spawn_local(async move {
+        finalize_in_memory_recording(
+            samples, sample_rate, bits_per_sample, is_float,
+            saved_path, file_size, live_idx, live_id, state,
+        ).await;
+    });
+}
+
+/// Heavy tail of `finalize_recording`: WAV encode + preview + file update +
+/// identity + spectrogram, run in a spawned task with cooperative yields so a
+/// long recording's `encode_wav_complete` can't freeze the UI thread at Stop.
+async fn finalize_in_memory_recording(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    is_float: bool,
+    saved_path: String,
+    file_size: Option<usize>,
+    live_idx: Option<usize>,
+    live_id: Option<u64>,
+    state: AppState,
+) {
+    use crate::canvas::live_waterfall;
+
+    // Re-resolve the live file's current index by its stable id; the list may
+    // have shifted since finalize_recording captured `live_idx`.
+    let live_idx = live_id
+        .and_then(|id| state.files.with_untracked(|f| f.iter().position(|x| x.id == id)))
+        .or(live_idx);
+
     let duration_secs = samples.len() as f64 / sample_rate as f64;
 
     // ── Phase 1: Build metadata (GUANO + WAV markers) from state ────────
@@ -1244,6 +1282,8 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         sample_rate,
         channels: 1,
     });
+    // Yield so the "Saving…" toast paints before the heavy encode runs.
+    crate::web_util::yield_now().await;
     let wav_bytes = crate::audio::wav_encoder::encode_wav_complete(
         &samples, sample_rate, Some(&meta.guano), &meta.wav_markers,
     );
@@ -1308,6 +1348,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     let needs_save = !to_memory && !shared_saved
         && if is_mobile { true } else { is_tauri && !native_saved };
 
+    crate::web_util::yield_now().await;
     persist_and_identify(
         state, file_index, name_check.clone(), wav_bytes,
         audio_data_size, needs_save, is_mobile,

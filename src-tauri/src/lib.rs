@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri::plugin::Builder::<_, ()>::new("usb-audio").build())
         .plugin(tauri::plugin::Builder::<_, ()>::new("media-store").build())
         .plugin(tauri::plugin::Builder::<_, ()>::new("geolocation").build())
+        .plugin(tauri::plugin::Builder::<_, ()>::new("audio-service").build())
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))

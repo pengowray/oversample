@@ -286,6 +286,11 @@ pub fn mic_stop_recording(
             let mut buf = m.buffer.lock().unwrap();
             recovery::drain_cpal_bytes(&mut buf)
         };
+        // Everything below operates on the owned writer / paths, not the mic
+        // state. Release the MicMutex before the (potentially large) in-place
+        // finalize + shared-storage copy so it can't block mic_get_status or a
+        // concurrent mic command for the duration of the copy.
+        drop(mic);
         let finalized_path = recovery::finalize_in_place_and_take(
             writer,
             &final_bytes,
