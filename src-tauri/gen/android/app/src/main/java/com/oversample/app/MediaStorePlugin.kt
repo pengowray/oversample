@@ -147,7 +147,7 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Save exported file bytes (WAV / MP4 / etc) to shared storage at a
      * given relative path, choosing the MediaStore collection from the MIME
-     * type (audio/* → Audio collection, video/* → Video, else Downloads).
+     * type (audio → Audio collection, video → Video, else Downloads).
      *
      * Unlike a <a download> blob, which the Tauri WebView silently drops,
      * this writes a real file visible in the gallery / Files app. Used by
