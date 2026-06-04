@@ -45,6 +45,43 @@ pub struct FileSettings {
     pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
 
+impl FileSettings {
+    /// Snapshot the current global gain / notch / noise-reduce signals into the
+    /// per-file persisted form. This is the SINGLE place that lists "which
+    /// signals are per-file" on the SAVE side — adding a per-file setting means
+    /// adding it here AND in `apply_to_state` (and to the struct), nowhere else.
+    pub fn from_state(state: &AppState) -> Self {
+        FileSettings {
+            gain_mode: state.gain.mode().get_untracked(),
+            gain_db: state.gain.db().get_untracked(),
+            gain_db_stash: state.gain.db_stash().get_untracked(),
+            notch_enabled: state.notch.enabled().get_untracked(),
+            notch_bands: state.notch.bands().get_untracked(),
+            notch_profile_name: state.notch.profile_name().get_untracked(),
+            notch_harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
+            noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
+            noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
+            noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
+        }
+    }
+
+    /// Apply a file's persisted settings back onto the global signals (the
+    /// RESTORE side of the per-file sync boundary — keep in sync with `from_state`).
+    pub fn apply_to_state(&self, state: &AppState) {
+        state.gain.mode().set(self.gain_mode);
+        state.gain.auto().set(self.gain_mode.is_auto());
+        state.gain.db().set(self.gain_db);
+        state.gain.db_stash().set(self.gain_db_stash);
+        state.notch.enabled().set(self.notch_enabled);
+        state.notch.bands().set(self.notch_bands.clone());
+        state.notch.profile_name().set(self.notch_profile_name.clone());
+        state.notch.harmonic_suppression().set(self.notch_harmonic_suppression);
+        state.noise_reduce.enabled().set(self.noise_reduce_enabled);
+        state.noise_reduce.strength().set(self.noise_reduce_strength);
+        state.noise_reduce.floor().set(self.noise_reduce_floor.clone());
+    }
+}
+
 impl Default for FileSettings {
     fn default() -> Self {
         Self {

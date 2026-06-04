@@ -641,18 +641,7 @@ pub fn App() -> impl IntoView {
 
             // Save current settings to the outgoing file
             if let Some(oi) = old_idx {
-                let settings = FileSettings {
-                    gain_mode: state.gain.mode().get_untracked(),
-                    gain_db: state.gain.db().get_untracked(),
-                    gain_db_stash: state.gain.db_stash().get_untracked(),
-                    notch_enabled: state.notch.enabled().get_untracked(),
-                    notch_bands: state.notch.bands().get_untracked(),
-                    notch_profile_name: state.notch.profile_name().get_untracked(),
-                    notch_harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
-                    noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
-                    noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
-                    noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
-                };
+                let settings = FileSettings::from_state(&state);
 
                 // Save to the outgoing file and all files in its sequence group
                 let names: Vec<String> = state.library.files().get_untracked().iter().map(|f| f.name.clone()).collect();
@@ -689,22 +678,14 @@ pub fn App() -> impl IntoView {
                 }
             }
 
-            // Restore settings from the incoming file
+            // Restore settings from the incoming file (single restore boundary).
             if let Some(ni) = new_idx {
-                let files = state.library.files().get_untracked();
-                if let Some(file) = files.get(ni) {
-                    let s = &file.settings;
-                    state.gain.mode().set(s.gain_mode);
-                    state.gain.auto().set(s.gain_mode.is_auto());
-                    state.gain.db().set(s.gain_db);
-                    state.gain.db_stash().set(s.gain_db_stash);
-                    state.notch.enabled().set(s.notch_enabled);
-                    state.notch.bands().set(s.notch_bands.clone());
-                    state.notch.profile_name().set(s.notch_profile_name.clone());
-                    state.notch.harmonic_suppression().set(s.notch_harmonic_suppression);
-                    state.noise_reduce.enabled().set(s.noise_reduce_enabled);
-                    state.noise_reduce.strength().set(s.noise_reduce_strength);
-                    state.noise_reduce.floor().set(s.noise_reduce_floor.clone());
+                let settings = state
+                    .library
+                    .files()
+                    .with_untracked(|files| files.get(ni).map(|f| f.settings.clone()));
+                if let Some(s) = settings {
+                    s.apply_to_state(&state);
                 }
             }
         });
