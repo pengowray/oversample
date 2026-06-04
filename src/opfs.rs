@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemWritableFileStream, WritableStream};
@@ -123,8 +124,8 @@ pub async fn load_batm_by_key(key: &str) -> Result<Option<crate::annotations::An
 fn sync_noise_profile_from_state(state: crate::state::AppState) -> Option<crate::dsp::notch::NoiseProfile> {
     use leptos::prelude::GetUntracked;
 
-    let bands = state.notch_bands.get_untracked();
-    let noise_floor = state.noise_reduce_floor.get_untracked();
+    let bands = state.notch.bands().get_untracked();
+    let noise_floor = state.noise_reduce.floor().get_untracked();
     if bands.is_empty() && noise_floor.is_none() {
         return None;
     }
@@ -136,7 +137,7 @@ fn sync_noise_profile_from_state(state: crate::state::AppState) -> Option<crate:
         .map(|f| f.audio.sample_rate)
         .unwrap_or(0);
 
-    let name = state.notch_profile_name.get_untracked();
+    let name = state.notch.profile_name().get_untracked();
     let profile_name = if name.is_empty() {
         idx.and_then(|i| files.get(i))
             .map(|f| {
@@ -155,7 +156,7 @@ fn sync_noise_profile_from_state(state: crate::state::AppState) -> Option<crate:
         source_sample_rate: sample_rate,
         created: crate::annotations::now_iso8601(),
         noise_floor,
-        harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
+        harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
     })
 }
 

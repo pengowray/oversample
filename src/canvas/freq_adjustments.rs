@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use std::cell::RefCell;
 use leptos::prelude::*;
 use crate::dsp::filters::harmonics_band_bounds;
@@ -25,8 +26,8 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
     (state.filter_db_harmonics.get_untracked() as i32).hash(&mut h);
     (state.filter_db_above.get_untracked() as i32).hash(&mut h);
     state.filter_band_mode.get_untracked().hash(&mut h);
-    state.notch_enabled.get_untracked().hash(&mut h);
-    let bands = state.notch_bands.get_untracked();
+    state.notch.enabled().get_untracked().hash(&mut h);
+    let bands = state.notch.bands().get_untracked();
     bands.len().hash(&mut h);
     for b in &bands {
         b.center_hz.to_bits().hash(&mut h);
@@ -34,14 +35,14 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         b.enabled.hash(&mut h);
         (b.strength_db as i32).hash(&mut h);
     }
-    state.notch_harmonic_suppression.get_untracked().to_bits().hash(&mut h);
+    state.notch.harmonic_suppression().get_untracked().to_bits().hash(&mut h);
     state.display_filter_enabled.get_untracked().hash(&mut h);
     (state.display_filter_nr.get_untracked() as u8).hash(&mut h);
     (state.display_filter_notch.get_untracked() as u8).hash(&mut h);
-    state.noise_reduce_enabled.get_untracked().hash(&mut h);
-    state.noise_reduce_strength.get_untracked().to_bits().hash(&mut h);
+    state.noise_reduce.enabled().get_untracked().hash(&mut h);
+    state.noise_reduce.strength().get_untracked().to_bits().hash(&mut h);
     // Include noise floor identity (use ptr + len as proxy for content)
-    let nf = state.noise_reduce_floor.get_untracked();
+    let nf = state.noise_reduce.floor().get_untracked();
     nf.as_ref().map(|f| f.bin_magnitudes.len()).unwrap_or(0).hash(&mut h);
     let dnf = state.display_auto_noise_floor.get_untracked();
     dnf.as_ref().map(|f| f.bin_magnitudes.len()).unwrap_or(0).hash(&mut h);
@@ -124,17 +125,17 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
                 // DSP panel controls notch display
                 match state.display_filter_notch.get_untracked() {
                     DisplayFilterMode::Off => false,
-                    DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch_enabled.get_untracked(),
+                    DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch.enabled().get_untracked(),
                     DisplayFilterMode::Custom => false,
                 }
             } else {
                 // Legacy: notch shows when playback notch is on
-                state.notch_enabled.get_untracked()
+                state.notch.enabled().get_untracked()
             }
         };
         if show_notch {
-            let bands = state.notch_bands.get_untracked();
-            let harm_supp = state.notch_harmonic_suppression.get_untracked();
+            let bands = state.notch.bands().get_untracked();
+            let harm_supp = state.notch.harmonic_suppression().get_untracked();
             for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                 let bin = tile_height - 1 - row;
                 let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
@@ -170,11 +171,11 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
             } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
                 // Custom: prefer display auto floor with custom strength
                 let floor = state.display_auto_noise_floor.get_untracked()
-                    .or_else(|| state.noise_reduce_floor.get_untracked());
+                    .or_else(|| state.noise_reduce.floor().get_untracked());
                 (floor, state.display_nr_strength.get_untracked())
-            } else if state.noise_reduce_enabled.get_untracked() {
+            } else if state.noise_reduce.enabled().get_untracked() {
                 // Same/fallback: use playback noise floor
-                (state.noise_reduce_floor.get_untracked(), state.noise_reduce_strength.get_untracked())
+                (state.noise_reduce.floor().get_untracked(), state.noise_reduce.strength().get_untracked())
             } else {
                 (None, 0.0)
             };

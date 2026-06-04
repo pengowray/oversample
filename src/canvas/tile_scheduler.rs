@@ -293,9 +293,9 @@ pub fn setup_cache_clearing_effects(state: AppState) {
 
     // Clear resonator tile cache when bandwidth, bin-count mode, or layout changes
     Effect::new(move || {
-        let _bw = state.resonator_bandwidth_hz.get();
-        let _mode = state.resonator_fft_mode.get();
-        let _layout = state.resonator_layout.get();
+        let _bw = state.resonator.bandwidth_hz().get();
+        let _mode = state.resonator.fft_mode().get();
+        let _layout = state.resonator.layout().get();
         crate::canvas::tile_cache::clear_resonator_cache();
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     });
@@ -314,14 +314,14 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         static VIEWPORT_DEBOUNCE_GEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     }
     Effect::new(move || {
-        let enabled = state.resonator_viewport_bins.get();
+        let enabled = state.resonator.viewport_bins().get();
         let min = state.min_display_freq.get();
         let max = state.max_display_freq.get();
 
         if !enabled {
             // Disabling reverts to full-Nyquist bins immediately.
-            if state.resonator_viewport_range.get_untracked().is_some() {
-                state.resonator_viewport_range.set(None);
+            if state.resonator.viewport_range().get_untracked().is_some() {
+                state.resonator.viewport_range().set(None);
                 crate::canvas::tile_cache::clear_resonator_cache();
                 state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
             }
@@ -344,7 +344,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let target = (target_lo, target_hi);
 
         // Skip if already matches current committed range.
-        if state.resonator_viewport_range.get_untracked() == Some(target) {
+        if state.resonator.viewport_range().get_untracked() == Some(target) {
             return;
         }
 
@@ -359,7 +359,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             if VIEWPORT_DEBOUNCE_GEN.with(|g| g.get()) != my_gen { return; }
             // Verify the viewport is still what we want to commit (the
             // user might have toggled the feature off mid-debounce).
-            if !state.resonator_viewport_bins.get_untracked() { return; }
+            if !state.resonator.viewport_bins().get_untracked() { return; }
             let min_now = state.min_display_freq.get_untracked().unwrap_or(0.0);
             let max_now = state.max_display_freq.get_untracked().unwrap_or(file_max).min(file_max);
             if (min_now - target_lo).abs() > 0.5 || (max_now - target_hi).abs() > 0.5 {
@@ -368,7 +368,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
                 // schedule a fresh timer for the new value.
                 return;
             }
-            state.resonator_viewport_range.set(Some(target));
+            state.resonator.viewport_range().set(Some(target));
             crate::canvas::tile_cache::clear_resonator_cache();
             state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
         });

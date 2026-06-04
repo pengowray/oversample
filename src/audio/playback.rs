@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::annotations::AnnotationKind;
 use crate::state::{ActiveFocus, AppState, GainMode, Selection, PlaybackMode};
@@ -492,12 +493,12 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
             .and_then(|s| s.freq_high)
             .unwrap_or(sample_rate as f64 / 2.0),
         has_selection: selection.is_some(),
-        notch_enabled: state.notch_enabled.get_untracked(),
-        notch_bands: state.notch_bands.get_untracked(),
-        notch_harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
-        noise_reduce_enabled: state.noise_reduce_enabled.get_untracked(),
-        noise_reduce_strength: state.noise_reduce_strength.get_untracked(),
-        noise_reduce_floor: state.noise_reduce_floor.get_untracked(),
+        notch_enabled: state.notch.enabled().get_untracked(),
+        notch_bands: state.notch.bands().get_untracked(),
+        notch_harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
+        noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
+        noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
+        noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
     }
 }
 

@@ -27,7 +27,7 @@ fn debug_tile_kind(
 ) -> spectrogram_renderer::DebugTileKind {
     if main_view == MainView::Resonators {
         spectrogram_renderer::DebugTileKind::Resonators {
-            mode: state.resonator_fft_mode.get_untracked(),
+            mode: state.resonator.fft_mode().get_untracked(),
         }
     } else if flow_on {
         spectrogram_renderer::DebugTileKind::Flow {
@@ -204,13 +204,13 @@ pub fn Spectrogram() -> impl IntoView {
         let hfr_colormap_pref = state.hfr_colormap_preference.get();
         let axis_drag_start = state.axis_drag_start_freq.get();
         let axis_drag_current = state.axis_drag_current_freq.get();
-        let notch_bands = state.notch_bands.get();
-        let notch_enabled = state.notch_enabled.get();
-        let notch_hovering = state.notch_hovering_band.get();
-        let harmonic_suppression = state.notch_harmonic_suppression.get();
-        let detected_pulses = state.detected_pulses.get();
-        let pulse_overlay = state.pulse_overlay_enabled.get();
-        let selected_pulse = state.selected_pulse_index.get();
+        let notch_bands = state.notch.bands().get();
+        let notch_enabled = state.notch.enabled().get();
+        let notch_hovering = state.notch.hovering_band().get();
+        let harmonic_suppression = state.notch.harmonic_suppression().get();
+        let detected_pulses = state.pulse.detected().get();
+        let pulse_overlay = state.pulse.overlay_enabled().get();
+        let selected_pulse = state.pulse.selected_index().get();
         let main_view = state.main_view.get();
         let (spect_floor, spect_range, spect_gamma, spect_gain) = if main_view == MainView::XformedSpec {
             (state.xform_spect_floor_db.get(), state.xform_spect_range_db.get(), state.xform_spect_gamma.get(), state.xform_spect_gain_db.get())
@@ -230,9 +230,9 @@ pub fn Spectrogram() -> impl IntoView {
         let _f_db_harmonics = state.filter_db_harmonics.get();
         let _f_db_above = state.filter_db_above.get();
         let _f_band_mode = state.filter_band_mode.get();
-        let _nr_enabled = state.noise_reduce_enabled.get();
-        let _nr_strength = state.noise_reduce_strength.get();
-        let _nr_floor_v = state.noise_reduce_floor.get();
+        let _nr_enabled = state.noise_reduce.enabled().get();
+        let _nr_strength = state.noise_reduce.strength().get();
+        let _nr_floor_v = state.noise_reduce.floor().get();
         // Display DSP filter subscriptions
         let _dsp_enabled = state.display_filter_enabled.get();
         let _dsp_nr = state.display_filter_nr.get();
@@ -348,7 +348,7 @@ pub fn Spectrogram() -> impl IntoView {
         // so blitting needs a different (fc_lo, fc_hi) — expressed as
         // fractions of the tile's own range — to map tile rows to canvas y.
         let resonator_tile_range = if main_view == MainView::Resonators {
-            state.resonator_viewport_range.get()
+            state.resonator.viewport_range().get()
         } else {
             None
         };
@@ -1073,7 +1073,7 @@ pub fn Spectrogram() -> impl IntoView {
 
             // Draw PSD hover frequency overlays
             {
-                let psd_hovers = state.psd_hover_freqs.get();
+                let psd_hovers = state.psd.hover_freqs().get();
                 if !psd_hovers.is_empty() && max_freq > min_freq {
                     let dh = display_h as f64;
                     let dw = display_w as f64;

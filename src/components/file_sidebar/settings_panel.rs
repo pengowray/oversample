@@ -332,7 +332,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             </div>
                             <div class="setting-row">
                                 <span class="setting-label">{move || {
-                                    let bw = state.resonator_bandwidth_hz.get().max(0.001);
+                                    let bw = state.resonator.bandwidth_hz().get().max(0.001);
                                     let tau_ms = 1000.0 / (2.0 * std::f32::consts::PI * bw);
                                     let bw_str = if bw < 10.0 {
                                         format!("{:.1}", bw)
@@ -350,7 +350,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     max=RESONATOR_BW_SLIDER_MAX.to_string()
                                     step="1"
                                     prop:value=move || {
-                                        resonator_bw_to_slider(state.resonator_bandwidth_hz.get())
+                                        resonator_bw_to_slider(state.resonator.bandwidth_hz().get())
                                             .round()
                                             .to_string()
                                     }
@@ -358,14 +358,14 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         let target = ev.target().unwrap();
                                         let input: web_sys::HtmlInputElement = target.unchecked_into();
                                         if let Ok(pos) = input.value().parse::<f32>() {
-                                            state.resonator_bandwidth_hz.set(resonator_slider_to_bw(pos));
+                                            state.resonator.bandwidth_hz().set(resonator_slider_to_bw(pos));
                                         }
                                     }
                                 />
                             </div>
                             <div class="setting-row">
                                 <span class="setting-label">{move || {
-                                    let mode = state.resonator_fft_mode.get();
+                                    let mode = state.resonator.fft_mode().get();
                                     let sr = current_resonator_sample_rate(state);
                                     let current_lod = crate::canvas::tile_cache::select_lod(
                                         state.zoom_level.get(),
@@ -400,9 +400,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         } else {
                                             return;
                                         };
-                                        state.resonator_fft_mode.set(new_mode);
+                                        state.resonator.fft_mode().set(new_mode);
                                     }
-                                    prop:value=move || match state.resonator_fft_mode.get() {
+                                    prop:value=move || match state.resonator.fft_mode().get() {
                                         ResonatorFftMode::Adaptive => "adaptive".to_string(),
                                         ResonatorFftMode::Single(sz) => sz.to_string(),
                                     }
@@ -426,9 +426,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                             "log" => ResonatorLayout::Log,
                                             _ => ResonatorLayout::Linear,
                                         };
-                                        state.resonator_layout.set(new_layout);
+                                        state.resonator.layout().set(new_layout);
                                     }
-                                    prop:value=move || match state.resonator_layout.get() {
+                                    prop:value=move || match state.resonator.layout().get() {
                                         ResonatorLayout::Linear => "linear",
                                         ResonatorLayout::Log => "log",
                                     }
@@ -442,11 +442,11 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     title="Concentrate all bins on the currently-visible frequency range for extra vertical detail. Rebuilds ~0.5s after you stop zooming vertically.">
                                     <input
                                         type="checkbox"
-                                        prop:checked=move || state.resonator_viewport_bins.get()
+                                        prop:checked=move || state.resonator.viewport_bins().get()
                                         on:change=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                            state.resonator_viewport_bins.set(input.checked());
+                                            state.resonator.viewport_bins().set(input.checked());
                                         }
                                     />
                                     "Viewport zoom"
@@ -456,10 +456,10 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 <button
                                     class="setting-button"
                                     on:click=move |_| {
-                                        state.resonator_bandwidth_hz.set(20.0);
-                                        state.resonator_fft_mode.set(ResonatorFftMode::Single(512));
-                                        state.resonator_layout.set(ResonatorLayout::Linear);
-                                        state.resonator_viewport_bins.set(true);
+                                        state.resonator.bandwidth_hz().set(20.0);
+                                        state.resonator.fft_mode().set(ResonatorFftMode::Single(512));
+                                        state.resonator.layout().set(ResonatorLayout::Linear);
+                                        state.resonator.viewport_bins().set(true);
                                     }
                                 >"Reset"</button>
                             </div>
@@ -487,7 +487,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             <div class="setting-group-title">"Chromagram"</div>
                             <div class="setting-row">
                                 <span class="setting-label">{move || {
-                                    let db = state.chroma_gain.get();
+                                    let db = state.chroma.gain().get();
                                     if db == 0.0 { "Gain: 0 dB".to_string() }
                                     else { format!("Gain: {:+.0} dB", db) }
                                 }}</span>
@@ -497,19 +497,19 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     min="-20"
                                     max="60"
                                     step="1"
-                                    prop:value=move || state.chroma_gain.get().round().to_string()
+                                    prop:value=move || state.chroma.gain().get().round().to_string()
                                     on:input=move |ev: web_sys::Event| {
                                         let target = ev.target().unwrap();
                                         let input: web_sys::HtmlInputElement = target.unchecked_into();
                                         if let Ok(v) = input.value().parse::<f32>() {
-                                            state.chroma_gain.set(v);
+                                            state.chroma.gain().set(v);
                                         }
                                     }
                                 />
                             </div>
                             <div class="setting-row">
                                 <span class="setting-label">{move || {
-                                    let g = state.chroma_gamma.get();
+                                    let g = state.chroma.gamma().get();
                                     if g == 1.0 { "Contrast: linear".to_string() }
                                     else { format!("Contrast: {:.2}", g) }
                                 }}</span>
@@ -519,12 +519,12 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     min="0.2"
                                     max="3.0"
                                     step="0.05"
-                                    prop:value=move || state.chroma_gamma.get().to_string()
+                                    prop:value=move || state.chroma.gamma().get().to_string()
                                     on:input=move |ev: web_sys::Event| {
                                         let target = ev.target().unwrap();
                                         let input: web_sys::HtmlInputElement = target.unchecked_into();
                                         if let Ok(v) = input.value().parse::<f32>() {
-                                            state.chroma_gamma.set(v);
+                                            state.chroma.gamma().set(v);
                                         }
                                     }
                                 />
@@ -533,10 +533,10 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                 <button
                                     class="setting-button"
                                     on:click=move |_| {
-                                        state.chroma_gain.set(0.0);
-                                        state.chroma_gamma.set(1.0);
-                                        state.chroma_adapt.set(0.0);
-                                        state.chroma_floor_db.set(-80.0);
+                                        state.chroma.gain().set(0.0);
+                                        state.chroma.gamma().set(1.0);
+                                        state.chroma.adapt().set(0.0);
+                                        state.chroma.floor_db().set(-80.0);
                                     }
                                 >"Reset"</button>
                             </div>

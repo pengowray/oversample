@@ -32,6 +32,7 @@
 //! bump `tile_ready_signal` to trigger re-rendering and schedule remaining
 //! missing tiles.
 
+use crate::state::store_fields::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use leptos::prelude::*;
@@ -1628,7 +1629,7 @@ fn clear_chroma_tiles_for_file_keep_max(file_idx: usize) {
 
 /// Schedule a chromagram tile for background generation (baseline LOD).
 ///
-/// The compute source is selected by `state.chroma_source`:
+/// The compute source is selected by `state.chroma.source()`:
 /// - [`ChromaSource::Fft`] re-bins linear STFT magnitudes into notes,
 ///   reusing cached STFT columns from `spectral_store` when available.
 /// - [`ChromaSource::Resonators`] (default) builds a constant-Q resonator
@@ -1647,7 +1648,7 @@ pub fn schedule_chroma_tile(
     if at_spawn_limit() { return; }
     CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
 
-    match state.chroma_source.get_untracked() {
+    match state.chroma.source().get_untracked() {
         ChromaSource::Fft => schedule_chroma_tile_fft(state, file_idx, tile_idx, key),
         ChromaSource::Resonators => schedule_chroma_tile_resonator(state, file_idx, tile_idx, key),
     }
@@ -1686,10 +1687,10 @@ fn schedule_chroma_tile_fft(
             files.get(file_idx).map(|f| f.spectrogram.freq_resolution)
         }).unwrap_or(1.0);
 
-        let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
-        let gain_db = state.chroma_gain.get_untracked();
-        let adapt = state.chroma_adapt.get_untracked();
-        let floor_db = state.chroma_floor_db.get_untracked();
+        let (min_octave, num_octaves) = state.chroma.range().get_untracked().octave_params();
+        let gain_db = state.chroma.gain().get_untracked();
+        let adapt = state.chroma.adapt().get_untracked();
+        let floor_db = state.chroma.floor_db().get_untracked();
 
         // Try spectral_store first, then file columns, then compute on-demand from audio
         let cols_from_store = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _| {
@@ -1809,10 +1810,10 @@ fn schedule_chroma_tile_resonator(
             return;
         };
 
-        let (min_octave, num_octaves) = state.chroma_range.get_untracked().octave_params();
-        let gain_db = state.chroma_gain.get_untracked();
-        let adapt = state.chroma_adapt.get_untracked();
-        let floor_db = state.chroma_floor_db.get_untracked();
+        let (min_octave, num_octaves) = state.chroma.range().get_untracked().octave_params();
+        let gain_db = state.chroma.gain().get_untracked();
+        let adapt = state.chroma.adapt().get_untracked();
+        let floor_db = state.chroma.floor_db().get_untracked();
         let cv = state.channel_view.get_untracked();
         let sr = audio.sample_rate;
         let hop_size = BASELINE_HOP;
@@ -2176,14 +2177,14 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     let gen = RESONATOR_CACHE_GENERATION.with(|g| *g.borrow());
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let reson_fft = state.resonator_fft_mode.get_untracked().fft_for_lod(lod).max(16);
-    let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
-    let layout = state.resonator_layout.get_untracked();
+    let reson_fft = state.resonator.fft_mode().get_untracked().fft_for_lod(lod).max(16);
+    let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
+    let layout = state.resonator.layout().get_untracked();
     // Viewport-zoom mode: concentrate bins on the committed viewport range
     // (the debouncer in tile_scheduler updates this signal). `None` keeps
     // the default full-Nyquist (or full-log) range.
     let freq_range = state
-        .resonator_viewport_range
+        .resonator.viewport_range()
         .get_untracked()
         .map(|(lo, hi)| (lo as f32, hi as f32));
 

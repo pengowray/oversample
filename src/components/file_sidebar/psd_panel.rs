@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -56,8 +57,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let tab = state.right_sidebar_tab.get();
         if tab != RightSidebarTab::Psd {
             // Clear hover overlays when leaving the tab
-            if !state.psd_hover_freqs.get_untracked().is_empty() {
-                state.psd_hover_freqs.set(Vec::new());
+            if !state.psd.hover_freqs().get_untracked().is_empty() {
+                state.psd.hover_freqs().set(Vec::new());
             }
             return;
         }
@@ -65,28 +66,28 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let _files = state.files.get();
         let _idx = state.current_file_index.get();
         let _sel = state.selection.get();
-        let _nfft = state.psd_nfft.get();
-        let _eq = state.psd_apply_eq.get();
-        let _notch = state.psd_apply_notch.get();
-        let _nr = state.psd_apply_nr.get();
+        let _nfft = state.psd.nfft().get();
+        let _eq = state.psd.apply_eq().get();
+        let _notch = state.psd.apply_notch().get();
+        let _nr = state.psd.apply_nr().get();
         let _fr = freq_range_mode.get();
         // Subscribe to selection/annotation changes when freq range mode cares
         let _ = state.selection.get();
         let _ = state.selected_annotation_ids.get();
 
         // Subscribe to relevant filter params when toggles are on
-        if state.psd_apply_eq.get_untracked() {
+        if state.psd.apply_eq().get_untracked() {
             let _ = state.filter_enabled.get();
             let _ = state.filter_freq_low.get();
             let _ = state.filter_freq_high.get();
             let _ = state.filter_band_mode.get();
         }
-        if state.psd_apply_notch.get_untracked() {
-            let _ = state.notch_enabled.get();
-            let _ = state.notch_bands.get();
+        if state.psd.apply_notch().get_untracked() {
+            let _ = state.notch.enabled().get();
+            let _ = state.notch.bands().get();
         }
-        if state.psd_apply_nr.get_untracked() {
-            let _ = state.noise_reduce_enabled.get();
+        if state.psd.apply_nr().get_untracked() {
+            let _ = state.noise_reduce.enabled().get();
         }
 
         let files = state.files.get_untracked();
@@ -278,7 +279,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
     // Clear hover when mouse leaves the panel
     let on_panel_leave = move |_: web_sys::MouseEvent| {
-        state.psd_hover_freqs.set(Vec::new());
+        state.psd.hover_freqs().set(Vec::new());
     };
 
     view! {
@@ -294,12 +295,12 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                             let target = ev.target().unwrap();
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             if let Ok(val) = select.value().parse::<usize>() {
-                                state.psd_nfft.set(val);
+                                state.psd.nfft().set(val);
                             }
                         }
                     >
                         {[256, 512, 1024, 2048, 4096].iter().map(|&n| {
-                            let selected = move || state.psd_nfft.get() == n;
+                            let selected = move || state.psd.nfft().get() == n;
                             view! {
                                 <option value=n.to_string() selected=selected>{n.to_string()}</option>
                             }
@@ -327,38 +328,38 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     <button
                         class=move || {
                             if !state.filter_enabled.get() { "psd-btn psd-btn-disabled" }
-                            else if state.psd_apply_eq.get() { "psd-btn psd-btn-active" }
+                            else if state.psd.apply_eq().get() { "psd-btn psd-btn-active" }
                             else { "psd-btn" }
                         }
                         on:click=move |_| {
                             if state.filter_enabled.get_untracked() {
-                                state.psd_apply_eq.update(|v| *v = !*v);
+                                state.psd.apply_eq().update(|v| *v = !*v);
                             }
                         }
                         title="Apply EQ filter to PSD"
                     >"EQ"</button>
                     <button
                         class=move || {
-                            if !state.notch_enabled.get() { "psd-btn psd-btn-disabled" }
-                            else if state.psd_apply_notch.get() { "psd-btn psd-btn-active" }
+                            if !state.notch.enabled().get() { "psd-btn psd-btn-disabled" }
+                            else if state.psd.apply_notch().get() { "psd-btn psd-btn-active" }
                             else { "psd-btn" }
                         }
                         on:click=move |_| {
-                            if state.notch_enabled.get_untracked() {
-                                state.psd_apply_notch.update(|v| *v = !*v);
+                            if state.notch.enabled().get_untracked() {
+                                state.psd.apply_notch().update(|v| *v = !*v);
                             }
                         }
                         title="Apply notch filter to PSD"
                     >"Notch"</button>
                     <button
                         class=move || {
-                            if !state.noise_reduce_enabled.get() { "psd-btn psd-btn-disabled" }
-                            else if state.psd_apply_nr.get() { "psd-btn psd-btn-active" }
+                            if !state.noise_reduce.enabled().get() { "psd-btn psd-btn-disabled" }
+                            else if state.psd.apply_nr().get() { "psd-btn psd-btn-active" }
                             else { "psd-btn" }
                         }
                         on:click=move |_| {
-                            if state.noise_reduce_enabled.get_untracked() {
-                                state.psd_apply_nr.update(|v| *v = !*v);
+                            if state.noise_reduce.enabled().get_untracked() {
+                                state.psd.apply_nr().update(|v| *v = !*v);
                             }
                         }
                         title="Apply noise reduction to PSD"
@@ -495,7 +496,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                     let freqs = vec![
                                         (freq_hz, format!("{:.1}k", freq_hz / 1000.0), hover_color.clone()),
                                     ];
-                                    state.psd_hover_freqs.set(freqs);
+                                    state.psd.hover_freqs().set(freqs);
                                 }
                             };
                             // -6 dB column hover: peak + -6 dB range
@@ -509,7 +510,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                         freqs.push((lo, "-6dB lo".to_string(), "#44aa66".to_string()));
                                         freqs.push((hi, "-6dB hi".to_string(), "#44aa66".to_string()));
                                     }
-                                    state.psd_hover_freqs.set(freqs);
+                                    state.psd.hover_freqs().set(freqs);
                                 }
                             };
                             // -10 dB column hover: peak + -10 dB range
@@ -523,11 +524,11 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                                         freqs.push((lo, "-10dB lo".to_string(), "#aaaa44".to_string()));
                                         freqs.push((hi, "-10dB hi".to_string(), "#aaaa44".to_string()));
                                     }
-                                    state.psd_hover_freqs.set(freqs);
+                                    state.psd.hover_freqs().set(freqs);
                                 }
                             };
                             let on_leave = move |_: web_sys::MouseEvent| {
-                                state.psd_hover_freqs.set(Vec::new());
+                                state.psd.hover_freqs().set(Vec::new());
                             };
 
                             let bw_6_text = match peak.bw_6db {
@@ -924,10 +925,10 @@ fn start_psd_compute(
         return;
     }
 
-    let nfft = state.psd_nfft.get_untracked();
-    let apply_eq = state.psd_apply_eq.get_untracked();
-    let apply_notch = state.psd_apply_notch.get_untracked();
-    let apply_nr = state.psd_apply_nr.get_untracked();
+    let nfft = state.psd.nfft().get_untracked();
+    let apply_eq = state.psd.apply_eq().get_untracked();
+    let apply_notch = state.psd.apply_notch().get_untracked();
+    let apply_nr = state.psd.apply_nr().get_untracked();
 
     // Determine sample range
     let selection = state.selection.get_untracked();
@@ -955,17 +956,17 @@ fn start_psd_compute(
         end_sample.saturating_sub(start_sample),
     );
 
-    if apply_notch && state.notch_enabled.get_untracked() {
-        let bands = state.notch_bands.get_untracked();
-        let harm_supp = state.notch_harmonic_suppression.get_untracked();
+    if apply_notch && state.notch.enabled().get_untracked() {
+        let bands = state.notch.bands().get_untracked();
+        let harm_supp = state.notch.harmonic_suppression().get_untracked();
         if !bands.is_empty() {
             samples = crate::dsp::notch::apply_notch_filters(&samples, sample_rate, &bands, harm_supp);
         }
     }
 
-    if apply_nr && state.noise_reduce_enabled.get_untracked() {
-        if let Some(nf) = state.noise_reduce_floor.get_untracked() {
-            let strength = state.noise_reduce_strength.get_untracked();
+    if apply_nr && state.noise_reduce.enabled().get_untracked() {
+        if let Some(nf) = state.noise_reduce.floor().get_untracked() {
+            let strength = state.noise_reduce.strength().get_untracked();
             samples = crate::dsp::spectral_sub::apply_spectral_subtraction(
                 &samples, sample_rate, &nf, strength, 0.01, 0.0,
             );

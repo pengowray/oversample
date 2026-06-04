@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::ev::MouseEvent;
 use wasm_bindgen::JsCast;
@@ -23,11 +24,11 @@ pub fn ChromagramView() -> impl IntoView {
     Effect::new(move || {
         let _files = state.files.get();
         let _idx = state.current_file_index.get();
-        let _range = state.chroma_range.get();
-        let _gain = state.chroma_gain.get();
-        let _adapt = state.chroma_adapt.get();
-        let _floor = state.chroma_floor_db.get();
-        let _source = state.chroma_source.get();
+        let _range = state.chroma.range().get();
+        let _gain = state.chroma.gain().get();
+        let _adapt = state.chroma.adapt().get();
+        let _floor = state.chroma.floor_db().get();
+        let _source = state.chroma.source().get();
         tile_cache::clear_chroma_cache();
     });
 
@@ -36,13 +37,13 @@ pub fn ChromagramView() -> impl IntoView {
         let _tile_ready = state.tile_ready_signal.get();
         let scroll = state.scroll_offset.get();
         let zoom = state.zoom_level.get();
-        let chroma_colormap = state.chroma_colormap.get();
-        let _chroma_gain = state.chroma_gain.get(); // triggers re-render after cache clear
-        let _chroma_source = state.chroma_source.get(); // same — re-render after source-swap cache clear
-        let _chroma_adapt = state.chroma_adapt.get(); // same — re-render after AGC-change cache clear
-        let _chroma_floor = state.chroma_floor_db.get(); // same — re-render after floor-change cache clear
-        let chroma_gamma = state.chroma_gamma.get();
-        let chroma_range = state.chroma_range.get();
+        let chroma_colormap = state.chroma.colormap().get();
+        let _chroma_gain = state.chroma.gain().get(); // triggers re-render after cache clear
+        let _chroma_source = state.chroma.source().get(); // same — re-render after source-swap cache clear
+        let _chroma_adapt = state.chroma.adapt().get(); // same — re-render after AGC-change cache clear
+        let _chroma_floor = state.chroma.floor_db().get(); // same — re-render after floor-change cache clear
+        let chroma_gamma = state.chroma.gamma().get();
+        let chroma_range = state.chroma.range().get();
         let (_min_octave, num_octaves) = chroma_range.octave_params();
         let files = state.files.get();
         let idx = state.current_file_index.get();

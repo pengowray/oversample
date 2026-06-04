@@ -5,6 +5,7 @@
 // Profile management (save/load Tauri presets) was dropped for this
 // pass; the Tauri-side commands are still there if it's reinstated.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
@@ -52,8 +53,8 @@ pub fn NotchCombo() -> impl IntoView {
     let no_file = move || {
         state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
     };
-    let band_count = Signal::derive(move || state.notch_bands.get().len());
-    let enabled = Signal::derive(move || state.notch_enabled.get());
+    let band_count = Signal::derive(move || state.notch.bands().get().len());
+    let enabled = Signal::derive(move || state.notch.enabled().get());
 
     let left_class = Signal::derive(move || {
         if no_file() { "layer-btn combo-btn-left disabled" }
@@ -78,7 +79,7 @@ pub fn NotchCombo() -> impl IntoView {
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if no_file() { return; }
-        state.notch_enabled.update(|v| *v = !*v);
+        state.notch.enabled().update(|v| *v = !*v);
     });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::Notch);
@@ -97,7 +98,7 @@ pub fn NotchCombo() -> impl IntoView {
                 state.show_error_toast("Not enough live audio yet");
                 return;
             }
-            state.notch_detecting.set(true);
+            state.notch.detecting().set(true);
             let threshold = sensitivity.get_untracked();
             let samples = Arc::new(snapshot);
             spawn_local(async move {
@@ -113,14 +114,14 @@ pub fn NotchCombo() -> impl IntoView {
                     crate::canvas::tile_cache::yield_to_browser,
                 ).await;
                 let count = bands.len();
-                state.notch_bands.set(bands);
+                state.notch.bands().set(bands);
                 if count > 0 {
-                    state.notch_enabled.set(true);
+                    state.notch.enabled().set(true);
                     state.show_info_toast(format!("Found {} noise band{} from live", count, if count == 1 { "" } else { "s" }));
                 } else {
                     state.show_info_toast("No persistent noise bands detected");
                 }
-                state.notch_detecting.set(false);
+                state.notch.detecting().set(false);
             });
             return;
         }
@@ -131,7 +132,7 @@ pub fn NotchCombo() -> impl IntoView {
             state.show_error_toast("No file loaded");
             return;
         };
-        state.notch_detecting.set(true);
+        state.notch.detecting().set(true);
         let threshold = sensitivity.get_untracked();
         let total = file.audio.source.total_samples() as usize;
         let samples = Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, total));
@@ -150,14 +151,14 @@ pub fn NotchCombo() -> impl IntoView {
                 crate::canvas::tile_cache::yield_to_browser,
             ).await;
             let count = bands.len();
-            state.notch_bands.set(bands);
+            state.notch.bands().set(bands);
             if count > 0 {
-                state.notch_enabled.set(true);
+                state.notch.enabled().set(true);
                 state.show_info_toast(format!("Found {} noise band{}", count, if count == 1 { "" } else { "s" }));
             } else {
                 state.show_info_toast("No persistent noise bands detected");
             }
-            state.notch_detecting.set(false);
+            state.notch.detecting().set(false);
         });
     };
 
@@ -171,24 +172,24 @@ pub fn NotchCombo() -> impl IntoView {
     let on_harmonic_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = target.value().parse::<f64>() {
-            state.notch_harmonic_suppression.set(val / 100.0);
+            state.notch.harmonic_suppression().set(val / 100.0);
         }
     };
 
     let toggle_band = move |index: usize| {
-        state.notch_bands.update(|bands| {
+        state.notch.bands().update(|bands| {
             if let Some(band) = bands.get_mut(index) {
                 band.enabled = !band.enabled;
             }
         });
     };
     let remove_band = move |index: usize| {
-        state.notch_bands.update(|bands| {
+        state.notch.bands().update(|bands| {
             if index < bands.len() { bands.remove(index); }
         });
     };
     let set_all_enabled = move |enabled: bool| {
-        state.notch_bands.update(|bands| {
+        state.notch.bands().update(|bands| {
             for band in bands.iter_mut() { band.enabled = enabled; }
         });
     };
@@ -211,11 +212,11 @@ pub fn NotchCombo() -> impl IntoView {
         >
             // ── Enable ──
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                <button class=move || layer_opt_class(state.notch_enabled.get())
-                    on:click=move |_| state.notch_enabled.set(true)
+                <button class=move || layer_opt_class(state.notch.enabled().get())
+                    on:click=move |_| state.notch.enabled().set(true)
                 >"On"</button>
-                <button class=move || layer_opt_class(!state.notch_enabled.get())
-                    on:click=move |_| state.notch_enabled.set(false)
+                <button class=move || layer_opt_class(!state.notch.enabled().get())
+                    on:click=move |_| state.notch.enabled().set(false)
                 >"Off"</button>
             </div>
 
@@ -229,13 +230,13 @@ pub fn NotchCombo() -> impl IntoView {
                     style="flex: 1;"
                     on:click=on_detect
                     disabled=move || {
-                        if state.notch_detecting.get() { return true; }
+                        if state.notch.detecting().get() { return true; }
                         let live = state.mic_listening.get() || state.mic_recording.get();
                         !live && state.current_file_index.get().is_none()
                     }
                 >
                     {move || {
-                        if state.notch_detecting.get() { return "Detecting\u{2026}".to_string(); }
+                        if state.notch.detecting().get() { return "Detecting\u{2026}".to_string(); }
                         let live = state.mic_listening.get() || state.mic_recording.get();
                         if live { "Detect from Live".to_string() } else { "Detect Noise".to_string() }
                     }}
@@ -254,13 +255,13 @@ pub fn NotchCombo() -> impl IntoView {
 
             // ── Bands ──
             <div class="layer-panel-title">{move || {
-                let bands = state.notch_bands.get();
+                let bands = state.notch.bands().get();
                 let on = bands.iter().filter(|b| b.enabled).count();
                 if bands.is_empty() { "Bands".to_string() }
                 else { format!("Bands ({}/{})", on, bands.len()) }
             }}</div>
             {move || {
-                let bands = state.notch_bands.get();
+                let bands = state.notch.bands().get();
                 if bands.is_empty() {
                     view! {
                         <div style="padding: 4px 8px; font-size: 11px; opacity: 0.55;">
@@ -276,8 +277,8 @@ pub fn NotchCombo() -> impl IntoView {
                         view! {
                             <div
                                 style="display: flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 11px;"
-                                on:mouseenter=move |_| state.notch_hovering_band.set(Some(i))
-                                on:mouseleave=move |_| state.notch_hovering_band.set(None)
+                                on:mouseenter=move |_| state.notch.hovering_band().set(Some(i))
+                                on:mouseleave=move |_| state.notch.hovering_band().set(None)
                             >
                                 <input type="checkbox"
                                     checked=band_enabled
@@ -311,8 +312,8 @@ pub fn NotchCombo() -> impl IntoView {
                             >"All Off"</button>
                             <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
                                 on:click=move |_: web_sys::MouseEvent| {
-                                    state.notch_bands.set(Vec::new());
-                                    state.notch_enabled.set(false);
+                                    state.notch.bands().set(Vec::new());
+                                    state.notch.enabled().set(false);
                                 }
                             >"Clear"</button>
                         </div>
@@ -322,24 +323,24 @@ pub fn NotchCombo() -> impl IntoView {
 
             // ── Harmonic suppression (only when there are bands or a learned floor) ──
             {move || {
-                let has_bands = !state.notch_bands.get().is_empty();
-                let has_floor = state.noise_reduce_floor.get().is_some();
+                let has_bands = !state.notch.bands().get().is_empty();
+                let has_floor = state.noise_reduce.floor().get().is_some();
                 if has_bands || has_floor {
                     view! {
                         <hr />
                         <div class="layer-panel-slider-row">
                             <label>"Harm. supp."</label>
                             <input type="range" min="0" max="100" step="5"
-                                prop:value=move || (state.notch_harmonic_suppression.get() * 100.0) as i32
+                                prop:value=move || (state.notch.harmonic_suppression().get() * 100.0) as i32
                                 on:input=on_harmonic_change
                                 title=move || {
-                                    let v = state.notch_harmonic_suppression.get();
+                                    let v = state.notch.harmonic_suppression().get();
                                     if v == 0.0 { "Off".to_string() }
                                     else { format!("{:.0}% ({:.0} dB at 2\u{00D7} & 3\u{00D7})", v * 100.0, -48.0 * v) }
                                 }
                             />
                             <span style="min-width: 30px; text-align: right; font-size: 10px; opacity: 0.7;">
-                                {move || format!("{:.0}%", state.notch_harmonic_suppression.get() * 100.0)}
+                                {move || format!("{:.0}%", state.notch.harmonic_suppression().get() * 100.0)}
                             </span>
                         </div>
                     }.into_any()
@@ -364,8 +365,8 @@ pub fn NrCombo() -> impl IntoView {
     let no_file = move || {
         state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
     };
-    let enabled = Signal::derive(move || state.noise_reduce_enabled.get());
-    let has_floor = Signal::derive(move || state.noise_reduce_floor.get().is_some());
+    let enabled = Signal::derive(move || state.noise_reduce.enabled().get());
+    let has_floor = Signal::derive(move || state.noise_reduce.floor().get().is_some());
 
     let left_class = Signal::derive(move || {
         if no_file() { "layer-btn combo-btn-left disabled" }
@@ -382,13 +383,13 @@ pub fn NrCombo() -> impl IntoView {
 
     let left_value = Signal::derive(move || {
         if !has_floor.get() { String::new() }
-        else { format!("{:.0}%", state.noise_reduce_strength.get() * 100.0) }
+        else { format!("{:.0}%", state.noise_reduce.strength().get() * 100.0) }
     });
     let right_value = Signal::derive(move || if enabled.get() { "ON".to_string() } else { "OFF".to_string() });
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if no_file() { return; }
-        state.noise_reduce_enabled.update(|v| *v = !*v);
+        state.noise_reduce.enabled().update(|v| *v = !*v);
     });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::NoiseReduce);
@@ -408,7 +409,7 @@ pub fn NrCombo() -> impl IntoView {
                 return;
             }
             let samples = Arc::new(snapshot);
-            state.noise_reduce_learning.set(true);
+            state.noise_reduce.learning().set(true);
             spawn_local(async move {
                 yield_to_browser().await;
                 let duration = samples.len() as f64 / sample_rate as f64;
@@ -418,13 +419,13 @@ pub fn NrCombo() -> impl IntoView {
                     crate::canvas::tile_cache::yield_to_browser,
                 ).await;
                 if let Some(f) = floor {
-                    state.noise_reduce_floor.set(Some(f));
-                    state.noise_reduce_enabled.set(true);
+                    state.noise_reduce.floor().set(Some(f));
+                    state.noise_reduce.enabled().set(true);
                     state.show_info_toast("Noise floor learned from live");
                 } else {
                     state.show_error_toast("Not enough live audio to learn noise floor");
                 }
-                state.noise_reduce_learning.set(false);
+                state.noise_reduce.learning().set(false);
             });
             return;
         }
@@ -435,7 +436,7 @@ pub fn NrCombo() -> impl IntoView {
             state.show_error_toast("No file loaded");
             return;
         };
-        state.noise_reduce_learning.set(true);
+        state.noise_reduce.learning().set(true);
         let total = file.audio.source.total_samples() as usize;
         let samples = Arc::new(file.audio.source.read_region(ChannelView::MonoMix, 0, total));
         let sample_rate = file.audio.sample_rate;
@@ -449,20 +450,20 @@ pub fn NrCombo() -> impl IntoView {
                 crate::canvas::tile_cache::yield_to_browser,
             ).await;
             if let Some(f) = floor {
-                state.noise_reduce_floor.set(Some(f));
-                state.noise_reduce_enabled.set(true);
+                state.noise_reduce.floor().set(Some(f));
+                state.noise_reduce.enabled().set(true);
                 state.show_info_toast("Noise floor learned");
             } else {
                 state.show_error_toast("Not enough audio to learn noise floor");
             }
-            state.noise_reduce_learning.set(false);
+            state.noise_reduce.learning().set(false);
         });
     };
 
     let on_strength_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = target.value().parse::<f64>() {
-            state.noise_reduce_strength.set(val / 100.0);
+            state.noise_reduce.strength().set(val / 100.0);
         }
     };
 
@@ -484,11 +485,11 @@ pub fn NrCombo() -> impl IntoView {
         >
             // ── Enable ──
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                <button class=move || layer_opt_class(state.noise_reduce_enabled.get())
-                    on:click=move |_| state.noise_reduce_enabled.set(true)
+                <button class=move || layer_opt_class(state.noise_reduce.enabled().get())
+                    on:click=move |_| state.noise_reduce.enabled().set(true)
                 >"On"</button>
-                <button class=move || layer_opt_class(!state.noise_reduce_enabled.get())
-                    on:click=move |_| state.noise_reduce_enabled.set(false)
+                <button class=move || layer_opt_class(!state.noise_reduce.enabled().get())
+                    on:click=move |_| state.noise_reduce.enabled().set(false)
                 >"Off"</button>
             </div>
 
@@ -501,13 +502,13 @@ pub fn NrCombo() -> impl IntoView {
                     style="flex: 1;"
                     on:click=on_learn_floor
                     disabled=move || {
-                        if state.noise_reduce_learning.get() { return true; }
+                        if state.noise_reduce.learning().get() { return true; }
                         let live = state.mic_listening.get() || state.mic_recording.get();
                         !live && state.current_file_index.get().is_none()
                     }
                 >
                     {move || {
-                        if state.noise_reduce_learning.get() { return "Learning\u{2026}".to_string(); }
+                        if state.noise_reduce.learning().get() { return "Learning\u{2026}".to_string(); }
                         let live = state.mic_listening.get() || state.mic_recording.get();
                         if live { "Learn from Live".to_string() } else { "Learn Noise Floor".to_string() }
                     }}
@@ -518,18 +519,18 @@ pub fn NrCombo() -> impl IntoView {
             <div class="layer-panel-slider-row">
                 <label>"Strength"</label>
                 <input type="range" min="0" max="300" step="5"
-                    prop:value=move || (state.noise_reduce_strength.get() * 100.0) as i32
+                    prop:value=move || (state.noise_reduce.strength().get() * 100.0) as i32
                     on:input=on_strength_change
-                    title=move || format!("{:.0}%", state.noise_reduce_strength.get() * 100.0)
+                    title=move || format!("{:.0}%", state.noise_reduce.strength().get() * 100.0)
                 />
                 <span style="min-width: 36px; text-align: right; font-size: 10px; opacity: 0.7;">
-                    {move || format!("{:.0}%", state.noise_reduce_strength.get() * 100.0)}
+                    {move || format!("{:.0}%", state.noise_reduce.strength().get() * 100.0)}
                 </span>
             </div>
 
             // ── Floor status ──
             {move || {
-                let floor = state.noise_reduce_floor.get();
+                let floor = state.noise_reduce.floor().get();
                 if let Some(f) = floor {
                     let bins = f.bin_magnitudes.len();
                     let dur = f.analysis_duration_secs;
@@ -541,8 +542,8 @@ pub fn NrCombo() -> impl IntoView {
                         <div style="display: flex; gap: 4px; padding: 2px 6px 0;">
                             <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
                                 on:click=move |_: web_sys::MouseEvent| {
-                                    state.noise_reduce_floor.set(None);
-                                    state.noise_reduce_enabled.set(false);
+                                    state.noise_reduce.floor().set(None);
+                                    state.noise_reduce.enabled().set(false);
                                 }
                             >"Clear Floor"</button>
                         </div>

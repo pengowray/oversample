@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -38,23 +39,23 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         // Already computed for this file + same BandFF range (trigger bypass: cache was cleared)
         if idx == last_computed_idx.get_untracked()
             && band_ff_pair == last_computed_ff.get_untracked()
-            && !state.detected_pulses.get_untracked().is_empty()
+            && !state.pulse.detected().get_untracked().is_empty()
         {
             return;
         }
 
         let file = idx.and_then(|i| files.get(i).cloned());
         let Some(file) = file else {
-            state.detected_pulses.set(Vec::new());
-            state.pulse_detecting.set(false);
+            state.pulse.detected().set(Vec::new());
+            state.pulse.detecting().set(false);
             last_computed_idx.set(None);
             return;
         };
 
         // Start detection
-        state.detected_pulses.set(Vec::new());
-        state.selected_pulse_index.set(None);
-        state.pulse_detecting.set(true);
+        state.pulse.detected().set(Vec::new());
+        state.pulse.selected_index().set(None);
+        state.pulse.detecting().set(true);
         last_computed_idx.set(idx);
         last_computed_ff.set(band_ff_pair);
         compute_gen.update(|g| *g += 1);
@@ -83,8 +84,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
             let pulses = pulse_detect::detect_pulses(&audio, &spectrogram, &params);
 
             if compute_gen.get_untracked() != generation { return; }
-            state.detected_pulses.set(pulses);
-            state.pulse_detecting.set(false);
+            state.pulse.detected().set(pulses);
+            state.pulse.detecting().set(false);
         });
     });
 
@@ -100,7 +101,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
     // Click a pulse to navigate
     let on_pulse_click = move |pulse: DetectedPulse| {
-        state.selected_pulse_index.set(Some(pulse.index));
+        state.pulse.selected_index().set(Some(pulse.index));
 
         // Center spectrogram on this pulse
         let files = state.files.get_untracked();
@@ -175,10 +176,10 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                     <label class="setting-label">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.pulse_overlay_enabled.get()
+                            prop:checked=move || state.pulse.overlay_enabled().get()
                             on:change=move |ev| {
                                 let checked = event_target_checked(&ev);
-                                state.pulse_overlay_enabled.set(checked);
+                                state.pulse.overlay_enabled().set(checked);
                             }
                         />
                         " Show overlay"
@@ -200,14 +201,14 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                     }.into_any();
                 }
 
-                if state.pulse_detecting.get() {
+                if state.pulse.detecting().get() {
                     return view! {
                         <div class="sidebar-panel-empty">"Detecting pulses\u{2026}"</div>
                     }.into_any();
                 }
 
-                let pulses = state.detected_pulses.get();
-                let selected = state.selected_pulse_index.get();
+                let pulses = state.pulse.detected().get();
+                let selected = state.pulse.selected_index().get();
 
                 if pulses.is_empty() {
                     return view! {

@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -718,10 +719,10 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 // emit the genuinely-new columns. This keeps per-tick cost
                 // bounded regardless of total recording length.
                 let new_cols = if state.main_view.get_untracked() == MainView::Resonators {
-                    let bandwidth_hz = state.resonator_bandwidth_hz.get_untracked().max(1.0);
-                    let layout = state.resonator_layout.get_untracked();
+                    let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
+                    let layout = state.resonator.layout().get_untracked();
                     let freq_range = state
-                        .resonator_viewport_range
+                        .resonator.viewport_range()
                         .get_untracked()
                         .map(|(lo, hi)| (lo as f32, hi as f32));
                     let warmup = warmup_samples(sample_rate, bandwidth_hz);

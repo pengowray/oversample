@@ -1207,11 +1207,96 @@ pub struct FlowState {
     pub color_scheme: FlowColorScheme,
 }
 
+/// Chromagram view settings.
+#[derive(Clone, Debug, Store)]
+pub struct ChromaState {
+    /// Chromagram colormap mode.
+    pub colormap: ChromaColormap,
+    /// Display gain boost in dB (0 = none, positive = amplify).
+    pub gain: f32,
+    /// Display gamma curve (1.0 = linear).
+    pub gamma: f32,
+    /// Frequency range preset.
+    pub range: ChromaRange,
+    /// Compute backend (resonator bank vs FFT re-binning).
+    pub source: ChromaSource,
+    /// Local-AGC strength: 0 = global normalisation, 1 = per-column smoothed
+    /// local max. Lifts quiet passages so relative note brightness stays visible.
+    pub adapt: f32,
+    /// Hard dB floor below the (adapt-adjusted) effective max; ratios below map
+    /// to black. -80 dB ≈ off; raise toward 0 to sharpen contrast.
+    pub floor_db: f32,
+}
+
+/// Resonator (per-bin EMA) view settings.
+#[derive(Clone, Debug, Store)]
+pub struct ResonatorState {
+    /// Per-bin EMA bandwidth in Hz (controls time-frequency tradeoff).
+    pub bandwidth_hz: f32,
+    /// Bin-count mode (fixed or adaptive-per-LOD).
+    pub fft_mode: ResonatorFftMode,
+    /// Frequency-bin spacing (linear or log).
+    pub layout: ResonatorLayout,
+    /// Concentrate the bank's range on the visible viewport instead of 0..Nyquist.
+    pub viewport_bins: bool,
+    /// Freq range (Hz) of tiles currently in the resonator cache; `None` = default.
+    pub viewport_range: Option<(f64, f64)>,
+}
+
+/// Notch noise filtering.
+#[derive(Clone, Debug, Store)]
+pub struct NotchState {
+    pub enabled: bool,
+    pub bands: Vec<crate::dsp::notch::NoiseBand>,
+    pub detecting: bool,
+    pub profile_name: String,
+    pub hovering_band: Option<usize>,
+    /// Harmonic suppression strength (0.0–1.0). Attenuates 2x and 3x harmonics.
+    pub harmonic_suppression: f64,
+}
+
+/// Spectral-subtraction noise reduction.
+#[derive(Clone, Debug, Store)]
+pub struct NoiseReduceState {
+    pub enabled: bool,
+    pub strength: f64,
+    pub floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
+    pub learning: bool,
+}
+
+/// Pulse detection overlay.
+#[derive(Clone, Debug, Store)]
+pub struct PulseState {
+    pub detected: Vec<crate::dsp::pulse_detect::DetectedPulse>,
+    pub overlay_enabled: bool,
+    pub selected_index: Option<usize>,
+    pub detecting: bool,
+}
+
+/// Power-spectral-density panel settings.
+#[derive(Clone, Debug, Store)]
+pub struct PsdState {
+    pub nfft: usize,
+    pub apply_eq: bool,
+    pub apply_notch: bool,
+    pub apply_nr: bool,
+    /// Temporary frequency overlays from PSD hover: (freq_hz, label, color_css).
+    pub hover_freqs: Vec<(f64, String, String)>,
+}
+
 /// Single-import prelude for the generated `#[derive(Store)]` accessor traits.
 /// Consumers `use crate::state::store_fields::*;` once instead of importing each
 /// `FooStateStoreFields` trait individually. Extend as more groups migrate.
 pub mod store_fields {
-    pub use super::FlowStateStoreFields;
+    pub use super::{
+        FlowStateStoreFields,
+        ChromaStateStoreFields,
+        ResonatorStateStoreFields,
+        NotchStateStoreFields,
+        NoiseReduceStateStoreFields,
+        PulseStateStoreFields,
+        PsdStateStoreFields,
+    };
 }
 
 // ── AppState ─────────────────────────────────────────────────────────────────
@@ -1603,67 +1688,24 @@ pub struct AppState {
 
     // User colormap preference (when not overridden by HFR/flow)
     pub colormap_preference: RwSignal<Colormap>,
-    // Chromagram colormap mode
-    pub chroma_colormap: RwSignal<ChromaColormap>,
-    // Chromagram display: gain boost in dB (0 = no boost, positive = amplify)
-    pub chroma_gain: RwSignal<f32>,
-    // Chromagram display: gamma curve (1.0 = linear)
-    pub chroma_gamma: RwSignal<f32>,
-    // Chromagram frequency range preset
-    pub chroma_range: RwSignal<ChromaRange>,
-    // Chromagram compute backend (resonator bank vs FFT re-binning).
-    pub chroma_source: RwSignal<ChromaSource>,
-    // Local-AGC strength: 0 = global normalisation, 1 = per-column smoothed
-    // local max. Lifts quiet passages so relative note brightness stays
-    // visible even when overall loudness varies.
-    pub chroma_adapt: RwSignal<f32>,
-    // Hard dB floor below the (possibly adapt-adjusted) effective max — energy
-    // ratios below this map to black. -80 dB ≈ off; raise toward 0 to sharpen
-    // contrast and keep the AGC from amplifying noise during silence.
-    pub chroma_floor_db: RwSignal<f32>,
+    /// Chromagram view settings (grouped reactive store).
+    pub chroma: Store<ChromaState>,
 
-    // Resonator view: per-bin EMA bandwidth in Hz (controls time-frequency tradeoff)
-    pub resonator_bandwidth_hz: RwSignal<f32>,
-    // Resonator view: bin-count mode (fixed or adaptive-per-LOD).
-    pub resonator_fft_mode: RwSignal<ResonatorFftMode>,
-    // Resonator view: frequency-bin spacing (linear or log).
-    pub resonator_layout: RwSignal<ResonatorLayout>,
-    // Resonator view: when true, the bank's frequency range is concentrated
-    // on the current visible viewport (min_display_freq..max_display_freq)
-    // instead of covering 0..Nyquist. Gives much higher vertical resolution
-    // than FFTs can offer — at the cost of needing a cache rebuild when the
-    // user's freq range changes.
-    pub resonator_viewport_bins: RwSignal<bool>,
-    // Current freq range of the tiles currently in the resonator cache, if
-    // any, in Hz. `None` means tiles cover the default 0..Nyquist (or the
-    // default log range). Updated after a debounced freq-range change so we
-    // don't rebuild tiles on every frame of a zoom gesture.
-    pub resonator_viewport_range: RwSignal<Option<(f64, f64)>>,
+    /// Resonator-view settings (grouped reactive store).
+    pub resonator: Store<ResonatorState>,
     // Colormap preference used when HFR mode is active
     pub hfr_colormap_preference: RwSignal<Colormap>,
     // When false, the Range button is hidden at full range
     pub always_show_view_range: RwSignal<bool>,
 
-    // Notch noise filtering
-    pub notch_enabled: RwSignal<bool>,
-    pub notch_bands: RwSignal<Vec<crate::dsp::notch::NoiseBand>>,
-    pub notch_detecting: RwSignal<bool>,
-    pub notch_profile_name: RwSignal<String>,
-    pub notch_hovering_band: RwSignal<Option<usize>>,
-    /// Harmonic suppression strength (0.0–1.0). Attenuates 2x and 3x harmonics of noise.
-    pub notch_harmonic_suppression: RwSignal<f64>,
+    /// Notch noise-filtering settings (grouped reactive store).
+    pub notch: Store<NotchState>,
 
-    // Spectral subtraction noise reduction
-    pub noise_reduce_enabled: RwSignal<bool>,
-    pub noise_reduce_strength: RwSignal<f64>,
-    pub noise_reduce_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
-    pub noise_reduce_learning: RwSignal<bool>,
+    /// Spectral-subtraction noise-reduction settings (grouped reactive store).
+    pub noise_reduce: Store<NoiseReduceState>,
 
-    // Pulse detection
-    pub detected_pulses: RwSignal<Vec<crate::dsp::pulse_detect::DetectedPulse>>,
-    pub pulse_overlay_enabled: RwSignal<bool>,
-    pub selected_pulse_index: RwSignal<Option<usize>>,
-    pub pulse_detecting: RwSignal<bool>,
+    /// Pulse-detection overlay settings (grouped reactive store).
+    pub pulse: Store<PulseState>,
 
     // File identity hashing
     /// Whether a full hash computation (Layer 3/4) is currently running.
@@ -1764,13 +1806,8 @@ pub struct AppState {
     // Auto-learned noise floor for display (computed from first ~500ms of file)
     pub display_auto_noise_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
 
-    // PSD (Power Spectral Density) panel
-    pub psd_nfft: RwSignal<usize>,
-    pub psd_apply_eq: RwSignal<bool>,
-    pub psd_apply_notch: RwSignal<bool>,
-    pub psd_apply_nr: RwSignal<bool>,
-    /// Temporary frequency overlays from PSD hover: Vec<(freq_hz, label, color_css)>.
-    pub psd_hover_freqs: RwSignal<Vec<(f64, String, String)>>,
+    /// PSD (Power Spectral Density) panel settings (grouped reactive store).
+    pub psd: Store<PsdState>,
 
     // Bat Book
     pub bat_book_open: RwSignal<bool>,
@@ -2106,37 +2143,47 @@ impl AppState {
             cursor_time: RwSignal::new(None),
             left_sidebar_tab: RwSignal::new(LeftSidebarTab::default()),
             colormap_preference: RwSignal::new(Colormap::Viridis),
-            chroma_colormap: RwSignal::new(ChromaColormap::PitchClass),
-            chroma_gain: RwSignal::new(0.0),
-            chroma_gamma: RwSignal::new(1.0),
-            chroma_range: RwSignal::new(ChromaRange::Full),
-            chroma_source: RwSignal::new(ChromaSource::Resonators),
-            chroma_adapt: RwSignal::new(0.0),
-            chroma_floor_db: RwSignal::new(-80.0),
-            resonator_bandwidth_hz: RwSignal::new(20.0),
-            resonator_fft_mode: RwSignal::new(ResonatorFftMode::Single(512)),
-            resonator_layout: RwSignal::new(ResonatorLayout::Linear),
-            resonator_viewport_bins: RwSignal::new(true),
-            resonator_viewport_range: RwSignal::new(None),
+            chroma: Store::new(ChromaState {
+                colormap: ChromaColormap::PitchClass,
+                gain: 0.0,
+                gamma: 1.0,
+                range: ChromaRange::Full,
+                source: ChromaSource::Resonators,
+                adapt: 0.0,
+                floor_db: -80.0,
+            }),
+            resonator: Store::new(ResonatorState {
+                bandwidth_hz: 20.0,
+                fft_mode: ResonatorFftMode::Single(512),
+                layout: ResonatorLayout::Linear,
+                viewport_bins: true,
+                viewport_range: None,
+            }),
             hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 
-            notch_enabled: RwSignal::new(false),
-            notch_bands: RwSignal::new(Vec::new()),
-            notch_detecting: RwSignal::new(false),
-            notch_profile_name: RwSignal::new(String::new()),
-            notch_hovering_band: RwSignal::new(None),
-            notch_harmonic_suppression: RwSignal::new(0.0),
+            notch: Store::new(NotchState {
+                enabled: false,
+                bands: Vec::new(),
+                detecting: false,
+                profile_name: String::new(),
+                hovering_band: None,
+                harmonic_suppression: 0.0,
+            }),
 
-            noise_reduce_enabled: RwSignal::new(false),
-            noise_reduce_strength: RwSignal::new(0.6),
-            noise_reduce_floor: RwSignal::new(None),
-            noise_reduce_learning: RwSignal::new(false),
+            noise_reduce: Store::new(NoiseReduceState {
+                enabled: false,
+                strength: 0.6,
+                floor: None,
+                learning: false,
+            }),
 
-            detected_pulses: RwSignal::new(Vec::new()),
-            pulse_overlay_enabled: RwSignal::new(false),
-            selected_pulse_index: RwSignal::new(None),
-            pulse_detecting: RwSignal::new(false),
+            pulse: Store::new(PulseState {
+                detected: Vec::new(),
+                overlay_enabled: false,
+                selected_index: None,
+                detecting: false,
+            }),
 
             hash_computing: RwSignal::new(false),
             hash_generation: RwSignal::new(0),
@@ -2204,11 +2251,13 @@ impl AppState {
             display_nr_strength: RwSignal::new(0.8),
             display_auto_noise_floor: RwSignal::new(None),
 
-            psd_nfft: RwSignal::new(1024),
-            psd_apply_eq: RwSignal::new(false),
-            psd_apply_notch: RwSignal::new(false),
-            psd_apply_nr: RwSignal::new(false),
-            psd_hover_freqs: RwSignal::new(Vec::new()),
+            psd: Store::new(PsdState {
+                nfft: 1024,
+                apply_eq: false,
+                apply_notch: false,
+                apply_nr: false,
+                hover_freqs: Vec::new(),
+            }),
 
             bat_book_open: RwSignal::new(false),
             bat_book_mode: RwSignal::new({

@@ -232,14 +232,14 @@ pub fn App() -> impl IntoView {
             let _ = state.filter_quality.get();
             let _ = state.bandpass_mode.get();
             let _ = state.channel_view.get();
-            let notch_on = state.notch_enabled.get();
-            let _ = state.notch_bands.get();
-            let noise_on = state.noise_reduce_enabled.get();
-            let _ = state.noise_reduce_strength.get();
-            let _ = state.noise_reduce_floor.get();
+            let notch_on = state.notch.enabled().get();
+            let _ = state.notch.bands().get();
+            let noise_on = state.noise_reduce.enabled().get();
+            let _ = state.noise_reduce.strength().get();
+            let _ = state.noise_reduce.floor().get();
             // Only trigger replay for harmonic suppression when a noise system is active
             if notch_on || noise_on {
-                let _ = state.notch_harmonic_suppression.get();
+                let _ = state.notch.harmonic_suppression().get();
             }
 
             if first_run.get() {
@@ -527,13 +527,13 @@ pub fn App() -> impl IntoView {
         let nr_on = match state.display_filter_nr.get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto | DisplayFilterMode::Custom => true,
-            DisplayFilterMode::Same => state.noise_reduce_enabled.get(),
+            DisplayFilterMode::Same => state.noise_reduce.enabled().get(),
         };
         // Also consider notch
         let notch_on = match state.display_filter_notch.get() {
             DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => state.notch_enabled.get(), // auto = show if playback notch is on
-            DisplayFilterMode::Same => state.notch_enabled.get(),
+            DisplayFilterMode::Auto => state.notch.enabled().get(), // auto = show if playback notch is on
+            DisplayFilterMode::Same => state.notch.enabled().get(),
             DisplayFilterMode::Custom => false,
         };
         state.display_noise_filter.set(nr_on || notch_on);
@@ -688,13 +688,13 @@ pub fn App() -> impl IntoView {
                     gain_mode: state.gain_mode.get_untracked(),
                     gain_db: state.gain_db.get_untracked(),
                     gain_db_stash: state.gain_db_stash.get_untracked(),
-                    notch_enabled: state.notch_enabled.get_untracked(),
-                    notch_bands: state.notch_bands.get_untracked(),
-                    notch_profile_name: state.notch_profile_name.get_untracked(),
-                    notch_harmonic_suppression: state.notch_harmonic_suppression.get_untracked(),
-                    noise_reduce_enabled: state.noise_reduce_enabled.get_untracked(),
-                    noise_reduce_strength: state.noise_reduce_strength.get_untracked(),
-                    noise_reduce_floor: state.noise_reduce_floor.get_untracked(),
+                    notch_enabled: state.notch.enabled().get_untracked(),
+                    notch_bands: state.notch.bands().get_untracked(),
+                    notch_profile_name: state.notch.profile_name().get_untracked(),
+                    notch_harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
+                    noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
+                    noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
+                    noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
                 };
 
                 // Save to the outgoing file and all files in its sequence group
@@ -741,13 +741,13 @@ pub fn App() -> impl IntoView {
                     state.auto_gain.set(s.gain_mode.is_auto());
                     state.gain_db.set(s.gain_db);
                     state.gain_db_stash.set(s.gain_db_stash);
-                    state.notch_enabled.set(s.notch_enabled);
-                    state.notch_bands.set(s.notch_bands.clone());
-                    state.notch_profile_name.set(s.notch_profile_name.clone());
-                    state.notch_harmonic_suppression.set(s.notch_harmonic_suppression);
-                    state.noise_reduce_enabled.set(s.noise_reduce_enabled);
-                    state.noise_reduce_strength.set(s.noise_reduce_strength);
-                    state.noise_reduce_floor.set(s.noise_reduce_floor.clone());
+                    state.notch.enabled().set(s.notch_enabled);
+                    state.notch.bands().set(s.notch_bands.clone());
+                    state.notch.profile_name().set(s.notch_profile_name.clone());
+                    state.notch.harmonic_suppression().set(s.notch_harmonic_suppression);
+                    state.noise_reduce.enabled().set(s.noise_reduce_enabled);
+                    state.noise_reduce.strength().set(s.noise_reduce_strength);
+                    state.noise_reduce.floor().set(s.noise_reduce_floor.clone());
                 }
             }
         });
@@ -1772,7 +1772,7 @@ pub fn MainViewButton() -> impl IntoView {
             // Eagerly resolve "Same" → mirror current playback state
             state.display_eq.set(state.filter_enabled.get_untracked());
             state.display_noise_filter.set(
-                state.noise_reduce_enabled.get_untracked() || state.notch_enabled.get_untracked()
+                state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked()
             );
             state.display_transform.set(
                 state.playback_mode.get_untracked() != PlaybackMode::Normal
@@ -1811,8 +1811,8 @@ pub fn MainViewButton() -> impl IntoView {
 
     // Playback active indicators (for DSP rows)
     let eq_active = Signal::derive(move || state.filter_enabled.get());
-    let notch_active = Signal::derive(move || state.notch_enabled.get());
-    let nr_active = Signal::derive(move || state.noise_reduce_enabled.get());
+    let notch_active = Signal::derive(move || state.notch.enabled().get());
+    let nr_active = Signal::derive(move || state.noise_reduce.enabled().get());
     let transform_active = Signal::derive(move || state.playback_mode.get() != PlaybackMode::Normal);
     let gain_active = Signal::derive(move || state.gain_mode.get() != GainMode::Off);
     let decim_active = Signal::derive(move || false);
@@ -1961,7 +1961,7 @@ pub fn MainViewButton() -> impl IntoView {
                     <div class="layer-panel-title">"Resonators"</div>
                     <div class="dsp-custom-section">
                         <div class="dsp-custom-title">{move || {
-                            let bw = state.resonator_bandwidth_hz.get().max(0.001);
+                            let bw = state.resonator.bandwidth_hz().get().max(0.001);
                             let tau_ms = 1000.0 / (2.0 * std::f32::consts::PI * bw);
                             let bw_str = if bw < 10.0 {
                                 format!("{:.1}", bw)
@@ -1979,7 +1979,7 @@ pub fn MainViewButton() -> impl IntoView {
                                 max=RESONATOR_BW_SLIDER_MAX.to_string()
                                 step="1"
                                 prop:value=move || {
-                                    resonator_bw_to_slider(state.resonator_bandwidth_hz.get())
+                                    resonator_bw_to_slider(state.resonator.bandwidth_hz().get())
                                         .round()
                                         .to_string()
                                 }
@@ -1987,16 +1987,16 @@ pub fn MainViewButton() -> impl IntoView {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(pos) = input.value().parse::<f32>() {
-                                        state.resonator_bandwidth_hz.set(resonator_slider_to_bw(pos));
+                                        state.resonator.bandwidth_hz().set(resonator_slider_to_bw(pos));
                                     }
                                 }
-                                on:dblclick=move |_| state.resonator_bandwidth_hz.set(20.0)
+                                on:dblclick=move |_| state.resonator.bandwidth_hz().set(20.0)
                             />
                         </div>
                     </div>
                     <div class="setting-row" style="padding: 4px 8px;">
                         <span class="setting-label">{move || {
-                            let mode = state.resonator_fft_mode.get();
+                            let mode = state.resonator.fft_mode().get();
                             let sr = resonator_quick_sample_rate(state);
                             let current_lod = crate::canvas::tile_cache::select_lod(
                                 state.zoom_level.get(),
@@ -2025,9 +2025,9 @@ pub fn MainViewButton() -> impl IntoView {
                                 } else {
                                     return;
                                 };
-                                state.resonator_fft_mode.set(new_mode);
+                                state.resonator.fft_mode().set(new_mode);
                             }
-                            prop:value=move || match state.resonator_fft_mode.get() {
+                            prop:value=move || match state.resonator.fft_mode().get() {
                                 ResonatorFftMode::Adaptive => "adaptive".to_string(),
                                 ResonatorFftMode::Single(sz) => sz.to_string(),
                             }
@@ -2051,9 +2051,9 @@ pub fn MainViewButton() -> impl IntoView {
                                     "log" => ResonatorLayout::Log,
                                     _ => ResonatorLayout::Linear,
                                 };
-                                state.resonator_layout.set(new_layout);
+                                state.resonator.layout().set(new_layout);
                             }
-                            prop:value=move || match state.resonator_layout.get() {
+                            prop:value=move || match state.resonator.layout().get() {
                                 ResonatorLayout::Linear => "linear",
                                 ResonatorLayout::Log => "log",
                             }
@@ -2066,11 +2066,11 @@ pub fn MainViewButton() -> impl IntoView {
                         title="Concentrate all bins on the visible freq range for finer vertical zoom. Rebuilds ~0.5s after you stop zooming vertically.">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.resonator_viewport_bins.get()
+                            prop:checked=move || state.resonator.viewport_bins().get()
                             on:change=move |ev: web_sys::Event| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                state.resonator_viewport_bins.set(input.checked());
+                                state.resonator.viewport_bins().set(input.checked());
                             }
                         />
                         "Viewport zoom"
@@ -2634,8 +2634,8 @@ pub fn MainViewButton() -> impl IntoView {
                     {ChromaColormap::ALL.iter().map(|&mode| {
                         view! {
                             <button
-                                class=move || layer_opt_class(state.chroma_colormap.get() == mode)
-                                on:click=move |_| state.chroma_colormap.set(mode)
+                                class=move || layer_opt_class(state.chroma.colormap().get() == mode)
+                                on:click=move |_| state.chroma.colormap().set(mode)
                             >
                                 {mode.label()}
                             </button>
@@ -2647,8 +2647,8 @@ pub fn MainViewButton() -> impl IntoView {
                     {ChromaRange::ALL.iter().map(|&range| {
                         view! {
                             <button
-                                class=move || layer_opt_class(state.chroma_range.get() == range)
-                                on:click=move |_| state.chroma_range.set(range)
+                                class=move || layer_opt_class(state.chroma.range().get() == range)
+                                on:click=move |_| state.chroma.range().set(range)
                             >
                                 {range.label()}
                             </button>
@@ -2660,8 +2660,8 @@ pub fn MainViewButton() -> impl IntoView {
                     {ChromaSource::ALL.iter().map(|&src| {
                         view! {
                             <button
-                                class=move || layer_opt_class(state.chroma_source.get() == src)
-                                on:click=move |_| state.chroma_source.set(src)
+                                class=move || layer_opt_class(state.chroma.source().get() == src)
+                                on:click=move |_| state.chroma.source().set(src)
                             >
                                 {src.label()}
                             </button>
@@ -2677,18 +2677,18 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="-20" max="60" step="1"
-                                prop:value=move || state.chroma_gain.get().round().to_string()
+                                prop:value=move || state.chroma.gain().get().round().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        state.chroma_gain.set(v);
+                                        state.chroma.gain().set(v);
                                     }
                                 }
-                                on:dblclick=move |_| state.chroma_gain.set(0.0)
+                                on:dblclick=move |_| state.chroma.gain().set(0.0)
                             />
                             <span class="dsp-custom-value">{move || {
-                                let db = state.chroma_gain.get();
+                                let db = state.chroma.gain().get();
                                 if db == 0.0 { "0 dB".to_string() } else { format!("{:+.0} dB", db) }
                             }}</span>
                         </div>
@@ -2698,18 +2698,18 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="0.2" max="3.0" step="0.05"
-                                prop:value=move || state.chroma_gamma.get().to_string()
+                                prop:value=move || state.chroma.gamma().get().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        state.chroma_gamma.set(v);
+                                        state.chroma.gamma().set(v);
                                     }
                                 }
-                                on:dblclick=move |_| state.chroma_gamma.set(1.0)
+                                on:dblclick=move |_| state.chroma.gamma().set(1.0)
                             />
                             <span class="dsp-custom-value">{move || {
-                                let g = state.chroma_gamma.get();
+                                let g = state.chroma.gamma().get();
                                 if g == 1.0 { "linear".to_string() } else { format!("{:.2}", g) }
                             }}</span>
                         </div>
@@ -2719,18 +2719,18 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="0" max="100" step="1"
-                                prop:value=move || (state.chroma_adapt.get() * 100.0).round().to_string()
+                                prop:value=move || (state.chroma.adapt().get() * 100.0).round().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        state.chroma_adapt.set((v / 100.0).clamp(0.0, 1.0));
+                                        state.chroma.adapt().set((v / 100.0).clamp(0.0, 1.0));
                                     }
                                 }
-                                on:dblclick=move |_| state.chroma_adapt.set(0.0)
+                                on:dblclick=move |_| state.chroma.adapt().set(0.0)
                             />
                             <span class="dsp-custom-value">{move || {
-                                let pct = (state.chroma_adapt.get() * 100.0).round() as i32;
+                                let pct = (state.chroma.adapt().get() * 100.0).round() as i32;
                                 if pct == 0 { "off".to_string() } else { format!("{}%", pct) }
                             }}</span>
                         </div>
@@ -2740,18 +2740,18 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="-80" max="0" step="1"
-                                prop:value=move || state.chroma_floor_db.get().round().to_string()
+                                prop:value=move || state.chroma.floor_db().get().round().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        state.chroma_floor_db.set(v.clamp(-80.0, 0.0));
+                                        state.chroma.floor_db().set(v.clamp(-80.0, 0.0));
                                     }
                                 }
-                                on:dblclick=move |_| state.chroma_floor_db.set(-80.0)
+                                on:dblclick=move |_| state.chroma.floor_db().set(-80.0)
                             />
                             <span class="dsp-custom-value">{move || {
-                                let db = state.chroma_floor_db.get().round() as i32;
+                                let db = state.chroma.floor_db().get().round() as i32;
                                 if db <= -80 { "off".to_string() } else { format!("{} dB", db) }
                             }}</span>
                         </div>
