@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 use crate::state::{AppState, GpsLocation, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
 use crate::audio::mic_backend::{ActiveBackend, StopResult};
 use crate::audio::live_recording::FinalizeParams;
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
+use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args};
 
 // ── GPS location acquisition ────────────────────────────────────────────
 
@@ -95,35 +95,20 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
     if !state.is_tauri {
         return;
     }
-    let result = match tauri_invoke_no_args("mic_list_devices").await {
+    let result = match tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>("mic_list_devices").await {
         Ok(v) => v,
         Err(_) => return,
     };
-    let devices = js_sys::Array::from(&result);
-    for i in 0..devices.length() {
-        let dev = devices.get(i);
-        let is_default = js_sys::Reflect::get(&dev, &JsValue::from_str("is_default"))
-            .ok()
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !is_default {
+    for dev in &result.devices {
+        if !dev.is_default {
             continue;
         }
-        let ranges = match js_sys::Reflect::get(&dev, &JsValue::from_str("sample_rate_ranges")).ok() {
-            Some(v) => js_sys::Array::from(&v),
-            None => continue,
-        };
         let mut rates = std::collections::BTreeSet::new();
-        for j in 0..ranges.length() {
-            let range = ranges.get(j);
-            let min = js_sys::Reflect::get(&range, &JsValue::from_str("min"))
-                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-            let max = js_sys::Reflect::get(&range, &JsValue::from_str("max"))
-                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-            rates.insert(min);
-            rates.insert(max);
-            for &r in &[44100, 48000, 96000, 192000, 256000, 384000, 500000] {
-                if r >= min && r <= max {
+        for range in &dev.sample_rate_ranges {
+            rates.insert(range.min);
+            rates.insert(range.max);
+            for &r in &[44100u32, 48000, 96000, 192000, 256000, 384000, 500000] {
+                if r >= range.min && r <= range.max {
                     rates.insert(r);
                 }
             }
@@ -169,52 +154,38 @@ pub async fn query_mic_info(state: &AppState) {
             state.mic_usb_connected.set(false);
         }
         Some(MicBackend::Cpal) | None => {
-            if let Ok(result) = tauri_invoke_no_args("mic_list_devices").await {
-                let devices = js_sys::Array::from(&result);
-                for i in 0..devices.length() {
-                    let dev = devices.get(i);
-                    let is_default = js_sys::Reflect::get(&dev, &JsValue::from_str("is_default"))
-                        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                    if is_default {
-                        let name = js_sys::Reflect::get(&dev, &JsValue::from_str("name"))
-                            .ok().and_then(|v| v.as_string());
-                        if let Some(ref n) = name {
-                            let conn = if n.to_lowercase().contains("usb") {
-                                "USB"
-                            } else if n.to_lowercase().contains("bluetooth") || n.to_lowercase().contains("bt ") {
-                                "Bluetooth"
-                            } else {
-                                "Internal"
-                            };
-                            state.mic_connection_type.set(Some(conn.to_string()));
-                        }
-                        state.mic_device_name.set(name);
+            if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>("mic_list_devices").await {
+                for dev in &result.devices {
+                    if dev.is_default {
+                        let n = dev.name.to_lowercase();
+                        let conn = if n.contains("usb") {
+                            "USB"
+                        } else if n.contains("bluetooth") || n.contains("bt ") {
+                            "Bluetooth"
+                        } else {
+                            "Internal"
+                        };
+                        state.mic_connection_type.set(Some(conn.to_string()));
+                        state.mic_device_name.set(Some(dev.name.clone()));
 
-                        if let Ok(ranges) = js_sys::Reflect::get(&dev, &JsValue::from_str("sample_rate_ranges")) {
-                            let ranges = js_sys::Array::from(&ranges);
-                            let mut max_rate: u32 = 0;
-                            let mut format_str: Option<String> = None;
-                            for j in 0..ranges.length() {
-                                let range = ranges.get(j);
-                                let rmax = js_sys::Reflect::get(&range, &JsValue::from_str("max"))
-                                    .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-                                if rmax > max_rate {
-                                    max_rate = rmax;
-                                    format_str = js_sys::Reflect::get(&range, &JsValue::from_str("format"))
-                                        .ok().and_then(|v| v.as_string());
-                                }
+                        let mut max_rate: u32 = 0;
+                        let mut format_str: Option<String> = None;
+                        for range in &dev.sample_rate_ranges {
+                            if range.max > max_rate {
+                                max_rate = range.max;
+                                format_str = Some(range.format.clone());
                             }
-                            if max_rate > 0 {
-                                state.mic_sample_rate.set(max_rate);
-                            }
-                            if let Some(fmt) = format_str {
-                                let bits: u16 = match fmt.as_str() {
-                                    "I16" => 16, "I24" => 24, "I32" => 32, "F32" => 32,
-                                    _ => 0,
-                                };
-                                if bits > 0 {
-                                    state.mic_bits_per_sample.set(bits);
-                                }
+                        }
+                        if max_rate > 0 {
+                            state.mic_sample_rate.set(max_rate);
+                        }
+                        if let Some(fmt) = format_str {
+                            let bits: u16 = match fmt.as_str() {
+                                "I16" => 16, "I24" => 24, "I32" => 32, "F32" => 32,
+                                _ => 0,
+                            };
+                            if bits > 0 {
+                                state.mic_bits_per_sample.set(bits);
                             }
                         }
                         break;
