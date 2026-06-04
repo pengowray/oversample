@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use crate::state::AppState;
-use crate::tauri_bridge::tauri_invoke;
+use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
 
 fn persist_home_wifi(state: &AppState) {
     if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
@@ -25,17 +25,15 @@ enum ZoneStatus {
 fn check_zone_status(state: AppState, status: RwSignal<ZoneStatus>) {
     status.set(ZoneStatus::Loading);
     spawn_local(async move {
-        let result = tauri_invoke(
+        let ssid = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::WifiSsidResult>(
             "plugin:geolocation|getWifiSsid",
-            &JsValue::from(js_sys::Object::new()),
-        ).await;
-        let Ok(result) = result else {
-            status.set(ZoneStatus::NoWifi);
-            return;
+        ).await {
+            Ok(r) => r.ssid,
+            Err(_) => {
+                status.set(ZoneStatus::NoWifi);
+                return;
+            }
         };
-        let ssid = js_sys::Reflect::get(&result, &JsValue::from_str("ssid"))
-            .ok()
-            .and_then(|v| v.as_string());
         match ssid {
             Some(ssid) => {
                 let on_zone = state.home_wifi_ssids.with_untracked(|list| list.contains(&ssid));
@@ -83,18 +81,17 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                 return;
             }
             // Read WiFi SSID
-            let result = tauri_invoke(
+            let ssid_result = tauri_invoke_typed_no_args::<oversample_ipc::plugins::WifiSsidResult>(
                 "plugin:geolocation|getWifiSsid",
-                &JsValue::from(js_sys::Object::new()),
             ).await;
             adding.set(false);
-            let Ok(result) = result else {
-                state.show_info_toast("Could not read WiFi network");
-                return;
+            let ssid = match ssid_result {
+                Ok(r) => r.ssid,
+                Err(_) => {
+                    state.show_info_toast("Could not read WiFi network");
+                    return;
+                }
             };
-            let ssid = js_sys::Reflect::get(&result, &JsValue::from_str("ssid"))
-                .ok()
-                .and_then(|v| v.as_string());
             if let Some(ssid) = ssid {
                 let already = state.home_wifi_ssids.with_untracked(|list| list.contains(&ssid));
                 if !already {

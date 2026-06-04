@@ -16,8 +16,9 @@ use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed
 /// Query the current WiFi SSID from the native plugin.
 /// Returns None if not connected or unavailable.
 async fn get_wifi_ssid() -> Option<String> {
-    let result = tauri_invoke("plugin:geolocation|getWifiSsid", &JsValue::from(js_sys::Object::new())).await.ok()?;
-    js_sys::Reflect::get(&result, &JsValue::from_str("ssid")).ok().and_then(|v| v.as_string())
+    let result: oversample_ipc::plugins::WifiSsidResult =
+        tauri_invoke_typed_no_args("plugin:geolocation|getWifiSsid").await.ok()?;
+    result.ssid
 }
 
 /// Fetch the Android device make/model from the native plugin.
@@ -26,38 +27,36 @@ async fn fetch_device_model(state: &AppState) {
     if state.cached_device_model.get_untracked().is_some() {
         return;
     }
-    let Ok(result) = tauri_invoke("plugin:geolocation|getDeviceModel", &JsValue::from(js_sys::Object::new())).await else {
+    let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::DeviceModelResult>(
+        "plugin:geolocation|getDeviceModel",
+    ).await else {
         return;
     };
-    let mfr = js_sys::Reflect::get(&result, &JsValue::from_str("manufacturer")).ok().and_then(|v| v.as_string()).unwrap_or_default();
-    let model = js_sys::Reflect::get(&result, &JsValue::from_str("model")).ok().and_then(|v| v.as_string()).unwrap_or_default();
-    if !mfr.is_empty() {
-        state.cached_device_make.set(Some(mfr));
+    if !result.manufacturer.is_empty() {
+        state.cached_device_make.set(Some(result.manufacturer));
     }
-    if !model.is_empty() {
-        state.cached_device_model.set(Some(model));
+    if !result.model.is_empty() {
+        state.cached_device_model.set(Some(result.model));
     }
 }
 
 /// Request a one-shot GPS fix from the native geolocation plugin.
 /// Returns None if the plugin is unavailable, permission denied, or location times out.
 async fn acquire_gps_location() -> Option<GpsLocation> {
-    let result = tauri_invoke("plugin:geolocation|getCurrentLocation", &JsValue::from(js_sys::Object::new())).await.ok()?;
-    // Check for error response
-    if js_sys::Reflect::get(&result, &JsValue::from_str("error")).ok().and_then(|v| v.as_string()).is_some() {
+    let result: oversample_ipc::plugins::GeolocationResult =
+        tauri_invoke_typed_no_args("plugin:geolocation|getCurrentLocation").await.ok()?;
+    // Error response (permission_denied, timeout, …) carries no coordinates.
+    if result.error.is_some() {
         return None;
     }
-    let latitude = js_sys::Reflect::get(&result, &JsValue::from_str("latitude")).ok()?.as_f64()?;
-    let longitude = js_sys::Reflect::get(&result, &JsValue::from_str("longitude")).ok()?.as_f64()?;
-    let has_altitude = js_sys::Reflect::get(&result, &JsValue::from_str("hasAltitude"))
-        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-    let elevation = if has_altitude {
-        js_sys::Reflect::get(&result, &JsValue::from_str("altitude")).ok().and_then(|v| v.as_f64())
+    let latitude = result.latitude?;
+    let longitude = result.longitude?;
+    let elevation = if result.has_altitude.unwrap_or(false) {
+        result.altitude
     } else {
         None
     };
-    let accuracy = js_sys::Reflect::get(&result, &JsValue::from_str("accuracy")).ok().and_then(|v| v.as_f64());
-    Some(GpsLocation { latitude, longitude, elevation, accuracy })
+    Some(GpsLocation { latitude, longitude, elevation, accuracy: result.accuracy })
 }
 
 // ── Tauri IPC query helpers ─────────────────────────────────────────────

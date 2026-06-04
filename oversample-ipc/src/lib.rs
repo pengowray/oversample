@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod mic;
+pub mod plugins;
 pub mod xc;
 
 /// Hash data extracted from an XC sidecar JSON file (stored under the `_app`
