@@ -351,40 +351,128 @@ fn has_active_in_flight<K: Eq + std::hash::Hash>(map: &mut HashMap<K, f64>, key:
     in_flight_is_active(map, key, js_sys::Date::now(), IN_FLIGHT_TIMEOUT_MS)
 }
 
+// ── CacheCtx: bundles one cache's thread-locals ──────────────────────────────
+//
+// The magnitude / flow / reassign / resonator caches each own a (TileCache,
+// in-flight map, generation counter) triple and had a full set of near-identical
+// get / borrow / clear / stats / still-active wrappers. CacheCtx bundles the
+// three thread-local handles so that synchronous wrapper layer is written once;
+// the public `*_tile` / `clear_*` functions below are thin shims that pick a
+// ctx. The wasm scheduling in `schedule_*` still drives the thread-locals
+// directly — only this wrapper layer is deduplicated.
+//
+// Chroma is intentionally excluded: its key is (file_idx, tile_idx) and it has
+// bespoke global-max bookkeeping, so it keeps its own wrappers.
+struct CacheCtx {
+    cache: &'static std::thread::LocalKey<RefCell<TileCache>>,
+    in_flight: &'static std::thread::LocalKey<RefCell<HashMap<CacheKey, f64>>>,
+    generation: &'static std::thread::LocalKey<RefCell<u64>>,
+}
+
+impl CacheCtx {
+    fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
+        self.cache.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+    }
+
+    /// Touch (mark recently-used) then borrow a cached tile. The double-`with`
+    /// dance drops the `borrow_mut` before re-borrowing shared, avoiding a
+    /// reentrant RefCell panic across the thread-local boundary.
+    fn borrow_tile<R>(
+        &self,
+        file_idx: usize,
+        lod: u8,
+        tile_idx: usize,
+        f: impl FnOnce(&Tile) -> R,
+    ) -> Option<R> {
+        self.cache.with(|c| {
+            let mut cache = c.borrow_mut();
+            let key = (file_idx, lod, tile_idx);
+            if cache.contains_key(&key) {
+                cache.touch(key);
+                drop(cache);
+                self.cache.with(|c| c.borrow().get_keyed(&key).map(f))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn request_still_active(&self, key: &CacheKey) -> bool {
+        self.in_flight.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+    }
+
+    fn tile_active(&self, file_idx: usize, lod: u8, tile_idx: usize) -> bool {
+        self.request_still_active(&(file_idx, lod, tile_idx))
+    }
+
+    fn bump_generation(&self) {
+        self.generation.with(|g| *g.borrow_mut() += 1);
+    }
+
+    /// Clear every tile + in-flight entry for this cache and bump its generation
+    /// so any still-running async task discards its result on completion.
+    fn clear_all(&self) {
+        self.cache.with(|c| c.borrow_mut().clear_all());
+        self.in_flight.with(|s| s.borrow_mut().clear());
+        self.bump_generation();
+    }
+
+    fn clear_file(&self, file_idx: usize) {
+        self.cache.with(|c| c.borrow_mut().clear_for_file(file_idx));
+        self.in_flight.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
+        self.bump_generation();
+    }
+
+    fn debug_stats(&self, file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
+        self.cache.with(|c| {
+            let cache = c.borrow();
+            self.in_flight.with(|s| {
+                let mut inflight = s.borrow_mut();
+                let mut stats = collect_debug_stats(
+                    cache.len(),
+                    &mut inflight,
+                    (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
+                    |key| cache.contains_key(key),
+                );
+                stats.used_bytes = cache.total_bytes();
+                stats.max_bytes = cache.max_bytes();
+                stats
+            })
+        })
+    }
+}
+
+fn magnitude_ctx() -> CacheCtx {
+    CacheCtx { cache: &CACHE, in_flight: &IN_FLIGHT, generation: &CACHE_GENERATION }
+}
+fn flow_ctx() -> CacheCtx {
+    CacheCtx { cache: &FLOW_CACHE, in_flight: &FLOW_IN_FLIGHT, generation: &FLOW_CACHE_GENERATION }
+}
+fn reassign_ctx() -> CacheCtx {
+    CacheCtx { cache: &REASSIGN_CACHE, in_flight: &REASSIGN_IN_FLIGHT, generation: &REASSIGN_CACHE_GENERATION }
+}
+fn resonator_ctx() -> CacheCtx {
+    CacheCtx { cache: &RESONATOR_CACHE, in_flight: &RESONATOR_IN_FLIGHT, generation: &RESONATOR_CACHE_GENERATION }
+}
+
 // ── Public API: magnitude tile cache ─────────────────────────────────────────
 
 pub fn get_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
-    CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+    magnitude_ctx().get(file_idx, lod, tile_idx)
 }
 
 pub fn borrow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
-    CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let key = (file_idx, lod, tile_idx);
-        if cache.contains_key(&key) {
-            cache.touch(key);
-            drop(cache);
-            CACHE.with(|c| {
-                c.borrow().get_keyed(&key).map(f)
-            })
-        } else {
-            None
-        }
-    })
+    magnitude_ctx().borrow_tile(file_idx, lod, tile_idx, f)
 }
 
 pub fn clear_file(file_idx: usize) {
-    CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
-    IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
-    CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    magnitude_ctx().clear_file(file_idx);
 }
 
 /// Clear all magnitude tiles (all files, all LODs). Used when global
 /// settings like FFT size change and all cached tiles become stale.
 pub fn clear_all_tiles() {
-    CACHE.with(|c| c.borrow_mut().clear_all());
-    IN_FLIGHT.with(|s| s.borrow_mut().clear());
-    CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    magnitude_ctx().clear_all();
     crate::canvas::spectrogram_renderer::clear_tile_canvas_cache();
 }
 
@@ -513,65 +601,35 @@ where
 }
 
 pub fn magnitude_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
-    CACHE.with(|c| {
-        let cache = c.borrow();
-        IN_FLIGHT.with(|s| {
-            let mut inflight = s.borrow_mut();
-            let mut stats = collect_debug_stats(
-                cache.len(),
-                &mut inflight,
-                (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.contains_key(key),
-            );
-            stats.used_bytes = cache.total_bytes();
-            stats.max_bytes = cache.max_bytes();
-            stats
-        })
-    })
+    magnitude_ctx().debug_stats(file_idx, lod, first_tile, last_tile)
 }
 
 pub fn flow_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
-    FLOW_CACHE.with(|c| {
-        let cache = c.borrow();
-        FLOW_IN_FLIGHT.with(|s| {
-            let mut inflight = s.borrow_mut();
-            let mut stats = collect_debug_stats(
-                cache.len(),
-                &mut inflight,
-                (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.contains_key(key),
-            );
-            stats.used_bytes = cache.total_bytes();
-            stats.max_bytes = cache.max_bytes();
-            stats
-        })
-    })
+    flow_ctx().debug_stats(file_idx, lod, first_tile, last_tile)
 }
 
 pub fn magnitude_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
-    let key = (file_idx, lod, tile_idx);
-    IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key))
+    magnitude_ctx().tile_active(file_idx, lod, tile_idx)
 }
 
 pub fn flow_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
-    let key = (file_idx, lod, tile_idx);
-    FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key))
+    flow_ctx().tile_active(file_idx, lod, tile_idx)
 }
 
 fn magnitude_request_still_active(key: &CacheKey) -> bool {
-    IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+    magnitude_ctx().request_still_active(key)
 }
 
 fn flow_request_still_active(key: &CacheKey) -> bool {
-    FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+    flow_ctx().request_still_active(key)
 }
 
 fn reassign_request_still_active(key: &CacheKey) -> bool {
-    REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+    reassign_ctx().request_still_active(key)
 }
 
 fn resonator_request_still_active(key: &CacheKey) -> bool {
-    RESONATOR_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
+    resonator_ctx().request_still_active(key)
 }
 
 fn active_baseline_fft(state: AppState) -> usize {
@@ -1219,35 +1277,19 @@ pub fn schedule_tile_on_demand(
 // ── Flow tile cache ─────────────────────────────────────────────────────────
 
 pub fn get_flow_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
-    FLOW_CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+    flow_ctx().get(file_idx, lod, tile_idx)
 }
 
 pub fn borrow_flow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
-    FLOW_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let key = (file_idx, lod, tile_idx);
-        if cache.contains_key(&key) {
-            cache.touch(key);
-            drop(cache);
-            FLOW_CACHE.with(|c| {
-                c.borrow().get_keyed(&key).map(f)
-            })
-        } else {
-            None
-        }
-    })
+    flow_ctx().borrow_tile(file_idx, lod, tile_idx, f)
 }
 
 pub fn clear_flow_cache() {
-    FLOW_CACHE.with(|c| c.borrow_mut().clear_all());
-    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().clear());
-    FLOW_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    flow_ctx().clear_all();
 }
 
 pub fn clear_flow_file(file_idx: usize) {
-    FLOW_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
-    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
-    FLOW_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    flow_ctx().clear_file(file_idx);
 }
 
 /// Schedule a flow tile for background generation at any LOD.
@@ -1419,35 +1461,19 @@ pub fn schedule_flow_tile(
 // ── Reassignment spectrogram tile cache ──────────────────────────────────────
 
 pub fn get_reassign_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
-    REASSIGN_CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+    reassign_ctx().get(file_idx, lod, tile_idx)
 }
 
 pub fn borrow_reassign_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
-    REASSIGN_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let key = (file_idx, lod, tile_idx);
-        if cache.contains_key(&key) {
-            cache.touch(key);
-            drop(cache);
-            REASSIGN_CACHE.with(|c| {
-                c.borrow().get_keyed(&key).map(f)
-            })
-        } else {
-            None
-        }
-    })
+    reassign_ctx().borrow_tile(file_idx, lod, tile_idx, f)
 }
 
 pub fn clear_reassign_cache() {
-    REASSIGN_CACHE.with(|c| c.borrow_mut().clear_all());
-    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().clear());
-    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    reassign_ctx().clear_all();
 }
 
 pub fn clear_reassign_file(file_idx: usize) {
-    REASSIGN_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
-    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
-    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    reassign_ctx().clear_file(file_idx);
 }
 
 /// Schedule a reassignment spectrogram tile for background generation.
@@ -2095,29 +2121,15 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
 // ── Resonator tile cache ─────────────────────────────────────────────────────
 
 pub fn get_resonator_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
-    RESONATOR_CACHE.with(|c| c.borrow().get(file_idx, lod, tile_idx).map(|_| ()))
+    resonator_ctx().get(file_idx, lod, tile_idx)
 }
 
 pub fn borrow_resonator_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
-    RESONATOR_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let key = (file_idx, lod, tile_idx);
-        if cache.contains_key(&key) {
-            cache.touch(key);
-            drop(cache);
-            RESONATOR_CACHE.with(|c| {
-                c.borrow().get_keyed(&key).map(f)
-            })
-        } else {
-            None
-        }
-    })
+    resonator_ctx().borrow_tile(file_idx, lod, tile_idx, f)
 }
 
 pub fn clear_resonator_cache() {
-    RESONATOR_CACHE.with(|c| c.borrow_mut().clear_all());
-    RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().clear());
-    RESONATOR_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    resonator_ctx().clear_all();
     // Offscreen tile canvases are keyed by (file_idx, lod, tile_idx) without
     // an underlying-tile-dimension component, so resizing bin counts would
     // otherwise reuse old canvases (rendered at the previous height) and draw
@@ -2126,32 +2138,15 @@ pub fn clear_resonator_cache() {
 }
 
 pub fn clear_resonator_file(file_idx: usize) {
-    RESONATOR_CACHE.with(|c| c.borrow_mut().clear_for_file(file_idx));
-    RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
-    RESONATOR_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
+    resonator_ctx().clear_file(file_idx);
 }
 
 pub fn resonator_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
-    let key = (file_idx, lod, tile_idx);
-    RESONATOR_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key))
+    resonator_ctx().tile_active(file_idx, lod, tile_idx)
 }
 
 pub fn resonator_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: usize) -> TileDebugStats {
-    RESONATOR_CACHE.with(|c| {
-        let cache = c.borrow();
-        RESONATOR_IN_FLIGHT.with(|s| {
-            let mut inflight = s.borrow_mut();
-            let mut stats = collect_debug_stats(
-                cache.len(),
-                &mut inflight,
-                (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.contains_key(key),
-            );
-            stats.used_bytes = cache.total_bytes();
-            stats.max_bytes = cache.max_bytes();
-            stats
-        })
-    })
+    resonator_ctx().debug_stats(file_idx, lod, first_tile, last_tile)
 }
 
 /// Schedule a resonator tile for background generation at any LOD.
