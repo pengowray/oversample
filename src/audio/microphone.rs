@@ -296,15 +296,13 @@ async fn maybe_prompt_notifications(state: &AppState) {
     if state.notif_perm_asked.get_untracked() {
         return;
     }
-    let result = match tauri_invoke_no_args("plugin:audio-service|isNotificationPermissionGranted").await {
+    let status = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::NotificationPermissionStatus>(
+        "plugin:audio-service|isNotificationPermissionGranted",
+    ).await {
         Ok(v) => v,
         Err(_) => return, // plugin unavailable — leave the Listen-time path as-is
     };
-    let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
-        .ok().and_then(|v| v.as_bool()).unwrap_or(true);
-    let runtime_required = js_sys::Reflect::get(&result, &JsValue::from_str("runtimeRequired"))
-        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-    if !runtime_required || granted {
+    if !status.runtime_required || status.granted {
         // Older Android (no runtime permission) or already granted — nothing to
         // ask; record it so we don't re-check on every acquisition.
         mark_notif_asked(state);

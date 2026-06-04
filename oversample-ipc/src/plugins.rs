@@ -45,3 +45,16 @@ pub struct GeolocationResult {
     #[serde(default)]
     pub error: Option<String>,
 }
+
+// ── audio-service plugin ────────────────────────────────────────────────
+
+/// `plugin:audio-service|isNotificationPermissionGranted`. Both keys are always
+/// present on the resolve path (the plugin rejects rather than resolving on
+/// failure). `runtimeRequired` is true only on API 33+ where POST_NOTIFICATIONS
+/// is a runtime permission.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationPermissionStatus {
+    pub granted: bool,
+    pub runtime_required: bool,
+}
