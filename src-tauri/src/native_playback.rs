@@ -12,8 +12,6 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Emitter;
 
-use crate::audio_decode;
-
 /// Playback parameters sent from the frontend.
 #[derive(Deserialize, Clone, Debug)]
 pub struct NativePlayParams {
@@ -73,10 +71,14 @@ pub fn start(
     params: NativePlayParams,
     app: tauri::AppHandle,
 ) -> Result<PlaybackState, String> {
-    // Decode the file (or use cached decode)
-    let decode_result = audio_decode::decode_full(&params.path)?;
-    let all_samples = Arc::new(decode_result.samples);
-    let source_rate = decode_result.info.sample_rate;
+    // Decode the file via the shared oversample-core decoder (single source of
+    // truth; the browser/WASM frontend uses the same path). `samples` is already
+    // an `Arc<Vec<f32>>`, so no extra copy is needed here.
+    let bytes = std::fs::read(&params.path)
+        .map_err(|e| format!("Failed to read '{}': {e}", params.path))?;
+    let audio = oversample_core::audio::loader::load_audio(&bytes)?;
+    let all_samples = audio.samples;
+    let source_rate = audio.sample_rate;
 
     let start_sample = params.start_sample.min(all_samples.len());
     let end_sample = params.end_sample.min(all_samples.len());

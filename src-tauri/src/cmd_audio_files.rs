@@ -1,14 +1,6 @@
-use crate::audio_decode::{self, AudioFileInfo, FullDecodeResult};
-
-#[tauri::command]
-pub fn audio_file_info(path: String) -> Result<AudioFileInfo, String> {
-    audio_decode::file_info(&path)
-}
-
-#[tauri::command]
-pub fn audio_decode_full(path: String) -> Result<FullDecodeResult, String> {
-    audio_decode::decode_full(&path)
-}
+//! File-byte IPC commands. Audio *decoding* lives entirely in `oversample-core`
+//! and runs in the WASM frontend (and in `native_playback` for the cpal path);
+//! these commands only ferry raw bytes across the boundary.
 
 /// Read raw file bytes — returns binary data via efficient IPC (no JSON serialization).
 #[tauri::command]

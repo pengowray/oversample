@@ -1,4 +1,3 @@
-mod audio_decode;
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_mic;
@@ -54,8 +53,6 @@ pub fn run() {
             cmd_mic::mic_get_status,
             cmd_mic::mic_list_devices,
             cmd_mic::mic_recover_recordings,
-            cmd_audio_files::audio_file_info,
-            cmd_audio_files::audio_decode_full,
             cmd_audio_files::read_file_bytes,
             cmd_audio_files::read_file_range,
             cmd_playback::native_play,
