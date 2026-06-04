@@ -27,7 +27,7 @@ pub fn Waveform() -> impl IntoView {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let filter_enabled = state.filter.enabled().get();
-        let cv = state.channel_view.get();
+        let cv = state.viewmode.channel_view().get();
         // Subscribe to EQ params so memo recomputes when they change
         let freq_low = state.filter.freq_low().get();
         let freq_high = state.filter.freq_high().get();
@@ -70,7 +70,7 @@ pub fn Waveform() -> impl IntoView {
     // unchanged; a fresh split fires once when the drag ends.
     let band_split_cache: StoredValue<Option<(Vec<f32>, Vec<f32>, Vec<f32>)>> = StoredValue::new(None);
     let band_split = Memo::new(move |_| {
-        let wv = state.waveform_view.get();
+        let wv = state.viewmode.waveform_view().get();
         if wv == WaveformView::Simple {
             band_split_cache.set_value(None);
             return None;
@@ -83,12 +83,12 @@ pub fn Waveform() -> impl IntoView {
         }
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
-        let cv = state.channel_view.get();
+        let cv = state.viewmode.channel_view().get();
         // Use the user's Band regardless of HFR state — the band_ff_freq_lo/hi
         // signals get zeroed when HFR is off, which would make the "above"
         // lane show the entire signal. effective_range_ignoring_hfr() always
         // reflects what the drag handles on the spectrogram show.
-        let ff = state.focus_stack.get().effective_range_ignoring_hfr();
+        let ff = state.viewmode.focus_stack().get().effective_range_ignoring_hfr();
         let freq_low = ff.lo;
         let freq_high = ff.hi;
 
@@ -114,7 +114,7 @@ pub fn Waveform() -> impl IntoView {
     Effect::new(move || {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let selection = state.selection.get();
+        let selection = state.interaction.selection().get();
         // Subscribe to file changes for reactivity, then get data without
         // re-subscribing (avoids redundant signal subscription in compute_auto_gain).
         state.library.files().track();
@@ -122,11 +122,11 @@ pub fn Waveform() -> impl IntoView {
         let _timeline_trigger = state.timeline.active().get(); // trigger redraw on timeline change
         let idx = state.library.current_index().get();
         let mode = state.playback.mode().get();
-        let waveform_view = state.waveform_view.get();
+        let waveform_view = state.viewmode.waveform_view().get();
         let is_playing = state.playback.is_playing().get();
-        let canvas_tool = state.canvas_tool.get();
-        let cv = state.channel_view.get();
-        let _tile_ready = state.tile_ready_signal.get();
+        let canvas_tool = state.interaction.canvas_tool().get();
+        let cv = state.viewmode.channel_view().get();
+        let _tile_ready = state.viewmode.tile_ready_signal().get();
         let wave_auto = state.gain.wave_view_auto().get();
         let gain_db = if wave_auto {
             state.compute_auto_gain_untracked()
@@ -138,13 +138,13 @@ pub fn Waveform() -> impl IntoView {
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
-        let clean_view = state.clean_view.get();
+        let clean_view = state.viewmode.clean_view().get();
         // Read band_split unconditionally so the Effect always subscribes to it.
         // If read only inside the match arms, the Effect may miss updates when
         // switching from Simple (which never reads it) to Frequency/Triple.
         let band_data = band_split.get();
         // Band boundaries for lane labels (Band wave + Triple).
-        let ff = state.focus_stack.get().effective_range_ignoring_hfr();
+        let ff = state.viewmode.focus_stack().get().effective_range_ignoring_hfr();
         let band_freq_low = ff.lo;
         let band_freq_high = ff.hi;
 
@@ -160,7 +160,7 @@ pub fn Waveform() -> impl IntoView {
             // once the browser has computed layout.
             let state_retry = state;
             let cb = wasm_bindgen::closure::Closure::once(move || {
-                state_retry.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state_retry.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             });
             let _ = web_sys::window().unwrap().request_animation_frame(
                 cb.as_ref().unchecked_ref(),
@@ -172,7 +172,7 @@ pub fn Waveform() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
-        state.spectrogram_canvas_width.set(display_w as f64);
+        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
 
         // The time axis / selection lives in a sibling <TimeGutter/> strip
         // now, so the waveform paints into the full canvas height.
@@ -320,7 +320,7 @@ pub fn Waveform() -> impl IntoView {
                 // single blue wave (same shape as Simple, just tinted blue)
                 // so the view still reads as "band mode" without implying an
                 // active filter split.
-                let hfr_on = state.focus_stack.get().hfr_enabled();
+                let hfr_on = state.viewmode.focus_stack().get().hfr_enabled();
 
                 match waveform_view {
                     WaveformView::Simple => {
@@ -565,7 +565,7 @@ pub fn Waveform() -> impl IntoView {
             let idx = state.library.current_index().get_untracked().unwrap_or(0);
             let (visible_time, duration) = if let Some(file) = files.get(idx) {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution), file.audio.duration_secs)
             } else {
                 return;
@@ -583,9 +583,9 @@ pub fn Waveform() -> impl IntoView {
         if ev.button() != 0 { return; }
         if state.status.viewport_zoomed().get_untracked() { return; }
 
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         // Always start pan drag (bookmark on click is handled in pointerup)
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
         // Capture pointer so drag continues when cursor leaves the canvas
         if let Some(target) = ev.target() {
@@ -596,11 +596,11 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_pointermove = move |ev: web_sys::PointerEvent| {
-        if !state.is_dragging.get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if !state.interaction.is_dragging().get_untracked() { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
         let dx = ev.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
+        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
         if cw == 0.0 { return; }
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
@@ -632,15 +632,15 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_pointerup = move |ev: web_sys::PointerEvent| {
-        if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
+        if state.interaction.is_dragging().get_untracked() && state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
             let (start_x, _) = hand_drag_start.get_untracked();
             let dx = (ev.client_x() as f64 - start_x).abs();
             if dx < 3.0 && state.playback.is_playing().get_untracked() {
                 let t = state.playback.playhead_time().get_untracked();
-                state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
             }
         }
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
     };
 
     let on_pointerleave = move |_ev: web_sys::PointerEvent| {
@@ -679,7 +679,7 @@ pub fn Waveform() -> impl IntoView {
                     from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
                 }));
             }
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
             return;
         }
 
@@ -687,10 +687,10 @@ pub fn Waveform() -> impl IntoView {
         pinch_state.set(None);
 
         let touch = touches.get(0).unwrap();
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         // Always start pan drag (bookmark on tap handled in touchend)
         ev.prevent_default();
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
@@ -721,12 +721,12 @@ pub fn Waveform() -> impl IntoView {
 
         if n != 1 { return; }
         let touch = touches.get(0).unwrap();
-        if !state.is_dragging.get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if !state.interaction.is_dragging().get_untracked() { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
         let dx = touch.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
+        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
         if cw == 0.0 { return; }
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
@@ -768,25 +768,25 @@ pub fn Waveform() -> impl IntoView {
         if remaining == 1 {
             if let Some(touch) = _ev.touches().get(0) {
                 hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
-                if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                    state.is_dragging.set(true);
+                if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+                    state.interaction.is_dragging().set(true);
                 }
             }
             return;
         }
         if remaining == 0 {
             // Hand tool: bookmark on tap (no significant drag) while playing, or launch inertia
-            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+            if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
                 if let Some(touch) = _ev.changed_touches().get(0) {
                     let (start_x, _) = hand_drag_start.get_untracked();
                     let dx = (touch.client_x() as f64 - start_x).abs();
                     if dx < 5.0 && state.playback.is_playing().get_untracked() {
                         let t = state.playback.playhead_time().get_untracked();
-                        state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                        state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
                     } else if dx >= 5.0 {
                         // Flick → launch inertia
                         let vel = velocity_tracker.with_value(|t| t.velocity_px_per_sec());
-                        let cw = state.spectrogram_canvas_width.get_untracked();
+                        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
                         let files = state.library.files().get_untracked();
                         let idx = state.library.current_index().get_untracked();
                         let file = idx.and_then(|i| files.get(i));
@@ -810,7 +810,7 @@ pub fn Waveform() -> impl IntoView {
                     }
                 }
             }
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
         }
     };
 
@@ -820,8 +820,8 @@ pub fn Waveform() -> impl IntoView {
                 let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
                 // Time-gutter hover or active drag → `cell` cursor, mirroring
                 // the spectrogram axes.
-                match state.canvas_tool.get() {
-                    CanvasTool::Hand => if state.is_dragging.get() {
+                match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => if state.interaction.is_dragging().get() {
                         format!("cursor: grabbing; touch-action: {ta};")
                     } else {
                         format!("cursor: grab; touch-action: {ta};")

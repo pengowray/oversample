@@ -21,7 +21,7 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
         let playhead = state.playback.playhead_time().get();
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let cw = state.spectrogram_canvas_width.get();
+        let cw = state.viewmode.spectrogram_canvas_width().get();
         let files = state.library.files().get_untracked();
         // Timeline mode borrows time_res from the first segment's file;
         // single-file mode uses the current file. Both stay None-safe
@@ -48,7 +48,7 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
             class="playhead-line"
             style:transform=transform
             style:display=move || {
-                if state.playback.is_playing().get() && !state.clean_view.get() { "block" } else { "none" }
+                if state.playback.is_playing().get() && !state.viewmode.clean_view().get() { "block" } else { "none" }
             }
         />
     }

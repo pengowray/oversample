@@ -43,7 +43,7 @@ pub(crate) fn build_export_params(
             }
         })
     } else {
-        state.selection.get_untracked()
+        state.interaction.selection().get_untracked()
     };
     snapshot_params(state, selection, sample_rate)
 }
@@ -491,7 +491,7 @@ pub struct ExportInfo {
 /// Determine what will be exported and return info for the button label.
 pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     let selected_ids = state.annotations.selected_ids().get();
-    let selection = state.selection.get();
+    let selection = state.interaction.selection().get();
 
     // Count selected annotations that are regions/segments (have time bounds)
     let (region_count, region_duration_sum) = if !selected_ids.is_empty() {
@@ -530,7 +530,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
 
     // Build mode label
     let mode = state.playback.mode().get();
-    let hfr = state.hfr_enabled.get();
+    let hfr = state.viewmode.hfr_enabled().get();
     let mode_label = match mode {
         PlaybackMode::Normal if hfr => Some("HF".to_string()),
         PlaybackMode::TimeExpansion => {
@@ -655,7 +655,7 @@ pub fn export_selected(state: &AppState) {
             );
             exports.push((filename, wav_data));
         }
-    } else if let Some(sel) = state.selection.get_untracked() {
+    } else if let Some(sel) = state.interaction.selection().get_untracked() {
         // Export current selection
         let params = build_export_params(state, None, false, sample_rate);
         let filename = format!("{base_name}_selection.wav");

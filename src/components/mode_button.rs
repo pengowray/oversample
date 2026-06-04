@@ -182,7 +182,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Effect A: Ensure a default user range when HFR is first enabled ──
     Effect::new(move || {
-        let stack = state.focus_stack.get();
+        let stack = state.viewmode.focus_stack().get();
         if stack.hfr_enabled() {
             let eff = stack.effective_range();
             if !eff.is_active() {
@@ -408,8 +408,8 @@ pub fn ModeRadioGroup() -> impl IntoView {
                 extras.push(bucket_mode);
                 // Selecting an HFR-requiring bucket turns HFR on so the
                 // mode is actually playable.
-                if bucket.needs_hfr() && !state.focus_stack.get_untracked().hfr_enabled() {
-                    state.focus_stack.update(|s| s.set_saved_playback_mode(Some(bucket_mode)));
+                if bucket.needs_hfr() && !state.viewmode.focus_stack().get_untracked().hfr_enabled() {
+                    state.viewmode.focus_stack().update(|s| s.set_saved_playback_mode(Some(bucket_mode)));
                     state.toggle_hfr();
                 }
             }
@@ -428,11 +428,11 @@ pub fn ModeRadioGroup() -> impl IntoView {
         }
         // Plain click on a different bucket: replace the entire selection.
         let mode = bucket.default_mode();
-        if bucket.needs_hfr() && !state.focus_stack.get_untracked().hfr_enabled() {
-            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
+        if bucket.needs_hfr() && !state.viewmode.focus_stack().get_untracked().hfr_enabled() {
+            state.viewmode.focus_stack().update(|s| s.set_saved_playback_mode(Some(mode)));
             state.toggle_hfr();
         } else {
-            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
+            state.viewmode.focus_stack().update(|s| s.set_saved_playback_mode(Some(mode)));
         }
         state.playback.mode().set(mode);
         // A plain click clears any extras the user had added; if they
@@ -456,7 +456,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
         let title = bucket.title();
         let class_sig = Signal::derive(move || {
             let active = ModeBucket::from_mode(state.playback.mode().get());
-            let on = state.hfr_enabled.get();
+            let on = state.viewmode.hfr_enabled().get();
             let mut s = String::from("layer-btn mode-radio-btn");
             // Active bucket: same logic as before — Normal is "active"
             // when HFR is off or mode is Normal; others when HFR is on
@@ -658,12 +658,12 @@ fn ModeSettingsBody() -> impl IntoView {
                 let out_lo = output_freq(band_ff_lo, f);
                 let out_hi = output_freq(band_ff_hi, f);
                 let (lo, hi) = if out_lo < out_hi { (out_lo, out_hi) } else { (out_hi, out_lo) };
-                state.output_freq_highlight.set(Some((lo, hi)));
+                state.viewmode.output_freq_highlight().set(Some((lo, hi)));
             }
         }
     }
     let clear_output_highlight = move |_: web_sys::MouseEvent| {
-        state.output_freq_highlight.set(None);
+        state.viewmode.output_freq_highlight().set(None);
     };
 
     view! {
@@ -691,11 +691,11 @@ fn ModeSettingsBody() -> impl IntoView {
                         <div class="layer-panel-slider-row het-text-row"
                             on:mouseenter=move |_| {
                                 state.transform.het_interacting().set(true);
-                                state.spec_hover_handle.set(Some(SpectrogramHandle::HetBandUpper));
+                                state.interaction.spec_hover_handle().set(Some(SpectrogramHandle::HetBandUpper));
                             }
                             on:mouseleave=move |_| {
                                 state.transform.het_interacting().set(false);
-                                state.spec_hover_handle.set(None);
+                                state.interaction.spec_hover_handle().set(None);
                             }
                         >
                             <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>

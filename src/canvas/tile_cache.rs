@@ -75,7 +75,7 @@ fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f6
     let file_duration = file.audio.duration_secs;
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
 
     if state.library.current_index().get_untracked() == Some(file_idx) {
         let visible_time = viewport::visible_time(canvas_w, zoom, file_time_res);
@@ -719,7 +719,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         };
 
         // Compute STFT columns for this tile using channel-aware samples
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
         let col_start = tile_idx * TILE_COLS;
 
         // Read only the sample region needed for this tile
@@ -799,20 +799,20 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // (e.g. user toggled xform mode — these tiles are stale)
         let current_gen = CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         if cols.is_empty() {
             // Still bump the signal so the render effect re-evaluates
             // (e.g. to schedule tiles at clamped positions after fast scrolling)
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         let rendered = spectrogram_renderer::pre_render_columns(&cols);
         CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -873,13 +873,13 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
         let current_gen = CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         CACHE.with(|c| c.borrow_mut().insert(file_idx, LOD_BASELINE, tile_idx, rendered));
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1058,7 +1058,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
 
         let current_gen = CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
@@ -1066,7 +1066,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
             CACHE.with(|c| c.borrow_mut().insert(file_idx, LOD_BASELINE, tile_idx, rendered));
         }
         // Always bump signal so render effect retries even if store had no data
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1226,7 +1226,7 @@ pub fn schedule_tile_on_demand(
             return;
         };
 
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
         let col_start = tile_idx * TILE_COLS;
         let hop_size = BASELINE_HOP;
         let fft_size = state.spect.fft_mode().get_untracked().fft_for_lod(LOD_BASELINE);
@@ -1254,7 +1254,7 @@ pub fn schedule_tile_on_demand(
         if cols.is_empty() {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             // Bump signal so render effect retries (e.g. after fast scroll clamping)
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
@@ -1265,13 +1265,13 @@ pub fn schedule_tile_on_demand(
         let current_gen = CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         CACHE.with(|c| c.borrow_mut().insert(file_idx, LOD_BASELINE, tile_idx, rendered));
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1357,7 +1357,7 @@ pub fn schedule_flow_tile(
             return;
         };
 
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
         let col_start = tile_idx * TILE_COLS;
 
         let rendered = match algo {
@@ -1449,13 +1449,13 @@ pub fn schedule_flow_tile(
         let current_gen = FLOW_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
             FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         FLOW_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
         FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1545,7 +1545,7 @@ pub fn schedule_reassign_tile(
             return;
         };
 
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
         let sample_start = tile_idx * TILE_COLS * config_hop;
         let sample_len = TILE_COLS * config_hop + actual_fft;
 
@@ -1579,13 +1579,13 @@ pub fn schedule_reassign_tile(
         let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
             REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         REASSIGN_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
         REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1723,7 +1723,7 @@ fn schedule_chroma_tile_fft(
                 return;
             };
 
-            let cv = state.channel_view.get_untracked();
+            let cv = state.viewmode.channel_view().get_untracked();
             let hop_size = BASELINE_HOP;
             let fft_size = active_baseline_fft(state);
             let sample_start = col_start * hop_size;
@@ -1766,7 +1766,7 @@ fn schedule_chroma_tile_fft(
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1814,7 +1814,7 @@ fn schedule_chroma_tile_resonator(
         let gain_db = state.chroma.gain().get_untracked();
         let adapt = state.chroma.adapt().get_untracked();
         let floor_db = state.chroma.floor_db().get_untracked();
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
         let sr = audio.sample_rate;
         let hop_size = BASELINE_HOP;
 
@@ -1907,7 +1907,7 @@ fn schedule_chroma_tile_resonator(
 
         CHROMA_CACHE.with(|c| c.borrow_mut().insert(file_idx, tile_idx, rendered));
         CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }
 
@@ -1998,7 +1998,7 @@ fn schedule_preload_batch(state: AppState, generation: u32) {
 
 fn run_preload_batch(state: AppState, generation: u32) {
     // Check generation (cancel if stale)
-    let current_gen = state.bg_preload_gen.get_untracked();
+    let current_gen = state.viewmode.bg_preload_gen().get_untracked();
     if current_gen != generation { return; }
 
     let batch = BG_PRELOAD.with(|bg| {
@@ -2216,7 +2216,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             return;
         };
 
-        let cv = state.channel_view.get_untracked();
+        let cv = state.viewmode.channel_view().get_untracked();
 
         // Warmup samples before the tile's first column so the EMA state has
         // converged by the time we emit output.
@@ -2262,17 +2262,17 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
 
         let current_gen = RESONATOR_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         if cols.is_empty() {
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             return;
         }
 
         let rendered = spectrogram_renderer::pre_render_columns(&cols);
         RESONATOR_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 }

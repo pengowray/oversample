@@ -67,7 +67,7 @@ pub fn DebugPanel() -> impl IntoView {
             <div class="debug-focus-stack">
                 <div class="debug-section-title">"Focus Stack"</div>
                 {move || {
-                    let stack = state.focus_stack.get();
+                    let stack = state.viewmode.focus_stack().get();
                     let layers = stack.debug_layers();
                     let hfr = stack.hfr_enabled();
                     let items: Vec<_> = layers.iter().map(|layer| {

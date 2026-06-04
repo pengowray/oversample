@@ -15,7 +15,7 @@ const ICON_CONTRACT: &str = "\u{25AD}"; // ▭ white rectangle — snap to curre
 
 /// Creates an annotation from the current transient selection and enters label-edit mode.
 pub fn annotate_selection(state: &AppState) {
-    let selection = state.selection.get_untracked();
+    let selection = state.interaction.selection().get_untracked();
     let file_idx = state.library.current_index().get_untracked();
     if let (Some(sel), Some(idx)) = (selection, file_idx) {
         let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
@@ -62,9 +62,9 @@ pub fn annotate_selection(state: &AppState) {
         });
         state.annotations.dirty().set(true);
         state.annotations.visible().set(true);
-        state.selection.set(None);
+        state.interaction.selection().set(None);
         state.annotations.selected_ids().set(vec![ann_id]);
-        state.active_focus.set(Some(ActiveFocus::Annotations));
+        state.interaction.active_focus().set(Some(ActiveFocus::Annotations));
         // Auto-enter label editing for the new annotation (floating editor)
         state.annotations.editing().set(true);
         state.annotations.is_new_edit().set(true);
@@ -122,7 +122,7 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
     state.annotations.dirty().set(true);
     state.annotations.visible().set(true);
     state.annotations.selected_ids().set(vec![ann_id]);
-    state.active_focus.set(Some(ActiveFocus::Annotations));
+    state.interaction.active_focus().set(Some(ActiveFocus::Annotations));
     state.annotations.editing().set(true);
     state.annotations.is_new_edit().set(true);
     state.show_info_toast("Marker added");
@@ -130,7 +130,7 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
 
 /// Get frequency bounds from focus stack or display range.
 fn get_freq_bounds(state: &AppState) -> (f64, f64) {
-    let ff = state.focus_stack.get_untracked().effective_range_ignoring_hfr();
+    let ff = state.viewmode.focus_stack().get_untracked().effective_range_ignoring_hfr();
     if ff.is_active() {
         (ff.lo, ff.hi)
     } else {
@@ -209,16 +209,16 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
 
     view! {
         {move || {
-            let focus = state.active_focus.get();
+            let focus = state.interaction.active_focus().get();
             if focus != Some(ActiveFocus::TransientSelection) {
-                state.selection_overflow_open.set(false);
+                state.interaction.selection_overflow_open().set(false);
             }
             if focus != Some(ActiveFocus::Annotations) {
-                state.annotation_overflow_open.set(false);
+                state.interaction.annotation_overflow_open().set(false);
             }
             match focus {
                 Some(ActiveFocus::TransientSelection) => {
-                    if state.selection.get().is_some() {
+                    if state.interaction.selection().get().is_some() {
                         Some(view! { <SelectionOverflowMenu /> }.into_any())
                     } else {
                         None
@@ -301,14 +301,14 @@ fn FreqRow(
 #[component]
 fn SelectionOverflowMenu() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_open = state.selection_overflow_open;
+    let is_open = state.interaction.selection_overflow_open();
 
     // Reactive position: top-right corner of selection
     let pos = Signal::derive(move || {
-        let sel = state.selection.get()?;
+        let sel = state.interaction.selection().get()?;
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let canvas_w = state.spectrogram_canvas_width.get();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
         let files = state.library.files().get();
         let idx = state.library.current_index().get()?;
@@ -331,7 +331,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
     });
 
     let sel_details = Signal::derive(move || {
-        let sel = state.selection.get()?;
+        let sel = state.interaction.selection().get()?;
         let d = sel.time_end - sel.time_start;
         if d < 0.0001 { return None; }
         let dur = crate::format_time::format_duration(d, 3);
@@ -344,11 +344,11 @@ fn SelectionOverflowMenu() -> impl IntoView {
     });
 
     let has_freq_sig = Signal::derive(move || {
-        state.selection.get().is_some_and(|s| s.freq_low.is_some() && s.freq_high.is_some())
+        state.interaction.selection().get().is_some_and(|s| s.freq_low.is_some() && s.freq_high.is_some())
     });
 
     let freq_text_sig = Signal::derive(move || {
-        state.selection.get()
+        state.interaction.selection().get()
             .and_then(|s| match (s.freq_low, s.freq_high) {
                 (Some(fl), Some(fh)) => Some(format!("{:.0} \u{2013} {:.0} kHz", fl / 1000.0, fh / 1000.0)),
                 _ => None,
@@ -357,7 +357,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
     });
 
     let matches_view_sig = Signal::derive(move || {
-        let sel = match state.selection.get() { Some(s) => s, None => return false };
+        let sel = match state.interaction.selection().get() { Some(s) => s, None => return false };
         let (tlo, thi) = get_freq_bounds(&state);
         if thi <= tlo { return false; }
         match (sel.freq_low, sel.freq_high) {
@@ -372,8 +372,8 @@ fn SelectionOverflowMenu() -> impl IntoView {
     });
 
     let on_expand = Callback::new(move |_: ()| {
-        if let Some(sel) = state.selection.get_untracked() {
-            state.selection.set(Some(Selection {
+        if let Some(sel) = state.interaction.selection().get_untracked() {
+            state.interaction.selection().set(Some(Selection {
                 freq_low: None,
                 freq_high: None,
                 ..sel
@@ -382,10 +382,10 @@ fn SelectionOverflowMenu() -> impl IntoView {
     });
 
     let on_contract = Callback::new(move |_: ()| {
-        if let Some(sel) = state.selection.get_untracked() {
+        if let Some(sel) = state.interaction.selection().get_untracked() {
             let (lo, hi) = get_freq_bounds(&state);
             if hi > lo {
-                state.selection.set(Some(Selection {
+                state.interaction.selection().set(Some(Selection {
                     freq_low: Some(lo),
                     freq_high: Some(hi),
                     ..sel
@@ -471,7 +471,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
 #[component]
 fn AnnotationOverflowMenu() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_open = state.annotation_overflow_open;
+    let is_open = state.interaction.annotation_overflow_open();
 
     // Reactive position: top-right corner of first selected annotation
     let pos = Signal::derive(move || {
@@ -490,7 +490,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let canvas_w = state.spectrogram_canvas_width.get();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
         let files = state.library.files().get();
         let file = files.get(idx)?;

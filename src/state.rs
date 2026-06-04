@@ -1468,6 +1468,8 @@ pub mod store_fields {
         LibraryStateStoreFields,
         PlaybackStateStoreFields,
         StatusStateStoreFields,
+        InteractionStateStoreFields,
+        ViewModeStateStoreFields,
     };
 }
 
@@ -1749,6 +1751,58 @@ pub struct StatusState {
     pub hash_generation: u32,
 }
 
+/// Pointer / selection / drag interaction state.
+#[derive(Clone, Store)]
+pub struct InteractionState {
+    pub selection: Option<Selection>,
+    pub last_selection: Option<Selection>,
+    pub is_dragging: bool,
+    /// True while any pointer button is held down on the spectrogram canvas.
+    pub pointer_is_down: bool,
+    pub mouse_freq: Option<f64>,
+    pub mouse_canvas_x: f64,
+    pub mouse_in_label_area: bool,
+    pub label_hover_opacity: f64,
+    pub canvas_tool: CanvasTool,
+    pub spec_drag_handle: Option<SpectrogramHandle>,
+    pub spec_hover_handle: Option<SpectrogramHandle>,
+    pub axis_drag_start_freq: Option<f64>,
+    pub axis_drag_current_freq: Option<f64>,
+    pub cursor_time: Option<f64>,
+    pub active_focus: Option<ActiveFocus>,
+    pub selection_overflow_open: bool,
+    pub annotation_overflow_open: bool,
+}
+
+/// View mode / navigation / overview / focus-stack / misc render state.
+#[derive(Clone, Store)]
+pub struct ViewModeState {
+    pub channel_view: ChannelView,
+    pub hfr_enabled: bool,
+    pub waveform_view: WaveformView,
+    pub overview_view: OverviewView,
+    pub nav_history: Vec<NavEntry>,
+    pub nav_index: usize,
+    pub bookmarks: Vec<Bookmark>,
+    /// Incrementing this triggers a spectrogram redraw.
+    pub tile_ready_signal: u32,
+    /// Generation counter for background preload.
+    pub bg_preload_gen: u32,
+    /// Actual pixel width of the main spectrogram canvas.
+    pub spectrogram_canvas_width: f64,
+    pub main_view: MainView,
+    /// Output frequency range to highlight (set by hover in HFR panel).
+    pub output_freq_highlight: Option<(f64, f64)>,
+    pub output_snap: OutputSnap,
+    /// When false, the Range button is hidden at full range.
+    pub always_show_view_range: bool,
+    pub shield_style: ShieldStyle,
+    /// Layered frequency-focus stack.
+    pub focus_stack: crate::focus_stack::FocusStack,
+    /// Hide all overlays while holding backtick.
+    pub clean_view: bool,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -1763,18 +1817,10 @@ pub struct AppState {
     pub playback: Store<PlaybackState>,
     /// Status / debug / platform / hash state (grouped reactive store).
     pub status: Store<StatusState>,
-    pub selection: RwSignal<Option<Selection>>,
-    pub last_selection: RwSignal<Option<Selection>>,
-    /// Modes selected via ctrl+click in the Mode radio group, in addition
-    /// to `playback_mode`. When non-empty, the bottom toolbar renders one
-    /// Play button per selected mode (in addition to `playback_mode`).
-    /// `playback_mode` is always implicitly part of the selection — only
-    /// extras are stored here so the simple "no ctrl-clicks yet" case
-    /// stays a no-op.
-    /// Set when the user clicked ▶ on a 1:1 button while HFR was on (in a
-    /// multi-selection containing both 1:1 and an HFR-only mode). HFR is
-    /// turned off for the duration of that playback and restored when
-    /// playback stops or the user switches to another mode.
+    /// Pointer / selection / drag interaction state (grouped reactive store).
+    pub interaction: Store<InteractionState>,
+    /// View mode / navigation / focus-stack / misc render state (grouped store).
+    pub viewmode: Store<ViewModeState>,
     /// Transform / DSP playback parameters: heterodyne, time-expansion, pitch
     /// shift, phase vocoder, zero-crossing — plus BandFF-derived auto flags
     /// (grouped reactive store).
@@ -1787,42 +1833,28 @@ pub struct AppState {
     pub gain: Store<GainState>,
     /// True when playback is frozen waiting for streaming chunks to decode.
     /// Drives the "Buffering…" toast and pauses the playhead animation.
-    pub is_dragging: RwSignal<bool>,
     /// True while any pointer button is held down on the spectrogram canvas.
-    pub pointer_is_down: RwSignal<bool>,
     /// Spectrogram display + colormap settings (grouped reactive store).
     pub spect: Store<SpectState>,
     /// Optical-flow overlay settings (grouped reactive store). Replaces the
     /// former flat `flow_enabled` / `flow_gate` / `flow_*` signals.
     pub flow: Store<FlowState>,
-    pub mouse_freq: RwSignal<Option<f64>>,
-    pub mouse_canvas_x: RwSignal<f64>,
-    pub mouse_in_label_area: RwSignal<bool>,
-    pub label_hover_opacity: RwSignal<f64>,
 
     // Channel
-    pub channel_view: RwSignal<ChannelView>,
 
     // ── New signals ──────────────────────────────────────────────────────────
 
     // Tool
-    pub canvas_tool: RwSignal<CanvasTool>,
 
     // HFR (High Frequency Range) mode
-    pub hfr_enabled: RwSignal<bool>,
 
     // Waveform sub-view mode
-    pub waveform_view: RwSignal<WaveformView>,
 
     // Overview
-    pub overview_view: RwSignal<OverviewView>,
 
     // Navigation history (for back/forward buttons in overview)
-    pub nav_history: RwSignal<Vec<NavEntry>>,
-    pub nav_index: RwSignal<usize>,
 
     // Bookmarks
-    pub bookmarks: RwSignal<Vec<Bookmark>>,
 
     // Play start mode (All / FromHere / Selected)
 
@@ -1831,31 +1863,23 @@ pub struct AppState {
     // Play-from-here time (updated by Spectrogram on scroll/zoom change)
 
     // Tile system: incrementing this triggers a spectrogram redraw
-    pub tile_ready_signal: RwSignal<u32>,
 
     /// Generation counter for background preload. Incremented when file/LOD changes
     /// to cancel stale preload jobs.
-    pub bg_preload_gen: RwSignal<u32>,
 
 
     // Which floating layer panel is currently open
 
     // Actual pixel width of the main spectrogram canvas (written by Spectrogram, read by Overview)
-    pub spectrogram_canvas_width: RwSignal<f64>,
 
     // Main panel view mode
-    pub main_view: RwSignal<MainView>,
 
     // Spectrogram drag handles (BandFF + HET)
-    pub spec_drag_handle: RwSignal<Option<SpectrogramHandle>>,
-    pub spec_hover_handle: RwSignal<Option<SpectrogramHandle>>,
 
     /// Output frequency range to highlight on spectrogram (set by hover in HFR panel).
-    pub output_freq_highlight: RwSignal<Option<(f64, f64)>>,
     /// Snap policy for the Output Range gutter when dragging.
     /// Free = continuous, Standard = powers of 2 + 10 / 5 kHz multiples,
     /// EqualChroma = powers of 2 only (preserves musical intervals).
-    pub output_snap: RwSignal<OutputSnap>,
 
     // Microphone (independent listen + record)
     /// Mic capture + recording lifecycle (grouped reactive store).
@@ -1898,11 +1922,8 @@ pub struct AppState {
     // (hfr_saved_* signals removed — now in FocusStack)
 
     // Axis drag (left axis frequency range selection)
-    pub axis_drag_start_freq: RwSignal<Option<f64>>,
-    pub axis_drag_current_freq: RwSignal<Option<f64>>,
 
     // Cursor time at mouse position (for bottom bar feedback)
-    pub cursor_time: RwSignal<Option<f64>>,
 
     // Left sidebar settings page
 
@@ -1912,7 +1933,6 @@ pub struct AppState {
     /// Resonator-view settings (grouped reactive store).
     pub resonator: Store<ResonatorState>,
     // When false, the Range button is hidden at full range
-    pub always_show_view_range: RwSignal<bool>,
 
     /// Notch noise-filtering settings (grouped reactive store).
     pub notch: Store<NotchState>,
@@ -1946,26 +1966,16 @@ pub struct AppState {
     pub bat_book: Store<BatBookState>,
 
     /// Frequency shield/flag color bar style (persisted to localStorage).
-    pub shield_style: RwSignal<ShieldStyle>,
 
     /// Whether the analysis/status bar is visible (persisted to localStorage).
 
     // Layered frequency focus stack
-    pub focus_stack: RwSignal<crate::focus_stack::FocusStack>,
 
     // Clean view: hide all overlays while holding backtick
-    pub clean_view: RwSignal<bool>,
 
     /// Export / video-export UI state (grouped reactive store).
     pub export: Store<ExportState>,
 
-    // Selection focus
-    /// Which entity type currently has interactive focus (handles, overflow menu).
-    pub active_focus: RwSignal<Option<ActiveFocus>>,
-    /// Whether the transient-selection "..." overflow menu is open.
-    pub selection_overflow_open: RwSignal<bool>,
-    /// Whether an annotation "..." overflow menu is open.
-    pub annotation_overflow_open: RwSignal<bool>,
 }
 
 fn detect_tauri() -> bool {
@@ -2012,8 +2022,6 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         let s = Self {
-            selection: RwSignal::new(None),
-            last_selection: RwSignal::new(None),
             spect: Store::new(SpectState {
                 display: SpectrogramDisplay::FlowOptical,
                 floor_db: -120.0,
@@ -2088,8 +2096,6 @@ impl AppState {
                 wave_view_auto: false,
             }),
 
-            is_dragging: RwSignal::new(false),
-            pointer_is_down: RwSignal::new(false),
             library: Store::new(LibraryState {
                 files: Vec::new(),
                 current_index: None,
@@ -2129,34 +2135,14 @@ impl AppState {
                 color_gamma: 1.0,
                 color_scheme: FlowColorScheme::default(),
             }),
-            mouse_freq: RwSignal::new(None),
-            mouse_canvas_x: RwSignal::new(0.0),
-            mouse_in_label_area: RwSignal::new(false),
-            label_hover_opacity: RwSignal::new(0.0),
             // Default: single carrier — comb engages only when the user opts in.
             // Default spacing ~ 2× cutoff so initial comb mode covers cleanly.
             // On by default — auto-fit carrier count + spacing to the
             // focus range. Toggle "A" off in the Carriers row to pick a
             // fixed count manually.
 
-            channel_view: RwSignal::new(ChannelView::Stereo),
 
             // New
-            canvas_tool: RwSignal::new(CanvasTool::Hand),
-            hfr_enabled: RwSignal::new(false),
-            waveform_view: RwSignal::new(WaveformView::Frequency),
-            overview_view: RwSignal::new(OverviewView::Waveform),
-            nav_history: RwSignal::new(Vec::new()),
-            nav_index: RwSignal::new(0),
-            bookmarks: RwSignal::new(Vec::new()),
-            tile_ready_signal: RwSignal::new(0),
-            bg_preload_gen: RwSignal::new(0),
-            spectrogram_canvas_width: RwSignal::new(1000.0),
-            main_view: RwSignal::new(MainView::Spectrogram),
-            spec_drag_handle: RwSignal::new(None),
-            spec_hover_handle: RwSignal::new(None),
-            output_freq_highlight: RwSignal::new(None),
-            output_snap: RwSignal::new(OutputSnap::Standard),
             mic: Store::new(MicState {
                 listening: false,
                 recording: false,
@@ -2253,9 +2239,6 @@ impl AppState {
             }),
             is_tauri: detect_tauri(),
             is_mobile_platform: detect_mobile_ua(),
-            axis_drag_start_freq: RwSignal::new(None),
-            axis_drag_current_freq: RwSignal::new(None),
-            cursor_time: RwSignal::new(None),
             chroma: Store::new(ChromaState {
                 colormap: ChromaColormap::PitchClass,
                 gain: 0.0,
@@ -2272,7 +2255,6 @@ impl AppState {
                 viewport_bins: true,
                 viewport_range: None,
             }),
-            always_show_view_range: RwSignal::new(false),
 
             notch: Store::new(NotchState {
                 enabled: false,
@@ -2417,12 +2399,49 @@ impl AppState {
                 last_clicked_id: None,
                 auto_focus: true,
             }),
-            shield_style: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_shield_style").ok().flatten())
-                    .map(|v| ShieldStyle::from_key(&v))
-                    .unwrap_or_default()
+            interaction: Store::new(InteractionState {
+                selection: None,
+                last_selection: None,
+                is_dragging: false,
+                pointer_is_down: false,
+                mouse_freq: None,
+                mouse_canvas_x: 0.0,
+                mouse_in_label_area: false,
+                label_hover_opacity: 0.0,
+                canvas_tool: CanvasTool::Hand,
+                spec_drag_handle: None,
+                spec_hover_handle: None,
+                axis_drag_start_freq: None,
+                axis_drag_current_freq: None,
+                cursor_time: None,
+                active_focus: None,
+                selection_overflow_open: false,
+                annotation_overflow_open: false,
+            }),
+            viewmode: Store::new(ViewModeState {
+                channel_view: ChannelView::Stereo,
+                hfr_enabled: false,
+                waveform_view: WaveformView::Frequency,
+                overview_view: OverviewView::Waveform,
+                nav_history: Vec::new(),
+                nav_index: 0,
+                bookmarks: Vec::new(),
+                tile_ready_signal: 0,
+                bg_preload_gen: 0,
+                spectrogram_canvas_width: 1000.0,
+                main_view: MainView::Spectrogram,
+                output_freq_highlight: None,
+                output_snap: OutputSnap::Standard,
+                always_show_view_range: false,
+                shield_style: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_shield_style").ok().flatten())
+                        .map(|v| ShieldStyle::from_key(&v))
+                        .unwrap_or_default()
+                },
+                focus_stack: crate::focus_stack::FocusStack::new(),
+                clean_view: false,
             }),
             panels: Store::new(PanelsState {
                 right_tab: RightSidebarTab::Metadata,
@@ -2442,8 +2461,6 @@ impl AppState {
                         .unwrap_or(false)
                 },
             }),
-            focus_stack: RwSignal::new(crate::focus_stack::FocusStack::new()),
-            clean_view: RwSignal::new(false),
 
             // Export UI
             export: Store::new(ExportState {
@@ -2458,9 +2475,6 @@ impl AppState {
                 video_view_mode: VideoViewMode::default(),
             }),
 
-            active_focus: RwSignal::new(None),
-            selection_overflow_open: RwSignal::new(false),
-            annotation_overflow_open: RwSignal::new(false),
         };
 
         // On mobile, start with sidebar collapsed
@@ -2502,8 +2516,8 @@ impl AppState {
             scroll_offset: self.view.scroll_offset().get_untracked(),
             zoom_level: self.view.zoom_level().get_untracked(),
         };
-        let idx = self.nav_index.get_untracked();
-        self.nav_history.update(|hist| {
+        let idx = self.viewmode.nav_index().get_untracked();
+        self.viewmode.nav_history().update(|hist| {
             hist.truncate(idx + 1);
             if hist.last().map(|e: &NavEntry| (e.scroll_offset - entry.scroll_offset).abs() < 0.05).unwrap_or(false) {
                 return;
@@ -2513,8 +2527,8 @@ impl AppState {
                 hist.remove(0);
             }
         });
-        let new_len = self.nav_history.get_untracked().len();
-        self.nav_index.set(new_len.saturating_sub(1));
+        let new_len = self.viewmode.nav_history().get_untracked().len();
+        self.viewmode.nav_index().set(new_len.saturating_sub(1));
     }
 
     /// Stable annotation key for the file at list position `idx` (untracked).
@@ -2762,7 +2776,7 @@ impl AppState {
     /// Returns None if no selection or not yet computed.
     /// Does not start new scans while audio is playing to avoid mid-play gain jumps.
     fn lookup_selection_peak(&self, file_index: usize, file: &LoadedFile) -> Option<f64> {
-        let sel = self.selection.get()?;
+        let sel = self.interaction.selection().get()?;
         let sr = file.audio.sample_rate as f64;
         let start_sample = (sel.time_start * sr) as u64;
         let end_sample = (sel.time_end * sr) as u64;
@@ -2795,7 +2809,7 @@ impl AppState {
     /// Updates the focus stack and syncs output signals immediately.
     pub fn set_band_ff_range(&self, lo: f64, hi: f64) {
         use crate::focus_stack::FocusRange;
-        self.focus_stack.update(|s| {
+        self.viewmode.focus_stack().update(|s| {
             s.set_user_range(FocusRange::new(lo, hi));
         });
         self.sync_focus_outputs();
@@ -2816,7 +2830,7 @@ impl AppState {
     /// Push a bat book BandFF override. Enables HFR if not already on.
     pub fn push_bat_book_ff(&self, lo: f64, hi: f64) {
         use crate::focus_stack::{FocusRange, FocusSource};
-        self.focus_stack.update(|s| {
+        self.viewmode.focus_stack().update(|s| {
             s.push_override(FocusSource::BatBook, FocusRange::new(lo, hi));
             if !s.hfr_enabled() {
                 s.set_hfr_enabled(true);
@@ -2824,11 +2838,11 @@ impl AppState {
         });
         // Ensure playback mode is not Normal when HFR is on
         if self.playback.mode().get_untracked() == PlaybackMode::Normal {
-            let saved = self.focus_stack.get_untracked().saved_playback_mode();
+            let saved = self.viewmode.focus_stack().get_untracked().saved_playback_mode();
             self.playback.mode().set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
         if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
-            let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
+            let saved = self.viewmode.focus_stack().get_untracked().saved_bandpass_mode();
             self.filter.bandpass_mode().set(saved.unwrap_or(BandpassMode::Auto));
         }
         self.sync_focus_outputs();
@@ -2838,13 +2852,13 @@ impl AppState {
     pub fn pop_bat_book_ff(&self) {
         use crate::focus_stack::{FocusRange, FocusSource};
         let mut restore: Option<FocusRange> = None;
-        self.focus_stack.update(|s| {
+        self.viewmode.focus_stack().update(|s| {
             restore = s.pop_override(FocusSource::BatBook);
         });
         if let Some(range) = restore {
             if !range.is_active() {
                 // No active focus to restore — turn off HFR
-                self.focus_stack.update(|s| s.set_hfr_enabled(false));
+                self.viewmode.focus_stack().update(|s| s.set_hfr_enabled(false));
                 self.playback.mode().set(PlaybackMode::Normal);
                 self.filter.bandpass_mode().set(BandpassMode::Off);
             }
@@ -2856,18 +2870,18 @@ impl AppState {
     /// Push an annotation BandFF override. Only for annotations with freq bounds.
     pub fn push_annotation_ff(&self, lo: f64, hi: f64) {
         use crate::focus_stack::{FocusRange, FocusSource};
-        self.focus_stack.update(|s| {
+        self.viewmode.focus_stack().update(|s| {
             s.push_override(FocusSource::Annotation, FocusRange::new(lo, hi));
             if !s.hfr_enabled() {
                 s.set_hfr_enabled(true);
             }
         });
         if self.playback.mode().get_untracked() == PlaybackMode::Normal {
-            let saved = self.focus_stack.get_untracked().saved_playback_mode();
+            let saved = self.viewmode.focus_stack().get_untracked().saved_playback_mode();
             self.playback.mode().set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
         if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
-            let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
+            let saved = self.viewmode.focus_stack().get_untracked().saved_bandpass_mode();
             self.filter.bandpass_mode().set(saved.unwrap_or(BandpassMode::Auto));
         }
         self.sync_focus_outputs();
@@ -2877,12 +2891,12 @@ impl AppState {
     pub fn pop_annotation_ff(&self) {
         use crate::focus_stack::{FocusRange, FocusSource};
         let mut restore: Option<FocusRange> = None;
-        self.focus_stack.update(|s| {
+        self.viewmode.focus_stack().update(|s| {
             restore = s.pop_override(FocusSource::Annotation);
         });
         if let Some(range) = restore {
-            if !range.is_active() && !self.focus_stack.get_untracked().has_override(FocusSource::BatBook) {
-                self.focus_stack.update(|s| s.set_hfr_enabled(false));
+            if !range.is_active() && !self.viewmode.focus_stack().get_untracked().has_override(FocusSource::BatBook) {
+                self.viewmode.focus_stack().update(|s| s.set_hfr_enabled(false));
                 self.playback.mode().set(PlaybackMode::Normal);
                 self.filter.bandpass_mode().set(BandpassMode::Off);
             }
@@ -2958,12 +2972,12 @@ impl AppState {
         self.gain.db().set(stashed_gain);
         self.gain.db_stash().set(current_gain);
 
-        let stack = self.focus_stack.get_untracked();
+        let stack = self.viewmode.focus_stack().get_untracked();
         if stack.hfr_enabled() {
             // Turning off: save current mode
             let current_mode = self.playback.mode().get_untracked();
             let current_bp = self.filter.bandpass_mode().get_untracked();
-            self.focus_stack.update(|s| {
+            self.viewmode.focus_stack().update(|s| {
                 s.set_saved_playback_mode(Some(current_mode));
                 s.set_saved_bandpass_mode(Some(current_bp));
                 s.set_hfr_enabled(false);
@@ -2972,10 +2986,10 @@ impl AppState {
             self.playback.mode().set(PlaybackMode::Normal);
         } else {
             // Turning on
-            self.focus_stack.update(|s| {
+            self.viewmode.focus_stack().update(|s| {
                 s.set_hfr_enabled(true);
             });
-            let stack = self.focus_stack.get_untracked();
+            let stack = self.viewmode.focus_stack().get_untracked();
             match stack.saved_playback_mode() {
                 Some(mode) => self.playback.mode().set(mode),
                 None => {
@@ -3016,7 +3030,7 @@ impl AppState {
     /// The unclamped user intent stays in the focus stack and re-applies when
     /// the source changes back.
     fn sync_focus_outputs(&self) {
-        let stack = self.focus_stack.get_untracked();
+        let stack = self.viewmode.focus_stack().get_untracked();
         let eff = stack.effective_range();
         let hfr = stack.hfr_enabled();
         let nyq = self.active_nyquist();
@@ -3028,8 +3042,8 @@ impl AppState {
         if self.filter.band_ff_freq_hi().get_untracked() != clamped_hi {
             self.filter.band_ff_freq_hi().set(clamped_hi);
         }
-        if self.hfr_enabled.get_untracked() != hfr {
-            self.hfr_enabled.set(hfr);
+        if self.viewmode.hfr_enabled().get_untracked() != hfr {
+            self.viewmode.hfr_enabled().set(hfr);
         }
     }
 

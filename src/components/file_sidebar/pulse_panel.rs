@@ -107,7 +107,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
         if let Some(file) = idx.and_then(|i| files.get(i)) {
-            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
             let zoom = state.view.zoom_level().get_untracked();
             let time_res = file.spectrogram.time_resolution;
             let visible_time = (canvas_w / zoom) * time_res;

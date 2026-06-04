@@ -261,7 +261,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
             // Prefetch the head region — already loaded, but schedule visible tiles
             let scroll = state.view.scroll_offset().get_untracked();
             let zoom = state.view.zoom_level().get_untracked();
-            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
             let time_res = HOP_SIZE as f64 / sample_rate as f64;
             let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
             let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
@@ -272,7 +272,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
         tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
     }
 
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     // Spawn low-priority background task to build the full overview spectrogram.
     // This only runs when the system is idle (not playing, not actively rendering tiles).
@@ -553,7 +553,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     {
         let scroll = state.view.scroll_offset().get_untracked();
         let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
         let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
@@ -562,7 +562,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     }
 
     tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     // Spawn background progressive decode
     {
@@ -927,7 +927,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     {
         let scroll = state.view.scroll_offset().get_untracked();
         let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
         let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
@@ -936,7 +936,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     }
 
     tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     // Spawn background progressive decode
     {
@@ -1010,7 +1010,7 @@ async fn background_mp3_decode(
                 tile_cache::schedule_tile_on_demand(state, file_index, t);
             }
             last_tile_scheduled = Some(last_tile);
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
         }
 
         // Yield to browser
@@ -1307,7 +1307,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     {
         let scroll = state.view.scroll_offset().get_untracked();
         let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
         let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
@@ -1316,7 +1316,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     }
 
     tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     // Spawn background progressive decode
     {
@@ -1517,7 +1517,7 @@ pub(super) async fn build_streaming_overview(
     });
 
     // Signal redraw so the overview panel picks up the new image
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     log::info!("Background overview complete for {} ({} columns)", expected_name, src_w);
 }
 
@@ -1931,7 +1931,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     {
         let scroll = state.view.scroll_offset().get_untracked();
         let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
         let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
@@ -1940,7 +1940,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     }
 
     tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     // Spawn background progressive decode to fill remaining chunks.
     {
@@ -2011,7 +2011,7 @@ async fn background_m4a_decode(
                     tile_cache::schedule_tile_on_demand(state, file_index, t);
                 }
                 last_tile_scheduled = Some(last_tile);
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             }
         }
 

@@ -35,14 +35,14 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
         state.spect.colormap_preference().set(parse_colormap_pref(&select.value()));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     };
 
     let on_hfr_colormap_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
         state.spect.hfr_colormap_preference().set(parse_colormap_pref(&select.value()));
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     };
 
     let is_tauri = state.is_tauri;
@@ -147,7 +147,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             let target = ev.target().unwrap();
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let style = ShieldStyle::from_key(&select.value());
-                            state.shield_style.set(style);
+                            state.viewmode.shield_style().set(style);
                             if let Some(ls) = web_sys::window()
                                 .and_then(|w| w.local_storage().ok().flatten())
                             {
@@ -158,7 +158,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         {ShieldStyle::ALL.iter().map(|&s| view! {
                             <option
                                 value=s.key()
-                                selected=move || state.shield_style.get() == s
+                                selected=move || state.viewmode.shield_style().get() == s
                             >{s.label()}</option>
                         }).collect::<Vec<_>>()}
                     </select>

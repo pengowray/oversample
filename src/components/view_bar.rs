@@ -34,8 +34,8 @@ fn AnnoToggle() -> impl IntoView {
                 state.annotations.visible().set(new_visible);
                 if !new_visible {
                     // Drop annotation focus/selection and clear interaction state.
-                    if state.active_focus.get_untracked() == Some(ActiveFocus::Annotations) {
-                        state.active_focus.set(None);
+                    if state.interaction.active_focus().get_untracked() == Some(ActiveFocus::Annotations) {
+                        state.interaction.active_focus().set(None);
                     }
                     if !state.annotations.selected_ids().get_untracked().is_empty() {
                         state.annotations.selected_ids().set(Vec::new());
@@ -97,7 +97,7 @@ fn ToolCombo() -> impl IntoView {
                 title="Tool"
             >
                 <span class="layer-btn-category">"Tool"</span>
-                <span class="layer-btn-value">{move || match state.canvas_tool.get() {
+                <span class="layer-btn-value">{move || match state.interaction.canvas_tool().get() {
                     CanvasTool::Hand => "Hand",
                     CanvasTool::Selection => "Select",
                 }}</span>
@@ -106,16 +106,16 @@ fn ToolCombo() -> impl IntoView {
                 <div class="layer-panel" style="top: calc(100% + 4px); right: 0;">
                     <div class="layer-panel-title">"Tool"</div>
                     <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
+                        class=move || layer_opt_class(state.interaction.canvas_tool().get() == CanvasTool::Hand)
                         on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Hand);
+                            state.interaction.canvas_tool().set(CanvasTool::Hand);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"Hand (pan)"</button>
                     <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
+                        class=move || layer_opt_class(state.interaction.canvas_tool().get() == CanvasTool::Selection)
                         on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Selection);
+                            state.interaction.canvas_tool().set(CanvasTool::Selection);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"Selection"</button>

@@ -157,7 +157,7 @@ pub fn schedule_normal_tiles(
         let disposed_rc = disposed.clone();
         let recovery_cb = Closure::once(move || {
             if disposed_rc.load(Ordering::Relaxed) { return; }
-            state_recovery.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state_recovery.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
         });
         let _ = web_sys::window().unwrap()
             .set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -258,7 +258,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         crate::canvas::tile_cache::clear_all_tiles();
         crate::canvas::tile_cache::clear_flow_cache();
         crate::canvas::tile_cache::clear_reassign_cache();
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 
     // Clear magnitude tiles when display transform/decimation toggles
@@ -278,7 +278,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let decim_changed = decim != prev_decim.get_untracked();
             if xform_on || prev_xform.get_untracked() || decim_changed {
                 crate::canvas::tile_cache::clear_all_tiles();
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             }
             prev_xform.set(xform_on);
             prev_decim.set(decim);
@@ -297,7 +297,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let _mode = state.resonator.fft_mode().get();
         let _layout = state.resonator.layout().get();
         crate::canvas::tile_cache::clear_resonator_cache();
-        state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
     });
 
     // Viewport-zoom: debounce view-freq-range changes for 500ms, then commit
@@ -323,7 +323,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             if state.resonator.viewport_range().get_untracked().is_some() {
                 state.resonator.viewport_range().set(None);
                 crate::canvas::tile_cache::clear_resonator_cache();
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             }
             // Even with the feature off, bump the generation so any
             // already-scheduled timer becomes stale.
@@ -370,7 +370,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             }
             state.resonator.viewport_range().set(Some(target));
             crate::canvas::tile_cache::clear_resonator_cache();
-            state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+            state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
         });
 
         if let Some(win) = web_sys::window() {

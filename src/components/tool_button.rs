@@ -34,7 +34,7 @@ pub fn ToolButton() -> impl IntoView {
                     title="Tool"
                 >
                     <span class="layer-btn-category">"Tool"</span>
-                    <span class="layer-btn-value">{move || match state.canvas_tool.get() {
+                    <span class="layer-btn-value">{move || match state.interaction.canvas_tool().get() {
                         CanvasTool::Hand => "Hand",
                         CanvasTool::Selection => "Select",
                     }}</span>
@@ -47,16 +47,16 @@ pub fn ToolButton() -> impl IntoView {
                 >
                     <div class="layer-panel-title">"Tool"</div>
                     <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
+                        class=move || layer_opt_class(state.interaction.canvas_tool().get() == CanvasTool::Hand)
                         on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Hand);
+                            state.interaction.canvas_tool().set(CanvasTool::Hand);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"Hand (pan)"</button>
                     <button
-                        class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
+                        class=move || layer_opt_class(state.interaction.canvas_tool().get() == CanvasTool::Selection)
                         on:click=move |_| {
-                            state.canvas_tool.set(CanvasTool::Selection);
+                            state.interaction.canvas_tool().set(CanvasTool::Selection);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"Selection"</button>

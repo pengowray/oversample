@@ -29,7 +29,7 @@ pub fn AnalysisPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let selection_dims = move || {
-        let selection = state.selection.get()?;
+        let selection = state.interaction.selection().get()?;
         let d = selection.time_end - selection.time_start;
         if d > 0.0001 {
             Some(format_selection_dims(d, selection.freq_low, selection.freq_high))
@@ -89,7 +89,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // BandFF / HET handle interaction
-                if let Some(handle) = state.spec_drag_handle.get() {
+                if let Some(handle) = state.interaction.spec_drag_handle().get() {
                     let msg = match handle {
                         SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle => {
                             let lo = state.filter.band_ff_freq_lo().get();
@@ -112,7 +112,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Axis drag
-                if let (Some(start), Some(current)) = (state.axis_drag_start_freq.get(), state.axis_drag_current_freq.get()) {
+                if let (Some(start), Some(current)) = (state.interaction.axis_drag_start_freq().get(), state.interaction.axis_drag_current_freq().get()) {
                     let lo = start.min(current);
                     let hi = start.max(current);
                     let msg = format!("Selecting frequency range: {} – {}", fmt_freq(lo), fmt_freq(hi));
@@ -129,8 +129,8 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Drag in progress
-                if state.is_dragging.get() {
-                    let msg = match state.canvas_tool.get() {
+                if state.interaction.is_dragging().get() {
+                    let msg = match state.interaction.canvas_tool().get() {
                         CanvasTool::Hand => "Panning...",
                         CanvasTool::Selection => "Selecting...",
                     };
@@ -140,15 +140,15 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Hovering label area
-                if state.mouse_in_label_area.get() {
+                if state.interaction.mouse_in_label_area().get() {
                     return view! {
                         <span style="color: #666">"Drag to set band"</span>
                     }.into_any();
                 }
 
                 // Mouse on spectrogram: show time and frequency
-                let freq = state.mouse_freq.get();
-                let time = state.cursor_time.get();
+                let freq = state.interaction.mouse_freq().get();
+                let time = state.interaction.cursor_time().get();
                 if let (Some(f), Some(t)) = (freq, time) {
                     return view! {
                         <span style="color: #777">{format!("{:.3}s  {}", t, fmt_freq(f))}</span>

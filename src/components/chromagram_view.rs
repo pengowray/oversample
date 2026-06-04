@@ -34,7 +34,7 @@ pub fn ChromagramView() -> impl IntoView {
 
     // Main render effect
     Effect::new(move || {
-        let _tile_ready = state.tile_ready_signal.get();
+        let _tile_ready = state.viewmode.tile_ready_signal().get();
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
         let chroma_colormap = state.chroma.colormap().get();
@@ -48,7 +48,7 @@ pub fn ChromagramView() -> impl IntoView {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let is_playing = state.playback.is_playing().get();
-        let canvas_tool = state.canvas_tool.get();
+        let canvas_tool = state.interaction.canvas_tool().get();
         // Re-read canvas dimensions when sidebar layout changes
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
@@ -66,7 +66,7 @@ pub fn ChromagramView() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
-        state.spectrogram_canvas_width.set(display_w as f64);
+        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
 
         let ctx = canvas
             .get_context("2d").unwrap().unwrap()
@@ -228,7 +228,7 @@ pub fn ChromagramView() -> impl IntoView {
             let idx = state.library.current_index().get_untracked().unwrap_or(0);
             let (visible_time, duration) = if let Some(file) = files.get(idx) {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution), file.audio.duration_secs)
             } else {
                 return;
@@ -243,17 +243,17 @@ pub fn ChromagramView() -> impl IntoView {
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() != 0 { return; }
         if state.status.viewport_zoomed().get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
-        state.is_dragging.set(true);
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
     let on_mousemove = move |ev: MouseEvent| {
-        if !state.is_dragging.get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if !state.interaction.is_dragging().get_untracked() { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
         let dx = ev.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
+        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
         if cw == 0.0 { return; }
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
@@ -269,19 +269,19 @@ pub fn ChromagramView() -> impl IntoView {
     };
 
     let on_mouseup = move |ev: MouseEvent| {
-        if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
+        if state.interaction.is_dragging().get_untracked() && state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
             let (start_x, _) = hand_drag_start.get_untracked();
             let dx = (ev.client_x() as f64 - start_x).abs();
             if dx < 3.0 && state.playback.is_playing().get_untracked() {
                 let t = state.playback.playhead_time().get_untracked();
-                state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
             }
         }
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
     };
 
     let on_mouseleave = move |_ev: MouseEvent| {
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
     };
 
     let on_touchstart = move |ev: web_sys::TouchEvent| {
@@ -308,7 +308,7 @@ pub fn ChromagramView() -> impl IntoView {
                     from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
                 }));
             }
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
             return;
         }
 
@@ -316,9 +316,9 @@ pub fn ChromagramView() -> impl IntoView {
         pinch_state.set(None);
 
         let touch = touches.get(0).unwrap();
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
@@ -347,12 +347,12 @@ pub fn ChromagramView() -> impl IntoView {
 
         if n != 1 { return; }
         let touch = touches.get(0).unwrap();
-        if !state.is_dragging.get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if !state.interaction.is_dragging().get_untracked() { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
         let dx = touch.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
+        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
         if cw == 0.0 { return; }
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
@@ -375,24 +375,24 @@ pub fn ChromagramView() -> impl IntoView {
         if remaining == 1 {
             if let Some(touch) = _ev.touches().get(0) {
                 hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
-                if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                    state.is_dragging.set(true);
+                if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+                    state.interaction.is_dragging().set(true);
                 }
             }
             return;
         }
         if remaining == 0 {
-            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+            if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
                 if let Some(touch) = _ev.changed_touches().get(0) {
                     let (start_x, _) = hand_drag_start.get_untracked();
                     let dx = (touch.client_x() as f64 - start_x).abs();
                     if dx < 5.0 && state.playback.is_playing().get_untracked() {
                         let t = state.playback.playhead_time().get_untracked();
-                        state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                        state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
                     }
                 }
             }
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
         }
     };
 
@@ -400,8 +400,8 @@ pub fn ChromagramView() -> impl IntoView {
         <div class="spectrogram-container"
             style=move || {
                 let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
-                match state.canvas_tool.get() {
-                    CanvasTool::Hand => if state.is_dragging.get() {
+                match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => if state.interaction.is_dragging().get() {
                         format!("cursor: grabbing; touch-action: {ta};")
                     } else {
                         format!("cursor: grab; touch-action: {ta};")

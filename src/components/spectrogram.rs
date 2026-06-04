@@ -75,7 +75,7 @@ pub fn Spectrogram() -> impl IntoView {
         let disposed = disposed.clone();
         move || {
         let target = label_hover_target.get();
-        let current = state.label_hover_opacity.get();
+        let current = state.interaction.label_hover_opacity().get();
         if (current - target).abs() < 0.01 {
             // Close enough — schedule a final snap via rAF to avoid
             // setting the signal inside this Effect (which would recurse).
@@ -87,7 +87,7 @@ pub fn Spectrogram() -> impl IntoView {
                 let cb = Closure::once(move || {
                     if disposed_rc.load(Ordering::Relaxed) || ag.get() != generation { return; }
                     let Some(tgt) = label_hover_target.try_get_untracked() else { return; };
-                    state.label_hover_opacity.set(tgt);
+                    state.interaction.label_hover_opacity().set(tgt);
                 });
                 let _ = web_sys::window().unwrap().request_animation_frame(
                     cb.as_ref().unchecked_ref(),
@@ -102,12 +102,12 @@ pub fn Spectrogram() -> impl IntoView {
         let disposed_rc = disposed.clone();
         let cb = Closure::once(move || {
             if disposed_rc.load(Ordering::Relaxed) || ag.get() != generation { return; }
-            let Some(cur) = state.label_hover_opacity.try_get_untracked() else { return; };
+            let Some(cur) = state.interaction.label_hover_opacity().try_get_untracked() else { return; };
             let Some(tgt) = label_hover_target.try_get_untracked() else { return; };
             let speed = if tgt > cur { 0.35 } else { 0.20 };
             let next = cur + (tgt - cur) * speed;
             let next = if (next - tgt).abs() < 0.01 { tgt } else { next };
-            state.label_hover_opacity.set(next);
+            state.interaction.label_hover_opacity().set(next);
         });
         let _ = web_sys::window().unwrap().request_animation_frame(
             cb.as_ref().unchecked_ref(),
@@ -160,16 +160,16 @@ pub fn Spectrogram() -> impl IntoView {
     Effect::new({
         let disposed = disposed.clone();
         move || {
-        let _tile_ready = state.tile_ready_signal.get(); // trigger redraw when tiles arrive
+        let _tile_ready = state.viewmode.tile_ready_signal().get(); // trigger redraw when tiles arrive
         let _size_tick = canvas_size_tick.get(); // trigger redraw when canvas resizes
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let bookmarks = state.bookmarks.get();
-        let canvas_tool = state.canvas_tool.get();
-        let selection = state.selection.get();
+        let bookmarks = state.viewmode.bookmarks().get();
+        let canvas_tool = state.interaction.canvas_tool().get();
+        let selection = state.interaction.selection().get();
         let is_playing = state.playback.is_playing().get();
         let het_interacting = state.transform.het_interacting().get();
-        let dragging = state.is_dragging.get();
+        let dragging = state.interaction.is_dragging().get();
         let het_freq = state.transform.het_frequency().get();
         let het_cutoff = state.transform.het_cutoff().get();
         let het_comb_count = state.transform.het_comb_count().get();
@@ -180,20 +180,20 @@ pub fn Spectrogram() -> impl IntoView {
         let playback_mode = state.playback.mode().get();
         let min_display_freq = state.view.min_display_freq().get();
         let max_display_freq = state.view.max_display_freq().get();
-        let mouse_freq = state.mouse_freq.get();
-        let mouse_cx = state.mouse_canvas_x.get();
-        let label_opacity = state.label_hover_opacity.get();
+        let mouse_freq = state.interaction.mouse_freq().get();
+        let mouse_cx = state.interaction.mouse_canvas_x().get();
+        let label_opacity = state.interaction.label_hover_opacity().get();
         let filter_hovering = state.filter.hovering_band().get();
         let filter_enabled = state.filter.enabled().get();
-        let spec_hover = state.spec_hover_handle.get();
-        let spec_drag = state.spec_drag_handle.get();
-        let pointer_down = state.pointer_is_down.get();
+        let spec_hover = state.interaction.spec_hover_handle().get();
+        let spec_drag = state.interaction.spec_drag_handle().get();
+        let pointer_down = state.interaction.pointer_is_down().get();
         let band_ff_lo = state.filter.band_ff_freq_lo().get();
         let band_ff_hi = state.filter.band_ff_freq_hi().get();
         let het_freq_auto = state.transform.het_freq_auto().get();
         let het_cutoff_auto = state.transform.het_cutoff_auto().get();
-        let hfr_enabled = state.hfr_enabled.get();
-        let output_freq_hl = state.output_freq_highlight.get();
+        let hfr_enabled = state.viewmode.hfr_enabled().get();
+        let output_freq_hl = state.viewmode.output_freq_highlight().get();
         let flow_on = state.flow.enabled().get_untracked();
         let _flow_ig = state.flow.intensity_gate().get(); // trigger redraw on flow setting change
         let _flow_mg = state.flow.gate().get();
@@ -202,8 +202,8 @@ pub fn Spectrogram() -> impl IntoView {
         let _flow_scheme = state.flow.color_scheme().get(); // trigger redraw on color scheme change
         let colormap_pref = state.spect.colormap_preference().get();
         let hfr_colormap_pref = state.spect.hfr_colormap_preference().get();
-        let axis_drag_start = state.axis_drag_start_freq.get();
-        let axis_drag_current = state.axis_drag_current_freq.get();
+        let axis_drag_start = state.interaction.axis_drag_start_freq().get();
+        let axis_drag_current = state.interaction.axis_drag_current_freq().get();
         let notch_bands = state.notch.bands().get();
         let notch_enabled = state.notch.enabled().get();
         let notch_hovering = state.notch.hovering_band().get();
@@ -211,7 +211,7 @@ pub fn Spectrogram() -> impl IntoView {
         let detected_pulses = state.pulse.detected().get();
         let pulse_overlay = state.pulse.overlay_enabled().get();
         let selected_pulse = state.pulse.selected_index().get();
-        let main_view = state.main_view.get();
+        let main_view = state.viewmode.main_view().get();
         let (spect_floor, spect_range, spect_gamma, spect_gain) = if main_view == MainView::XformedSpec {
             (state.display.xform_floor_db().get(), state.display.xform_range_db().get(), state.display.xform_gamma().get(), state.display.xform_gain_db().get())
         } else {
@@ -247,7 +247,7 @@ pub fn Spectrogram() -> impl IntoView {
         let selected_annotation_ids = state.annotations.selected_ids().get();
         let annotation_hover_handle = state.annotations.hover_handle().get();
         let annotations_visible = state.annotations.visible().get();
-        let active_focus = state.active_focus.get();
+        let active_focus = state.interaction.active_focus().get();
         let _timeline = state.timeline.active().get(); // trigger redraw on timeline change
         pre_rendered.track();
         // Re-read canvas dimensions when sidebar layout changes
@@ -255,7 +255,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
-        let clean_view = state.clean_view.get();
+        let clean_view = state.viewmode.clean_view().get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -284,7 +284,7 @@ pub fn Spectrogram() -> impl IntoView {
             canvas.set_height(display_h);
         }
         // Keep overview in sync with actual canvas width
-        state.spectrogram_canvas_width.set(display_w as f64);
+        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
 
         let ctx = canvas
             .get_context("2d")
@@ -804,7 +804,7 @@ pub fn Spectrogram() -> impl IntoView {
                 band_ff_lo: marker_band_ff_lo,
                 band_ff_hi: marker_band_ff_hi,
                 band_ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
-                shield_style: state.shield_style.get_untracked(),
+                shield_style: state.viewmode.shield_style().get_untracked(),
             };
 
             let xform_on = state.display.transform().get_untracked()
@@ -1219,7 +1219,7 @@ pub fn Spectrogram() -> impl IntoView {
             let _zoom = state.view.zoom_level().get();
             let _playing = state.playback.is_playing().get();
             let _file_idx = state.library.current_index().get();
-            let _main_view = state.main_view.get();
+            let _main_view = state.viewmode.main_view().get();
             let _reassign = state.spect.reassign_enabled().get();
             let _flow = state.flow.enabled().get();
             // NOTE: intentionally NOT subscribing to tile_ready_signal here —
@@ -1239,7 +1239,7 @@ pub fn Spectrogram() -> impl IntoView {
 
                 handle_rc.set(None);
 
-                let main_view = state.main_view.get_untracked();
+                let main_view = state.viewmode.main_view().get_untracked();
                 if matches!(main_view, MainView::Waveform | MainView::ZcChart) {
                     return;
                 }
@@ -1254,7 +1254,7 @@ pub fn Spectrogram() -> impl IntoView {
 
                 let zoom = state.view.zoom_level().get_untracked();
                 let scroll = state.view.scroll_offset().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 let visible_time = if zoom > 0.0 { (canvas_w / zoom) * time_res } else { 1.0 };
                 let viewport_right = scroll + visible_time;
 
@@ -1350,7 +1350,7 @@ pub fn Spectrogram() -> impl IntoView {
         let time_res = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
         });
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let visible_time = if zoom > 0.0 { (canvas_w / zoom) * time_res } else { 1.0 };
         let center_time = scroll + visible_time / 2.0;
         let ratio = tile_cache::lod_ratio(lod);
@@ -1358,15 +1358,15 @@ pub fn Spectrogram() -> impl IntoView {
         let center_tile = (center_col / tile_cache::TILE_COLS as f64) as usize;
 
         // Bump generation to cancel any stale preload
-        state.bg_preload_gen.update(|g| *g = g.wrapping_add(1));
-        let generation = state.bg_preload_gen.get_untracked();
+        state.viewmode.bg_preload_gen().update(|g| *g = g.wrapping_add(1));
+        let generation = state.viewmode.bg_preload_gen().get_untracked();
 
         tile_cache::start_background_preload(state, file_idx, lod, center_tile, max_tiles, generation);
     });
 
     // Stop background preload on component disposal
     on_cleanup(move || {
-        state.bg_preload_gen.update(|g| *g = g.wrapping_add(1));
+        state.viewmode.bg_preload_gen().update(|g| *g = g.wrapping_add(1));
         crate::canvas::tile_cache::stop_background_preload();
     });
 
@@ -1408,19 +1408,19 @@ pub fn Spectrogram() -> impl IntoView {
                 // gutter (axis_drag_*), or mid-pan on the left axis
                 // (freq_pan_start). Keeps the cursor pinned even when a
                 // left-axis drag carries the pointer into the main canvas.
-                if state.axis_drag_start_freq.get().is_some()
+                if state.interaction.axis_drag_start_freq().get().is_some()
                     || ix.freq_pan_start.get().is_some()
-                    || state.mouse_in_label_area.get() {
+                    || state.interaction.mouse_in_label_area().get() {
                     return format!("cursor: cell; touch-action: {ta};");
                 }
-                if state.spec_drag_handle.get().is_some() {
+                if state.interaction.spec_drag_handle().get().is_some() {
                     return format!("cursor: ns-resize; touch-action: {ta};");
                 }
-                if let Some(handle) = state.spec_hover_handle.get() {
+                if let Some(handle) = state.interaction.spec_hover_handle().get() {
                     let is_ff = matches!(handle, SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle);
                     if !is_ff || crate::canvas::hit_test::is_in_band_ff_drag_zone(
-                        state.mouse_canvas_x.get(),
-                        state.spectrogram_canvas_width.get(),
+                        state.interaction.mouse_canvas_x().get(),
+                        state.viewmode.spectrogram_canvas_width().get(),
                     ) {
                         return format!("cursor: ns-resize; touch-action: {ta};");
                     }
@@ -1440,8 +1440,8 @@ pub fn Spectrogram() -> impl IntoView {
                 if state.annotations.drag_handle().get().is_some() {
                     return format!("cursor: move; touch-action: {ta};");
                 }
-                match state.canvas_tool.get() {
-                    CanvasTool::Hand => if state.is_dragging.get() {
+                match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => if state.interaction.is_dragging().get() {
                         format!("cursor: grabbing; touch-action: {ta};")
                     } else {
                         format!("cursor: grab; touch-action: {ta};")

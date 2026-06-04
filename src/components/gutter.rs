@@ -110,14 +110,14 @@ pub fn BandGutter() -> impl IntoView {
     Effect::new(move |_| {
         let band_lo = state.filter.band_ff_freq_lo().get();
         let band_hi = state.filter.band_ff_freq_hi().get();
-        let hfr_on = state.hfr_enabled.get();
-        let shield_style = state.shield_style.get();
+        let hfr_on = state.viewmode.hfr_enabled().get();
+        let shield_style = state.viewmode.shield_style().get();
         // Live drag range from either this gutter or the spectrogram's
         // y-axis — when Some, overrides the stored band so the shield
         // lights up mid-drag even before the band has been committed.
         let drag_range = match (
-            state.axis_drag_start_freq.get(),
-            state.axis_drag_current_freq.get(),
+            state.interaction.axis_drag_start_freq().get(),
+            state.interaction.axis_drag_current_freq().get(),
         ) {
             (Some(s), Some(c)) => Some((s, c)),
             _ => None,
@@ -127,7 +127,7 @@ pub fn BandGutter() -> impl IntoView {
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
-        let _tile_ready = state.tile_ready_signal.get();
+        let _tile_ready = state.viewmode.tile_ready_signal().get();
         let _size_tick = canvas_size_tick.get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
@@ -231,9 +231,9 @@ pub fn BandGutter() -> impl IntoView {
                 drag_start_y.set_value(None);
                 drag_active.set_value(false);
                 state.filter.band_ff_dragging().set(false);
-                state.axis_drag_start_freq.set(None);
-                state.axis_drag_current_freq.set(None);
-                state.is_dragging.set(false);
+                state.interaction.axis_drag_start_freq().set(None);
+                state.interaction.axis_drag_current_freq().set(None);
+                state.interaction.is_dragging().set(false);
                 select_all_frequencies(state);
                 return;
             }
@@ -266,9 +266,9 @@ pub fn BandGutter() -> impl IntoView {
         // if the pointer never leaves the slop zone.
         let snap_s = freq_snap(raw_start, shift);
         let snap_e = freq_snap(freq, shift);
-        state.axis_drag_start_freq.set(Some((raw_start / snap_s).round() * snap_s));
-        state.axis_drag_current_freq.set(Some((freq / snap_e).round() * snap_e));
-        state.is_dragging.set(true);
+        state.interaction.axis_drag_start_freq().set(Some((raw_start / snap_s).round() * snap_s));
+        state.interaction.axis_drag_current_freq().set(Some((freq / snap_e).round() * snap_e));
+        state.interaction.is_dragging().set(true);
 
         // Shift-extend should update the band immediately; a fresh drag
         // waits for pointermove so a pure tap leaves the existing band
@@ -329,10 +329,10 @@ pub fn BandGutter() -> impl IntoView {
             // if on, otherwise leave band untouched. Record the tap time
             // so a follow-up tap within DBLTAP_WINDOW_MS is seen as a
             // double-tap ("select all frequencies").
-            state.axis_drag_start_freq.set(None);
-            state.axis_drag_current_freq.set(None);
-            state.is_dragging.set(false);
-            let stack = state.focus_stack.get_untracked();
+            state.interaction.axis_drag_start_freq().set(None);
+            state.interaction.axis_drag_current_freq().set(None);
+            state.interaction.is_dragging().set(false);
+            let stack = state.viewmode.focus_stack().get_untracked();
             if stack.hfr_enabled() {
                 state.toggle_hfr();
             }
@@ -373,9 +373,9 @@ pub fn BandGutter() -> impl IntoView {
             drag_active.set_value(false);
             tooltip_y.set(None);
             state.filter.band_ff_dragging().set(false);
-            state.axis_drag_start_freq.set(None);
-            state.axis_drag_current_freq.set(None);
-            state.is_dragging.set(false);
+            state.interaction.axis_drag_start_freq().set(None);
+            state.interaction.axis_drag_current_freq().set(None);
+            state.interaction.is_dragging().set(false);
 
             let Some(canvas_el) = canvas_ref.get() else { return };
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -503,7 +503,7 @@ pub fn BandGutter() -> impl IntoView {
 /// Horizontal time-range gutter. Mounts as the bottom strip of a main
 /// view; the strip renders the time-axis labels that used to live inside
 /// the host canvas (so low frequencies in the spectrogram stay readable)
-/// and acts as the single drag surface for creating `state.selection`
+/// and acts as the single drag surface for creating `state.interaction.selection()`
 /// time ranges. A tap clears the selection, a drag sets it, a double-
 /// click selects the full file duration.
 ///
@@ -531,7 +531,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
     // Mirrors the per-view bookkeeping the main Effect does so the gutter
     // paints the same ticks as the host would have.
     let time_window = move || -> Option<(f64, f64, f64, f64, Option<crate::canvas::time_markers::ClockTimeConfig>)> {
-        let canvas_w = state.spectrogram_canvas_width.get();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get();
         if canvas_w <= 0.0 { return None; }
         let zoom = state.view.zoom_level().get();
         let scroll = state.view.scroll_offset().get();
@@ -577,12 +577,12 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
 
     // Redraw on any relevant signal change.
     Effect::new(move |_| {
-        let selection = state.selection.get();
+        let selection = state.interaction.selection().get();
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
-        let _main_view = state.main_view.get();
+        let _main_view = state.viewmode.main_view().get();
         let show_clock = state.timeline.show_clock_time().get();
         let _size_tick = canvas_size_tick.get();
         let Some((scroll, visible_time, duration, _time_res, clock)) = time_window() else { return };
@@ -695,7 +695,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
             if now - last_t < DBLTAP_WINDOW_MS && (ev.client_x() as f64 - last_x).abs() < 30.0 {
                 last_tap_time.set_value(0.0);
                 drag_anchor.set_value(None);
-                state.is_dragging.set(false);
+                state.interaction.is_dragging().set(false);
                 select_all_time(state);
                 return;
             }
@@ -705,13 +705,13 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         drag_start_client.set_value((ev.client_x() as f64, ev.client_y() as f64));
         // Seed a zero-width selection so the highlight starts drawing; the
         // range expands as the pointer moves.
-        let ff = state.focus_stack.get_untracked().effective_range();
+        let ff = state.viewmode.focus_stack().get_untracked().effective_range();
         let (fl, fh) = if ff.is_active() { (Some(ff.lo), Some(ff.hi)) } else { (None, None) };
-        state.selection.set(Some(Selection {
+        state.interaction.selection().set(Some(Selection {
             time_start: t, time_end: t,
             freq_low: fl, freq_high: fh,
         }));
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         if let Some(target) = ev.target() {
             if let Ok(el) = target.dyn_into::<web_sys::Element>() {
                 let _ = el.set_pointer_capture(ev.pointer_id());
@@ -723,9 +723,9 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let Some(anchor) = drag_anchor.get_value() else { return };
         let Some(t) = x_to_time(ev.client_x() as f64) else { return };
         let (ts, te) = if t < anchor { (t, anchor) } else { (anchor, t) };
-        let ff = state.focus_stack.get_untracked().effective_range();
+        let ff = state.viewmode.focus_stack().get_untracked().effective_range();
         let (fl, fh) = if ff.is_active() { (Some(ff.lo), Some(ff.hi)) } else { (None, None) };
-        state.selection.set(Some(Selection {
+        state.interaction.selection().set(Some(Selection {
             time_start: ts, time_end: te,
             freq_low: fl, freq_high: fh,
         }));
@@ -742,12 +742,12 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let slop = if pointer_is_touch(&ev) { TAP_SLOP_PX } else { 3.0 };
         let was_tap = dx < slop && dy < slop;
         drag_anchor.set_value(None);
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
         if was_tap {
             // Tap on the time gutter clears any existing selection — same
             // "fog returns" metaphor the waveform's old in-canvas strip had.
-            if state.selection.get_untracked().is_some() {
-                state.selection.set(None);
+            if state.interaction.selection().get_untracked().is_some() {
+                state.interaction.selection().set(None);
             }
             // Record this tap so a second one within DBLTAP_WINDOW_MS
             // still fires select_all_time even when the browser eats the
@@ -760,13 +760,13 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         }
         // Real drag committed. Promote a time-only segment to a region when
         // HFR is on so the selection carries the active band.
-        if let Some(sel) = state.selection.get_untracked() {
+        if let Some(sel) = state.interaction.selection().get_untracked() {
             if sel.time_end - sel.time_start < 1e-4 {
-                state.selection.set(None);
+                state.interaction.selection().set(None);
             } else if sel.freq_low.is_none() {
-                let ff = state.focus_stack.get_untracked().effective_range();
+                let ff = state.viewmode.focus_stack().get_untracked().effective_range();
                 if ff.is_active() {
-                    state.selection.set(Some(Selection {
+                    state.interaction.selection().set(Some(Selection {
                         freq_low: Some(ff.lo),
                         freq_high: Some(ff.hi),
                         ..sel
@@ -774,7 +774,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
                 }
             }
         }
-        state.active_focus.set(Some(ActiveFocus::TransientSelection));
+        state.interaction.active_focus().set(Some(ActiveFocus::TransientSelection));
     };
 
     let on_dblclick = move |ev: web_sys::MouseEvent| {

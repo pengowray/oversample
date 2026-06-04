@@ -444,7 +444,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     .and_then(|s| files.get(s.file_index))
                     .map(|f| f.spectrogram.time_resolution)
                     .unwrap_or(1.0);
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 // Save to project
                 state.project.current().update(|p| {
                     let Some(proj) = p else { return };
@@ -711,7 +711,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                                     .and_then(|s| files.get(s.file_index))
                                     .map(|f| f.spectrogram.time_resolution)
                                     .unwrap_or(1.0);
-                                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                                 state.timeline.selected_file_indices().set(runtime_indices);
                                 state.timeline.active().set(Some(tv));
                                 state.timeline.active_track().set(None);

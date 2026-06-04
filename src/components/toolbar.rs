@@ -140,7 +140,7 @@ pub fn Toolbar() -> impl IntoView {
         let rec_ready = state.mic.record_ready_state().get();
         let muted = state.mic.mute_output().get();
         let mode = state.playback.mode().get();
-        let hfr_on = state.focus_stack.get().hfr_enabled();
+        let hfr_on = state.viewmode.focus_stack().get().hfr_enabled();
         let acq_state = state.mic.acquisition_state().get();
 
         let mut parts = Vec::new();
@@ -330,7 +330,7 @@ pub fn Toolbar() -> impl IntoView {
                             if listening {
                                 let muted = state.mic.mute_output().get();
                                 let mode = state.playback.mode().get();
-                                let hfr_on = state.focus_stack.get().hfr_enabled();
+                                let hfr_on = state.viewmode.focus_stack().get().hfr_enabled();
                                 let frequency_shifted = hfr_on && !muted && mode != PlaybackMode::Normal;
                                 if frequency_shifted {
                                     Some("\u{1F3A4}\u{1F987}".to_string())
@@ -522,18 +522,18 @@ pub fn Toolbar() -> impl IntoView {
                             <button
                                 class="toolbar-overflow-item"
                                 on:click=move |_| {
-                                    let idx = state.nav_index.get_untracked();
+                                    let idx = state.viewmode.nav_index().get_untracked();
                                     if idx == 0 { return; }
                                     let new_idx = idx - 1;
-                                    state.nav_index.set(new_idx);
-                                    let hist = state.nav_history.get_untracked();
+                                    state.viewmode.nav_index().set(new_idx);
+                                    let hist = state.viewmode.nav_history().get_untracked();
                                     if let Some(entry) = hist.get(new_idx) {
                                         state.suspend_follow();
                                         state.view.scroll_offset().set(entry.scroll_offset);
                                         state.view.zoom_level().set(entry.zoom_level);
                                     }
                                 }
-                                disabled=move || state.nav_index.get() == 0
+                                disabled=move || state.viewmode.nav_index().get() == 0
                             >
                                 <span class="toolbar-overflow-icon">"←"</span>
                                 "Back"
@@ -541,11 +541,11 @@ pub fn Toolbar() -> impl IntoView {
                             <button
                                 class="toolbar-overflow-item"
                                 on:click=move |_| {
-                                    let idx = state.nav_index.get_untracked();
-                                    let hist = state.nav_history.get_untracked();
+                                    let idx = state.viewmode.nav_index().get_untracked();
+                                    let hist = state.viewmode.nav_history().get_untracked();
                                     if idx + 1 >= hist.len() { return; }
                                     let new_idx = idx + 1;
-                                    state.nav_index.set(new_idx);
+                                    state.viewmode.nav_index().set(new_idx);
                                     if let Some(entry) = hist.get(new_idx) {
                                         state.suspend_follow();
                                         state.view.scroll_offset().set(entry.scroll_offset);
@@ -553,8 +553,8 @@ pub fn Toolbar() -> impl IntoView {
                                     }
                                 }
                                 disabled=move || {
-                                    let idx = state.nav_index.get();
-                                    let len = state.nav_history.get().len();
+                                    let idx = state.viewmode.nav_index().get();
+                                    let len = state.viewmode.nav_history().get().len();
                                     idx + 1 >= len
                                 }
                             >

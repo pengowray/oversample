@@ -393,9 +393,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             state.timeline.selected_file_indices().set(Vec::new());
                             state.timeline.active().set(None);
                             state.timeline.active_track().set(None);
-                            state.nav_history.set(vec![]);
-                            state.nav_index.set(0);
-                            state.bookmarks.set(vec![]);
+                            state.viewmode.nav_history().set(vec![]);
+                            state.viewmode.nav_index().set(0);
+                            state.viewmode.bookmarks().set(vec![]);
                             current_idx.set(Some(i));
                         };
                         let on_close = move |ev: MouseEvent| {

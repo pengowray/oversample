@@ -49,7 +49,7 @@ pub fn BookmarkPopup() -> impl IntoView {
 
     view! {
         {move || state.dialogs.bookmark_popup().get().then(|| {
-            let bms = state.bookmarks.get();
+            let bms = state.viewmode.bookmarks().get();
             let recent: Vec<_> = bms.iter().rev().take(8).cloned().collect();
             view! {
                 <div class="bookmark-popup"

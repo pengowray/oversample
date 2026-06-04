@@ -383,17 +383,17 @@ fn draw_overview_waveform(
 fn OverviewToggleButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let label = move || match state.overview_view.get() {
+    let label = move || match state.viewmode.overview_view().get() {
         OverviewView::Spectrogram => "Spectrum",
         OverviewView::Waveform => "Waveform",
     };
 
     let toggle = move |_: MouseEvent| {
-        let next = match state.overview_view.get_untracked() {
+        let next = match state.viewmode.overview_view().get_untracked() {
             OverviewView::Spectrogram => OverviewView::Waveform,
             OverviewView::Waveform => OverviewView::Spectrogram,
         };
-        state.overview_view.set(next);
+        state.viewmode.overview_view().set(next);
     };
 
     view! {
@@ -449,8 +449,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let files = state.library.files().get_untracked();
         let _timeline_trigger = state.timeline.active().get();
         let idx = state.library.current_index().get();
-        let overview_view = state.overview_view.get();
-        let cv = state.channel_view.get();
+        let overview_view = state.viewmode.overview_view().get();
+        let cv = state.viewmode.channel_view().get();
         let _mic_recording = state.mic.recording().get();
         let _mic_listening = state.mic.listening().get();
         let auto_gain = state.gain.auto().get();
@@ -648,14 +648,14 @@ pub fn OverviewPanel() -> impl IntoView {
     Effect::new(move || {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let bookmarks = state.bookmarks.get();
-        let clean_view = state.clean_view.get();
-        let main_canvas_w = state.spectrogram_canvas_width.get();
+        let bookmarks = state.viewmode.bookmarks().get();
+        let clean_view = state.viewmode.clean_view().get();
+        let main_canvas_w = state.viewmode.spectrogram_canvas_width().get();
         let min_display_freq = state.view.min_display_freq().get();
         let max_display_freq = state.view.max_display_freq().get();
         let band_ff_lo_hz = state.filter.band_ff_freq_lo().get();
         let band_ff_hi_hz = state.filter.band_ff_freq_hi().get();
-        let overview_view = state.overview_view.get();
+        let overview_view = state.viewmode.overview_view().get();
         // Re-sync overlay dimensions when sidebar layout changes
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
@@ -881,7 +881,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i)).map(|f| {
             let zoom = state.view.zoom_level().get_untracked();
-            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
             (canvas_w / zoom) * f.spectrogram.time_resolution / 2.0
         }).unwrap_or(0.0)
     };
@@ -928,7 +928,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
@@ -986,7 +986,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
@@ -1009,7 +1009,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
@@ -1069,11 +1069,11 @@ pub fn OverviewPanel() -> impl IntoView {
                     } else { 0.0 };
                     format!("{:.2}%", pct)
                 }
-                style:display=move || if state.playback.is_playing().get() && !state.clean_view.get() { "block" } else { "none" }
+                style:display=move || if state.playback.is_playing().get() && !state.viewmode.clean_view().get() { "block" } else { "none" }
             />
 
             // Layers button (bottom-left, after nav buttons)
-            <Show when=move || !state.clean_view.get()>
+            <Show when=move || !state.viewmode.clean_view().get()>
                 <OverviewToggleButton />
             </Show>
         </div>

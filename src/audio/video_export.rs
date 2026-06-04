@@ -109,7 +109,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let (start_time, end_time) = if !regions.is_empty() {
         let r = &regions[0].1;
         (r.time_start, r.time_end)
-    } else if let Some(sel) = state.selection.get_untracked() {
+    } else if let Some(sel) = state.interaction.selection().get_untracked() {
         (sel.time_start, sel.time_end)
     } else {
         (0.0, file.audio.source.duration_secs())
@@ -123,7 +123,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
 
     // Video resolution
     let resolution = state.export.video_resolution().get_untracked();
-    let canvas_w_hint = state.spectrogram_canvas_width.get_untracked().max(320.0) as u32;
+    let canvas_w_hint = state.viewmode.spectrogram_canvas_width().get_untracked().max(320.0) as u32;
     let canvas_h_hint = 400u32; // reasonable default for spectrogram height
     let (vid_w, vid_h) = resolution.dimensions(canvas_w_hint, canvas_h_hint);
     // Ensure even dimensions (required by most codecs)
@@ -158,7 +158,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let freq_crop_lo = min_freq / file_max_freq;
     let freq_crop_hi = (max_freq / file_max_freq).min(1.0);
 
-    let hfr_enabled = state.hfr_enabled.get_untracked();
+    let hfr_enabled = state.viewmode.hfr_enabled().get_untracked();
     let colormap_pref = state.spect.colormap_preference().get_untracked();
     let hfr_colormap_pref = state.spect.hfr_colormap_preference().get_untracked();
     let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
@@ -220,7 +220,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         max_freq,
         canvas_w: vid_w,
         canvas_h: vid_h,
-        shield_style: state.shield_style.get_untracked(),
+        shield_style: state.viewmode.shield_style().get_untracked(),
     };
 
     // ── Process audio ────────────────────────────────────────────────────────
@@ -482,7 +482,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         VideoViewMode::ScrollingView => {
             // Compute zoom proportional to current app zoom
             let current_zoom = state.view.zoom_level().get_untracked();
-            let app_canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let app_canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
             let zoom = if app_canvas_w > 0.0 {
                 current_zoom * (vid_w as f64 / app_canvas_w)
             } else {

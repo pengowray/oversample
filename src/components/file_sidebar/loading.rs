@@ -258,8 +258,8 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
             .and_then(|f| f.audio.metadata.zc_data.as_ref())
             .is_some()
     });
-    if is_zc_file && state.main_view.get_untracked() != crate::state::MainView::ZcChart {
-        state.main_view.set(crate::state::MainView::ZcChart);
+    if is_zc_file && state.viewmode.main_view().get_untracked() != crate::state::MainView::ZcChart {
+        state.viewmode.main_view().set(crate::state::MainView::ZcChart);
     }
 
     // Compute file identity (Layer 1 + Layer 2 with bytes available)
@@ -328,7 +328,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     ));
 
     // Signal the spectrogram canvas to start rendering visible tiles on-demand
-    state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
     Ok(())
 }

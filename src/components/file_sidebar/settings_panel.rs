@@ -138,7 +138,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
 
             // Flow-specific settings (shown only when Flow view is active)
             {move || {
-                if state.main_view.get() == MainView::Flow {
+                if state.viewmode.main_view().get() == MainView::Flow {
                     let display = state.spect.display().get();
                     let _ = display; // used for reactivity trigger above
                     view! {
@@ -318,7 +318,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
 
             // Resonator-specific settings (shown only when Resonators view is active)
             {move || {
-                if state.main_view.get() == MainView::Resonators {
+                if state.viewmode.main_view().get() == MainView::Resonators {
                     view! {
                         <div class="setting-group">
                             <div class="setting-group-title">"Resonators"</div>
@@ -481,7 +481,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
 
             // Chromagram-specific settings (shown only when Chromagram view is active)
             {move || {
-                if state.main_view.get() == MainView::Chromagram {
+                if state.viewmode.main_view().get() == MainView::Chromagram {
                     view! {
                         <div class="setting-group">
                             <div class="setting-group-title">"Chromagram"</div>
@@ -1159,7 +1159,7 @@ fn restore_selection(state: AppState, annotation_id: &str) {
         if a.id == annotation_id {
             let jump_time = match &a.kind {
                 AnnotationKind::Region(reg) => {
-                    state.selection.set(Some(crate::state::Selection {
+                    state.interaction.selection().set(Some(crate::state::Selection {
                         time_start: reg.time_start,
                         time_end: reg.time_end,
                         freq_low: reg.freq_low,
@@ -1190,7 +1190,7 @@ fn jump_to_time(state: AppState, time: f64) {
     let idx = state.library.current_index().get_untracked();
     if let Some(file) = idx.and_then(|i| files.get(i)) {
         let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.spectrogram_canvas_width.get_untracked();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
         let half_visible = (canvas_w / zoom) * file.spectrogram.time_resolution / 2.0;
         let visible = half_visible * 2.0;
         let max_scroll = (file.audio.duration_secs - visible).max(0.0);

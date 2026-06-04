@@ -65,14 +65,14 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
         let _files = state.library.files().get();
         let _idx = state.library.current_index().get();
-        let _sel = state.selection.get();
+        let _sel = state.interaction.selection().get();
         let _nfft = state.psd.nfft().get();
         let _eq = state.psd.apply_eq().get();
         let _notch = state.psd.apply_notch().get();
         let _nr = state.psd.apply_nr().get();
         let _fr = freq_range_mode.get();
         // Subscribe to selection/annotation changes when freq range mode cares
-        let _ = state.selection.get();
+        let _ = state.interaction.selection().get();
         let _ = state.annotations.selected_ids().get();
 
         // Subscribe to relevant filter params when toggles are on
@@ -120,7 +120,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
     let annotate_peaks = move |_: web_sys::MouseEvent| {
         let result = psd_result.get_untracked();
         let file_idx = state.library.current_index().get_untracked();
-        let selection = state.selection.get_untracked();
+        let selection = state.interaction.selection().get_untracked();
         if let (Some(psd), Some(idx)) = (result, file_idx) {
             if psd.peaks.is_empty() { return; }
             let time_start;
@@ -396,7 +396,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     <button
                         class=move || {
                             let mode = freq_range_mode.get();
-                            let has_ff = state.hfr_enabled.get();
+                            let has_ff = state.viewmode.hfr_enabled().get();
                             if mode == PsdFreqRangeMode::BandFF && has_ff { "psd-btn psd-btn-active" }
                             else if mode == PsdFreqRangeMode::BandFF { "psd-btn psd-btn-active psd-btn-dimmed" }
                             else if !has_ff { "psd-btn psd-btn-disabled" }
@@ -931,7 +931,7 @@ fn start_psd_compute(
     let apply_nr = state.psd.apply_nr().get_untracked();
 
     // Determine sample range
-    let selection = state.selection.get_untracked();
+    let selection = state.interaction.selection().get_untracked();
     let (start_sample, end_sample, is_sel) = if let Some(sel) = selection {
         let s = (sel.time_start * sample_rate as f64) as usize;
         let e = ((sel.time_end * sample_rate as f64) as usize).min(total);
@@ -998,7 +998,7 @@ fn start_psd_compute(
                 })
             }
             PsdFreqRangeMode::BandFF => {
-                if state.hfr_enabled.get_untracked() {
+                if state.viewmode.hfr_enabled().get_untracked() {
                     let lo = state.filter.freq_low().get_untracked();
                     let hi = state.filter.freq_high().get_untracked();
                     if lo < hi { Some((lo, hi)) } else { None }
@@ -1013,7 +1013,7 @@ fn start_psd_compute(
                     _ => None,
                 });
                 sel_range.or_else(|| {
-                    if state.hfr_enabled.get_untracked() {
+                    if state.viewmode.hfr_enabled().get_untracked() {
                         let lo = state.filter.freq_low().get_untracked();
                         let hi = state.filter.freq_high().get_untracked();
                         if lo < hi { Some((lo, hi)) } else { None }

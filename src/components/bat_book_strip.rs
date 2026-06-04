@@ -498,7 +498,7 @@ fn BatBookChip(
     let class = move || {
         let mut cls = if is_selected() {
             use crate::focus_stack::FocusSource;
-            if state.focus_stack.get().is_adopted(FocusSource::BatBook) {
+            if state.viewmode.focus_stack().get().is_adopted(FocusSource::BatBook) {
                 "bat-book-chip selected adopted".to_string()
             } else {
                 "bat-book-chip selected".to_string()

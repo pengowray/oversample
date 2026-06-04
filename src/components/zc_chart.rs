@@ -92,21 +92,21 @@ pub fn ZcDotChart() -> impl IntoView {
     Effect::new(move || {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let selection = state.selection.get();
+        let selection = state.interaction.selection().get();
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let is_playing = state.playback.is_playing().get();
-        let canvas_tool = state.canvas_tool.get();
+        let canvas_tool = state.interaction.canvas_tool().get();
         let display_min_freq = state.view.min_display_freq().get();
         let display_max_freq = state.view.max_display_freq().get();
         let band_ff_lo = state.filter.band_ff_freq_lo().get();
         let band_ff_hi = state.filter.band_ff_freq_hi().get();
-        let axis_drag_start = state.axis_drag_start_freq.get();
-        let axis_drag_current = state.axis_drag_current_freq.get();
-        let spec_hover = state.spec_hover_handle.get();
-        let spec_drag = state.spec_drag_handle.get();
-        let mouse_freq = state.mouse_freq.get();
-        let mouse_cx = state.mouse_canvas_x.get();
+        let axis_drag_start = state.interaction.axis_drag_start_freq().get();
+        let axis_drag_current = state.interaction.axis_drag_current_freq().get();
+        let spec_hover = state.interaction.spec_hover_handle().get();
+        let spec_drag = state.interaction.spec_drag_handle().get();
+        let mouse_freq = state.interaction.mouse_freq().get();
+        let mouse_cx = state.interaction.mouse_canvas_x().get();
         // Re-read canvas dimensions when sidebar layout changes
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
@@ -124,7 +124,7 @@ pub fn ZcDotChart() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
-        state.spectrogram_canvas_width.set(display_w as f64);
+        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
 
         let ctx = canvas
             .get_context("2d").unwrap().unwrap()
@@ -332,9 +332,9 @@ pub fn ZcDotChart() -> impl IntoView {
                 ch, cw,
                 spec_hover, spec_drag,
                 state.status.is_mobile().get_untracked(),
-                state.active_focus.get_untracked() == Some(crate::state::ActiveFocus::FrequencyFocus),
-                state.pointer_is_down.get_untracked(),
-                state.mouse_freq.get_untracked(),
+                state.interaction.active_focus().get_untracked() == Some(crate::state::ActiveFocus::FrequencyFocus),
+                state.interaction.pointer_is_down().get_untracked(),
+                state.interaction.mouse_freq().get_untracked(),
             );
         }
 
@@ -376,7 +376,7 @@ pub fn ZcDotChart() -> impl IntoView {
             band_ff_lo,
             band_ff_hi,
             band_ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
-            shield_style: state.shield_style.get_untracked(),
+            shield_style: state.viewmode.shield_style().get_untracked(),
         };
 
         spectrogram_renderer::draw_freq_markers(
@@ -501,7 +501,7 @@ pub fn ZcDotChart() -> impl IntoView {
             let idx = state.library.current_index().get_untracked().unwrap_or(0);
             let (visible_time, duration) = if let Some(file) = files.get(idx) {
                 let zoom = state.view.zoom_level().get_untracked();
-                let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                 (viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution), file.audio.duration_secs)
             } else {
                 return;
@@ -518,9 +518,9 @@ pub fn ZcDotChart() -> impl IntoView {
         if state.status.viewport_zoomed().get_untracked() { return; }
 
         // BandFF handle drag takes priority over everything
-        if let Some(handle) = state.spec_hover_handle.get_untracked() {
-            state.spec_drag_handle.set(Some(handle));
-            state.is_dragging.set(true);
+        if let Some(handle) = state.interaction.spec_hover_handle().get_untracked() {
+            state.interaction.spec_drag_handle().set(Some(handle));
+            state.interaction.is_dragging().set(true);
             ev.prevent_default();
             return;
         }
@@ -531,36 +531,36 @@ pub fn ZcDotChart() -> impl IntoView {
                 let snap = freq_snap(freq, ev.shift_key());
                 let snapped = (freq / snap).round() * snap;
                 axis_drag_raw_start.set(freq);
-                state.axis_drag_start_freq.set(Some(snapped));
-                state.axis_drag_current_freq.set(Some(snapped));
-                state.is_dragging.set(true);
+                state.interaction.axis_drag_start_freq().set(Some(snapped));
+                state.interaction.axis_drag_current_freq().set(Some(snapped));
+                state.interaction.is_dragging().set(true);
                 ev.prevent_default();
                 return;
             }
         }
 
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         if state.playback.is_playing().get_untracked() {
             let t = state.playback.playhead_time().get_untracked();
-            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
             return;
         }
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
     let on_mousemove = move |ev: MouseEvent| {
         if let Some((px_x, px_y, freq)) = mouse_to_xf(&ev) {
             // Always track mouse position for frequency display
-            state.mouse_freq.set(Some(freq));
-            state.mouse_canvas_x.set(px_x);
+            state.interaction.mouse_freq().set(Some(freq));
+            state.interaction.mouse_canvas_x().set(px_x);
             let in_label_area = px_x < LABEL_AREA_WIDTH;
-            state.mouse_in_label_area.set(in_label_area);
-            state.label_hover_opacity.set(if in_label_area { 1.0 } else { 0.0 });
+            state.interaction.mouse_in_label_area().set(in_label_area);
+            state.interaction.label_hover_opacity().set(if in_label_area { 1.0 } else { 0.0 });
 
-            if state.is_dragging.get_untracked() {
+            if state.interaction.is_dragging().get_untracked() {
                 // BandFF handle drag takes highest priority
-                if let Some(handle) = state.spec_drag_handle.get_untracked() {
+                if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
                     let Some(canvas_el) = canvas_ref.get() else { return };
                     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                     let ch = canvas.height() as f64;
@@ -599,17 +599,17 @@ pub fn ZcDotChart() -> impl IntoView {
                 }
 
                 // Axis drag takes second priority
-                if state.axis_drag_start_freq.get_untracked().is_some() {
+                if state.interaction.axis_drag_start_freq().get_untracked().is_some() {
                     let raw_start = axis_drag_raw_start.get_untracked();
                     apply_axis_drag(state, raw_start, freq, ev.shift_key());
                     return;
                 }
 
                 // Hand panning
-                if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+                if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
                 let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
                 let dx = ev.client_x() as f64 - start_client_x;
-                let cw = state.spectrogram_canvas_width.get_untracked();
+                let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
                 if cw == 0.0 { return; }
                 let files = state.library.files().get_untracked();
                 let idx = state.library.current_index().get_untracked();
@@ -630,9 +630,9 @@ pub fn ZcDotChart() -> impl IntoView {
                     let ch = canvas.height() as f64;
                     let (min_freq, max_freq) = get_freq_range();
                     let handle = hit_test_band_ff_handles(px_y, min_freq, max_freq, ch, 8.0);
-                    state.spec_hover_handle.set(handle);
+                    state.interaction.spec_hover_handle().set(handle);
                 } else {
-                    state.spec_hover_handle.set(None);
+                    state.interaction.spec_hover_handle().set(None);
                 }
             }
         }
@@ -640,37 +640,37 @@ pub fn ZcDotChart() -> impl IntoView {
 
     let on_mouseup = move |_ev: MouseEvent| {
         // End BandFF handle drag
-        if state.spec_drag_handle.get_untracked().is_some() {
-            state.spec_drag_handle.set(None);
-            state.is_dragging.set(false);
+        if state.interaction.spec_drag_handle().get_untracked().is_some() {
+            state.interaction.spec_drag_handle().set(None);
+            state.interaction.is_dragging().set(false);
             return;
         }
         // End axis drag
-        if state.axis_drag_start_freq.get_untracked().is_some() {
-            let stack = state.focus_stack.get_untracked();
+        if state.interaction.axis_drag_start_freq().get_untracked().is_some() {
+            let stack = state.viewmode.focus_stack().get_untracked();
             let range = stack.effective_range_ignoring_hfr();
             if range.hi - range.lo > 500.0 && !stack.hfr_enabled() {
                 state.toggle_hfr();
             }
-            state.axis_drag_start_freq.set(None);
-            state.axis_drag_current_freq.set(None);
-            state.is_dragging.set(false);
+            state.interaction.axis_drag_start_freq().set(None);
+            state.interaction.axis_drag_current_freq().set(None);
+            state.interaction.is_dragging().set(false);
             return;
         }
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
     };
 
     let on_mouseleave = move |_ev: MouseEvent| {
-        state.mouse_freq.set(None);
-        state.mouse_in_label_area.set(false);
-        state.label_hover_opacity.set(0.0);
-        state.spec_hover_handle.set(None);
-        state.spec_drag_handle.set(None);
-        if state.axis_drag_start_freq.get_untracked().is_some() {
-            state.axis_drag_start_freq.set(None);
-            state.axis_drag_current_freq.set(None);
+        state.interaction.mouse_freq().set(None);
+        state.interaction.mouse_in_label_area().set(false);
+        state.interaction.label_hover_opacity().set(0.0);
+        state.interaction.spec_hover_handle().set(None);
+        state.interaction.spec_drag_handle().set(None);
+        if state.interaction.axis_drag_start_freq().get_untracked().is_some() {
+            state.interaction.axis_drag_start_freq().set(None);
+            state.interaction.axis_drag_current_freq().set(None);
         }
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
     };
 
     // Touch event handlers (mobile)
@@ -698,7 +698,7 @@ pub fn ZcDotChart() -> impl IntoView {
                     from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
                 }));
             }
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
             return;
         }
 
@@ -714,21 +714,21 @@ pub fn ZcDotChart() -> impl IntoView {
             let ch = canvas.height() as f64;
             let (min_freq, max_freq) = get_freq_range();
             if let Some(handle) = hit_test_band_ff_handles(px_y, min_freq, max_freq, ch, 16.0) {
-                state.spec_drag_handle.set(Some(handle));
-                state.is_dragging.set(true);
+                state.interaction.spec_drag_handle().set(Some(handle));
+                state.interaction.is_dragging().set(true);
                 ev.prevent_default();
                 return;
             }
         }
 
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         if state.playback.is_playing().get_untracked() {
             let t = state.playback.playhead_time().get_untracked();
-            state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+            state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
             return;
         }
         ev.prevent_default();
-        state.is_dragging.set(true);
+        state.interaction.is_dragging().set(true);
         hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
@@ -759,7 +759,7 @@ pub fn ZcDotChart() -> impl IntoView {
         let touch = touches.get(0).unwrap();
 
         // BandFF handle drag via touch
-        if let Some(handle) = state.spec_drag_handle.get_untracked() {
+        if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
             if let Some((_px_x, px_y, _freq)) = touch_to_yf(&touch) {
                 let Some(canvas_el) = canvas_ref.get() else { return };
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -799,12 +799,12 @@ pub fn ZcDotChart() -> impl IntoView {
             return;
         }
 
-        if !state.is_dragging.get_untracked() { return; }
-        if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
+        if !state.interaction.is_dragging().get_untracked() { return; }
+        if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
         let (start_client_x, start_scroll) = hand_drag_start.get_untracked();
         let dx = touch.client_x() as f64 - start_client_x;
-        let cw = state.spectrogram_canvas_width.get_untracked();
+        let cw = state.viewmode.spectrogram_canvas_width().get_untracked();
         if cw == 0.0 { return; }
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
@@ -825,22 +825,22 @@ pub fn ZcDotChart() -> impl IntoView {
             pinch_state.set(None);
         }
         // End BandFF handle drag
-        if state.spec_drag_handle.get_untracked().is_some() {
-            state.spec_drag_handle.set(None);
-            state.is_dragging.set(false);
+        if state.interaction.spec_drag_handle().get_untracked().is_some() {
+            state.interaction.spec_drag_handle().set(None);
+            state.interaction.is_dragging().set(false);
             return;
         }
         if remaining == 1 {
             if let Some(touch) = _ev.touches().get(0) {
                 hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
-                if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                    state.is_dragging.set(true);
+                if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+                    state.interaction.is_dragging().set(true);
                 }
             }
             return;
         }
         if remaining == 0 {
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
         }
     };
 
@@ -850,20 +850,20 @@ pub fn ZcDotChart() -> impl IntoView {
                 // When viewport is pinch-zoomed, allow native pinch so user can zoom back out
                 let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
                 // Handle hover: show resize cursor only when over the drag zone
-                if state.spec_drag_handle.get().is_some() {
+                if state.interaction.spec_drag_handle().get().is_some() {
                     return format!("cursor: ns-resize; touch-action: {ta};");
                 }
-                if let Some(handle) = state.spec_hover_handle.get() {
+                if let Some(handle) = state.interaction.spec_hover_handle().get() {
                     let is_ff = matches!(handle, SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle);
                     if !is_ff || crate::canvas::hit_test::is_in_band_ff_drag_zone(
-                        state.mouse_canvas_x.get(),
-                        state.spectrogram_canvas_width.get(),
+                        state.interaction.mouse_canvas_x().get(),
+                        state.viewmode.spectrogram_canvas_width().get(),
                     ) {
                         return format!("cursor: ns-resize; touch-action: {ta};");
                     }
                 }
-                match state.canvas_tool.get() {
-                    CanvasTool::Hand => if state.is_dragging.get() {
+                match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => if state.interaction.is_dragging().get() {
                         format!("cursor: grabbing; touch-action: {ta};")
                     } else {
                         format!("cursor: grab; touch-action: {ta};")

@@ -601,8 +601,8 @@ fn SnapPicker() -> impl IntoView {
             <span class="output-range-snap-label">"Snap"</span>
             <div class="output-range-snap-group">
                 {opts.iter().map(|&(val, label, title)| {
-                    let sel = Signal::derive(move || state.output_snap.get() == val);
-                    let click = move |_: web_sys::MouseEvent| state.output_snap.set(val);
+                    let sel = Signal::derive(move || state.viewmode.output_snap().get() == val);
+                    let click = move |_: web_sys::MouseEvent| state.viewmode.output_snap().set(val);
                     view! {
                         <button
                             class=move || if sel.get() { "snap-btn sel" } else { "snap-btn" }
@@ -638,7 +638,7 @@ fn OutputGutter() -> impl IntoView {
 
     let pin_input_to = move |target_hz: f64, anchor: f64| {
         let mode = state.playback.mode().get_untracked();
-        let snap = state.output_snap.get_untracked();
+        let snap = state.viewmode.output_snap().get_untracked();
         let target = target_hz.clamp(1.0, GUTTER_MAX_HZ);
         match style_for(mode) {
             Style::Passthrough => {}

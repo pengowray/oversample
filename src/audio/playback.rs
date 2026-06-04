@@ -20,7 +20,7 @@ struct PlaybackTarget {
 }
 
 fn timeline_selection(state: &AppState) -> Option<Selection> {
-    state.selection.get_untracked()
+    state.interaction.selection().get_untracked()
 }
 
 fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
@@ -69,11 +69,11 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
 /// Resolve the effective selection for playback, checking the focused
 /// selection (transient drag or annotations) based on `active_focus`.
 pub fn effective_selection(state: &AppState) -> Option<Selection> {
-    let focus = state.active_focus.get_untracked();
+    let focus = state.interaction.active_focus().get_untracked();
 
     // 1. Transient selection — only when it has focus
     if focus == Some(ActiveFocus::TransientSelection) {
-        if let Some(sel) = state.selection.get_untracked() {
+        if let Some(sel) = state.interaction.selection().get_untracked() {
             return Some(sel);
         }
     }
@@ -146,7 +146,7 @@ fn is_playhead_visible(state: &AppState) -> bool {
     let playhead = state.playback.playhead_time().get_untracked();
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let time_res = state.library.current_index().get_untracked()
         .and_then(|i| state.library.files().get_untracked().get(i).cloned())
         .map(|f| f.spectrogram.time_resolution)
@@ -160,7 +160,7 @@ fn is_playhead_visible(state: &AppState) -> bool {
 pub fn is_selection_in_viewport(state: &AppState, sel: &Selection) -> bool {
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let time_res = state.library.current_index().get_untracked()
         .and_then(|i| state.library.files().get_untracked().get(i).cloned())
         .map(|f| f.spectrogram.time_resolution)
@@ -220,7 +220,7 @@ pub fn replay_live(state: &AppState) {
 
     let params = snapshot_params(state, selection, sr);
     let remaining_duration = (end_sample - start_sample) as f64 / sr as f64;
-    let channel_view = state.channel_view.get_untracked();
+    let channel_view = state.viewmode.channel_view().get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
         target.source,
@@ -297,7 +297,7 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
         return state.playback.from_here_time().get_untracked();
     };
 
-    let canvas_width = state.spectrogram_canvas_width.get_untracked();
+    let canvas_width = state.viewmode.spectrogram_canvas_width().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
     let scroll = state.view.scroll_offset().get_untracked();
     let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
@@ -324,7 +324,7 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
 /// Play from a specific time offset in the current file.
 /// Uses the current selection (if any) for end time.
 pub fn play_from_time(state: &AppState, start_secs: f64) {
-    let selection = state.selection.get_untracked();
+    let selection = state.interaction.selection().get_untracked();
     play_from_time_inner(state, start_secs, selection);
 }
 
@@ -346,7 +346,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     }
 
     let params = snapshot_params(state, selection, sr);
-    let channel_view = state.channel_view.get_untracked();
+    let channel_view = state.viewmode.channel_view().get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
         target.source,
@@ -402,7 +402,7 @@ pub fn play(state: &AppState) {
     let params = snapshot_params(state, selection, sr);
     let play_start_time = selection.map(|s| s.time_start).unwrap_or(0.0);
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
-    let channel_view = state.channel_view.get_untracked();
+    let channel_view = state.viewmode.channel_view().get_untracked();
 
     let Some(_) = streaming_playback::start_stream(
         target.source,
@@ -629,7 +629,7 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
             }
             state.playback.is_playing().set(false);
             // Show bookmark popup briefly if any bookmarks were made during playback
-            if !state.bookmarks.get_untracked().is_empty() {
+            if !state.viewmode.bookmarks().get_untracked().is_empty() {
                 state.dialogs.bookmark_popup().set(true);
                 let state_bm = state;
                 let cb = wasm_bindgen::closure::Closure::once(move || {

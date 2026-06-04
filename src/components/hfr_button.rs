@@ -60,7 +60,7 @@ fn nyquist_for_current(state: AppState) -> f64 {
 /// Apply a band preset: set the BandFF range and ensure HFR is enabled.
 fn apply_band(state: AppState, lo: f64, hi: f64) {
     state.set_band_ff_range(lo, hi);
-    if !state.focus_stack.get_untracked().hfr_enabled() {
+    if !state.viewmode.focus_stack().get_untracked().hfr_enabled() {
         state.toggle_hfr();
     }
     state.panels.layer_panel_open().set(None);
@@ -68,7 +68,7 @@ fn apply_band(state: AppState, lo: f64, hi: f64) {
 
 fn clear_band(state: AppState) {
     state.set_band_ff_range(0.0, 0.0);
-    if state.focus_stack.get_untracked().hfr_enabled() {
+    if state.viewmode.focus_stack().get_untracked().hfr_enabled() {
         state.toggle_hfr();
     }
     state.panels.layer_panel_open().set(None);
@@ -115,9 +115,9 @@ fn selected_species_range(state: AppState) -> Option<(f64, f64)> {
 /// Range from whichever of selection / annotation / frequency-focus is
 /// the active focus right now (only one can be active at a time).
 fn focused_range(state: AppState) -> Option<(f64, f64)> {
-    match state.active_focus.get_untracked() {
+    match state.interaction.active_focus().get_untracked() {
         Some(ActiveFocus::TransientSelection) => {
-            let sel = state.selection.get_untracked()?;
+            let sel = state.interaction.selection().get_untracked()?;
             match (sel.freq_low, sel.freq_high) {
                 (Some(lo), Some(hi)) if hi > lo => Some((lo, hi)),
                 _ => None,
@@ -125,7 +125,7 @@ fn focused_range(state: AppState) -> Option<(f64, f64)> {
         }
         Some(ActiveFocus::Annotations) => state.selected_annotation_focus_range(),
         Some(ActiveFocus::FrequencyFocus) => {
-            let r = state.focus_stack.get_untracked().effective_range();
+            let r = state.viewmode.focus_stack().get_untracked().effective_range();
             if r.is_active() { Some((r.lo, r.hi)) } else { None }
         }
         None => None,
@@ -141,14 +141,14 @@ pub fn RangeButton() -> impl IntoView {
 
     let btn_class = Signal::derive(move || {
         let mut s = String::from("layer-btn range-btn lock-grow");
-        if state.hfr_enabled.get() { s.push_str(" hfr-on"); } else { s.push_str(" hfr-off"); }
+        if state.viewmode.hfr_enabled().get() { s.push_str(" hfr-on"); } else { s.push_str(" hfr-off"); }
         if is_open.get() { s.push_str(" open"); }
         if no_file() { s.push_str(" disabled"); }
         s
     });
 
     let label = Signal::derive(move || {
-        if !state.hfr_enabled.get() {
+        if !state.viewmode.hfr_enabled().get() {
             return "OFF".to_string();
         }
         let lo = state.filter.band_ff_freq_lo().get();
@@ -249,7 +249,7 @@ pub fn RangeButton() -> impl IntoView {
                 // ── Selection / annotation / focus ──
                 {move || {
                     let r = focused_range(state);
-                    let (label, hint) = match (state.active_focus.get(), &r) {
+                    let (label, hint) = match (state.interaction.active_focus().get(), &r) {
                         (Some(ActiveFocus::TransientSelection), Some((lo, hi))) => (
                             "Selection".to_string(),
                             format!(" ({:.0}\u{2013}{:.0} kHz)", lo / 1000.0, hi / 1000.0),

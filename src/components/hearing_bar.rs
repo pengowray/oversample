@@ -213,10 +213,10 @@ fn GainCombo() -> impl IntoView {
                     >"Full"</button>
                     <button class=move || {
                         let base = if state.gain.peak_source().get() == PeakSource::Selection { "peak-src-btn sel" } else { "peak-src-btn" };
-                        if state.selection.get().is_none() { format!("{} disabled", base) } else { base.to_string() }
+                        if state.interaction.selection().get().is_none() { format!("{} disabled", base) } else { base.to_string() }
                     }
                         on:click=move |_| {
-                            if state.selection.get_untracked().is_some() {
+                            if state.interaction.selection().get_untracked().is_some() {
                                 state.gain.peak_source().set(PeakSource::Selection);
                             }
                         }
@@ -346,7 +346,7 @@ fn BandpassCombo() -> impl IntoView {
         let mode = state.filter.bandpass_mode().get_untracked();
         if mode == BandpassMode::Off {
             // Turn on: prefer Auto when HFR is on (band-following), else On.
-            let next = if state.focus_stack.get_untracked().hfr_enabled() {
+            let next = if state.viewmode.focus_stack().get_untracked().hfr_enabled() {
                 BandpassMode::Auto
             } else {
                 BandpassMode::On
@@ -418,7 +418,7 @@ fn BandpassCombo() -> impl IntoView {
         >
             <div class="layer-panel-title">"Bandpass"</div>
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                <Show when=move || state.hfr_enabled.get()>
+                <Show when=move || state.viewmode.hfr_enabled().get()>
                     <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::Auto)
                         on:click=move |_| state.filter.bandpass_mode().set(BandpassMode::Auto)
                     >"AUTO"</button>
@@ -428,8 +428,8 @@ fn BandpassCombo() -> impl IntoView {
                 >"OFF"</button>
                 <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::On)
                     on:click=move |_| {
-                        if !state.focus_stack.get_untracked().hfr_enabled() {
-                            state.focus_stack.update(|s| s.set_saved_playback_mode(Some(PlaybackMode::Normal)));
+                        if !state.viewmode.focus_stack().get_untracked().hfr_enabled() {
+                            state.viewmode.focus_stack().update(|s| s.set_saved_playback_mode(Some(PlaybackMode::Normal)));
                             state.toggle_hfr();
                         }
                         state.filter.bandpass_mode().set(BandpassMode::On);
@@ -544,7 +544,7 @@ fn BandHfrCell() -> impl IntoView {
     };
 
     let cell_class = Signal::derive(move || {
-        let on = state.hfr_enabled.get();
+        let on = state.viewmode.hfr_enabled().get();
         let h_dim = on && {
             let lo = state.filter.band_ff_freq_lo().get();
             let hi = state.filter.band_ff_freq_hi().get();
@@ -558,7 +558,7 @@ fn BandHfrCell() -> impl IntoView {
     });
 
     let title = Signal::derive(move || {
-        if state.hfr_enabled.get() {
+        if state.viewmode.hfr_enabled().get() {
             "High-frequency reception is ON — click to disable.".to_string()
         } else {
             "Enable high-frequency reception — process and listen to the band selected on the gutter below.".to_string()
@@ -591,7 +591,7 @@ fn pass_is_locked(state: AppState) -> bool {
 pub fn HearingBar() -> impl IntoView {
     let state = expect_context::<AppState>();
     let overline_class = Signal::derive(move || {
-        let on = state.hfr_enabled.get();
+        let on = state.viewmode.hfr_enabled().get();
         let mut s = String::from("band-affected-row");
         if on { s.push_str(" band-on"); } else { s.push_str(" band-off"); }
         if pass_is_locked(state) { s.push_str(" pass-locked"); }

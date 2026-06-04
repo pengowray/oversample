@@ -126,7 +126,7 @@ pub fn ComboButton(
             class=move || if is_open.get() { "combo-btn-row open" } else { "combo-btn-row" }
             style=move || format!(
                 "pointer-events: {};",
-                if state.mouse_in_label_area.get() { "none" } else { "auto" }
+                if state.interaction.mouse_in_label_area().get() { "none" } else { "auto" }
             )
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()

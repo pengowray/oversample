@@ -340,7 +340,7 @@ pub fn on_pointerdown(
     // the user can zoom back out via native pinch.
     if state.status.viewport_zoomed().get_untracked() { return; }
 
-    state.pointer_is_down.set(true);
+    state.interaction.pointer_is_down().set(true);
 
     // Check for annotation resize handle drag first (selected annotations take
     // priority over BandFF/HET handles when they overlap). Skipped when annotations are hidden.
@@ -372,7 +372,7 @@ pub fn on_pointerdown(
                 }
             }
             state.annotations.drag_handle().set(Some((ann_id.clone(), handle_pos)));
-            state.is_dragging.set(true);
+            state.interaction.is_dragging().set(true);
             capture_pointer(&ev);
             ev.prevent_default();
             return;
@@ -382,7 +382,7 @@ pub fn on_pointerdown(
 
     // Check for spec handle drag (BandFF or HET — takes priority over axis/tool drags)
     // BandFF handles only start drag when clicking within the center handle zone.
-    if let Some(handle) = state.spec_hover_handle.get_untracked() {
+    if let Some(handle) = state.interaction.spec_hover_handle().get_untracked() {
         let is_ff = matches!(handle, SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle);
         let allow_drag = if is_ff {
             if let Some((px_x, _, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
@@ -395,8 +395,8 @@ pub fn on_pointerdown(
             true // HET handles drag from anywhere
         };
         if allow_drag {
-            state.spec_drag_handle.set(Some(handle));
-            state.is_dragging.set(true);
+            state.interaction.spec_drag_handle().set(Some(handle));
+            state.interaction.is_dragging().set(true);
             capture_pointer(&ev);
             ev.prevent_default();
             return;
@@ -420,7 +420,7 @@ pub fn on_pointerdown(
                 ev.client_x() as f64, ev.client_y() as f64,
                 freq, start_min, start_max,
             )));
-            state.is_dragging.set(true);
+            state.interaction.is_dragging().set(true);
             capture_pointer(&ev);
             ev.prevent_default();
             return;
@@ -435,7 +435,7 @@ pub fn on_pointerdown(
     // Priority: annotation > selection > BandFF. All deferred to pointer-up so panning takes priority.
     ix.pending_band_ff_hit.set(false);
     ix.pending_selection_hit.set(false);
-    if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+    if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
         if let Some((px_x, px_y, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
         let files = state.library.files().get_untracked();
@@ -470,7 +470,7 @@ pub fn on_pointerdown(
 
         if !hit_annotation {
             // Check transient selection body (priority over BandFF)
-            if let Some(sel) = state.selection.get_untracked() {
+            if let Some(sel) = state.interaction.selection().get_untracked() {
                 if point_in_selection(&sel, t, freq) {
                     ix.pending_selection_hit.set(true);
                 } else {
@@ -503,31 +503,31 @@ pub fn on_pointerdown(
 
     // Click on empty area deselects annotations and clears focus (unless modifier held)
     // For Hand tool: defer to mouseup so panning isn't blocked
-    if state.canvas_tool.get_untracked() != CanvasTool::Hand
+    if state.interaction.canvas_tool().get_untracked() != CanvasTool::Hand
         && !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
             let ids = state.annotations.selected_ids().get_untracked();
             if !ids.is_empty() {
                 state.annotations.selected_ids().set(Vec::new());
             }
-            state.active_focus.set(None);
+            state.interaction.active_focus().set(None);
         }
 
-    match state.canvas_tool.get_untracked() {
+    match state.interaction.canvas_tool().get_untracked() {
         CanvasTool::Hand => {
-            state.is_dragging.set(true);
+            state.interaction.is_dragging().set(true);
             ix.hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
         }
         CanvasTool::Selection => {
             if let Some((_, _, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-                state.is_dragging.set(true);
+                state.interaction.is_dragging().set(true);
                 ix.drag_start.set((t, f));
-                state.selection.set(None);
+                state.interaction.selection().set(None);
             }
         }
     }
 
     // Capture pointer so drag continues even when cursor leaves the canvas
-    if state.is_dragging.get_untracked() {
+    if state.interaction.is_dragging().get_untracked() {
         capture_pointer(&ev);
     }
 }
@@ -540,9 +540,9 @@ pub fn on_pointermove(
 ) {
     if let Some((px_x, px_y, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         // Always track hover position
-        state.mouse_freq.set(Some(f));
-        state.mouse_canvas_x.set(px_x);
-        state.cursor_time.set(Some(t));
+        state.interaction.mouse_freq().set(Some(f));
+        state.interaction.mouse_canvas_x().set(px_x);
+        state.interaction.cursor_time().set(Some(t));
 
         // Canvas height for time-axis zone detection (reuse single rect query)
         let canvas_height = canvas_ref.get()
@@ -554,14 +554,14 @@ pub fn on_pointermove(
         // Update label hover target + in-label-area state. (Time-axis
         // interactions live on the sibling <TimeGutter/> now.)
         let in_label_area = px_x < LABEL_AREA_WIDTH;
-        state.mouse_in_label_area.set(in_label_area);
+        state.interaction.mouse_in_label_area().set(in_label_area);
         let current_target = ix.label_hover_target.get_untracked();
         let new_target = if in_label_area { 1.0 } else { 0.0 };
         if current_target != new_target {
             ix.label_hover_target.set(new_target);
         }
 
-        if state.is_dragging.get_untracked() {
+        if state.interaction.is_dragging().get_untracked() {
             // Left-axis viewport pan takes priority over every other drag —
             // once the user grabs the axis, they're navigating the display
             // window, not selecting or panning the main canvas.
@@ -573,7 +573,7 @@ pub fn on_pointermove(
             }
 
             // Spec handle drag takes priority
-            if let Some(handle) = state.spec_drag_handle.get_untracked() {
+            if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
                 if let Some((freq_at_mouse, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
                     apply_handle_drag(state, handle, freq_at_mouse, file_max_freq);
                 }
@@ -586,13 +586,13 @@ pub fn on_pointermove(
                 return;
             }
 
-            match state.canvas_tool.get_untracked() {
+            match state.interaction.canvas_tool().get_untracked() {
                 CanvasTool::Hand => {
                     apply_hand_pan(state, ev.client_x() as f64, canvas_ref, ix.hand_drag_start.get_untracked());
                 }
                 CanvasTool::Selection => {
                     let (t0, f0) = ix.drag_start.get_untracked();
-                    state.selection.set(Some(Selection {
+                    state.interaction.selection().set(Some(Selection {
                         time_start: t0.min(t),
                         time_end: t0.max(t),
                         freq_low: Some(f0.min(f)),
@@ -612,14 +612,14 @@ pub fn on_pointermove(
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let cw = canvas.width() as f64;
                         let ch = canvas.height() as f64;
-                        let band_ff_focused = state.active_focus.get_untracked() == Some(ActiveFocus::FrequencyFocus);
+                        let band_ff_focused = state.interaction.active_focus().get_untracked() == Some(ActiveFocus::FrequencyFocus);
                         let handle = hit_test_spec_handles(
                             &state, px_y, min_freq_val, max_freq_val, ch, 8.0, band_ff_focused,
                         );
-                        state.spec_hover_handle.set(handle);
+                        state.interaction.spec_hover_handle().set(handle);
 
                         // Annotation resize handle hover detection (only when annotations have focus and are visible)
-                        let annotations_focused = state.active_focus.get_untracked() == Some(ActiveFocus::Annotations)
+                        let annotations_focused = state.interaction.active_focus().get_untracked() == Some(ActiveFocus::Annotations)
                             && state.annotations.visible().get_untracked();
                         let selected_ids = state.annotations.selected_ids().get_untracked();
                         if annotations_focused && !selected_ids.is_empty() {
@@ -648,7 +648,7 @@ pub fn on_pointermove(
                     }
                 }
             } else {
-                state.spec_hover_handle.set(None);
+                state.interaction.spec_hover_handle().set(None);
                 state.annotations.hover_handle().set(None);
             }
         }
@@ -662,16 +662,16 @@ pub fn on_pointerleave(
 ) {
     // When pointer is captured (during a drag), pointerleave won't normally fire.
     // But if it does somehow, preserve drag state so the gesture isn't interrupted.
-    if state.is_dragging.get_untracked() {
+    if state.interaction.is_dragging().get_untracked() {
         return;
     }
 
-    state.pointer_is_down.set(false);
-    state.mouse_freq.set(None);
-    state.mouse_in_label_area.set(false);
-    state.cursor_time.set(None);
+    state.interaction.pointer_is_down().set(false);
+    state.interaction.mouse_freq().set(None);
+    state.interaction.mouse_in_label_area().set(false);
+    state.interaction.cursor_time().set(None);
     ix.label_hover_target.set(0.0);
-    state.spec_hover_handle.set(None);
+    state.interaction.spec_hover_handle().set(None);
     state.annotations.hover_handle().set(None);
     ix.pending_annotation_hit.set(None);
 }
@@ -682,13 +682,13 @@ pub fn on_pointerup(
     canvas_ref: &NodeRef<leptos::html::Canvas>,
     state: AppState,
 ) {
-    state.pointer_is_down.set(false);
-    if !state.is_dragging.get_untracked() { return; }
+    state.interaction.pointer_is_down().set(false);
+    if !state.interaction.is_dragging().get_untracked() { return; }
 
     // End HET/BandFF handle drag
-    if state.spec_drag_handle.get_untracked().is_some() {
-        state.spec_drag_handle.set(None);
-        state.is_dragging.set(false);
+    if state.interaction.spec_drag_handle().get_untracked().is_some() {
+        state.interaction.spec_drag_handle().set(None);
+        state.interaction.is_dragging().set(false);
         return;
     }
 
@@ -700,7 +700,7 @@ pub fn on_pointerup(
         let dy = (ev.client_y() as f64 - cy).abs();
         let was_tap = dx < 3.0 && dy < 3.0;
         ix.freq_pan_start.set(None);
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
         if was_tap {
             reset_freq_axis_view(state);
         }
@@ -722,13 +722,13 @@ pub fn on_pointerup(
         state.annotations.dirty().set(true);
         state.annotations.drag_handle().set(None);
         state.annotations.drag_original().set(None);
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
         return;
     }
 
-    state.is_dragging.set(false);
+    state.interaction.is_dragging().set(false);
 
-    if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+    if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
         let (start_x, _) = ix.hand_drag_start.get_untracked();
         let dx = (ev.client_x() as f64 - start_x).abs();
         let was_click = dx < 3.0;
@@ -748,13 +748,13 @@ pub fn on_pointerup(
                     state.annotations.selected_ids().set(vec![hit_id.clone()]);
                 }
                 state.annotations.last_clicked_id().set(Some(hit_id));
-                state.active_focus.set(Some(ActiveFocus::Annotations));
+                state.interaction.active_focus().set(Some(ActiveFocus::Annotations));
             } else if ix.pending_selection_hit.get_untracked() {
                 // Deferred transient selection body click-to-refocus
-                state.active_focus.set(Some(ActiveFocus::TransientSelection));
+                state.interaction.active_focus().set(Some(ActiveFocus::TransientSelection));
             } else if ix.pending_band_ff_hit.get_untracked() {
                 // Deferred BandFF body click-to-select
-                state.active_focus.set(Some(ActiveFocus::FrequencyFocus));
+                state.interaction.active_focus().set(Some(ActiveFocus::FrequencyFocus));
             } else {
                 // Click on empty area deselects annotations and clears focus
                 if !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
@@ -762,13 +762,13 @@ pub fn on_pointerup(
                     if !ids.is_empty() {
                         state.annotations.selected_ids().set(Vec::new());
                     }
-                    state.active_focus.set(None);
+                    state.interaction.active_focus().set(None);
                 }
             }
             // Bookmark while playing
             if state.playback.is_playing().get_untracked() {
                 let t = state.playback.playhead_time().get_untracked();
-                state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
             }
         }
 
@@ -777,7 +777,7 @@ pub fn on_pointerup(
         ix.pending_selection_hit.set(false);
         return;
     }
-    if state.canvas_tool.get_untracked() != CanvasTool::Selection { return; }
+    if state.interaction.canvas_tool().get_untracked() != CanvasTool::Selection { return; }
     if let Some((_, _, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         let (t0, f0) = ix.drag_start.get_untracked();
         let sel = Selection {
@@ -787,8 +787,8 @@ pub fn on_pointerup(
             freq_high: Some(f0.max(f)),
         };
         if sel.time_end - sel.time_start > 0.0001 {
-            state.selection.set(Some(sel));
-            state.active_focus.set(Some(ActiveFocus::TransientSelection));
+            state.interaction.selection().set(Some(sel));
+            state.interaction.active_focus().set(Some(ActiveFocus::TransientSelection));
             if state.annotations.selection_auto_focus().get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {
@@ -797,7 +797,7 @@ pub fn on_pointerup(
                 }
             }
         } else {
-            state.selection.set(None);
+            state.interaction.selection().set(None);
         }
     }
 }
@@ -821,7 +821,7 @@ pub fn on_dblclick(
     }
 
     // Double-click inside a transient selection: promote it to an annotation and open label edit.
-    if let Some(sel) = state.selection.get_untracked() {
+    if let Some(sel) = state.interaction.selection().get_untracked() {
         if let Some((_, _, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
             if point_in_selection(&sel, t, freq) {
                 crate::components::overflow_menu::annotate_selection(&state);
@@ -829,10 +829,10 @@ pub fn on_dblclick(
                 return;
             }
             // Outside selection: clear it (existing behavior)
-            state.last_selection.set(Some(sel));
-            state.selection.set(None);
-            if state.active_focus.get_untracked() == Some(ActiveFocus::TransientSelection) {
-                state.active_focus.set(None);
+            state.interaction.last_selection().set(Some(sel));
+            state.interaction.selection().set(None);
+            if state.interaction.active_focus().get_untracked() == Some(ActiveFocus::TransientSelection) {
+                state.interaction.active_focus().set(None);
             }
             ev.prevent_default();
             return;
@@ -868,7 +868,7 @@ pub fn on_dblclick(
                             })
                             .unwrap_or(false);
                         state.annotations.selected_ids().set(vec![hit_id]);
-                        state.active_focus.set(Some(ActiveFocus::Annotations));
+                        state.interaction.active_focus().set(Some(ActiveFocus::Annotations));
                         if is_locked {
                             state.show_info_toast("Annotation is locked \u{2014} unlock to edit label by double-click");
                         } else {
@@ -888,7 +888,7 @@ pub fn on_dblclick(
     if !has_range { return; }
 
     let on_handle = matches!(
-        state.spec_hover_handle.get_untracked(),
+        state.interaction.spec_hover_handle().get_untracked(),
         Some(SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle)
     );
     if on_handle {
@@ -948,10 +948,10 @@ pub fn on_touchstart(
             }));
         }
         // End any in-progress single-touch gesture
-        state.is_dragging.set(false);
-        state.spec_drag_handle.set(None);
-        state.axis_drag_start_freq.set(None);
-        state.axis_drag_current_freq.set(None);
+        state.interaction.is_dragging().set(false);
+        state.interaction.spec_drag_handle().set(None);
+        state.interaction.axis_drag_start_freq().set(None);
+        state.interaction.axis_drag_current_freq().set(None);
         return;
     }
 
@@ -961,8 +961,8 @@ pub fn on_touchstart(
         ix.pinch_state.set(None);
         if let Some(touch) = touches.get(0) {
             ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
-            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                state.is_dragging.set(true);
+            if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+                state.interaction.is_dragging().set(true);
             }
         }
         return;
@@ -1020,7 +1020,7 @@ pub fn on_touchstart(
                                 }
                             }
                             state.annotations.drag_handle().set(Some((ann_id.clone(), handle_pos)));
-                            state.is_dragging.set(true);
+                            state.interaction.is_dragging().set(true);
                             ev.prevent_default();
                             return;
                         }
@@ -1042,15 +1042,15 @@ pub fn on_touchstart(
             let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
             let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
             let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
-            let band_ff_focused = state.active_focus.get_untracked() == Some(ActiveFocus::FrequencyFocus);
+            let band_ff_focused = state.interaction.active_focus().get_untracked() == Some(ActiveFocus::FrequencyFocus);
             let handle = hit_test_spec_handles(
                 &state, px_y, min_freq_val, max_freq_val, ch, 16.0, band_ff_focused, // wider touch target
             );
             if let Some(handle) = handle {
                 let is_ff = matches!(handle, SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle);
                 if !is_ff || is_in_band_ff_drag_zone(px_x, cw) {
-                    state.spec_drag_handle.set(Some(handle));
-                    state.is_dragging.set(true);
+                    state.interaction.spec_drag_handle().set(Some(handle));
+                    state.interaction.is_dragging().set(true);
                     ev.prevent_default();
                     return;
                 }
@@ -1082,7 +1082,7 @@ pub fn on_touchstart(
                 touch.client_x() as f64, touch.client_y() as f64,
                 freq, start_min, start_max,
             )));
-            state.is_dragging.set(true);
+            state.interaction.is_dragging().set(true);
             ev.prevent_default();
             return;
         }
@@ -1091,10 +1091,10 @@ pub fn on_touchstart(
     // Time-axis touch interactions (drag-to-select, double-tap) moved to
     // the <TimeGutter/> strip.
 
-    match state.canvas_tool.get_untracked() {
+    match state.interaction.canvas_tool().get_untracked() {
         CanvasTool::Hand => {
             ev.prevent_default();
-            state.is_dragging.set(true);
+            state.interaction.is_dragging().set(true);
             ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
         }
         CanvasTool::Selection => {
@@ -1137,7 +1137,7 @@ pub fn on_touchmove(
     if n != 1 { return; }
     let touch = touches.get(0).unwrap();
 
-    if !state.is_dragging.get_untracked() { return; }
+    if !state.interaction.is_dragging().get_untracked() { return; }
     ev.prevent_default();
 
     // Left-axis viewport pan (touch). Takes priority over every other
@@ -1153,7 +1153,7 @@ pub fn on_touchmove(
     }
 
     // Spec handle drag takes priority
-    if let Some(handle) = state.spec_drag_handle.get_untracked() {
+    if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
         if let Some((_, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
             if let Some((freq_at_touch, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
                 apply_handle_drag(state, handle, freq_at_touch, file_max_freq);
@@ -1170,7 +1170,7 @@ pub fn on_touchmove(
         return;
     }
 
-    match state.canvas_tool.get_untracked() {
+    match state.interaction.canvas_tool().get_untracked() {
         CanvasTool::Hand => {
             apply_hand_pan(state, touch.client_x() as f64, canvas_ref, ix.hand_drag_start.get_untracked());
             // Record velocity sample for inertia
@@ -1197,17 +1197,17 @@ pub fn on_touchend(
     if remaining == 1 {
         if let Some(touch) = ev.touches().get(0) {
             ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
-            if state.canvas_tool.get_untracked() == CanvasTool::Hand {
-                state.is_dragging.set(true);
+            if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+                state.interaction.is_dragging().set(true);
             }
         }
         return;
     }
 
     if remaining == 0 {
-        if state.spec_drag_handle.get_untracked().is_some() {
-            state.spec_drag_handle.set(None);
-            state.is_dragging.set(false);
+        if state.interaction.spec_drag_handle().get_untracked().is_some() {
+            state.interaction.spec_drag_handle().set(None);
+            state.interaction.is_dragging().set(false);
             return;
         }
         // End annotation resize handle drag
@@ -1225,7 +1225,7 @@ pub fn on_touchend(
             state.annotations.dirty().set(true);
             state.annotations.drag_handle().set(None);
             state.annotations.drag_original().set(None);
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
             return;
         }
         // End left-axis viewport pan (touch). Tap with no movement resets
@@ -1241,7 +1241,7 @@ pub fn on_touchend(
             };
             let was_tap = dx < 3.0 && dy < 3.0;
             ix.freq_pan_start.set(None);
-            state.is_dragging.set(false);
+            state.interaction.is_dragging().set(false);
             if was_tap {
                 reset_freq_axis_view(state);
                 // Track tap for double-tap detection so a second tap still
@@ -1257,16 +1257,16 @@ pub fn on_touchend(
             return;
         }
 
-        state.is_dragging.set(false);
+        state.interaction.is_dragging().set(false);
 
         // Hand tool: bookmark on tap (no significant drag) while playing, or launch inertia
-        if state.canvas_tool.get_untracked() == CanvasTool::Hand {
+        if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
             if let Some(touch) = ev.changed_touches().get(0) {
                 let (start_x, _) = ix.hand_drag_start.get_untracked();
                 let dx = (touch.client_x() as f64 - start_x).abs();
                 if dx < 5.0 && state.playback.is_playing().get_untracked() {
                     let t = state.playback.playhead_time().get_untracked();
-                    state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
+                    state.viewmode.bookmarks().update(|bm| bm.push(crate::state::Bookmark { time: t }));
                 } else if dx >= 5.0 {
                     // Flick → launch inertia
                     let velocity = ix.velocity_tracker.with_value(|t| t.velocity_px_per_sec());
@@ -1298,8 +1298,8 @@ pub fn on_touchend(
         }
 
         // Update frequency focus from selection (if auto-focus enabled)
-        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.annotations.selection_auto_focus().get_untracked() {
-            if let Some(sel) = state.selection.get_untracked() {
+        if state.interaction.canvas_tool().get_untracked() == CanvasTool::Selection && state.annotations.selection_auto_focus().get_untracked() {
+            if let Some(sel) = state.interaction.selection().get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {
                         state.set_band_ff_range(lo, hi);
@@ -1346,7 +1346,7 @@ pub fn on_wheel(
         let range = cur_max - cur_min;
         if range < 1.0 { return; }
 
-        let anchor_frac = if let Some(mf) = state.mouse_freq.get_untracked() {
+        let anchor_frac = if let Some(mf) = state.interaction.mouse_freq().get_untracked() {
             ((mf - cur_min) / range).clamp(0.0, 1.0)
         } else {
             0.5
@@ -1387,7 +1387,7 @@ pub fn on_wheel(
         };
         {
             let zoom = state.view.zoom_level().get_untracked();
-            let canvas_w = state.spectrogram_canvas_width.get_untracked();
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
             let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
             let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
             // Scroll proportional to visible time (like arrow keys),

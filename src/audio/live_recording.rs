@@ -146,7 +146,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
 
     // Set zoom for comfortable live recording scroll speed.
     // Use hop=256 to match the actual hop size in spawn_live_processing_loop.
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
     state.view.scroll_offset().set(0.0);
@@ -250,7 +250,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
 /// scroll_offset. Shared by start_live_recording, start_live_armed, and the
 /// armed→record promotion path.
 pub(crate) fn set_live_recording_zoom(state: &AppState, sample_rate: u32) {
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
     state.view.scroll_offset().set(0.0);
@@ -467,7 +467,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
 
     // Set zoom for comfortable waterfall viewing.
     // Use LIVE_HOP to match the actual hop size in spawn_live_processing_loop.
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
     state.view.scroll_offset().set(0.0);
@@ -718,7 +718,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 // and run a short warmup prefix so the EMA converges before we
                 // emit the genuinely-new columns. This keeps per-tick cost
                 // bounded regardless of total recording length.
-                let new_cols = if state.main_view.get_untracked() == MainView::Resonators {
+                let new_cols = if state.viewmode.main_view().get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
                     let layout = state.resonator.layout().get_untracked();
                     let freq_range = state
@@ -877,13 +877,13 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 state.mic.live_data_cols().set(total_cols);
 
                 // Trigger spectrogram redraw
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
 
                 // Set target scroll for waterfall effect
                 if total_cols > 0 {
                     let time_res = hop_size as f64 / sample_rate as f64;
                     let recording_time = total_cols as f64 * time_res;
-                    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+                    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
                     let zoom = state.view.zoom_level().get_untracked();
                     if zoom > 0.0 && canvas_w > 0.0 {
                         let visible_cols = canvas_w / zoom;
@@ -1391,7 +1391,7 @@ async fn finalize_in_memory_recording(
         state.mic.preroll_samples().set(0);
     }
 
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let final_time_res = 512.0 / sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.view.scroll_offset().set(0.0);
@@ -1517,7 +1517,7 @@ async fn finalize_streaming_tauri_recording(
         }
     });
 
-    let canvas_w = state.spectrogram_canvas_width.get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
     let final_time_res = 512.0 / header.sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.view.scroll_offset().set(0.0);
@@ -1627,7 +1627,7 @@ pub(crate) fn spawn_spectrogram_computation(
                 }
             }
             if any_tile_rendered {
-                state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
+                state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
             }
 
             chunk_start += CHUNK_COLS;
@@ -1685,6 +1685,6 @@ pub(crate) fn spawn_spectrogram_computation(
             tile_cache::schedule_all_tiles(state, file, file_index);
         }
 
-        state.tile_ready_signal.update(|n| *n += 1);
+        state.viewmode.tile_ready_signal().update(|n| *n += 1);
     });
 }

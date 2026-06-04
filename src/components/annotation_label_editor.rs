@@ -37,7 +37,7 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
 
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let canvas_w = state.spectrogram_canvas_width.get();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get();
         let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
         let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
         let canvas_h = web_sys::window()

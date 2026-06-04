@@ -41,7 +41,7 @@ pub fn FreqRangeButton() -> impl IntoView {
     };
 
     let visible = move || {
-        if state.always_show_view_range.get() {
+        if state.viewmode.always_show_view_range().get() {
             return true;
         }
         let min_f = state.view.min_display_freq().get();
@@ -67,7 +67,7 @@ pub fn FreqRangeButton() -> impl IntoView {
     view! {
         <div
             style=move || format!("position: absolute; top: 46px; left: 56px; pointer-events: none; z-index: 20; opacity: {}; transition: opacity 0.1s;{}",
-                if state.mouse_in_label_area.get() { "0" } else { "1" },
+                if state.interaction.mouse_in_label_area().get() { "0" } else { "1" },
                 if visible() { "" } else { " display: none;" })
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
@@ -75,7 +75,7 @@ pub fn FreqRangeButton() -> impl IntoView {
             <div
                 node_ref=anchor
                 style=move || format!("position: relative; pointer-events: {};",
-                    if state.mouse_in_label_area.get() { "none" } else { "auto" })
+                    if state.interaction.mouse_in_label_area().get() { "none" } else { "auto" })
             >
                 <button
                     class=move || if is_open.get() { "layer-btn open" } else { "layer-btn" }

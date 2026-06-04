@@ -231,7 +231,7 @@ pub fn App() -> impl IntoView {
             let _ = state.filter.band_mode().get();
             let _ = state.filter.quality().get();
             let _ = state.filter.bandpass_mode().get();
-            let _ = state.channel_view.get();
+            let _ = state.viewmode.channel_view().get();
             let notch_on = state.notch.enabled().get();
             let _ = state.notch.bands().get();
             let noise_on = state.noise_reduce.enabled().get();
@@ -343,7 +343,7 @@ pub fn App() -> impl IntoView {
 
     // Sync flow_enabled with main_view (Flow view → enabled, anything else → disabled)
     Effect::new(move |_| {
-        let is_flow = state.main_view.get() == MainView::Flow;
+        let is_flow = state.viewmode.main_view().get() == MainView::Flow;
         state.flow.enabled().set(is_flow);
     });
 
@@ -353,8 +353,8 @@ pub fn App() -> impl IntoView {
     // initial-load path in loading.rs only catches first-load; this covers
     // file-list switching, project navigation, etc.
     Effect::new(move |_| {
-        if state.current_is_zc() && !state.main_view.get().is_sensible_for_zc() {
-            state.main_view.set(MainView::ZcChart);
+        if state.current_is_zc() && !state.viewmode.main_view().get().is_sensible_for_zc() {
+            state.viewmode.main_view().set(MainView::ZcChart);
         }
     });
 
@@ -383,7 +383,7 @@ pub fn App() -> impl IntoView {
     Effect::new(move |_| {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
-        let canvas_w = state.spectrogram_canvas_width.get();
+        let canvas_w = state.viewmode.spectrogram_canvas_width().get();
         let from_here_mode = state.playback.start_mode().get().uses_from_here();
         let timeline = state.timeline.active().get();
         let files = state.library.files().get();
@@ -436,7 +436,7 @@ pub fn App() -> impl IntoView {
     // current_file_index (file's Nyquist), mic_sample_rate (mic's Nyquist),
     // and mic_listening / mic_recording (which selects between them).
     Effect::new(move |_| {
-        let _ = state.focus_stack.get();
+        let _ = state.viewmode.focus_stack().get();
         let _ = state.library.current_index().get();
         let _ = state.mic.sample_rate().get();
         let _ = state.mic.listening().get();
@@ -674,7 +674,7 @@ pub fn App() -> impl IntoView {
             // "normal" orientation before saving the outgoing file settings.
             let was_hfr = old_idx.is_some()
                 && old_idx != new_idx
-                && state.focus_stack.get_untracked().hfr_enabled();
+                && state.viewmode.focus_stack().get_untracked().hfr_enabled();
             if was_hfr {
                 let current_gain = state.gain.db().get_untracked();
                 let stashed_gain = state.gain.db_stash().get_untracked();
@@ -723,7 +723,7 @@ pub fn App() -> impl IntoView {
                     crate::opfs::save_annotations(state, oi);
                 }
                 // Reset HFR and focus stack for the new file (HFR defaults to OFF).
-                state.focus_stack.set(crate::focus_stack::FocusStack::new());
+                state.viewmode.focus_stack().set(crate::focus_stack::FocusStack::new());
                 if was_hfr {
                     state.playback.mode().set(PlaybackMode::Normal);
                     state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
@@ -828,7 +828,7 @@ pub fn App() -> impl IntoView {
         }
         if (ev.key() == "h" || ev.key() == "H") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
-            state_kb.hfr_enabled.update(|v| *v = !*v);
+            state_kb.viewmode.hfr_enabled().update(|v| *v = !*v);
         }
         if (ev.key() == "b" || ev.key() == "B") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
@@ -844,12 +844,12 @@ pub fn App() -> impl IntoView {
         }
         // Q = toggle frequency bounds on current selection or selected annotations (region ↔ segment)
         if (ev.key() == "q" || ev.key() == "Q") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
-            if let Some(sel) = state_kb.selection.get_untracked() {
+            if let Some(sel) = state_kb.interaction.selection().get_untracked() {
                 // Transient selection exists — toggle it
                 ev.prevent_default();
                 if sel.freq_low.is_some() && sel.freq_high.is_some() {
                     // Strip freq bounds: region → segment
-                    state_kb.selection.set(Some(crate::state::Selection {
+                    state_kb.interaction.selection().set(Some(crate::state::Selection {
                         freq_low: None,
                         freq_high: None,
                         ..sel
@@ -857,7 +857,7 @@ pub fn App() -> impl IntoView {
                     state_kb.show_info_toast("Region → Segment (Q)");
                 } else {
                     // Restore freq bounds from BandFF range: segment → region
-                    let ff = state_kb.focus_stack.get_untracked().effective_range_ignoring_hfr();
+                    let ff = state_kb.viewmode.focus_stack().get_untracked().effective_range_ignoring_hfr();
                     let (lo, hi) = if ff.is_active() {
                         (ff.lo, ff.hi)
                     } else {
@@ -867,7 +867,7 @@ pub fn App() -> impl IntoView {
                         (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
                          state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
                     };
-                    state_kb.selection.set(Some(crate::state::Selection {
+                    state_kb.interaction.selection().set(Some(crate::state::Selection {
                         freq_low: Some(lo),
                         freq_high: Some(hi),
                         ..sel
@@ -912,7 +912,7 @@ pub fn App() -> impl IntoView {
                         state_kb.show_info_toast("Region → Segment (Q)");
                     } else {
                         // Segment → Region: use BandFF height
-                        let ff = state_kb.focus_stack.get_untracked().effective_range_ignoring_hfr();
+                        let ff = state_kb.viewmode.focus_stack().get_untracked().effective_range_ignoring_hfr();
                         let (lo, hi) = if ff.is_active() {
                             (ff.lo, ff.hi)
                         } else {
@@ -980,7 +980,7 @@ pub fn App() -> impl IntoView {
             };
             {
                 let zoom = state_kb.view.zoom_level().get_untracked();
-                let canvas_w = state_kb.spectrogram_canvas_width.get_untracked();
+                let canvas_w = state_kb.viewmode.spectrogram_canvas_width().get_untracked();
                 let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
                 let from_here_mode = state_kb.playback.start_mode().get_untracked().uses_from_here();
                 let (_min_scroll, max_scroll) = viewport::scroll_bounds_for_mode(duration, visible_time, from_here_mode);
@@ -1012,8 +1012,8 @@ pub fn App() -> impl IntoView {
         }
         // Backtick: activate clean view (hide overlays)
         if ev.key() == "`" && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key()
-            && !state_kb.clean_view.get_untracked() {
-                state_kb.clean_view.set(true);
+            && !state_kb.viewmode.clean_view().get_untracked() {
+                state_kb.viewmode.clean_view().set(true);
             }
     });
     let window = web_sys::window().unwrap();
@@ -1024,7 +1024,7 @@ pub fn App() -> impl IntoView {
     let state_ku = state;
     let keyup_handler = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
         if ev.key() == "`" {
-            state_ku.clean_view.set(false);
+            state_ku.viewmode.clean_view().set(false);
         }
     });
     let _ = window.add_event_listener_with_callback("keyup", keyup_handler.as_ref().unchecked_ref());
@@ -1033,7 +1033,7 @@ pub fn App() -> impl IntoView {
     // Reset clean view if window loses focus (so it doesn't stick)
     let state_blur = state;
     let blur_handler = Closure::<dyn Fn()>::new(move || {
-        state_blur.clean_view.set(false);
+        state_blur.viewmode.clean_view().set(false);
     });
     let _ = window.add_event_listener_with_callback("blur", blur_handler.as_ref().unchecked_ref());
     blur_handler.forget();
@@ -1305,8 +1305,8 @@ pub fn App() -> impl IntoView {
             // When zooming back out, clear any stale drag/interaction state so
             // a single touch doesn't get "stuck" acting like a pinch.
             if prev && !zoomed {
-                state_vp.is_dragging.set(false);
-                state_vp.spec_drag_handle.set(None);
+                state_vp.interaction.is_dragging().set(false);
+                state_vp.interaction.spec_drag_handle().set(None);
                 state_vp.annotations.drag_handle().set(None);
             }
         });
@@ -1421,7 +1421,7 @@ fn MainArea() -> impl IntoView {
                         // Main view (takes remaining space)
                         <div class="main-view">
                             // Show the selected main view
-                            {move || match state.main_view.get() {
+                            {move || match state.viewmode.main_view().get() {
                                 MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators => view! { <Spectrogram /> }.into_any(),
                                 MainView::Waveform => view! {
                                     <div class="main-waveform-full">
@@ -1453,7 +1453,7 @@ fn MainArea() -> impl IntoView {
 
                             // Floating overlay layer
                             <div class="main-overlays"
-                                style:display=move || if state.clean_view.get() { "none" } else { "" }
+                                style:display=move || if state.viewmode.clean_view().get() { "none" } else { "" }
                             >
                                 // Unsaved recording banner (web only)
                                 {move || {
@@ -1491,7 +1491,7 @@ fn MainArea() -> impl IntoView {
                             </div>
 
                             // Bat book reference panel (floating overlay, right side)
-                            {move || (state.bat_book.ref_open().get() && !state.clean_view.get()).then(|| view! { <BatBookRefPanel /> })}
+                            {move || (state.bat_book.ref_open().get() && !state.viewmode.clean_view().get()).then(|| view! { <BatBookRefPanel /> })}
                         </div>
 
                         // Bat book strip (between main view and bottom toolbar)
@@ -1752,7 +1752,7 @@ pub fn MainViewButton() -> impl IntoView {
     // Helper: handle all side-effects of a view switch synchronously,
     // so the spectrogram render Effect always sees consistent state.
     let switch_view = move |new_view: MainView| {
-        let old_view = state.main_view.get_untracked();
+        let old_view = state.viewmode.main_view().get_untracked();
         if new_view == old_view { return; }
 
         let entering_xform = new_view == MainView::XformedSpec && old_view != MainView::XformedSpec;
@@ -1792,7 +1792,7 @@ pub fn MainViewButton() -> impl IntoView {
 
         // Set the view last so all display state is consistent when
         // the main_view change triggers the spectrogram render Effect.
-        state.main_view.set(new_view);
+        state.viewmode.main_view().set(new_view);
     };
 
     // Click on a non-selected view: switch to it. Click on the
@@ -1800,7 +1800,7 @@ pub fn MainViewButton() -> impl IntoView {
     // playback mode radio group's "click again to open settings".
     let select_view = move |new_view: MainView| {
         if no_file() { return; }
-        let cur = state.main_view.get_untracked();
+        let cur = state.viewmode.main_view().get_untracked();
         if cur == new_view {
             toggle_panel(&state, LayerPanel::MainView);
             return;
@@ -1854,10 +1854,10 @@ pub fn MainViewButton() -> impl IntoView {
     });
 
     let show_nr_custom = Signal::derive(move || {
-        state.main_view.get() == MainView::XformedSpec && state.display.filter_nr().get() == DisplayFilterMode::Custom
+        state.viewmode.main_view().get() == MainView::XformedSpec && state.display.filter_nr().get() == DisplayFilterMode::Custom
     });
     let show_decim_custom = Signal::derive(move || {
-        state.main_view.get() == MainView::XformedSpec && state.display.filter_decimate().get() == DisplayFilterMode::Custom
+        state.viewmode.main_view().get() == MainView::XformedSpec && state.display.filter_decimate().get() == DisplayFilterMode::Custom
     });
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
@@ -1865,7 +1865,7 @@ pub fn MainViewButton() -> impl IntoView {
     // Per-view-button class (radio-group look, reused from .mode-radio-*).
     let view_btn_class = move |view: MainView| {
         Signal::derive(move || {
-            let is_sel = state.main_view.get() == view;
+            let is_sel = state.viewmode.main_view().get() == view;
             let mut s = String::from("layer-btn mode-radio-btn");
             if is_sel {
                 s.push_str(" selected has-settings");
@@ -1912,19 +1912,19 @@ pub fn MainViewButton() -> impl IntoView {
                 preferred_align=Align::Start
                 extra_style="min-width: 240px;"
             >
-                <div class="layer-panel-title">{move || state.main_view.get().label()}</div>
+                <div class="layer-panel-title">{move || state.viewmode.main_view().get().label()}</div>
 
             // Waveform sub-view (when Waveform is the active main view)
-            {move || (state.main_view.get() == MainView::Waveform).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::Waveform).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Waveform Mode"</div>
                     {WaveformView::ALL.iter().map(|&wv| {
                         view! {
                             <button
-                                class=move || layer_opt_class(state.waveform_view.get() == wv)
+                                class=move || layer_opt_class(state.viewmode.waveform_view().get() == wv)
                                 on:click=move |_: web_sys::MouseEvent| {
-                                    state.waveform_view.set(wv);
+                                    state.viewmode.waveform_view().set(wv);
                                 }
                             >
                                 {wv.label()}
@@ -1935,7 +1935,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Reassignment checkbox (spectrogram views)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
                 view! {
                     <hr />
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
@@ -1955,7 +1955,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Resonator quick controls (shown only when Resonators view is active)
-            {move || (state.main_view.get() == MainView::Resonators).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::Resonators).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Resonators"</div>
@@ -2079,7 +2079,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // DSP filter rows (only when XformedSpec is active)
-            {move || (state.main_view.get() == MainView::XformedSpec).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::XformedSpec).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Display Processing"</div>
@@ -2158,7 +2158,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // FFT size selector (when any spectrogram/flow view is active)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"FFT Size"</div>
@@ -2221,7 +2221,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Frequency range selector (for spectrogram/flow/resonator views)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
                 let file_max = move || {
                     let files = state.library.files().get();
                     let idx = state.library.current_index().get();
@@ -2298,8 +2298,8 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Intensity sliders (for Spectrogram, XformedSpec, Flow, or Resonators)
-            {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
-                let is_xform = state.main_view.get_untracked() == MainView::XformedSpec;
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
+                let is_xform = state.viewmode.main_view().get_untracked() == MainView::XformedSpec;
                 // The xform branch is a flat `RwSignal<f32>` while the main branch is
                 // a `Store<SpectState>` subfield — incompatible types for an `if/else`
                 // handle — so use Copy get/set closures (capture only `state`+`is_xform`).
@@ -2425,7 +2425,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Waveform view gain (when Waveform is active)
-            {move || (state.main_view.get() == MainView::Waveform).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::Waveform).then(|| {
                 view! {
                     <hr />
                     <div class="dsp-custom-section">
@@ -2482,7 +2482,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Flow algorithm options (when Flow is active)
-            {move || (state.main_view.get() == MainView::Flow).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::Flow).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Algorithm"</div>
@@ -2633,7 +2633,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Chromagram options (when Chromagram is active)
-            {move || (state.main_view.get() == MainView::Chromagram).then(|| {
+            {move || (state.viewmode.main_view().get() == MainView::Chromagram).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"Colormap"</div>

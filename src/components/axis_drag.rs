@@ -44,8 +44,8 @@ pub fn apply_axis_drag(
     // Ensure snapped values don't go below 0
     let snapped_start = snapped_start.max(0.0);
     let snapped_end = snapped_end.max(0.0);
-    state.axis_drag_start_freq.set(Some(snapped_start));
-    state.axis_drag_current_freq.set(Some(snapped_end));
+    state.interaction.axis_drag_start_freq().set(Some(snapped_start));
+    state.interaction.axis_drag_current_freq().set(Some(snapped_end));
     // Live update BandFF range
     let lo = snapped_start.min(snapped_end);
     let hi = snapped_start.max(snapped_end);
@@ -68,7 +68,7 @@ pub fn select_all_frequencies(state: AppState) {
             .unwrap_or(96_000.0)
     };
     state.set_band_ff_range(0.0, file_max_freq);
-    let stack = state.focus_stack.get_untracked();
+    let stack = state.viewmode.focus_stack().get_untracked();
     if !stack.hfr_enabled() {
         state.toggle_hfr();
     }
@@ -90,23 +90,23 @@ pub fn select_all_time(state: AppState) {
     };
     if duration <= 0.0 { return; }
 
-    let ff = state.focus_stack.get_untracked().effective_range();
+    let ff = state.viewmode.focus_stack().get_untracked().effective_range();
     let (fl, fh) = if ff.is_active() { (Some(ff.lo), Some(ff.hi)) } else { (None, None) };
 
-    state.selection.set(Some(Selection {
+    state.interaction.selection().set(Some(Selection {
         time_start: 0.0,
         time_end: duration,
         freq_low: fl,
         freq_high: fh,
     }));
-    state.active_focus.set(Some(ActiveFocus::TransientSelection));
+    state.interaction.active_focus().set(Some(ActiveFocus::TransientSelection));
 }
 
 /// Finalize axis drag — auto-enable HFR if a meaningful range was
 /// selected, or toggle HFR off if it was just a tap (no meaningful drag).
 pub fn finalize_axis_drag(state: AppState) {
-    let start = state.axis_drag_start_freq.get_untracked();
-    let current = state.axis_drag_current_freq.get_untracked();
+    let start = state.interaction.axis_drag_start_freq().get_untracked();
+    let current = state.interaction.axis_drag_current_freq().get_untracked();
     let was_tap = match (start, current) {
         (Some(s), Some(c)) => (s - c).abs() < 1.0, // start == end means no drag movement
         _ => true,
@@ -114,24 +114,24 @@ pub fn finalize_axis_drag(state: AppState) {
 
     if was_tap {
         // Tap on the gutter: toggle HFR off (if on)
-        let stack = state.focus_stack.get_untracked();
+        let stack = state.viewmode.focus_stack().get_untracked();
         if stack.hfr_enabled() {
             state.toggle_hfr();
         }
     } else {
         // Drag completed: enable HFR if a meaningful range was selected
-        let stack = state.focus_stack.get_untracked();
+        let stack = state.viewmode.focus_stack().get_untracked();
         let range = stack.effective_range_ignoring_hfr();
         if range.hi - range.lo > 500.0 && !stack.hfr_enabled() {
             state.toggle_hfr();
         }
     }
     // Auto-combine: if there's a time-only segment, upgrade to region — only when HFR is on
-    if let Some(sel) = state.selection.get_untracked() {
+    if let Some(sel) = state.interaction.selection().get_untracked() {
         if sel.freq_low.is_none() && sel.freq_high.is_none() && sel.time_end - sel.time_start > 0.0001 {
-            let ff = state.focus_stack.get_untracked().effective_range();
+            let ff = state.viewmode.focus_stack().get_untracked().effective_range();
             if ff.is_active() {
-                state.selection.set(Some(Selection {
+                state.interaction.selection().set(Some(Selection {
                     freq_low: Some(ff.lo),
                     freq_high: Some(ff.hi),
                     ..sel
@@ -141,9 +141,9 @@ pub fn finalize_axis_drag(state: AppState) {
     }
     // Set focus to BandFF when axis drag creates/modifies BandFF
     if !was_tap {
-        state.active_focus.set(Some(ActiveFocus::FrequencyFocus));
+        state.interaction.active_focus().set(Some(ActiveFocus::FrequencyFocus));
     }
-    state.axis_drag_start_freq.set(None);
-    state.axis_drag_current_freq.set(None);
-    state.is_dragging.set(false);
+    state.interaction.axis_drag_start_freq().set(None);
+    state.interaction.axis_drag_current_freq().set(None);
+    state.interaction.is_dragging().set(false);
 }
