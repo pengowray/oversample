@@ -3191,6 +3191,7 @@ dependencies = [
  "lewton",
  "log",
  "oversample-core",
+ "oversample-ipc",
  "realfft",
  "send_wrapper",
  "serde",
@@ -3238,6 +3239,13 @@ dependencies = [
  "tauri-build",
  "tokio",
  "xc-lib",
+]
+
+[[package]]
+name = "oversample-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -6955,6 +6963,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "chrono",
+ "oversample-ipc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

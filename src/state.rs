@@ -7,25 +7,11 @@ use crate::types::{AudioData, PreviewImage, SpectrogramData};
 use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 
 /// Hash data extracted from an XC sidecar JSON file.
-/// Mirrors `xc_lib::cache::SidecarHashes` but defined locally to avoid
-/// pulling xc-lib (which depends on reqwest) into the WASM frontend.
-#[derive(Clone, Debug, Default)]
-pub struct SidecarHashes {
-    pub blake3: Option<String>,
-    pub sha256: Option<String>,
-    pub file_size: Option<u64>,
-    pub spot_hash_b3: Option<String>,
-    pub content_hash: Option<String>,
-    pub data_offset: Option<u64>,
-    pub data_size: Option<u64>,
-}
-
-impl SidecarHashes {
-    pub fn is_empty(&self) -> bool {
-        self.blake3.is_none() && self.sha256.is_none()
-            && self.file_size.is_none() && self.spot_hash_b3.is_none()
-    }
-}
+///
+/// Canonical definition lives in the dependency-light `oversample-ipc` crate
+/// (shared with `xc-lib` and the Tauri backend); re-exported here so existing
+/// `crate::state::SidecarHashes` references keep working.
+pub use oversample_ipc::SidecarHashes;
 
 /// Overall verification result against reference hashes (XC sidecar or .batm).
 #[derive(Clone, Debug, Default, PartialEq)]

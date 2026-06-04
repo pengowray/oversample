@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core"]
+members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core", "oversample-ipc"]
 
 [package]
 name = "oversample"
@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 oversample-core = { path = "oversample-core" }
+oversample-ipc = { path = "oversample-ipc" }
 leptos = { version = "0.8", features = ["csr"] }
 web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",

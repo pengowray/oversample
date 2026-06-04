@@ -22,33 +22,10 @@ pub struct FileHashes {
 
 /// Hash data extracted from an XC sidecar JSON (stored under "_app" key,
 /// with fallback to legacy top-level keys).
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct SidecarHashes {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blake3: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_size: Option<u64>,
-    /// Multi-point spot hash (16×1MB chunks, matches main app Layer 2).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub spot_hash_b3: Option<String>,
-    /// Content hash (BLAKE3 with header zeroed).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_hash: Option<String>,
-    /// Audio data region byte offset within the file.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_offset: Option<u64>,
-    /// Audio data region byte length.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_size: Option<u64>,
-}
-
-impl SidecarHashes {
-    pub fn is_empty(&self) -> bool {
-        self.blake3.is_none() && self.sha256.is_none() && self.file_size.is_none()
-    }
-}
+///
+/// Canonical definition lives in the dependency-light `oversample-ipc` crate so
+/// it can be shared with the WASM frontend (which can't depend on `xc-lib`).
+pub use oversample_ipc::SidecarHashes;
 
 /// Extract hash data from an XC sidecar JSON.
 /// Tries `json["_app"]` first (new format), then falls back to top-level keys (legacy).
