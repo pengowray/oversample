@@ -10,6 +10,93 @@ use crate::viewport;
 
 pub const LABEL_AREA_WIDTH: f64 = 60.0;
 
+/// Auto-scroll the viewport to follow the playhead during playback, with
+/// manual-scroll suspension support (resume once the playhead is back on-screen
+/// and the user has stopped scrolling for 200ms). Call from a single reactive
+/// Effect in each canvas component — the `.get()`s here establish its deps.
+///
+/// Extracted from the previously copy-pasted (and drift-prone) follow Effects
+/// in `spectrogram.rs` + `waveform.rs`; a fix now lands in both at once.
+pub fn follow_playhead(state: &AppState, canvas_ref: NodeRef<leptos::html::Canvas>) {
+    let playhead = state.playback.playhead_time().get();
+    let is_playing = state.playback.is_playing().get();
+    let follow = state.view.follow_cursor().get();
+    // get_untracked to avoid recursive Effect invocation — this already re-runs
+    // via playhead_time / is_playing / follow_cursor changes.
+    let suspended = state.view.follow_suspended().get_untracked();
+
+    if !follow {
+        return;
+    }
+    if !is_playing {
+        // Reset suspension when playback stops so the next play starts fresh.
+        if suspended {
+            state.view.follow_suspended().set(false);
+            state.view.follow_visible_since().set(None);
+        }
+        return;
+    }
+
+    let Some(canvas_el) = canvas_ref.get() else { return };
+    let canvas: &HtmlCanvasElement = canvas_el.as_ref();
+    let display_w = canvas.width() as f64;
+    if display_w == 0.0 {
+        return;
+    }
+
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked();
+    let (time_res, duration) = idx
+        .and_then(|i| files.get(i))
+        .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
+        .unwrap_or((1.0, 0.0));
+    let zoom = state.view.zoom_level().get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
+    let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
+
+    let visible_time = viewport::visible_time(display_w, zoom, time_res);
+    let playhead_rel = playhead - scroll;
+
+    if suspended {
+        // Resume once the playhead is on-screen and the user stopped scrolling.
+        let playhead_visible = playhead_rel >= 0.0 && playhead_rel <= visible_time;
+        if playhead_visible {
+            let resume = match state.view.follow_visible_since().get_untracked() {
+                Some(since) => js_sys::Date::now() - since >= 200.0,
+                None => true, // no recorded scroll time — safe to resume
+            };
+            if resume {
+                state.view.follow_suspended().set(false);
+                state.view.follow_visible_since().set(None);
+            }
+        }
+        return;
+    }
+
+    // When very zoomed in (viewport < 0.5s), follow every frame to keep the
+    // playhead pinned at FOLLOW_CURSOR_FRACTION — the edge trigger would fire
+    // too frequently and look jarring.
+    if visible_time < viewport::FOLLOW_EXACT_THRESHOLD_SECS {
+        let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
+        state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(
+            target_scroll,
+            duration,
+            visible_time,
+            from_here_mode,
+        ));
+    }
+    // Normal follow: scroll when the playhead nears the edge.
+    else if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
+        let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
+        state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(
+            target_scroll,
+            duration,
+            visible_time,
+            from_here_mode,
+        ));
+    }
+}
+
 /// Local interaction state for the spectrogram component.
 /// These signals are only used by event handlers, not by rendering.
 #[derive(Copy, Clone)]

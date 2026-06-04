@@ -204,43 +204,8 @@ pub fn App() -> impl IntoView {
     {
         let first_run = std::cell::Cell::new(true);
         Effect::new(move |_| {
-            // Track all playback-relevant signals (subscribes to changes)
-            let _ = state.playback.mode().get();
-            let _ = state.transform.te_factor().get();
-            let _ = state.transform.ps_factor().get();
-            let _ = state.transform.pv_factor().get();
-            let _ = state.transform.pv_hq().get();
-            let _ = state.transform.ps_shift_hz().get();
-            // BandFF lower edge affects the effective output shift clamp
-            // for PS / PV; retrigger replay so the DSP picks up the
-            // newly-bounded shift even when bandpass is off.
-            let _ = state.filter.band_ff_freq_lo().get();
-            let _ = state.transform.zc_factor().get();
-            let _ = state.transform.het_frequency().get();
-            let _ = state.transform.het_cutoff().get();
-            let _ = state.gain.db().get();
-            let _ = state.gain.auto().get();
-            let _ = state.gain.mode().get();
-            let _ = state.filter.enabled().get();
-            let _ = state.filter.freq_low().get();
-            let _ = state.filter.freq_high().get();
-            let _ = state.filter.db_below().get();
-            let _ = state.filter.db_selected().get();
-            let _ = state.filter.db_harmonics().get();
-            let _ = state.filter.db_above().get();
-            let _ = state.filter.band_mode().get();
-            let _ = state.filter.quality().get();
-            let _ = state.filter.bandpass_mode().get();
-            let _ = state.viewmode.channel_view().get();
-            let notch_on = state.notch.enabled().get();
-            let _ = state.notch.bands().get();
-            let noise_on = state.noise_reduce.enabled().get();
-            let _ = state.noise_reduce.strength().get();
-            let _ = state.noise_reduce.floor().get();
-            // Only trigger replay for harmonic suppression when a noise system is active
-            if notch_on || noise_on {
-                let _ = state.notch.harmonic_suppression().get();
-            }
+            // Subscribe to every playback-relevant signal (one place: state.rs).
+            state.track_replay_params();
 
             if first_run.get() {
                 first_run.set(false);
@@ -264,16 +229,8 @@ pub fn App() -> impl IntoView {
         let first_run = std::cell::Cell::new(true);
         let prev_mode = std::cell::Cell::new(state.playback.mode().get_untracked());
         Effect::new(move |_| {
-            let mode = state.playback.mode().get();
-            let _ = state.filter.enabled().get();
-            let _ = state.filter.freq_low().get();
-            let _ = state.filter.freq_high().get();
-            let _ = state.filter.quality().get();
-            let _ = state.filter.band_mode().get();
-            let _ = state.filter.bandpass_mode().get();
-            let _ = state.transform.het_frequency().get();
-            let _ = state.transform.het_cutoff().get();
-            let _ = state.transform.ps_shift_hz().get();
+            // Subscribe to the params that require clearing live DSP buffers.
+            let mode = state.track_live_reset_params();
 
             if first_run.get() {
                 first_run.set(false);

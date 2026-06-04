@@ -2406,11 +2406,73 @@ impl AppState {
     /// sense on a dot-plot recording (the underlying samples are a
     /// synthesised reconstruction, not the original data).
     pub fn current_is_zc(&self) -> bool {
-        let files = self.library.files().get();
         let Some(idx) = self.library.current_index().get() else { return false };
-        files.get(idx)
-            .map(|f| f.audio.metadata.zc_data.is_some())
-            .unwrap_or(false)
+        self.library.files().with(|files| {
+            files.get(idx)
+                .map(|f| f.audio.metadata.zc_data.is_some())
+                .unwrap_or(false)
+        })
+    }
+
+    /// Read (and thus reactively subscribe to) EVERY signal whose change should
+    /// restart live playback with fresh parameters. The live-replay Effect (and
+    /// any future consumer) calls this, so a new playback/DSP parameter is added
+    /// in exactly ONE place — forgetting it can't silently break param-replay.
+    pub fn track_replay_params(&self) {
+        let _ = self.playback.mode().get();
+        let _ = self.transform.te_factor().get();
+        let _ = self.transform.ps_factor().get();
+        let _ = self.transform.pv_factor().get();
+        let _ = self.transform.pv_hq().get();
+        let _ = self.transform.ps_shift_hz().get();
+        // BandFF lower edge affects the effective output-shift clamp for PS/PV.
+        let _ = self.filter.band_ff_freq_lo().get();
+        let _ = self.transform.zc_factor().get();
+        let _ = self.transform.het_frequency().get();
+        let _ = self.transform.het_cutoff().get();
+        let _ = self.gain.db().get();
+        let _ = self.gain.auto().get();
+        let _ = self.gain.mode().get();
+        let _ = self.filter.enabled().get();
+        let _ = self.filter.freq_low().get();
+        let _ = self.filter.freq_high().get();
+        let _ = self.filter.db_below().get();
+        let _ = self.filter.db_selected().get();
+        let _ = self.filter.db_harmonics().get();
+        let _ = self.filter.db_above().get();
+        let _ = self.filter.band_mode().get();
+        let _ = self.filter.quality().get();
+        let _ = self.filter.bandpass_mode().get();
+        let _ = self.viewmode.channel_view().get();
+        let notch_on = self.notch.enabled().get();
+        let _ = self.notch.bands().get();
+        let noise_on = self.noise_reduce.enabled().get();
+        let _ = self.noise_reduce.strength().get();
+        let _ = self.noise_reduce.floor().get();
+        // Only retrigger on harmonic suppression when a noise system is active.
+        if notch_on || noise_on {
+            let _ = self.notch.harmonic_suppression().get();
+        }
+    }
+
+    /// Read (and subscribe to) the params whose change requires clearing live
+    /// DSP state (PS/PV overlap buffers, HET delay lines, IIR bandpass warmup)
+    /// so the previous mode's artefacts don't carry into the new one. A SUBSET
+    /// of `track_replay_params` — deliberately separate, because gain / notch /
+    /// channel changes must NOT clear the live buffers. Returns the current
+    /// playback mode (the live-clear Effect needs it for the TE toast).
+    pub fn track_live_reset_params(&self) -> PlaybackMode {
+        let mode = self.playback.mode().get();
+        let _ = self.filter.enabled().get();
+        let _ = self.filter.freq_low().get();
+        let _ = self.filter.freq_high().get();
+        let _ = self.filter.quality().get();
+        let _ = self.filter.band_mode().get();
+        let _ = self.filter.bandpass_mode().get();
+        let _ = self.transform.het_frequency().get();
+        let _ = self.transform.het_cutoff().get();
+        let _ = self.transform.ps_shift_hz().get();
+        mode
     }
 
     /// Push current scroll/zoom onto the navigation history stack.
