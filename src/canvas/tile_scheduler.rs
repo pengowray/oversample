@@ -247,14 +247,14 @@ pub fn schedule_resonator_tiles(
 pub fn setup_cache_clearing_effects(state: AppState) {
     // Clear flow tile cache when algorithm or enabled state changes
     Effect::new(move || {
-        let _display = state.spectrogram_display.get();
+        let _display = state.spect.display().get();
         let _enabled = state.flow.enabled().get();
         crate::canvas::tile_cache::clear_flow_cache();
     });
 
     // Clear all tiles when FFT mode changes
     Effect::new(move || {
-        let _fft = state.spect_fft_mode.get();
+        let _fft = state.spect.fft_mode().get();
         crate::canvas::tile_cache::clear_all_tiles();
         crate::canvas::tile_cache::clear_flow_cache();
         crate::canvas::tile_cache::clear_reassign_cache();
@@ -287,7 +287,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
 
     // Clear reassignment tile cache when toggle changes
     Effect::new(move || {
-        let _reassign = state.reassign_enabled.get();
+        let _reassign = state.spect.reassign_enabled().get();
         crate::canvas::tile_cache::clear_reassign_cache();
     });
 

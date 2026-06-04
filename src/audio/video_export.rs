@@ -159,8 +159,8 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let freq_crop_hi = (max_freq / file_max_freq).min(1.0);
 
     let hfr_enabled = state.hfr_enabled.get_untracked();
-    let colormap_pref = state.colormap_preference.get_untracked();
-    let hfr_colormap_pref = state.hfr_colormap_preference.get_untracked();
+    let colormap_pref = state.spect.colormap_preference().get_untracked();
+    let hfr_colormap_pref = state.spect.hfr_colormap_preference().get_untracked();
     let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
     let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
 
@@ -176,13 +176,13 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         ColormapMode::Uniform(colormap_pref)
     };
 
-    let spect_floor = state.spect_floor_db.get_untracked();
-    let spect_range = state.spect_range_db.get_untracked();
-    let spect_gamma = state.spect_gamma.get_untracked();
-    let spect_gain = state.spect_gain_db.get_untracked();
+    let spect_floor = state.spect.floor_db().get_untracked();
+    let spect_range = state.spect.range_db().get_untracked();
+    let spect_gamma = state.spect.gamma().get_untracked();
+    let spect_gain = state.spect.gain_db().get_untracked();
 
     // Compute ref_db the same way the spectrogram component does
-    let fft_size = state.spect_fft_mode.get_untracked().max_fft_size() as f32;
+    let fft_size = state.spect.fft_mode().get_untracked().max_fft_size() as f32;
     let fixed_ref_db = 20.0 * (fft_size / 4.0).log10();
     let display_auto_gain = state.display_auto_gain.get_untracked();
     let total_cols = {

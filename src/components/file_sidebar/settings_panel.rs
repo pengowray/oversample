@@ -110,11 +110,11 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                         title="Sharpen time-frequency localization using the reassignment method (3x FFT cost)">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.reassign_enabled.get()
+                            prop:checked=move || state.spect.reassign_enabled().get()
                             on:change=move |ev: web_sys::Event| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                state.reassign_enabled.set(input.checked());
+                                state.spect.reassign_enabled().set(input.checked());
                             }
                         />
                         "Reassignment"
@@ -124,11 +124,11 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                     <label class="setting-label" style="display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.debug_tiles.get()
+                            prop:checked=move || state.spect.debug_tiles().get()
                             on:change=move |ev: web_sys::Event| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                state.debug_tiles.set(input.checked());
+                                state.spect.debug_tiles().set(input.checked());
                             }
                         />
                         "Debug tiles"
@@ -139,7 +139,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
             // Flow-specific settings (shown only when Flow view is active)
             {move || {
                 if state.main_view.get() == MainView::Flow {
-                    let display = state.spectrogram_display.get();
+                    let display = state.spect.display().get();
                     let _ = display; // used for reactivity trigger above
                     view! {
                         <div class="setting-group">
@@ -158,9 +158,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                             "phase" => SpectrogramDisplay::Phase,
                                             _ => SpectrogramDisplay::FlowOptical,
                                         };
-                                        state.spectrogram_display.set(mode);
+                                        state.spect.display().set(mode);
                                     }
-                                    prop:value=move || match state.spectrogram_display.get() {
+                                    prop:value=move || match state.spect.display().get() {
                                         SpectrogramDisplay::FlowOptical => "flow",
                                         SpectrogramDisplay::PhaseCoherence => "coherence",
                                         SpectrogramDisplay::FlowCentroid => "centroid",
@@ -177,7 +177,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                             </div>
                             // Color scheme selector (only for flow algorithms, not phase)
                             {move || {
-                                let display = state.spectrogram_display.get();
+                                let display = state.spect.display().get();
                                 let is_flow_algo = matches!(display,
                                     SpectrogramDisplay::FlowOptical |
                                     SpectrogramDisplay::FlowCentroid |

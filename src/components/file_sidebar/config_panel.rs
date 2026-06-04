@@ -34,14 +34,14 @@ pub(super) fn ConfigPanel() -> impl IntoView {
     let on_colormap_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
-        state.colormap_preference.set(parse_colormap_pref(&select.value()));
+        state.spect.colormap_preference().set(parse_colormap_pref(&select.value()));
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     };
 
     let on_hfr_colormap_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let select: web_sys::HtmlSelectElement = target.unchecked_into();
-        state.hfr_colormap_preference.set(parse_colormap_pref(&select.value()));
+        state.spect.hfr_colormap_preference().set(parse_colormap_pref(&select.value()));
         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
     };
 
@@ -73,13 +73,13 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         class="setting-select"
                         on:change=on_colormap_change
                     >
-                        <option value="viridis" selected=move || state.colormap_preference.get() == Colormap::Viridis>"Viridis"</option>
-                        <option value="inferno" selected=move || state.colormap_preference.get() == Colormap::Inferno>"Inferno"</option>
-                        <option value="magma" selected=move || state.colormap_preference.get() == Colormap::Magma>"Magma"</option>
-                        <option value="plasma" selected=move || state.colormap_preference.get() == Colormap::Plasma>"Plasma"</option>
-                        <option value="cividis" selected=move || state.colormap_preference.get() == Colormap::Cividis>"Cividis"</option>
-                        <option value="turbo" selected=move || state.colormap_preference.get() == Colormap::Turbo>"Turbo"</option>
-                        <option value="greyscale" selected=move || state.colormap_preference.get() == Colormap::Greyscale>"Greyscale"</option>
+                        <option value="viridis" selected=move || state.spect.colormap_preference().get() == Colormap::Viridis>"Viridis"</option>
+                        <option value="inferno" selected=move || state.spect.colormap_preference().get() == Colormap::Inferno>"Inferno"</option>
+                        <option value="magma" selected=move || state.spect.colormap_preference().get() == Colormap::Magma>"Magma"</option>
+                        <option value="plasma" selected=move || state.spect.colormap_preference().get() == Colormap::Plasma>"Plasma"</option>
+                        <option value="cividis" selected=move || state.spect.colormap_preference().get() == Colormap::Cividis>"Cividis"</option>
+                        <option value="turbo" selected=move || state.spect.colormap_preference().get() == Colormap::Turbo>"Turbo"</option>
+                        <option value="greyscale" selected=move || state.spect.colormap_preference().get() == Colormap::Greyscale>"Greyscale"</option>
                     </select>
                 </div>
                 <div class="setting-row">
@@ -88,13 +88,13 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         class="setting-select"
                         on:change=on_hfr_colormap_change
                     >
-                        <option value="viridis" selected=move || state.hfr_colormap_preference.get() == Colormap::Viridis>"Viridis"</option>
-                        <option value="inferno" selected=move || state.hfr_colormap_preference.get() == Colormap::Inferno>"Inferno"</option>
-                        <option value="magma" selected=move || state.hfr_colormap_preference.get() == Colormap::Magma>"Magma"</option>
-                        <option value="plasma" selected=move || state.hfr_colormap_preference.get() == Colormap::Plasma>"Plasma"</option>
-                        <option value="cividis" selected=move || state.hfr_colormap_preference.get() == Colormap::Cividis>"Cividis"</option>
-                        <option value="turbo" selected=move || state.hfr_colormap_preference.get() == Colormap::Turbo>"Turbo"</option>
-                        <option value="greyscale" selected=move || state.hfr_colormap_preference.get() == Colormap::Greyscale>"Greyscale"</option>
+                        <option value="viridis" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Viridis>"Viridis"</option>
+                        <option value="inferno" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Inferno>"Inferno"</option>
+                        <option value="magma" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Magma>"Magma"</option>
+                        <option value="plasma" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Plasma>"Plasma"</option>
+                        <option value="cividis" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Cividis>"Cividis"</option>
+                        <option value="turbo" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Turbo>"Turbo"</option>
+                        <option value="greyscale" selected=move || state.spect.hfr_colormap_preference().get() == Colormap::Greyscale>"Greyscale"</option>
                     </select>
                 </div>
                 <div class="setting-row">

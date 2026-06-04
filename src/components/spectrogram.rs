@@ -31,11 +31,11 @@ fn debug_tile_kind(
         }
     } else if flow_on {
         spectrogram_renderer::DebugTileKind::Flow {
-            fft_mode: state.spect_fft_mode.get_untracked(),
+            fft_mode: state.spect.fft_mode().get_untracked(),
         }
     } else {
         spectrogram_renderer::DebugTileKind::Magnitude {
-            fft_mode: state.spect_fft_mode.get_untracked(),
+            fft_mode: state.spect.fft_mode().get_untracked(),
         }
     }
 }
@@ -200,8 +200,8 @@ pub fn Spectrogram() -> impl IntoView {
         let _flow_sg = state.flow.shift_gain().get();
         let _flow_cg = state.flow.color_gamma().get();
         let _flow_scheme = state.flow.color_scheme().get(); // trigger redraw on color scheme change
-        let colormap_pref = state.colormap_preference.get();
-        let hfr_colormap_pref = state.hfr_colormap_preference.get();
+        let colormap_pref = state.spect.colormap_preference().get();
+        let hfr_colormap_pref = state.spect.hfr_colormap_preference().get();
         let axis_drag_start = state.axis_drag_start_freq.get();
         let axis_drag_current = state.axis_drag_current_freq.get();
         let notch_bands = state.notch.bands().get();
@@ -215,10 +215,10 @@ pub fn Spectrogram() -> impl IntoView {
         let (spect_floor, spect_range, spect_gamma, spect_gain) = if main_view == MainView::XformedSpec {
             (state.xform_spect_floor_db.get(), state.xform_spect_range_db.get(), state.xform_spect_gamma.get(), state.xform_spect_gain_db.get())
         } else {
-            (state.spect_floor_db.get(), state.spect_range_db.get(), state.spect_gamma.get(), state.spect_gain_db.get())
+            (state.spect.floor_db().get(), state.spect.range_db().get(), state.spect.gamma().get(), state.spect.gain_db().get())
         };
-        let debug_tiles = state.debug_tiles.get();
-        let reassign_on = state.reassign_enabled.get();
+        let debug_tiles = state.spect.debug_tiles().get();
+        let reassign_on = state.spect.reassign_enabled().get();
         // Display-affecting checkbox subscriptions
         let display_auto_gain = state.display_auto_gain.get();
         let _display_eq = state.display_eq.get();
@@ -408,7 +408,7 @@ pub fn Spectrogram() -> impl IntoView {
         // independent of file content and stable during progressive loading.
         // Fixed ref ≈ 20*log10(fft_size/4) accounts for the Hann window's
         // coherent gain (~0.5) on the one-sided spectrum, giving ~dBFS values.
-        let fft_size = state.spect_fft_mode.get_untracked().max_fft_size() as f32;
+        let fft_size = state.spect.fft_mode().get_untracked().max_fft_size() as f32;
         let fixed_ref_db = 20.0 * (fft_size / 4.0).log10();
 
         let ref_db = if display_auto_gain && total_cols > 0 {
@@ -480,7 +480,7 @@ pub fn Spectrogram() -> impl IntoView {
         } else {
 
         // Pre-compute per-frequency dB adjustments for display EQ / noise filter
-        let tile_height = state.spect_fft_mode.get_untracked().max_fft_size() / 2 + 1;
+        let tile_height = state.spect.fft_mode().get_untracked().max_fft_size() / 2 + 1;
         let freq_adjustments = compute_freq_adjustments(&state, file_max_freq, tile_height);
 
         // Render base spectrogram.
@@ -618,7 +618,7 @@ pub fn Spectrogram() -> impl IntoView {
             let op = 1.0_f32; // opacity consolidated into color gain
             let sg = state.flow.shift_gain().get_untracked();
             let cg = state.flow.color_gamma().get_untracked();
-            let algo = state.spectrogram_display.get_untracked().flow_algo();
+            let algo = state.spect.display().get_untracked().flow_algo();
             let flow_scheme = state.flow.color_scheme().get_untracked();
             let flow_render_mode = spectrogram_renderer::TileRenderMode::Flow {
                 intensity_gate: ig,
@@ -1220,7 +1220,7 @@ pub fn Spectrogram() -> impl IntoView {
             let _playing = state.is_playing.get();
             let _file_idx = state.current_file_index.get();
             let _main_view = state.main_view.get();
-            let _reassign = state.reassign_enabled.get();
+            let _reassign = state.spect.reassign_enabled().get();
             let _flow = state.flow.enabled().get();
             // NOTE: intentionally NOT subscribing to tile_ready_signal here —
             // that would create a feedback loop (tile completes -> prefetch fires -> schedules more).
@@ -1268,12 +1268,12 @@ pub fn Spectrogram() -> impl IntoView {
 
                 let flow_on = state.flow.enabled().get_untracked();
                 let flow_algo = if flow_on {
-                    Some(state.spectrogram_display.get_untracked().flow_algo())
+                    Some(state.spect.display().get_untracked().flow_algo())
                 } else {
                     None
                 };
 
-                let reassign = state.reassign_enabled.get_untracked();
+                let reassign = state.spect.reassign_enabled().get_untracked();
 
                 let (ahead_secs, max_prefetch) = if is_playing {
                     (15.0, 60)  // aggressive prefetch during playback
@@ -1318,7 +1318,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _scroll = state.view.scroll_offset().get();
         let _zoom = state.view.zoom_level().get();
         let _loading = state.loading_files.get();
-        let _fft = state.spect_fft_mode.get();
+        let _fft = state.spect.fft_mode().get();
 
         use crate::canvas::tile_cache;
 

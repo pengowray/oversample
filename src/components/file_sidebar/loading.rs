@@ -172,7 +172,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let name_check = name.clone();
 
     const HOP_SIZE: usize = 512; // baseline LOD hop
-    let fft_size: usize = state.spect_fft_mode.get_untracked().fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
+    let fft_size: usize = state.spect.fft_mode().get_untracked().fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
 
     // Check for silent/quiet files — scan first 30s only
     let (silence_check, cached_peak_db) = {

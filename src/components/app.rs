@@ -579,7 +579,7 @@ pub fn App() -> impl IntoView {
 
         // When Gain is Off, zero out the display gain offset
         if gain_filter == DisplayFilterMode::Off {
-            state.spect_gain_db.set(0.0);
+            state.spect.gain_db().set(0.0);
         }
 
         // Decimation — resolve effective target rate (0 = no decimation)
@@ -1942,11 +1942,11 @@ pub fn MainViewButton() -> impl IntoView {
                         title="Sharpen time-frequency localization using the reassignment method (3x FFT cost)">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.reassign_enabled.get()
+                            prop:checked=move || state.spect.reassign_enabled().get()
                             on:change=move |ev: web_sys::Event| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                state.reassign_enabled.set(input.checked());
+                                state.spect.reassign_enabled().set(input.checked());
                             }
                         />
                         "Reassignment"
@@ -2182,11 +2182,11 @@ pub fn MainViewButton() -> impl IntoView {
                                     }
                                 }
                             };
-                            state.spect_fft_mode.set(mode);
+                            state.spect.fft_mode().set(mode);
                         }
                     >
                         {move || {
-                            let current = state.spect_fft_mode.get();
+                            let current = state.spect.fft_mode().get();
                             let options: [(&str, &str); 13] = [
                                 ("ax", "Adaptive XS"),
                                 ("as", "Adaptive S"),
@@ -2300,10 +2300,16 @@ pub fn MainViewButton() -> impl IntoView {
             // Intensity sliders (for Spectrogram, XformedSpec, Flow, or Resonators)
             {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
                 let is_xform = state.main_view.get_untracked() == MainView::XformedSpec;
-                let gain_sig = if is_xform { state.xform_spect_gain_db } else { state.spect_gain_db };
-                let range_sig = if is_xform { state.xform_spect_range_db } else { state.spect_range_db };
-                let floor_sig = if is_xform { state.xform_spect_floor_db } else { state.spect_floor_db };
-                let gamma_sig = if is_xform { state.xform_spect_gamma } else { state.spect_gamma };
+                // The xform branch is a flat `RwSignal<f32>` while the main branch is
+                // a `Store<SpectState>` subfield — incompatible types for an `if/else`
+                // handle — so use Copy get/set closures (capture only `state`+`is_xform`).
+                let gain_get = move || if is_xform { state.xform_spect_gain_db.get() } else { state.spect.gain_db().get() };
+                let gain_set = move |v: f32| if is_xform { state.xform_spect_gain_db.set(v) } else { state.spect.gain_db().set(v) };
+                let range_get = move || if is_xform { state.xform_spect_range_db.get() } else { state.spect.range_db().get() };
+                let range_set = move |v: f32| if is_xform { state.xform_spect_range_db.set(v) } else { state.spect.range_db().set(v) };
+                let floor_set = move |v: f32| if is_xform { state.xform_spect_floor_db.set(v) } else { state.spect.floor_db().set(v) };
+                let gamma_get = move || if is_xform { state.xform_spect_gamma.get() } else { state.spect.gamma().get() };
+                let gamma_set = move |v: f32| if is_xform { state.xform_spect_gamma.set(v) } else { state.spect.gamma().set(v) };
                 view! {
                     <hr />
                     <div class="dsp-custom-section">
@@ -2314,19 +2320,19 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="-40" max="40" step="1"
-                                prop:value=move || gain_sig.get().to_string()
+                                prop:value=move || gain_get().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        gain_sig.set(v);
+                                        gain_set(v);
                                         if is_xform {
                                             state.display_filter_gain.set(DisplayFilterMode::Custom);
                                         }
                                         state.display_auto_gain.set(false);
                                     }
                                 }
-                                on:dblclick=move |_| gain_sig.set(0.0)
+                                on:dblclick=move |_| gain_set(0.0)
                             />
                             <span class="dsp-custom-value">{move || {
                                 if is_xform {
@@ -2341,10 +2347,10 @@ pub fn MainViewButton() -> impl IntoView {
                                         if boost.abs() < 0.5 { "same".to_string() }
                                         else { format!("={:+.0}", boost) }
                                     } else {
-                                        format!("{:+.0} dB", gain_sig.get())
+                                        format!("{:+.0} dB", gain_get())
                                     }
                                 } else {
-                                    format!("{:+.0} dB", gain_sig.get())
+                                    format!("{:+.0} dB", gain_get())
                                 }
                             }}</span>
                         </div>
@@ -2354,21 +2360,21 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="20" max="120" step="5"
-                                prop:value=move || range_sig.get().to_string()
+                                prop:value=move || range_get().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        range_sig.set(v);
-                                        floor_sig.set(-v);
+                                        range_set(v);
+                                        floor_set(-v);
                                     }
                                 }
                                 on:dblclick=move |_| {
-                                    range_sig.set(120.0);
-                                    floor_sig.set(-120.0);
+                                    range_set(120.0);
+                                    floor_set(-120.0);
                                 }
                             />
-                            <span class="dsp-custom-value">{move || format!("{:.0} dB", range_sig.get())}</span>
+                            <span class="dsp-custom-value">{move || format!("{:.0} dB", range_get())}</span>
                         </div>
                         <div class="dsp-custom-slider-row">
                             <span class="dsp-slider-label">"Contrast"</span>
@@ -2376,18 +2382,18 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="0.2" max="3.0" step="0.05"
-                                prop:value=move || gamma_sig.get().to_string()
+                                prop:value=move || gamma_get().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
-                                        gamma_sig.set(v);
+                                        gamma_set(v);
                                     }
                                 }
-                                on:dblclick=move |_| gamma_sig.set(1.0)
+                                on:dblclick=move |_| gamma_set(1.0)
                             />
                             <span class="dsp-custom-value">{move || {
-                                let g = gamma_sig.get();
+                                let g = gamma_get();
                                 if g == 1.0 { "linear".to_string() } else { format!("{:.2}", g) }
                             }}</span>
                         </div>
@@ -2396,10 +2402,10 @@ pub fn MainViewButton() -> impl IntoView {
                                 class="layer-panel-opt"
                                 style="display: inline; width: auto; padding: 2px 8px; font-size: 9px;"
                                 on:click=move |_| {
-                                    gain_sig.set(0.0);
-                                    floor_sig.set(-120.0);
-                                    range_sig.set(120.0);
-                                    gamma_sig.set(1.0);
+                                    gain_set(0.0);
+                                    floor_set(-120.0);
+                                    range_set(120.0);
+                                    gamma_set(1.0);
                                     state.display_auto_gain.set(false);
                                     if is_xform {
                                         state.display_filter_eq.set(DisplayFilterMode::Same);
@@ -2481,29 +2487,29 @@ pub fn MainViewButton() -> impl IntoView {
                     <hr />
                     <div class="layer-panel-title">"Algorithm"</div>
                     <button
-                        class=move || layer_opt_class(state.spectrogram_display.get() == SpectrogramDisplay::FlowOptical)
-                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowOptical)
+                        class=move || layer_opt_class(state.spect.display().get() == SpectrogramDisplay::FlowOptical)
+                        on:click=move |_| state.spect.display().set(SpectrogramDisplay::FlowOptical)
                     >"Optical"</button>
                     <button
-                        class=move || layer_opt_class(state.spectrogram_display.get() == SpectrogramDisplay::PhaseCoherence)
-                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::PhaseCoherence)
+                        class=move || layer_opt_class(state.spect.display().get() == SpectrogramDisplay::PhaseCoherence)
+                        on:click=move |_| state.spect.display().set(SpectrogramDisplay::PhaseCoherence)
                     >"Phase Coherence"</button>
                     <button
-                        class=move || layer_opt_class(state.spectrogram_display.get() == SpectrogramDisplay::FlowCentroid)
-                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowCentroid)
+                        class=move || layer_opt_class(state.spect.display().get() == SpectrogramDisplay::FlowCentroid)
+                        on:click=move |_| state.spect.display().set(SpectrogramDisplay::FlowCentroid)
                     >"Centroid"</button>
                     <button
-                        class=move || layer_opt_class(state.spectrogram_display.get() == SpectrogramDisplay::FlowGradient)
-                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::FlowGradient)
+                        class=move || layer_opt_class(state.spect.display().get() == SpectrogramDisplay::FlowGradient)
+                        on:click=move |_| state.spect.display().set(SpectrogramDisplay::FlowGradient)
                     >"Gradient"</button>
                     <button
-                        class=move || layer_opt_class(state.spectrogram_display.get() == SpectrogramDisplay::Phase)
-                        on:click=move |_| state.spectrogram_display.set(SpectrogramDisplay::Phase)
+                        class=move || layer_opt_class(state.spect.display().get() == SpectrogramDisplay::Phase)
+                        on:click=move |_| state.spect.display().set(SpectrogramDisplay::Phase)
                     >"Phase"</button>
 
                     // Color scheme (only for non-phase flow algorithms)
                     {move || {
-                        let display = state.spectrogram_display.get();
+                        let display = state.spect.display().get();
                         matches!(display,
                             SpectrogramDisplay::FlowOptical |
                             SpectrogramDisplay::FlowCentroid |

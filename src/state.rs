@@ -1460,6 +1460,7 @@ pub mod store_fields {
         GainStateStoreFields,
         MicStateStoreFields,
         RecordingMetaStateStoreFields,
+        SpectStateStoreFields,
     };
 }
 
@@ -1557,6 +1558,31 @@ pub struct RecordingMetaState {
     pub cached_model: Option<String>,
 }
 
+/// Spectrogram display + colormap settings (applied at render time).
+#[derive(Clone, Debug, Store)]
+pub struct SpectState {
+    /// Spectrogram display mode (linear / optical-flow / etc).
+    pub display: SpectrogramDisplay,
+    /// dB floor. Values below this map to black.
+    pub floor_db: f32,
+    /// dB range. floor + range = ceiling.
+    pub range_db: f32,
+    /// Gamma curve (1.0 = linear).
+    pub gamma: f32,
+    /// Additive dB gain offset.
+    pub gain_db: f32,
+    /// Show tile debug overlay (borders, LOD labels).
+    pub debug_tiles: bool,
+    /// FFT window mode (single size or multi-resolution).
+    pub fft_mode: FftMode,
+    /// Enable reassignment spectrogram (sharper time-frequency localization).
+    pub reassign_enabled: bool,
+    /// Colormap preference (when not overridden by HFR/flow).
+    pub colormap_preference: Colormap,
+    /// Colormap preference used when HFR mode is active.
+    pub hfr_colormap_preference: Colormap,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -1601,7 +1627,8 @@ pub struct AppState {
     pub is_dragging: RwSignal<bool>,
     /// True while any pointer button is held down on the spectrogram canvas.
     pub pointer_is_down: RwSignal<bool>,
-    pub spectrogram_display: RwSignal<SpectrogramDisplay>,
+    /// Spectrogram display + colormap settings (grouped reactive store).
+    pub spect: Store<SpectState>,
     /// Optical-flow overlay settings (grouped reactive store). Replaces the
     /// former flat `flow_enabled` / `flow_gate` / `flow_*` signals.
     pub flow: Store<FlowState>,
@@ -1658,23 +1685,6 @@ pub struct AppState {
     /// to cancel stale preload jobs.
     pub bg_preload_gen: RwSignal<u32>,
 
-    // Spectrogram display settings (applied at render time, no tile regen needed)
-    /// dB floor (default -80.0). Values below this map to black.
-    pub spect_floor_db: RwSignal<f32>,
-    /// dB range (default 80.0). floor + range = ceiling.
-    pub spect_range_db: RwSignal<f32>,
-    /// Gamma curve (default 1.0 = linear). <1 = brighter darks, >1 = more contrast.
-    pub spect_gamma: RwSignal<f32>,
-    /// Additive dB gain offset (default 0.0).
-    pub spect_gain_db: RwSignal<f32>,
-    /// Show tile debug overlay (borders, LOD labels) on the spectrogram canvas.
-    pub debug_tiles: RwSignal<bool>,
-    /// FFT window mode for spectrogram computation.
-    /// Single size or multi-resolution (different sizes per frequency band).
-    pub spect_fft_mode: RwSignal<FftMode>,
-
-    /// Enable reassignment spectrogram (sharper time-frequency localization).
-    pub reassign_enabled: RwSignal<bool>,
 
     // Which floating layer panel is currently open
     pub layer_panel_open: RwSignal<Option<LayerPanel>>,
@@ -1759,15 +1769,11 @@ pub struct AppState {
     // Left sidebar settings page
     pub left_sidebar_tab: RwSignal<LeftSidebarTab>,
 
-    // User colormap preference (when not overridden by HFR/flow)
-    pub colormap_preference: RwSignal<Colormap>,
     /// Chromagram view settings (grouped reactive store).
     pub chroma: Store<ChromaState>,
 
     /// Resonator-view settings (grouped reactive store).
     pub resonator: Store<ResonatorState>,
-    // Colormap preference used when HFR mode is active
-    pub hfr_colormap_preference: RwSignal<Colormap>,
     // When false, the Range button is hidden at full range
     pub always_show_view_range: RwSignal<bool>,
 
@@ -1950,6 +1956,18 @@ impl AppState {
             playback_mode: RwSignal::new(PlaybackMode::Normal),
             playback_modes_extra: RwSignal::new(Vec::new()),
             paused_hfr_for_normal: RwSignal::new(false),
+            spect: Store::new(SpectState {
+                display: SpectrogramDisplay::FlowOptical,
+                floor_db: -120.0,
+                range_db: 120.0,
+                gamma: 1.0,
+                gain_db: 0.0,
+                debug_tiles: false,
+                fft_mode: FftMode::AdaptiveM,
+                reassign_enabled: false,
+                colormap_preference: Colormap::Viridis,
+                hfr_colormap_preference: Colormap::Inferno,
+            }),
 
             transform: Store::new(TransformState {
                 het_frequency: 45_000.0,
@@ -2020,7 +2038,6 @@ impl AppState {
             loading_next_id: RwSignal::new(0),
             is_dragging: RwSignal::new(false),
             pointer_is_down: RwSignal::new(false),
-            spectrogram_display: RwSignal::new(SpectrogramDisplay::FlowOptical),
             flow: Store::new(FlowState {
                 enabled: false,
                 intensity_gate: 0.5,
@@ -2063,13 +2080,6 @@ impl AppState {
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             bg_preload_gen: RwSignal::new(0),
-            spect_floor_db: RwSignal::new(-120.0),
-            spect_range_db: RwSignal::new(120.0),
-            spect_gamma: RwSignal::new(1.0),
-            spect_gain_db: RwSignal::new(0.0),
-            debug_tiles: RwSignal::new(false),
-            spect_fft_mode: RwSignal::new(FftMode::AdaptiveM),
-            reassign_enabled: RwSignal::new(false),
             layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),
@@ -2180,7 +2190,6 @@ impl AppState {
             axis_drag_current_freq: RwSignal::new(None),
             cursor_time: RwSignal::new(None),
             left_sidebar_tab: RwSignal::new(LeftSidebarTab::default()),
-            colormap_preference: RwSignal::new(Colormap::Viridis),
             chroma: Store::new(ChromaState {
                 colormap: ChromaColormap::PitchClass,
                 gain: 0.0,
@@ -2197,7 +2206,6 @@ impl AppState {
                 viewport_bins: true,
                 viewport_range: None,
             }),
-            hfr_colormap_preference: RwSignal::new(Colormap::Inferno),
             always_show_view_range: RwSignal::new(false),
 
             notch: Store::new(NotchState {
