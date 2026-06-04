@@ -23,8 +23,8 @@ const LIVE_HOP: usize = 256;
 /// removes it entirely and fixes `current_file_index`.  Otherwise marks it
 /// as not-recording so the overview doesn't say "Recording…" forever.
 pub(crate) fn cleanup_failed_recording(state: &AppState) {
-    let live_idx = state.mic_live_file_idx.get_untracked();
-    state.mic_live_file_idx.set(None);
+    let live_idx = state.mic.live_file_idx().get_untracked();
+    state.mic.live_file_idx().set(None);
 
     let Some(idx) = live_idx else { return };
 
@@ -90,7 +90,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
         metadata: FileMetadata {
             file_size: 0,
             format: "REC",
-            bits_per_sample: state.mic_bits_per_sample.get_untracked(),
+            bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: false,
             guano: None,
             data_offset: None,
@@ -142,7 +142,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     });
 
     state.current_file_index.set(Some(file_index));
-    state.mic_live_file_idx.set(Some(file_index));
+    state.mic.live_file_idx().set(Some(file_index));
 
     // Set zoom for comfortable live recording scroll speed.
     // Use hop=256 to match the actual hop size in spawn_live_processing_loop.
@@ -183,7 +183,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
         metadata: FileMetadata {
             file_size: 0,
             format: "MIC",
-            bits_per_sample: state.mic_bits_per_sample.get_untracked(),
+            bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: false,
             guano: None,
             data_offset: None,
@@ -235,7 +235,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
     });
 
     state.current_file_index.set(Some(file_index));
-    state.mic_live_file_idx.set(Some(file_index));
+    state.mic.live_file_idx().set(Some(file_index));
     // Reset display so the gutter immediately picks up the mic Nyquist.
     state.view.min_display_freq().set(None);
     state.view.max_display_freq().set(None);
@@ -315,7 +315,7 @@ pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<u
             };
         }
     });
-    state.mic_live_file_idx.update(|mi| {
+    state.mic.live_file_idx().update(|mi| {
         if let Some(m) = *mi {
             if victims.contains(&m) { *mi = None; }
             else { *mi = Some(m - below(m)); }
@@ -463,7 +463,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
     });
 
     state.current_file_index.set(Some(file_index));
-    state.mic_live_file_idx.set(Some(file_index));
+    state.mic.live_file_idx().set(Some(file_index));
 
     // Set zoom for comfortable waterfall viewing.
     // Use LIVE_HOP to match the actual hop size in spawn_live_processing_loop.
@@ -481,7 +481,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
 /// subsequent Listen/Record can reuse it via the armed-doc promotion path.
 /// No-op if there's no live file or the file isn't a listen entry.
 pub(crate) fn convert_listen_to_armed(state: &AppState) {
-    let Some(idx) = state.mic_live_file_idx.get_untracked() else { return };
+    let Some(idx) = state.mic.live_file_idx().get_untracked() else { return };
     let is_listen = state.files.with_untracked(|files| {
         files.get(idx).map_or(false, |f| f.is_live_listen)
     });
@@ -533,8 +533,8 @@ pub(crate) fn convert_listen_to_armed(state: &AppState) {
 
 /// Remove the transient listening file and fix indices.
 pub(crate) fn cleanup_listen_file(state: &AppState) {
-    let live_idx = state.mic_live_file_idx.get_untracked();
-    state.mic_live_file_idx.set(None);
+    let live_idx = state.mic.live_file_idx().get_untracked();
+    state.mic.live_file_idx().set(None);
 
     let Some(idx) = live_idx else { return };
 
@@ -580,11 +580,11 @@ pub(crate) fn cleanup_listen_file(state: &AppState) {
 ///
 /// Mirrors `promote_armed_to_recording` for the armed-doc path.
 pub(crate) fn rename_listen_to_recording(state: &AppState, sample_rate: u32) {
-    let Some(file_index) = state.mic_live_file_idx.get_untracked() else { return };
+    let Some(file_index) = state.mic.live_file_idx().get_untracked() else { return };
 
     // When pre-roll is active, backdate the filename to reflect the actual
     // start of audio data (i.e. the beginning of the pre-roll buffer).
-    let preroll = state.mic_preroll_samples.get_untracked();
+    let preroll = state.mic.preroll_samples().get_untracked();
     let preroll_ms = if preroll > 0 && sample_rate > 0 {
         (preroll as f64 / sample_rate as f64) * 1000.0
     } else {
@@ -617,14 +617,14 @@ pub(crate) fn rename_listen_to_recording(state: &AppState, sample_rate: u32) {
 /// Assumes `rename_listen_to_recording` has already run — this only flips the
 /// listening-state flags and updates metadata.
 pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -> usize {
-    let file_index = state.mic_live_file_idx.get_untracked()
+    let file_index = state.mic.live_file_idx().get_untracked()
         .expect("convert_listen_to_recording: no live file");
 
     state.files.update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.is_live_listen = false;
             f.audio.metadata.format = "REC";
-            f.audio.metadata.bits_per_sample = state.mic_bits_per_sample.get_untracked();
+            f.audio.metadata.bits_per_sample = state.mic.bits_per_sample().get_untracked();
         }
     });
 
@@ -647,8 +647,8 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
     const PROCESS_INTERVAL_MS: i32 = 50;
 
     // Bump the generation counter so any previous processing loop will exit.
-    let gen = state.mic_processing_gen.get_untracked().wrapping_add(1);
-    state.mic_processing_gen.set(gen);
+    let gen = state.mic.processing_gen().get_untracked().wrapping_add(1);
+    state.mic.processing_gen().set(gen);
 
     // Initialize waterfall synchronously so the renderer sees it immediately
     // (before any async yield that could allow a spectrogram draw)
@@ -675,15 +675,15 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             let _ = JsFuture::from(p).await;
 
             // A newer processing loop has started — this one is stale.
-            if state.mic_processing_gen.get_untracked() != gen {
+            if state.mic.processing_gen().get_untracked() != gen {
                 log::info!("Processing loop superseded (gen {} vs {}), exiting",
-                    gen, state.mic_processing_gen.get_untracked());
+                    gen, state.mic.processing_gen().get_untracked());
                 break;
             }
 
             // Check if still recording/listening
-            let is_recording = state.mic_recording.get_untracked();
-            let is_listening = state.mic_listening.get_untracked();
+            let is_recording = state.mic.recording().get_untracked();
+            let is_listening = state.mic.listening().get_untracked();
             if !is_recording && !is_listening {
                 break;
             }
@@ -696,7 +696,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 break;
             };
             // It must still be the live-capture slot.
-            if state.mic_live_file_idx.get_untracked() != Some(file_index) {
+            if state.mic.live_file_idx().get_untracked() != Some(file_index) {
                 break;
             }
 
@@ -765,7 +765,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 live_waterfall::push_columns(&new_cols);
 
                 // Update file metadata (recording OR listening with a live file)
-                let has_live_file = state.mic_live_file_idx.get_untracked() == Some(file_index);
+                let has_live_file = state.mic.live_file_idx().get_untracked() == Some(file_index);
                 if has_live_file {
                     let duration = samples.len() as f64 / sample_rate as f64;
                     state.files.update(|files| {
@@ -839,7 +839,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             //     until stop.
             //   - To-memory mode: user explicitly opted out of disk writes.
             let to_memory = state.record_mode.get_untracked() == crate::state::RecordMode::ToMemory;
-            let preroll_active = state.mic_preroll_samples.get_untracked() > 0;
+            let preroll_active = state.mic.preroll_samples().get_untracked() > 0;
             let wasm_is_authoritative = to_memory || preroll_active || !is_tauri;
             let should_trim = any_update
                 && (is_listening || (is_recording && !wasm_is_authoritative));
@@ -856,7 +856,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     // exactly the user's setting.
                     const GESTURE_HEADROOM_SECS: u32 = 2;
                     let buf_secs = state
-                        .mic_preroll_buffer_secs
+                        .mic.preroll_buffer_secs()
                         .get_untracked()
                         .max(2)
                         .saturating_add(GESTURE_HEADROOM_SECS) as usize;
@@ -872,9 +872,9 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             }
 
             if any_update {
-                state.mic_peak_level.set(peak_normalized);
+                state.mic.peak_level().set(peak_normalized);
                 let total_cols = live_waterfall::total_columns();
-                state.mic_live_data_cols.set(total_cols);
+                state.mic.live_data_cols().set(total_cols);
 
                 // Trigger spectrogram redraw
                 state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
@@ -889,14 +889,14 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         let visible_cols = canvas_w / zoom;
                         let visible_time = visible_cols * time_res;
                         let target_scroll = (recording_time - visible_time).max(0.0);
-                        state.mic_recording_target_scroll.set(target_scroll);
+                        state.mic.recording_target_scroll().set(target_scroll);
                     }
                 }
             } else if is_recording && last_processed_col == 0 {
                 // No audio chunks have arrived yet — update file duration from
                 // wall-clock time so the overview can show elapsed recording time
                 // instead of static "Recording…" text.
-                if let Some(start) = state.mic_recording_start_time.get_untracked() {
+                if let Some(start) = state.mic.recording_start_time().get_untracked() {
                     let elapsed = (js_sys::Date::now() - start) / 1000.0;
                     state.files.update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
@@ -908,8 +908,8 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         }
 
         // Processing loop exited — clean up
-        state.mic_peak_level.set(0.0);
-        if !state.mic_recording.get_untracked() {
+        state.mic.peak_level().set(0.0);
+        if !state.mic.recording().get_untracked() {
             // Only clear waterfall when fully done (not when switching from listen to record)
             live_waterfall::clear();
         }
@@ -918,9 +918,9 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         // as soon as mic_recording is false, but the async stop command hasn't
         // returned yet, so finalize_recording sees mic_live_file_idx=None and
         // creates a duplicate file.
-        state.mic_live_data_cols.set(0);
-        state.mic_recording_target_scroll.set(0.0);
-        state.mic_scroll_user_pan_until.set(0.0);
+        state.mic.live_data_cols().set(0);
+        state.mic.recording_target_scroll().set(0.0);
+        state.mic.scroll_user_pan_until().set(0.0);
     });
 }
 
@@ -935,17 +935,17 @@ pub(crate) fn spawn_smooth_scroll_animation(state: AppState) {
     let cb_clone = cb.clone();
 
     *cb.borrow_mut() = Some(Closure::new(move || {
-        if !state.mic_recording.get_untracked() && !state.mic_listening.get_untracked() {
+        if !state.mic.recording().get_untracked() && !state.mic.listening().get_untracked() {
             // Neither recording nor listening — exit the animation loop
             return;
         }
         // If the user is panning (or just released a pan within the grace
         // window), leave scroll_offset alone so they can look at earlier
         // material without fighting the auto-scroll.
-        let pan_until = state.mic_scroll_user_pan_until.get_untracked();
+        let pan_until = state.mic.scroll_user_pan_until().get_untracked();
         let suspended = pan_until > 0.0 && js_sys::Date::now() < pan_until;
         if !suspended {
-            let target = state.mic_recording_target_scroll.get_untracked();
+            let target = state.mic.recording_target_scroll().get_untracked();
             let current = state.view.scroll_offset().get_untracked();
             let diff = target - current;
             if diff.abs() > 0.0001 {
@@ -1001,13 +1001,13 @@ fn build_recording_meta(
     duration_secs: f64,
     filename: &str,
 ) -> RecordingMeta {
-    let mic_name = state.mic_device_name.get_untracked();
-    let mic_manufacturer = state.mic_manufacturer.get_untracked();
-    let conn_type = state.mic_connection_type.get_untracked();
-    let loc = state.recording_location.get_untracked();
+    let mic_name = state.mic.device_name().get_untracked();
+    let mic_manufacturer = state.mic.manufacturer().get_untracked();
+    let conn_type = state.mic.connection_type().get_untracked();
+    let loc = state.recording_meta.location().get_untracked();
     let is_mobile = state.is_mobile.get_untracked();
-    let (dev_make, dev_model) = if state.device_model_enabled.get_untracked() && is_mobile {
-        (state.cached_device_make.get_untracked(), state.cached_device_model.get_untracked())
+    let (dev_make, dev_model) = if state.recording_meta.device_model_enabled().get_untracked() && is_mobile {
+        (state.recording_meta.cached_make().get_untracked(), state.recording_meta.cached_model().get_untracked())
     } else {
         (None, None)
     };
@@ -1026,7 +1026,7 @@ fn build_recording_meta(
         (mic_name.clone(), None)
     };
 
-    let preroll = state.mic_preroll_samples.get_untracked();
+    let preroll = state.mic.preroll_samples().get_untracked();
     let preroll_secs = if preroll > 0 && sample_rate > 0 {
         Some(preroll as f64 / sample_rate as f64)
     } else {
@@ -1202,7 +1202,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
 
     let FinalizeParams { samples, sample_rate, bits_per_sample, is_float, saved_path, file_size } = params;
 
-    let live_idx = state.mic_live_file_idx.get_untracked();
+    let live_idx = state.mic.live_file_idx().get_untracked();
 
     // Streaming-to-disk mode: Tauri wrote the file during recording and
     // returned only metadata (no samples in RAM). Hand off to the streaming
@@ -1212,7 +1212,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     // recordings.
     let has_native_path = !saved_path.is_empty() && !saved_path.starts_with("shared://");
     if samples.is_empty() && has_native_path {
-        state.mic_live_file_idx.set(None);
+        state.mic.live_file_idx().set(None);
         live_waterfall::clear();
         let path = saved_path.clone();
         let live_idx_for_async = live_idx;
@@ -1237,7 +1237,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     // read from here. Just drop the live placeholder; the user finds the
     // file through the system file manager.
     if samples.is_empty() && saved_path.starts_with("shared://") {
-        state.mic_live_file_idx.set(None);
+        state.mic.live_file_idx().set(None);
         live_waterfall::clear();
         if let Some(idx) = live_idx {
             state.files.update(|files| {
@@ -1248,7 +1248,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         return;
     }
 
-    state.mic_live_file_idx.set(None);
+    state.mic.live_file_idx().set(None);
 
     if samples.is_empty() {
         log::warn!("Empty recording");
@@ -1388,7 +1388,7 @@ async fn finalize_in_memory_recording(
 
     // ── Phase 5: Reset preroll + zoom + spectrogram ─────────────────────
     if meta.preroll_samples > 0 {
-        state.mic_preroll_samples.set(0);
+        state.mic.preroll_samples().set(0);
     }
 
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -1521,8 +1521,8 @@ async fn finalize_streaming_tauri_recording(
     let final_time_res = 512.0 / header.sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.view.scroll_offset().set(0.0);
-    if state.mic_preroll_samples.get_untracked() > 0 {
-        state.mic_preroll_samples.set(0);
+    if state.mic.preroll_samples().get_untracked() > 0 {
+        state.mic.preroll_samples().set(0);
     }
 
     // Clear the provisional live-tile cache and kick off progressive tile

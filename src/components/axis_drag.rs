@@ -57,7 +57,7 @@ pub fn apply_axis_drag(
 /// Select all frequencies: set BandFF range to 0..Nyquist and enable HFR.
 /// Used by double-click / double-tap on the band gutter.
 pub fn select_all_frequencies(state: AppState) {
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     let file_max_freq = if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {

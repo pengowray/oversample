@@ -134,14 +134,14 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: status prefix for document title
     let status_prefix = Memo::new(move |_| {
-        let recording = state.mic_recording.get();
-        let listening = state.mic_listening.get();
+        let recording = state.mic.recording().get();
+        let listening = state.mic.listening().get();
         let playing = state.is_playing.get();
-        let rec_ready = state.record_ready_state.get();
-        let muted = state.mic_mute_output.get();
+        let rec_ready = state.mic.record_ready_state().get();
+        let muted = state.mic.mute_output().get();
         let mode = state.playback_mode.get();
         let hfr_on = state.focus_stack.get().hfr_enabled();
-        let acq_state = state.mic_acquisition_state.get();
+        let acq_state = state.mic.acquisition_state().get();
 
         let mut parts = Vec::new();
 
@@ -175,11 +175,11 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: recording file name
     let recording_file_name = Memo::new(move |_| {
-        let recording = state.mic_recording.get();
-        let listening = state.mic_listening.get();
+        let recording = state.mic.recording().get();
+        let listening = state.mic.listening().get();
         if recording || (recording && listening) {
             let files = state.files.get();
-            state.mic_live_file_idx.get()
+            state.mic.live_file_idx().get()
                 .and_then(|idx| files.get(idx).map(|f| f.name.clone()))
                 .or_else(|| file_name.get())
         } else {
@@ -189,12 +189,12 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: center text
     let center_text = Memo::new(move |_| {
-        let recording = state.mic_recording.get();
-        let listening = state.mic_listening.get();
+        let recording = state.mic.recording().get();
+        let listening = state.mic.listening().get();
 
         if recording {
-            let _ = state.mic_timer_tick.get(); // subscribe to timer ticks
-            let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+            let _ = state.mic.timer_tick().get(); // subscribe to timer ticks
+            let start = state.mic.recording_start_time().get_untracked().unwrap_or(0.0);
             let now = js_sys::Date::now();
             let secs = (now - start) / 1000.0;
             let dur = crate::format_time::format_duration_compact(secs);
@@ -215,12 +215,12 @@ pub fn Toolbar() -> impl IntoView {
     Effect::new(move |_| {
         let prefix = status_prefix.get();
         let name = file_name.get();
-        let recording = state.mic_recording.get();
-        let listening = state.mic_listening.get();
+        let recording = state.mic.recording().get();
+        let listening = state.mic.listening().get();
 
         let title = if recording {
-            let _ = state.mic_timer_tick.get(); // subscribe for live updates
-            let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+            let _ = state.mic.timer_tick().get(); // subscribe for live updates
+            let start = state.mic.recording_start_time().get_untracked().unwrap_or(0.0);
             let now = js_sys::Date::now();
             let secs = (now - start) / 1000.0;
             let dur = crate::format_time::format_duration_compact(secs);
@@ -306,8 +306,8 @@ pub fn Toolbar() -> impl IntoView {
                             let mobile = state.is_mobile.get();
                             if mobile {
                                 let has_file = file_name.get().is_some();
-                                let recording = state.mic_recording.get();
-                                let listening = state.mic_listening.get();
+                                let recording = state.mic.recording().get();
+                                let listening = state.mic.listening().get();
                                 if has_file || recording || listening {
                                     s.push_str("; display: none");
                                 }
@@ -319,16 +319,16 @@ pub fn Toolbar() -> impl IntoView {
                     ><b>"Oversample"</b>" "<span style="font-style: italic; opacity: 0.45; font-weight: 300;">"beta"</span></span>
 
                     <span class="toolbar-status-icons">
-                        {move || state.mic_recording.get().then(|| view! {
+                        {move || state.mic.recording().get().then(|| view! {
                             <span class="toolbar-rec-dot"></span>
                         })}
                         {move || {
-                            let listening = state.mic_listening.get();
+                            let listening = state.mic.listening().get();
                             let playing = state.is_playing.get();
-                            let recording = state.mic_recording.get();
+                            let recording = state.mic.recording().get();
 
                             if listening {
-                                let muted = state.mic_mute_output.get();
+                                let muted = state.mic.mute_output().get();
                                 let mode = state.playback_mode.get();
                                 let hfr_on = state.focus_stack.get().hfr_enabled();
                                 let frequency_shifted = hfr_on && !muted && mode != PlaybackMode::Normal;

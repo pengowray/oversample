@@ -29,7 +29,7 @@ pub fn pointer_to_xtf(
 
     // When the waterfall is active, use its parameters so interactions work
     // even without a file loaded (listening/recording mode).
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     let waterfall_active = is_mic_active && crate::canvas::live_waterfall::is_active();
 
     let (time_res, file_max_freq) = if waterfall_active {

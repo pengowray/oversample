@@ -451,8 +451,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let idx = state.current_file_index.get();
         let overview_view = state.overview_view.get();
         let cv = state.channel_view.get();
-        let _mic_recording = state.mic_recording.get();
-        let _mic_listening = state.mic_listening.get();
+        let _mic_recording = state.mic.recording().get();
+        let _mic_listening = state.mic.listening().get();
         let auto_gain = state.gain.auto().get();
         let gain_db = if auto_gain { state.compute_auto_gain_untracked() } else { state.gain.db().get() };
         // Re-read canvas dimensions when sidebar layout changes
@@ -517,8 +517,8 @@ pub fn OverviewPanel() -> impl IntoView {
             let file_opt = idx.and_then(|i| files.get(i));
 
             if file_opt.is_none() {
-                let is_rec = state.mic_recording.get_untracked();
-                let is_lis = state.mic_listening.get_untracked();
+                let is_rec = state.mic.recording().get_untracked();
+                let is_lis = state.mic.listening().get_untracked();
                 if is_rec || is_lis {
                     ctx.set_fill_style_str("#1a1a1a");
                     ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
@@ -529,7 +529,7 @@ pub fn OverviewPanel() -> impl IntoView {
                     ctx.set_text_align("center");
                     ctx.set_text_baseline("middle");
                     let _ = ctx.fill_text(&format!("\u{25CF} {}\u{2026}", label), w as f64 / 2.0, h as f64 / 2.0);
-                    let peak = state.mic_peak_level.get_untracked();
+                    let peak = state.mic.peak_level().get_untracked();
                     if peak > 0.01 {
                         let bar_w = (peak as f64 * w as f64).min(w as f64);
                         ctx.set_fill_style_str(color);
@@ -598,7 +598,7 @@ pub fn OverviewPanel() -> impl IntoView {
                         ctx.set_text_align("center");
                         ctx.set_text_baseline("middle");
                         let _ = ctx.fill_text(&text, w as f64 / 2.0, h as f64 / 2.0);
-                        let peak = state.mic_peak_level.get_untracked();
+                        let peak = state.mic.peak_level().get_untracked();
                         if peak > 0.01 {
                             let bar_w = (peak as f64 * w as f64).min(w as f64);
                             let vu_color = if is_listen { "#48f" } else { "#f44" };
@@ -857,7 +857,7 @@ pub fn OverviewPanel() -> impl IntoView {
         if let Some(ref tl) = state.timeline.active().get_untracked() {
             return tl.total_duration_secs;
         }
-        let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+        let is_live = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
         if is_live && crate::canvas::live_waterfall::is_active() {
             return crate::canvas::live_waterfall::total_time();
         }
@@ -1052,8 +1052,8 @@ pub fn OverviewPanel() -> impl IntoView {
                     let duration = if let Some(ref tl) = state.timeline.active().get_untracked() {
                         tl.total_duration_secs
                     } else {
-                        let is_live = state.mic_recording.get_untracked()
-                            || state.mic_listening.get_untracked();
+                        let is_live = state.mic.recording().get_untracked()
+                            || state.mic.listening().get_untracked();
                         if is_live && crate::canvas::live_waterfall::is_active() {
                             crate::canvas::live_waterfall::total_time()
                         } else {

@@ -4,6 +4,7 @@
 //! Raw USB) behind an `ActiveBackend` enum with uniform open/close/record/listen
 //! methods. All thread-local state for each backend lives here.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -42,24 +43,24 @@ fn build_start_recording_args(
     shared_fd: Option<i32>,
 ) -> oversample_ipc::mic::StartRecordingArgs {
     let to_memory = state.record_mode.get_untracked() == crate::state::RecordMode::ToMemory;
-    let preroll = state.mic_preroll_samples.get_untracked();
+    let preroll = state.mic.preroll_samples().get_untracked();
     let stream_to_disk = state.is_tauri && !to_memory && preroll == 0;
 
     // Filename mirrors the one the WASM side uses for the live file so the
     // sidecar + partial match up with the final WAV name on recovery.
     let filename = state
-        .mic_live_file_idx
+        .mic.live_file_idx()
         .get_untracked()
         .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())));
 
-    let (device_make, device_model) = if state.device_model_enabled.get_untracked() {
-        (state.cached_device_make.get_untracked(), state.cached_device_model.get_untracked())
+    let (device_make, device_model) = if state.recording_meta.device_model_enabled().get_untracked() {
+        (state.recording_meta.cached_make().get_untracked(), state.recording_meta.cached_model().get_untracked())
     } else {
         (None, None)
     };
 
     let (loc_latitude, loc_longitude, loc_elevation, loc_accuracy) =
-        match state.recording_location.get_untracked() {
+        match state.recording_meta.location().get_untracked() {
             Some(loc) => (Some(loc.latitude), Some(loc.longitude), loc.elevation, loc.accuracy),
             None => (None, None, None, None),
         };
@@ -68,9 +69,9 @@ fn build_start_recording_args(
         shared_fd,
         enable_recovery: stream_to_disk,
         filename,
-        connection_type: state.mic_connection_type.get_untracked(),
-        mic_name: state.mic_device_name.get_untracked(),
-        mic_make: state.mic_manufacturer.get_untracked(),
+        connection_type: state.mic.connection_type().get_untracked(),
+        mic_name: state.mic.device_name().get_untracked(),
+        mic_make: state.mic.manufacturer().get_untracked(),
         device_make,
         device_model,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -85,12 +86,12 @@ fn build_start_recording_args(
 /// including optional GPS location and device model fields from state.
 fn build_stop_recording_args(state: &AppState) -> oversample_ipc::mic::StopRecordingArgs {
     let (loc_latitude, loc_longitude, loc_elevation, loc_accuracy) =
-        match state.recording_location.get_untracked() {
+        match state.recording_meta.location().get_untracked() {
             Some(loc) => (Some(loc.latitude), Some(loc.longitude), loc.elevation, loc.accuracy),
             None => (None, None, None, None),
         };
-    let (device_make, device_model) = if state.device_model_enabled.get_untracked() {
-        (state.cached_device_make.get_untracked(), state.cached_device_model.get_untracked())
+    let (device_make, device_model) = if state.recording_meta.device_model_enabled().get_untracked() {
+        (state.recording_meta.cached_make().get_untracked(), state.recording_meta.cached_model().get_untracked())
     } else {
         (None, None)
     };
@@ -104,7 +105,7 @@ fn build_stop_recording_args(state: &AppState) -> oversample_ipc::mic::StopRecor
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         // Pre-roll: skip native WAV encoding/saving — the WASM side re-encodes
         // with the full buffer + cue markers.
-        skip_native_save: (state.mic_preroll_samples.get_untracked() > 0).then_some(true),
+        skip_native_save: (state.mic.preroll_samples().get_untracked() > 0).then_some(true),
     }
 }
 
@@ -500,7 +501,7 @@ impl ActiveBackend {
 
     /// Close only if not recording and not listening.
     pub async fn maybe_close(&self, state: &AppState) {
-        if !state.mic_listening.get_untracked() && !state.mic_recording.get_untracked() {
+        if !state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
             self.close(state).await;
         }
     }
@@ -527,11 +528,11 @@ impl ActiveBackend {
     pub async fn stop_recording(&self, state: &AppState) -> StopResult {
         match self {
             ActiveBackend::Browser => {
-                state.mic_recording.set(false);
-                state.mic_recording_start_time.set(None);
-                let sample_rate = state.mic_sample_rate.get_untracked();
+                state.mic.recording().set(false);
+                state.mic.recording_start_time().set(None);
+                let sample_rate = state.mic.sample_rate().get_untracked();
                 let samples = MIC_BUFFER.with(|buf| std::mem::take(&mut *buf.borrow_mut()));
-                state.mic_samples_recorded.set(0);
+                state.mic.samples_recorded().set(0);
                 if samples.is_empty() || sample_rate == 0 {
                     log::warn!("No samples recorded (web)");
                     StopResult::Empty
@@ -646,7 +647,7 @@ async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
         return None;
     }
     // Build filename from the live file if available, otherwise generate one
-    let filename = state.mic_live_file_idx.get_untracked()
+    let filename = state.mic.live_file_idx().get_untracked()
         .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
         .unwrap_or_else(|| {
             let now = js_sys::Date::new_0();
@@ -818,19 +819,19 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
         }
 
         // Accumulate samples for live waterfall display during recording OR listening
-        if state_cb.mic_recording.get_untracked() || state_cb.mic_listening.get_untracked() {
+        if state_cb.mic.recording().get_untracked() || state_cb.mic.listening().get_untracked() {
             NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().extend_from_slice(&input_data));
-            if state_cb.mic_recording.get_untracked() {
-                state_cb.mic_samples_recorded.update(|n| *n += len);
+            if state_cb.mic.recording().get_untracked() {
+                state_cb.mic.samples_recorded().update(|n| *n += len);
             }
         }
 
         // Listen mode: process input through selected DSP and play through speakers
-        if state_cb.mic_listening.get_untracked() {
-            let sr = state_cb.mic_sample_rate.get_untracked();
+        if state_cb.mic.listening().get_untracked() {
+            let sr = state_cb.mic.sample_rate().get_untracked();
             let params = snapshot_params(&state_cb, None, sr);
-            let mute = state_cb.mic_mute_output.get_untracked();
-            let ctx_samples = state_cb.listen_context_samples.get_untracked();
+            let mute = state_cb.mic.mute_output().get_untracked();
+            let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
             let out_data = NATIVE_RT_HET.with(|h| {
                 NATIVE_LISTEN_STATE.with(|s| {
                     process_live_audio(
@@ -1012,8 +1013,8 @@ async fn open_web(state: &AppState) -> bool {
     js_sys::Reflect::set(&audio_opts, &"noiseSuppression".into(), &JsValue::FALSE).ok();
     js_sys::Reflect::set(&audio_opts, &"autoGainControl".into(), &JsValue::FALSE).ok();
     // If a specific browser device was selected, constrain to that deviceId
-    if let Some(device_id) = state.mic_selected_device.get_untracked() {
-        if state.mic_backend.get_untracked() == Some(MicBackend::Browser) && !device_id.is_empty() {
+    if let Some(device_id) = state.mic.selected_device().get_untracked() {
+        if state.mic.backend().get_untracked() == Some(MicBackend::Browser) && !device_id.is_empty() {
             let exact = js_sys::Object::new();
             js_sys::Reflect::set(&exact, &"exact".into(), &JsValue::from_str(&device_id)).ok();
             js_sys::Reflect::set(&audio_opts, &"deviceId".into(), &exact.into()).ok();
@@ -1065,21 +1066,21 @@ async fn open_web(state: &AppState) -> bool {
     }
 
     let sample_rate = ctx.sample_rate() as u32;
-    state.mic_sample_rate.set(sample_rate);
+    state.mic.sample_rate().set(sample_rate);
     // Only report a device name when the user explicitly selected a specific
     // device via the mic chooser (mic_selected_device is Some with a non-empty id).
     // "Browser default" and direct browser mode leave mic_device_name as None.
-    let has_specific_device = state.mic_selected_device.get_untracked()
+    let has_specific_device = state.mic.selected_device().get_untracked()
         .as_ref()
         .is_some_and(|id| !id.is_empty());
     let dev_name = if has_specific_device {
-        state.mic_device_info.get_untracked().map(|info| info.name.clone())
+        state.mic.device_info().get_untracked().map(|info| info.name.clone())
     } else {
         None
     };
-    state.mic_device_name.set(dev_name);
-    state.mic_manufacturer.set(None);
-    state.mic_connection_type.set(Some("Web Audio API".to_string()));
+    state.mic.device_name().set(dev_name);
+    state.mic.manufacturer().set(None);
+    state.mic.connection_type().set(Some("Web Audio API".to_string()));
     let source = match ctx.create_media_stream_source(&stream) {
         Ok(s) => s,
         Err(e) => {
@@ -1124,11 +1125,11 @@ async fn open_web(state: &AppState) -> bool {
             Err(_) => return,
         };
 
-        if state_cb.mic_listening.get_untracked() {
-            let sr = state_cb.mic_sample_rate.get_untracked();
+        if state_cb.mic.listening().get_untracked() {
+            let sr = state_cb.mic.sample_rate().get_untracked();
             let params = snapshot_params(&state_cb, None, sr);
-            let mute = state_cb.mic_mute_output.get_untracked();
-            let ctx_samples = state_cb.listen_context_samples.get_untracked();
+            let mute = state_cb.mic.mute_output().get_untracked();
+            let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
             let out_data = WEB_RT_HET.with(|h| {
                 WEB_LISTEN_STATE.with(|s| {
                     process_live_audio(
@@ -1149,11 +1150,11 @@ async fn open_web(state: &AppState) -> bool {
         }
 
         // Accumulate samples for live waterfall display during recording OR listening
-        if state_cb.mic_recording.get_untracked() || state_cb.mic_listening.get_untracked() {
+        if state_cb.mic.recording().get_untracked() || state_cb.mic.listening().get_untracked() {
             MIC_BUFFER.with(|buf| {
                 buf.borrow_mut().extend_from_slice(&input_data);
-                if state_cb.mic_recording.get_untracked() {
-                    state_cb.mic_samples_recorded.set(buf.borrow().len());
+                if state_cb.mic.recording().get_untracked() {
+                    state_cb.mic.samples_recorded().set(buf.borrow().len());
                 }
             });
         }
@@ -1203,7 +1204,7 @@ fn close_web(state: &AppState) {
     WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
     crate::canvas::live_waterfall::clear();
 
-    state.mic_samples_recorded.set(0);
+    state.mic.samples_recorded().set(0);
     log::info!("Web mic closed");
 }
 
@@ -1214,10 +1215,10 @@ async fn open_cpal(state: &AppState) -> bool {
         return true;
     }
 
-    let max_sr = state.mic_max_sample_rate.get_untracked();
-    let max_bits = state.mic_max_bit_depth.get_untracked();
-    let channel_mode = state.mic_channel_mode.get_untracked();
-    let selected_device = state.mic_selected_device.get_untracked();
+    let max_sr = state.mic.max_sample_rate().get_untracked();
+    let max_bits = state.mic.max_bit_depth().get_untracked();
+    let channel_mode = state.mic.channel_mode().get_untracked();
+    let selected_device = state.mic.selected_device().get_untracked();
     let channels: u16 = {
         use crate::state::ChannelMode;
         match channel_mode {
@@ -1250,13 +1251,13 @@ async fn open_cpal(state: &AppState) -> bool {
     let host_label: Option<String> = (!info.host_name.is_empty()).then_some(info.host_name);
     let supported_rates = info.supported_sample_rates;
     if !supported_rates.is_empty() {
-        state.mic_supported_rates.set(supported_rates);
+        state.mic.supported_rates().set(supported_rates);
     }
 
-    state.mic_sample_rate.set(sample_rate);
-    state.mic_bits_per_sample.set(bits_per_sample);
-    state.mic_device_name.set(Some(device_name.clone()));
-    state.mic_manufacturer.set(None);
+    state.mic.sample_rate().set(sample_rate);
+    state.mic.bits_per_sample().set(bits_per_sample);
+    state.mic.device_name().set(Some(device_name.clone()));
+    state.mic.manufacturer().set(None);
     // Determine mic interface from the cpal host backend.
     // The host_label comes from the Tauri backend via mic_info.
     let conn_type = if device_name.to_lowercase().contains("usb") {
@@ -1267,7 +1268,7 @@ async fn open_cpal(state: &AppState) -> bool {
         // Use the audio host name for native audio interfaces
         host_label.as_deref().unwrap_or("Internal")
     };
-    state.mic_connection_type.set(Some(conn_type.to_string()));
+    state.mic.connection_type().set(Some(conn_type.to_string()));
 
     // Setup HET playback AudioContext and chunk handler
     if !setup_het_context(state).await {
@@ -1290,7 +1291,7 @@ async fn close_cpal(state: &AppState) {
     cleanup_native_state();
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = None);
 
-    state.mic_samples_recorded.set(0);
+    state.mic.samples_recorded().set(0);
     log::info!("Native mic closed");
 }
 
@@ -1343,7 +1344,7 @@ async fn open_usb(state: &AppState) -> bool {
     }
 
     // Step 3: open the device via the Kotlin plugin.
-    let max_sr = state.mic_max_sample_rate.get_untracked();
+    let max_sr = state.mic.max_sample_rate().get_untracked();
     let info = match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbOpenResult>(
         "plugin:usb-audio|openUsbDevice",
         &oversample_ipc::plugins::UsbOpenArgs {
@@ -1383,11 +1384,11 @@ async fn open_usb(state: &AppState) -> bool {
         return false;
     }
 
-    state.mic_sample_rate.set(sample_rate);
+    state.mic.sample_rate().set(sample_rate);
     // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
     // (never present) so usb_bits was always stuck at the 16 default.
     let usb_bits = if info.bit_resolution > 0 { info.bit_resolution as u16 } else { 16 };
-    state.mic_bits_per_sample.set(usb_bits);
+    state.mic.bits_per_sample().set(usb_bits);
 
     // Setup HET playback AudioContext and chunk handler (same as cpal)
     if !setup_het_context(state).await {
@@ -1405,13 +1406,13 @@ async fn open_usb(state: &AppState) -> bool {
         state_err.log_debug("error", format!("USB stream error: {}", msg));
         state_err.show_error_toast(&msg);
 
-        let was_recording = state_err.mic_recording.get_untracked();
-        state_err.mic_recording.set(false);
-        state_err.mic_recording_start_time.set(None);
-        state_err.mic_listening.set(false);
-        state_err.mic_usb_connected.set(false);
-        state_err.mic_backend.set(None);
-        state_err.mic_acquisition_state.set(MicAcquisitionState::Failed);
+        let was_recording = state_err.mic.recording().get_untracked();
+        state_err.mic.recording().set(false);
+        state_err.mic.recording_start_time().set(None);
+        state_err.mic.listening().set(false);
+        state_err.mic.usb_connected().set(false);
+        state_err.mic.backend().set(None);
+        state_err.mic.acquisition_state().set(MicAcquisitionState::Failed);
 
         NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = None);
 
@@ -1420,13 +1421,13 @@ async fn open_usb(state: &AppState) -> bool {
 
         // Finalize any in-progress recording with whatever samples we have
         if was_recording {
-            let sr = state_err.mic_sample_rate.get_untracked();
+            let sr = state_err.mic.sample_rate().get_untracked();
             let samples = take_native_buffer();
             if !samples.is_empty() && sr > 0 {
                 crate::audio::live_recording::finalize_recording(
                     crate::audio::live_recording::FinalizeParams {
                         samples, sample_rate: sr,
-                        bits_per_sample: state_err.mic_bits_per_sample.get_untracked(),
+                        bits_per_sample: state_err.mic.bits_per_sample().get_untracked(),
                         is_float: false,
                         saved_path: String::new(),
                         file_size: None,
@@ -1451,9 +1452,9 @@ async fn open_usb(state: &AppState) -> bool {
     // Mark open before starting the pull loop (see the cpal path).
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = Some(NativeMode::Usb));
     start_audio_pull_loop(*state);
-    state.mic_device_name.set(Some(product_name.clone()));
-    state.mic_manufacturer.set(manufacturer_name);
-    state.mic_connection_type.set(Some("USB (Raw)".to_string()));
+    state.mic.device_name().set(Some(product_name.clone()));
+    state.mic.manufacturer().set(manufacturer_name);
+    state.mic.connection_type().set(Some("USB (Raw)".to_string()));
     log::info!("USB mic opened: {} at {} Hz", product_name, sample_rate);
     true
 }
@@ -1472,6 +1473,6 @@ async fn close_usb(state: &AppState) {
     cleanup_native_state();
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = None);
 
-    state.mic_samples_recorded.set(0);
+    state.mic.samples_recorded().set(0);
     log::info!("USB mic closed");
 }

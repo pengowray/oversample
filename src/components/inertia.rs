@@ -130,8 +130,8 @@ pub fn start_inertia(
     // Convert px velocity to time velocity (same sign convention as apply_hand_pan: negate)
     let v0_time = -(velocity_px_per_sec / canvas_width) * visible_time;
     let start_scroll = state.view.scroll_offset().get_untracked();
-    let waterfall_active = (state.mic_recording.get_untracked()
-        || state.mic_listening.get_untracked())
+    let waterfall_active = (state.mic.recording().get_untracked()
+        || state.mic.listening().get_untracked())
         && crate::canvas::live_waterfall::is_active();
     let (min_scroll, max_scroll) = if waterfall_active {
         let total_time = crate::canvas::live_waterfall::total_time();

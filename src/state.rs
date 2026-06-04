@@ -1458,7 +1458,103 @@ pub mod store_fields {
         ViewStateStoreFields,
         FilterStateStoreFields,
         GainStateStoreFields,
+        MicStateStoreFields,
+        RecordingMetaStateStoreFields,
     };
+}
+
+/// Microphone capture + recording lifecycle (independent listen + record).
+#[derive(Clone, Debug, Store)]
+pub struct MicState {
+    pub listening: bool,
+    pub recording: bool,
+    pub sample_rate: u32,
+    pub samples_recorded: usize,
+    pub bits_per_sample: u16,
+    /// 0 = auto (device default).
+    pub max_sample_rate: u32,
+    /// Maximum seconds of listen buffer to capture on long-press record.
+    pub preroll_buffer_secs: u32,
+    pub mode: MicMode,
+    /// Actual rates from cpal device query.
+    pub supported_rates: Vec<u32>,
+    /// File index of the currently-recording live file (None if not recording).
+    pub live_file_idx: Option<usize>,
+    /// Generation counter for the live processing loop (older loops self-exit).
+    pub processing_gen: u32,
+    /// Number of pre-roll samples captured from the listen buffer on long-press.
+    pub preroll_samples: usize,
+    /// Wall-clock ms when the long-press gesture started.
+    pub gesture_start_ms: Option<f64>,
+    /// Wall-clock ms when recording started, for timer display.
+    pub recording_start_time: Option<f64>,
+    /// Wrapping counter incremented by setInterval(100ms) while recording.
+    pub timer_tick: u32,
+    /// Current mic device name (populated on open or query).
+    pub device_name: Option<String>,
+    /// Connection type: "USB", "Internal", "Bluetooth", etc.
+    pub connection_type: Option<String>,
+    /// USB mic manufacturer name (from USB descriptors), if available.
+    pub manufacturer: Option<String>,
+    /// Whether a USB audio device is currently connected.
+    pub usb_connected: bool,
+    /// What Auto mode resolved to (Cpal or RawUsb).
+    pub effective_mode: MicMode,
+    /// Target scroll offset during recording (rAF interpolates toward it).
+    pub recording_target_scroll: f64,
+    /// Epoch ms until which the waterfall smooth-scroll leaves scroll alone.
+    pub scroll_user_pan_until: f64,
+    /// Rightmost spectrogram column with actual data during recording.
+    pub live_data_cols: usize,
+    /// User's preferred device name for mic input. None = system default.
+    pub selected_device: Option<String>,
+    /// Whether the mic chooser modal dialog is visible.
+    pub show_chooser: bool,
+    /// User dismissed the "Mic detected" chip for this session.
+    pub chip_dismissed: bool,
+    /// Peak audio level from mic (0.0..1.0).
+    pub peak_level: f32,
+    /// Mic acquisition strategy (Ask, Selected, Browser, None).
+    pub strategy: MicStrategy,
+    /// Which backend is handling mic audio.
+    pub backend: Option<MicBackend>,
+    /// State of mic acquisition lifecycle.
+    pub acquisition_state: MicAcquisitionState,
+    /// Pending mic action (Listen or Record).
+    pub pending_action: Option<MicPendingAction>,
+    /// Whether a recording is ready to begin.
+    pub record_ready_state: RecordReadyState,
+    /// Debounce: true from Record press until running/abandoned.
+    pub starting_recording: bool,
+    /// Whether the mic permission dialog has been shown.
+    pub permission_dialog_shown: bool,
+    /// Maximum bit depth for mic recording (0 = auto).
+    pub max_bit_depth: u16,
+    /// Mono or stereo channel mode for mic recording.
+    pub channel_mode: ChannelMode,
+    /// Information about the selected mic device.
+    pub device_info: Option<MicDeviceInfo>,
+    /// Context window size in samples for PS/PV overlap-save buffering.
+    pub listen_context_samples: usize,
+    /// When true, mic input is processed but the speakers stay silent.
+    pub mute_output: bool,
+}
+
+/// Recording metadata / privacy: GPS, device id, home-wifi suppression.
+#[derive(Clone, Debug, Store)]
+pub struct RecordingMetaState {
+    /// Whether GPS location embedding is enabled (persisted).
+    pub gps_enabled: bool,
+    /// GPS location acquired at recording start (cleared after finalization).
+    pub location: Option<GpsLocation>,
+    /// WiFi SSIDs where location embedding is suppressed (persisted).
+    pub home_wifi_ssids: Vec<String>,
+    /// Whether to include phone model in recording metadata (persisted).
+    pub device_model_enabled: bool,
+    /// Cached device manufacturer (Android only).
+    pub cached_make: Option<String>,
+    /// Cached device model (Android only).
+    pub cached_model: Option<String>,
 }
 
 // ── AppState ─────────────────────────────────────────────────────────────────
@@ -1601,132 +1697,26 @@ pub struct AppState {
     pub output_snap: RwSignal<OutputSnap>,
 
     // Microphone (independent listen + record)
-    pub mic_listening: RwSignal<bool>,
-    pub mic_recording: RwSignal<bool>,
-    pub mic_sample_rate: RwSignal<u32>,
-    pub mic_samples_recorded: RwSignal<usize>,
-    pub mic_bits_per_sample: RwSignal<u16>,
-    pub mic_max_sample_rate: RwSignal<u32>, // 0 = auto (device default)
-    /// Maximum seconds of listen buffer to capture on long-press record.
-    pub mic_preroll_buffer_secs: RwSignal<u32>,
-    pub mic_mode: RwSignal<MicMode>,
-    pub mic_supported_rates: RwSignal<Vec<u32>>, // actual rates from cpal device query
-    /// File index of the currently-recording live file (None if not recording).
-    /// Used to update the live file in-place during recording and finalization.
-    pub mic_live_file_idx: RwSignal<Option<usize>>,
-    /// Generation counter for the live processing loop.  Incremented each time
-    /// `spawn_live_processing_loop` is called.  Older loops exit when they see
-    /// they've been superseded, preventing duplicate-loop races (e.g. listen →
-    /// record with no files open used to spawn two loops on the same file_index).
-    pub mic_processing_gen: RwSignal<u32>,
-    /// Number of pre-roll samples captured from the listen buffer when the user
-    /// long-pressed record.  Zero = no pre-roll.  Used to write a WAV cue marker.
-    pub mic_preroll_samples: RwSignal<usize>,
-    /// Wall-clock time (Date.now()) when the long-press gesture started.
-    /// Used to compensate for audio accumulated during the gesture hold period.
-    pub mic_gesture_start_ms: RwSignal<Option<f64>>,
-    /// Wall-clock time (Date.now()) when recording started, for timer display.
-    pub mic_recording_start_time: RwSignal<Option<f64>>,
-    /// Wrapping counter incremented by setInterval(100ms) while recording.
-    pub mic_timer_tick: RwSignal<u32>,
-    /// Current mic device name (populated on open or query).
-    pub mic_device_name: RwSignal<Option<String>>,
-    /// Connection type: "USB", "Internal", "Bluetooth", etc.
-    pub mic_connection_type: RwSignal<Option<String>>,
-    /// Whether GPS location embedding is enabled (privacy toggle, persisted).
-    pub gps_location_enabled: RwSignal<bool>,
-    /// GPS location acquired at recording start (cleared after finalization).
-    pub recording_location: RwSignal<Option<GpsLocation>>,
-    /// WiFi SSIDs where location embedding is suppressed (home networks, persisted).
-    pub home_wifi_ssids: RwSignal<Vec<String>>,
-    /// Whether to include phone model in recording metadata (privacy toggle, persisted, default true).
-    pub device_model_enabled: RwSignal<bool>,
-    /// Cached device manufacturer (e.g. "samsung"), fetched once on first recording. Android only.
-    pub cached_device_make: RwSignal<Option<String>>,
-    /// Cached device model (e.g. "SM-A556E"), fetched once on first recording. Android only.
-    pub cached_device_model: RwSignal<Option<String>>,
-    /// USB mic manufacturer name (from USB descriptors), if available.
-    pub mic_manufacturer: RwSignal<Option<String>>,
-    /// Whether a USB audio device is currently connected.
-    pub mic_usb_connected: RwSignal<bool>,
-    /// What Auto mode resolved to (Cpal or RawUsb). Ignored when mode is not Auto.
-    pub mic_effective_mode: RwSignal<MicMode>,
-    /// Target scroll offset during recording. The rAF animation loop interpolates
-    /// scroll_offset toward this value for smooth waterfall scrolling.
-    pub mic_recording_target_scroll: RwSignal<f64>,
-    /// Epoch ms (Date.now) until which the waterfall smooth-scroll animation must
-    /// leave `scroll_offset` alone — lets the user drag backwards during
-    /// listen/record without the animation snapping back to "now". After this
-    /// timestamp elapses, the smooth-scroll loop resumes snapping to the live
-    /// edge. 0.0 = no suspension.
-    pub mic_scroll_user_pan_until: RwSignal<f64>,
-    /// Rightmost spectrogram column with actual data during recording.
-    /// Used to clip the canvas so partial tiles don't show black padding.
-    pub mic_live_data_cols: RwSignal<usize>,
-    /// User's preferred device name for mic input. None = use system default.
-    pub mic_selected_device: RwSignal<Option<String>>,
-    /// Whether the mic chooser modal dialog is visible.
-    pub show_mic_chooser: RwSignal<bool>,
-    /// User has dismissed the "Mic detected" chip in the file panel for this
-    /// session. Resets to false whenever a new USB mic appears so a fresh
-    /// connect re-shows the chip.
-    pub mic_chip_dismissed: RwSignal<bool>,
+    /// Mic capture + recording lifecycle (grouped reactive store).
+    pub mic: Store<MicState>,
+    /// Recording metadata / privacy: GPS, device id, home-wifi (grouped store).
+    pub recording_meta: Store<RecordingMetaState>,
+
     /// Whether the privacy settings modal dialog is visible.
     pub show_privacy_settings: RwSignal<bool>,
     /// Whether the about dialog is visible.
     pub show_about: RwSignal<bool>,
-    /// Peak audio level from mic (0.0..1.0).
-    pub mic_peak_level: RwSignal<f32>,
-    /// Mic acquisition strategy (Ask, Selected, Browser, None).
-    pub mic_strategy: RwSignal<MicStrategy>,
-    /// Which backend is handling mic audio.
-    pub mic_backend: RwSignal<Option<MicBackend>>,
-    /// State of mic acquisition lifecycle.
-    pub mic_acquisition_state: RwSignal<MicAcquisitionState>,
-    /// Pending mic action (Listen or Record).
-    pub mic_pending_action: RwSignal<Option<MicPendingAction>>,
-    /// Whether a recording is ready to begin.
-    pub record_ready_state: RwSignal<RecordReadyState>,
-    /// True from the moment the user presses Record until the recording is
-    /// either actively running (`mic_recording=true`) or the start attempt
-    /// was abandoned (chooser cancelled, permission denied, dialog cancelled).
-    /// Used to debounce rapid Record taps so a single user gesture doesn't
-    /// kick off two parallel `mic_start_recording` IPCs and produce
-    /// duplicate Android MediaStore entries ("…(1).wav" + a stuck `.pending`).
-    pub mic_starting_recording: RwSignal<bool>,
-    /// Whether the mic permission dialog has been shown.
-    pub mic_permission_dialog_shown: RwSignal<bool>,
-    /// Maximum bit depth for mic recording (0 = auto).
-    pub mic_max_bit_depth: RwSignal<u16>,
-    /// Mono or stereo channel mode for mic recording.
-    pub mic_channel_mode: RwSignal<ChannelMode>,
-    /// Information about the selected mic device.
-    pub mic_device_info: RwSignal<Option<MicDeviceInfo>>,
-
-    // Live listen settings.
-    // Mode/het/factor/bandpass all reuse the unified HFR signals (playback_mode,
-    // het_frequency, het_cutoff, ps_factor, pv_factor, zc_factor, filter_*).
-    /// Context window size in samples for PS/PV overlap-save buffering.
-    pub listen_context_samples: RwSignal<usize>,
-    /// When true, mic input is processed but the speakers stay silent.
-    /// Used as a "mic warm-up / ready" mode and as a manual mute while listening.
-    pub mic_mute_output: RwSignal<bool>,
-    /// True when we've detected that background audio (capture or audible
-    /// monitoring) was throttled by the OS while the app was backgrounded, and
-    /// want to surface the one-time battery-optimization guidance. Cleared when
-    /// the user acts on or dismisses it.
+    /// True when OS-throttled background audio was detected; surfaces the
+    /// one-time battery-optimization guidance. Cleared when acted on/dismissed.
     pub show_background_audio_hint: RwSignal<bool>,
-    /// Persisted flag: the user has already seen and dismissed the background-
-    /// audio guidance, so we don't nag again. Stored in localStorage under
-    /// `oversample_bg_audio_hint_dismissed`.
+    /// Persisted flag: background-audio guidance already dismissed
+    /// (`oversample_bg_audio_hint_dismissed`).
     pub background_hint_dismissed: RwSignal<bool>,
-    /// True when the in-app "we'll ask for notification permission, here's why"
-    /// rationale modal should show (Android, before the OS POST_NOTIFICATIONS
-    /// prompt for the foreground-service notification).
+    /// True when the in-app notification-permission rationale modal should show
+    /// (Android, before the OS POST_NOTIFICATIONS prompt).
     pub show_notif_rationale: RwSignal<bool>,
-    /// Persisted flag: we've already surfaced the notification rationale (and
-    /// requested or the user declined), so we don't prompt again. Stored under
-    /// `oversample_notif_perm_asked`.
+    /// Persisted flag: notification rationale already surfaced
+    /// (`oversample_notif_perm_asked`).
     pub notif_perm_asked: RwSignal<bool>,
 
     // Transient status message (e.g. permission errors)
@@ -2087,76 +2077,80 @@ impl AppState {
             spec_hover_handle: RwSignal::new(None),
             output_freq_highlight: RwSignal::new(None),
             output_snap: RwSignal::new(OutputSnap::Standard),
-            mic_listening: RwSignal::new(false),
-            mic_recording: RwSignal::new(false),
-            mic_sample_rate: RwSignal::new(0),
-            mic_samples_recorded: RwSignal::new(0),
-            mic_bits_per_sample: RwSignal::new(16),
-            mic_max_sample_rate: RwSignal::new(0),
-            mic_preroll_buffer_secs: RwSignal::new(10),
-            mic_mode: RwSignal::new(if detect_tauri() { MicMode::Auto } else { MicMode::Browser }),
-            mic_supported_rates: RwSignal::new(Vec::new()),
-            mic_live_file_idx: RwSignal::new(None),
-            mic_processing_gen: RwSignal::new(0),
-            mic_preroll_samples: RwSignal::new(0),
-            mic_gesture_start_ms: RwSignal::new(None),
-            mic_recording_start_time: RwSignal::new(None),
-            mic_timer_tick: RwSignal::new(0),
-            mic_device_name: RwSignal::new(None),
-            mic_connection_type: RwSignal::new(None),
-            gps_location_enabled: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_gps_enabled").ok().flatten())
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            mic: Store::new(MicState {
+                listening: false,
+                recording: false,
+                sample_rate: 0,
+                samples_recorded: 0,
+                bits_per_sample: 16,
+                max_sample_rate: 0,
+                preroll_buffer_secs: 10,
+                mode: if detect_tauri() { MicMode::Auto } else { MicMode::Browser },
+                supported_rates: Vec::new(),
+                live_file_idx: None,
+                processing_gen: 0,
+                preroll_samples: 0,
+                gesture_start_ms: None,
+                recording_start_time: None,
+                timer_tick: 0,
+                device_name: None,
+                connection_type: None,
+                manufacturer: None,
+                usb_connected: false,
+                effective_mode: if detect_tauri() { MicMode::Cpal } else { MicMode::Browser },
+                recording_target_scroll: 0.0,
+                scroll_user_pan_until: 0.0,
+                live_data_cols: 0,
+                selected_device: None,
+                show_chooser: false,
+                chip_dismissed: false,
+                peak_level: 0.0,
+                strategy: if detect_tauri() { MicStrategy::Ask } else { MicStrategy::Browser },
+                backend: None,
+                acquisition_state: MicAcquisitionState::Idle,
+                pending_action: None,
+                record_ready_state: RecordReadyState::None,
+                starting_recording: false,
+                permission_dialog_shown: false,
+                max_bit_depth: 0,
+                channel_mode: ChannelMode::Mono,
+                device_info: None,
+                listen_context_samples: 65536,
+                mute_output: false,
             }),
-            recording_location: RwSignal::new(None),
-            home_wifi_ssids: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_home_wifi").ok().flatten())
-                    .map(|v| {
-                        v.split('\n')
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default()
+            recording_meta: Store::new(RecordingMetaState {
+                gps_enabled: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_gps_enabled").ok().flatten())
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                },
+                location: None,
+                home_wifi_ssids: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_home_wifi").ok().flatten())
+                        .map(|v| {
+                            v.split('\n')
+                                .filter(|s| !s.is_empty())
+                                .map(|s| s.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                },
+                device_model_enabled: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_device_model").ok().flatten())
+                        .map(|v| v != "false")
+                        .unwrap_or(true) // default on
+                },
+                cached_make: None,
+                cached_model: None,
             }),
-            device_model_enabled: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_device_model").ok().flatten())
-                    .map(|v| v != "false")
-                    .unwrap_or(true) // default on
-            }),
-            cached_device_make: RwSignal::new(None),
-            cached_device_model: RwSignal::new(None),
-            mic_manufacturer: RwSignal::new(None),
-            mic_usb_connected: RwSignal::new(false),
-            mic_effective_mode: RwSignal::new(if detect_tauri() { MicMode::Cpal } else { MicMode::Browser }),
-            mic_recording_target_scroll: RwSignal::new(0.0),
-            mic_scroll_user_pan_until: RwSignal::new(0.0),
-            mic_live_data_cols: RwSignal::new(0),
-            mic_selected_device: RwSignal::new(None),
-            show_mic_chooser: RwSignal::new(false),
-            mic_chip_dismissed: RwSignal::new(false),
             show_privacy_settings: RwSignal::new(false),
             show_about: RwSignal::new(false),
-            mic_peak_level: RwSignal::new(0.0),
-            mic_strategy: RwSignal::new(if detect_tauri() { MicStrategy::Ask } else { MicStrategy::Browser }),
-            mic_backend: RwSignal::new(None),
-            mic_acquisition_state: RwSignal::new(MicAcquisitionState::Idle),
-            mic_pending_action: RwSignal::new(None),
-            record_ready_state: RwSignal::new(RecordReadyState::None),
-            mic_starting_recording: RwSignal::new(false),
-            mic_permission_dialog_shown: RwSignal::new(false),
-            mic_max_bit_depth: RwSignal::new(0),
-            mic_channel_mode: RwSignal::new(ChannelMode::Mono),
-            mic_device_info: RwSignal::new(None),
-            listen_context_samples: RwSignal::new(65536),
-            mic_mute_output: RwSignal::new(false),
             show_background_audio_hint: RwSignal::new(false),
             background_hint_dismissed: RwSignal::new({
                 web_sys::window()
@@ -2629,9 +2623,9 @@ impl AppState {
     /// the display immediately snapping back to the live edge. Called on every
     /// pan tick so the timer always extends past the last gesture.
     pub fn suspend_waterfall_follow(&self, delay_ms: f64) {
-        if self.mic_recording.get_untracked() || self.mic_listening.get_untracked() {
+        if self.mic.recording().get_untracked() || self.mic.listening().get_untracked() {
             let until = js_sys::Date::now() + delay_ms;
-            self.mic_scroll_user_pan_until.set(until);
+            self.mic.scroll_user_pan_until().set(until);
         }
     }
 
@@ -2961,10 +2955,10 @@ impl AppState {
     /// back to 96 kHz if neither source has reported a sample rate.
     pub fn active_nyquist(&self) -> f64 {
         let cur = self.current_file_index.get_untracked();
-        let live = self.mic_live_file_idx.get_untracked();
+        let live = self.mic.live_file_idx().get_untracked();
         let is_live_doc = matches!((cur, live), (Some(c), Some(l)) if c == l);
         if is_live_doc {
-            let sr = self.mic_sample_rate.get_untracked();
+            let sr = self.mic.sample_rate().get_untracked();
             if sr > 0 {
                 return sr as f64 / 2.0;
             }

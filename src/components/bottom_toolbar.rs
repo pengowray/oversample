@@ -47,10 +47,10 @@ pub fn BottomToolbar() -> impl IntoView {
     // ── Recording timer ──
     let interval_id: StoredValue<Option<i32>> = StoredValue::new(None);
     Effect::new(move |_| {
-        let recording = state.mic_recording.get();
+        let recording = state.mic.recording().get();
         if recording {
             let cb = Closure::<dyn FnMut()>::new(move || {
-                state.mic_timer_tick.update(|n| *n = n.wrapping_add(1));
+                state.mic.timer_tick().update(|n| *n = n.wrapping_add(1));
             });
             if let Some(window) = web_sys::window() {
                 if let Ok(id) = window.set_interval_with_callback_and_timeout_and_arguments_0(
@@ -84,7 +84,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
     let play_left_class = Signal::derive(move || {
         let no_file = state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
-        let recording_and_listening = state.mic_recording.get() && state.mic_listening.get();
+        let recording_and_listening = state.mic.recording().get() && state.mic.listening().get();
         if no_file || recording_and_listening {
             "layer-btn combo-btn-left disabled"
         } else if state.is_playing.get() {
@@ -216,7 +216,7 @@ pub fn BottomToolbar() -> impl IntoView {
     // start playback.
     let do_play_in_mode = move |mode: PlaybackMode| {
         let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
-        let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
+        let recording_and_listening = state.mic.recording().get_untracked() && state.mic.listening().get_untracked();
         if no_file || recording_and_listening { return; }
         // Stop anything currently playing (lets the HFR-restore Effect
         // unpause HFR if we'd paused it for a previous 1:1 play).
@@ -252,7 +252,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
     let play_left_click = Callback::new(move |_: web_sys::MouseEvent| {
         let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
-        let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
+        let recording_and_listening = state.mic.recording().get_untracked() && state.mic.listening().get_untracked();
         if no_file || recording_and_listening { return; }
         if state.is_playing.get_untracked() {
             playback::stop(&state);
@@ -268,9 +268,9 @@ pub fn BottomToolbar() -> impl IntoView {
     let rec_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::RecordMode));
 
     let rec_left_class = Signal::derive(move || {
-        if state.mic_recording.get() {
+        if state.mic.recording().get() {
             "layer-btn combo-btn-left rec-btn mic-recording"
-        } else if state.record_mode.get() == RecordMode::ListenOnly || state.mic_strategy.get() == MicStrategy::None {
+        } else if state.record_mode.get() == RecordMode::ListenOnly || state.mic.strategy().get() == MicStrategy::None {
             "layer-btn combo-btn-left rec-btn disabled"
         } else {
             "layer-btn combo-btn-left rec-btn"
@@ -281,9 +281,9 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let rec_left_value = Signal::derive(move || {
-        if state.mic_recording.get() {
-            let _ = state.mic_timer_tick.get();
-            let start = state.mic_recording_start_time.get_untracked().unwrap_or(0.0);
+        if state.mic.recording().get() {
+            let _ = state.mic.timer_tick().get();
+            let start = state.mic.recording_start_time().get_untracked().unwrap_or(0.0);
             let now = js_sys::Date::now();
             let secs = (now - start) / 1000.0;
             format!("Rec {}", crate::format_time::format_duration_compact(secs))
@@ -301,7 +301,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
     let rec_left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if state.record_mode.get_untracked() == RecordMode::ListenOnly
-            || state.mic_strategy.get_untracked() == MicStrategy::None {
+            || state.mic.strategy().get_untracked() == MicStrategy::None {
             return; // greyed out
         }
         let st = state;
@@ -312,11 +312,11 @@ pub fn BottomToolbar() -> impl IntoView {
     // Long-press on record button while listening: start recording with pre-roll
     // buffer (works even in ListenOnly mode).
     let rec_long_press = Callback::new(move |_: web_sys::MouseEvent| {
-        if state.mic_strategy.get_untracked() == MicStrategy::None {
+        if state.mic.strategy().get_untracked() == MicStrategy::None {
             return;
         }
         // Only meaningful when currently listening
-        if !state.mic_listening.get_untracked() {
+        if !state.mic.listening().get_untracked() {
             return;
         }
         let st = state;
@@ -680,13 +680,13 @@ pub fn BottomToolbar() -> impl IntoView {
                     // LED state: green when a mic is connected and ready to use.
                     // Red dot is rendered separately while recording (CSS pulses).
                     let led_class = Signal::derive(move || {
-                        if state.mic_strategy.get() == MicStrategy::None {
+                        if state.mic.strategy().get() == MicStrategy::None {
                             "mic-led off"
-                        } else if state.mic_recording.get() {
+                        } else if state.mic.recording().get() {
                             "mic-led rec"
-                        } else if state.mic_listening.get() {
+                        } else if state.mic.listening().get() {
                             "mic-led listening"
-                        } else if state.mic_backend.get().is_some() || state.mic_device_info.get().is_some() {
+                        } else if state.mic.backend().get().is_some() || state.mic.device_info().get().is_some() {
                             "mic-led ready"
                         } else {
                             "mic-led idle"
@@ -701,10 +701,10 @@ pub fn BottomToolbar() -> impl IntoView {
                     // explicitly picked Browser strategy), so it gets the
                     // low-key capsule rather than the amber "empty" nudge.
                     let mic_left_class = Signal::derive(move || {
-                        let strat = state.mic_strategy.get();
+                        let strat = state.mic.strategy().get();
                         if strat == MicStrategy::None {
                             "layer-btn combo-btn-left mic-select-btn mic-off"
-                        } else if state.mic_device_info.get().is_some() || strat == MicStrategy::Browser {
+                        } else if state.mic.device_info().get().is_some() || strat == MicStrategy::Browser {
                             "layer-btn combo-btn-left mic-select-btn mic-chosen"
                         } else {
                             "layer-btn combo-btn-left mic-select-btn mic-empty"
@@ -713,20 +713,20 @@ pub fn BottomToolbar() -> impl IntoView {
                     let mic_right_class = Signal::derive(move || {
                         if mic_is_open.get() {
                             "layer-btn combo-btn-right mic-options-btn open"
-                        } else if state.mic_listening.get() || state.mic_recording.get() {
+                        } else if state.mic.listening().get() || state.mic.recording().get() {
                             "layer-btn combo-btn-right mic-options-btn active"
                         } else {
                             "layer-btn combo-btn-right mic-options-btn"
                         }
                     });
                     let mic_value = Signal::derive(move || {
-                        match state.mic_strategy.get() {
+                        match state.mic.strategy().get() {
                             MicStrategy::None => "Off".to_string(),
-                            MicStrategy::Browser if state.mic_device_info.get().is_none() => {
+                            MicStrategy::Browser if state.mic.device_info().get().is_none() => {
                                 "Browser default".to_string()
                             }
                             _ => {
-                                if let Some(info) = state.mic_device_info.get() {
+                                if let Some(info) = state.mic.device_info().get() {
                                     info.name.clone()
                                 } else {
                                     "No mic selected".to_string()
@@ -735,9 +735,9 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                     });
                     let mic_title = Signal::derive(move || {
-                        if state.mic_strategy.get() == MicStrategy::None {
+                        if state.mic.strategy().get() == MicStrategy::None {
                             "Mic input is disabled. Click for options.".to_string()
-                        } else if let Some(info) = state.mic_device_info.get() {
+                        } else if let Some(info) = state.mic.device_info().get() {
                             let rate = info.supported_rates.iter().max().copied().unwrap_or(0);
                             let rate_str = if rate >= 1000 { format!(" \u{2014} up to {} kHz", rate / 1000) } else { String::new() };
                             format!("Microphone: {}{}", info.name, rate_str)
@@ -761,8 +761,8 @@ pub fn BottomToolbar() -> impl IntoView {
                                     // Close the options popup if it happens to be open,
                                     // then surface the chooser modal.
                                     state.layer_panel_open.set(None);
-                                    state.mic_pending_action.set(None);
-                                    state.show_mic_chooser.set(true);
+                                    state.mic.pending_action().set(None);
+                                    state.mic.show_chooser().set(true);
                                 }
                             >
                                 <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
@@ -786,16 +786,16 @@ pub fn BottomToolbar() -> impl IntoView {
                                     // ── Microphone strategy ──
                                     <div class="layer-panel-title">"Microphone"</div>
                                     <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                                        <button class=move || layer_opt_class(state.mic_strategy.get() == MicStrategy::Ask)
+                                        <button class=move || layer_opt_class(state.mic.strategy().get() == MicStrategy::Ask)
                                             on:click=move |_| {
-                                                state.mic_strategy.set(MicStrategy::Ask);
-                                                state.mic_backend.set(None);
-                                                state.mic_device_info.set(None);
-                                                state.mic_selected_device.set(None);
+                                                state.mic.strategy().set(MicStrategy::Ask);
+                                                state.mic.backend().set(None);
+                                                state.mic.device_info().set(None);
+                                                state.mic.selected_device().set(None);
                                             }
                                         >"Ask"</button>
                                         <button class=move || {
-                                            if state.mic_strategy.get() == MicStrategy::Selected {
+                                            if state.mic.strategy().get() == MicStrategy::Selected {
                                                 layer_opt_class(true)
                                             } else {
                                                 "layer-panel-opt disabled"
@@ -807,26 +807,26 @@ pub fn BottomToolbar() -> impl IntoView {
                                             if state.is_tauri {
                                                 "layer-panel-opt disabled"
                                             } else {
-                                                layer_opt_class(state.mic_strategy.get() == MicStrategy::Browser)
+                                                layer_opt_class(state.mic.strategy().get() == MicStrategy::Browser)
                                             }
                                         }
                                             on:click=move |_| {
                                                 if !state.is_tauri {
-                                                    state.mic_strategy.set(MicStrategy::Browser);
+                                                    state.mic.strategy().set(MicStrategy::Browser);
                                                 }
                                             }
                                             title=move || if state.is_tauri { "Not available on desktop/mobile" } else { "Use browser Web Audio API" }
                                         >"Browser"</button>
-                                        <button class=move || layer_opt_class(state.mic_strategy.get() == MicStrategy::None)
-                                            on:click=move |_| state.mic_strategy.set(MicStrategy::None)
+                                        <button class=move || layer_opt_class(state.mic.strategy().get() == MicStrategy::None)
+                                            on:click=move |_| state.mic.strategy().set(MicStrategy::None)
                                         >"None"</button>
                                     </div>
 
                                     // Selected device info + change button
-                                    <Show when=move || matches!(state.mic_strategy.get(), MicStrategy::Ask | MicStrategy::Selected)>
+                                    <Show when=move || matches!(state.mic.strategy().get(), MicStrategy::Ask | MicStrategy::Selected)>
                                         <div style="padding: 2px 8px;">
                                             {move || {
-                                                let info = state.mic_device_info.get();
+                                                let info = state.mic.device_info().get();
                                                 match info {
                                                     Some(info) => {
                                                         let rate_str = if !info.supported_rates.is_empty() {
@@ -862,18 +862,18 @@ pub fn BottomToolbar() -> impl IntoView {
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     if let Ok(val) = leptos::prelude::event_target_value(&ev).parse::<u32>() {
-                                                        state.mic_max_sample_rate.set(val);
+                                                        state.mic.max_sample_rate().set(val);
                                                     }
                                                 }
                                             >
-                                                <option value="0" selected=move || state.mic_max_sample_rate.get() == 0>"Auto"</option>
-                                                <option value="44100" selected=move || state.mic_max_sample_rate.get() == 44100>"44.1k"</option>
-                                                <option value="48000" selected=move || state.mic_max_sample_rate.get() == 48000>"48k"</option>
-                                                <option value="96000" selected=move || state.mic_max_sample_rate.get() == 96000>"96k"</option>
-                                                <option value="192000" selected=move || state.mic_max_sample_rate.get() == 192000>"192k"</option>
-                                                <option value="256000" selected=move || state.mic_max_sample_rate.get() == 256000>"256k"</option>
-                                                <option value="384000" selected=move || state.mic_max_sample_rate.get() == 384000>"384k"</option>
-                                                <option value="500000" selected=move || state.mic_max_sample_rate.get() == 500000>"500k"</option>
+                                                <option value="0" selected=move || state.mic.max_sample_rate().get() == 0>"Auto"</option>
+                                                <option value="44100" selected=move || state.mic.max_sample_rate().get() == 44100>"44.1k"</option>
+                                                <option value="48000" selected=move || state.mic.max_sample_rate().get() == 48000>"48k"</option>
+                                                <option value="96000" selected=move || state.mic.max_sample_rate().get() == 96000>"96k"</option>
+                                                <option value="192000" selected=move || state.mic.max_sample_rate().get() == 192000>"192k"</option>
+                                                <option value="256000" selected=move || state.mic.max_sample_rate().get() == 256000>"256k"</option>
+                                                <option value="384000" selected=move || state.mic.max_sample_rate().get() == 384000>"384k"</option>
+                                                <option value="500000" selected=move || state.mic.max_sample_rate().get() == 500000>"500k"</option>
                                             </select>
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
@@ -881,14 +881,14 @@ pub fn BottomToolbar() -> impl IntoView {
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     if let Ok(val) = leptos::prelude::event_target_value(&ev).parse::<u16>() {
-                                                        state.mic_max_bit_depth.set(val);
+                                                        state.mic.max_bit_depth().set(val);
                                                     }
                                                 }
                                             >
-                                                <option value="0" selected=move || state.mic_max_bit_depth.get() == 0>"Auto"</option>
-                                                <option value="16" selected=move || state.mic_max_bit_depth.get() == 16>"16-bit"</option>
-                                                <option value="24" selected=move || state.mic_max_bit_depth.get() == 24>"24-bit"</option>
-                                                <option value="32" selected=move || state.mic_max_bit_depth.get() == 32>"32-bit"</option>
+                                                <option value="0" selected=move || state.mic.max_bit_depth().get() == 0>"Auto"</option>
+                                                <option value="16" selected=move || state.mic.max_bit_depth().get() == 16>"16-bit"</option>
+                                                <option value="24" selected=move || state.mic.max_bit_depth().get() == 24>"24-bit"</option>
+                                                <option value="32" selected=move || state.mic.max_bit_depth().get() == 32>"32-bit"</option>
                                             </select>
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
@@ -896,11 +896,11 @@ pub fn BottomToolbar() -> impl IntoView {
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     let val = leptos::prelude::event_target_value(&ev);
-                                                    state.mic_channel_mode.set(if val == "stereo" { ChannelMode::Stereo } else { ChannelMode::Mono });
+                                                    state.mic.channel_mode().set(if val == "stereo" { ChannelMode::Stereo } else { ChannelMode::Mono });
                                                 }
                                             >
-                                                <option value="mono" selected=move || state.mic_channel_mode.get() == ChannelMode::Mono>"Mono"</option>
-                                                <option value="stereo" selected=move || state.mic_channel_mode.get() == ChannelMode::Stereo>"Stereo"</option>
+                                                <option value="mono" selected=move || state.mic.channel_mode().get() == ChannelMode::Mono>"Mono"</option>
+                                                <option value="stereo" selected=move || state.mic.channel_mode().get() == ChannelMode::Stereo>"Stereo"</option>
                                             </select>
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
@@ -908,16 +908,16 @@ pub fn BottomToolbar() -> impl IntoView {
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     if let Ok(val) = leptos::prelude::event_target_value(&ev).parse::<u32>() {
-                                                        state.mic_preroll_buffer_secs.set(val);
+                                                        state.mic.preroll_buffer_secs().set(val);
                                                     }
                                                 }
                                             >
-                                                <option value="2" selected=move || state.mic_preroll_buffer_secs.get() == 2>"2s"</option>
-                                                <option value="5" selected=move || state.mic_preroll_buffer_secs.get() == 5>"5s"</option>
-                                                <option value="10" selected=move || state.mic_preroll_buffer_secs.get() == 10>"10s"</option>
-                                                <option value="15" selected=move || state.mic_preroll_buffer_secs.get() == 15>"15s"</option>
-                                                <option value="20" selected=move || state.mic_preroll_buffer_secs.get() == 20>"20s"</option>
-                                                <option value="30" selected=move || state.mic_preroll_buffer_secs.get() == 30>"30s"</option>
+                                                <option value="2" selected=move || state.mic.preroll_buffer_secs().get() == 2>"2s"</option>
+                                                <option value="5" selected=move || state.mic.preroll_buffer_secs().get() == 5>"5s"</option>
+                                                <option value="10" selected=move || state.mic.preroll_buffer_secs().get() == 10>"10s"</option>
+                                                <option value="15" selected=move || state.mic.preroll_buffer_secs().get() == 15>"15s"</option>
+                                                <option value="20" selected=move || state.mic.preroll_buffer_secs().get() == 20>"20s"</option>
+                                                <option value="30" selected=move || state.mic.preroll_buffer_secs().get() == 30>"30s"</option>
                                             </select>
                                         </div>
                                     </div>
@@ -970,7 +970,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 <button class=move || layer_opt_class(state.record_mode.get() == RecordMode::ListenOnly)
                     on:click=move |_| {
                         // If currently recording, finish and switch to listening
-                        if state.mic_recording.get_untracked() {
+                        if state.mic.recording().get_untracked() {
                             let st = state;
                             wasm_bindgen_futures::spawn_local(async move {
                                 microphone::toggle_record(&st).await; // stops recording

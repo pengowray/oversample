@@ -25,7 +25,7 @@ async fn get_wifi_ssid() -> Option<String> {
 /// Fetch the Android device make/model from the native plugin.
 /// Results are cached in state after first call (cached_device_make / cached_device_model).
 async fn fetch_device_model(state: &AppState) {
-    if state.cached_device_model.get_untracked().is_some() {
+    if state.recording_meta.cached_model().get_untracked().is_some() {
         return;
     }
     let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::DeviceModelResult>(
@@ -34,10 +34,10 @@ async fn fetch_device_model(state: &AppState) {
         return;
     };
     if !result.manufacturer.is_empty() {
-        state.cached_device_make.set(Some(result.manufacturer));
+        state.recording_meta.cached_make().set(Some(result.manufacturer));
     }
     if !result.model.is_empty() {
-        state.cached_device_model.set(Some(result.model));
+        state.recording_meta.cached_model().set(Some(result.model));
     }
 }
 
@@ -89,7 +89,7 @@ pub async fn request_audio_permission_tauri(state: &AppState) -> bool {
 }
 
 /// Query the default cpal input device's supported sample rates without opening the mic.
-/// Updates `state.mic_supported_rates` with the result.
+/// Updates `state.mic.supported_rates()` with the result.
 pub async fn query_cpal_supported_rates(state: &AppState) {
     if !state.is_tauri {
         return;
@@ -114,7 +114,7 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
         }
         let rates_vec: Vec<u32> = rates.into_iter().collect();
         if !rates_vec.is_empty() {
-            state.mic_supported_rates.set(rates_vec);
+            state.mic.supported_rates().set(rates_vec);
         }
         break;
     }
@@ -125,7 +125,7 @@ pub async fn query_mic_info(state: &AppState) {
     if !state.is_tauri {
         return;
     }
-    let backend = state.mic_backend.get_untracked();
+    let backend = state.mic.backend().get_untracked();
 
     match backend {
         Some(MicBackend::RawUsb) => {
@@ -133,13 +133,13 @@ pub async fn query_mic_info(state: &AppState) {
                 "plugin:usb-audio|listUsbDevices",
             ).await {
                 if let Some(dev) = result.devices.iter().find(|d| d.is_audio_device) {
-                    state.mic_device_name.set(Some(dev.product_name.clone()));
-                    state.mic_connection_type.set(Some("USB".to_string()));
-                    state.mic_usb_connected.set(true);
+                    state.mic.device_name().set(Some(dev.product_name.clone()));
+                    state.mic.connection_type().set(Some("USB".to_string()));
+                    state.mic.usb_connected().set(true);
                     return;
                 }
             }
-            state.mic_usb_connected.set(false);
+            state.mic.usb_connected().set(false);
         }
         Some(MicBackend::Cpal) | None => {
             if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>("mic_list_devices").await {
@@ -153,8 +153,8 @@ pub async fn query_mic_info(state: &AppState) {
                         } else {
                             "Internal"
                         };
-                        state.mic_connection_type.set(Some(conn.to_string()));
-                        state.mic_device_name.set(Some(dev.name.clone()));
+                        state.mic.connection_type().set(Some(conn.to_string()));
+                        state.mic.device_name().set(Some(dev.name.clone()));
 
                         let mut max_rate: u32 = 0;
                         let mut format_str: Option<String> = None;
@@ -165,7 +165,7 @@ pub async fn query_mic_info(state: &AppState) {
                             }
                         }
                         if max_rate > 0 {
-                            state.mic_sample_rate.set(max_rate);
+                            state.mic.sample_rate().set(max_rate);
                         }
                         if let Some(fmt) = format_str {
                             let bits: u16 = match fmt.as_str() {
@@ -173,7 +173,7 @@ pub async fn query_mic_info(state: &AppState) {
                                 _ => 0,
                             };
                             if bits > 0 {
-                                state.mic_bits_per_sample.set(bits);
+                                state.mic.bits_per_sample().set(bits);
                             }
                         }
                         break;
@@ -188,7 +188,7 @@ pub async fn query_mic_info(state: &AppState) {
     if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
         "plugin:usb-audio|listUsbDevices",
     ).await {
-        state.mic_usb_connected.set(result.devices.iter().any(|d| d.is_audio_device));
+        state.mic.usb_connected().set(result.devices.iter().any(|d| d.is_audio_device));
     }
 }
 
@@ -198,13 +198,13 @@ pub async fn check_usb_status(state: &AppState) {
         "plugin:usb-audio|listUsbDevices",
     ).await {
         if let Some(dev) = result.devices.iter().find(|d| d.is_audio_device) {
-            state.mic_usb_connected.set(true);
+            state.mic.usb_connected().set(true);
             state.show_info_toast(format!("USB mic: {}", dev.product_name));
             return;
         }
     }
 
-    state.mic_usb_connected.set(false);
+    state.mic.usb_connected().set(false);
 }
 
 // ── Android foreground audio service ─────────────────────────────────────
@@ -281,9 +281,9 @@ async fn maybe_prompt_notifications(state: &AppState) {
 
 // ── Backend resolution ──────────────────────────────────────────────────
 
-/// Convert `state.mic_backend` to `ActiveBackend`.
+/// Convert `state.mic.backend()` to `ActiveBackend`.
 fn resolve_active_backend(state: &AppState) -> Option<ActiveBackend> {
-    state.mic_backend.get_untracked().map(ActiveBackend::from)
+    state.mic.backend().get_untracked().map(ActiveBackend::from)
 }
 
 /// Open the appropriate mic backend based on a resolved MicBackend.
@@ -298,18 +298,18 @@ async fn open_backend(state: &AppState, backend: MicBackend) -> bool {
 /// cancelled, permission was denied, or the mic failed to open.
 pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<MicBackend> {
     // If mic is already open and streaming, return current backend immediately
-    if state.mic_acquisition_state.get_untracked() == MicAcquisitionState::Ready {
-        if let Some(backend) = state.mic_backend.get_untracked() {
+    if state.mic.acquisition_state().get_untracked() == MicAcquisitionState::Ready {
+        if let Some(backend) = state.mic.backend().get_untracked() {
             let still_open = ActiveBackend::from(backend).is_open();
             if still_open {
                 return Some(backend);
             }
             // Backend closed unexpectedly — fall through to re-acquire
-            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
         }
     }
 
-    let strategy = state.mic_strategy.get_untracked();
+    let strategy = state.mic.strategy().get_untracked();
 
     match strategy {
         MicStrategy::None => {
@@ -317,58 +317,58 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
             None
         }
         MicStrategy::Browser => {
-            state.mic_acquisition_state.set(MicAcquisitionState::Acquiring);
+            state.mic.acquisition_state().set(MicAcquisitionState::Acquiring);
             let t0 = js_sys::Date::now();
             if ActiveBackend::Browser.open(state).await {
                 let elapsed = js_sys::Date::now() - t0;
-                state.mic_permission_dialog_shown.set(elapsed > 1500.0);
-                state.mic_backend.set(Some(MicBackend::Browser));
-                state.mic_acquisition_state.set(MicAcquisitionState::Ready);
+                state.mic.permission_dialog_shown().set(elapsed > 1500.0);
+                state.mic.backend().set(Some(MicBackend::Browser));
+                state.mic.acquisition_state().set(MicAcquisitionState::Ready);
                 let st = *state;
                 wasm_bindgen_futures::spawn_local(async move { maybe_prompt_notifications(&st).await; });
                 Some(MicBackend::Browser)
             } else {
-                state.mic_acquisition_state.set(MicAcquisitionState::Failed);
-                state.mic_strategy.set(MicStrategy::Ask);
-                state.mic_backend.set(None);
-                state.mic_device_info.set(None);
-                state.mic_selected_device.set(None);
+                state.mic.acquisition_state().set(MicAcquisitionState::Failed);
+                state.mic.strategy().set(MicStrategy::Ask);
+                state.mic.backend().set(None);
+                state.mic.device_info().set(None);
+                state.mic.selected_device().set(None);
                 state.status_message.set(Some("Browser mic failed. Please choose a microphone.".into()));
                 None
             }
         }
         MicStrategy::Selected => {
-            if let Some(backend) = state.mic_backend.get_untracked() {
-                state.mic_acquisition_state.set(MicAcquisitionState::Acquiring);
+            if let Some(backend) = state.mic.backend().get_untracked() {
+                state.mic.acquisition_state().set(MicAcquisitionState::Acquiring);
                 let t0 = js_sys::Date::now();
                 if open_backend(state, backend).await {
                     let elapsed = js_sys::Date::now() - t0;
-                    state.mic_permission_dialog_shown.set(elapsed > 1500.0);
-                    state.mic_acquisition_state.set(MicAcquisitionState::Ready);
+                    state.mic.permission_dialog_shown().set(elapsed > 1500.0);
+                    state.mic.acquisition_state().set(MicAcquisitionState::Ready);
                     let st = *state;
                     wasm_bindgen_futures::spawn_local(async move { maybe_prompt_notifications(&st).await; });
                     return Some(backend);
                 } else {
-                    state.mic_strategy.set(MicStrategy::Ask);
-                    state.mic_backend.set(None);
-                    state.mic_device_info.set(None);
-                    state.mic_selected_device.set(None);
-                    state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                    state.mic.strategy().set(MicStrategy::Ask);
+                    state.mic.backend().set(None);
+                    state.mic.device_info().set(None);
+                    state.mic.selected_device().set(None);
+                    state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                     state.status_message.set(Some("Microphone failed. Please choose again.".into()));
                     return None;
                 }
             }
             // No backend remembered despite Selected — fall back to Ask
-            state.mic_strategy.set(MicStrategy::Ask);
-            state.mic_pending_action.set(Some(action));
-            state.mic_acquisition_state.set(MicAcquisitionState::AwaitingChoice);
-            state.show_mic_chooser.set(true);
+            state.mic.strategy().set(MicStrategy::Ask);
+            state.mic.pending_action().set(Some(action));
+            state.mic.acquisition_state().set(MicAcquisitionState::AwaitingChoice);
+            state.mic.show_chooser().set(true);
             None
         }
         MicStrategy::Ask => {
-            state.mic_pending_action.set(Some(action));
-            state.mic_acquisition_state.set(MicAcquisitionState::AwaitingChoice);
-            state.show_mic_chooser.set(true);
+            state.mic.pending_action().set(Some(action));
+            state.mic.acquisition_state().set(MicAcquisitionState::AwaitingChoice);
+            state.mic.show_chooser().set(true);
             None
         }
     }
@@ -379,32 +379,32 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
 /// Start recording with the given backend (mic already open).
 async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     warn_if_te_for_live(state);
-    let was_listening = state.mic_listening.get_untracked();
-    let has_listen_file = was_listening && state.mic_live_file_idx.get_untracked().is_some();
+    let was_listening = state.mic.listening().get_untracked();
+    let has_listen_file = was_listening && state.mic.live_file_idx().get_untracked().is_some();
 
     // Fetch device model on first recording (cached for future use)
-    if state.is_tauri && state.is_mobile.get_untracked() && state.device_model_enabled.get_untracked() {
+    if state.is_tauri && state.is_mobile.get_untracked() && state.recording_meta.device_model_enabled().get_untracked() {
         let _ = fetch_device_model(state).await;
     }
 
     // Acquire GPS location if enabled (one-shot, non-blocking).
     // Skip if connected to a home WiFi network (geofencing).
-    if state.gps_location_enabled.get_untracked() && state.is_tauri && state.is_mobile.get_untracked() {
-        let on_home_wifi = if state.home_wifi_ssids.with_untracked(|list| !list.is_empty()) {
+    if state.recording_meta.gps_enabled().get_untracked() && state.is_tauri && state.is_mobile.get_untracked() {
+        let on_home_wifi = if state.recording_meta.home_wifi_ssids().with_untracked(|list| !list.is_empty()) {
             get_wifi_ssid().await
-                .map(|ssid| state.home_wifi_ssids.with_untracked(|list| list.contains(&ssid)))
+                .map(|ssid| state.recording_meta.home_wifi_ssids().with_untracked(|list| list.contains(&ssid)))
                 .unwrap_or(false)
         } else {
             false
         };
         if on_home_wifi {
             log::info!("On home WiFi — skipping location embedding");
-            state.recording_location.set(None);
+            state.recording_meta.location().set(None);
         } else {
-            state.recording_location.set(acquire_gps_location().await);
+            state.recording_meta.location().set(acquire_gps_location().await);
         }
     } else {
-        state.recording_location.set(None);
+        state.recording_meta.location().set(None);
     }
 
     // Detect armed-doc reuse before any backend I/O so we can rename it to the
@@ -416,9 +416,9 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         // Fresh record (not converting an active listen): collapse stale empty
         // live placeholders and reuse the surviving one (armed doc or a stale
         // listen entry) instead of spawning a second recording file.
-        let keep = state.mic_live_file_idx.get_untracked();
+        let keep = state.mic.live_file_idx().get_untracked();
         prune_empty_live_placeholders(state, keep);
-        state.mic_live_file_idx.get_untracked()
+        state.mic.live_file_idx().get_untracked()
             .filter(|&idx| is_reusable_live_doc(state, idx))
     } else {
         None
@@ -434,8 +434,8 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         // Fresh recording — clear buffer, tiles, and any stale pre-roll count
         backend.clear_buffer();
         crate::canvas::tile_cache::clear_all_caches();
-        state.mic_preroll_samples.set(0);
-        state.mic_listening.set(false);
+        state.mic.preroll_samples().set(0);
+        state.mic.listening().set(false);
     } else {
         // Listen→record: keep mic_listening=true during the await so the
         // processing loop doesn't exit (it checks `!recording && !listening`).
@@ -447,7 +447,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         // from `mic_live_file_idx`'s current name. With the placeholder, the
         // MediaStore entry ends up `DISPLAY_NAME=Listening` against MIME
         // `audio/wav`, which Android either rejects or saves invisibly.
-        let sr = state.mic_sample_rate.get_untracked();
+        let sr = state.mic.sample_rate().get_untracked();
         rename_listen_to_recording(state, sr);
     }
 
@@ -456,14 +456,14 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
             // Reset frequency display so the waterfall shows the full mic range.
             state.view.min_display_freq().set(None);
             state.view.max_display_freq().set(None);
-            state.mic_samples_recorded.set(0);
-            state.mic_recording.set(true);
+            state.mic.samples_recorded().set(0);
+            state.mic.recording().set(true);
             // Now safe to clear listening — recording is active, loop won't exit.
-            state.mic_listening.set(false);
-            state.mic_recording_start_time.set(Some(js_sys::Date::now()));
+            state.mic.listening().set(false);
+            state.mic.recording_start_time().set(Some(js_sys::Date::now()));
             // Keep capturing if the app is backgrounded (Android foreground service).
             start_foreground_service(state, "recording").await;
-            let sr = state.mic_sample_rate.get_untracked();
+            let sr = state.mic.sample_rate().get_untracked();
 
             let file_idx = if has_listen_file {
                 // Convert the existing listening file into a recording file.
@@ -502,7 +502,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
             }
             // If we were listening, clean up the orphaned listen file
             if has_listen_file {
-                state.mic_listening.set(false);
+                state.mic.listening().set(false);
                 cleanup_listen_file(state);
             }
             // If we promoted an armed doc to recording above, roll it back so
@@ -517,7 +517,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     // Cleared on both Ok and Err paths — `mic_recording` is what really tells
     // the next press to stop instead of start, but the gate covers the gap
     // between user gesture and that flag flipping.
-    state.mic_starting_recording.set(false);
+    state.mic.starting_recording().set(false);
 }
 
 /// Convert a Tauri recording result into FinalizeParams.  When pre-roll is
@@ -526,7 +526,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
 /// recording).  In that case we use the WASM buffer and force a WASM-side
 /// re-save so the written WAV includes the pre-roll + cue marker.
 fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult, state: &AppState) -> FinalizeParams {
-    let preroll = state.mic_preroll_samples.get_untracked();
+    let preroll = state.mic.preroll_samples().get_untracked();
     if preroll > 0 {
         // Use the full WASM buffer (which includes pre-roll) instead of the
         // Tauri-only samples. Clear saved_path to force a WASM-side re-encode.
@@ -558,7 +558,7 @@ fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult, 
 /// Dispatch a StopResult into finalize_recording or cleanup.
 /// Shared by both `do_stop_recording` and `stop_all`.
 fn handle_stop_result(result: StopResult, state: &AppState) {
-    let bits_per_sample = state.mic_bits_per_sample.get_untracked();
+    let bits_per_sample = state.mic.bits_per_sample().get_untracked();
     match result {
         StopResult::Samples { samples, sample_rate } => {
             finalize_recording(FinalizeParams {
@@ -583,10 +583,10 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
 
 /// Stop recording and finalize.
 async fn do_stop_recording(state: &AppState, backend: ActiveBackend) {
-    let was_listening = state.mic_listening.get_untracked();
-    state.mic_recording.set(false);
-    state.mic_recording_start_time.set(None);
-    state.mic_samples_recorded.set(0);
+    let was_listening = state.mic.listening().get_untracked();
+    state.mic.recording().set(false);
+    state.mic.recording_start_time().set(None);
+    state.mic.samples_recorded().set(0);
 
     let result = backend.stop_recording(state).await;
     handle_stop_result(result, state);
@@ -620,23 +620,23 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     crate::audio::mic_backend::stop_het_playback();
     // Set the frontend signal early so the chunk handler accepts data
     // as soon as the native side starts streaming.
-    state.mic_listening.set(true);
+    state.mic.listening().set(true);
     backend.set_listening(state, true).await;
-    let sr = state.mic_sample_rate.get_untracked();
+    let sr = state.mic.sample_rate().get_untracked();
     // Clear tile caches so previous file's spectrogram doesn't flash
     crate::canvas::tile_cache::clear_all_caches();
 
     // Collapse any stale, empty live-mic placeholders so the file list never
     // accumulates more than one. Keep the current live entry (if any) as the
     // reuse candidate; prune fixes up mic_live_file_idx for any removals.
-    let keep = state.mic_live_file_idx.get_untracked();
+    let keep = state.mic.live_file_idx().get_untracked();
     prune_empty_live_placeholders(state, keep);
     // Reuse the existing live placeholder — an armed doc OR a stale listen
     // entry that wasn't cleanly converted — if one is present; otherwise
     // create a new transient listening file. The reuse path lets the user
     // pre-configure HFR settings before pressing Listen, without spawning a
     // second file.
-    let reuse = state.mic_live_file_idx.get_untracked()
+    let reuse = state.mic.live_file_idx().get_untracked()
         .filter(|&idx| is_reusable_live_doc(state, idx));
     let file_idx = if let Some(idx) = reuse {
         // If it's a stale listen entry, reset its accumulated display state
@@ -659,7 +659,7 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
 /// (mic stays open) so the user can adjust HFR / band and press Listen or
 /// Record again without re-acquiring the mic or creating a new entry.
 async fn do_stop_listening(state: &AppState, backend: ActiveBackend) {
-    state.mic_listening.set(false);
+    state.mic.listening().set(false);
     // Stop scheduled playback immediately so Stop is instant (no backlog tail).
     crate::audio::mic_backend::stop_het_playback();
     crate::canvas::live_waterfall::clear();
@@ -667,7 +667,7 @@ async fn do_stop_listening(state: &AppState, backend: ActiveBackend) {
     backend.clear_buffer();
     backend.set_listening(state, false).await;
     // Tear down the foreground service unless a recording is still running.
-    if !state.mic_recording.get_untracked() {
+    if !state.mic.recording().get_untracked() {
         stop_foreground_service(state).await;
     }
     // Intentionally not calling backend.maybe_close — keep the mic warm
@@ -684,9 +684,9 @@ pub async fn toggle_listen(state: &AppState) {
     // do_start_listening / do_stop_listening here would clear_buffer() (wiping
     // in-progress recording samples) and replace mic_live_file_idx with a new
     // "Listening" entry — corrupting the file list.
-    if state.mic_recording.get_untracked() {
+    if state.mic.recording().get_untracked() {
         if let Some(backend) = resolve_active_backend(state) {
-            let enabling = !state.mic_listening.get_untracked();
+            let enabling = !state.mic.listening().get_untracked();
             state.log_debug("info", format!(
                 "toggle_listen: recording active, {} HET overlay only",
                 if enabling { "enabling" } else { "disabling" },
@@ -698,20 +698,20 @@ pub async fn toggle_listen(state: &AppState) {
                 // Stop the listen overlay's scheduled playback immediately.
                 crate::audio::mic_backend::stop_het_playback();
             }
-            state.mic_listening.set(enabling);
+            state.mic.listening().set(enabling);
             backend.set_listening(state, enabling).await;
         }
         return;
     }
 
     // If already listening, stop
-    if state.mic_listening.get_untracked() {
+    if state.mic.listening().get_untracked() {
         state.log_debug("info", "toggle_listen: stopping");
         if let Some(backend) = resolve_active_backend(state) {
             do_stop_listening(state, backend).await;
         } else {
             // Fallback: just clear signals
-            state.mic_listening.set(false);
+            state.mic.listening().set(false);
             crate::canvas::live_waterfall::clear();
             cleanup_listen_file(state);
         }
@@ -763,19 +763,19 @@ fn warn_if_te_for_live(state: &AppState) {
 pub async fn arm_live_doc(state: &AppState) {
     // If we already have a live doc that's currently streaming, refuse — don't
     // step on an in-progress listen or recording session.
-    if state.mic_listening.get_untracked() || state.mic_recording.get_untracked() {
+    if state.mic.listening().get_untracked() || state.mic.recording().get_untracked() {
         state.show_error_toast("Already listening or recording.");
         return;
     }
 
     // Collapse stale empty live placeholders; keep the current one (if any)
     // as the reuse candidate.
-    let keep = state.mic_live_file_idx.get_untracked();
+    let keep = state.mic.live_file_idx().get_untracked();
     prune_empty_live_placeholders(state, keep);
     // If a reusable live placeholder already exists, reset it to the idle
     // "armed" shape (a stale listen entry gets cleared) and navigate to it
     // instead of making a second one — pressing +New repeatedly is idempotent.
-    if let Some(idx) = state.mic_live_file_idx.get_untracked() {
+    if let Some(idx) = state.mic.live_file_idx().get_untracked() {
         if is_reusable_live_doc(state, idx) {
             convert_listen_to_armed(state); // no-op unless it's a stale listen entry
             state.current_file_index.set(Some(idx));
@@ -798,14 +798,14 @@ pub async fn arm_live_doc(state: &AppState) {
     backend.clear_dsp_state();
     crate::canvas::tile_cache::clear_all_caches();
 
-    let sr = state.mic_sample_rate.get_untracked().max(48_000);
+    let sr = state.mic.sample_rate().get_untracked().max(48_000);
     let _ = start_live_armed(state, sr);
 }
 
 /// Toggle recording on/off. When stopping, finalizes the recording.
 pub async fn toggle_record(state: &AppState) {
     // If already recording, stop
-    if state.mic_recording.get_untracked() {
+    if state.mic.recording().get_untracked() {
         state.log_debug("info", "toggle_record: stopping");
         if let Some(backend) = resolve_active_backend(state) {
             do_stop_recording(state, backend).await;
@@ -819,15 +819,15 @@ pub async fn toggle_record(state: &AppState) {
     // `mic_start_recording` and `try_create_shared_fd`, leaving Android with
     // two MediaStore entries (one stuck IS_PENDING=1 → `.pending`, the other
     // saved as "…(1).wav").
-    if state.mic_starting_recording.get_untracked() {
+    if state.mic.starting_recording().get_untracked() {
         state.log_debug("info", "toggle_record: ignored — start already in flight");
         state.show_info_toast("Recording is starting\u{2026}");
         return;
     }
-    state.mic_starting_recording.set(true);
+    state.mic.starting_recording().set(true);
 
     // If already listening, the mic is ready — go straight to recording
-    if state.mic_listening.get_untracked() {
+    if state.mic.listening().get_untracked() {
         if let Some(backend) = resolve_active_backend(state) {
             state.log_debug("info", format!("toggle_record: already listening, starting immediate with {:?}", backend));
             do_start_recording(state, backend).await;
@@ -840,7 +840,7 @@ pub async fn toggle_record(state: &AppState) {
         Some(b) => b,
         None => {
             state.log_debug("info", "toggle_record: acquire_mic returned None (chooser shown or failed)");
-            state.mic_starting_recording.set(false);
+            state.mic.starting_recording().set(false);
             return;
         }
     };
@@ -848,7 +848,7 @@ pub async fn toggle_record(state: &AppState) {
     let backend = ActiveBackend::from(mic_backend);
 
     // If OS permission dialog was shown (detected by timing), skip our dialog
-    if state.mic_permission_dialog_shown.get_untracked() {
+    if state.mic.permission_dialog_shown().get_untracked() {
         state.log_debug("info", format!("toggle_record: backend={:?}, permission dialog detected, starting immediately", backend));
         do_start_recording(state, backend).await;
     } else {
@@ -856,7 +856,7 @@ pub async fn toggle_record(state: &AppState) {
         // set so a stray tap during the dialog can't kick off a second flow;
         // confirm_record_start / cancel_record_start clear it.
         state.log_debug("info", format!("toggle_record: backend={:?}, showing Ready to Record dialog", backend));
-        state.record_ready_state.set(crate::state::RecordReadyState::AwaitingConfirmation);
+        state.mic.record_ready_state().set(crate::state::RecordReadyState::AwaitingConfirmation);
     }
 }
 
@@ -865,7 +865,7 @@ pub async fn toggle_record(state: &AppState) {
 /// so a WAV cue marker can be written at finalization time.
 pub async fn toggle_record_with_preroll(state: &AppState) {
     // If already recording, just stop (same as toggle_record)
-    if state.mic_recording.get_untracked() {
+    if state.mic.recording().get_untracked() {
         if let Some(backend) = resolve_active_backend(state) {
             do_stop_recording(state, backend).await;
         }
@@ -873,17 +873,17 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
     }
 
     // Debounce against rapid double-press (see `toggle_record` for why).
-    if state.mic_starting_recording.get_untracked() {
+    if state.mic.starting_recording().get_untracked() {
         state.log_debug("info", "toggle_record_with_preroll: ignored — start already in flight");
         return;
     }
-    state.mic_starting_recording.set(true);
+    state.mic.starting_recording().set(true);
 
     // Must be listening to have a pre-roll buffer
-    if !state.mic_listening.get_untracked() {
+    if !state.mic.listening().get_untracked() {
         // Not listening — fall back to normal toggle_record. Clear our flag
         // first so toggle_record's own debounce check doesn't bounce.
-        state.mic_starting_recording.set(false);
+        state.mic.starting_recording().set(false);
         toggle_record(state).await;
         return;
     }
@@ -893,9 +893,9 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
     // is to capture the buffer state from when they *started* pressing, not when
     // the 400ms timeout fired.
     let raw_preroll = crate::audio::mic_backend::with_live_samples(state.is_tauri, |s| s.len());
-    let gesture_start = state.mic_gesture_start_ms.get_untracked();
-    state.mic_gesture_start_ms.set(None); // consume
-    let sample_rate = state.mic_sample_rate.get_untracked();
+    let gesture_start = state.mic.gesture_start_ms().get_untracked();
+    state.mic.gesture_start_ms().set(None); // consume
+    let sample_rate = state.mic.sample_rate().get_untracked();
     let preroll = if let Some(start_ms) = gesture_start {
         let gesture_ms = (js_sys::Date::now() - start_ms).max(0.0);
         let gesture_samples = ((gesture_ms / 1000.0) * sample_rate as f64).round() as usize;
@@ -908,42 +908,42 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
     // gesture-time compensation above doesn't eat into what the user asked
     // for. Clamp back down to the requested duration here so long presses
     // don't produce *more* pre-roll than the setting promises.
-    let requested_secs = state.mic_preroll_buffer_secs.get_untracked().max(2) as usize;
+    let requested_secs = state.mic.preroll_buffer_secs().get_untracked().max(2) as usize;
     let requested_samples = requested_secs.saturating_mul(sample_rate as usize);
     let preroll = preroll.min(requested_samples);
-    state.mic_preroll_samples.set(preroll);
+    state.mic.preroll_samples().set(preroll);
 
     if let Some(backend) = resolve_active_backend(state) {
         log::info!("Long-press record: capturing {} pre-roll samples (raw={}, gesture compensated)", preroll, raw_preroll);
         do_start_recording(state, backend).await;
     } else {
         // No backend to start with; do_start_recording won't run to clear the flag.
-        state.mic_starting_recording.set(false);
+        state.mic.starting_recording().set(false);
     }
 }
 
 /// Called by the "Ready to record" dialog's OK button.
 pub async fn confirm_record_start(state: &AppState) {
-    state.record_ready_state.set(crate::state::RecordReadyState::None);
+    state.mic.record_ready_state().set(crate::state::RecordReadyState::None);
     if let Some(backend) = resolve_active_backend(state) {
         do_start_recording(state, backend).await;
     } else {
         // No backend resolvable; do_start_recording won't run to clear the flag.
-        state.mic_starting_recording.set(false);
+        state.mic.starting_recording().set(false);
     }
 }
 
 /// Called by the "Ready to record" dialog's Cancel button.
 pub fn cancel_record_start(state: &AppState) {
-    state.record_ready_state.set(crate::state::RecordReadyState::None);
-    state.mic_starting_recording.set(false);
+    state.mic.record_ready_state().set(crate::state::RecordReadyState::None);
+    state.mic.starting_recording().set(false);
 }
 
 /// Stop both listening and recording, close mic.
 pub fn stop_all(state: &AppState) {
     // Defensive: clear the start-debounce gate in case stop_all is called
     // mid-acquisition (e.g. tab close, app teardown, error recovery).
-    state.mic_starting_recording.set(false);
+    state.mic.starting_recording().set(false);
 
     // Silence any scheduled live playback synchronously so Stop is instant,
     // independent of the async close that follows.
@@ -965,34 +965,34 @@ pub fn stop_all(state: &AppState) {
     match backend {
         Some(b) => {
             wasm_bindgen_futures::spawn_local(async move {
-                if state_copy.mic_recording.get_untracked() {
-                    state_copy.mic_recording.set(false);
-                    state_copy.mic_recording_start_time.set(None);
-                    state_copy.mic_samples_recorded.set(0);
+                if state_copy.mic.recording().get_untracked() {
+                    state_copy.mic.recording().set(false);
+                    state_copy.mic.recording_start_time().set(None);
+                    state_copy.mic.samples_recorded().set(0);
 
                     let result = b.stop_recording(&state_copy).await;
                     handle_stop_result(result, &state_copy);
                 }
-                if state_copy.mic_listening.get_untracked() {
-                    state_copy.mic_listening.set(false);
+                if state_copy.mic.listening().get_untracked() {
+                    state_copy.mic.listening().set(false);
                     cleanup_listen_file(&state_copy);
                 }
                 crate::canvas::live_waterfall::clear();
                 b.close(&state_copy).await;
                 stop_foreground_service(&state_copy).await;
-                state_copy.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                state_copy.mic.acquisition_state().set(MicAcquisitionState::Idle);
             });
         }
         None => {
             // No backend known — just clear state
             cleanup_listen_file(state);
-            state.mic_listening.set(false);
-            state.mic_recording.set(false);
-            state.mic_recording_start_time.set(None);
+            state.mic.listening().set(false);
+            state.mic.recording().set(false);
+            state.mic.recording_start_time().set(None);
             wasm_bindgen_futures::spawn_local(async move {
                 ActiveBackend::Browser.close(&state_copy).await;
                 stop_foreground_service(&state_copy).await;
-                state_copy.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                state_copy.mic.acquisition_state().set(MicAcquisitionState::Idle);
             });
         }
     }

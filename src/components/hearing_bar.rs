@@ -59,7 +59,7 @@ fn GainCombo() -> impl IntoView {
     // Live monitoring uses `live_gain_db` (separate from file-playback gain).
     // When live is active, the slider rebinds and the AGC/AutoPeak modes are
     // ignored — the user wanted a simple slider for monitoring.
-    let is_live = move || state.mic_listening.get() || state.mic_recording.get();
+    let is_live = move || state.mic.listening().get() || state.mic.recording().get();
     let no_file = move || {
         !is_live()
             && state.current_file_index.get().is_none()

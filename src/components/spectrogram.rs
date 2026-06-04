@@ -306,8 +306,8 @@ pub fn Spectrogram() -> impl IntoView {
         // Check for active waterfall early — when active, use waterfall
         // parameters so listening/recording works identically with or without
         // a file open.
-        let is_recording = state.mic_recording.get_untracked();
-        let is_listening = state.mic_listening.get_untracked();
+        let is_recording = state.mic.recording().get_untracked();
+        let is_listening = state.mic.listening().get_untracked();
         let waterfall_active = (is_recording || is_listening) && crate::canvas::live_waterfall::is_active();
 
         let (time_res, original_max_freq) = if waterfall_active {
@@ -432,7 +432,7 @@ pub fn Spectrogram() -> impl IntoView {
         // ── Live waterfall rendering (recording / listening) ──
         // When the waterfall is active, render directly from it and skip the
         // tile-based pipeline entirely.
-        let live_data_cols = state.mic_live_data_cols.get_untracked();
+        let live_data_cols = state.mic.live_data_cols().get_untracked();
 
         let base_drawn = if waterfall_active {
             // Use waterfall's own time_res and max_freq for correct viewport mapping

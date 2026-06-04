@@ -97,7 +97,7 @@ fn remove_file_at(state: &AppState, i: usize) {
             other => other,
         };
     });
-    state.mic_live_file_idx.update(|idx| {
+    state.mic.live_file_idx().update(|idx| {
         *idx = match *idx {
             Some(cur) if cur == i => None,
             Some(cur) if cur > i => Some(cur - 1),
@@ -409,20 +409,20 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             // Capture the file's add_order so we can find it
                             // again after the await — concurrent file ops or
                             // finalize_recording could shift its index.
-                            let is_live_doc = state.mic_live_file_idx.get_untracked() == Some(i);
-                            let mic_active = state.mic_listening.get_untracked()
-                                || state.mic_recording.get_untracked();
+                            let is_live_doc = state.mic.live_file_idx().get_untracked() == Some(i);
+                            let mic_active = state.mic.listening().get_untracked()
+                                || state.mic.recording().get_untracked();
                             if is_live_doc && mic_active {
                                 let add_order = state.files.with_untracked(|files| {
                                     files.get(i).map(|f| f.add_order)
                                 });
                                 spawn_local(async move {
-                                    if state.mic_recording.get_untracked() {
+                                    if state.mic.recording().get_untracked() {
                                         // Stops + finalizes (saves) the recording.
                                         // The file stays in the list with the
                                         // recorded audio after this await.
                                         crate::audio::microphone::toggle_record(&state).await;
-                                    } else if state.mic_listening.get_untracked() {
+                                    } else if state.mic.listening().get_untracked() {
                                         // Stops listening; cleanup_listen_file
                                         // removes the file from the list.
                                         crate::audio::microphone::toggle_listen(&state).await;
@@ -698,25 +698,25 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             // opens the chooser; X dismisses for the session.
                             // Reappears on the next USB-connect transition.
                             {move || {
-                                let usb = state.mic_usb_connected.get();
-                                let has_backend = state.mic_backend.get().is_some();
-                                let dismissed = state.mic_chip_dismissed.get();
-                                let strat = state.mic_strategy.get();
+                                let usb = state.mic.usb_connected().get();
+                                let has_backend = state.mic.backend().get().is_some();
+                                let dismissed = state.mic.chip_dismissed().get();
+                                let strat = state.mic.strategy().get();
                                 let show = state.is_tauri
                                     && usb
                                     && !has_backend
                                     && !dismissed
                                     && strat != crate::state::MicStrategy::None;
                                 show.then(|| {
-                                    let name = state.mic_device_name.get_untracked()
+                                    let name = state.mic.device_name().get_untracked()
                                         .unwrap_or_else(|| "USB mic".to_string());
                                     view! {
                                         <div class="mic-detected-chip"
                                             role="button"
                                             tabindex="0"
                                             on:click=move |_| {
-                                                state.mic_pending_action.set(None);
-                                                state.show_mic_chooser.set(true);
+                                                state.mic.pending_action().set(None);
+                                                state.mic.show_chooser().set(true);
                                             }
                                         >
                                             <span class="mic-led ready" aria-hidden="true"></span>
@@ -729,7 +729,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                 title="Dismiss"
                                                 on:click=move |ev: web_sys::MouseEvent| {
                                                     ev.stop_propagation();
-                                                    state.mic_chip_dismissed.set(true);
+                                                    state.mic.chip_dismissed().set(true);
                                                 }
                                             >{"\u{00D7}"}</button>
                                         </div>
@@ -744,7 +744,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 <button class="upload-btn add-files-btn" on:click=on_upload_click>
                                     "+ Open files"
                                 </button>
-                                {(state.mic_strategy.get() != crate::state::MicStrategy::None).then(|| view! {
+                                {(state.mic.strategy().get() != crate::state::MicStrategy::None).then(|| view! {
                                     <button
                                         class="upload-btn add-files-btn"
                                         title="Open the mic and create an empty live document. Adjust HFR mode/range/bandpass before pressing Listen or Record."

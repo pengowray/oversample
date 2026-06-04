@@ -49,7 +49,7 @@ fn fmt_khz(hz: f64) -> String {
 /// recording, the live waterfall has the most up-to-date sample rate (USB
 /// devices can re-negotiate after the AppState signal is first set).
 fn nyquist_for_current(state: AppState) -> f64 {
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {

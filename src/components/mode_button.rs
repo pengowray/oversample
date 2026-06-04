@@ -369,7 +369,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
     // ── Settings popup state ──
     let settings_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
     let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
-    let muting = Signal::derive(move || state.mic_listening.get() && state.mic_mute_output.get());
+    let muting = Signal::derive(move || state.mic.listening().get() && state.mic.mute_output().get());
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
 
@@ -669,14 +669,14 @@ fn ModeSettingsBody() -> impl IntoView {
     view! {
         <>
             // ── Listening-muted notice (unchanged from old ModeButton) ──
-            <Show when=move || state.mic_listening.get() && state.mic_mute_output.get()>
+            <Show when=move || state.mic.listening().get() && state.mic.mute_output().get()>
                 <div style="padding: 6px 8px; background: rgba(255, 200, 0, 0.12); border: 1px solid rgba(255, 200, 0, 0.5); border-radius: 4px; margin: 0 4px 6px;">
                     <div style="font-size: 11px; color: #ffcc00; line-height: 1.3; margin-bottom: 4px;">
                         "Listening output is muted (warm-up). Spectrogram still updates."
                     </div>
                     <button class="layer-panel-opt"
                         style="width: 100%;"
-                        on:click=move |_| state.mic_mute_output.set(false)
+                        on:click=move |_| state.mic.mute_output().set(false)
                         title="Unmute speaker output"
                     >"Unmute"</button>
                 </div>

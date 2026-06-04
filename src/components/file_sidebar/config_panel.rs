@@ -194,12 +194,12 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                                 <input
                                     type="checkbox"
                                     class="setting-checkbox"
-                                    prop:checked=move || state.gps_location_enabled.get()
+                                    prop:checked=move || state.recording_meta.gps_enabled().get()
                                     on:change=move |ev: web_sys::Event| {
                                         let target = ev.target().unwrap();
                                         let input: web_sys::HtmlInputElement = target.unchecked_into();
                                         let checked = input.checked();
-                                        state.gps_location_enabled.set(checked);
+                                        state.recording_meta.gps_enabled().set(checked);
                                         if let Some(ls) = web_sys::window()
                                             .and_then(|w| w.local_storage().ok().flatten())
                                         {
@@ -210,10 +210,10 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             </div>
                             <div class="setting-hint">"Add location data to recorded audio"</div>
                             {move || {
-                                if !state.gps_location_enabled.get() {
+                                if !state.recording_meta.gps_enabled().get() {
                                     return view! { <span></span> }.into_any();
                                 }
-                                let count = state.home_wifi_ssids.with(|list| list.len());
+                                let count = state.recording_meta.home_wifi_ssids().with(|list| list.len());
                                 if count > 0 {
                                     view! {
                                         <div class="setting-hint" style="color: #8cf;">

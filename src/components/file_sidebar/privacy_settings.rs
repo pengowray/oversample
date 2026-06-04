@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
@@ -8,7 +9,7 @@ use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
 
 fn persist_home_wifi(state: &AppState) {
     if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let val = state.home_wifi_ssids.with_untracked(|list| list.join("\n"));
+        let val = state.recording_meta.home_wifi_ssids().with_untracked(|list| list.join("\n"));
         let _ = ls.set_item("oversample_home_wifi", &val);
     }
 }
@@ -36,7 +37,7 @@ fn check_zone_status(state: AppState, status: RwSignal<ZoneStatus>) {
         };
         match ssid {
             Some(ssid) => {
-                let on_zone = state.home_wifi_ssids.with_untracked(|list| list.contains(&ssid));
+                let on_zone = state.recording_meta.home_wifi_ssids().with_untracked(|list| list.contains(&ssid));
                 status.set(if on_zone { ZoneStatus::Active } else { ZoneStatus::NotOnZone });
             }
             None => status.set(ZoneStatus::NoWifi),
@@ -93,9 +94,9 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                 }
             };
             if let Some(ssid) = ssid {
-                let already = state.home_wifi_ssids.with_untracked(|list| list.contains(&ssid));
+                let already = state.recording_meta.home_wifi_ssids().with_untracked(|list| list.contains(&ssid));
                 if !already {
-                    state.home_wifi_ssids.update(|list| list.push(ssid));
+                    state.recording_meta.home_wifi_ssids().update(|list| list.push(ssid));
                     persist_home_wifi(&state);
                     state.show_info_toast("Privacy zone added");
                 } else {
@@ -111,7 +112,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
 
     let on_clear = move |_: web_sys::MouseEvent| {
         if confirm_clear.get_untracked() {
-            state.home_wifi_ssids.set(Vec::new());
+            state.recording_meta.home_wifi_ssids().set(Vec::new());
             persist_home_wifi(&state);
             confirm_clear.set(false);
             state.show_info_toast("All privacy zones cleared");
@@ -170,7 +171,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
 
                         // Saved networks list
                         {move || {
-                            let ssids = state.home_wifi_ssids.get();
+                            let ssids = state.recording_meta.home_wifi_ssids().get();
                             if ssids.is_empty() {
                                 view! {
                                     <div class="privacy-ssid-list">
@@ -198,7 +199,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                         </button>
 
                         {move || {
-                            let count = state.home_wifi_ssids.with(|list| list.len());
+                            let count = state.recording_meta.home_wifi_ssids().with(|list| list.len());
                             if count > 0 {
                                 view! {
                                     <button
@@ -222,12 +223,12 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                             <input
                                 type="checkbox"
                                 class="setting-checkbox"
-                                prop:checked=move || state.device_model_enabled.get()
+                                prop:checked=move || state.recording_meta.device_model_enabled().get()
                                 on:change=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     let checked = input.checked();
-                                    state.device_model_enabled.set(checked);
+                                    state.recording_meta.device_model_enabled().set(checked);
                                     if let Some(ls) = web_sys::window()
                                         .and_then(|w| w.local_storage().ok().flatten())
                                     {

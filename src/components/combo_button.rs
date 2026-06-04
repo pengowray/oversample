@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
@@ -91,7 +92,7 @@ pub fn ComboButton(
             if let Some(lp) = long_press {
                 // Store gesture start time so the callback can compensate for hold duration
                 let start = hold_start_ms.get_untracked();
-                state.mic_gesture_start_ms.set(Some(start));
+                state.mic.gesture_start_ms().set(Some(start));
                 let me = web_sys::MouseEvent::new("longpress").unwrap();
                 lp.run(me);
             } else {

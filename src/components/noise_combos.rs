@@ -89,10 +89,10 @@ pub fn NotchCombo() -> impl IntoView {
     let on_detect = move |_: web_sys::MouseEvent| {
         // While live, detect from the circular buffer so the bands reflect
         // current ambient noise rather than stale file content.
-        let is_live = state.mic_listening.get_untracked() || state.mic_recording.get_untracked();
+        let is_live = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
         if is_live {
             let is_tauri = state.is_tauri;
-            let sample_rate = state.mic_sample_rate.get_untracked();
+            let sample_rate = state.mic.sample_rate().get_untracked();
             let snapshot = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.to_vec());
             if sample_rate == 0 || snapshot.is_empty() {
                 state.show_error_toast("Not enough live audio yet");
@@ -231,13 +231,13 @@ pub fn NotchCombo() -> impl IntoView {
                     on:click=on_detect
                     disabled=move || {
                         if state.notch.detecting().get() { return true; }
-                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        let live = state.mic.listening().get() || state.mic.recording().get();
                         !live && state.current_file_index.get().is_none()
                     }
                 >
                     {move || {
                         if state.notch.detecting().get() { return "Detecting\u{2026}".to_string(); }
-                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        let live = state.mic.listening().get() || state.mic.recording().get();
                         if live { "Detect from Live".to_string() } else { "Detect Noise".to_string() }
                     }}
                 </button>
@@ -399,10 +399,10 @@ pub fn NrCombo() -> impl IntoView {
         // While live, source samples from the circular capture buffer rather
         // than the file (which lags the buffer by the periodic snapshot
         // interval, and is short on history right after Listen starts).
-        let is_live = state.mic_listening.get_untracked() || state.mic_recording.get_untracked();
+        let is_live = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
         if is_live {
             let is_tauri = state.is_tauri;
-            let sample_rate = state.mic_sample_rate.get_untracked();
+            let sample_rate = state.mic.sample_rate().get_untracked();
             let snapshot = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.to_vec());
             if sample_rate == 0 || snapshot.is_empty() {
                 state.show_error_toast("Not enough live audio yet");
@@ -503,13 +503,13 @@ pub fn NrCombo() -> impl IntoView {
                     on:click=on_learn_floor
                     disabled=move || {
                         if state.noise_reduce.learning().get() { return true; }
-                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        let live = state.mic.listening().get() || state.mic.recording().get();
                         !live && state.current_file_index.get().is_none()
                     }
                 >
                     {move || {
                         if state.noise_reduce.learning().get() { return "Learning\u{2026}".to_string(); }
-                        let live = state.mic_listening.get() || state.mic_recording.get();
+                        let live = state.mic.listening().get() || state.mic.recording().get();
                         if live { "Learn from Live".to_string() } else { "Learn Noise Floor".to_string() }
                     }}
                 </button>

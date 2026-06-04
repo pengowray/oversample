@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::prelude::*;
@@ -120,10 +121,10 @@ pub fn MicChooserModal() -> impl IntoView {
     });
 
     let on_close = move |_: web_sys::MouseEvent| {
-        state.show_mic_chooser.set(false);
-        state.mic_pending_action.set(None);
-        if state.mic_acquisition_state.get_untracked() == MicAcquisitionState::AwaitingChoice {
-            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+        state.mic.show_chooser().set(false);
+        state.mic.pending_action().set(None);
+        if state.mic.acquisition_state().get_untracked() == MicAcquisitionState::AwaitingChoice {
+            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
         }
     };
 
@@ -163,27 +164,27 @@ pub fn MicChooserModal() -> impl IntoView {
                                 view! {
                                     <div
                                         class=move || {
-                                            let sel = state.mic_selected_device.get() == Some(dev_name_for_class.clone())
-                                                && state.mic_backend.get() == Some(MicBackend::RawUsb);
+                                            let sel = state.mic.selected_device().get() == Some(dev_name_for_class.clone())
+                                                && state.mic.backend().get() == Some(MicBackend::RawUsb);
                                             if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                         }
                                         on:click=move |_| {
                                             let name = dev_name.clone();
-                                            state.mic_backend.set(Some(MicBackend::RawUsb));
-                                            state.mic_strategy.set(MicStrategy::Selected);
-                                            state.mic_selected_device.set(Some(name.clone()));
-                                            state.mic_device_info.set(Some(MicDeviceInfo {
+                                            state.mic.backend().set(Some(MicBackend::RawUsb));
+                                            state.mic.strategy().set(MicStrategy::Selected);
+                                            state.mic.selected_device().set(Some(name.clone()));
+                                            state.mic.device_info().set(Some(MicDeviceInfo {
                                                 name: product_for_click.clone(),
                                                 connection_type: "USB".to_string(),
                                                 supported_rates: vec![44100, 48000, 96000, 192000, 256000, 384000, 500000],
                                                 supported_bit_depths: vec![16],
                                                 max_channels: 1,
                                             }));
-                                            state.show_mic_chooser.set(false);
-                                            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                            state.mic.show_chooser().set(false);
+                                            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                                             crate::audio::microphone::stop_all(&state);
-                                            let pending = state.mic_pending_action.get_untracked();
-                                            state.mic_pending_action.set(None);
+                                            let pending = state.mic.pending_action().get_untracked();
+                                            state.mic.pending_action().set(None);
                                             if let Some(action) = pending {
                                                 spawn_local(async move {
                                                     match action {
@@ -201,8 +202,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                                 <span class="mic-chooser-device-badge warn">"needs permission"</span>
                                             })}
                                             {move || {
-                                                let sel = state.mic_selected_device.get() == Some(dev_name_for_badge.clone())
-                                                    && state.mic_backend.get() == Some(MicBackend::RawUsb);
+                                                let sel = state.mic.selected_device().get() == Some(dev_name_for_badge.clone())
+                                                    && state.mic.backend().get() == Some(MicBackend::RawUsb);
                                                 sel.then(|| view! {
                                                     <span class="mic-chooser-device-badge sel">"selected"</span>
                                                 })
@@ -244,28 +245,28 @@ pub fn MicChooserModal() -> impl IntoView {
                                 view! {
                                     <div
                                         class=move || {
-                                            let sel = state.mic_selected_device.get() == Some(dev_name_for_class.clone())
-                                                && state.mic_backend.get() == Some(MicBackend::Cpal);
+                                            let sel = state.mic.selected_device().get() == Some(dev_name_for_class.clone())
+                                                && state.mic.backend().get() == Some(MicBackend::Cpal);
                                             if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                         }
                                         on:click=move |_| {
                                             let name = dev_name.clone();
-                                            state.mic_backend.set(Some(MicBackend::Cpal));
-                                            state.mic_strategy.set(MicStrategy::Selected);
-                                            state.mic_selected_device.set(Some(name.clone()));
-                                            state.mic_device_info.set(Some(MicDeviceInfo {
+                                            state.mic.backend().set(Some(MicBackend::Cpal));
+                                            state.mic.strategy().set(MicStrategy::Selected);
+                                            state.mic.selected_device().set(Some(name.clone()));
+                                            state.mic.device_info().set(Some(MicDeviceInfo {
                                                 name: name.clone(),
                                                 connection_type: "Native".to_string(),
                                                 supported_rates: click_rates.clone(),
                                                 supported_bit_depths: click_bit_depths.clone(),
                                                 max_channels: 2,
                                             }));
-                                            state.show_mic_chooser.set(false);
-                                            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                            state.mic.show_chooser().set(false);
+                                            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                                             crate::audio::microphone::stop_all(&state);
                                             // Re-trigger pending action if any
-                                            let pending = state.mic_pending_action.get_untracked();
-                                            state.mic_pending_action.set(None);
+                                            let pending = state.mic.pending_action().get_untracked();
+                                            state.mic.pending_action().set(None);
                                             spawn_local(async move {
                                                 crate::audio::microphone::query_cpal_supported_rates(&state).await;
                                                 crate::audio::microphone::query_mic_info(&state).await;
@@ -285,8 +286,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                                 <span class="mic-chooser-device-badge">"default"</span>
                                             })}
                                             {move || {
-                                                let sel = state.mic_selected_device.get() == Some(dev_name_for_badge.clone())
-                                                    && state.mic_backend.get() == Some(MicBackend::Cpal);
+                                                let sel = state.mic.selected_device().get() == Some(dev_name_for_badge.clone())
+                                                    && state.mic.backend().get() == Some(MicBackend::Cpal);
                                                 sel.then(|| view! {
                                                     <span class="mic-chooser-device-badge sel">"selected"</span>
                                                 })
@@ -344,28 +345,28 @@ pub fn MicChooserModal() -> impl IntoView {
                                 view! {
                                     <div
                                         class=move || {
-                                            let sel = state.mic_selected_device.get() == Some(dev_id_for_class.clone())
-                                                && state.mic_backend.get() == Some(MicBackend::Browser);
+                                            let sel = state.mic.selected_device().get() == Some(dev_id_for_class.clone())
+                                                && state.mic.backend().get() == Some(MicBackend::Browser);
                                             if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                         }
                                         on:click=move |_| {
                                             let id = dev_id.clone();
                                             let lbl = label.clone();
-                                            state.mic_backend.set(Some(MicBackend::Browser));
-                                            state.mic_strategy.set(MicStrategy::Selected);
-                                            state.mic_selected_device.set(Some(id));
-                                            state.mic_device_info.set(Some(MicDeviceInfo {
+                                            state.mic.backend().set(Some(MicBackend::Browser));
+                                            state.mic.strategy().set(MicStrategy::Selected);
+                                            state.mic.selected_device().set(Some(id));
+                                            state.mic.device_info().set(Some(MicDeviceInfo {
                                                 name: lbl,
                                                 connection_type: "Browser".to_string(),
                                                 supported_rates: vec![44100, 48000, 96000],
                                                 supported_bit_depths: vec![32],
                                                 max_channels: 1,
                                             }));
-                                            state.show_mic_chooser.set(false);
-                                            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                            state.mic.show_chooser().set(false);
+                                            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                                             crate::audio::microphone::stop_all(&state);
-                                            let pending = state.mic_pending_action.get_untracked();
-                                            state.mic_pending_action.set(None);
+                                            let pending = state.mic.pending_action().get_untracked();
+                                            state.mic.pending_action().set(None);
                                             if let Some(action) = pending {
                                                 spawn_local(async move {
                                                     match action {
@@ -383,8 +384,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                                 <span class="mic-chooser-device-badge">"default"</span>
                                             })}
                                             {move || {
-                                                let sel = state.mic_selected_device.get() == Some(dev_id_for_badge.clone())
-                                                    && state.mic_backend.get() == Some(MicBackend::Browser);
+                                                let sel = state.mic.selected_device().get() == Some(dev_id_for_badge.clone())
+                                                    && state.mic.backend().get() == Some(MicBackend::Browser);
                                                 sel.then(|| view! {
                                                     <span class="mic-chooser-device-badge sel">"selected"</span>
                                                 })
@@ -398,26 +399,26 @@ pub fn MicChooserModal() -> impl IntoView {
                             // Fallback: "Browser default" option (always shown)
                             <div
                                 class=move || {
-                                    let sel = state.mic_selected_device.get().is_none()
-                                        && state.mic_backend.get() == Some(MicBackend::Browser);
+                                    let sel = state.mic.selected_device().get().is_none()
+                                        && state.mic.backend().get() == Some(MicBackend::Browser);
                                     if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                 }
                                 on:click=move |_| {
-                                    state.mic_backend.set(Some(MicBackend::Browser));
-                                    state.mic_strategy.set(MicStrategy::Selected);
-                                    state.mic_selected_device.set(None);
-                                    state.mic_device_info.set(Some(MicDeviceInfo {
+                                    state.mic.backend().set(Some(MicBackend::Browser));
+                                    state.mic.strategy().set(MicStrategy::Selected);
+                                    state.mic.selected_device().set(None);
+                                    state.mic.device_info().set(Some(MicDeviceInfo {
                                         name: "Browser microphone".to_string(),
                                         connection_type: "Browser".to_string(),
                                         supported_rates: vec![44100, 48000, 96000],
                                         supported_bit_depths: vec![32],
                                         max_channels: 1,
                                     }));
-                                    state.show_mic_chooser.set(false);
-                                    state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                    state.mic.show_chooser().set(false);
+                                    state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                                     crate::audio::microphone::stop_all(&state);
-                                    let pending = state.mic_pending_action.get_untracked();
-                                    state.mic_pending_action.set(None);
+                                    let pending = state.mic.pending_action().get_untracked();
+                                    state.mic.pending_action().set(None);
                                     if let Some(action) = pending {
                                         spawn_local(async move {
                                             match action {
@@ -432,8 +433,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                 <div class="mic-chooser-device-name">
                                     "Browser default"
                                     {move || {
-                                        let sel = state.mic_selected_device.get().is_none()
-                                            && state.mic_backend.get() == Some(MicBackend::Browser);
+                                        let sel = state.mic.selected_device().get().is_none()
+                                            && state.mic.backend().get() == Some(MicBackend::Browser);
                                         sel.then(|| view! {
                                             <span class="mic-chooser-device-badge sel">"selected"</span>
                                         })
@@ -451,22 +452,22 @@ pub fn MicChooserModal() -> impl IntoView {
                             <div class="mic-chooser-group-title" style="margin-top: 8px;"></div>
                             <div
                                 class=move || {
-                                    let sel = state.mic_selected_device.get().is_none()
-                                        && state.mic_backend.get() != Some(MicBackend::Browser)
-                                        && state.mic_backend.get() != Some(MicBackend::RawUsb);
+                                    let sel = state.mic.selected_device().get().is_none()
+                                        && state.mic.backend().get() != Some(MicBackend::Browser)
+                                        && state.mic.backend().get() != Some(MicBackend::RawUsb);
                                     if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
                                 }
                                 on:click=move |_| {
-                                    state.mic_backend.set(Some(MicBackend::Cpal));
-                                    state.mic_strategy.set(MicStrategy::Selected);
-                                    state.mic_selected_device.set(None);
-                                    state.mic_device_info.set(None);
-                                    state.show_mic_chooser.set(false);
-                                    state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                                    state.mic.backend().set(Some(MicBackend::Cpal));
+                                    state.mic.strategy().set(MicStrategy::Selected);
+                                    state.mic.selected_device().set(None);
+                                    state.mic.device_info().set(None);
+                                    state.mic.show_chooser().set(false);
+                                    state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                                     crate::audio::microphone::stop_all(&state);
                                     // Re-trigger pending action if any
-                                    let pending = state.mic_pending_action.get_untracked();
-                                    state.mic_pending_action.set(None);
+                                    let pending = state.mic.pending_action().get_untracked();
+                                    state.mic.pending_action().set(None);
                                     spawn_local(async move {
                                         crate::audio::microphone::query_cpal_supported_rates(&state).await;
                                         crate::audio::microphone::query_mic_info(&state).await;

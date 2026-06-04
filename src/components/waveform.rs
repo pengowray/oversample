@@ -605,8 +605,8 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let waterfall_active = (state.mic_recording.get_untracked()
-            || state.mic_listening.get_untracked())
+        let waterfall_active = (state.mic.recording().get_untracked()
+            || state.mic.listening().get_untracked())
             && crate::canvas::live_waterfall::is_active();
         let time_res = if waterfall_active {
             crate::canvas::live_waterfall::time_resolution()
@@ -731,8 +731,8 @@ pub fn Waveform() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
-        let waterfall_active = (state.mic_recording.get_untracked()
-            || state.mic_listening.get_untracked())
+        let waterfall_active = (state.mic.recording().get_untracked()
+            || state.mic.listening().get_untracked())
             && crate::canvas::live_waterfall::is_active();
         let time_res = if waterfall_active {
             crate::canvas::live_waterfall::time_resolution()
@@ -790,8 +790,8 @@ pub fn Waveform() -> impl IntoView {
                         let files = state.files.get_untracked();
                         let idx = state.current_file_index.get_untracked();
                         let file = idx.and_then(|i| files.get(i));
-                        let waterfall_active = (state.mic_recording.get_untracked()
-                            || state.mic_listening.get_untracked())
+                        let waterfall_active = (state.mic.recording().get_untracked()
+                            || state.mic.listening().get_untracked())
                             && crate::canvas::live_waterfall::is_active();
                         let time_res = if waterfall_active {
                             crate::canvas::live_waterfall::time_resolution()

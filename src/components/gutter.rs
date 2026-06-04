@@ -35,7 +35,7 @@ const DBLTAP_WINDOW_MS: f64 = 400.0;
 /// `spectrogram_events::file_nyquist` but duplicated here to keep the
 /// gutter self-contained.
 fn gutter_nyquist(state: AppState) -> f64 {
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {

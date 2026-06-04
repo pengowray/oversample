@@ -77,7 +77,7 @@ impl SpectInteraction {
 /// Read the file's Nyquist / max frequency — the ceiling for the freq
 /// display range.
 fn file_nyquist(state: AppState) -> f64 {
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {
@@ -181,7 +181,7 @@ pub fn resolve_freq_at_pointer(
     let canvas_el = canvas_ref.get()?;
     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
     let ch = canvas.height() as f64;
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     let wf_active = is_mic_active && crate::canvas::live_waterfall::is_active();
     let file_max_freq = if wf_active {
         crate::canvas::live_waterfall::max_freq()
@@ -215,8 +215,8 @@ pub fn apply_hand_pan(
     let idx = state.current_file_index.get_untracked();
     let file = idx.and_then(|i| files.get(i));
     let timeline = state.timeline.active().get_untracked();
-    let waterfall_active = (state.mic_recording.get_untracked()
-        || state.mic_listening.get_untracked())
+    let waterfall_active = (state.mic.recording().get_untracked()
+        || state.mic.listening().get_untracked())
         && crate::canvas::live_waterfall::is_active();
     let time_res = if waterfall_active {
         crate::canvas::live_waterfall::time_resolution()
@@ -1327,7 +1327,7 @@ pub fn on_wheel(
 
     // Resolve file_max_freq / time_res: prefer waterfall params when active,
     // so scroll/zoom work during listening/recording without a file.
-    let is_mic_active = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+    let is_mic_active = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     let wf_active = is_mic_active && crate::canvas::live_waterfall::is_active();
 
     if ev.shift_key() {

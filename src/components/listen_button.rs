@@ -9,6 +9,7 @@
 // popup only carries settings that have nowhere else to go:
 //   • PS/PV overlap-save buffer size (latency vs smoothness tradeoff)
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::audio::microphone;
 use crate::components::combo_button::ComboButton;
@@ -34,12 +35,12 @@ pub fn ListenButton() -> impl IntoView {
     let listen_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode));
 
     let listen_left_class = Signal::derive(move || {
-        if state.mic_strategy.get() == MicStrategy::None {
+        if state.mic.strategy().get() == MicStrategy::None {
             return "layer-btn combo-btn-left disabled";
         }
-        let is_listening_ready = state.mic_listening.get()
-            && state.mic_acquisition_state.get() == MicAcquisitionState::Ready;
-        let is_rec_ready = state.record_ready_state.get() == RecordReadyState::AwaitingConfirmation;
+        let is_listening_ready = state.mic.listening().get()
+            && state.mic.acquisition_state().get() == MicAcquisitionState::Ready;
+        let is_rec_ready = state.mic.record_ready_state().get() == RecordReadyState::AwaitingConfirmation;
         if is_listening_ready || is_rec_ready {
             "layer-btn combo-btn-left mic-armed"
         } else {
@@ -51,12 +52,12 @@ pub fn ListenButton() -> impl IntoView {
     });
 
     let listen_left_value = Signal::derive(move || {
-        if state.record_ready_state.get() == RecordReadyState::AwaitingConfirmation {
+        if state.mic.record_ready_state().get() == RecordReadyState::AwaitingConfirmation {
             "\u{23F8} Rec ready\u{2026}".to_string()
-        } else if state.mic_acquisition_state.get() == MicAcquisitionState::Acquiring {
+        } else if state.mic.acquisition_state().get() == MicAcquisitionState::Acquiring {
             "Readying\u{2026}".to_string()
-        } else if state.mic_listening.get() && state.mic_mute_output.get() {
-            if state.mic_acquisition_state.get() == MicAcquisitionState::Ready {
+        } else if state.mic.listening().get() && state.mic.mute_output().get() {
+            if state.mic.acquisition_state().get() == MicAcquisitionState::Ready {
                 "\u{23F8} Muted".to_string()
             } else {
                 "Readying\u{2026}".to_string()
@@ -73,7 +74,7 @@ pub fn ListenButton() -> impl IntoView {
     let listen_right_value = Signal::derive(|| "\u{2026}".to_string()); // …
 
     let listen_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if state.mic_strategy.get_untracked() == MicStrategy::None {
+        if state.mic.strategy().get_untracked() == MicStrategy::None {
             return;
         }
         let st = state;
@@ -106,12 +107,12 @@ pub fn ListenButton() -> impl IntoView {
             // either way. Useful for noise-floor learning before unmuting.
             <div class="layer-panel-title">"Listen output"</div>
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                <button class=move || layer_opt_class(!state.mic_mute_output.get())
-                    on:click=move |_| state.mic_mute_output.set(false)
+                <button class=move || layer_opt_class(!state.mic.mute_output().get())
+                    on:click=move |_| state.mic.mute_output().set(false)
                     title="Play processed audio through speakers"
                 >"On"</button>
-                <button class=move || layer_opt_class(state.mic_mute_output.get())
-                    on:click=move |_| state.mic_mute_output.set(true)
+                <button class=move || layer_opt_class(state.mic.mute_output().get())
+                    on:click=move |_| state.mic.mute_output().set(true)
                     title="Mute speaker output (mic warm-up). Spectrogram still updates."
                 >"Mute (warm-up)"</button>
             </div>
@@ -121,24 +122,24 @@ pub fn ListenButton() -> impl IntoView {
                 <hr />
                 <div class="layer-panel-title">"PS/PV Buffer"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                    <button class=move || layer_opt_class(state.listen_context_samples.get() == 4096)
-                        on:click=move |_| state.listen_context_samples.set(4096)
+                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 4096)
+                        on:click=move |_| state.mic.listen_context_samples().set(4096)
                         title="4096 samples \u{2014} minimum context (more artifacts, lowest latency)"
                     >"4K"</button>
-                    <button class=move || layer_opt_class(state.listen_context_samples.get() == 8192)
-                        on:click=move |_| state.listen_context_samples.set(8192)
+                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 8192)
+                        on:click=move |_| state.mic.listen_context_samples().set(8192)
                         title="8192 samples"
                     >"8K"</button>
-                    <button class=move || layer_opt_class(state.listen_context_samples.get() == 16384)
-                        on:click=move |_| state.listen_context_samples.set(16384)
+                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 16384)
+                        on:click=move |_| state.mic.listen_context_samples().set(16384)
                         title="16384 samples (default)"
                     >"16K"</button>
-                    <button class=move || layer_opt_class(state.listen_context_samples.get() == 32768)
-                        on:click=move |_| state.listen_context_samples.set(32768)
+                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 32768)
+                        on:click=move |_| state.mic.listen_context_samples().set(32768)
                         title="32768 samples (smoother, more CPU)"
                     >"32K"</button>
-                    <button class=move || layer_opt_class(state.listen_context_samples.get() == 65536)
-                        on:click=move |_| state.listen_context_samples.set(65536)
+                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 65536)
+                        on:click=move |_| state.mic.listen_context_samples().set(65536)
                         title="65536 samples (smoothest, most CPU)"
                     >"64K"</button>
                 </div>

@@ -130,7 +130,7 @@ pub fn App() -> impl IntoView {
     }
 
     // Startup: check for USB device (delayed to ensure Tauri internals are ready)
-    if state.is_tauri && state.mic_strategy.get_untracked() == MicStrategy::Ask {
+    if state.is_tauri && state.mic.strategy().get_untracked() == MicStrategy::Ask {
         wasm_bindgen_futures::spawn_local(async move {
             // Wait 500ms for Tauri plugin system to initialize
             sleep_ms(500).await;
@@ -139,7 +139,7 @@ pub fn App() -> impl IntoView {
             microphone::query_mic_info(&state).await;
 
             // If no USB found on first try, retry after 2s (device may enumerate slowly)
-            if !state.mic_usb_connected.get_untracked() {
+            if !state.mic.usb_connected().get_untracked() {
                 sleep_ms(2000).await;
                 microphone::check_usb_status(&state).await;
                 microphone::query_mic_info(&state).await;
@@ -157,7 +157,7 @@ pub fn App() -> impl IntoView {
                 sleep_ms(3000).await;
 
                 // Skip polling when mic is active (recording/listening)
-                if state.mic_listening.get_untracked() || state.mic_recording.get_untracked() {
+                if state.mic.listening().get_untracked() || state.mic.recording().get_untracked() {
                     continue;
                 }
 
@@ -173,7 +173,7 @@ pub fn App() -> impl IntoView {
                 let last_event = status.last_event;
 
                 // Update USB connected state
-                state.mic_usb_connected.set(is_connected);
+                state.mic.usb_connected().set(is_connected);
 
                 // Handle hotplug events
                 if let Some(event) = last_event {
@@ -184,9 +184,9 @@ pub fn App() -> impl IntoView {
                         microphone::query_mic_info(&state).await;
                     } else if event == "detached" && was_connected {
                         // If we were using USB, clear backend so user is re-prompted
-                        if state.mic_backend.get_untracked() == Some(MicBackend::RawUsb) {
-                            state.mic_backend.set(None);
-                            state.mic_acquisition_state.set(MicAcquisitionState::Idle);
+                        if state.mic.backend().get_untracked() == Some(MicBackend::RawUsb) {
+                            state.mic.backend().set(None);
+                            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
                         }
                         state.show_info_toast("USB mic disconnected");
                         microphone::query_mic_info(&state).await;
@@ -281,8 +281,8 @@ pub fn App() -> impl IntoView {
                 return;
             }
 
-            let live = state.mic_listening.get_untracked()
-                || state.mic_recording.get_untracked();
+            let live = state.mic.listening().get_untracked()
+                || state.mic.recording().get_untracked();
             if live {
                 crate::audio::microphone::clear_live_dsp_state(&state);
 
@@ -364,12 +364,12 @@ pub fn App() -> impl IntoView {
     {
         let prev_usb: StoredValue<bool> = StoredValue::new(false);
         Effect::new(move |_| {
-            let now = state.mic_usb_connected.get();
+            let now = state.mic.usb_connected().get();
             let was = prev_usb.get_value();
             prev_usb.set_value(now);
             if now && !was {
-                state.mic_chip_dismissed.set(false);
-                let name = state.mic_device_name.get_untracked()
+                state.mic.chip_dismissed().set(false);
+                let name = state.mic.device_name().get_untracked()
                     .unwrap_or_else(|| "USB mic".to_string());
                 state.show_info_toast(format!("Mic detected: {name}"));
             }
@@ -413,7 +413,7 @@ pub fn App() -> impl IntoView {
         // sliding leftward from a from-here offset.
         // Also use the waterfall's total duration (which grows indefinitely) instead
         // of the file's duration (which is capped at ~10s by the circular buffer trim).
-        let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
+        let is_live = state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
         let effective_duration = if is_live && crate::canvas::live_waterfall::is_active() {
             crate::canvas::live_waterfall::total_columns() as f64 * time_res
         } else {
@@ -438,9 +438,9 @@ pub fn App() -> impl IntoView {
     Effect::new(move |_| {
         let _ = state.focus_stack.get();
         let _ = state.current_file_index.get();
-        let _ = state.mic_sample_rate.get();
-        let _ = state.mic_listening.get();
-        let _ = state.mic_recording.get();
+        let _ = state.mic.sample_rate().get();
+        let _ = state.mic.listening().get();
+        let _ = state.mic.recording().get();
         state.resync_focus_outputs();
     });
 
@@ -1006,7 +1006,7 @@ pub fn App() -> impl IntoView {
                 state_kb.xc_browser_open.set(false);
                 return;
             }
-            if state_kb.mic_listening.get_untracked() || state_kb.mic_recording.get_untracked() {
+            if state_kb.mic.listening().get_untracked() || state_kb.mic.recording().get_untracked() {
                 microphone::stop_all(&state_kb);
             }
         }
@@ -1121,18 +1121,18 @@ pub fn App() -> impl IntoView {
             // quick app-switch where throttling never had time to bite.
             if wall_elapsed < 5.0 { return; }
 
-            let sr = state.mic_sample_rate.get_untracked().max(1) as f64;
+            let sr = state.mic.sample_rate().get_untracked().max(1) as f64;
             let mut throttled = false;
 
             // Capture check (recording only — mic_samples_recorded isn't advanced
             // during listen-only): did samples keep pace with wall time?
-            if state.mic_recording.get_untracked() {
-                let actual = state.mic_samples_recorded.get_untracked().saturating_sub(samples_hide) as f64;
+            if state.mic.recording().get_untracked() {
+                let actual = state.mic.samples_recorded().get_untracked().saturating_sub(samples_hide) as f64;
                 if actual < wall_elapsed * sr * 0.5 { throttled = true; }
             }
 
             // Audible-output check (listening): did the audio clock advance?
-            if state.mic_listening.get_untracked() {
+            if state.mic.listening().get_untracked() {
                 if let Some(now) = het_now {
                     if now - het_hide < wall_elapsed * 0.5 { throttled = true; }
                 }
@@ -1149,13 +1149,13 @@ pub fn App() -> impl IntoView {
         let doc_vis = web_sys::window().unwrap().document().unwrap();
         let on_visibility = Closure::<dyn Fn()>::new(move || {
             let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
-            let live = state_vis.mic_listening.get_untracked() || state_vis.mic_recording.get_untracked();
+            let live = state_vis.mic.listening().get_untracked() || state_vis.mic.recording().get_untracked();
             if doc.hidden() {
                 if live {
                     let het = crate::audio::mic_backend::het_context_time().unwrap_or(0.0);
                     snapshot.set(Some((
                         js_sys::Date::now(),
-                        state_vis.mic_samples_recorded.get_untracked(),
+                        state_vis.mic.samples_recorded().get_untracked(),
                         het,
                     )));
                 } else {
@@ -1166,7 +1166,7 @@ pub fn App() -> impl IntoView {
                 // interval (resume is async and won't have advanced it yet).
                 let het_now = crate::audio::mic_backend::het_context_time();
                 crate::audio::mic_backend::resume_playback_context();
-                if state_vis.mic_listening.get_untracked() {
+                if state_vis.mic.listening().get_untracked() {
                     crate::audio::mic_backend::stop_het_playback();
                 }
                 if let Some((wall_hide, samples_hide, het_hide)) = snapshot.take() {
@@ -1438,10 +1438,10 @@ fn MainArea() -> impl IntoView {
 
                             // VU meter — red line on right edge during recording/listening
                             {move || {
-                                let recording = state.mic_recording.get();
-                                let listening = state.mic_listening.get();
+                                let recording = state.mic.recording().get();
+                                let listening = state.mic.listening().get();
                                 if !recording && !listening { return None; }
-                                let level = state.mic_peak_level.get();
+                                let level = state.mic.peak_level().get();
                                 let height_pct = (level * 100.0).clamp(0.0, 100.0);
                                 Some(view! {
                                     <div
@@ -1600,7 +1600,7 @@ fn MainArea() -> impl IntoView {
             })}
 
             // Mic chooser modal (position:fixed, shown when show_mic_chooser is true)
-            {move || state.show_mic_chooser.get().then(|| view! {
+            {move || state.mic.show_chooser().get().then(|| view! {
                 <crate::components::file_sidebar::mic_chooser::MicChooserModal />
             })}
 
@@ -1610,7 +1610,7 @@ fn MainArea() -> impl IntoView {
             })}
 
             // "Ready to record" modal
-            {move || (state.record_ready_state.get() == crate::state::RecordReadyState::AwaitingConfirmation).then(|| {
+            {move || (state.mic.record_ready_state().get() == crate::state::RecordReadyState::AwaitingConfirmation).then(|| {
                 let on_ok = move |_: web_sys::MouseEvent| {
                     let st = state;
                     wasm_bindgen_futures::spawn_local(async move {
@@ -1626,7 +1626,7 @@ fn MainArea() -> impl IntoView {
                             <div style="padding: 24px 16px 8px;">
                                 <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">"Ready to record"</div>
                                 <div style="font-size: 13px; color: #aaa; margin-bottom: 16px;">
-                                    {move || state.mic_device_info.get().map(|info| info.name.clone()).unwrap_or_else(|| "Microphone".to_string())}
+                                    {move || state.mic.device_info().get().map(|info| info.name.clone()).unwrap_or_else(|| "Microphone".to_string())}
                                     " is ready"
                                 </div>
                             </div>
