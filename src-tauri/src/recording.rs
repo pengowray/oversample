@@ -687,23 +687,19 @@ pub fn write_wav_to_fd(_fd: i32, _wav_data: &[u8]) -> Result<(), String> {
 /// samples appended since the last tick are written to the `.wav.part` file.
 /// Disk I/O happens outside the buffer lock to avoid stalling the audio callback.
 pub fn start_emitter(
-    app: tauri::AppHandle,
     buffer: Arc<Mutex<RecordingBuffer>>,
     stop_flag: Arc<AtomicBool>,
     recovery: crate::recovery::RecoveryHandle,
 ) {
     std::thread::spawn(move || {
-        use tauri::Emitter;
         let mut tick: u32 = 0;
         while !stop_flag.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(80));
-            let chunks = {
-                let mut buf = buffer.lock().unwrap();
-                buf.drain_pending()
-            };
-            if !chunks.is_empty() {
-                let _ = app.emit("mic-audio-chunk", &chunks);
-            }
+            // Streamed samples are pulled by the frontend via the
+            // `mic_pull_audio` command (raw f32 bytes) instead of being pushed
+            // as a JSON "mic-audio-chunk" event: `pending_f32` accumulates until
+            // the frontend drains it. This thread only does crash-recovery disk
+            // flushing below.
 
             // Flush new samples to disk every ~240 ms (every 3rd tick) to
             // amortize open/write cost. Only happens when a recovery writer

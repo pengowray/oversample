@@ -50,6 +50,7 @@ pub fn run() {
             cmd_mic::mic_start_recording,
             cmd_mic::mic_stop_recording,
             cmd_mic::mic_set_listening,
+            cmd_mic::mic_pull_audio,
             cmd_mic::mic_get_status,
             cmd_mic::mic_list_devices,
             cmd_mic::mic_recover_recordings,

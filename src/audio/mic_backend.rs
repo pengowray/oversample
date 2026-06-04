@@ -138,10 +138,9 @@ thread_local! {
     /// Count of skip-ahead (dropped-backlog) events since last read — a coarse
     /// signal that live playback is being throttled (e.g. app backgrounded).
     static HET_SKIP_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Keep the event listener closure alive.
-    static TAURI_EVENT_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
-    /// Unlisten function returned by Tauri event subscription.
-    static TAURI_UNLISTEN: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+    /// Generation counter for the native audio pull loop. Bumped each time a
+    /// loop starts (on mic open) so any stale loop from a prior open exits.
+    static NATIVE_PULL_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Accumulated recording samples on the frontend for native modes (cpal/USB).
     static NATIVE_REC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// Realtime heterodyne processor for native modes.
@@ -671,39 +670,6 @@ pub(crate) async fn cancel_shared_entry() {
 
 // ── Tauri event listeners (private) ─────────────────────────────────────
 
-/// Subscribe to a Tauri event, storing the closure in the shared native thread-local.
-fn tauri_listen(event_name: &str, callback: Closure<dyn FnMut(JsValue)>) -> Option<()> {
-    // If a listener is already registered, reuse it. The closure reads signals
-    // dynamically on each invocation, so it works correctly across mic
-    // open/close cycles without re-registration.
-    if TAURI_EVENT_CLOSURE.with(|c| c.borrow().is_some()) {
-        return Some(());
-    }
-
-    let tauri = get_tauri_internals()?;
-
-    let transform_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("transformCallback")).ok()?;
-    let transform_fn = js_sys::Function::from(transform_fn);
-    let handler_id = transform_fn.call1(&tauri, callback.as_ref().unchecked_ref()).ok()?;
-
-    let invoke_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")).ok()?;
-    let invoke_fn = js_sys::Function::from(invoke_fn);
-
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(&args, &"event".into(), &JsValue::from_str(event_name)).ok();
-    let target = js_sys::Object::new();
-    js_sys::Reflect::set(&target, &"kind".into(), &JsValue::from_str("Any")).ok();
-    js_sys::Reflect::set(&args, &"target".into(), &target).ok();
-    js_sys::Reflect::set(&args, &"handler".into(), &handler_id).ok();
-
-    invoke_fn
-        .call2(&tauri, &JsValue::from_str("plugin:event|listen"), &args)
-        .ok();
-
-    TAURI_EVENT_CLOSURE.with(|c| *c.borrow_mut() = Some(callback));
-    Some(())
-}
-
 /// Subscribe to a USB stream error event (separate thread-local from tauri_listen).
 fn tauri_listen_usb_error(event_name: &str, callback: Closure<dyn FnMut(JsValue)>) -> Option<()> {
     let tauri = get_tauri_internals()?;
@@ -816,25 +782,16 @@ pub fn het_context_time() -> Option<f64> {
     HET_CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.current_time()))
 }
 
-/// Create the chunk handler closure used by both cpal and USB native backends.
-/// The closure accumulates samples in NATIVE_REC_BUFFER and handles HET listening.
-fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
-    let state_cb = state;
-    Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
-        let payload = match js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-
-        let array = js_sys::Array::from(&payload);
-        let len = array.length() as usize;
+/// Process one chunk of native mic samples: accumulate them in
+/// NATIVE_REC_BUFFER for the live waterfall and, while listening, run them
+/// through the DSP and schedule HET playback. Called from the frontend audio
+/// pull loop (`start_audio_pull_loop`) with samples drained from the native
+/// side as raw f32 bytes (replacing the old JSON `mic-audio-chunk` event).
+fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
+        let len = input_data.len();
         if len == 0 {
             return;
         }
-
-        let input_data: Vec<f32> = (0..len)
-            .map(|i| array.get(i as u32).as_f64().unwrap_or(0.0) as f32)
-            .collect();
 
         // Accumulate samples for live waterfall display during recording OR listening
         if state_cb.mic_recording.get_untracked() || state_cb.mic_listening.get_untracked() {
@@ -918,15 +875,50 @@ fn create_native_chunk_handler(state: AppState) -> Closure<dyn FnMut(JsValue)> {
                 });
             });
         }
-    })
+}
+
+/// Interval between native audio pulls. The native emitters fill `pending_f32`
+/// in real time; pulling every ~40 ms keeps live-listening latency close to the
+/// old 80 ms event push without spamming empty pulls.
+const AUDIO_PULL_INTERVAL_MS: i32 = 40;
+
+/// Drive the native audio stream by polling `mic_pull_audio` for raw f32 bytes
+/// (an ArrayBuffer) and feeding each chunk to [`process_native_chunk`]. Runs
+/// until the mic closes (NATIVE_MIC_OPEN cleared) or a newer loop supersedes it.
+/// Replaces the JSON `mic-audio-chunk` event listener.
+fn start_audio_pull_loop(state: AppState) {
+    let gen = NATIVE_PULL_GEN.with(|c| {
+        let g = c.get().wrapping_add(1);
+        c.set(g);
+        g
+    });
+    wasm_bindgen_futures::spawn_local(async move {
+        loop {
+            // Superseded by a newer loop, or mic closed → exit.
+            if NATIVE_PULL_GEN.with(|c| c.get()) != gen {
+                break;
+            }
+            if NATIVE_MIC_OPEN.with(|o| o.borrow().is_none()) {
+                break;
+            }
+            match crate::tauri_bridge::tauri_invoke_no_args("mic_pull_audio").await {
+                Ok(val) => {
+                    if let Ok(buf) = val.dyn_into::<js_sys::ArrayBuffer>() {
+                        let samples = js_sys::Float32Array::new(&buf).to_vec();
+                        if !samples.is_empty() {
+                            process_native_chunk(state, samples);
+                        }
+                    }
+                }
+                Err(e) => log::warn!("mic_pull_audio failed: {}", e),
+            }
+            crate::web_util::sleep_ms(AUDIO_PULL_INTERVAL_MS).await;
+        }
+    });
 }
 
 /// Clean up all native thread-local state (HET context, buffer).
-/// Note: TAURI_EVENT_CLOSURE is intentionally kept alive — the handler reads
-/// signals dynamically and is reused across mic open/close cycles.
 fn cleanup_native_state() {
-    TAURI_UNLISTEN.with(|u| { u.borrow_mut().take(); });
-
     // Stop any still-scheduled live playback before tearing down the context.
     stop_het_playback();
 
@@ -1236,10 +1228,10 @@ async fn open_cpal(state: &AppState) -> bool {
         return false;
     }
 
-    let chunk_handler = create_native_chunk_handler(*state);
-    tauri_listen("mic-audio-chunk", chunk_handler);
-
+    // Mark open BEFORE starting the pull loop so its first tick sees the mic
+    // as open (the loop exits when NATIVE_MIC_OPEN is cleared on close).
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = Some(NativeMode::Cpal));
+    start_audio_pull_loop(*state);
     log::info!("Native mic opened: {} at {} Hz, {}-bit", device_name, sample_rate, bits_per_sample);
     true
 }
@@ -1356,9 +1348,6 @@ async fn open_usb(state: &AppState) -> bool {
         return false;
     }
 
-    let chunk_handler = create_native_chunk_handler(*state);
-    tauri_listen("mic-audio-chunk", chunk_handler);
-
     // Listen for USB stream errors (disconnect / ENODEV)
     let state_err = *state;
     let error_handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
@@ -1413,7 +1402,9 @@ async fn open_usb(state: &AppState) -> bool {
     });
     tauri_listen_usb_error("usb-stream-error", error_handler);
 
+    // Mark open before starting the pull loop (see the cpal path).
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = Some(NativeMode::Usb));
+    start_audio_pull_loop(*state);
     state.mic_device_name.set(Some(product_name.clone()));
     state.mic_manufacturer.set(manufacturer_name);
     state.mic_connection_type.set(Some("USB (Raw)".to_string()));

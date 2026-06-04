@@ -71,7 +71,7 @@ impl UsbRecordingBuffer {
         self.pending_f32.extend_from_slice(&f32_data);
     }
 
-    fn drain_pending(&mut self) -> Vec<f32> {
+    pub fn drain_pending(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.pending_f32)
     }
 }
@@ -110,23 +110,18 @@ pub fn drain_usb_recovery_bytes(buf: &mut UsbRecordingBuffer) -> Vec<u8> {
 
 #[allow(dead_code)]
 pub fn start_usb_emitter(
-    app: tauri::AppHandle,
     buffer: Arc<Mutex<UsbRecordingBuffer>>,
     stop_flag: Arc<AtomicBool>,
     recovery: crate::recovery::RecoveryHandle,
 ) {
     std::thread::spawn(move || {
-        use tauri::Emitter;
         let mut tick: u32 = 0;
         while !stop_flag.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(80));
-            let chunks = {
-                let mut buf = buffer.lock().unwrap();
-                buf.drain_pending()
-            };
-            if !chunks.is_empty() {
-                let _ = app.emit("mic-audio-chunk", &chunks);
-            }
+            // Streamed samples are pulled by the frontend via `mic_pull_audio`
+            // (raw f32 bytes) instead of a JSON "mic-audio-chunk" event;
+            // `pending_f32` accumulates until the frontend drains it. This
+            // thread only does crash-recovery disk flushing below.
 
             // Disk flush every ~240 ms. We hold the writer lock across the
             // drain+write so the stop path can't consume the writer
@@ -279,7 +274,7 @@ pub fn start_usb_stream(
     // Start emitter for streaming audio chunks to the frontend (also does
     // best-effort crash-recovery flushes when a writer is installed).
     let recovery = crate::recovery::RecoveryHandle::default();
-    start_usb_emitter(app, buffer.clone(), cancel_flag.clone(), recovery.clone());
+    start_usb_emitter(buffer.clone(), cancel_flag.clone(), recovery.clone());
 
     Ok(UsbStreamState {
         cancel_flag,

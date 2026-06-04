@@ -64,7 +64,6 @@ pub fn save_recording(
 
 #[tauri::command]
 pub fn mic_open(
-    app: tauri::AppHandle,
     state: tauri::State<MicMutex>,
     max_sample_rate: Option<u32>,
     device_name: Option<String>,
@@ -105,7 +104,7 @@ pub fn mic_open(
 
     // Start the emitter thread for streaming audio chunks to the frontend
     // (also does best-effort disk flushing for crash-recovery).
-    recording::start_emitter(app, m.buffer.clone(), m.emitter_stop.clone(), m.recovery.clone());
+    recording::start_emitter(m.buffer.clone(), m.emitter_stop.clone(), m.recovery.clone());
 
     *mic = Some(m);
     Ok(info)
@@ -373,6 +372,38 @@ pub fn mic_set_listening(state: tauri::State<MicMutex>, listening: bool) -> Resu
     let m = mic.as_ref().ok_or("Microphone not open")?;
     m.is_streaming.store(listening, Ordering::Relaxed);
     Ok(())
+}
+
+/// Drain the active native mic source's pending streamed samples as raw
+/// little-endian f32 bytes, returned to the frontend's pull loop as an
+/// ArrayBuffer. Replaces the JSON `mic-audio-chunk` event push (an array of
+/// numbers is ~5x the bytes and parses element-by-element in WASM). cpal and
+/// USB never stream simultaneously, so cpal takes precedence and USB is drained
+/// only when no cpal mic is open. Returns an empty buffer when nothing is
+/// pending.
+#[tauri::command]
+pub fn mic_pull_audio(
+    mic: tauri::State<MicMutex>,
+    usb: tauri::State<crate::UsbStreamMutex>,
+) -> tauri::ipc::Response {
+    let from_cpal = mic
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.buffer.lock().ok().map(|mut b| b.drain_pending())));
+    let samples: Vec<f32> = match from_cpal {
+        Some(s) => s,
+        None => usb
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|u| u.buffer.lock().ok().map(|mut b| b.drain_pending())))
+            .unwrap_or_default(),
+    };
+
+    let mut bytes = Vec::with_capacity(samples.len() * 4);
+    for s in samples {
+        bytes.extend_from_slice(&s.to_le_bytes());
+    }
+    tauri::ipc::Response::new(bytes)
 }
 
 #[tauri::command]
