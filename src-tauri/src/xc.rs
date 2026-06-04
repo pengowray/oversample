@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use xc_lib::{api, cache, key_store, taxonomy, XcGroupTaxonomy, XcRecording, XcSearchResult};
+use oversample_ipc::xc::XcCachedFile;
 
 /// Shared state for XC operations.
 pub struct XcState {
@@ -140,17 +140,6 @@ pub async fn xc_species_recordings(
 }
 
 // ── Download & cache ──────────────────────────────────────────────────
-
-/// Result of downloading/loading a cached XC recording.
-#[derive(Serialize, Deserialize)]
-pub struct XcCachedFile {
-    pub path: String,
-    pub filename: String,
-    pub xc_id: u64,
-    pub metadata: Vec<(String, String)>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hashes: Option<xc_lib::cache::SidecarHashes>,
-}
 
 #[tauri::command]
 pub async fn xc_download(

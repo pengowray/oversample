@@ -85,92 +85,83 @@ struct CachedFile {
 // ── Parse helpers ────────────────────────────────────────────────────
 
 fn parse_species_list(val: &JsValue) -> Vec<SpeciesInfo> {
-    let species_arr = js_sys::Reflect::get(val, &"species".into())
-        .ok()
-        .map(|v| js_sys::Array::from(&v));
-    let Some(arr) = species_arr else { return Vec::new() };
-    let mut result = Vec::new();
-    for i in 0..arr.length() {
-        let item = arr.get(i);
-        let s = |k: &str| js_sys::Reflect::get(&item, &k.into())
-            .ok()
-            .and_then(|v| v.as_string())
-            .unwrap_or_default();
-        let n = |k: &str| js_sys::Reflect::get(&item, &k.into())
-            .ok()
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as u32;
-        result.push(SpeciesInfo {
-            genus: s("gen"),
-            sp: s("sp"),
-            en: s("en"),
-            _fam: s("fam"),
-            recording_count: n("recording_count"),
-        });
-    }
-    result
+    let taxonomy: oversample_ipc::xc::XcGroupTaxonomy =
+        match serde_wasm_bindgen::from_value(val.clone()) {
+            Ok(t) => t,
+            Err(_) => return Vec::new(),
+        };
+    taxonomy
+        .species
+        .into_iter()
+        .map(|s| SpeciesInfo {
+            genus: s.genus,
+            sp: s.sp,
+            en: s.en,
+            _fam: s.fam,
+            recording_count: s.recording_count,
+        })
+        .collect()
 }
 
 fn parse_recordings(val: &JsValue) -> Vec<RecordingInfo> {
-    let rec_arr = js_sys::Reflect::get(val, &"recordings".into())
-        .ok()
-        .map(|v| js_sys::Array::from(&v));
-    let Some(arr) = rec_arr else { return Vec::new() };
-    let mut result = Vec::new();
-    for i in 0..arr.length() {
-        let item = arr.get(i);
-        let s = |k: &str| js_sys::Reflect::get(&item, &k.into())
-            .ok()
-            .and_then(|v| v.as_string())
-            .unwrap_or_default();
-        let id = js_sys::Reflect::get(&item, &"id".into())
-            .ok()
-            .and_then(|v| {
-                // API v3 returns id as string; handle both string and number
-                v.as_string()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .or_else(|| v.as_f64().map(|n| n as u64))
-            })
-            .unwrap_or(0);
-        result.push(RecordingInfo {
-            id,
-            en: s("en"),
-            _genus: s("gen"),
-            _sp: s("sp"),
-            q: s("q"),
-            length: s("length"),
-            cnt: s("cnt"),
-            loc: s("loc"),
-            rec: s("rec"),
-            date: s("date"),
-            sound_type: s("type"),
-            smp: s("smp"),
-            dvc: s("dvc"),
-            mic: s("mic"),
-        });
-    }
+    let result: oversample_ipc::xc::XcSearchResult =
+        match serde_wasm_bindgen::from_value(val.clone()) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
     result
+        .recordings
+        .into_iter()
+        .map(|r| RecordingInfo {
+            id: r.id_num(),
+            en: r.en,
+            _genus: r.genus,
+            _sp: r.sp,
+            q: r.q,
+            length: r.length,
+            cnt: r.cnt,
+            loc: r.loc,
+            rec: r.rec,
+            date: r.date,
+            sound_type: r.sound_type,
+            smp: r.smp,
+            dvc: r.dvc,
+            mic: r.mic,
+        })
+        .collect()
+}
+
+/// Lightweight view of `XcSearchResult` that skips the (potentially large)
+/// recordings array when only the pagination/count scalars are needed.
+#[derive(serde::Deserialize)]
+struct SearchMeta {
+    #[serde(default = "one")]
+    num_pages: u32,
+    #[serde(default = "one")]
+    page: u32,
+    #[serde(default)]
+    num_recordings: u32,
+}
+fn one() -> u32 {
+    1
 }
 
 fn parse_num_pages(val: &JsValue) -> u32 {
-    js_sys::Reflect::get(val, &"num_pages".into())
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1.0) as u32
+    serde_wasm_bindgen::from_value::<SearchMeta>(val.clone())
+        .map(|m| m.num_pages)
+        .unwrap_or(1)
 }
 
 fn parse_current_page(val: &JsValue) -> u32 {
-    js_sys::Reflect::get(val, &"page".into())
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1.0) as u32
+    serde_wasm_bindgen::from_value::<SearchMeta>(val.clone())
+        .map(|m| m.page)
+        .unwrap_or(1)
 }
 
 fn parse_num_recordings(val: &JsValue) -> u32 {
-    js_sys::Reflect::get(val, &"num_recordings".into())
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0) as u32
+    serde_wasm_bindgen::from_value::<SearchMeta>(val.clone())
+        .map(|m| m.num_recordings)
+        .unwrap_or(0)
 }
 
 fn format_sample_rate(smp: &str) -> String {
@@ -182,46 +173,14 @@ fn format_sample_rate(smp: &str) -> String {
 }
 
 fn parse_cached_file(val: &JsValue) -> Option<CachedFile> {
-    let path = js_sys::Reflect::get(val, &"path".into()).ok()?.as_string()?;
-    let filename = js_sys::Reflect::get(val, &"filename".into()).ok()?.as_string()?;
-    let xc_id = js_sys::Reflect::get(val, &"xc_id".into()).ok()?.as_f64()? as u64;
-    let meta_arr = js_sys::Reflect::get(val, &"metadata".into())
-        .ok()
-        .map(|v| js_sys::Array::from(&v));
-    let metadata = meta_arr.map(|arr| {
-        let mut pairs = Vec::new();
-        for i in 0..arr.length() {
-            let pair = arr.get(i);
-            let pair_arr = js_sys::Array::from(&pair);
-            if pair_arr.length() >= 2 {
-                let k = pair_arr.get(0).as_string().unwrap_or_default();
-                let v = pair_arr.get(1).as_string().unwrap_or_default();
-                pairs.push((k, v));
-            }
-        }
-        pairs
-    }).unwrap_or_default();
-    // Parse optional hashes object
-    let hashes = js_sys::Reflect::get(val, &"hashes".into()).ok().and_then(|h| {
-        if h.is_null() || h.is_undefined() {
-            return None;
-        }
-        let s = |k: &str| js_sys::Reflect::get(&h, &k.into()).ok().and_then(|v| v.as_string());
-        let u = |k: &str| js_sys::Reflect::get(&h, &k.into()).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
-        let blake3 = s("blake3");
-        let sha256 = s("sha256");
-        let file_size = u("file_size");
-        let spot_hash_b3 = s("spot_hash_b3");
-        let content_hash = s("content_hash");
-        let data_offset = u("data_offset");
-        let data_size = u("data_size");
-        if blake3.is_none() && sha256.is_none() && file_size.is_none() {
-            None
-        } else {
-            Some(crate::state::SidecarHashes { blake3, sha256, file_size, spot_hash_b3, content_hash, data_offset, data_size })
-        }
-    });
-    Some(CachedFile { path, filename, _xc_id: xc_id, metadata, hashes })
+    let cf: oversample_ipc::xc::XcCachedFile = serde_wasm_bindgen::from_value(val.clone()).ok()?;
+    Some(CachedFile {
+        path: cf.path,
+        filename: cf.filename,
+        _xc_id: cf.xc_id,
+        metadata: cf.metadata,
+        hashes: cf.hashes,
+    })
 }
 
 // ── View states ──────────────────────────────────────────────────────

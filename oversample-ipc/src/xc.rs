@@ -5,6 +5,7 @@
 //! serde field renames map the real Xeno-Canto API field names (`gen`, `type`,
 //! `file`, `file-name`); they are also the on-disk/IPC wire names.
 
+use crate::SidecarHashes;
 use serde::{Deserialize, Serialize};
 
 /// A single recording from the XC API.
@@ -135,3 +136,15 @@ pub struct XcIndexEntry {
 
 /// Available groups on xeno-canto.
 pub const XC_GROUPS: &[&str] = &["bats", "birds", "frogs", "grasshoppers", "land mammals"];
+
+/// Result of downloading or loading a cached XC recording (the `xc_download`
+/// command and the cached-path lookup).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcCachedFile {
+    pub path: String,
+    pub filename: String,
+    pub xc_id: u64,
+    pub metadata: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hashes: Option<SidecarHashes>,
+}
