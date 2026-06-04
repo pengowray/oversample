@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::state::store_fields::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
@@ -120,7 +121,7 @@ pub fn Spectrogram() -> impl IntoView {
     Effect::new(move || {
         let _files = state.files.get();
         let _idx = state.current_file_index.get();
-        let _enabled = state.flow_enabled.get();
+        let _enabled = state.flow.enabled().get();
         pre_rendered.set(None);
     });
 
@@ -193,12 +194,12 @@ pub fn Spectrogram() -> impl IntoView {
         let het_cutoff_auto = state.het_cutoff_auto.get();
         let hfr_enabled = state.hfr_enabled.get();
         let output_freq_hl = state.output_freq_highlight.get();
-        let flow_on = state.flow_enabled.get_untracked();
-        let _flow_ig = state.flow_intensity_gate.get(); // trigger redraw on flow setting change
-        let _flow_mg = state.flow_gate.get();
-        let _flow_sg = state.flow_shift_gain.get();
-        let _flow_cg = state.flow_color_gamma.get();
-        let _flow_scheme = state.flow_color_scheme.get(); // trigger redraw on color scheme change
+        let flow_on = state.flow.enabled().get_untracked();
+        let _flow_ig = state.flow.intensity_gate().get(); // trigger redraw on flow setting change
+        let _flow_mg = state.flow.gate().get();
+        let _flow_sg = state.flow.shift_gain().get();
+        let _flow_cg = state.flow.color_gamma().get();
+        let _flow_scheme = state.flow.color_scheme().get(); // trigger redraw on color scheme change
         let colormap_pref = state.colormap_preference.get();
         let hfr_colormap_pref = state.hfr_colormap_preference.get();
         let axis_drag_start = state.axis_drag_start_freq.get();
@@ -612,13 +613,13 @@ pub fn Spectrogram() -> impl IntoView {
             any_drawn
         } else if flow_on && total_cols > 0 {
             // Flow mode (includes phase coherence): composite dB+shift tiles at render time
-            let ig = state.flow_intensity_gate.get_untracked();
-            let mg = state.flow_gate.get_untracked();
+            let ig = state.flow.intensity_gate().get_untracked();
+            let mg = state.flow.gate().get_untracked();
             let op = 1.0_f32; // opacity consolidated into color gain
-            let sg = state.flow_shift_gain.get_untracked();
-            let cg = state.flow_color_gamma.get_untracked();
+            let sg = state.flow.shift_gain().get_untracked();
+            let cg = state.flow.color_gamma().get_untracked();
             let algo = state.spectrogram_display.get_untracked().flow_algo();
-            let flow_scheme = state.flow_color_scheme.get_untracked();
+            let flow_scheme = state.flow.color_scheme().get_untracked();
             let flow_render_mode = spectrogram_renderer::TileRenderMode::Flow {
                 intensity_gate: ig,
                 flow_gate: mg,
@@ -1220,7 +1221,7 @@ pub fn Spectrogram() -> impl IntoView {
             let _file_idx = state.current_file_index.get();
             let _main_view = state.main_view.get();
             let _reassign = state.reassign_enabled.get();
-            let _flow = state.flow_enabled.get();
+            let _flow = state.flow.enabled().get();
             // NOTE: intentionally NOT subscribing to tile_ready_signal here —
             // that would create a feedback loop (tile completes -> prefetch fires -> schedules more).
             // Scroll/zoom/playing changes are sufficient triggers for prefetch.
@@ -1265,7 +1266,7 @@ pub fn Spectrogram() -> impl IntoView {
                     viewport_right
                 };
 
-                let flow_on = state.flow_enabled.get_untracked();
+                let flow_on = state.flow.enabled().get_untracked();
                 let flow_algo = if flow_on {
                     Some(state.spectrogram_display.get_untracked().flow_algo())
                 } else {

@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use reactive_stores::Store;
 use crate::audio::source::ChannelView;
 use crate::canvas::spectrogram_renderer::Colormap;
 use crate::canvas::flow::FlowAlgo;
@@ -1176,6 +1177,43 @@ pub struct LoadingEntry {
     pub stage: LoadingStage,
 }
 
+// ── Reactive-store groups ────────────────────────────────────────────────────
+//
+// Cohesive slices of former `AppState` signals, grouped into `#[derive(Store)]`
+// plain-data structs and held as `Store<…>` fields on `AppState`. Each field is
+// still independently reactive (subscribing to `state.flow.gate()` only re-runs
+// on `gate` changes, exactly like the old per-`RwSignal` model), but the struct
+// is now organized rather than 290 flat signals. Access pattern:
+//
+//     state.flow.gate().get()           // was state.flow_gate.get()
+//     state.flow.enabled().set(true)    // was state.flow_enabled.set(true)
+//
+// Consumers must bring the generated `*StoreFields` accessor trait into scope;
+// the [`store_fields`] prelude re-exports them all for a single glob import.
+//
+// NB: `Store::new` requires the inner type to be `Send + Sync + 'static`. Groups
+// that hold non-`Send` values (JS/web-sys handles, etc.) need a different
+// storage; `FlowState` is all plain `Copy` data so the default storage applies.
+
+/// Optical-flow overlay settings (the "Flow" spectrogram view).
+#[derive(Clone, Debug, Default, Store)]
+pub struct FlowState {
+    pub enabled: bool,
+    pub intensity_gate: f32,
+    pub gate: f32,
+    pub opacity: f32,
+    pub shift_gain: f32,
+    pub color_gamma: f32,
+    pub color_scheme: FlowColorScheme,
+}
+
+/// Single-import prelude for the generated `#[derive(Store)]` accessor traits.
+/// Consumers `use crate::state::store_fields::*;` once instead of importing each
+/// `FooStateStoreFields` trait individually. Extend as more groups migrate.
+pub mod store_fields {
+    pub use super::FlowStateStoreFields;
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -1226,18 +1264,14 @@ pub struct AppState {
     /// True while any pointer button is held down on the spectrogram canvas.
     pub pointer_is_down: RwSignal<bool>,
     pub spectrogram_display: RwSignal<SpectrogramDisplay>,
-    pub flow_enabled: RwSignal<bool>,
+    /// Optical-flow overlay settings (grouped reactive store). Replaces the
+    /// former flat `flow_enabled` / `flow_gate` / `flow_*` signals.
+    pub flow: Store<FlowState>,
     pub right_sidebar_tab: RwSignal<RightSidebarTab>,
     pub right_sidebar_collapsed: RwSignal<bool>,
     pub right_sidebar_width: RwSignal<f64>,
     pub right_sidebar_dropdown_open: RwSignal<bool>,
     pub metadata_view: RwSignal<MetadataView>,
-    pub flow_intensity_gate: RwSignal<f32>,
-    pub flow_gate: RwSignal<f32>,
-    pub flow_opacity: RwSignal<f32>,
-    pub flow_shift_gain: RwSignal<f32>,
-    pub flow_color_gamma: RwSignal<f32>,
-    pub flow_color_scheme: RwSignal<FlowColorScheme>,
     pub min_display_freq: RwSignal<Option<f64>>,
     pub max_display_freq: RwSignal<Option<f64>>,
     pub mouse_freq: RwSignal<Option<f64>>,
@@ -1874,18 +1908,20 @@ impl AppState {
             is_dragging: RwSignal::new(false),
             pointer_is_down: RwSignal::new(false),
             spectrogram_display: RwSignal::new(SpectrogramDisplay::FlowOptical),
-            flow_enabled: RwSignal::new(false),
+            flow: Store::new(FlowState {
+                enabled: false,
+                intensity_gate: 0.5,
+                gate: 0.75,
+                opacity: 0.75,
+                shift_gain: 3.0,
+                color_gamma: 1.0,
+                color_scheme: FlowColorScheme::default(),
+            }),
             right_sidebar_tab: RwSignal::new(RightSidebarTab::Metadata),
             right_sidebar_collapsed: RwSignal::new(true),
             right_sidebar_width: RwSignal::new(220.0),
             right_sidebar_dropdown_open: RwSignal::new(false),
             metadata_view: RwSignal::new(MetadataView::default()),
-            flow_intensity_gate: RwSignal::new(0.5),
-            flow_gate: RwSignal::new(0.75),
-            flow_opacity: RwSignal::new(0.75),
-            flow_shift_gain: RwSignal::new(3.0),
-            flow_color_gamma: RwSignal::new(1.0),
-            flow_color_scheme: RwSignal::new(FlowColorScheme::default()),
             min_display_freq: RwSignal::new(None),
             max_display_freq: RwSignal::new(None),
             mouse_freq: RwSignal::new(None),

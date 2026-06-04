@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::state::store_fields::*;
 use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, FlowColorScheme, MainView, ResonatorFftMode, ResonatorLayout, SpectrogramDisplay,
@@ -198,9 +199,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                                         "spectral" => FlowColorScheme::Spectral,
                                                         _ => FlowColorScheme::RedBlue,
                                                     };
-                                                    state.flow_color_scheme.set(scheme);
+                                                    state.flow.color_scheme().set(scheme);
                                                 }
-                                                prop:value=move || match state.flow_color_scheme.get() {
+                                                prop:value=move || match state.flow.color_scheme().get() {
                                                     FlowColorScheme::RedBlue => "redblue",
                                                     FlowColorScheme::CoolWarm => "coolwarm",
                                                     FlowColorScheme::TealOrange => "tealorange",
@@ -229,16 +230,16 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         min="0"
                                         max="100"
                                         step="1"
-                                        prop:value=move || (state.flow_intensity_gate.get() * 100.0).round().to_string()
+                                        prop:value=move || (state.flow.intensity_gate().get() * 100.0).round().to_string()
                                         on:input=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                                             if let Ok(val) = input.value().parse::<f32>() {
-                                                state.flow_intensity_gate.set(val / 100.0);
+                                                state.flow.intensity_gate().set(val / 100.0);
                                             }
                                         }
                                     />
-                                    <span class="setting-value">{move || format!("{}%", (state.flow_intensity_gate.get() * 100.0).round() as u32)}</span>
+                                    <span class="setting-value">{move || format!("{}%", (state.flow.intensity_gate().get() * 100.0).round() as u32)}</span>
                                 </div>
                             </div>
                             <div class="setting-row">
@@ -250,21 +251,21 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         min="0.5"
                                         max="10.0"
                                         step="0.5"
-                                        prop:value=move || state.flow_shift_gain.get().to_string()
+                                        prop:value=move || state.flow.shift_gain().get().to_string()
                                         on:input=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                                             if let Ok(val) = input.value().parse::<f32>() {
-                                                state.flow_shift_gain.set(val);
+                                                state.flow.shift_gain().set(val);
                                             }
                                         }
                                     />
-                                    <span class="setting-value">{move || format!("{:.1}x", state.flow_shift_gain.get())}</span>
+                                    <span class="setting-value">{move || format!("{:.1}x", state.flow.shift_gain().get())}</span>
                                 </div>
                             </div>
                             <div class="setting-row">
                                 <span class="setting-label">{move || {
-                                    let g = state.flow_color_gamma.get();
+                                    let g = state.flow.color_gamma().get();
                                     if g == 1.0 { "Color contrast: linear".to_string() }
                                     else { format!("Color contrast: {:.2}", g) }
                                 }}</span>
@@ -275,12 +276,12 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         min="0.2"
                                         max="3.0"
                                         step="0.05"
-                                        prop:value=move || state.flow_color_gamma.get().to_string()
+                                        prop:value=move || state.flow.color_gamma().get().to_string()
                                         on:input=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                                             if let Ok(val) = input.value().parse::<f32>() {
-                                                state.flow_color_gamma.set(val);
+                                                state.flow.color_gamma().set(val);
                                             }
                                         }
                                     />
@@ -296,16 +297,16 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         min="0"
                                         max="100"
                                         step="1"
-                                        prop:value=move || (state.flow_gate.get() * 100.0).round().to_string()
+                                        prop:value=move || (state.flow.gate().get() * 100.0).round().to_string()
                                         on:input=move |ev: web_sys::Event| {
                                             let target = ev.target().unwrap();
                                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                                             if let Ok(val) = input.value().parse::<f32>() {
-                                                state.flow_gate.set(val / 100.0);
+                                                state.flow.gate().set(val / 100.0);
                                             }
                                         }
                                     />
-                                    <span class="setting-value">{move || format!("{}%", (state.flow_gate.get() * 100.0).round() as u32)}</span>
+                                    <span class="setting-value">{move || format!("{}%", (state.flow.gate().get() * 100.0).round() as u32)}</span>
                                 </div>
                             </div>
                         </div>

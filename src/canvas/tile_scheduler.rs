@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::state::store_fields::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use std::sync::Arc;
@@ -247,7 +248,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
     // Clear flow tile cache when algorithm or enabled state changes
     Effect::new(move || {
         let _display = state.spectrogram_display.get();
-        let _enabled = state.flow_enabled.get();
+        let _enabled = state.flow.enabled().get();
         crate::canvas::tile_cache::clear_flow_cache();
     });
 
