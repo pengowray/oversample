@@ -15,10 +15,25 @@ use crate::format_time::format_duration_compact;
 use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, find_open_demo, load_single_demo};
 use super::suggestions::BatsForYou;
 
-/// Remove the file at `idx` from the list and fix up index-tracking signals
-/// (current_file_index, mic_live_file_idx) plus the per-file viewport state
-/// when the closed file was the current one. Stops playback if the closed
-/// file was being played, and clears its tile cache.
+/// Remove the file at `idx` from the list and reconcile EVERY piece of state
+/// that keys off a file's positional index, because `Vec::remove(i)` shifts
+/// all files after `i` down by one.
+///
+/// Index-bearing state that must be fixed up on removal (keep this list in
+/// sync with the body):
+/// - `current_file_index`  — the focused file
+/// - `mic_live_file_idx`   — the live-capture slot
+/// - `selected_file_indices` — the multi-select set (timeline builder)
+/// - `active_timeline` / `active_timeline_track` — segments hold `file_index`
+/// - the positional tile/spectral caches (main/flow/reassign/chroma/resonator
+///   + `spectral_store`), whose keys are `(file_idx, …)`. Clearing only the
+///   removed file's tiles is NOT enough: the files that shift down would then
+///   read their old neighbour's tiles under the now-reused index (a wrong-file
+///   render). We clear all positional caches on removal; they self-heal by
+///   re-rendering the visible tiles.
+///
+/// Also stops playback if the closed file was being played, and restores the
+/// new current file's viewport.
 ///
 /// Used for the synchronous close-button path and for the post-stop close
 /// path that runs after an async stop_listening / stop_recording.
@@ -26,7 +41,10 @@ fn remove_file_at(state: &AppState, i: usize) {
     if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
         playback::stop(state);
     }
-    tile_cache::clear_file(i);
+    // Indices shift on remove, so every positional cache becomes stale for the
+    // files after `i`, not just for `i`. Clear them all (cheap: lazy re-render).
+    tile_cache::clear_all_caches();
+    crate::canvas::spectral_store::clear();
     let was_current = state.current_file_index.get_untracked() == Some(i);
     state.files.update(|files| {
         if i < files.len() {
@@ -52,6 +70,27 @@ fn remove_file_at(state: &AppState, i: usize) {
             other => other,
         };
     });
+    // Multi-select set: drop the removed index, shift higher ones down.
+    state.selected_file_indices.update(|sel| {
+        sel.retain(|&x| x != i);
+        for x in sel.iter_mut() {
+            if *x > i { *x -= 1; }
+        }
+    });
+    // The active timeline embeds `file_index` in each segment, so it must be
+    // rebuilt from the (already-reconciled) selection against the new file
+    // list. Dropping below 2 files makes `from_files` return None, which also
+    // tears down the now-meaningless track selection.
+    if state.active_timeline.get_untracked().is_some() {
+        let sel = state.selected_file_indices.get_untracked();
+        let rebuilt = state.files.with_untracked(|files| {
+            crate::timeline::TimelineView::from_files(&sel, files)
+        });
+        if rebuilt.is_none() {
+            state.active_timeline_track.set(None);
+        }
+        state.active_timeline.set(rebuilt);
+    }
     // If closing the current file left current_file_index unchanged (e.g.
     // closing file 0 when file 1 slides into slot 0), the per-file
     // vertical-zoom sync Effect won't fire — so reload the new current
