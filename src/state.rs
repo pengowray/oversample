@@ -1462,6 +1462,7 @@ pub mod store_fields {
         RecordingMetaStateStoreFields,
         SpectStateStoreFields,
         AnnotationsStateStoreFields,
+        DisplayStateStoreFields,
     };
 }
 
@@ -1616,6 +1617,50 @@ pub struct AnnotationsState {
     pub is_new_edit: bool,
     /// Whether saved annotations are drawn on the spectrogram.
     pub visible: bool,
+}
+
+/// Display-DSP / spectrogram-processing settings: the per-stage display filter
+/// panel, Xformed-Spec view intensity, decimation, and saved ZC/normal states.
+#[derive(Clone, Debug, Store)]
+pub struct DisplayState {
+    // Display-affecting checkboxes (spectrogram intensity).
+    pub auto_gain: bool,
+    pub eq: bool,
+    pub noise_filter: bool,
+    /// Compute spectrogram tiles from DSP-transformed audio (pitch shift, het, …).
+    pub transform: bool,
+    // Saved display settings restored on ZC enter/leave.
+    pub zc_saved_auto_gain: bool,
+    pub zc_saved_eq: bool,
+    pub zc_saved_noise_filter: bool,
+    pub normal_saved_auto_gain: bool,
+    pub normal_saved_eq: bool,
+    pub normal_saved_noise_filter: bool,
+    // Independent gain/intensity for the Xformed-Spec view.
+    pub xform_gain_db: f32,
+    pub xform_floor_db: f32,
+    pub xform_range_db: f32,
+    pub xform_gamma: f32,
+    // Per-stage display DSP filter panel.
+    pub filter_enabled: bool,
+    pub filter_eq: DisplayFilterMode,
+    pub filter_notch: DisplayFilterMode,
+    pub filter_nr: DisplayFilterMode,
+    pub filter_transform: DisplayFilterMode,
+    pub filter_gain: DisplayFilterMode,
+    pub filter_decimate: DisplayFilterMode,
+    /// Extra dB boost applied to spectrogram display from Auto/Same gain modes.
+    pub gain_boost: f32,
+    /// Target decimation sample rate in Hz (Custom mode; Auto derives from transform).
+    pub decimate_rate: u32,
+    /// Effective decimation target rate resolved from `filter_decimate` (0 = none).
+    pub decimate_effective: u32,
+    /// Browser's default audio output sample rate.
+    pub browser_sample_rate: u32,
+    /// Custom NR strength (display-only).
+    pub nr_strength: f64,
+    /// Auto-learned noise floor for display (from first ~500ms of file).
+    pub auto_noise_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
 
 // ── AppState ─────────────────────────────────────────────────────────────────
@@ -1836,49 +1881,8 @@ pub struct AppState {
     /// Timeline / multi-file selection state (grouped reactive store).
     pub timeline: Store<TimelineState>,
 
-    // Display-affecting checkboxes (spectrogram intensity settings)
-    pub display_auto_gain: RwSignal<bool>,
-    pub display_eq: RwSignal<bool>,
-    pub display_noise_filter: RwSignal<bool>,
-    /// When true, spectrogram tiles are computed from DSP-transformed audio
-    /// (same transform as playback mode: pitch shift, heterodyne, etc.)
-    pub display_transform: RwSignal<bool>,
-    // ZC saved display settings (restored when entering ZC; defaults: eq=true, noise=true)
-    pub zc_saved_display_auto_gain: RwSignal<bool>,
-    pub zc_saved_display_eq: RwSignal<bool>,
-    pub zc_saved_display_noise_filter: RwSignal<bool>,
-    // Normal saved display settings (restored when leaving ZC; defaults: all false)
-    pub normal_saved_display_auto_gain: RwSignal<bool>,
-    pub normal_saved_display_eq: RwSignal<bool>,
-    pub normal_saved_display_noise_filter: RwSignal<bool>,
-
-    // Independent gain signals for Xformed Spec view
-    pub xform_spect_gain_db: RwSignal<f32>,
-    pub xform_spect_floor_db: RwSignal<f32>,
-    pub xform_spect_range_db: RwSignal<f32>,
-    pub xform_spect_gamma: RwSignal<f32>,
-
-    // Display DSP filter panel (per-stage control of spectrogram processing)
-    pub display_filter_enabled: RwSignal<bool>,
-    pub display_filter_eq: RwSignal<DisplayFilterMode>,
-    pub display_filter_notch: RwSignal<DisplayFilterMode>,
-    pub display_filter_nr: RwSignal<DisplayFilterMode>,
-    pub display_filter_transform: RwSignal<DisplayFilterMode>,
-    pub display_filter_gain: RwSignal<DisplayFilterMode>,
-    /// Extra dB boost applied to spectrogram display from Auto/Same gain modes.
-    pub display_gain_boost: RwSignal<f32>,
-    // Decimation (downsample after DSP transform)
-    pub display_filter_decimate: RwSignal<DisplayFilterMode>,
-    /// Target decimation sample rate in Hz (used for Custom mode; Auto computes from transform).
-    pub display_decimate_rate: RwSignal<u32>,
-    /// Effective decimation target rate resolved from display_filter_decimate mode (0 = no decimation).
-    pub display_decimate_effective: RwSignal<u32>,
-    /// Browser's default audio output sample rate (detected from AudioContext, typically 44100 or 48000).
-    pub browser_sample_rate: RwSignal<u32>,
-    // Custom NR settings (display-only)
-    pub display_nr_strength: RwSignal<f64>,
-    // Auto-learned noise floor for display (computed from first ~500ms of file)
-    pub display_auto_noise_floor: RwSignal<Option<crate::dsp::spectral_sub::NoiseFloor>>,
+    /// Display-DSP / spectrogram-processing settings (grouped reactive store).
+    pub display: Store<DisplayState>,
 
     /// PSD (Power Spectral Density) panel settings (grouped reactive store).
     pub psd: Store<PsdState>,
@@ -2280,36 +2284,35 @@ impl AppState {
                 show_clock_time: false,
             }),
 
-            display_auto_gain: RwSignal::new(false),
-            display_eq: RwSignal::new(false),
-            display_noise_filter: RwSignal::new(false),
-            display_transform: RwSignal::new(false),
-
-            zc_saved_display_auto_gain: RwSignal::new(false),
-            zc_saved_display_eq: RwSignal::new(true),
-            zc_saved_display_noise_filter: RwSignal::new(true),
-            normal_saved_display_auto_gain: RwSignal::new(false),
-            normal_saved_display_eq: RwSignal::new(false),
-            normal_saved_display_noise_filter: RwSignal::new(false),
-
-            xform_spect_gain_db: RwSignal::new(0.0),
-            xform_spect_floor_db: RwSignal::new(-120.0),
-            xform_spect_range_db: RwSignal::new(120.0),
-            xform_spect_gamma: RwSignal::new(1.0),
-
-            display_filter_enabled: RwSignal::new(false),
-            display_filter_eq: RwSignal::new(DisplayFilterMode::Off),
-            display_filter_notch: RwSignal::new(DisplayFilterMode::Off),
-            display_filter_nr: RwSignal::new(DisplayFilterMode::Auto),
-            display_filter_transform: RwSignal::new(DisplayFilterMode::Off),
-            display_filter_gain: RwSignal::new(DisplayFilterMode::Auto),
-            display_filter_decimate: RwSignal::new(DisplayFilterMode::Auto),
-            display_decimate_rate: RwSignal::new(48000),
-            display_decimate_effective: RwSignal::new(0),
-            browser_sample_rate: RwSignal::new(0),
-            display_gain_boost: RwSignal::new(0.0),
-            display_nr_strength: RwSignal::new(0.8),
-            display_auto_noise_floor: RwSignal::new(None),
+            display: Store::new(DisplayState {
+                auto_gain: false,
+                eq: false,
+                noise_filter: false,
+                transform: false,
+                zc_saved_auto_gain: false,
+                zc_saved_eq: true,
+                zc_saved_noise_filter: true,
+                normal_saved_auto_gain: false,
+                normal_saved_eq: false,
+                normal_saved_noise_filter: false,
+                xform_gain_db: 0.0,
+                xform_floor_db: -120.0,
+                xform_range_db: 120.0,
+                xform_gamma: 1.0,
+                filter_enabled: false,
+                filter_eq: DisplayFilterMode::Off,
+                filter_notch: DisplayFilterMode::Off,
+                filter_nr: DisplayFilterMode::Auto,
+                filter_transform: DisplayFilterMode::Off,
+                filter_gain: DisplayFilterMode::Auto,
+                filter_decimate: DisplayFilterMode::Auto,
+                gain_boost: 0.0,
+                decimate_rate: 48000,
+                decimate_effective: 0,
+                browser_sample_rate: 0,
+                nr_strength: 0.8,
+                auto_noise_floor: None,
+            }),
 
             psd: Store::new(PsdState {
                 nfft: 1024,

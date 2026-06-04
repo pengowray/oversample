@@ -213,16 +213,16 @@ pub fn Spectrogram() -> impl IntoView {
         let selected_pulse = state.pulse.selected_index().get();
         let main_view = state.main_view.get();
         let (spect_floor, spect_range, spect_gamma, spect_gain) = if main_view == MainView::XformedSpec {
-            (state.xform_spect_floor_db.get(), state.xform_spect_range_db.get(), state.xform_spect_gamma.get(), state.xform_spect_gain_db.get())
+            (state.display.xform_floor_db().get(), state.display.xform_range_db().get(), state.display.xform_gamma().get(), state.display.xform_gain_db().get())
         } else {
             (state.spect.floor_db().get(), state.spect.range_db().get(), state.spect.gamma().get(), state.spect.gain_db().get())
         };
         let debug_tiles = state.spect.debug_tiles().get();
         let reassign_on = state.spect.reassign_enabled().get();
         // Display-affecting checkbox subscriptions
-        let display_auto_gain = state.display_auto_gain.get();
-        let _display_eq = state.display_eq.get();
-        let _display_noise_filter = state.display_noise_filter.get();
+        let display_auto_gain = state.display.auto_gain().get();
+        let _display_eq = state.display.eq().get();
+        let _display_noise_filter = state.display.noise_filter().get();
         let _f_freq_lo = state.filter.freq_low().get();
         let _f_freq_hi = state.filter.freq_high().get();
         let _f_db_below = state.filter.db_below().get();
@@ -234,15 +234,15 @@ pub fn Spectrogram() -> impl IntoView {
         let _nr_strength = state.noise_reduce.strength().get();
         let _nr_floor_v = state.noise_reduce.floor().get();
         // Display DSP filter subscriptions
-        let _dsp_enabled = state.display_filter_enabled.get();
-        let _dsp_nr = state.display_filter_nr.get();
-        let _dsp_eq = state.display_filter_eq.get();
-        let _dsp_notch = state.display_filter_notch.get();
-        let _dsp_gain = state.display_filter_gain.get();
-        let _dsp_nr_strength = state.display_nr_strength.get();
-        let _dsp_auto_floor = state.display_auto_noise_floor.get();
-        let _dsp_transform = state.display_transform.get();
-        let _dsp_decimate = state.display_decimate_effective.get();
+        let _dsp_enabled = state.display.filter_enabled().get();
+        let _dsp_nr = state.display.filter_nr().get();
+        let _dsp_eq = state.display.filter_eq().get();
+        let _dsp_notch = state.display.filter_notch().get();
+        let _dsp_gain = state.display.filter_gain().get();
+        let _dsp_nr_strength = state.display.nr_strength().get();
+        let _dsp_auto_floor = state.display.auto_noise_floor().get();
+        let _dsp_transform = state.display.transform().get();
+        let _dsp_decimate = state.display.decimate_effective().get();
         let annotation_store = state.annotations.store().get();
         let selected_annotation_ids = state.annotations.selected_ids().get();
         let annotation_hover_handle = state.annotations.hover_handle().get();
@@ -325,7 +325,7 @@ pub fn Spectrogram() -> impl IntoView {
             (tr, mf)
         };
         let scroll_col = scroll / time_res;
-        let decim_effective = state.display_decimate_effective.get_untracked();
+        let decim_effective = state.display.decimate_effective().get_untracked();
         let original_sample_rate = primary_file_idx
             .and_then(|i| files.get(i))
             .map(|f| f.spectrogram.sample_rate)
@@ -364,7 +364,7 @@ pub fn Spectrogram() -> impl IntoView {
         // --- Normal spectrogram mode ---
 
         // Build colormap
-        let xform_or_decim = state.display_transform.get_untracked()
+        let xform_or_decim = state.display.transform().get_untracked()
             || main_view == MainView::XformedSpec
             || decim_effective > 0;
         let colormap = if flow_on {
@@ -420,7 +420,7 @@ pub fn Spectrogram() -> impl IntoView {
         };
 
         // Extra dB boost from Auto/Same gain modes (computed in app.rs Effect)
-        let display_boost = state.display_gain_boost.get();
+        let display_boost = state.display.gain_boost().get();
 
         let display_settings = SpectDisplaySettings {
             floor_db: spect_floor,
@@ -542,7 +542,7 @@ pub fn Spectrogram() -> impl IntoView {
                 } else {
                     spectrogram_renderer::TileSource::Normal
                 };
-                let xform_on = state.display_transform.get_untracked();
+                let xform_on = state.display.transform().get_untracked();
                 let preview_ref = if xform_on || decim_effective > 0 || resonators_on {
                     None
                 } else {
@@ -657,7 +657,7 @@ pub fn Spectrogram() -> impl IntoView {
             };
             // Skip preview fallback when xform/decimation/resonators is active
             // (preview shows the original untransformed FFT).
-            let xform_on = state.display_transform.get_untracked();
+            let xform_on = state.display.transform().get_untracked();
             let preview_ref = if xform_on || decim_effective > 0 || resonators_on {
                 None
             } else {
@@ -807,7 +807,7 @@ pub fn Spectrogram() -> impl IntoView {
                 shield_style: state.shield_style.get_untracked(),
             };
 
-            let xform_on = state.display_transform.get_untracked()
+            let xform_on = state.display.transform().get_untracked()
                 || main_view == MainView::XformedSpec;
             // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
             let marker_state = if xform_on || decim_effective > 0 {

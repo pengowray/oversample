@@ -184,7 +184,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     // Compute ref_db the same way the spectrogram component does
     let fft_size = state.spect.fft_mode().get_untracked().max_fft_size() as f32;
     let fixed_ref_db = 20.0 * (fft_size / 4.0).log10();
-    let display_auto_gain = state.display_auto_gain.get_untracked();
+    let display_auto_gain = state.display.auto_gain().get_untracked();
     let total_cols = {
         let tc = file.spectrogram.total_columns;
         if tc > 0 { tc } else { file.spectrogram.columns.len() }
@@ -195,7 +195,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     } else {
         fixed_ref_db
     };
-    let display_boost = state.display_gain_boost.get_untracked();
+    let display_boost = state.display.gain_boost().get_untracked();
 
     let display_settings = SpectDisplaySettings {
         floor_db: spect_floor,

@@ -730,7 +730,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // (phase vocoder, pitch shift), read extra pre-padding samples so the
         // transform's onset fade/warmup falls on discarded samples rather than
         // visible tile content.
-        let xform_on = state.display_transform.get_untracked();
+        let xform_on = state.display.transform().get_untracked();
         let needs_padding = xform_on && matches!(
             state.playback_mode.get_untracked(),
             PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift | PlaybackMode::TimeExpansion
@@ -772,7 +772,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         };
 
         // Apply decimation if active — produces fewer samples, so STFT yields fewer columns per tile
-        let decim_target = state.display_decimate_effective.get_untracked();
+        let decim_target = state.display.decimate_effective().get_untracked();
         let (samples, effective_rate) = if decim_target > 0 && decim_target < audio.sample_rate {
             let decimated = crate::dsp::filters::decimate(&samples, audio.sample_rate, decim_target);
             let rate = crate::dsp::filters::decimated_rate(audio.sample_rate, decim_target);

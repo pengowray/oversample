@@ -295,21 +295,21 @@ pub fn ModeRadioGroup() -> impl IntoView {
             let is_zc = mode == PlaybackMode::ZeroCrossing;
 
             if was_zc && !is_zc {
-                state.zc_saved_display_auto_gain.set(state.display_auto_gain.get_untracked());
-                state.zc_saved_display_eq.set(state.display_eq.get_untracked());
-                state.zc_saved_display_noise_filter.set(state.display_noise_filter.get_untracked());
+                state.display.zc_saved_auto_gain().set(state.display.auto_gain().get_untracked());
+                state.display.zc_saved_eq().set(state.display.eq().get_untracked());
+                state.display.zc_saved_noise_filter().set(state.display.noise_filter().get_untracked());
 
-                state.display_auto_gain.set(state.normal_saved_display_auto_gain.get_untracked());
-                state.display_eq.set(state.normal_saved_display_eq.get_untracked());
-                state.display_noise_filter.set(state.normal_saved_display_noise_filter.get_untracked());
+                state.display.auto_gain().set(state.display.normal_saved_auto_gain().get_untracked());
+                state.display.eq().set(state.display.normal_saved_eq().get_untracked());
+                state.display.noise_filter().set(state.display.normal_saved_noise_filter().get_untracked());
             } else if !was_zc && is_zc {
-                state.normal_saved_display_auto_gain.set(state.display_auto_gain.get_untracked());
-                state.normal_saved_display_eq.set(state.display_eq.get_untracked());
-                state.normal_saved_display_noise_filter.set(state.display_noise_filter.get_untracked());
+                state.display.normal_saved_auto_gain().set(state.display.auto_gain().get_untracked());
+                state.display.normal_saved_eq().set(state.display.eq().get_untracked());
+                state.display.normal_saved_noise_filter().set(state.display.noise_filter().get_untracked());
 
-                state.display_auto_gain.set(state.zc_saved_display_auto_gain.get_untracked());
-                state.display_eq.set(state.zc_saved_display_eq.get_untracked());
-                state.display_noise_filter.set(state.zc_saved_display_noise_filter.get_untracked());
+                state.display.auto_gain().set(state.display.zc_saved_auto_gain().get_untracked());
+                state.display.eq().set(state.display.zc_saved_eq().get_untracked());
+                state.display.noise_filter().set(state.display.zc_saved_noise_filter().get_untracked());
             }
         });
     }

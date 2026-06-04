@@ -4,9 +4,11 @@ use crate::state::DisplayFilterMode;
 
 /// A single row in the DSP filter grid: label + 4-way segmented control + playback indicator.
 #[component]
-pub fn DspFilterRow(
+pub fn DspFilterRow<S>(
     label: &'static str,
-    signal: RwSignal<DisplayFilterMode>,
+    /// The mode signal — generic so it accepts both `RwSignal<DisplayFilterMode>`
+    /// and a `Store<DisplayState>` subfield (distinct types).
+    signal: S,
     /// Whether the corresponding playback filter is currently active
     #[prop(into)]
     playback_active: Signal<bool>,
@@ -21,7 +23,15 @@ pub fn DspFilterRow(
     /// Extra tooltip text for the sam-dot
     #[prop(optional, into)]
     sam_tooltip: Option<Signal<String>>,
-) -> impl IntoView {
+) -> impl IntoView
+where
+    S: leptos::prelude::Get<Value = DisplayFilterMode>
+        + leptos::prelude::Set<Value = DisplayFilterMode>
+        + Copy
+        + Send
+        + Sync
+        + 'static,
+{
     let modes = DisplayFilterMode::ALL;
 
     view! {

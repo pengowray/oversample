@@ -16,8 +16,8 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
     let mut h = std::collections::hash_map::DefaultHasher::new();
     file_max_freq.to_bits().hash(&mut h);
     tile_height.hash(&mut h);
-    state.display_eq.get_untracked().hash(&mut h);
-    state.display_noise_filter.get_untracked().hash(&mut h);
+    state.display.eq().get_untracked().hash(&mut h);
+    state.display.noise_filter().get_untracked().hash(&mut h);
     state.filter.enabled().get_untracked().hash(&mut h);
     state.filter.freq_low().get_untracked().to_bits().hash(&mut h);
     state.filter.freq_high().get_untracked().to_bits().hash(&mut h);
@@ -36,17 +36,17 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         (b.strength_db as i32).hash(&mut h);
     }
     state.notch.harmonic_suppression().get_untracked().to_bits().hash(&mut h);
-    state.display_filter_enabled.get_untracked().hash(&mut h);
-    (state.display_filter_nr.get_untracked() as u8).hash(&mut h);
-    (state.display_filter_notch.get_untracked() as u8).hash(&mut h);
+    state.display.filter_enabled().get_untracked().hash(&mut h);
+    (state.display.filter_nr().get_untracked() as u8).hash(&mut h);
+    (state.display.filter_notch().get_untracked() as u8).hash(&mut h);
     state.noise_reduce.enabled().get_untracked().hash(&mut h);
     state.noise_reduce.strength().get_untracked().to_bits().hash(&mut h);
     // Include noise floor identity (use ptr + len as proxy for content)
     let nf = state.noise_reduce.floor().get_untracked();
     nf.as_ref().map(|f| f.bin_magnitudes.len()).unwrap_or(0).hash(&mut h);
-    let dnf = state.display_auto_noise_floor.get_untracked();
+    let dnf = state.display.auto_noise_floor().get_untracked();
     dnf.as_ref().map(|f| f.bin_magnitudes.len()).unwrap_or(0).hash(&mut h);
-    state.display_nr_strength.get_untracked().to_bits().hash(&mut h);
+    state.display.nr_strength().get_untracked().to_bits().hash(&mut h);
     h.finish()
 }
 
@@ -76,8 +76,8 @@ pub fn compute_freq_adjustments(state: &AppState, file_max_freq: f64, tile_heigh
 }
 
 fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_height: usize) -> Option<Vec<f32>> {
-    let show_eq = state.display_eq.get_untracked();
-    let show_noise = state.display_noise_filter.get_untracked();
+    let show_eq = state.display.eq().get_untracked();
+    let show_noise = state.display.noise_filter().get_untracked();
     if !show_eq && !show_noise {
         return None;
     }
@@ -120,10 +120,10 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
     if show_noise {
         // Notch bands: check DSP filter state to determine if notch should show
         let show_notch = {
-            let dsp_on = state.display_filter_enabled.get_untracked();
+            let dsp_on = state.display.filter_enabled().get_untracked();
             if dsp_on {
                 // DSP panel controls notch display
-                match state.display_filter_notch.get_untracked() {
+                match state.display.filter_notch().get_untracked() {
                     DisplayFilterMode::Off => false,
                     DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch.enabled().get_untracked(),
                     DisplayFilterMode::Custom => false,
@@ -162,17 +162,17 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
         // Spectral subtraction: use display auto noise floor when DSP NR is Auto,
         // custom strength when Custom, or playback noise floor when Same/fallback.
         {
-            let dsp_enabled = state.display_filter_enabled.get_untracked();
-            let nr_mode = state.display_filter_nr.get_untracked();
+            let dsp_enabled = state.display.filter_enabled().get_untracked();
+            let nr_mode = state.display.filter_nr().get_untracked();
 
             let (nf_opt, strength) = if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
                 // Auto: use display-specific auto-learned floor
-                (state.display_auto_noise_floor.get_untracked(), 0.8)
+                (state.display.auto_noise_floor().get_untracked(), 0.8)
             } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
                 // Custom: prefer display auto floor with custom strength
-                let floor = state.display_auto_noise_floor.get_untracked()
+                let floor = state.display.auto_noise_floor().get_untracked()
                     .or_else(|| state.noise_reduce.floor().get_untracked());
-                (floor, state.display_nr_strength.get_untracked())
+                (floor, state.display.nr_strength().get_untracked())
             } else if state.noise_reduce.enabled().get_untracked() {
                 // Same/fallback: use playback noise floor
                 (state.noise_reduce.floor().get_untracked(), state.noise_reduce.strength().get_untracked())

@@ -266,7 +266,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let prev_xform = RwSignal::new(false);
         let prev_decim = RwSignal::new(0u32);
         Effect::new(move || {
-            let xform_on = state.display_transform.get();
+            let xform_on = state.display.transform().get();
             let _mode = state.playback_mode.get();
             let _het = state.transform.het_frequency().get();
             let _het_cut = state.transform.het_cutoff().get();
@@ -274,7 +274,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let _ps = state.transform.ps_factor().get();
             let _pv = state.transform.pv_factor().get();
             let _zc = state.transform.zc_factor().get();
-            let decim = state.display_decimate_effective.get();
+            let decim = state.display.decimate_effective().get();
             let decim_changed = decim != prev_decim.get_untracked();
             if xform_on || prev_xform.get_untracked() || decim_changed {
                 crate::canvas::tile_cache::clear_all_tiles();

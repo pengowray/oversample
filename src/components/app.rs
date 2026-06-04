@@ -45,7 +45,7 @@ pub fn App() -> impl IntoView {
         if let Ok(ctx) = AudioContext::new() {
             let rate = ctx.sample_rate() as u32;
             if rate > 0 {
-                state.browser_sample_rate.set(rate);
+                state.display.browser_sample_rate().set(rate);
             }
             let _ = ctx.close();
         }
@@ -502,53 +502,53 @@ pub fn App() -> impl IntoView {
     // When the DSP panel is enabled, the per-stage modes drive the existing
     // display_auto_gain / display_eq / display_noise_filter signals.
     Effect::new(move |_| {
-        let enabled = state.display_filter_enabled.get();
+        let enabled = state.display.filter_enabled().get();
         if !enabled {
             // Reset all display processing signals when DSP is off
-            state.display_transform.set(false);
-            state.display_eq.set(false);
-            state.display_noise_filter.set(false);
-            state.display_auto_gain.set(false);
-            state.display_gain_boost.set(0.0);
-            state.display_decimate_effective.set(0);
+            state.display.transform().set(false);
+            state.display.eq().set(false);
+            state.display.noise_filter().set(false);
+            state.display.auto_gain().set(false);
+            state.display.gain_boost().set(0.0);
+            state.display.decimate_effective().set(0);
             return;
         }
 
         // EQ
-        let eq_on = match state.display_filter_eq.get() {
+        let eq_on = match state.display.filter_eq().get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto => state.filter.enabled().get(), // auto = show if playback EQ is on
             DisplayFilterMode::Same => state.filter.enabled().get(),
             DisplayFilterMode::Custom => false, // not yet implemented
         };
-        state.display_eq.set(eq_on);
+        state.display.eq().set(eq_on);
 
         // Noise (notch + spectral subtraction)
-        let nr_on = match state.display_filter_nr.get() {
+        let nr_on = match state.display.filter_nr().get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto | DisplayFilterMode::Custom => true,
             DisplayFilterMode::Same => state.noise_reduce.enabled().get(),
         };
         // Also consider notch
-        let notch_on = match state.display_filter_notch.get() {
+        let notch_on = match state.display.filter_notch().get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto => state.notch.enabled().get(), // auto = show if playback notch is on
             DisplayFilterMode::Same => state.notch.enabled().get(),
             DisplayFilterMode::Custom => false,
         };
-        state.display_noise_filter.set(nr_on || notch_on);
+        state.display.noise_filter().set(nr_on || notch_on);
 
         // Transform
-        let xform_on = match state.display_filter_transform.get() {
+        let xform_on = match state.display.filter_transform().get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto => false, // auto = off for transform
             DisplayFilterMode::Same => state.playback_mode.get() != PlaybackMode::Normal,
             DisplayFilterMode::Custom => false, // not yet implemented
         };
-        state.display_transform.set(xform_on);
+        state.display.transform().set(xform_on);
 
         // Gain — compute display_gain_boost (dB) and display_auto_gain
-        let gain_filter = state.display_filter_gain.get();
+        let gain_filter = state.display.filter_gain().get();
         let (gain_auto, boost) = match gain_filter {
             DisplayFilterMode::Off => (false, 0.0),
             DisplayFilterMode::Auto => {
@@ -574,8 +574,8 @@ pub fn App() -> impl IntoView {
             }
             DisplayFilterMode::Custom => (false, 0.0), // manual slider control
         };
-        state.display_auto_gain.set(gain_auto);
-        state.display_gain_boost.set(boost);
+        state.display.auto_gain().set(gain_auto);
+        state.display.gain_boost().set(boost);
 
         // When Gain is Off, zero out the display gain offset
         if gain_filter == DisplayFilterMode::Off {
@@ -583,7 +583,7 @@ pub fn App() -> impl IntoView {
         }
 
         // Decimation — resolve effective target rate (0 = no decimation)
-        let decim_rate = match state.display_filter_decimate.get() {
+        let decim_rate = match state.display.filter_decimate().get() {
             DisplayFilterMode::Off => 0,
             DisplayFilterMode::Auto => {
                 // Only decimate when xform display is active
@@ -591,12 +591,12 @@ pub fn App() -> impl IntoView {
             }
             DisplayFilterMode::Same => {
                 // Decimate to browser's native output sample rate so Web Audio doesn't resample
-                let bsr = state.browser_sample_rate.get();
+                let bsr = state.display.browser_sample_rate().get();
                 if bsr > 0 { bsr } else { 0 }
             }
-            DisplayFilterMode::Custom => state.display_decimate_rate.get(),
+            DisplayFilterMode::Custom => state.display.decimate_rate().get(),
         };
-        state.display_decimate_effective.set(decim_rate);
+        state.display.decimate_effective().set(decim_rate);
     });
 
     // (Auto-zoom Effect removed — decimation now controls the frequency axis via sample rate)
@@ -606,15 +606,15 @@ pub fn App() -> impl IntoView {
     {
         let learning: RwSignal<bool> = RwSignal::new(false);
         Effect::new(move |_| {
-            let nr_mode = state.display_filter_nr.get();
-            let enabled = state.display_filter_enabled.get();
+            let nr_mode = state.display.filter_nr().get();
+            let enabled = state.display.filter_enabled().get();
             let file_idx = state.current_file_index.get();
             // Only auto-learn when DSP is enabled and NR is Auto or Custom
             if !enabled || !matches!(nr_mode, DisplayFilterMode::Auto | DisplayFilterMode::Custom) {
                 return;
             }
             // Already have a floor for this file? Skip.
-            if state.display_auto_noise_floor.get_untracked().is_some() {
+            if state.display.auto_noise_floor().get_untracked().is_some() {
                 return;
             }
             if learning.get_untracked() {
@@ -640,7 +640,7 @@ pub fn App() -> impl IntoView {
                     crate::canvas::tile_cache::yield_to_browser,
                 ).await;
                 if let Some(f) = floor {
-                    state.display_auto_noise_floor.set(Some(f));
+                    state.display.auto_noise_floor().set(Some(f));
                 }
                 learning.set(false);
             });
@@ -654,7 +654,7 @@ pub fn App() -> impl IntoView {
             let idx = state.current_file_index.get();
             if idx != prev_file.get() {
                 prev_file.set(idx);
-                state.display_auto_noise_floor.set(None);
+                state.display.auto_noise_floor().set(None);
             }
         });
     }
@@ -1762,32 +1762,32 @@ pub fn MainViewButton() -> impl IntoView {
             // Enable display processing with all filters defaulting to "Same".
             // Also directly resolve the display_* signals so the render Effect
             // sees correct state immediately (don't wait for the resolve Effect).
-            state.display_filter_enabled.set(true);
-            state.display_filter_eq.set(DisplayFilterMode::Same);
-            state.display_filter_notch.set(DisplayFilterMode::Same);
-            state.display_filter_nr.set(DisplayFilterMode::Same);
-            state.display_filter_transform.set(DisplayFilterMode::Same);
-            state.display_filter_gain.set(DisplayFilterMode::Same);
-            state.display_filter_decimate.set(DisplayFilterMode::Same);
+            state.display.filter_enabled().set(true);
+            state.display.filter_eq().set(DisplayFilterMode::Same);
+            state.display.filter_notch().set(DisplayFilterMode::Same);
+            state.display.filter_nr().set(DisplayFilterMode::Same);
+            state.display.filter_transform().set(DisplayFilterMode::Same);
+            state.display.filter_gain().set(DisplayFilterMode::Same);
+            state.display.filter_decimate().set(DisplayFilterMode::Same);
             // Eagerly resolve "Same" → mirror current playback state
-            state.display_eq.set(state.filter.enabled().get_untracked());
-            state.display_noise_filter.set(
+            state.display.eq().set(state.filter.enabled().get_untracked());
+            state.display.noise_filter().set(
                 state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked()
             );
-            state.display_transform.set(
+            state.display.transform().set(
                 state.playback_mode.get_untracked() != PlaybackMode::Normal
             );
         } else if leaving_xform {
             // Disable display processing and directly reset all display signals.
             // Setting these directly (rather than relying on the resolve Effect)
             // ensures the spectrogram render Effect sees consistent state.
-            state.display_filter_enabled.set(false);
-            state.display_transform.set(false);
-            state.display_eq.set(false);
-            state.display_noise_filter.set(false);
-            state.display_auto_gain.set(false);
-            state.display_gain_boost.set(0.0);
-            state.display_decimate_effective.set(0);
+            state.display.filter_enabled().set(false);
+            state.display.transform().set(false);
+            state.display.eq().set(false);
+            state.display.noise_filter().set(false);
+            state.display.auto_gain().set(false);
+            state.display.gain_boost().set(0.0);
+            state.display.decimate_effective().set(0);
         }
 
         // Set the view last so all display state is consistent when
@@ -1818,13 +1818,13 @@ pub fn MainViewButton() -> impl IntoView {
     let decim_active = Signal::derive(move || false);
 
     let browser_is_resampling = Signal::derive(move || {
-        let bsr = state.browser_sample_rate.get();
+        let bsr = state.display.browser_sample_rate().get();
         if bsr == 0 { return false; }
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
         if file_rate == 0 { return false; }
-        let decim = state.display_decimate_effective.get();
+        let decim = state.display.decimate_effective().get();
         let effective = if decim > 0 && decim < file_rate {
             crate::dsp::filters::decimated_rate(file_rate, decim)
         } else {
@@ -1834,13 +1834,13 @@ pub fn MainViewButton() -> impl IntoView {
     });
 
     let resam_tooltip = Signal::derive(move || {
-        let bsr = state.browser_sample_rate.get();
+        let bsr = state.display.browser_sample_rate().get();
         if bsr == 0 { return String::new(); }
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
         if file_rate == 0 { return String::new(); }
-        let decim = state.display_decimate_effective.get();
+        let decim = state.display.decimate_effective().get();
         let effective = if decim > 0 && decim < file_rate {
             crate::dsp::filters::decimated_rate(file_rate, decim)
         } else {
@@ -1854,10 +1854,10 @@ pub fn MainViewButton() -> impl IntoView {
     });
 
     let show_nr_custom = Signal::derive(move || {
-        state.main_view.get() == MainView::XformedSpec && state.display_filter_nr.get() == DisplayFilterMode::Custom
+        state.main_view.get() == MainView::XformedSpec && state.display.filter_nr().get() == DisplayFilterMode::Custom
     });
     let show_decim_custom = Signal::derive(move || {
-        state.main_view.get() == MainView::XformedSpec && state.display_filter_decimate.get() == DisplayFilterMode::Custom
+        state.main_view.get() == MainView::XformedSpec && state.display.filter_decimate().get() == DisplayFilterMode::Custom
     });
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
@@ -2095,18 +2095,18 @@ pub fn MainViewButton() -> impl IntoView {
                             {"\u{1F50A}"}
                         </div>
                     </div>
-                    <DspFilterRow label="EQ" signal=state.display_filter_eq playback_active=eq_active custom_available=false />
-                    <DspFilterRow label="Notch" signal=state.display_filter_notch playback_active=notch_active custom_available=false auto_available=false />
-                    <DspFilterRow label="NR" signal=state.display_filter_nr playback_active=nr_active custom_available=false />
-                    <DspFilterRow label="Xform" signal=state.display_filter_transform playback_active=transform_active custom_available=false auto_available=false />
-                    <DspFilterRow label="Gain" signal=state.display_filter_gain playback_active=gain_active custom_available=true />
-                    <DspFilterRow label="Resam" signal=state.display_filter_decimate playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
+                    <DspFilterRow label="EQ" signal=state.display.filter_eq() playback_active=eq_active custom_available=false />
+                    <DspFilterRow label="Notch" signal=state.display.filter_notch() playback_active=notch_active custom_available=false auto_available=false />
+                    <DspFilterRow label="NR" signal=state.display.filter_nr() playback_active=nr_active custom_available=false />
+                    <DspFilterRow label="Xform" signal=state.display.filter_transform() playback_active=transform_active custom_available=false auto_available=false />
+                    <DspFilterRow label="Gain" signal=state.display.filter_gain() playback_active=gain_active custom_available=true />
+                    <DspFilterRow label="Resam" signal=state.display.filter_decimate() playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
                 }
             })}
 
             // Custom NR section
             {move || show_nr_custom.get().then(|| {
-                let strength = state.display_nr_strength;
+                let strength = state.display.nr_strength();
                 view! {
                     <div class="dsp-custom-section">
                         <div class="dsp-custom-title">"NR Strength"</div>
@@ -2133,7 +2133,7 @@ pub fn MainViewButton() -> impl IntoView {
 
             // Custom Decimate rate section
             {move || show_decim_custom.get().then(|| {
-                let rate = state.display_decimate_rate;
+                let rate = state.display.decimate_rate();
                 let rates: [(u32, &str); 4] = [
                     (44100, "44.1k"),
                     (48000, "48k"),
@@ -2303,13 +2303,13 @@ pub fn MainViewButton() -> impl IntoView {
                 // The xform branch is a flat `RwSignal<f32>` while the main branch is
                 // a `Store<SpectState>` subfield — incompatible types for an `if/else`
                 // handle — so use Copy get/set closures (capture only `state`+`is_xform`).
-                let gain_get = move || if is_xform { state.xform_spect_gain_db.get() } else { state.spect.gain_db().get() };
-                let gain_set = move |v: f32| if is_xform { state.xform_spect_gain_db.set(v) } else { state.spect.gain_db().set(v) };
-                let range_get = move || if is_xform { state.xform_spect_range_db.get() } else { state.spect.range_db().get() };
-                let range_set = move |v: f32| if is_xform { state.xform_spect_range_db.set(v) } else { state.spect.range_db().set(v) };
-                let floor_set = move |v: f32| if is_xform { state.xform_spect_floor_db.set(v) } else { state.spect.floor_db().set(v) };
-                let gamma_get = move || if is_xform { state.xform_spect_gamma.get() } else { state.spect.gamma().get() };
-                let gamma_set = move |v: f32| if is_xform { state.xform_spect_gamma.set(v) } else { state.spect.gamma().set(v) };
+                let gain_get = move || if is_xform { state.display.xform_gain_db().get() } else { state.spect.gain_db().get() };
+                let gain_set = move |v: f32| if is_xform { state.display.xform_gain_db().set(v) } else { state.spect.gain_db().set(v) };
+                let range_get = move || if is_xform { state.display.xform_range_db().get() } else { state.spect.range_db().get() };
+                let range_set = move |v: f32| if is_xform { state.display.xform_range_db().set(v) } else { state.spect.range_db().set(v) };
+                let floor_set = move |v: f32| if is_xform { state.display.xform_floor_db().set(v) } else { state.spect.floor_db().set(v) };
+                let gamma_get = move || if is_xform { state.display.xform_gamma().get() } else { state.spect.gamma().get() };
+                let gamma_set = move |v: f32| if is_xform { state.display.xform_gamma().set(v) } else { state.spect.gamma().set(v) };
                 view! {
                     <hr />
                     <div class="dsp-custom-section">
@@ -2327,17 +2327,17 @@ pub fn MainViewButton() -> impl IntoView {
                                     if let Ok(v) = input.value().parse::<f32>() {
                                         gain_set(v);
                                         if is_xform {
-                                            state.display_filter_gain.set(DisplayFilterMode::Custom);
+                                            state.display.filter_gain().set(DisplayFilterMode::Custom);
                                         }
-                                        state.display_auto_gain.set(false);
+                                        state.display.auto_gain().set(false);
                                     }
                                 }
                                 on:dblclick=move |_| gain_set(0.0)
                             />
                             <span class="dsp-custom-value">{move || {
                                 if is_xform {
-                                    let gain_mode = state.display_filter_gain.get();
-                                    let boost = state.display_gain_boost.get();
+                                    let gain_mode = state.display.filter_gain().get();
+                                    let boost = state.display.gain_boost().get();
                                     if gain_mode == DisplayFilterMode::Off {
                                         "off".to_string()
                                     } else if gain_mode == DisplayFilterMode::Auto {
@@ -2406,16 +2406,16 @@ pub fn MainViewButton() -> impl IntoView {
                                     floor_set(-120.0);
                                     range_set(120.0);
                                     gamma_set(1.0);
-                                    state.display_auto_gain.set(false);
+                                    state.display.auto_gain().set(false);
                                     if is_xform {
-                                        state.display_filter_eq.set(DisplayFilterMode::Same);
-                                        state.display_filter_notch.set(DisplayFilterMode::Same);
-                                        state.display_filter_nr.set(DisplayFilterMode::Same);
-                                        state.display_filter_transform.set(DisplayFilterMode::Same);
-                                        state.display_filter_gain.set(DisplayFilterMode::Same);
-                                        state.display_filter_decimate.set(DisplayFilterMode::Same);
-                                        state.display_decimate_rate.set(48000);
-                                        state.display_nr_strength.set(0.8);
+                                        state.display.filter_eq().set(DisplayFilterMode::Same);
+                                        state.display.filter_notch().set(DisplayFilterMode::Same);
+                                        state.display.filter_nr().set(DisplayFilterMode::Same);
+                                        state.display.filter_transform().set(DisplayFilterMode::Same);
+                                        state.display.filter_gain().set(DisplayFilterMode::Same);
+                                        state.display.filter_decimate().set(DisplayFilterMode::Same);
+                                        state.display.decimate_rate().set(48000);
+                                        state.display.nr_strength().set(0.8);
                                     }
                                 }
                             >"Reset"</button>

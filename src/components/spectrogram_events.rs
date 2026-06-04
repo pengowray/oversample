@@ -412,7 +412,7 @@ pub fn on_pointerdown(
     // gutter now; the left axis is for navigating what you *look at*
     // (drag to pan the visible frequency range, tap to reset to full).
     if let Some((px_x, _, _, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-        if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
+        if px_x < LABEL_AREA_WIDTH && !state.display.transform().get_untracked() {
             let nyquist = file_nyquist(state);
             let start_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
             let start_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
@@ -811,7 +811,7 @@ pub fn on_dblclick(
     // 0..Nyquist (same as a tap). The band gutter owns "select all
     // frequencies" (HFR) now; this axis is a viewport control.
     if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-        if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
+        if px_x < LABEL_AREA_WIDTH && !state.display.transform().get_untracked() {
             reset_freq_axis_view(state);
             ev.prevent_default();
             return;
@@ -1064,7 +1064,7 @@ pub fn on_touchstart(
     // side band gutter. Double-tap resets the view; single-tap after
     // touchend also resets (handled in on_touchend).
     if let Some((px_x, _, _, freq)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
-        if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
+        if px_x < LABEL_AREA_WIDTH && !state.display.transform().get_untracked() {
             let now = js_sys::Date::now();
             let last_time = ix.last_tap_time.get_untracked();
             let last_x = ix.last_tap_x.get_untracked();
