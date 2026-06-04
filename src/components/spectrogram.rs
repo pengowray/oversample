@@ -119,8 +119,8 @@ pub fn Spectrogram() -> impl IntoView {
     // The active draw path is tile-based for normal spectrogram rendering, so
     // building a full-image pre-render here only duplicates load-time work.
     Effect::new(move || {
-        let _files = state.files.get();
-        let _idx = state.current_file_index.get();
+        let _files = state.library.files().get();
+        let _idx = state.library.current_index().get();
         let _enabled = state.flow.enabled().get();
         pre_rendered.set(None);
     });
@@ -167,7 +167,7 @@ pub fn Spectrogram() -> impl IntoView {
         let bookmarks = state.bookmarks.get();
         let canvas_tool = state.canvas_tool.get();
         let selection = state.selection.get();
-        let is_playing = state.is_playing.get();
+        let is_playing = state.playback.is_playing().get();
         let het_interacting = state.transform.het_interacting().get();
         let dragging = state.is_dragging.get();
         let het_freq = state.transform.het_frequency().get();
@@ -177,7 +177,7 @@ pub fn Spectrogram() -> impl IntoView {
         let te_factor = state.transform.te_factor().get();
         let ps_factor = state.transform.ps_factor().get();
         let pv_factor = state.transform.pv_factor().get();
-        let playback_mode = state.playback_mode.get();
+        let playback_mode = state.playback.mode().get();
         let min_display_freq = state.view.min_display_freq().get();
         let max_display_freq = state.view.max_display_freq().get();
         let mouse_freq = state.mouse_freq.get();
@@ -293,9 +293,9 @@ pub fn Spectrogram() -> impl IntoView {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
 
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         let timeline = state.timeline.active().get_untracked();
-        let idx = if timeline.is_some() { None } else { state.current_file_index.get_untracked() };
+        let idx = if timeline.is_some() { None } else { state.library.current_index().get_untracked() };
 
         // In timeline mode, use the first segment's file for freq/resolution defaults
         let primary_file_idx = if let Some(ref tl) = timeline {
@@ -903,7 +903,7 @@ pub fn Spectrogram() -> impl IntoView {
                     min_freq, max_freq,
                     display_h as f64, display_w as f64,
                     spec_hover, spec_drag,
-                    state.is_mobile.get_untracked(),
+                    state.status.is_mobile().get_untracked(),
                     active_focus == Some(crate::state::ActiveFocus::FrequencyFocus),
                     pointer_down,
                     mouse_freq,
@@ -999,7 +999,7 @@ pub fn Spectrogram() -> impl IntoView {
                             zoom,
                             display_w as f64,
                             display_h as f64,
-                            state.is_mobile.get_untracked(),
+                            state.status.is_mobile().get_untracked(),
                             active_focus == Some(crate::state::ActiveFocus::Annotations),
                         );
                     }
@@ -1104,10 +1104,10 @@ pub fn Spectrogram() -> impl IntoView {
             let px_per_sec = display_w as f64 / visible_time;
 
             // Draw static position marker when not playing in FromHere mode
-            if state.play_start_mode.get() .uses_from_here() && !is_playing && canvas_tool == CanvasTool::Hand {
+            if state.playback.start_mode().get() .uses_from_here() && !is_playing && canvas_tool == CanvasTool::Hand {
                 let here_x = display_w as f64 * viewport::PLAY_FROM_HERE_FRACTION;
                 let here_time = viewport::play_from_here_time(scroll, visible_time);
-                state.play_from_here_time.set(here_time);
+                state.playback.from_here_time().set(here_time);
                 ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
                 ctx.set_line_width(1.5);
                 let _ = ctx.set_line_dash(&js_sys::Array::of2(
@@ -1139,8 +1139,8 @@ pub fn Spectrogram() -> impl IntoView {
     // pauses until the playhead is on-screen and 200ms have passed since the
     // last scroll action — so it resumes even when very zoomed in.
     Effect::new(move || {
-        let playhead = state.playhead_time.get();
-        let is_playing = state.is_playing.get();
+        let playhead = state.playback.playhead_time().get();
+        let is_playing = state.playback.is_playing().get();
         let follow = state.view.follow_cursor().get();
         // Use get_untracked to avoid recursive Effect invocation — this Effect
         // already re-runs via playhead_time / is_playing / follow_cursor changes.
@@ -1163,15 +1163,15 @@ pub fn Spectrogram() -> impl IntoView {
         let display_w = canvas.width() as f64;
         if display_w == 0.0 { return; }
 
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let (time_res, duration) = idx
             .and_then(|i| files.get(i))
             .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
             .unwrap_or((1.0, 0.0));
         let zoom = state.view.zoom_level().get_untracked();
         let scroll = state.view.scroll_offset().get_untracked();
-        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+        let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
 
         let visible_time = viewport::visible_time(display_w, zoom, time_res);
         let playhead_rel = playhead - scroll;
@@ -1217,8 +1217,8 @@ pub fn Spectrogram() -> impl IntoView {
             // Subscribe to coarse-grained signals (NOT playhead_time)
             let _scroll = state.view.scroll_offset().get();
             let _zoom = state.view.zoom_level().get();
-            let _playing = state.is_playing.get();
-            let _file_idx = state.current_file_index.get();
+            let _playing = state.playback.is_playing().get();
+            let _file_idx = state.library.current_index().get();
             let _main_view = state.main_view.get();
             let _reassign = state.spect.reassign_enabled().get();
             let _flow = state.flow.enabled().get();
@@ -1244,8 +1244,8 @@ pub fn Spectrogram() -> impl IntoView {
                     return;
                 }
 
-                let Some(file_idx) = state.current_file_index.get_untracked() else { return };
-                let (total_samples, sample_rate, time_res) = state.files.with_untracked(|files| {
+                let Some(file_idx) = state.library.current_index().get_untracked() else { return };
+                let (total_samples, sample_rate, time_res) = state.library.files().with_untracked(|files| {
                     files.get(file_idx).map(|f| {
                         (f.audio.source.total_samples() as usize, f.audio.sample_rate, f.spectrogram.time_resolution)
                     })
@@ -1258,9 +1258,9 @@ pub fn Spectrogram() -> impl IntoView {
                 let visible_time = if zoom > 0.0 { (canvas_w / zoom) * time_res } else { 1.0 };
                 let viewport_right = scroll + visible_time;
 
-                let is_playing = state.is_playing.get_untracked();
+                let is_playing = state.playback.is_playing().get_untracked();
                 let center = if is_playing {
-                    let playhead = state.playhead_time.get_untracked();
+                    let playhead = state.playback.playhead_time().get_untracked();
                     playhead.max(viewport_right)
                 } else {
                     viewport_right
@@ -1314,25 +1314,25 @@ pub fn Spectrogram() -> impl IntoView {
     // Effect 6: background preload — progressively pre-compute tiles for the whole file
     // at the current LOD, expanding outward from the viewport center.
     Effect::new(move || {
-        let _file_idx = state.current_file_index.get();
+        let _file_idx = state.library.current_index().get();
         let _scroll = state.view.scroll_offset().get();
         let _zoom = state.view.zoom_level().get();
-        let _loading = state.loading_files.get();
+        let _loading = state.library.loading().get();
         let _fft = state.spect.fft_mode().get();
 
         use crate::canvas::tile_cache;
 
         // Don't preload while still loading a file
-        if state.loading_files.with_untracked(|v| !v.is_empty()) {
+        if state.library.loading().with_untracked(|v| !v.is_empty()) {
             return;
         }
 
-        let Some(file_idx) = state.current_file_index.get_untracked() else {
+        let Some(file_idx) = state.library.current_index().get_untracked() else {
             tile_cache::stop_background_preload();
             return;
         };
 
-        let total_samples = state.files.with_untracked(|files| {
+        let total_samples = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
         });
         if total_samples == 0 {
@@ -1347,7 +1347,7 @@ pub fn Spectrogram() -> impl IntoView {
 
         // Compute center tile from current viewport
         let scroll = state.view.scroll_offset().get_untracked();
-        let time_res = state.files.with_untracked(|files| {
+        let time_res = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
         });
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -1403,7 +1403,7 @@ pub fn Spectrogram() -> impl IntoView {
         <div class="spectrogram-container"
             style=move || {
                 // When viewport is pinch-zoomed, allow native pinch so user can zoom back out
-                let ta = if state.viewport_zoomed.get() { "pinch-zoom" } else { "none" };
+                let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
                 // `cell` cursor while hovering an axis, dragging the band
                 // gutter (axis_drag_*), or mid-pan on the left axis
                 // (freq_pan_start). Keeps the cursor pinned even when a
@@ -1455,7 +1455,7 @@ pub fn Spectrogram() -> impl IntoView {
             <div class="chart-stage">
             <canvas
                 node_ref=canvas_ref
-                style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
+                style:pointer-events=move || if state.status.viewport_zoomed().get() { "none" } else { "auto" }
                 on:wheel=on_wheel
                 on:pointerdown=on_pointerdown
                 on:pointermove=on_pointermove

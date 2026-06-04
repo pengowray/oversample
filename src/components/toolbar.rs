@@ -30,15 +30,15 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: current file name
     let file_name = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         files.get(idx).map(|f| f.name.clone())
     });
 
     // Derived: XC metadata of current file
     let xc_metadata = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         files.get(idx).and_then(|f| f.xc_metadata.clone())
     });
 
@@ -51,8 +51,8 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: is current file unsaved (recording not yet saved by user)
     let is_unsaved = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         idx.and_then(|i| files.get(i))
             .map(|f| f.is_recording)
             .unwrap_or(false)
@@ -60,8 +60,8 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: badge data for current file
     let current_badge_data = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         let f = files.get(idx)?;
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         let groups = file_groups::compute_all_groups(&names, &files);
@@ -90,8 +90,8 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: sequence group files (for dropdown)
     let seq_group_files = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         let groups = file_groups::compute_all_groups(&names, &files);
         let cur_seq = groups.get(idx)?.sequence.as_ref()?;
@@ -113,8 +113,8 @@ pub fn Toolbar() -> impl IntoView {
 
     // Derived: track group files (for dropdown)
     let track_group_files = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         let groups = file_groups::compute_all_groups(&names, &files);
         let cur_track = groups.get(idx)?.track.as_ref()?;
@@ -136,10 +136,10 @@ pub fn Toolbar() -> impl IntoView {
     let status_prefix = Memo::new(move |_| {
         let recording = state.mic.recording().get();
         let listening = state.mic.listening().get();
-        let playing = state.is_playing.get();
+        let playing = state.playback.is_playing().get();
         let rec_ready = state.mic.record_ready_state().get();
         let muted = state.mic.mute_output().get();
-        let mode = state.playback_mode.get();
+        let mode = state.playback.mode().get();
         let hfr_on = state.focus_stack.get().hfr_enabled();
         let acq_state = state.mic.acquisition_state().get();
 
@@ -178,7 +178,7 @@ pub fn Toolbar() -> impl IntoView {
         let recording = state.mic.recording().get();
         let listening = state.mic.listening().get();
         if recording || (recording && listening) {
-            let files = state.files.get();
+            let files = state.library.files().get();
             state.mic.live_file_idx().get()
                 .and_then(|idx| files.get(idx).map(|f| f.name.clone()))
                 .or_else(|| file_name.get())
@@ -244,19 +244,19 @@ pub fn Toolbar() -> impl IntoView {
     // Close dropdowns on click-outside
     Effect::new(move |_| {
         // Close dropdowns when file changes
-        let _ = state.current_file_index.get();
+        let _ = state.library.current_index().get();
         seq_dropdown_open.set(false);
         track_dropdown_open.set(false);
     });
 
     // Download/save handler for toolbar
     let on_toolbar_download = move |_: web_sys::MouseEvent| {
-        let files = state.files.get_untracked();
-        if let Some(idx) = state.current_file_index.get_untracked() {
+        let files = state.library.files().get_untracked();
+        if let Some(idx) = state.library.current_index().get_untracked() {
             if let Some(f) = files.get(idx) {
                 if is_tauri {
                     // On Tauri, the backend already saved to disk — just clear unsaved state
-                    state.status_message.set(Some("Recording saved".into()));
+                    state.status.message().set(Some("Recording saved".into()));
                 } else {
                     // On web, trigger browser download with preserved GUANO + cue markers
                     let total = f.audio.source.total_samples() as usize;
@@ -267,7 +267,7 @@ pub fn Toolbar() -> impl IntoView {
                     );
                 }
                 // Clear unsaved state
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(idx) {
                         f.is_recording = false;
                     }
@@ -288,7 +288,7 @@ pub fn Toolbar() -> impl IntoView {
                 on:click=move |ev: web_sys::MouseEvent| {
                     ev.stop_propagation();
                     state.panels.left_collapsed().update(|c| *c = !*c);
-                    if !state.panels.left_collapsed().get_untracked() && state.is_mobile.get_untracked() {
+                    if !state.panels.left_collapsed().get_untracked() && state.status.is_mobile().get_untracked() {
                         state.panels.right_collapsed().set(true);
                     }
                 }
@@ -303,7 +303,7 @@ pub fn Toolbar() -> impl IntoView {
                         class="toolbar-brand"
                         style=move || {
                             let mut s = String::from("cursor: pointer");
-                            let mobile = state.is_mobile.get();
+                            let mobile = state.status.is_mobile().get();
                             if mobile {
                                 let has_file = file_name.get().is_some();
                                 let recording = state.mic.recording().get();
@@ -324,12 +324,12 @@ pub fn Toolbar() -> impl IntoView {
                         })}
                         {move || {
                             let listening = state.mic.listening().get();
-                            let playing = state.is_playing.get();
+                            let playing = state.playback.is_playing().get();
                             let recording = state.mic.recording().get();
 
                             if listening {
                                 let muted = state.mic.mute_output().get();
-                                let mode = state.playback_mode.get();
+                                let mode = state.playback.mode().get();
                                 let hfr_on = state.focus_stack.get().hfr_enabled();
                                 let frequency_shifted = hfr_on && !muted && mode != PlaybackMode::Normal;
                                 if frequency_shifted {
@@ -435,7 +435,7 @@ pub fn Toolbar() -> impl IntoView {
                     // Sequence dropdown panel
                     {move || seq_dropdown_open.get().then(|| {
                         let items = seq_group_files.get().unwrap_or_default();
-                        let current = state.current_file_index.get();
+                        let current = state.library.current_index().get();
                         view! {
                             <div class="badge-dropdown-panel">
                                 {items.into_iter().map(|(idx, name, seq_num)| {
@@ -446,7 +446,7 @@ pub fn Toolbar() -> impl IntoView {
                                             class=cls
                                             on:click=move |e: web_sys::MouseEvent| {
                                                 e.stop_propagation();
-                                                state.current_file_index.set(Some(idx));
+                                                state.library.current_index().set(Some(idx));
                                                 seq_dropdown_open.set(false);
                                             }
                                         >
@@ -462,7 +462,7 @@ pub fn Toolbar() -> impl IntoView {
                     // Track dropdown panel
                     {move || track_dropdown_open.get().then(|| {
                         let items = track_group_files.get().unwrap_or_default();
-                        let current = state.current_file_index.get();
+                        let current = state.library.current_index().get();
                         view! {
                             <div class="badge-dropdown-panel">
                                 {items.into_iter().map(|(idx, name, label)| {
@@ -473,7 +473,7 @@ pub fn Toolbar() -> impl IntoView {
                                             class=cls
                                             on:click=move |e: web_sys::MouseEvent| {
                                                 e.stop_propagation();
-                                                state.current_file_index.set(Some(idx));
+                                                state.library.current_index().set(Some(idx));
                                                 track_dropdown_open.set(false);
                                             }
                                         >
@@ -573,7 +573,7 @@ pub fn Toolbar() -> impl IntoView {
                     on:click=move |ev: web_sys::MouseEvent| {
                         ev.stop_propagation();
                         state.panels.right_collapsed().update(|c| *c = !*c);
-                        if !state.panels.right_collapsed().get_untracked() && state.is_mobile.get_untracked() {
+                        if !state.panels.right_collapsed().get_untracked() && state.status.is_mobile().get_untracked() {
                             state.panels.left_collapsed().set(true);
                         }
                     }
@@ -607,8 +607,8 @@ pub fn Toolbar() -> impl IntoView {
                     country
                 };
                 let is_demo = {
-                    let files = state.files.get();
-                    let idx = state.current_file_index.get();
+                    let files = state.library.files().get();
+                    let idx = state.library.current_index().get();
                     idx.and_then(|i| files.get(i)).map(|f| f.is_demo).unwrap_or(false)
                 };
 

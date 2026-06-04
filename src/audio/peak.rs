@@ -51,7 +51,7 @@ impl PeakCache {
 /// LoadedFile at `file_index` when done. For files <= 30s the peak is already
 /// known from the initial scan, so we just copy `cached_peak_db`.
 pub fn start_full_peak_scan(state: AppState, file_index: usize) {
-    let files = state.files.get_untracked();
+    let files = state.library.files().get_untracked();
     let Some(file) = files.get(file_index) else { return };
     let duration = file.audio.duration_secs;
     let sr = file.audio.sample_rate;
@@ -60,7 +60,7 @@ pub fn start_full_peak_scan(state: AppState, file_index: usize) {
     if duration <= 30.0 {
         let peak = file.cached_peak_db;
         drop(files);
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.cached_full_peak_db = peak;
             }
@@ -96,7 +96,7 @@ pub fn start_full_peak_scan(state: AppState, file_index: usize) {
             let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 
             // Check file is still at same index (user may have removed it)
-            let still_valid = state.files.with_untracked(|files| {
+            let still_valid = state.library.files().with_untracked(|files| {
                 files.get(file_index)
                     .map(|f| f.audio.sample_rate == sr && f.audio.source.total_samples() as usize == total_samples)
                     .unwrap_or(false)
@@ -110,7 +110,7 @@ pub fn start_full_peak_scan(state: AppState, file_index: usize) {
             None
         };
 
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.cached_full_peak_db = peak_db;
             }
@@ -134,7 +134,7 @@ pub fn start_selection_peak_scan(
         return;
     }
 
-    let files = state.files.get_untracked();
+    let files = state.library.files().get_untracked();
     let Some(file) = files.get(file_index) else { return };
     let sr = file.audio.sample_rate;
     let source = file.audio.source.clone();
@@ -181,7 +181,7 @@ pub fn start_selection_peak_scan(
             let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 
             // Verify file is still valid
-            let still_valid = state.files.with_untracked(|files| {
+            let still_valid = state.library.files().with_untracked(|files| {
                 files.get(file_index)
                     .map(|f| f.audio.sample_rate == sr && f.audio.source.total_samples() == total_file_samples)
                     .unwrap_or(false)

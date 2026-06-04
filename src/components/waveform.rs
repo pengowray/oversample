@@ -24,8 +24,8 @@ pub fn Waveform() -> impl IntoView {
 
     // Cache ZC bins — recompute when the file, channel, or EQ settings change.
     let zc_bins = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let filter_enabled = state.filter.enabled().get();
         let cv = state.channel_view.get();
         // Subscribe to EQ params so memo recomputes when they change
@@ -81,8 +81,8 @@ pub fn Waveform() -> impl IntoView {
         if state.filter.band_ff_dragging().get() {
             return band_split_cache.get_value();
         }
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let cv = state.channel_view.get();
         // Use the user's Band regardless of HFR state — the band_ff_freq_lo/hi
         // signals get zeroed when HFR is off, which would make the "above"
@@ -117,13 +117,13 @@ pub fn Waveform() -> impl IntoView {
         let selection = state.selection.get();
         // Subscribe to file changes for reactivity, then get data without
         // re-subscribing (avoids redundant signal subscription in compute_auto_gain).
-        state.files.track();
-        let files = state.files.get_untracked();
+        state.library.files().track();
+        let files = state.library.files().get_untracked();
         let _timeline_trigger = state.timeline.active().get(); // trigger redraw on timeline change
-        let idx = state.current_file_index.get();
-        let mode = state.playback_mode.get();
+        let idx = state.library.current_index().get();
+        let mode = state.playback.mode().get();
         let waveform_view = state.waveform_view.get();
-        let is_playing = state.is_playing.get();
+        let is_playing = state.playback.is_playing().get();
         let canvas_tool = state.canvas_tool.get();
         let cv = state.channel_view.get();
         let _tile_ready = state.tile_ready_signal.get();
@@ -464,11 +464,11 @@ pub fn Waveform() -> impl IntoView {
             }
 
             // Draw "play here" marker when not playing
-            if !clean_view && state.play_start_mode.get() .uses_from_here() && !is_playing && canvas_tool == CanvasTool::Hand {
+            if !clean_view && state.playback.start_mode().get() .uses_from_here() && !is_playing && canvas_tool == CanvasTool::Hand {
                 let visible_time = viewport::visible_time(display_w as f64, zoom, file.spectrogram.time_resolution);
                 let here_x = display_w as f64 * viewport::PLAY_FROM_HERE_FRACTION;
                 let here_time = viewport::play_from_here_time(scroll, visible_time);
-                state.play_from_here_time.set(here_time);
+                state.playback.from_here_time().set(here_time);
                 ctx.set_stroke_style_str("rgba(100, 160, 255, 0.35)");
                 ctx.set_line_width(1.5);
                 let _ = ctx.set_line_dash(&js_sys::Array::of2(
@@ -493,8 +493,8 @@ pub fn Waveform() -> impl IntoView {
 
     // Auto-scroll to follow playhead during playback (with suspension support)
     Effect::new(move || {
-        let playhead = state.playhead_time.get();
-        let is_playing = state.is_playing.get();
+        let playhead = state.playback.playhead_time().get();
+        let is_playing = state.playback.is_playing().get();
         let follow = state.view.follow_cursor().get();
         let suspended = state.view.follow_suspended().get_untracked();
 
@@ -512,15 +512,15 @@ pub fn Waveform() -> impl IntoView {
         let display_w = canvas.width() as f64;
         if display_w == 0.0 { return; }
 
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let (time_res, duration) = idx
             .and_then(|i| files.get(i))
             .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
             .unwrap_or((1.0, 0.0));
         let zoom = state.view.zoom_level().get_untracked();
         let scroll = state.view.scroll_offset().get_untracked();
-        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+        let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
 
         let visible_time = viewport::visible_time(display_w, zoom, time_res);
         let playhead_rel = playhead - scroll;
@@ -561,8 +561,8 @@ pub fn Waveform() -> impl IntoView {
             });
         } else {
             let raw_delta = ev.delta_y() + ev.delta_x();
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked().unwrap_or(0);
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked().unwrap_or(0);
             let (visible_time, duration) = if let Some(file) = files.get(idx) {
                 let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -571,7 +571,7 @@ pub fn Waveform() -> impl IntoView {
                 return;
             };
             let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
-            let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+            let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
             state.suspend_follow();
             state.view.scroll_offset().update(|s| {
                 *s = viewport::clamp_scroll_for_mode(*s + delta, duration, visible_time, from_here_mode);
@@ -581,7 +581,7 @@ pub fn Waveform() -> impl IntoView {
 
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
         if ev.button() != 0 { return; }
-        if state.viewport_zoomed.get_untracked() { return; }
+        if state.status.viewport_zoomed().get_untracked() { return; }
 
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         // Always start pan drag (bookmark on click is handled in pointerup)
@@ -602,8 +602,8 @@ pub fn Waveform() -> impl IntoView {
         let dx = ev.client_x() as f64 - start_client_x;
         let cw = state.spectrogram_canvas_width.get_untracked();
         if cw == 0.0 { return; }
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let file = idx.and_then(|i| files.get(i));
         let waterfall_active = (state.mic.recording().get_untracked()
             || state.mic.listening().get_untracked())
@@ -625,7 +625,7 @@ pub fn Waveform() -> impl IntoView {
             (start_scroll + dt).clamp(oldest, max_scroll)
         } else {
             let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
             viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
         };
         state.view.scroll_offset().set(new_scroll);
@@ -635,8 +635,8 @@ pub fn Waveform() -> impl IntoView {
         if state.is_dragging.get_untracked() && state.canvas_tool.get_untracked() == CanvasTool::Hand {
             let (start_x, _) = hand_drag_start.get_untracked();
             let dx = (ev.client_x() as f64 - start_x).abs();
-            if dx < 3.0 && state.is_playing.get_untracked() {
-                let t = state.playhead_time.get_untracked();
+            if dx < 3.0 && state.playback.is_playing().get_untracked() {
+                let t = state.playback.playhead_time().get_untracked();
                 state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
             }
         }
@@ -650,7 +650,7 @@ pub fn Waveform() -> impl IntoView {
 
     // ── Touch event handlers (mobile) ──────────────────────────────────────────
     let on_touchstart = move |ev: web_sys::TouchEvent| {
-        if state.viewport_zoomed.get_untracked() { return; }
+        if state.status.viewport_zoomed().get_untracked() { return; }
 
         // Cancel any ongoing inertia animation immediately
         crate::components::inertia::cancel_inertia(inertia_generation);
@@ -664,8 +664,8 @@ pub fn Waveform() -> impl IntoView {
             ev.prevent_default();
             use crate::components::pinch::{two_finger_geometry, PinchState};
             if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
-                let files = state.files.get_untracked();
-                let idx = state.current_file_index.get_untracked();
+                let files = state.library.files().get_untracked();
+                let idx = state.library.current_index().get_untracked();
                 let file = idx.and_then(|i| files.get(i));
                 let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
@@ -676,7 +676,7 @@ pub fn Waveform() -> impl IntoView {
                     initial_mid_client_x: mid_x,
                     time_res,
                     duration,
-                    from_here_mode: state.play_start_mode.get_untracked() .uses_from_here(),
+                    from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
                 }));
             }
             state.is_dragging.set(false);
@@ -695,7 +695,7 @@ pub fn Waveform() -> impl IntoView {
     };
 
     let on_touchmove = move |ev: web_sys::TouchEvent| {
-        if state.viewport_zoomed.get_untracked() { return; }
+        if state.status.viewport_zoomed().get_untracked() { return; }
 
         let touches = ev.touches();
         let n = touches.length();
@@ -728,8 +728,8 @@ pub fn Waveform() -> impl IntoView {
         let dx = touch.client_x() as f64 - start_client_x;
         let cw = state.spectrogram_canvas_width.get_untracked();
         if cw == 0.0 { return; }
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let file = idx.and_then(|i| files.get(i));
         let waterfall_active = (state.mic.recording().get_untracked()
             || state.mic.listening().get_untracked())
@@ -751,7 +751,7 @@ pub fn Waveform() -> impl IntoView {
             (start_scroll + dt).clamp(oldest, max_scroll)
         } else {
             let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
-            let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+            let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
             viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
         };
         state.view.scroll_offset().set(new_scroll);
@@ -780,15 +780,15 @@ pub fn Waveform() -> impl IntoView {
                 if let Some(touch) = _ev.changed_touches().get(0) {
                     let (start_x, _) = hand_drag_start.get_untracked();
                     let dx = (touch.client_x() as f64 - start_x).abs();
-                    if dx < 5.0 && state.is_playing.get_untracked() {
-                        let t = state.playhead_time.get_untracked();
+                    if dx < 5.0 && state.playback.is_playing().get_untracked() {
+                        let t = state.playback.playhead_time().get_untracked();
                         state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
                     } else if dx >= 5.0 {
                         // Flick → launch inertia
                         let vel = velocity_tracker.with_value(|t| t.velocity_px_per_sec());
                         let cw = state.spectrogram_canvas_width.get_untracked();
-                        let files = state.files.get_untracked();
-                        let idx = state.current_file_index.get_untracked();
+                        let files = state.library.files().get_untracked();
+                        let idx = state.library.current_index().get_untracked();
                         let file = idx.and_then(|i| files.get(i));
                         let waterfall_active = (state.mic.recording().get_untracked()
                             || state.mic.listening().get_untracked())
@@ -803,7 +803,7 @@ pub fn Waveform() -> impl IntoView {
                         } else {
                             file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
                         };
-                        let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+                        let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
                         crate::components::inertia::start_inertia(
                             state, vel, cw, time_res, duration, from_here_mode, inertia_generation,
                         );
@@ -817,7 +817,7 @@ pub fn Waveform() -> impl IntoView {
     view! {
         <div class="waveform-container"
             style=move || {
-                let ta = if state.viewport_zoomed.get() { "pinch-zoom" } else { "none" };
+                let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
                 // Time-gutter hover or active drag → `cell` cursor, mirroring
                 // the spectrogram axes.
                 match state.canvas_tool.get() {
@@ -835,7 +835,7 @@ pub fn Waveform() -> impl IntoView {
             <div class="chart-stage">
                 <canvas
                     node_ref=canvas_ref
-                    style:pointer-events=move || if state.viewport_zoomed.get() { "none" } else { "auto" }
+                    style:pointer-events=move || if state.status.viewport_zoomed().get() { "none" } else { "auto" }
                     on:wheel=on_wheel
                     on:pointerdown=on_pointerdown
                     on:pointermove=on_pointermove

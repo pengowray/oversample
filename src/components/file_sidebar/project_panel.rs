@@ -83,7 +83,7 @@ fn NoProjectView() -> impl IntoView {
     let loading_list = RwSignal::new(false);
 
     let on_create = move |_: web_sys::MouseEvent| {
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         let mut proj = BatProject::new();
         for f in files.iter() {
             if let Some(ref identity) = f.identity {
@@ -156,7 +156,7 @@ fn NoProjectView() -> impl IntoView {
         input.set_value("");
     };
 
-    let has_files = move || !state.files.with(|f| f.is_empty());
+    let has_files = move || !state.library.files().with(|f| f.is_empty());
 
     view! {
         <div class="project-panel-empty">
@@ -271,7 +271,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     let timelines_clone = project.timelines.clone();
 
     // Track which project files are currently loaded
-    let loaded_files = state.files.get_untracked();
+    let loaded_files = state.library.files().get_untracked();
     let file_statuses: Vec<(crate::project::ProjectFile, bool)> = project.files.iter().map(|pf| {
         let is_loaded = loaded_files.iter().any(|lf| {
             lf.identity.as_ref().is_some_and(|id| {
@@ -354,7 +354,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     let on_merge_batm = move |_: web_sys::MouseEvent| {
         merge_status.set(Some("Scanning...".to_string()));
         spawn_local(async move {
-            let loaded = state.files.get_untracked();
+            let loaded = state.library.files().get_untracked();
             let mut merged_count = 0u32;
             let mut skipped = 0u32;
 
@@ -399,7 +399,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
     // Add new loaded files that aren't in the project yet
     let on_sync_files = move |_: web_sys::MouseEvent| {
-        let loaded = state.files.get_untracked();
+        let loaded = state.library.files().get_untracked();
         state.project.current().update(|p| {
             let Some(proj) = p else { return };
             for f in loaded.iter() {
@@ -437,7 +437,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 .filter_map(|&pi| proj_to_runtime.with_value(|p2r| p2r.get(pi).copied().flatten()))
                 .collect();
             if runtime_indices.len() < 2 { return; }
-            let files = state.files.get_untracked();
+            let files = state.library.files().get_untracked();
             if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
                 let timeline_duration = tv.total_duration_secs;
                 let primary_time_res = tv.segments.first()
@@ -473,13 +473,13 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 state.timeline.selected_file_indices().set(runtime_indices);
                 state.timeline.active().set(Some(tv));
                 state.timeline.active_track().set(None);
-                state.current_file_index.set(None);
+                state.library.current_index().set(None);
                 state.suspend_follow();
                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
                     let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
                     state.view.zoom_level().set(fit_zoom);
                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
-                    let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+                    let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
                     state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
                 } else {
                     state.view.scroll_offset().set(0.0);
@@ -680,7 +680,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
                     // Activate this saved timeline
                     let on_activate = move |_: web_sys::MouseEvent| {
-                        let files = state.files.get_untracked();
+                        let files = state.library.files().get_untracked();
                         let proj = state.project.current().get_untracked();
                         let Some(proj) = proj else { return };
 
@@ -715,13 +715,13 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                                 state.timeline.selected_file_indices().set(runtime_indices);
                                 state.timeline.active().set(Some(tv));
                                 state.timeline.active_track().set(None);
-                                state.current_file_index.set(None);
+                                state.library.current_index().set(None);
                                 state.suspend_follow();
                                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
                                     let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
                                     state.view.zoom_level().set(fit_zoom);
                                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
-                                    let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+                                    let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
                                     state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
                                 } else {
                                     state.view.scroll_offset().set(0.0);

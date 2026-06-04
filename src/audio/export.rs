@@ -518,9 +518,9 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
         (region_count, label, Some(region_duration_sum))
     } else if let Some(ref sel) = selection {
         (1, "selection", Some(sel.time_end - sel.time_start))
-    } else if state.current_file_index.get().is_some() {
-        let files = state.files.get();
-        let file_dur = state.current_file_index.get()
+    } else if state.library.current_index().get().is_some() {
+        let files = state.library.files().get();
+        let file_dur = state.library.current_index().get()
             .and_then(|idx| files.get(idx))
             .map(|f| f.audio.duration_secs);
         (1, "file", file_dur)
@@ -529,7 +529,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     };
 
     // Build mode label
-    let mode = state.playback_mode.get();
+    let mode = state.playback.mode().get();
     let hfr = state.hfr_enabled.get();
     let mode_label = match mode {
         PlaybackMode::Normal if hfr => Some("HF".to_string()),

@@ -33,8 +33,8 @@ pub fn FreqRangeButton() -> impl IntoView {
     let anchor = NodeRef::<leptos::html::Div>::new();
 
     let file_max = move || {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)

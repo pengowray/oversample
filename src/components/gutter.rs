@@ -39,8 +39,8 @@ fn gutter_nyquist(state: AppState) -> f64 {
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
@@ -97,8 +97,8 @@ pub fn BandGutter() -> impl IntoView {
     // select bands at file scale; v-zoom navigation lives on the main
     // canvas y-axis.
     let display_range = move || -> (f64, f64) {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let nyquist = idx
             .and_then(|i| files.get(i))
             .map(|f| f.audio.sample_rate as f64 / 2.0)
@@ -537,7 +537,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let scroll = state.view.scroll_offset().get();
         // Timeline mode has its own time_res/duration/clock.
         if let Some(tl) = state.timeline.active().get() {
-            let files = state.files.get();
+            let files = state.library.files().get();
             let time_res = tl.segments.first()
                 .and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution)
@@ -552,8 +552,8 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
             let visible_time = (data_w / zoom) * time_res;
             return Some((scroll, visible_time, duration, time_res, clock));
         }
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let data_w = (canvas_w - data_left_offset).max(1.0);

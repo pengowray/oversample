@@ -14,8 +14,8 @@ fn current_resonator_sample_rate(state: AppState) -> f64 {
     if crate::canvas::live_waterfall::is_active() {
         return crate::canvas::live_waterfall::max_freq() * 2.0;
     }
-    let files = state.files.get();
-    let idx = state.current_file_index.get();
+    let files = state.library.files().get();
+    let idx = state.library.current_index().get();
     idx.and_then(|i| files.get(i))
         .map(|f| f.spectrogram.sample_rate as f64)
         .unwrap_or(192_000.0)
@@ -562,8 +562,8 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
     };
 
     let has_wav_markers = move || {
-        let idx = state.current_file_index.get()?;
-        let files = state.files.get();
+        let idx = state.library.current_index().get()?;
+        let files = state.library.files().get();
         let file = files.get(idx)?;
         if file.wav_markers.is_empty() { None } else { Some(()) }
     };
@@ -594,8 +594,8 @@ fn WavMarkersList() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let markers = move || {
-        let idx = state.current_file_index.get()?;
-        let files = state.files.get();
+        let idx = state.library.current_index().get()?;
+        let files = state.library.files().get();
         let file = files.get(idx)?;
         if file.wav_markers.is_empty() { return None; }
         let sr = file.audio.sample_rate;
@@ -630,8 +630,8 @@ fn WavMarkersList() -> impl IntoView {
                                         class="annotation-tree-item wav-marker-item"
                                         title=format!("Sample {}", pos)
                                         on:click=move |_| {
-                                            let sr = state2.files.with_untracked(|files| {
-                                                state2.current_file_index.get_untracked()
+                                            let sr = state2.library.files().with_untracked(|files| {
+                                                state2.library.current_index().get_untracked()
                                                     .and_then(|i| files.get(i))
                                                     .map(|f| f.audio.sample_rate)
                                                     .unwrap_or(1)
@@ -640,14 +640,14 @@ fn WavMarkersList() -> impl IntoView {
                                             // 1) Remember this as the "play from here" position
                                             //    so the play button picks up from the marker
                                             //    instead of the previous scroll position.
-                                            state2.play_from_here_time.set(time);
+                                            state2.playback.from_here_time().set(time);
                                             // 2) Update the visual playhead.
-                                            state2.playhead_time.set(time);
+                                            state2.playback.playhead_time().set(time);
                                             // 3) Scroll viewport to center on the marker.
                                             jump_to_time(state2, time);
                                             // 4) If playback is active, restart from here so
                                             //    the audio actually jumps.
-                                            if state2.is_playing.get_untracked() {
+                                            if state2.playback.is_playing().get_untracked() {
                                                 crate::audio::playback::play_from_time(&state2, time);
                                             }
                                         }
@@ -737,8 +737,8 @@ fn AnnotationsList() -> impl IntoView {
     };
 
     let has_file_path = move || -> Option<bool> {
-        let idx = state.current_file_index.get()?;
-        let files = state.files.get();
+        let idx = state.library.current_index().get()?;
+        let files = state.library.files().get();
         let file = files.get(idx)?;
         file.identity.as_ref()?.file_path.as_ref().map(|_| true)
     };
@@ -805,7 +805,7 @@ fn AnnotationsList() -> impl IntoView {
         <super::export_section::ExportSection
             on_export_batm=Callback::new(move |()| export_annotations(state))
             on_save_sidecar=Callback::new(move |()| {
-                if let Some(idx) = state.current_file_index.get_untracked() {
+                if let Some(idx) = state.library.current_index().get_untracked() {
                     crate::opfs::save_sidecar_explicit(state, idx);
                 }
             })
@@ -1186,8 +1186,8 @@ fn jump_to_time(state: AppState, time: f64) {
     state.push_nav();
     state.suspend_follow();
 
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked();
     if let Some(file) = idx.and_then(|i| files.get(i)) {
         let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();

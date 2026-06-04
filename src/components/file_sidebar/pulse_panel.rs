@@ -25,8 +25,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     // Trigger pulse detection when tab is active and file changes
     Effect::new(move || {
         let tab = state.panels.right_tab().get();
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let band_ff_lo = state.filter.band_ff_freq_lo().get();
         let band_ff_hi = state.filter.band_ff_freq_hi().get();
         let _trigger = redetect_trigger.get(); // subscribe so Re-detect re-runs this Effect
@@ -104,8 +104,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         state.pulse.selected_index().set(Some(pulse.index));
 
         // Center spectrogram on this pulse
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         if let Some(file) = idx.and_then(|i| files.get(i)) {
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
             let zoom = state.view.zoom_level().get_untracked();
@@ -191,8 +191,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
             </div>
             // Status / Results
             {move || {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let has_file = idx.and_then(|i| files.get(i)).is_some();
 
                 if !has_file {

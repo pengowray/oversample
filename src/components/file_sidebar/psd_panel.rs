@@ -63,8 +63,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             return;
         }
 
-        let _files = state.files.get();
-        let _idx = state.current_file_index.get();
+        let _files = state.library.files().get();
+        let _idx = state.library.current_index().get();
         let _sel = state.selection.get();
         let _nfft = state.psd.nfft().get();
         let _eq = state.psd.apply_eq().get();
@@ -90,8 +90,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             let _ = state.noise_reduce.enabled().get();
         }
 
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         if idx.and_then(|i| files.get(i)).is_none() {
             psd_result.set(None);
             is_computing.set(false);
@@ -119,7 +119,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
     // Annotate all peaks
     let annotate_peaks = move |_: web_sys::MouseEvent| {
         let result = psd_result.get_untracked();
-        let file_idx = state.current_file_index.get_untracked();
+        let file_idx = state.library.current_index().get_untracked();
         let selection = state.selection.get_untracked();
         if let (Some(psd), Some(idx)) = (result, file_idx) {
             if psd.peaks.is_empty() { return; }
@@ -130,7 +130,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 time_end = sel.time_end;
             } else {
                 time_start = 0.0;
-                let files = state.files.get_untracked();
+                let files = state.library.files().get_untracked();
                 time_end = files.get(idx).map(|f| f.audio.duration_secs).unwrap_or(0.0);
             }
 
@@ -255,7 +255,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             if let Some(file_id) = state.file_id_at(idx) {
                 state.annotations.store().update(|store| {
                     let set = store.entry_or_insert_with(file_id, || {
-                        state.files.with_untracked(|files| {
+                        state.library.files().with_untracked(|files| {
                             files.get(idx).map(|f| {
                                 let id = f.identity.clone().unwrap_or_else(|| {
                                     crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
@@ -444,8 +444,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     view! { <span class="analysis-scope-badge analysis-scope-full">"Full file"</span> }.into_any()
                 } else if psd_result.get().is_none() && !is_computing.get() {
                     let has_file = {
-                        let files = state.files.get();
-                        let idx = state.current_file_index.get();
+                        let files = state.library.files().get();
+                        let idx = state.library.current_index().get();
                         idx.and_then(|i| files.get(i)).is_some()
                     };
                     if !has_file {
@@ -904,8 +904,8 @@ fn start_psd_compute(
     freq_range_mode: RwSignal<PsdFreqRangeMode>,
     full_file: bool,
 ) {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked();
     let file = idx.and_then(|i| files.get(i).cloned());
     let Some(file) = file else { return; };
 

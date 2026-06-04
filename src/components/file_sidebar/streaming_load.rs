@@ -197,7 +197,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -227,7 +227,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -255,7 +255,7 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     spectral_store::init(file_index, total_cols, fft_size);
 
     // Prefetch first viewport worth of audio, then schedule tiles
-    let audio_ref = state.files.get_untracked().get(file_index).cloned();
+    let audio_ref = state.library.files().get_untracked().get(file_index).cloned();
     if let Some(f) = audio_ref {
         if let Some(streaming) = f.audio.source.as_any().downcast_ref::<StreamingWavSource>() {
             // Prefetch the head region — already loaded, but schedule visible tiles
@@ -495,7 +495,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -525,7 +525,7 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -600,7 +600,7 @@ async fn background_flac_decode(
     // datasets and the index shifts if another file is closed mid-decode, so a
     // name/index check could bind to the wrong file. Decoding writes into the
     // shared `source` Arc, so we only need a liveness check here.
-    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+    let Some(expected_id) = state.library.files().get_untracked().get(file_index).map(|f| f.id) else { return };
 
     // Initial delay — let the UI settle
     sleep_ms(200).await;
@@ -610,8 +610,8 @@ async fn background_flac_decode(
         if state.file_idx_for_id(expected_id).is_none() { return; }
 
         // Defer while playing or loading
-        let is_busy = state.is_playing.get_untracked()
-            || state.loading_files.with_untracked(|v| !v.is_empty());
+        let is_busy = state.playback.is_playing().get_untracked()
+            || state.library.loading().with_untracked(|v| !v.is_empty());
         if is_busy {
             sleep_ms(500).await;
             continue;
@@ -869,7 +869,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -899,7 +899,7 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -975,7 +975,7 @@ async fn background_mp3_decode(
     // Pin to the file's stable id; this decode schedules tiles by index, so
     // re-resolve the index from the id each hop (duplicate names / index shift
     // would otherwise schedule tiles against the wrong file).
-    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+    let Some(expected_id) = state.library.files().get_untracked().get(file_index).map(|f| f.id) else { return };
 
     // Initial delay — let the UI settle
     sleep_ms(200).await;
@@ -989,8 +989,8 @@ async fn background_mp3_decode(
         let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
         // Defer while playing or loading
-        let is_busy = state.is_playing.get_untracked()
-            || state.loading_files.with_untracked(|v| !v.is_empty());
+        let is_busy = state.playback.is_playing().get_untracked()
+            || state.library.loading().with_untracked(|v| !v.is_empty());
         if is_busy {
             sleep_ms(500).await;
             continue;
@@ -1249,7 +1249,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -1279,7 +1279,7 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -1351,7 +1351,7 @@ async fn background_ogg_decode(
 ) {
     // Pin to the file's stable id (see background_flac_decode); decoding writes
     // into the shared `source` Arc, so a liveness check is all we need.
-    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+    let Some(expected_id) = state.library.files().get_untracked().get(file_index).map(|f| f.id) else { return };
 
     // Initial delay — let the UI settle
     sleep_ms(200).await;
@@ -1361,8 +1361,8 @@ async fn background_ogg_decode(
         if state.file_idx_for_id(expected_id).is_none() { return; }
 
         // Defer while playing or loading
-        let is_busy = state.is_playing.get_untracked()
-            || state.loading_files.with_untracked(|v| !v.is_empty());
+        let is_busy = state.playback.is_playing().get_untracked()
+            || state.library.loading().with_untracked(|v| !v.is_empty());
         if is_busy {
             sleep_ms(500).await;
             continue;
@@ -1396,13 +1396,13 @@ pub(super) async fn build_streaming_overview(
     // Pin to the file's stable id before any await: the index shifts if another
     // file is closed, and duplicate filenames (common in bat datasets) make a
     // name check ambiguous. Re-resolve the index from the id at each use.
-    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+    let Some(expected_id) = state.library.files().get_untracked().get(file_index).map(|f| f.id) else { return };
 
     // Initial delay — let the UI settle after loading
     sleep_ms(500).await;
 
     let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
-    let file = match state.files.get_untracked().get(file_index).cloned() {
+    let file = match state.library.files().get_untracked().get(file_index).cloned() {
         Some(f) => f,
         _ => return,
     };
@@ -1439,9 +1439,9 @@ pub(super) async fn build_streaming_overview(
         let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
         // Defer while playing, loading new files, or if this isn't the current file
-        let is_busy = state.is_playing.get_untracked()
-            || state.loading_files.with_untracked(|v| !v.is_empty())
-            || state.current_file_index.get_untracked() != Some(file_index);
+        let is_busy = state.playback.is_playing().get_untracked()
+            || state.library.loading().with_untracked(|v| !v.is_empty())
+            || state.library.current_index().get_untracked() != Some(file_index);
         if is_busy {
             // Sleep 500ms and retry
             sleep_ms(500).await;
@@ -1510,7 +1510,7 @@ pub(super) async fn build_streaming_overview(
 
     // Update the file's overview image (re-resolve by id).
     let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.overview_image = Some(overview);
         }
@@ -1874,7 +1874,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -1904,7 +1904,7 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -1970,7 +1970,7 @@ async fn background_m4a_decode(
     // Pin to the file's stable id before any await; this decode schedules tiles
     // by index, so re-resolve the index from the id each hop (see
     // background_mp3_decode).
-    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+    let Some(expected_id) = state.library.files().get_untracked().get(file_index).map(|f| f.id) else { return };
 
     // Initial delay.
     sleep_ms(200).await;
@@ -1991,8 +1991,8 @@ async fn background_m4a_decode(
         // Re-resolve our index by id (used below for tile scheduling).
         let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
-        let is_busy = state.is_playing.get_untracked()
-            || state.loading_files.with_untracked(|v| !v.is_empty());
+        let is_busy = state.playback.is_playing().get_untracked()
+            || state.library.loading().with_untracked(|v| !v.is_empty());
         if is_busy {
             sleep_ms(500).await;
             continue;

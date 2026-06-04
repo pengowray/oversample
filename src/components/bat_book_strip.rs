@@ -40,8 +40,8 @@ pub fn BatBookStrip() -> impl IntoView {
                 state.bat_book.auto_resolved().set(None);
             }
             BatBookMode::Auto => {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let file = idx.and_then(|i| files.get(i));
                 let favourites = state.bat_book.favourites().get_untracked();
                 let resolved = auto_resolve::resolve_auto(file, &favourites);
@@ -89,7 +89,7 @@ pub fn BatBookStrip() -> impl IntoView {
     Effect::new(move |_| {
         let is_open = state.bat_book.open().get();
         let resolved = state.bat_book.auto_resolved().get();
-        let file_idx = state.current_file_index.get();
+        let file_idx = state.library.current_index().get();
 
         let Some(idx) = file_idx else { return };
         let Some(ref res) = resolved else { return };
@@ -370,8 +370,8 @@ fn apply_bat_book_ff(state: &AppState) {
         return;
     };
 
-    let files = state.files.get_untracked();
-    let Some(idx) = state.current_file_index.get_untracked() else { return };
+    let files = state.library.files().get_untracked();
+    let Some(idx) = state.library.current_index().get_untracked() else { return };
     let Some(file) = files.get(idx) else { return };
     let nyquist = file.audio.sample_rate as f64 / 2.0;
 

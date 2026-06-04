@@ -205,7 +205,7 @@ pub fn App() -> impl IntoView {
         let first_run = std::cell::Cell::new(true);
         Effect::new(move |_| {
             // Track all playback-relevant signals (subscribes to changes)
-            let _ = state.playback_mode.get();
+            let _ = state.playback.mode().get();
             let _ = state.transform.te_factor().get();
             let _ = state.transform.ps_factor().get();
             let _ = state.transform.pv_factor().get();
@@ -247,7 +247,7 @@ pub fn App() -> impl IntoView {
                 return;
             }
 
-            if state.is_playing.get_untracked() {
+            if state.playback.is_playing().get_untracked() {
                 playback::schedule_replay_live(&state);
             }
         });
@@ -262,9 +262,9 @@ pub fn App() -> impl IntoView {
     // tricks that can't work for an unbounded live stream.
     {
         let first_run = std::cell::Cell::new(true);
-        let prev_mode = std::cell::Cell::new(state.playback_mode.get_untracked());
+        let prev_mode = std::cell::Cell::new(state.playback.mode().get_untracked());
         Effect::new(move |_| {
-            let mode = state.playback_mode.get();
+            let mode = state.playback.mode().get();
             let _ = state.filter.enabled().get();
             let _ = state.filter.freq_low().get();
             let _ = state.filter.freq_high().get();
@@ -384,10 +384,10 @@ pub fn App() -> impl IntoView {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
-        let from_here_mode = state.play_start_mode.get().uses_from_here();
+        let from_here_mode = state.playback.start_mode().get().uses_from_here();
         let timeline = state.timeline.active().get();
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
 
         let (time_res, duration) = if let Some(ref tl) = timeline {
             let time_res = tl
@@ -437,7 +437,7 @@ pub fn App() -> impl IntoView {
     // and mic_listening / mic_recording (which selects between them).
     Effect::new(move |_| {
         let _ = state.focus_stack.get();
-        let _ = state.current_file_index.get();
+        let _ = state.library.current_index().get();
         let _ = state.mic.sample_rate().get();
         let _ = state.mic.listening().get();
         let _ = state.mic.recording().get();
@@ -447,7 +447,7 @@ pub fn App() -> impl IntoView {
     // Keep annotation-driven BandFF in sync regardless of whether selection happened
     // from the sidebar or directly on the canvas.
     Effect::new(move |_| {
-        let _ = state.current_file_index.get();
+        let _ = state.library.current_index().get();
         let _ = state.annotations.auto_focus().get();
         let _ = state.annotations.selected_ids().get();
         let _ = state.annotations.store().get();
@@ -458,9 +458,9 @@ pub fn App() -> impl IntoView {
     // min/max_display_freq into the global signals. New files have None,
     // so they default to full range rather than inheriting the previous file.
     Effect::new(move |_| {
-        let idx = state.current_file_index.get();
+        let idx = state.library.current_index().get();
         let (min, max) = if let Some(i) = idx {
-            state.files.with_untracked(|files| {
+            state.library.files().with_untracked(|files| {
                 files.get(i)
                     .map(|f| (f.min_display_freq, f.max_display_freq))
                     .unwrap_or((None, None))
@@ -480,15 +480,15 @@ pub fn App() -> impl IntoView {
     Effect::new(move |_| {
         let min = state.view.min_display_freq().get();
         let max = state.view.max_display_freq().get();
-        let idx = state.current_file_index.get_untracked();
+        let idx = state.library.current_index().get_untracked();
         if let Some(i) = idx {
-            let needs_write = state.files.with_untracked(|files| {
+            let needs_write = state.library.files().with_untracked(|files| {
                 files.get(i)
                     .map(|f| f.min_display_freq != min || f.max_display_freq != max)
                     .unwrap_or(false)
             });
             if needs_write {
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(i) {
                         f.min_display_freq = min;
                         f.max_display_freq = max;
@@ -542,7 +542,7 @@ pub fn App() -> impl IntoView {
         let xform_on = match state.display.filter_transform().get() {
             DisplayFilterMode::Off => false,
             DisplayFilterMode::Auto => false, // auto = off for transform
-            DisplayFilterMode::Same => state.playback_mode.get() != PlaybackMode::Normal,
+            DisplayFilterMode::Same => state.playback.mode().get() != PlaybackMode::Normal,
             DisplayFilterMode::Custom => false, // not yet implemented
         };
         state.display.transform().set(xform_on);
@@ -608,7 +608,7 @@ pub fn App() -> impl IntoView {
         Effect::new(move |_| {
             let nr_mode = state.display.filter_nr().get();
             let enabled = state.display.filter_enabled().get();
-            let file_idx = state.current_file_index.get();
+            let file_idx = state.library.current_index().get();
             // Only auto-learn when DSP is enabled and NR is Auto or Custom
             if !enabled || !matches!(nr_mode, DisplayFilterMode::Auto | DisplayFilterMode::Custom) {
                 return;
@@ -620,7 +620,7 @@ pub fn App() -> impl IntoView {
             if learning.get_untracked() {
                 return;
             }
-            let files = state.files.get_untracked();
+            let files = state.library.files().get_untracked();
             let Some(idx) = file_idx else { return; };
             let Some(file) = files.get(idx).cloned() else { return; };
 
@@ -651,7 +651,7 @@ pub fn App() -> impl IntoView {
     {
         let prev_file: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
         Effect::new(move |_| {
-            let idx = state.current_file_index.get();
+            let idx = state.library.current_index().get();
             if idx != prev_file.get() {
                 prev_file.set(idx);
                 state.display.auto_noise_floor().set(None);
@@ -665,7 +665,7 @@ pub fn App() -> impl IntoView {
     {
         let prev_idx: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
         Effect::new(move |_| {
-            let new_idx = state.current_file_index.get();
+            let new_idx = state.library.current_index().get();
 
             let old_idx = prev_idx.get();
             prev_idx.set(new_idx);
@@ -698,11 +698,11 @@ pub fn App() -> impl IntoView {
                 };
 
                 // Save to the outgoing file and all files in its sequence group
-                let names: Vec<String> = state.files.get_untracked().iter().map(|f| f.name.clone()).collect();
+                let names: Vec<String> = state.library.files().get_untracked().iter().map(|f| f.name.clone()).collect();
                 let groups = crate::components::file_sidebar::file_groups::compute_file_groups(&names);
                 let group_key = groups.get(oi).and_then(|g| g.as_ref()).map(|ti| ti.group_key.clone());
 
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     for (i, file) in files.iter_mut().enumerate() {
                         let dominated = i == oi || group_key.as_ref().is_some_and(|gk| {
                             groups.get(i).and_then(|g| g.as_ref()).map(|ti| &ti.group_key) == Some(gk)
@@ -725,7 +725,7 @@ pub fn App() -> impl IntoView {
                 // Reset HFR and focus stack for the new file (HFR defaults to OFF).
                 state.focus_stack.set(crate::focus_stack::FocusStack::new());
                 if was_hfr {
-                    state.playback_mode.set(PlaybackMode::Normal);
+                    state.playback.mode().set(PlaybackMode::Normal);
                     state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
                     state.view.min_display_freq().set(None);
                     state.view.max_display_freq().set(None);
@@ -734,7 +734,7 @@ pub fn App() -> impl IntoView {
 
             // Restore settings from the incoming file
             if let Some(ni) = new_idx {
-                let files = state.files.get_untracked();
+                let files = state.library.files().get_untracked();
                 if let Some(file) = files.get(ni) {
                     let s = &file.settings;
                     state.gain.mode().set(s.gain_mode);
@@ -758,7 +758,7 @@ pub fn App() -> impl IntoView {
         let dirty = state.annotations.dirty().get();
         if !dirty { return; }
         state.annotations.dirty().set(false);
-        let idx = match state.current_file_index.get_untracked() {
+        let idx = match state.library.current_index().get_untracked() {
             Some(i) => i,
             None => return,
         };
@@ -779,11 +779,11 @@ pub fn App() -> impl IntoView {
         }
         if ev.key() == " " {
             ev.prevent_default();
-            if state_kb.current_file_index.get_untracked().is_some() {
-                if state_kb.is_playing.get_untracked() {
+            if state_kb.library.current_index().get_untracked().is_some() {
+                if state_kb.playback.is_playing().get_untracked() {
                     playback::stop(&state_kb);
                 } else {
-                    match state_kb.play_start_mode.get_untracked() {
+                    match state_kb.playback.start_mode().get_untracked() {
                         PlayStartMode::All => playback::play_from_start(&state_kb),
                         PlayStartMode::FromHere => playback::play_from_here(&state_kb),
                         PlayStartMode::Selected => {
@@ -839,7 +839,7 @@ pub fn App() -> impl IntoView {
             // If something else wants the key (label editor, etc.), skip.
             if state_kb.annotations.editing().get_untracked() { return; }
             ev.prevent_default();
-            let t = state_kb.playhead_time.get_untracked();
+            let t = state_kb.playback.playhead_time().get_untracked();
             crate::components::overflow_menu::add_marker_at_time(&state_kb, t);
         }
         // Q = toggle frequency bounds on current selection or selected annotations (region ↔ segment)
@@ -861,8 +861,8 @@ pub fn App() -> impl IntoView {
                     let (lo, hi) = if ff.is_active() {
                         (ff.lo, ff.hi)
                     } else {
-                        let files = state_kb.files.get_untracked();
-                        let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
+                        let files = state_kb.library.files().get_untracked();
+                        let idx = state_kb.library.current_index().get_untracked().unwrap_or(0);
                         let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
                         (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
                          state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
@@ -877,7 +877,7 @@ pub fn App() -> impl IntoView {
             } else {
                 // No transient selection — toggle selected annotations
                 let sel_ids = state_kb.annotations.selected_ids().get_untracked();
-                if let (false, Some(idx)) = (sel_ids.is_empty(), state_kb.current_file_index.get_untracked()) {
+                if let (false, Some(idx)) = (sel_ids.is_empty(), state_kb.library.current_index().get_untracked()) {
                     ev.prevent_default();
                     let file_id = state_kb.current_file_id();
                     // Check if all selected annotations are regions (have freq bounds)
@@ -916,7 +916,7 @@ pub fn App() -> impl IntoView {
                         let (lo, hi) = if ff.is_active() {
                             (ff.lo, ff.hi)
                         } else {
-                            let files = state_kb.files.get_untracked();
+                            let files = state_kb.library.files().get_untracked();
                             let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
                             (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
                              state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
@@ -965,14 +965,14 @@ pub fn App() -> impl IntoView {
         };
         if let Some(key) = nav_action {
             ev.prevent_default();
-            let files = state_kb.files.get_untracked();
+            let files = state_kb.library.files().get_untracked();
             let timeline = state_kb.timeline.active().get_untracked();
             let (time_res, duration) = if let Some(ref tl) = timeline {
                 let tr = tl.segments.first().and_then(|s| files.get(s.file_index))
                     .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 (tr, tl.total_duration_secs)
             } else {
-                let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
+                let idx = state_kb.library.current_index().get_untracked().unwrap_or(0);
                 match files.get(idx) {
                     Some(file) => (file.spectrogram.time_resolution, file.audio.duration_secs),
                     None => (1.0, 0.0),
@@ -982,7 +982,7 @@ pub fn App() -> impl IntoView {
                 let zoom = state_kb.view.zoom_level().get_untracked();
                 let canvas_w = state_kb.spectrogram_canvas_width.get_untracked();
                 let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
-                let from_here_mode = state_kb.play_start_mode.get_untracked().uses_from_here();
+                let from_here_mode = state_kb.playback.start_mode().get_untracked().uses_from_here();
                 let (_min_scroll, max_scroll) = viewport::scroll_bounds_for_mode(duration, visible_time, from_here_mode);
                 let new_scroll = match key.as_str() {
                     "Home" => viewport::clamp_scroll_for_mode(0.0, duration, visible_time, from_here_mode),
@@ -1045,9 +1045,9 @@ pub fn App() -> impl IntoView {
         let state_resize = state;
         let on_resize = Closure::<dyn Fn()>::new(move || {
             let mobile = crate::state::is_mobile_viewport();
-            let was_mobile = state_resize.is_mobile.get_untracked();
+            let was_mobile = state_resize.status.is_mobile().get_untracked();
             if mobile != was_mobile {
-                state_resize.is_mobile.set(mobile);
+                state_resize.status.is_mobile().set(mobile);
                 if mobile {
                     // Switching to mobile: collapse sidebars (they become overlays)
                     state_resize.panels.left_collapsed().set(true);
@@ -1063,7 +1063,7 @@ pub fn App() -> impl IntoView {
     }
 
     let grid_style = move || {
-        if state.is_mobile.get() {
+        if state.status.is_mobile().get() {
             // Sidebars are position:fixed overlays, so single column for main content
             "grid-template-columns: 1fr; grid-template-rows: auto 1fr".to_string()
         } else {
@@ -1112,7 +1112,7 @@ pub fn App() -> impl IntoView {
             het_hide: f64,
         ) {
             // Only meaningful on mobile Tauri, and only nag once.
-            if !state.is_tauri || !state.is_mobile.get_untracked() { return; }
+            if !state.is_tauri || !state.status.is_mobile().get_untracked() { return; }
             if state.dialogs.background_hint_dismissed().get_untracked() { return; }
             if state.dialogs.background_audio_hint().get_untracked() { return; }
 
@@ -1249,7 +1249,7 @@ pub fn App() -> impl IntoView {
     {
         let state_back = state;
         let on_popstate = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            if !state_back.is_mobile.get_untracked() { return; }
+            if !state_back.status.is_mobile().get_untracked() { return; }
             if !state_back.panels.right_collapsed().get_untracked() {
                 state_back.panels.right_collapsed().set(true);
                 let _ = web_sys::window().unwrap().history().unwrap()
@@ -1290,10 +1290,10 @@ pub fn App() -> impl IntoView {
                     .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let vp_width = js_sys::Reflect::get(vv, &wasm_bindgen::JsValue::from_str("width"))
                     .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                state_vp.visual_viewport_rect.set((offset_top, offset_left, vp_width, scale));
+                state_vp.status.visual_viewport_rect().set((offset_top, offset_left, vp_width, scale));
             }
-            let prev = state_vp.viewport_zoomed.get_untracked();
-            state_vp.viewport_zoomed.set(zoomed);
+            let prev = state_vp.status.viewport_zoomed().get_untracked();
+            state_vp.status.viewport_zoomed().set(zoomed);
             // Toggle body class so CSS can override touch-action on canvas areas
             if let Some(body) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.body()) {
                 if zoomed {
@@ -1349,13 +1349,13 @@ pub fn App() -> impl IntoView {
         check_zoom.forget();
     }
 
-    let app_class = move || if state.is_mobile.get() { "app mobile" } else { "app" };
+    let app_class = move || if state.status.is_mobile().get() { "app mobile" } else { "app" };
 
     view! {
         <div class=app_class style=grid_style>
             <Toolbar />
             <FileSidebar />
-            {move || state.is_mobile.get().then(|| view! {
+            {move || state.status.is_mobile().get().then(|| view! {
                 <div
                     class=move || if !state.panels.left_collapsed().get() || !state.panels.right_collapsed().get() { "sidebar-backdrop open" } else { "sidebar-backdrop" }
                     on:click=move |_| {
@@ -1382,12 +1382,12 @@ pub fn App() -> impl IntoView {
 #[component]
 fn MainArea() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let has_file = move || state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
+    let has_file = move || state.library.current_index().get().is_some() || state.timeline.active().get().is_some();
 
     // Click/tap anywhere in the main area closes open layer panels (and sidebar on mobile)
     let on_main_click = move |_: web_sys::MouseEvent| {
         state.panels.layer_panel_open().set(None);
-        if state.is_mobile.get_untracked() {
+        if state.status.is_mobile().get_untracked() {
             state.panels.left_collapsed().set(true);
             state.panels.right_collapsed().set(true);
         }
@@ -1396,7 +1396,7 @@ fn MainArea() -> impl IntoView {
     // call preventDefault() which suppresses the synthetic click event
     let on_main_touchstart = move |_: web_sys::TouchEvent| {
         state.panels.layer_panel_open().set(None);
-        if state.is_mobile.get_untracked() {
+        if state.status.is_mobile().get_untracked() {
             state.panels.left_collapsed().set(true);
             state.panels.right_collapsed().set(true);
         }
@@ -1458,8 +1458,8 @@ fn MainArea() -> impl IntoView {
                                 // Unsaved recording banner (web only)
                                 {move || {
                                     if state.is_tauri { return None; }
-                                    let files = state.files.get();
-                                    let idx = state.current_file_index.get()?;
+                                    let files = state.library.files().get();
+                                    let idx = state.library.current_index().get()?;
                                     let file = files.get(idx)?;
                                     if !file.is_recording { return None; }
                                     let name = file.name.clone();
@@ -1467,8 +1467,8 @@ fn MainArea() -> impl IntoView {
                                         <div
                                             class="unsaved-banner"
                                             on:click=move |_| {
-                                                let files = state.files.get_untracked();
-                                                let idx = state.current_file_index.get_untracked();
+                                                let files = state.library.files().get_untracked();
+                                                let idx = state.library.current_index().get_untracked();
                                                 if let Some(i) = idx {
                                                     if let Some(f) = files.get(i) {
                                                         let total = f.audio.source.total_samples() as usize;
@@ -1500,7 +1500,7 @@ fn MainArea() -> impl IntoView {
                         {move || state.panels.show_status_bar().get().then(|| view! { <AnalysisPanel /> })}
                     }.into_any()
                 } else {
-                    let empty_msg = if state.is_mobile.get() {
+                    let empty_msg = if state.status.is_mobile().get() {
                         "Tap \u{2630} to load audio files"
                     } else {
                         "Drop WAV, FLAC or MP3 files into the sidebar"
@@ -1519,7 +1519,7 @@ fn MainArea() -> impl IntoView {
             // Zoom-out button — appears when mobile viewport is pinch-zoomed in.
             // Uses absolute positioning relative to the visual viewport (not
             // position:fixed which anchors to the layout viewport and goes off-screen).
-            {move || state.viewport_zoomed.get().then(|| {
+            {move || state.status.viewport_zoomed().get().then(|| {
                 let btn_size = 44.0_f64;
                 let margin = 10.0_f64;
                 view! {
@@ -1527,7 +1527,7 @@ fn MainArea() -> impl IntoView {
                         class="zoom-out-btn"
                         title="Reset zoom"
                         style=move || {
-                            let (off_top, off_left, vp_w, _scale) = state.visual_viewport_rect.get();
+                            let (off_top, off_left, vp_w, _scale) = state.status.visual_viewport_rect().get();
                             let top = off_top + margin;
                             let left = off_left + vp_w - btn_size - margin;
                             format!("top:{top}px;left:{left}px;")
@@ -1729,8 +1729,8 @@ fn resonator_quick_sample_rate(state: AppState) -> f64 {
     if crate::canvas::live_waterfall::is_active() {
         return crate::canvas::live_waterfall::max_freq() * 2.0;
     }
-    let files = state.files.get();
-    let idx = state.current_file_index.get();
+    let files = state.library.files().get();
+    let idx = state.library.current_index().get();
     idx.and_then(|i| files.get(i))
         .map(|f| f.spectrogram.sample_rate as f64)
         .unwrap_or(192_000.0)
@@ -1747,7 +1747,7 @@ pub fn MainViewButton() -> impl IntoView {
     use crate::components::popup::{Align, PopupPanel, Side};
     let state = expect_context::<AppState>();
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::MainView));
-    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
+    let no_file = move || state.library.current_index().get().is_none() && state.timeline.active().get().is_none();
 
     // Helper: handle all side-effects of a view switch synchronously,
     // so the spectrogram render Effect always sees consistent state.
@@ -1775,7 +1775,7 @@ pub fn MainViewButton() -> impl IntoView {
                 state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked()
             );
             state.display.transform().set(
-                state.playback_mode.get_untracked() != PlaybackMode::Normal
+                state.playback.mode().get_untracked() != PlaybackMode::Normal
             );
         } else if leaving_xform {
             // Disable display processing and directly reset all display signals.
@@ -1813,15 +1813,15 @@ pub fn MainViewButton() -> impl IntoView {
     let eq_active = Signal::derive(move || state.filter.enabled().get());
     let notch_active = Signal::derive(move || state.notch.enabled().get());
     let nr_active = Signal::derive(move || state.noise_reduce.enabled().get());
-    let transform_active = Signal::derive(move || state.playback_mode.get() != PlaybackMode::Normal);
+    let transform_active = Signal::derive(move || state.playback.mode().get() != PlaybackMode::Normal);
     let gain_active = Signal::derive(move || state.gain.mode().get() != GainMode::Off);
     let decim_active = Signal::derive(move || false);
 
     let browser_is_resampling = Signal::derive(move || {
         let bsr = state.display.browser_sample_rate().get();
         if bsr == 0 { return false; }
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
         if file_rate == 0 { return false; }
         let decim = state.display.decimate_effective().get();
@@ -1836,8 +1836,8 @@ pub fn MainViewButton() -> impl IntoView {
     let resam_tooltip = Signal::derive(move || {
         let bsr = state.display.browser_sample_rate().get();
         if bsr == 0 { return String::new(); }
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
         if file_rate == 0 { return String::new(); }
         let decim = state.display.decimate_effective().get();
@@ -2223,8 +2223,8 @@ pub fn MainViewButton() -> impl IntoView {
             // Frequency range selector (for spectrogram/flow/resonator views)
             {move || matches!(state.main_view.get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
                 let file_max = move || {
-                    let files = state.files.get();
-                    let idx = state.current_file_index.get();
+                    let files = state.library.files().get();
+                    let idx = state.library.current_index().get();
                     idx.and_then(|i| files.get(i))
                         .map(|f| f.spectrogram.max_freq)
                         .unwrap_or(96_000.0)

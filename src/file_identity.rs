@@ -336,7 +336,7 @@ fn run_verification(
 
 /// Read the current reference hashes for a file from state.
 fn get_merged_reference(state: AppState, file_index: usize) -> crate::state::SidecarHashes {
-    let xc_hashes = state.files.with_untracked(|files| {
+    let xc_hashes = state.library.files().with_untracked(|files| {
         files.get(file_index).and_then(|f| f.xc_hashes.clone())
     });
     let sidecar_id = state.file_id_at(file_index).and_then(|id| {
@@ -349,7 +349,7 @@ fn get_merged_reference(state: AppState, file_index: usize) -> crate::state::Sid
 
 /// Store verification outcome on the LoadedFile.
 fn set_verify_outcome(state: AppState, file_index: usize, outcome: crate::state::VerifyOutcome) {
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.verify_outcome = outcome;
         }
@@ -357,7 +357,7 @@ fn set_verify_outcome(state: AppState, file_index: usize, outcome: crate::state:
 }
 
 /// Compute Layer 1 identity and kick off async Layer 2 (spot-check) computation.
-/// Call this after a file is added to state.files.
+/// Call this after a file is added to state.library.files().
 pub fn start_identity_computation(
     state: AppState,
     file_index: usize,
@@ -369,12 +369,12 @@ pub fn start_identity_computation(
     last_modified_ms: Option<f64>,
 ) {
     // Skip if identity already computed (e.g. by load_named_bytes)
-    let already_has_identity = state.files.with_untracked(|files| {
+    let already_has_identity = state.library.files().with_untracked(|files| {
         files.get(file_index).is_some_and(|f| f.identity.is_some())
     });
     if already_has_identity {
         // Still try loading saved annotations even if identity was already set
-        let identity = state.files.with_untracked(|files| {
+        let identity = state.library.files().with_untracked(|files| {
             files.get(file_index).and_then(|f| f.identity.clone())
         });
         if let Some(id) = identity {
@@ -389,7 +389,7 @@ pub fn start_identity_computation(
     identity.data_size = data_size;
     identity.last_modified = last_modified_ms.map(|ms| ms.to_string());
 
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.identity = Some(identity.clone());
         }
@@ -405,7 +405,7 @@ pub fn start_identity_computation(
             Some(compute_spot_hash_b3_sync(bytes, data_offset, data_size))
         } else {
             // No bytes available (streaming load) — need file handle for range reads
-            let handle = state.files.with_untracked(|files| {
+            let handle = state.library.files().with_untracked(|files| {
                 files.get(file_index).and_then(|f| f.file_handle.clone())
             });
             if let Some(handle) = handle {
@@ -417,7 +417,7 @@ pub fn start_identity_computation(
         };
 
         if let Some(hash) = spot_hash {
-            state.files.update(|files| {
+            state.library.files().update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
                     if let Some(ref mut id) = f.identity {
                         id.spot_hash_b3 = Some(hash);
@@ -426,7 +426,7 @@ pub fn start_identity_computation(
             });
 
             // Try loading annotations again with the better spot_hash_b3 key
-            let identity = state.files.with_untracked(|files| {
+            let identity = state.library.files().with_untracked(|files| {
                 files.get(file_index).and_then(|f| f.identity.clone())
             });
             if let Some(id) = identity {
@@ -451,7 +451,7 @@ pub fn start_identity_computation(
                 let content_hash = blake3::hash(&bytes[audio_start..audio_end]).to_hex().to_string();
                 let full_blake3 = blake3::hash(&bytes).to_hex().to_string();
 
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(file_index) {
                         if let Some(ref mut id) = f.identity {
                             id.content_hash = Some(content_hash);
@@ -463,7 +463,7 @@ pub fn start_identity_computation(
                 crate::opfs::save_annotations_to_opfs(state, file_index);
             } else {
                 // Small file without in-memory bytes: compute via file handle
-                let has_handle = state.files.with_untracked(|files| {
+                let has_handle = state.library.files().with_untracked(|files| {
                     files.get(file_index).is_some_and(|f| f.file_handle.is_some())
                 });
                 if has_handle {
@@ -474,7 +474,7 @@ pub fn start_identity_computation(
 
         // Run verification against reference hashes
         let reference = get_merged_reference(state, file_index);
-        let identity = state.files.with_untracked(|files| {
+        let identity = state.library.files().with_untracked(|files| {
             files.get(file_index).and_then(|f| f.identity.clone())
         });
 
@@ -484,7 +484,7 @@ pub fn start_identity_computation(
             // On mismatch: for large files, content_hash isn't auto-computed.
             // Compute it now as a fallback, then re-verify.
             if outcome == crate::state::VerifyOutcome::Mismatch && id.content_hash.is_none() {
-                let handle = state.files.with_untracked(|files| {
+                let handle = state.library.files().with_untracked(|files| {
                     files.get(file_index).and_then(|f| f.file_handle.clone())
                 });
                 if let Some(handle) = handle {
@@ -493,7 +493,7 @@ pub fn start_identity_computation(
                     if let Ok((content_hash, full_blake3)) =
                         compute_full_hashes(reader.as_ref(), file_size, data_offset, data_size, 0, &check).await
                     {
-                        state.files.update(|files| {
+                        state.library.files().update(|files| {
                             if let Some(f) = files.get_mut(file_index) {
                                 if let Some(ref mut fid) = f.identity {
                                     fid.content_hash = Some(content_hash);
@@ -504,7 +504,7 @@ pub fn start_identity_computation(
                         crate::opfs::save_annotations_to_opfs(state, file_index);
 
                         // Re-verify with content_hash now available
-                        let updated_id = state.files.with_untracked(|files| {
+                        let updated_id = state.library.files().with_untracked(|files| {
                             files.get(file_index).and_then(|f| f.identity.clone())
                         });
                         if let Some(ref uid) = updated_id {
@@ -525,40 +525,40 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
     use leptos::prelude::{Get, Set};
 
     // Increment generation to cancel any in-progress computation
-    let gen = state.hash_generation.get() + 1;
-    state.hash_generation.set(gen);
-    state.hash_computing.set(true);
+    let gen = state.status.hash_generation().get() + 1;
+    state.status.hash_generation().set(gen);
+    state.status.hash_computing().set(true);
 
-    let file_size = state.files.with_untracked(|files| {
+    let file_size = state.library.files().with_untracked(|files| {
         files.get(file_index).map(|f| f.identity.as_ref().map(|id| id.file_size).unwrap_or(0))
     }).unwrap_or(0);
 
-    let data_offset = state.files.with_untracked(|files| {
+    let data_offset = state.library.files().with_untracked(|files| {
         files.get(file_index).and_then(|f| f.identity.as_ref().and_then(|id| id.data_offset))
     });
 
-    let data_size = state.files.with_untracked(|files| {
+    let data_size = state.library.files().with_untracked(|files| {
         files.get(file_index).and_then(|f| f.identity.as_ref().and_then(|id| id.data_size))
     });
 
-    let handle = state.files.with_untracked(|files| {
+    let handle = state.library.files().with_untracked(|files| {
         files.get(file_index).and_then(|f| f.file_handle.clone())
     });
 
     let Some(handle) = handle else {
         log::warn!("No file handle available for hash computation (file_index={file_index})");
-        state.hash_computing.set(false);
+        state.status.hash_computing().set(false);
         return;
     };
 
     wasm_bindgen_futures::spawn_local(async move {
         let reader = reader_from_handle(&handle);
-        let check = |g: u32| state.hash_generation.get() != g;
+        let check = |g: u32| state.status.hash_generation().get() != g;
 
         // Compute BLAKE3 layers 3+4
         match compute_full_hashes(reader.as_ref(), file_size, data_offset, data_size, gen, &check).await {
             Ok((content_hash, full_blake3)) => {
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(file_index) {
                         if let Some(ref mut id) = f.identity {
                             id.content_hash = Some(content_hash);
@@ -579,7 +579,7 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
             let reader2 = reader_from_handle(&handle);
             match compute_full_sha256(reader2.as_ref(), file_size, gen, &check).await {
                 Ok(sha256) => {
-                    state.files.update(|files| {
+                    state.library.files().update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
                             if let Some(ref mut id) = f.identity {
                                 id.full_sha256 = Some(sha256);
@@ -597,17 +597,17 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
 
         // Only clear computing flag if this is still the current generation
         if !check(gen) {
-            state.hash_computing.set(false);
+            state.status.hash_computing().set(false);
 
             // Mark all hashes as verified and run verification
-            state.files.update(|files| {
+            state.library.files().update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
                     f.all_hashes_verified = true;
                 }
             });
 
             let reference = get_merged_reference(state, file_index);
-            let identity = state.files.with_untracked(|files| {
+            let identity = state.library.files().with_untracked(|files| {
                 files.get(file_index).and_then(|f| f.identity.clone())
             });
             if let Some(ref id) = identity {

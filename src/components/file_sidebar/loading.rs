@@ -23,7 +23,7 @@ const MAX_FILE_SIZE: f64 = 2_000_000_000.0;
 const TOTAL_OPEN_FILE_STREAMING_THRESHOLD: u64 = 500_000_000;
 
 fn total_open_file_bytes(state: AppState) -> u64 {
-    state.files.with_untracked(|files| {
+    state.library.files().with_untracked(|files| {
         files.iter()
             .map(|file| file.audio.metadata.file_size as u64)
             .sum()
@@ -42,15 +42,15 @@ pub(super) async fn read_and_load_file(file: File, state: AppState, load_id: u64
     let finalize_loaded_file = move |state: AppState, lm: Option<f64>| {
         let file_size = size as u64;
         let file_name = name_for_identity.clone();
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.last_mut() {
                 f.last_modified_ms = lm;
             }
         });
         // Compute file identity (Layer 1 + Layer 2 async)
-        let file_index = state.files.get_untracked().len().saturating_sub(1);
+        let file_index = state.library.files().get_untracked().len().saturating_sub(1);
         // Read data_offset/data_size from the loaded file's metadata
-        let (data_offset, data_size) = state.files.with_untracked(|files| {
+        let (data_offset, data_size) = state.library.files().with_untracked(|files| {
             files.get(file_index)
                 .map(|f| (f.audio.metadata.data_offset, f.audio.metadata.data_size))
                 .unwrap_or((None, None))
@@ -214,7 +214,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     let file_index;
     {
         let mut idx = 0;
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -244,7 +244,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
         });
         file_index = idx;
     }
@@ -253,7 +253,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     // recording has no continuous waveform, so the Spectrogram view
     // would render a blank canvas; the dot plot is the only correct
     // visualisation. Honour an existing ZcChart selection too.
-    let is_zc_file = state.files.with_untracked(|files| {
+    let is_zc_file = state.library.files().with_untracked(|files| {
         files.get(file_index)
             .and_then(|f| f.audio.metadata.zc_data.as_ref())
             .is_some()
@@ -263,7 +263,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     }
 
     // Compute file identity (Layer 1 + Layer 2 with bytes available)
-    let (data_offset, data_size) = state.files.with_untracked(|files| {
+    let (data_offset, data_size) = state.library.files().with_untracked(|files| {
         files.get(file_index)
             .map(|f| (f.audio.metadata.data_offset, f.audio.metadata.data_size))
             .unwrap_or((None, None))
@@ -307,7 +307,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         max_freq,
         sample_rate: audio_for_stft.sample_rate,
     };
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             if f.name == name_check {
                 f.spectrogram = spectrogram;
@@ -577,11 +577,11 @@ pub(crate) async fn fetch_demo_details(metadata_file: &str) -> DemoDetails {
     DemoDetails { duration_secs, sample_rate_hz }
 }
 
-/// If a demo with this filename is already open, return its index in `state.files`.
+/// If a demo with this filename is already open, return its index in `state.library.files()`.
 /// Used to jump-to-existing instead of opening a duplicate when the user clicks
 /// the same demo bat suggestion twice.
 pub(crate) fn find_open_demo(state: AppState, filename: &str) -> Option<usize> {
-    state.files.with_untracked(|files| {
+    state.library.files().with_untracked(|files| {
         files.iter().position(|f| f.is_demo && f.name == filename)
     })
 }
@@ -692,11 +692,11 @@ pub(crate) async fn load_native_file(path: String, state: AppState, load_id: u64
     load_named_bytes(name.clone(), &bytes, None, None, state, load_id, false).await?;
 
     // The file was just added — set the native path on identity
-    let file_index = state.files.get_untracked().len().saturating_sub(1);
+    let file_index = state.library.files().get_untracked().len().saturating_sub(1);
 
     // start_identity_computation was already called inside load_named_bytes.
     // Set the native file_path on the identity so future saves write the sidecar.
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             if let Some(ref mut id) = f.identity {
                 id.file_path = Some(path.clone());
@@ -706,7 +706,7 @@ pub(crate) async fn load_native_file(path: String, state: AppState, load_id: u64
 
     // Also try loading a file-adjacent sidecar (central store was already tried
     // by start_identity_computation, but it didn't have the path at that point).
-    let identity = state.files.with_untracked(|files| {
+    let identity = state.library.files().with_untracked(|files| {
         files.get(file_index).and_then(|f| f.identity.clone())
     });
     if let Some(id) = identity {

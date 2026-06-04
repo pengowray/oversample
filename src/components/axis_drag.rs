@@ -61,8 +61,8 @@ pub fn select_all_frequencies(state: AppState) {
     let file_max_freq = if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
@@ -82,8 +82,8 @@ pub fn select_all_time(state: AppState) {
     let duration = if let Some(ref tl) = state.timeline.active().get_untracked() {
         tl.total_duration_secs
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.audio.duration_secs)
             .unwrap_or(0.0)

@@ -664,9 +664,9 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     }
 
     if has_file_handle && !all_verified {
-        let computing = state.hash_computing.get();
+        let computing = state.status.hash_computing().get();
         let on_calc_all = move |_: web_sys::MouseEvent| {
-            if let Some(idx) = state.current_file_index.get_untracked() {
+            if let Some(idx) = state.library.current_index().get_untracked() {
                 crate::file_identity::start_full_hash_computation(state, idx, true);
             }
         };
@@ -722,8 +722,8 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                 </button>
             </div>
             {move || {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let file = idx.and_then(|i| files.get(i));
                 let view_mode = view_mode.get();
 

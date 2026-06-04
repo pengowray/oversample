@@ -98,7 +98,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
 
     // Gather file info
     let file = state.current_file().ok_or_else(|| JsValue::from_str("No file loaded"))?;
-    let file_idx = state.current_file_index.get_untracked().unwrap();
+    let file_idx = state.library.current_index().get_untracked().unwrap();
     let sample_rate = file.audio.sample_rate;
     let source = &file.audio.source;
 

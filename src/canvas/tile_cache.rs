@@ -69,7 +69,7 @@ const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
 const MAX_CONCURRENT_SPAWNS: usize = 8;
 
 fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f64)> {
-    let files = state.files.get_untracked();
+    let files = state.library.files().get_untracked();
     let file = files.get(file_idx)?;
     let file_time_res = file.spectrogram.time_resolution;
     let file_duration = file.audio.duration_secs;
@@ -77,7 +77,7 @@ fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f6
     let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
 
-    if state.current_file_index.get_untracked() == Some(file_idx) {
+    if state.library.current_index().get_untracked() == Some(file_idx) {
         let visible_time = viewport::visible_time(canvas_w, zoom, file_time_res);
         return viewport::data_window(scroll, visible_time, file_duration);
     }
@@ -671,7 +671,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
 
     // Bounds check: reject tiles that are entirely past the audio data.
     // This prevents futile async work and IN_FLIGHT entries that never resolve.
-    let total_samples = state.files.with_untracked(|files| {
+    let total_samples = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
     });
     let max_tiles = tile_count_for_samples(total_samples, lod);
@@ -710,7 +710,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {
@@ -732,7 +732,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // visible tile content.
         let xform_on = state.display.transform().get_untracked();
         let needs_padding = xform_on && matches!(
-            state.playback_mode.get_untracked(),
+            state.playback.mode().get_untracked(),
             PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift | PlaybackMode::TimeExpansion
         );
         // Pad by PV_HQ_OVERLAP to ensure complete overlap-add warmup
@@ -851,7 +851,7 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
             }
         }
 
-        let still_loaded = state.files.with_untracked(|files| {
+        let still_loaded = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.name == file.name).unwrap_or(false)
         });
         if !still_loaded {
@@ -1024,7 +1024,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
 
         // Defer while audio is playing — playback chunk processing needs
         // uncontested CPU and I/O to avoid gaps
-        if state.is_playing.get_untracked() {
+        if state.playback.is_playing().get_untracked() {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
@@ -1039,7 +1039,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
             }
         }
 
-        let still_loaded = state.files.with_untracked(|files| {
+        let still_loaded = state.library.files().with_untracked(|files| {
             file_idx < files.len()
         });
         if !still_loaded {
@@ -1075,7 +1075,7 @@ pub fn schedule_visible_tiles_from_store(state: AppState, file_idx: usize, total
     if total_cols == 0 { return; }
     let n_tiles = total_cols.div_ceil(TILE_COLS);
 
-    let time_res = state.files.with_untracked(|files| {
+    let time_res = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
     });
     let center_tile = visible_tile_focus_for_file(&state, file_idx, total_cols, time_res)
@@ -1185,7 +1185,7 @@ pub fn schedule_tile_on_demand(
     if at_spawn_limit() { return; }
 
     // Bounds check: reject tiles past the audio data
-    let total_samples = state.files.with_untracked(|files| {
+    let total_samples = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
     });
     let max_tiles = tile_count_for_samples(total_samples, LOD_BASELINE);
@@ -1203,7 +1203,7 @@ pub fn schedule_tile_on_demand(
         }
 
         // Defer while audio is playing — playback needs uncontested I/O and CPU
-        if state.is_playing.get_untracked() {
+        if state.playback.is_playing().get_untracked() {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
@@ -1218,7 +1218,7 @@ pub fn schedule_tile_on_demand(
             }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {
@@ -1312,7 +1312,7 @@ pub fn schedule_flow_tile(
     if FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
-    let total_samples = state.files.with_untracked(|files| {
+    let total_samples = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
     });
     let max_tiles = tile_count_for_samples(total_samples, lod);
@@ -1349,7 +1349,7 @@ pub fn schedule_flow_tile(
             }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {
@@ -1494,7 +1494,7 @@ pub fn schedule_reassign_tile(
     if REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
-    let total_samples = state.files.with_untracked(|files| {
+    let total_samples = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
     });
     let max_tiles = tile_count_for_samples(total_samples, lod);
@@ -1537,7 +1537,7 @@ pub fn schedule_reassign_tile(
             }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {
@@ -1675,7 +1675,7 @@ fn schedule_chroma_tile_fft(
             for _ in 0..3 { yield_to_browser().await; }
         }
 
-        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
+        let still_loaded = state.library.files().with_untracked(|files| file_idx < files.len());
         if !still_loaded {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
@@ -1683,7 +1683,7 @@ fn schedule_chroma_tile_fft(
 
         let col_start = tile_idx * TILE_COLS;
 
-        let freq_res = state.files.with_untracked(|files| {
+        let freq_res = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.spectrogram.freq_resolution)
         }).unwrap_or(1.0);
 
@@ -1699,7 +1699,7 @@ fn schedule_chroma_tile_fft(
         let cols_from_file = if cols_from_store.is_some() {
             None
         } else {
-            state.files.with_untracked(|files| {
+            state.library.files().with_untracked(|files| {
                 files.get(file_idx).and_then(|f| {
                     if f.spectrogram.columns.is_empty() { return None; }
                     let end = (col_start + TILE_COLS).min(f.spectrogram.columns.len());
@@ -1715,7 +1715,7 @@ fn schedule_chroma_tile_fft(
             c
         } else {
             // On-demand: compute STFT from audio samples (same as schedule_tile_on_demand)
-            let audio = state.files.with_untracked(|files| {
+            let audio = state.library.files().with_untracked(|files| {
                 files.get(file_idx).map(|f| f.audio.clone())
             });
             let Some(audio) = audio else {
@@ -1802,7 +1802,7 @@ fn schedule_chroma_tile_resonator(
             for _ in 0..3 { yield_to_browser().await; }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {
@@ -1844,7 +1844,7 @@ fn schedule_chroma_tile_resonator(
             padded_len,
         ).await;
 
-        let still_loaded = state.files.with_untracked(|files| file_idx < files.len());
+        let still_loaded = state.library.files().with_untracked(|files| file_idx < files.len());
         if !still_loaded {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
@@ -2086,7 +2086,7 @@ pub async fn yield_to_browser() {
 /// Apply the current playback DSP mode transform to samples for display.
 /// Used when display_transform is true (Transform "Same" mode).
 fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -> Vec<f32> {
-    let mode = state.playback_mode.get_untracked();
+    let mode = state.playback.mode().get_untracked();
     match mode {
         PlaybackMode::Normal => {
             samples.to_vec()
@@ -2166,7 +2166,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     if RESONATOR_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
-    let total_samples = state.files.with_untracked(|files| {
+    let total_samples = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| f.audio.source.total_samples() as usize).unwrap_or(0)
     });
     let max_tiles = tile_count_for_samples(total_samples, lod);
@@ -2208,7 +2208,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             }
         }
 
-        let audio = state.files.with_untracked(|files| {
+        let audio = state.library.files().with_untracked(|files| {
             files.get(file_idx).map(|f| f.audio.clone())
         });
         let Some(audio) = audio else {

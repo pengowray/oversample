@@ -118,7 +118,7 @@ pub fn ListenButton() -> impl IntoView {
             </div>
 
             // ── Buffer size (PS/PV only) ──
-            <Show when=move || matches!(state.playback_mode.get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
+            <Show when=move || matches!(state.playback.mode().get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
                 <hr />
                 <div class="layer-panel-title">"PS/PV Buffer"</div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 4px;">

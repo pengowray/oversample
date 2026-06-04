@@ -16,11 +16,11 @@ const ICON_CONTRACT: &str = "\u{25AD}"; // ▭ white rectangle — snap to curre
 /// Creates an annotation from the current transient selection and enters label-edit mode.
 pub fn annotate_selection(state: &AppState) {
     let selection = state.selection.get_untracked();
-    let file_idx = state.current_file_index.get_untracked();
+    let file_idx = state.library.current_index().get_untracked();
     if let (Some(sel), Some(idx)) = (selection, file_idx) {
         let has_freq = sel.freq_low.is_some() && sel.freq_high.is_some();
         let Some(file_id) = state.file_id_at(idx) else { return; };
-        let new_set = state.files.with_untracked(|files| {
+        let new_set = state.library.files().with_untracked(|files| {
             files.get(idx).map(|f| {
                 let id = f.identity.clone().unwrap_or_else(|| {
                     crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
@@ -75,15 +75,15 @@ pub fn annotate_selection(state: &AppState) {
 /// Drop an annotation marker at the given time on the current file, open label
 /// edit. Called from the keyboard shortcut (M) and the overflow menu.
 pub fn add_marker_at_time(state: &AppState, time: f64) {
-    let Some(idx) = state.current_file_index.get_untracked() else { return; };
-    let duration = state.files.with_untracked(|files| {
+    let Some(idx) = state.library.current_index().get_untracked() else { return; };
+    let duration = state.library.files().with_untracked(|files| {
         files.get(idx).map(|f| f.audio.duration_secs).unwrap_or(0.0)
     });
     if duration <= 0.0 { return; }
     let time = time.clamp(0.0, duration);
 
     let Some(file_id) = state.file_id_at(idx) else { return; };
-    let new_set = state.files.with_untracked(|files| {
+    let new_set = state.library.files().with_untracked(|files| {
         files.get(idx).map(|f| {
             let id = f.identity.clone().unwrap_or_else(|| {
                 crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
@@ -134,8 +134,8 @@ fn get_freq_bounds(state: &AppState) -> (f64, f64) {
     if ff.is_active() {
         (ff.lo, ff.hi)
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked().unwrap_or(0);
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked().unwrap_or(0);
         let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
         (
             state.view.min_display_freq().get_untracked().unwrap_or(0.0),
@@ -310,8 +310,8 @@ fn SelectionOverflowMenu() -> impl IntoView {
         let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
 
-        let files = state.files.get();
-        let idx = state.current_file_index.get()?;
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get()?;
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;
@@ -477,7 +477,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
     let pos = Signal::derive(move || {
         let ids = state.annotations.selected_ids().get();
         if ids.is_empty() { return None; }
-        let idx = state.current_file_index.get()?;
+        let idx = state.library.current_index().get()?;
         let file_id = state.current_file_id_tracked()?;
         let store = state.annotations.store().get();
         let set = store.get(file_id)?;
@@ -492,7 +492,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
 
-        let files = state.files.get();
+        let files = state.library.files().get();
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;

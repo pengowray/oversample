@@ -11,7 +11,7 @@ pub fn DebugPanel() -> impl IntoView {
 
     // Auto-scroll to bottom when entries change
     Effect::new(move |_| {
-        let entries = state.debug_log_entries.get();
+        let entries = state.status.debug_log().get();
         let _ = entries.len(); // subscribe
         if let Some(el) = container_ref.get() {
             let el: &web_sys::HtmlElement = &el;
@@ -20,7 +20,7 @@ pub fn DebugPanel() -> impl IntoView {
     });
 
     let on_copy = move |_| {
-        let entries = state.debug_log_entries.get_untracked();
+        let entries = state.status.debug_log().get_untracked();
         let text: String = entries.iter().map(|(ts, level, msg)| {
             let secs = (ts / 1000.0) % 100000.0;
             format!("[{:.1}s] [{}] {}", secs, level, msg)
@@ -39,7 +39,7 @@ pub fn DebugPanel() -> impl IntoView {
     };
 
     let on_clear = move |_| {
-        state.debug_log_entries.update(|e| e.clear());
+        state.status.debug_log().update(|e| e.clear());
     };
 
     // Compute start_time from first entry (or now) for relative timestamps
@@ -115,7 +115,7 @@ pub fn DebugPanel() -> impl IntoView {
             </div>
             <div class="debug-panel-log" node_ref=container_ref>
                 {move || {
-                    let entries = state.debug_log_entries.get();
+                    let entries = state.status.debug_log().get();
                     if entries.is_empty() {
                         return view! {
                             <div class="debug-panel-empty">"No log entries yet"</div>

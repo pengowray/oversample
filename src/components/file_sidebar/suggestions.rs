@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -209,7 +210,7 @@ pub(super) fn BatsForYou(
             let on_click = move |_: web_sys::MouseEvent| {
                 let entry = entry_for_click.clone();
                 if let Some(idx) = find_open_demo(state, &entry.filename) {
-                    state.current_file_index.set(Some(idx));
+                    state.library.current_index().set(Some(idx));
                     return;
                 }
                 let label = entry.en.clone().unwrap_or_else(|| entry.filename.clone());

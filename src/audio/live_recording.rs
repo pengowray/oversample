@@ -28,31 +28,31 @@ pub(crate) fn cleanup_failed_recording(state: &AppState) {
 
     let Some(idx) = live_idx else { return };
 
-    let is_empty = state.files.with_untracked(|files| {
+    let is_empty = state.library.files().with_untracked(|files| {
         files.get(idx).map_or(true, |f| f.audio.samples.is_empty() && f.preview.is_none())
     });
 
     if is_empty {
         // Remove the phantom live file
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if idx < files.len() {
                 files.remove(idx);
             }
         });
         // Adjust current_file_index after removal
-        let len = state.files.with_untracked(|f| f.len());
-        match state.current_file_index.get_untracked() {
+        let len = state.library.files().with_untracked(|f| f.len());
+        match state.library.current_index().get_untracked() {
             Some(ci) if ci == idx => {
-                state.current_file_index.set(if len > 0 { Some(idx.min(len - 1)) } else { None });
+                state.library.current_index().set(if len > 0 { Some(idx.min(len - 1)) } else { None });
             }
             Some(ci) if ci > idx => {
-                state.current_file_index.set(Some(ci - 1));
+                state.library.current_index().set(Some(ci - 1));
             }
             _ => {}
         }
     } else {
         // File has partial data — keep it but stop the recording indicator
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(idx) {
                 f.is_recording = false;
             }
@@ -109,7 +109,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     };
 
     let mut file_index = 0;
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
             id: crate::state::next_file_id(),
@@ -141,7 +141,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
         });
     });
 
-    state.current_file_index.set(Some(file_index));
+    state.library.current_index().set(Some(file_index));
     state.mic.live_file_idx().set(Some(file_index));
 
     // Set zoom for comfortable live recording scroll speed.
@@ -202,7 +202,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
     };
 
     let mut file_index = 0;
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
             id: crate::state::next_file_id(),
@@ -234,7 +234,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
         });
     });
 
-    state.current_file_index.set(Some(file_index));
+    state.library.current_index().set(Some(file_index));
     state.mic.live_file_idx().set(Some(file_index));
     // Reset display so the gutter immediately picks up the mic Nyquist.
     state.view.min_display_freq().set(None);
@@ -274,7 +274,7 @@ pub(crate) fn is_empty_live_placeholder(f: &crate::state::LoadedFile) -> bool {
 /// decide whether Listen/Record/+New can reuse the existing live entry rather
 /// than spawning a second one.
 pub(crate) fn is_reusable_live_doc(state: &AppState, idx: usize) -> bool {
-    state.files.with_untracked(|files| {
+    state.library.files().with_untracked(|files| {
         files.get(idx).map_or(false, is_empty_live_placeholder)
     })
 }
@@ -286,7 +286,7 @@ pub(crate) fn is_reusable_live_doc(state: &AppState, idx: usize) -> bool {
 /// (they have samples or a backing file). `current_file_index` and
 /// `mic_live_file_idx` are fixed up for the removals.
 pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<usize>) {
-    let victims: Vec<usize> = state.files.with_untracked(|files| {
+    let victims: Vec<usize> = state.library.files().with_untracked(|files| {
         files.iter().enumerate()
             .filter(|&(i, f)| Some(i) != keep_idx && is_empty_live_placeholder(f))
             .map(|(i, _)| i)
@@ -295,7 +295,7 @@ pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<u
     if victims.is_empty() { return; }
 
     // Remove from the back so earlier indices stay valid mid-loop.
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         for &i in victims.iter().rev() {
             if i < files.len() { files.remove(i); }
         }
@@ -303,9 +303,9 @@ pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<u
 
     // How many removed entries sat strictly below `idx` (so it shifts down).
     let below = |idx: usize| victims.iter().filter(|&&v| v < idx).count();
-    let new_len = state.files.with_untracked(|f| f.len());
+    let new_len = state.library.files().with_untracked(|f| f.len());
 
-    state.current_file_index.update(|ci| {
+    state.library.current_index().update(|ci| {
         if let Some(c) = *ci {
             *ci = if victims.contains(&c) {
                 // The viewed file itself was pruned — clamp into range.
@@ -327,7 +327,7 @@ pub(crate) fn prune_empty_live_placeholders(state: &AppState, keep_idx: Option<u
 /// processing loop and waveform overview key off without altering the file's
 /// position or name. Use only on a file that satisfies `is_reusable_live_doc`.
 pub(crate) fn promote_armed_to_listening(state: &AppState, idx: usize) {
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(idx) {
             f.is_live_listen = true;
             // Reuse the recording display path for the live waveform/overview,
@@ -335,8 +335,8 @@ pub(crate) fn promote_armed_to_listening(state: &AppState, idx: usize) {
             f.is_recording = true;
         }
     });
-    state.current_file_index.set(Some(idx));
-    let sr = state.files.with_untracked(|files| {
+    state.library.current_index().set(Some(idx));
+    let sr = state.library.files().with_untracked(|files| {
         files.get(idx).map(|f| f.audio.sample_rate).unwrap_or(48_000)
     });
     set_live_recording_zoom(state, sr);
@@ -360,7 +360,7 @@ pub(crate) fn promote_armed_to_recording(state: &AppState, idx: usize) {
         now.get_minutes(),
         now.get_seconds(),
     );
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(idx) {
             f.name = new_name;
             f.is_recording = true;
@@ -368,7 +368,7 @@ pub(crate) fn promote_armed_to_recording(state: &AppState, idx: usize) {
             f.audio.metadata.format = "REC";
         }
     });
-    state.current_file_index.set(Some(idx));
+    state.library.current_index().set(Some(idx));
 }
 
 /// Roll back a recording-promoted file to its armed state. Used when
@@ -381,7 +381,7 @@ pub(crate) fn revert_recording_to_armed(state: &AppState, idx: usize) {
         now.get_minutes(),
         now.get_seconds(),
     );
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(idx) {
             f.name = armed_name;
             f.is_recording = false;
@@ -430,7 +430,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
     };
 
     let mut file_index = 0;
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         file_index = files.len();
         files.push(LoadedFile {
             id: crate::state::next_file_id(),
@@ -462,7 +462,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
         });
     });
 
-    state.current_file_index.set(Some(file_index));
+    state.library.current_index().set(Some(file_index));
     state.mic.live_file_idx().set(Some(file_index));
 
     // Set zoom for comfortable waterfall viewing.
@@ -482,7 +482,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
 /// No-op if there's no live file or the file isn't a listen entry.
 pub(crate) fn convert_listen_to_armed(state: &AppState) {
     let Some(idx) = state.mic.live_file_idx().get_untracked() else { return };
-    let is_listen = state.files.with_untracked(|files| {
+    let is_listen = state.library.files().with_untracked(|files| {
         files.get(idx).map_or(false, |f| f.is_live_listen)
     });
     if !is_listen { return; }
@@ -495,7 +495,7 @@ pub(crate) fn convert_listen_to_armed(state: &AppState) {
         now.get_seconds(),
     );
 
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(idx) {
             let sr = f.audio.sample_rate;
             let empty: Arc<Vec<f32>> = Arc::new(Vec::new());
@@ -526,7 +526,7 @@ pub(crate) fn convert_listen_to_armed(state: &AppState) {
         }
     });
 
-    state.current_file_index.set(Some(idx));
+    state.library.current_index().set(Some(idx));
     state.view.min_display_freq().set(None);
     state.view.max_display_freq().set(None);
 }
@@ -538,12 +538,12 @@ pub(crate) fn cleanup_listen_file(state: &AppState) {
 
     let Some(idx) = live_idx else { return };
 
-    let is_listen = state.files.with_untracked(|files| {
+    let is_listen = state.library.files().with_untracked(|files| {
         files.get(idx).map_or(false, |f| f.is_live_listen)
     });
     if !is_listen { return; }
 
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if idx < files.len() {
             files.remove(idx);
         }
@@ -555,13 +555,13 @@ pub(crate) fn cleanup_listen_file(state: &AppState) {
     crate::components::file_sidebar::files_panel::reconcile_after_file_removed(state, idx);
 
     // Fix current_file_index after removal
-    let len = state.files.with_untracked(|f| f.len());
-    match state.current_file_index.get_untracked() {
+    let len = state.library.files().with_untracked(|f| f.len());
+    match state.library.current_index().get_untracked() {
         Some(ci) if ci == idx => {
-            state.current_file_index.set(if len > 0 { Some(idx.min(len - 1)) } else { None });
+            state.library.current_index().set(if len > 0 { Some(idx.min(len - 1)) } else { None });
         }
         Some(ci) if ci > idx => {
-            state.current_file_index.set(Some(ci - 1));
+            state.library.current_index().set(Some(ci - 1));
         }
         _ => {}
     }
@@ -603,7 +603,7 @@ pub(crate) fn rename_listen_to_recording(state: &AppState, sample_rate: u32) {
         ts.get_seconds(),
     );
 
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.name = name;
         }
@@ -620,7 +620,7 @@ pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -
     let file_index = state.mic.live_file_idx().get_untracked()
         .expect("convert_listen_to_recording: no live file");
 
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.is_live_listen = false;
             f.audio.metadata.format = "REC";
@@ -628,7 +628,7 @@ pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -
         }
     });
 
-    state.current_file_index.set(Some(file_index));
+    state.library.current_index().set(Some(file_index));
 
     // Don't reset scroll_offset — the smooth scroll animation is already
     // running from the listen phase and will keep the view at the right edge.
@@ -657,7 +657,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
     // Pin to the live file's STABLE id, not its current index. Closing another
     // file shifts this file's index, so the loop re-resolves the index each
     // tick from the id (see the guard below).
-    let live_id = state.files.with_untracked(|f| f.get(file_index).map(|x| x.id));
+    let live_id = state.library.files().with_untracked(|f| f.get(file_index).map(|x| x.id));
 
     wasm_bindgen_futures::spawn_local(async move {
         let mut last_processed_col: usize = 0;
@@ -768,7 +768,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 let has_live_file = state.mic.live_file_idx().get_untracked() == Some(file_index);
                 if has_live_file {
                     let duration = samples.len() as f64 / sample_rate as f64;
-                    state.files.update(|files| {
+                    state.library.files().update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
                             f.spectrogram.total_columns = total_possible_cols;
                             f.audio.duration_secs = duration;
@@ -802,7 +802,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                             sample_rate,
                             channels: 1,
                         });
-                        state.files.update(|files| {
+                        state.library.files().update(|files| {
                             if let Some(f) = files.get_mut(file_index) {
                                 f.audio.samples = snapshot;
                                 f.audio.source = new_source;
@@ -838,7 +838,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             //     pre-roll samples + cue marker, so everything must survive
             //     until stop.
             //   - To-memory mode: user explicitly opted out of disk writes.
-            let to_memory = state.record_mode.get_untracked() == crate::state::RecordMode::ToMemory;
+            let to_memory = state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
             let preroll_active = state.mic.preroll_samples().get_untracked() > 0;
             let wasm_is_authoritative = to_memory || preroll_active || !is_tauri;
             let should_trim = any_update
@@ -898,7 +898,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 // instead of static "Recording…" text.
                 if let Some(start) = state.mic.recording_start_time().get_untracked() {
                     let elapsed = (js_sys::Date::now() - start) / 1000.0;
-                    state.files.update(|files| {
+                    state.library.files().update(|files| {
                         if let Some(f) = files.get_mut(file_index) {
                             f.audio.duration_secs = elapsed;
                         }
@@ -1005,7 +1005,7 @@ fn build_recording_meta(
     let mic_manufacturer = state.mic.manufacturer().get_untracked();
     let conn_type = state.mic.connection_type().get_untracked();
     let loc = state.recording_meta.location().get_untracked();
-    let is_mobile = state.is_mobile.get_untracked();
+    let is_mobile = state.status.is_mobile().get_untracked();
     let (dev_make, dev_model) = if state.recording_meta.device_model_enabled().get_untracked() && is_mobile {
         (state.recording_meta.cached_make().get_untracked(), state.recording_meta.cached_model().get_untracked())
     } else {
@@ -1079,14 +1079,14 @@ fn update_or_create_file(
     use crate::canvas::{spectral_store, tile_cache};
 
     let (file_index, name) = if let Some(idx) = live_idx {
-        let name = state.files.with_untracked(|files| {
+        let name = state.library.files().with_untracked(|files| {
             files.get(idx).map(|f| f.name.clone()).unwrap_or_default()
         });
 
         tile_cache::clear_file(idx);
         spectral_store::clear_file(idx);
 
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(idx) {
                 f.audio = audio;
                 f.preview = Some(preview);
@@ -1110,7 +1110,7 @@ fn update_or_create_file(
 
         let mut idx = 0;
         let name_clone = name.clone();
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
                 id: crate::state::next_file_id(),
@@ -1141,13 +1141,13 @@ fn update_or_create_file(
                 max_display_freq: None,
             });
         });
-        state.current_file_index.set(Some(idx));
+        state.library.current_index().set(Some(idx));
         (idx, name)
     };
 
     // Store WAV markers (preroll cue point) on the file
     if !wav_markers.is_empty() {
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.wav_markers = wav_markers;
             }
@@ -1185,7 +1185,7 @@ fn persist_and_identify(
             } else if try_tauri_save(&wav_data, &filename).await.is_some() {
                 // Desktop WASM save succeeded
             }
-            state.files.update(|files| {
+            state.library.files().update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
                     f.is_recording = false;
                 }
@@ -1223,7 +1223,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
             ).await {
                 log::error!("Streaming finalize failed: {}", e);
                 if let Some(idx) = live_idx_for_async {
-                    state.files.update(|files| {
+                    state.library.files().update(|files| {
                         if idx < files.len() { files.remove(idx); }
                     });
                 }
@@ -1240,7 +1240,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         state.mic.live_file_idx().set(None);
         live_waterfall::clear();
         if let Some(idx) = live_idx {
-            state.files.update(|files| {
+            state.library.files().update(|files| {
                 if idx < files.len() { files.remove(idx); }
             });
         }
@@ -1253,7 +1253,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     if samples.is_empty() {
         log::warn!("Empty recording");
         if let Some(idx) = live_idx {
-            state.files.update(|files| {
+            state.library.files().update(|files| {
                 if idx < files.len() { files.remove(idx); }
             });
         }
@@ -1266,7 +1266,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     // async task so the UI stays responsive. Capture the live file's stable id
     // so the task can re-resolve its index even if the list shifts (e.g. a
     // follow-on listen session prunes placeholders) before it runs.
-    let live_id = live_idx.and_then(|i| state.files.with_untracked(|f| f.get(i).map(|f| f.id)));
+    let live_id = live_idx.and_then(|i| state.library.files().with_untracked(|f| f.get(i).map(|f| f.id)));
     state.show_info_toast("Saving recording\u{2026}");
     wasm_bindgen_futures::spawn_local(async move {
         finalize_in_memory_recording(
@@ -1295,14 +1295,14 @@ async fn finalize_in_memory_recording(
     // Re-resolve the live file's current index by its stable id; the list may
     // have shifted since finalize_recording captured `live_idx`.
     let live_idx = live_id
-        .and_then(|id| state.files.with_untracked(|f| f.iter().position(|x| x.id == id)))
+        .and_then(|id| state.library.files().with_untracked(|f| f.iter().position(|x| x.id == id)))
         .or(live_idx);
 
     let duration_secs = samples.len() as f64 / sample_rate as f64;
 
     // ── Phase 1: Build metadata (GUANO + WAV markers) from state ────────
     let recording_name = live_idx
-        .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
+        .and_then(|idx| state.library.files().with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
         .unwrap_or_else(generate_recording_name);
     let meta = build_recording_meta(&state, sample_rate, duration_secs, &recording_name);
 
@@ -1355,7 +1355,7 @@ async fn finalize_in_memory_recording(
     let shared_saved = saved_path.starts_with("shared://");
     let native_saved = !saved_path.is_empty();
     if native_saved && !shared_saved {
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.file_handle = Some(crate::audio::streaming_source::FileHandle::TauriPath(saved_path));
             }
@@ -1363,13 +1363,13 @@ async fn finalize_in_memory_recording(
     }
 
     // Mark saved if native backend already persisted the file
-    let record_mode = state.record_mode.get_untracked();
+    let record_mode = state.playback.record_mode().get_untracked();
     let is_tauri = state.is_tauri;
-    let is_mobile = state.is_mobile.get_untracked();
+    let is_mobile = state.status.is_mobile().get_untracked();
     let to_memory = record_mode == crate::state::RecordMode::ToMemory;
 
     if (native_saved || shared_saved) && !to_memory {
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.is_recording = false;
             }
@@ -1508,7 +1508,7 @@ async fn finalize_streaming_tauri_recording(
     );
 
     // Rename the live entry to match the on-disk filename + wire up the handle.
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.name = name.clone();
             f.file_handle = Some(FileHandle::TauriPath(path.clone()));
@@ -1589,7 +1589,7 @@ pub(crate) fn spawn_spectrogram_computation(
         let mut chunk_start = 0;
 
         while chunk_start < total_cols {
-            let still_present = state.files.get_untracked()
+            let still_present = state.library.files().get_untracked()
                 .get(file_index)
                 .map(|f| f.name == name_check)
                 .unwrap_or(false);
@@ -1668,7 +1668,7 @@ pub(crate) fn spawn_spectrogram_computation(
         // Compute overview image for the recording
         let overview_img = crate::dsp::fft::compute_overview_from_spectrogram(&spectrogram);
 
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 if f.name == name_check {
                     f.spectrogram = spectrogram;
@@ -1680,7 +1680,7 @@ pub(crate) fn spawn_spectrogram_computation(
         // Clear stale tiles (rendered with provisional max_magnitude) and
         // re-schedule with accurate final normalization.
         tile_cache::clear_file(file_index);
-        let file_for_tiles = state.files.get_untracked().get(file_index).cloned();
+        let file_for_tiles = state.library.files().get_untracked().get(file_index).cloned();
         if let Some(file) = file_for_tiles {
             tile_cache::schedule_all_tiles(state, file, file_index);
         }

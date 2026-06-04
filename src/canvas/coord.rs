@@ -24,7 +24,7 @@ pub fn pointer_to_xtf(
     let cw = canvas.width() as f64;
     let ch = canvas.height() as f64;
 
-    let files = state.files.get_untracked();
+    let files = state.library.files().get_untracked();
     let timeline = state.timeline.active().get_untracked();
 
     // When the waterfall is active, use its parameters so interactions work
@@ -39,7 +39,7 @@ pub fn pointer_to_xtf(
         let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index))?;
         (primary_file.spectrogram.time_resolution, primary_file.spectrogram.max_freq)
     } else {
-        let idx = state.current_file_index.get_untracked()?;
+        let idx = state.library.current_index().get_untracked()?;
         let file = files.get(idx)?;
         (file.spectrogram.time_resolution, file.spectrogram.max_freq)
     };

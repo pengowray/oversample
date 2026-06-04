@@ -1,6 +1,6 @@
 // DOM-based playhead overlay shared by every main chart view. Sits as a
 // 2px absolutely-positioned vertical line on top of the host `.*-stage`,
-// driven by a `translateX` that follows `state.playhead_time`. Using a
+// driven by a `translateX` that follows `state.playback.playhead_time()`. Using a
 // DOM overlay (rather than re-drawing the canvas) lets the line track
 // smoothly at 60fps without invalidating the expensive underlying image.
 
@@ -18,11 +18,11 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let transform = move || {
-        let playhead = state.playhead_time.get();
+        let playhead = state.playback.playhead_time().get();
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
         let cw = state.spectrogram_canvas_width.get();
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         // Timeline mode borrows time_res from the first segment's file;
         // single-file mode uses the current file. Both stay None-safe
         // (unknown → 1.0) so the line renders at x=0 when a view mounts
@@ -31,7 +31,7 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
             tl.segments.first().and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
         } else {
-            let idx = state.current_file_index.get_untracked();
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i))
                 .map(|f| f.spectrogram.time_resolution)
                 .unwrap_or(1.0)
@@ -48,7 +48,7 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
             class="playhead-line"
             style:transform=transform
             style:display=move || {
-                if state.is_playing.get() && !state.clean_view.get() { "block" } else { "none" }
+                if state.playback.is_playing().get() && !state.clean_view.get() { "block" } else { "none" }
             }
         />
     }

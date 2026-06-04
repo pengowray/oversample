@@ -66,7 +66,7 @@ pub fn AnalysisPanel() -> impl IntoView {
     view! {
         <div class="analysis-panel">
             {move || {
-                let has_file = state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
+                let has_file = state.library.current_index().get().is_some() || state.timeline.active().get().is_some();
 
                 if !has_file {
                     return view! {
@@ -156,7 +156,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Loading files
-                let loading = state.loading_files.get();
+                let loading = state.library.loading().get();
                 if !loading.is_empty() {
                     let msg = if loading.len() == 1 {
                         let entry = &loading[0];
@@ -177,7 +177,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Hash computing
-                if state.hash_computing.get() {
+                if state.status.hash_computing().get() {
                     return view! {
                         <span style="color: #666">"Computing file identity..."</span>
                     }.into_any();

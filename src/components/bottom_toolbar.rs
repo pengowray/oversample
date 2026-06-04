@@ -41,7 +41,7 @@ pub fn BottomToolbar() -> impl IntoView {
     // Always show all buttons; use has_file/is_file_disabled for enable/disable logic
     let has_file = move || true;
     let is_file_disabled = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
 
     // ── Recording timer ──
@@ -76,18 +76,18 @@ pub fn BottomToolbar() -> impl IntoView {
     // amber underline on the 1:1 mode radio button.
     let play_inaudible = Signal::derive(move || {
         use crate::state::PlaybackMode;
-        if state.playback_mode.get() != PlaybackMode::Normal { return false; }
+        if state.playback.mode().get() != PlaybackMode::Normal { return false; }
         let lo = state.filter.band_ff_freq_lo().get();
         let hi = state.filter.band_ff_freq_hi().get();
         hi > lo && lo >= 20_000.0
     });
 
     let play_left_class = Signal::derive(move || {
-        let no_file = state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
+        let no_file = state.library.current_index().get().is_none() && state.timeline.active().get().is_none();
         let recording_and_listening = state.mic.recording().get() && state.mic.listening().get();
         if no_file || recording_and_listening {
             "layer-btn combo-btn-left disabled"
-        } else if state.is_playing.get() {
+        } else if state.playback.is_playing().get() {
             "layer-btn combo-btn-left active"
         } else {
             "layer-btn combo-btn-left"
@@ -111,8 +111,8 @@ pub fn BottomToolbar() -> impl IntoView {
     // with no extras and no inaudible-band warning): there the label is
     // suppressed so just a plain ▶ shows.
     let play_mode_label = Signal::derive(move || {
-        let mode = state.playback_mode.get();
-        let lone = state.playback_modes_extra.get().is_empty();
+        let mode = state.playback.mode().get();
+        let lone = state.playback.modes_extra().get().is_empty();
         if mode == PlaybackMode::Normal && lone && !play_inaudible.get() {
             String::new()
         } else {
@@ -128,12 +128,12 @@ pub fn BottomToolbar() -> impl IntoView {
     let play_pos_label = Signal::derive(move || {
         // Start-position caption (Auto / All / Here / Sel) above the caret.
         // Freeze while playing so scrolling doesn't flicker it.
-        if state.is_playing.get() {
+        if state.playback.is_playing().get() {
             if let Some(frozen) = play_right_frozen.get_value() {
                 return frozen;
             }
         }
-        let val = match state.play_start_mode.get() {
+        let val = match state.playback.start_mode().get() {
             PlayStartMode::All => "All".to_string(),
             PlayStartMode::FromHere => "Here".to_string(),
             PlayStartMode::Selected => "Sel".to_string(),
@@ -168,9 +168,9 @@ pub fn BottomToolbar() -> impl IntoView {
     // back on. Switching mid-play via another ▶ button also relies on
     // this (do_play_in_mode calls stop() before swapping modes).
     Effect::new(move || {
-        let playing = state.is_playing.get();
-        if !playing && state.paused_hfr_for_normal.get_untracked() {
-            state.paused_hfr_for_normal.set(false);
+        let playing = state.playback.is_playing().get();
+        if !playing && state.playback.paused_hfr_for_normal().get_untracked() {
+            state.playback.paused_hfr_for_normal().set(false);
             if !state.hfr_enabled.get_untracked() {
                 state.toggle_hfr();
             }
@@ -182,7 +182,7 @@ pub fn BottomToolbar() -> impl IntoView {
     // primary Play button and the per-mode Play buttons in the
     // multi-mode row.
     let do_start_playback = move || {
-        match state.play_start_mode.get_untracked() {
+        match state.playback.start_mode().get_untracked() {
             PlayStartMode::All => playback::play_from_start(&state),
             PlayStartMode::FromHere => playback::play_from_here(&state),
             PlayStartMode::Selected => {
@@ -215,12 +215,12 @@ pub fn BottomToolbar() -> impl IntoView {
     // playback_mode, handle the special "1:1 needs HFR off" case, and
     // start playback.
     let do_play_in_mode = move |mode: PlaybackMode| {
-        let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
+        let no_file = state.library.current_index().get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
         let recording_and_listening = state.mic.recording().get_untracked() && state.mic.listening().get_untracked();
         if no_file || recording_and_listening { return; }
         // Stop anything currently playing (lets the HFR-restore Effect
         // unpause HFR if we'd paused it for a previous 1:1 play).
-        if state.is_playing.get_untracked() {
+        if state.playback.is_playing().get_untracked() {
             playback::stop(&state);
         }
         // Swap: the clicked mode becomes the live (main-button) mode and
@@ -228,33 +228,33 @@ pub fn BottomToolbar() -> impl IntoView {
         // full multi-selection set intact and guarantees exactly one
         // labelled play button per selected mode (no mode shown twice on
         // the main button AND an extra).
-        let old_active = state.playback_mode.get_untracked();
+        let old_active = state.playback.mode().get_untracked();
         let new_bucket = ModeBucket::from_mode(mode);
         let old_bucket = ModeBucket::from_mode(old_active);
         if new_bucket != old_bucket {
-            state.playback_modes_extra.update(|extras| {
+            state.playback.modes_extra().update(|extras| {
                 extras.retain(|m| ModeBucket::from_mode(*m) != new_bucket);
                 if !extras.iter().any(|m| ModeBucket::from_mode(*m) == old_bucket) {
                     extras.push(old_active);
                 }
             });
         }
-        state.playback_mode.set(mode);
+        state.playback.mode().set(mode);
         // 1:1 inside a multi-selection that includes HFR modes: HFR is
         // on but 1:1 itself doesn't want it. Pause HFR for the duration
         // of this playback; the Effect above restores it on stop.
         if mode == PlaybackMode::Normal && state.hfr_enabled.get_untracked() {
-            state.paused_hfr_for_normal.set(true);
+            state.playback.paused_hfr_for_normal().set(true);
             state.toggle_hfr();
         }
         do_start_playback();
     };
 
     let play_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
+        let no_file = state.library.current_index().get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
         let recording_and_listening = state.mic.recording().get_untracked() && state.mic.listening().get_untracked();
         if no_file || recording_and_listening { return; }
-        if state.is_playing.get_untracked() {
+        if state.playback.is_playing().get_untracked() {
             playback::stop(&state);
         } else {
             do_start_playback();
@@ -270,7 +270,7 @@ pub fn BottomToolbar() -> impl IntoView {
     let rec_left_class = Signal::derive(move || {
         if state.mic.recording().get() {
             "layer-btn combo-btn-left rec-btn mic-recording"
-        } else if state.record_mode.get() == RecordMode::ListenOnly || state.mic.strategy().get() == MicStrategy::None {
+        } else if state.playback.record_mode().get() == RecordMode::ListenOnly || state.mic.strategy().get() == MicStrategy::None {
             "layer-btn combo-btn-left rec-btn disabled"
         } else {
             "layer-btn combo-btn-left rec-btn"
@@ -292,7 +292,7 @@ pub fn BottomToolbar() -> impl IntoView {
         }
     });
     let rec_right_value = Signal::derive(move || {
-        match state.record_mode.get() {
+        match state.playback.record_mode().get() {
             RecordMode::ToFile => "File".to_string(),
             RecordMode::ToMemory => "Mem".to_string(),
             RecordMode::ListenOnly => "Listen".to_string(),
@@ -300,7 +300,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let rec_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if state.record_mode.get_untracked() == RecordMode::ListenOnly
+        if state.playback.record_mode().get_untracked() == RecordMode::ListenOnly
             || state.mic.strategy().get_untracked() == MicStrategy::None {
             return; // greyed out
         }
@@ -379,7 +379,7 @@ pub fn BottomToolbar() -> impl IntoView {
     };
 
     view! {
-        <div class=move || if state.is_mobile.get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
+        <div class=move || if state.status.is_mobile().get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
             class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Transport))
             node_ref=toolbar_node
             style=move || {
@@ -428,7 +428,7 @@ pub fn BottomToolbar() -> impl IntoView {
             // restore it on stop) via the Effect above.
             {move || {
                 if !has_file() { return None; }
-                let extras = state.playback_modes_extra.get();
+                let extras = state.playback.modes_extra().get();
                 if extras.is_empty() { return None; }
                 let buttons = extras.into_iter().map(|mode| {
                     let bucket = ModeBucket::from_mode(mode);
@@ -440,7 +440,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     };
                     let extra_btn_class = Signal::derive(move || {
                         let mut s = String::from("layer-btn play-mode-extra");
-                        if state.is_playing.get() && state.playback_mode.get() == mode {
+                        if state.playback.is_playing().get() && state.playback.mode().get() == mode {
                             s.push_str(" active");
                         }
                         if is_band_inaudible {
@@ -489,27 +489,27 @@ pub fn BottomToolbar() -> impl IntoView {
                     menu_direction="above"
                     panel_style="min-width: 180px;"
                 >
-                    <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::Auto)
+                    <button class=move || layer_opt_class(state.playback.start_mode().get() == PlayStartMode::Auto)
                         on:click=move |_| {
-                            state.play_start_mode.set(PlayStartMode::Auto);
+                            state.playback.start_mode().set(PlayStartMode::Auto);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"Auto \u{2014} Selected / Here / All"</button>
-                    <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::All)
+                    <button class=move || layer_opt_class(state.playback.start_mode().get() == PlayStartMode::All)
                         on:click=move |_| {
-                            state.play_start_mode.set(PlayStartMode::All);
+                            state.playback.start_mode().set(PlayStartMode::All);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"All \u{2014} Play from start"</button>
-                    <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::FromHere)
+                    <button class=move || layer_opt_class(state.playback.start_mode().get() == PlayStartMode::FromHere)
                         on:click=move |_| {
-                            state.play_start_mode.set(PlayStartMode::FromHere);
+                            state.playback.start_mode().set(PlayStartMode::FromHere);
                             state.panels.layer_panel_open().set(None);
                         }
                     >"From here \u{2014} Current position"</button>
                     <button
                         class=move || {
-                            let active = state.play_start_mode.get() == PlayStartMode::Selected;
+                            let active = state.playback.start_mode().get() == PlayStartMode::Selected;
                             let _sel = state.selection.get();
                             let _ann = state.annotations.selected_ids().get();
                             let enabled = playback::effective_selection(&state).is_some();
@@ -523,7 +523,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                         on:click=move |_| {
                             if playback::effective_selection(&state).is_some() {
-                                state.play_start_mode.set(PlayStartMode::Selected);
+                                state.playback.start_mode().set(PlayStartMode::Selected);
                                 state.panels.layer_panel_open().set(None);
                             }
                         }
@@ -538,8 +538,8 @@ pub fn BottomToolbar() -> impl IntoView {
             // users can see the option exists).
             {
                 let is_multi = move || {
-                    let files = state.files.get();
-                    let idx = state.current_file_index.get();
+                    let files = state.library.files().get();
+                    let idx = state.library.current_index().get();
                     let has_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
                     let has_mt = state.timeline.active().with(|t| {
                         t.as_ref().map(|tv| !tv.multitrack_groups.is_empty()).unwrap_or(false)
@@ -589,8 +589,8 @@ pub fn BottomToolbar() -> impl IntoView {
                             };
 
                             // Check if current file is stereo
-                            let files = state.files.get_untracked();
-                            let idx = state.current_file_index.get_untracked();
+                            let files = state.library.files().get_untracked();
+                            let idx = state.library.current_index().get_untracked();
                             let is_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
 
                             // Get multitrack options from active timeline
@@ -947,7 +947,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 <div class="layer-panel-title">"Record mode"</div>
                 <button
                     class=move || {
-                        let active = state.record_mode.get() == RecordMode::ToFile;
+                        let active = state.playback.record_mode().get() == RecordMode::ToFile;
                         if !state.is_tauri {
                             "layer-panel-opt disabled"
                         } else if active {
@@ -958,16 +958,16 @@ pub fn BottomToolbar() -> impl IntoView {
                     }
                     on:click=move |_| {
                         if state.is_tauri {
-                            state.record_mode.set(RecordMode::ToFile);
+                            state.playback.record_mode().set(RecordMode::ToFile);
                         }
                     }
                 >"To file"</button>
-                <button class=move || layer_opt_class(state.record_mode.get() == RecordMode::ToMemory)
+                <button class=move || layer_opt_class(state.playback.record_mode().get() == RecordMode::ToMemory)
                     on:click=move |_| {
-                        state.record_mode.set(RecordMode::ToMemory);
+                        state.playback.record_mode().set(RecordMode::ToMemory);
                     }
                 >"To memory"</button>
-                <button class=move || layer_opt_class(state.record_mode.get() == RecordMode::ListenOnly)
+                <button class=move || layer_opt_class(state.playback.record_mode().get() == RecordMode::ListenOnly)
                     on:click=move |_| {
                         // If currently recording, finish and switch to listening
                         if state.mic.recording().get_untracked() {
@@ -977,7 +977,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                 microphone::toggle_listen(&st).await; // starts listening
                             });
                         }
-                        state.record_mode.set(RecordMode::ListenOnly);
+                        state.playback.record_mode().set(RecordMode::ListenOnly);
                     }
                 >"Listen only"</button>
                 <hr />

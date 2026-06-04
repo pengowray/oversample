@@ -51,7 +51,7 @@ pub fn NotchCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Notch));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
     let band_count = Signal::derive(move || state.notch.bands().get().len());
     let enabled = Signal::derive(move || state.notch.enabled().get());
@@ -126,8 +126,8 @@ pub fn NotchCombo() -> impl IntoView {
             return;
         }
 
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let Some(file) = idx.and_then(|i| files.get(i).cloned()) else {
             state.show_error_toast("No file loaded");
             return;
@@ -232,7 +232,7 @@ pub fn NotchCombo() -> impl IntoView {
                     disabled=move || {
                         if state.notch.detecting().get() { return true; }
                         let live = state.mic.listening().get() || state.mic.recording().get();
-                        !live && state.current_file_index.get().is_none()
+                        !live && state.library.current_index().get().is_none()
                     }
                 >
                     {move || {
@@ -363,7 +363,7 @@ pub fn NrCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::NoiseReduce));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
     let enabled = Signal::derive(move || state.noise_reduce.enabled().get());
     let has_floor = Signal::derive(move || state.noise_reduce.floor().get().is_some());
@@ -430,8 +430,8 @@ pub fn NrCombo() -> impl IntoView {
             return;
         }
 
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let Some(file) = idx.and_then(|i| files.get(i).cloned()) else {
             state.show_error_toast("No file loaded");
             return;
@@ -504,7 +504,7 @@ pub fn NrCombo() -> impl IntoView {
                     disabled=move || {
                         if state.noise_reduce.learning().get() { return true; }
                         let live = state.mic.listening().get() || state.mic.recording().get();
-                        !live && state.current_file_index.get().is_none()
+                        !live && state.library.current_index().get().is_none()
                     }
                 >
                     {move || {

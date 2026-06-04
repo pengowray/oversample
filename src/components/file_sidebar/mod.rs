@@ -103,7 +103,7 @@ pub fn FileSidebar() -> impl IntoView {
         if state.panels.left_collapsed().get() {
             cls.push_str(" collapsed");
         }
-        if state.is_mobile.get() {
+        if state.status.is_mobile().get() {
             cls.push_str(" mobile-overlay");
         }
         cls
@@ -182,7 +182,7 @@ pub fn FileSidebar() -> impl IntoView {
                 }
             }}
             <div
-                class=move || if state.is_mobile.get() { "sidebar-resize-handle hidden" } else { "sidebar-resize-handle" }
+                class=move || if state.status.is_mobile().get() { "sidebar-resize-handle hidden" } else { "sidebar-resize-handle" }
                 on:mousedown=on_resize_start
             ></div>
         </div>

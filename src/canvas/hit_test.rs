@@ -41,7 +41,7 @@ pub fn hit_test_spec_handles(
     }
 
     // HET handles (only when in HET mode and parameter is manual)
-    if state.playback_mode.get_untracked() == PlaybackMode::Heterodyne {
+    if state.playback.mode().get_untracked() == PlaybackMode::Heterodyne {
         let het_freq = state.transform.het_frequency().get_untracked();
         let het_cutoff = state.transform.het_cutoff().get_untracked();
 

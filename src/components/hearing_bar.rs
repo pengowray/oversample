@@ -62,7 +62,7 @@ fn GainCombo() -> impl IntoView {
     let is_live = move || state.mic.listening().get() || state.mic.recording().get();
     let no_file = move || {
         !is_live()
-            && state.current_file_index.get().is_none()
+            && state.library.current_index().get().is_none()
             && state.timeline.active().get().is_none()
     };
 
@@ -97,7 +97,7 @@ fn GainCombo() -> impl IntoView {
         }
         let mode = state.gain.mode().get();
         let manual_db = state.gain.db().get();
-        let pv_boost = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
+        let pv_boost = if state.playback.mode().get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
         match mode {
             GainMode::Off => {
                 if pv_boost > 0.0 { format!("+{:.0}dB", pv_boost) }
@@ -236,7 +236,7 @@ fn GainCombo() -> impl IntoView {
                         return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
                     }
                     let db = state.gain.db().get();
-                    let pv = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
+                    let pv = if state.playback.mode().get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
                     let total = db + pv;
                     if total > 0.0 { format!("+{:.0}dB", total) }
                     else { format!("{:.0}dB", total) }
@@ -281,7 +281,7 @@ fn BandpassCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Bandpass));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
 
     let active = Signal::derive(move || state.filter.bandpass_mode().get() != BandpassMode::Off);
@@ -540,7 +540,7 @@ fn BandpassCombo() -> impl IntoView {
 fn BandHfrCell() -> impl IntoView {
     let state = expect_context::<AppState>();
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
 
     let cell_class = Signal::derive(move || {

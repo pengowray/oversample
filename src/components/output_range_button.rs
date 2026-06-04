@@ -281,10 +281,10 @@ pub fn OutputRangeCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::OutputRange));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
+        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
     };
 
-    let mode = Signal::derive(move || state.playback_mode.get());
+    let mode = Signal::derive(move || state.playback.mode().get());
     let anchor_ref = NodeRef::<leptos::html::Div>::new();
 
     let on_click = move |_: web_sys::MouseEvent| {
@@ -338,7 +338,7 @@ fn OutputRangePopup() -> impl IntoView {
             <div class="output-range-controls">
                 <div class="layer-panel-title">"Output range"</div>
                 {move || {
-                    let mode = state.playback_mode.get();
+                    let mode = state.playback.mode().get();
                     match style_for(mode) {
                         Style::Passthrough => view! {
                             <div class="output-range-empty">
@@ -546,7 +546,7 @@ fn BandSummary() -> impl IntoView {
             // the current factor/BandFF allows, we annotate "(capped)"
             // so they can see why the value isn't fully in play.
             {move || {
-                let mode = state.playback_mode.get();
+                let mode = state.playback.mode().get();
                 if !supports_shift(mode) { return view! { <span></span> }.into_any(); }
                 let stored_shift = state.transform.ps_shift_hz().get();
                 if stored_shift.abs() < 50.0 { return view! { <span></span> }.into_any(); }
@@ -572,7 +572,7 @@ fn BandSummary() -> impl IntoView {
             <div>
                 <span class="dim">"out  "</span>
                 {move || {
-                    let mode = state.playback_mode.get();
+                    let mode = state.playback.mode().get();
                     match current_output_range(&state, mode) {
                         Some((lo, hi)) => format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi)),
                         None => "\u{2014}".into(),
@@ -622,7 +622,7 @@ fn OutputGutter() -> impl IntoView {
     let gutter_ref = NodeRef::<leptos::html::Div>::new();
 
     let highlight_style = move || {
-        let mode = state.playback_mode.get();
+        let mode = state.playback.mode().get();
         let Some((lo, hi)) = current_output_range(&state, mode) else {
             return "display: none;".to_string();
         };
@@ -634,10 +634,10 @@ fn OutputGutter() -> impl IntoView {
         )
     };
 
-    let band_label = move || mapping_shorthand(&state, state.playback_mode.get());
+    let band_label = move || mapping_shorthand(&state, state.playback.mode().get());
 
     let pin_input_to = move |target_hz: f64, anchor: f64| {
-        let mode = state.playback_mode.get_untracked();
+        let mode = state.playback.mode().get_untracked();
         let snap = state.output_snap.get_untracked();
         let target = target_hz.clamp(1.0, GUTTER_MAX_HZ);
         match style_for(mode) {

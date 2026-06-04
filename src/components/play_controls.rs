@@ -13,12 +13,12 @@ pub fn ToastDisplay() -> impl IntoView {
             // Persistent "Buffering…" indicator while the streaming decoder
             // is behind the playhead. Distinct from transient status toasts
             // so it doesn't auto-dismiss.
-            {move || state.is_buffering.get().then(|| {
+            {move || state.playback.is_buffering().get().then(|| {
                 view! {
                     <span class="status-toast status-toast-info">"Buffering\u{2026}"</span>
                 }
             })}
-            {move || state.status_message.get().map(|msg| {
+            {move || state.status.message().get().map(|msg| {
                 let state2 = state;
                 wasm_bindgen_futures::spawn_local(async move {
                     let p = js_sys::Promise::new(&mut |resolve, _| {
@@ -27,9 +27,9 @@ pub fn ToastDisplay() -> impl IntoView {
                         }
                     });
                     wasm_bindgen_futures::JsFuture::from(p).await.ok();
-                    state2.status_message.set(None);
+                    state2.status.message().set(None);
                 });
-                let cls = if state.status_level.get_untracked() == StatusLevel::Info {
+                let cls = if state.status.level().get_untracked() == StatusLevel::Info {
                     "status-toast status-toast-info"
                 } else {
                     "status-toast"
@@ -63,8 +63,8 @@ pub fn BookmarkPopup() -> impl IntoView {
                             <button class="bookmark-item"
                                 on:click=move |_| {
                                     let zoom = state2.view.zoom_level().get_untracked();
-                                    let files = state2.files.get_untracked();
-                                    let idx = state2.current_file_index.get_untracked();
+                                    let files = state2.library.files().get_untracked();
+                                    let idx = state2.library.current_index().get_untracked();
                                     let time_res = idx.and_then(|i| files.get(i))
                                         .map(|f| f.spectrogram.time_resolution)
                                         .unwrap_or(0.001);

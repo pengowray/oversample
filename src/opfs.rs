@@ -130,8 +130,8 @@ fn sync_noise_profile_from_state(state: crate::state::AppState) -> Option<crate:
         return None;
     }
 
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked();
     let sample_rate = idx
         .and_then(|i| files.get(i))
         .map(|f| f.audio.sample_rate)
@@ -175,7 +175,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     use leptos::prelude::{GetUntracked, Update, WithUntracked};
 
     // Check read_only flag — skip all saves
-    let (read_only, had_sidecar) = state.files.with_untracked(|files: &Vec<crate::state::LoadedFile>| {
+    let (read_only, had_sidecar) = state.library.files().with_untracked(|files: &Vec<crate::state::LoadedFile>| {
         files.get(file_idx)
             .map(|f| (f.read_only, f.had_sidecar))
             .unwrap_or((false, false))
@@ -194,7 +194,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
             // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
-            if let Some(id) = state.files.with_untracked(|files| {
+            if let Some(id) = state.library.files().with_untracked(|files| {
                 files.get(file_idx).and_then(|f| f.identity.clone())
             }) {
                 set.file_identity = id;
@@ -258,7 +258,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     use leptos::prelude::{GetUntracked, Update, WithUntracked};
 
     // Get the file path from LoadedFile.identity (authoritative source)
-    let file_path = state.files.with_untracked(|files| {
+    let file_path = state.library.files().with_untracked(|files| {
         files.get(file_idx).and_then(|f| f.identity.as_ref().and_then(|id| id.file_path.clone()))
     });
     let path = match file_path {
@@ -278,7 +278,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         let new_set = if store.contains(file_id) {
             None
         } else {
-            state.files.with_untracked(|files| {
+            state.library.files().with_untracked(|files| {
                 files.get(file_idx).map(|f| {
                     let id = f.identity.clone().unwrap_or_else(|| {
                         crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
@@ -292,7 +292,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         }
         // Sync file identity and noise profile, touch modified_at
         if let Some(set) = store.get_mut(file_id) {
-            if let Some(id) = state.files.with_untracked(|files| {
+            if let Some(id) = state.library.files().with_untracked(|files| {
                 files.get(file_idx).and_then(|f| f.identity.clone())
             }) {
                 set.file_identity = id;
@@ -311,7 +311,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     let sidecar_yaml = sidecar_yaml_without_full_path(&set);
 
     // Mark had_sidecar so future auto-saves keep updating it
-    state.files.update(|files| {
+    state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_idx) {
             f.had_sidecar = true;
         }
@@ -348,7 +348,7 @@ fn apply_loaded_sidecar(state: crate::state::AppState, file_id: u64, loaded: cra
     let peak_full = loaded.audio_metadata.as_ref().and_then(|m| m.peak_db_full);
 
     if has_noise_profile || peak_30s.is_some() || peak_full.is_some() {
-        state.files.update(|files| {
+        state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_idx) {
                 // Restore peak values from sidecar if not yet computed
                 if f.cached_peak_db.is_none() {
@@ -470,7 +470,7 @@ fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity:
         };
         if sidecar_yaml.is_some() {
             if let Some(idx) = state.file_idx_for_id(file_id) {
-                state.files.update(|files| {
+                state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(idx) {
                         f.had_sidecar = true;
                     }

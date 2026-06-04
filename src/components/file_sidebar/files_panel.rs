@@ -43,7 +43,7 @@ pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
     });
     if state.timeline.active().get_untracked().is_some() {
         let sel = state.timeline.selected_file_indices().get_untracked();
-        let rebuilt = state.files.with_untracked(|files| {
+        let rebuilt = state.library.files().with_untracked(|files| {
             crate::timeline::TimelineView::from_files(&sel, files)
         });
         if rebuilt.is_none() {
@@ -76,19 +76,19 @@ pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
 /// Used for the synchronous close-button path and for the post-stop close
 /// path that runs after an async stop_listening / stop_recording.
 fn remove_file_at(state: &AppState, i: usize) {
-    if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
+    if state.playback.is_playing().get_untracked() && state.library.current_index().get_untracked() == Some(i) {
         playback::stop(state);
     }
-    let was_current = state.current_file_index.get_untracked() == Some(i);
-    state.files.update(|files| {
+    let was_current = state.library.current_index().get_untracked() == Some(i);
+    state.library.files().update(|files| {
         if i < files.len() {
             files.remove(i);
         }
     });
-    state.current_file_index.update(|idx| {
+    state.library.current_index().update(|idx| {
         *idx = match *idx {
             Some(cur) if cur == i => {
-                let new_len = state.files.get_untracked().len();
+                let new_len = state.library.files().get_untracked().len();
                 if new_len == 0 { None }
                 else if i > 0 { Some(i - 1) }
                 else { Some(0) }
@@ -112,9 +112,9 @@ fn remove_file_at(state: &AppState, i: usize) {
     // vertical-zoom sync Effect won't fire — so reload the new current
     // file's stored viewport manually.
     if was_current {
-        let new_idx = state.current_file_index.get_untracked();
+        let new_idx = state.library.current_index().get_untracked();
         let (min, max) = if let Some(n) = new_idx {
-            state.files.with_untracked(|files| {
+            state.library.files().with_untracked(|files| {
                 files.get(n)
                     .map(|f| (f.min_display_freq, f.max_display_freq))
                     .unwrap_or((None, None))
@@ -135,9 +135,9 @@ fn remove_file_at(state: &AppState, i: usize) {
 pub(super) fn FilesPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
     let drag_over = RwSignal::new(false);
-    let files = state.files;
-    let current_idx = state.current_file_index;
-    let loading_files = state.loading_files;
+    let files = state.library.files();
+    let current_idx = state.library.current_index();
+    let loading_files = state.library.loading();
 
     let on_dragenter = move |ev: DragEvent| {
         ev.prevent_default();
@@ -157,7 +157,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
 
     let state_for_upload = state;
     let on_upload_click = move |_: web_sys::MouseEvent| {
-        if state.is_tauri && !state.is_mobile.get_untracked() {
+        if state.is_tauri && !state.status.is_mobile().get_untracked() {
             // Tauri desktop: use native file dialog to get real filesystem paths
             let state = state_for_upload;
             spawn_local(async move {
@@ -218,7 +218,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
     // Default suggestions panel to expanded when the file list starts empty so
     // first-run users see "Bats For You"; collapse when files are present so
     // the panel doesn't push the file list off-screen.
-    let bats_expanded = RwSignal::new(state.files.with_untracked(|f| f.is_empty()));
+    let bats_expanded = RwSignal::new(state.library.files().with_untracked(|f| f.is_empty()));
 
     let on_demo_click = move |_: web_sys::MouseEvent| {
         if demo_picker_open.get_untracked() {
@@ -314,7 +314,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     .and_then(|g| g.sequence.as_ref())
                     .map(|s| (s.sequence_key.clone(), s.track_label.clone()));
 
-                let sort_mode = state.file_sort_mode.get();
+                let sort_mode = state.library.sort_mode().get();
                 let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &group_infos);
 
                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
@@ -413,7 +413,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             let mic_active = state.mic.listening().get_untracked()
                                 || state.mic.recording().get_untracked();
                             if is_live_doc && mic_active {
-                                let add_order = state.files.with_untracked(|files| {
+                                let add_order = state.library.files().with_untracked(|files| {
                                     files.get(i).map(|f| f.add_order)
                                 });
                                 spawn_local(async move {
@@ -431,7 +431,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     // Recording case: finalize kept the file —
                                     // honor the close by removing it now.
                                     if let Some(target) = add_order {
-                                        if let Some(idx) = state.files.with_untracked(|files| {
+                                        if let Some(idx) = state.library.files().with_untracked(|files| {
                                             files.iter().position(|f| f.add_order == target)
                                         }) {
                                             remove_file_at(&state, idx);
@@ -444,7 +444,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
                         let name_dl = name.clone();
                         let on_download = move |_: ()| {
-                            let files = state.files.get_untracked();
+                            let files = state.library.files().get_untracked();
                             if let Some(f) = files.get(i) {
                                 let total = f.audio.source.total_samples() as usize;
                                 let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
@@ -454,7 +454,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 );
                             }
                             // Clear unsaved state after download
-                            state.files.update(|files| {
+                            state.library.files().update(|files| {
                                 if let Some(f) = files.get_mut(i) {
                                     f.is_recording = false;
                                 }
@@ -462,14 +462,14 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
                         let on_toggle_readonly = move |ev: MouseEvent| {
                             ev.stop_propagation();
-                            state.files.update(|files| {
+                            state.library.files().update(|files| {
                                 if let Some(f) = files.get_mut(i) {
                                     f.read_only = !f.read_only;
                                 }
                             });
                         };
                         let batm_badge_state = move || {
-                            state.files.with(|files| {
+                            state.library.files().with(|files| {
                                 files.get(i).map(|f| (f.read_only, f.had_sidecar)).unwrap_or((false, false))
                             })
                         };
@@ -486,7 +486,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 on:click=on_click
                             >
                                 {preview.map(|pv| {
-                    let show = state.show_file_previews;
+                    let show = state.library.show_previews();
                     view! {
                         <Show when=move || show.get()>
                             <PreviewCanvas preview=pv.clone() />
@@ -594,14 +594,14 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         state.timeline.active_track().set(None);
                         state.timeline.selected_file_indices().set(Vec::new());
                         // Restore to first file if none active
-                        if state.current_file_index.get_untracked().is_none() && !state.files.with_untracked(|f| f.is_empty()) {
-                            state.current_file_index.set(Some(0));
+                        if state.library.current_index().get_untracked().is_none() && !state.library.files().with_untracked(|f| f.is_empty()) {
+                            state.library.current_index().set(Some(0));
                         }
                     };
 
                     view! {
                         <div class="file-list">
-                            {state.is_mobile.get().then(|| view! {
+                            {state.status.is_mobile().get().then(|| view! {
                                 <div
                                     style="padding: 12px 12px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;"
                                     on:click=move |_| state.dialogs.about().set(true)
@@ -786,7 +786,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             let idx = (js_sys::Math::random() * pool.len() as f64) as usize;
                                             let entry = pool[idx.min(pool.len() - 1)].clone();
                                             if let Some(open_idx) = find_open_demo(state, &entry.filename) {
-                                                state.current_file_index.set(Some(open_idx));
+                                                state.library.current_index().set(Some(open_idx));
                                                 return;
                                             }
                                             let label = entry.en.clone()
@@ -820,7 +820,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             on:click=move |_| {
                                                 let entry = entry_clone.clone();
                                                 if let Some(idx) = find_open_demo(state, &entry.filename) {
-                                                    state.current_file_index.set(Some(idx));
+                                                    state.library.current_index().set(Some(idx));
                                                     demo_picker_open.set(false);
                                                     return;
                                                 }
@@ -891,7 +891,7 @@ fn PreviewCanvas(preview: PreviewImage) -> impl IntoView {
 #[component]
 fn SortBar(sort_mode: FileSortMode) -> impl IntoView {
     let state = expect_context::<AppState>();
-    let sort_signal = state.file_sort_mode;
+    let sort_signal = state.library.sort_mode();
 
     let options: Vec<_> = FileSortMode::ALL.iter().map(|&mode| {
         let label = mode.label();
@@ -909,7 +909,7 @@ fn SortBar(sort_mode: FileSortMode) -> impl IntoView {
         sort_signal.set(mode);
     };
 
-    let show_previews = state.show_file_previews;
+    let show_previews = state.library.show_previews();
     let on_toggle_previews = move |_: web_sys::MouseEvent| {
         show_previews.update(|v| *v = !*v);
     };

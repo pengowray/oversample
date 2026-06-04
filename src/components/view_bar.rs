@@ -83,7 +83,7 @@ fn BookToggle() -> impl IntoView {
 fn ToolCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = move || state.panels.layer_panel_open().get() == Some(LayerPanel::Tool);
-    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
+    let no_file = move || state.library.current_index().get().is_none() && state.timeline.active().get().is_none();
 
     view! {
         <div style="position: relative;">
@@ -128,7 +128,7 @@ fn ToolCombo() -> impl IntoView {
 #[component]
 pub fn ViewBar() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let has_file = move || state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
+    let has_file = move || state.library.current_index().get().is_some() || state.timeline.active().get().is_some();
 
     view! {
         // Stop clicks/taps inside the bar from bubbling to .main's
@@ -149,7 +149,7 @@ pub fn ViewBar() -> impl IntoView {
                 {move || has_file().then(|| view! { <AnnoToggle /> })}
                 <BookToggle />
                 <div class="bar-spacer"></div>
-                {move || (!state.is_mobile.get() && has_file()).then(|| view! { <ToolCombo /> })}
+                {move || (!state.status.is_mobile().get() && has_file()).then(|| view! { <ToolCombo /> })}
             </div>
         </div>
     }

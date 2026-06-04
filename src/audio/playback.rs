@@ -24,7 +24,7 @@ fn timeline_selection(state: &AppState) -> Option<Selection> {
 }
 
 fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
-    let files = state.files.get_untracked();
+    let files = state.library.files().get_untracked();
 
     if let Some(timeline) = state.timeline.active().get_untracked() {
         let mut sample_rate = None;
@@ -57,7 +57,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
         });
     }
 
-    let idx = state.current_file_index.get_untracked()?;
+    let idx = state.library.current_index().get_untracked()?;
     let file = files.get(idx)?;
     Some(PlaybackTarget {
         source: file.audio.source.clone(),
@@ -143,12 +143,12 @@ fn cancel_replay_timer() {
 
 /// Check whether the current playhead position is within the visible viewport.
 fn is_playhead_visible(state: &AppState) -> bool {
-    let playhead = state.playhead_time.get_untracked();
+    let playhead = state.playback.playhead_time().get_untracked();
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
-    let time_res = state.current_file_index.get_untracked()
-        .and_then(|i| state.files.get_untracked().get(i).cloned())
+    let time_res = state.library.current_index().get_untracked()
+        .and_then(|i| state.library.files().get_untracked().get(i).cloned())
         .map(|f| f.spectrogram.time_resolution)
         .unwrap_or(1.0);
     let visible = viewport::visible_time(canvas_w, zoom, time_res);
@@ -161,8 +161,8 @@ pub fn is_selection_in_viewport(state: &AppState, sel: &Selection) -> bool {
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
-    let time_res = state.current_file_index.get_untracked()
-        .and_then(|i| state.files.get_untracked().get(i).cloned())
+    let time_res = state.library.current_index().get_untracked()
+        .and_then(|i| state.library.files().get_untracked().get(i).cloned())
         .map(|f| f.spectrogram.time_resolution)
         .unwrap_or(1.0);
     let visible = viewport::visible_time(canvas_w, zoom, time_res);
@@ -174,11 +174,11 @@ pub fn is_selection_in_viewport(state: &AppState, sel: &Selection) -> bool {
 }
 
 pub fn stop(state: &AppState) {
-    let was_playing = state.is_playing.get_untracked();
+    let was_playing = state.playback.is_playing().get_untracked();
     cancel_replay_timer();
     cancel_playhead();
     streaming_playback::stop_stream();
-    state.is_buffering.set(false);
+    state.playback.is_buffering().set(false);
     if was_playing {
         if state.view.user_panned_during_playback().get_untracked()
             && !is_playhead_visible(state)
@@ -191,22 +191,22 @@ pub fn stop(state: &AppState) {
             state.view.scroll_offset().set(state.view.pre_play_scroll().get_untracked());
         }
     }
-    state.is_playing.set(false);
-    state.active_playback_selection.set(None);
+    state.playback.is_playing().set(false);
+    state.playback.active_selection().set(None);
 }
 
 /// Continue playback from the current playhead position with fresh parameters.
 /// Used for live parameter switching — mode, gain, filter, etc.
 pub fn replay_live(state: &AppState) {
-    if !state.is_playing.get_untracked() { return; }
+    if !state.playback.is_playing().get_untracked() { return; }
 
-    let current_time = state.playhead_time.get_untracked();
+    let current_time = state.playback.playhead_time().get_untracked();
     cancel_playhead();
     streaming_playback::stop_stream();
 
     let Some(target) = playback_target(state) else { return; };
 
-    let selection = state.active_playback_selection.get_untracked();
+    let selection = state.playback.active_selection().get_untracked();
     let sr = target.sample_rate;
     let total = target.source.total_samples() as usize;
     let sel_end = selection.map(|s| s.time_end).unwrap_or(target.duration_secs);
@@ -214,7 +214,7 @@ pub fn replay_live(state: &AppState) {
     let end_sample = ((sel_end * sr as f64) as usize).min(total);
 
     if end_sample <= start_sample {
-        state.is_playing.set(false);
+        state.playback.is_playing().set(false);
         return;
     }
 
@@ -230,13 +230,13 @@ pub fn replay_live(state: &AppState) {
         end_sample,
         params,
     ) else {
-        state.is_playing.set(false);
+        state.playback.is_playing().set(false);
         return;
     };
 
     // Compute correct playback speed for the current mode
     let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback_mode.get_untracked() {
+    let playback_speed = match state.playback.mode().get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
             if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
@@ -294,20 +294,20 @@ pub fn play_from_here(state: &AppState) {
 
 fn current_play_from_here_time(state: &AppState) -> f64 {
     let Some(target) = playback_target(state) else {
-        return state.play_from_here_time.get_untracked();
+        return state.playback.from_here_time().get_untracked();
     };
 
     let canvas_width = state.spectrogram_canvas_width.get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
     let scroll = state.view.scroll_offset().get_untracked();
     let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         tl.segments.first().and_then(|s| files.get(s.file_index))
             .map(|f| f.spectrogram.time_resolution)
             .unwrap_or(1.0)
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.time_resolution)
             .unwrap_or(1.0)
@@ -315,7 +315,7 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
     let visible_time = viewport::visible_time(canvas_width, zoom, time_res);
 
     if visible_time <= 0.0 {
-        state.play_from_here_time.get_untracked()
+        state.playback.from_here_time().get_untracked()
     } else {
         viewport::play_from_here_time(scroll, visible_time).clamp(0.0, target.duration_secs)
     }
@@ -362,7 +362,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
 
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback_mode.get_untracked() {
+    let playback_speed = match state.playback.mode().get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
             if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
@@ -370,9 +370,9 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
         _ => 1.0,
     };
 
-    state.active_playback_selection.set(selection);
-    state.is_playing.set(true);
-    state.playhead_time.set(start_secs);
+    state.playback.active_selection().set(selection);
+    state.playback.is_playing().set(true);
+    state.playback.playhead_time().set(start_secs);
     start_playhead(*state, start_secs, play_duration, playback_speed);
 }
 
@@ -414,7 +414,7 @@ pub fn play(state: &AppState) {
     ) else { return };
 
     let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback_mode.get_untracked() {
+    let playback_speed = match state.playback.mode().get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
             if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
@@ -425,9 +425,9 @@ pub fn play(state: &AppState) {
     state.push_nav(); // save pre-play position so the back button can return here
     state.view.pre_play_scroll().set(state.view.scroll_offset().get_untracked());
     state.view.user_panned_during_playback().set(false);
-    state.active_playback_selection.set(selection);
-    state.is_playing.set(true);
-    state.playhead_time.set(play_start_time);
+    state.playback.active_selection().set(selection);
+    state.playback.is_playing().set(true);
+    state.playback.playhead_time().set(play_start_time);
     start_playhead(*state, play_start_time, play_duration, playback_speed);
 }
 
@@ -447,7 +447,7 @@ fn extract_selection_range(sample_rate: u32, total: usize, selection: Option<Sel
 /// Build a PlaybackParams snapshot from current AppState.
 pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: u32) -> PlaybackParams {
     PlaybackParams {
-        mode: state.playback_mode.get_untracked(),
+        mode: state.playback.mode().get_untracked(),
         het_freq: state.transform.het_frequency().get_untracked(),
         het_cutoff: state.transform.het_cutoff().get_untracked(),
         het_comb_count: state.transform.het_comb_count().get_untracked().max(1),
@@ -463,7 +463,7 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
             // actually uses.
             let stored = state.transform.ps_shift_hz().get_untracked();
             let band_lo = state.filter.band_ff_freq_lo().get_untracked();
-            let f = match state.playback_mode.get_untracked() {
+            let f = match state.playback.mode().get_untracked() {
                 crate::state::PlaybackMode::PitchShift => state.transform.ps_factor().get_untracked(),
                 crate::state::PlaybackMode::PhaseVocoder => state.transform.pv_factor().get_untracked(),
                 _ => 1.0,
@@ -577,8 +577,8 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
     const BUFFER_RECOVER_THRESHOLD: f64 = 0.35;  // need this much ahead to resume
 
     *cb.borrow_mut() = Some(wasm_bindgen::closure::Closure::new(move || {
-        if !state.is_playing.get_untracked() {
-            state.is_buffering.set(false);
+        if !state.playback.is_playing().get_untracked() {
+            state.playback.is_buffering().set(false);
             return;
         }
         let window = web_sys::window().unwrap();
@@ -590,7 +590,7 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
         let ahead = audio_buffer_ahead_secs();
         let is_buffering = match ahead {
             Some(a) => {
-                let currently = state.is_buffering.get_untracked();
+                let currently = state.playback.is_buffering().get_untracked();
                 if currently {
                     a < BUFFER_RECOVER_THRESHOLD
                 } else {
@@ -601,15 +601,15 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
         };
 
         // Manage the buffering signal + accumulated-freeze timer.
-        let was_buffering = state.is_buffering.get_untracked();
+        let was_buffering = state.playback.is_buffering().get_untracked();
         if is_buffering && !was_buffering {
             *buffering_started_at.borrow_mut() = Some(now_ms);
-            state.is_buffering.set(true);
+            state.playback.is_buffering().set(true);
         } else if !is_buffering && was_buffering {
             if let Some(started) = buffering_started_at.borrow_mut().take() {
                 *buffering_total.borrow_mut() += now_ms - started;
             }
-            state.is_buffering.set(false);
+            state.playback.is_buffering().set(false);
         }
 
         // Effective elapsed time excludes any wall-clock spent frozen.
@@ -620,14 +620,14 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
         let current = start_time + elapsed_real * speed;
 
         if current >= end_time {
-            state.playhead_time.set(end_time);
-            state.is_buffering.set(false);
+            state.playback.playhead_time().set(end_time);
+            state.playback.is_buffering().set(false);
             if !(state.view.user_panned_during_playback().get_untracked()
                 && !is_playhead_visible(&state))
             {
                 state.view.scroll_offset().set(state.view.pre_play_scroll().get_untracked());
             }
-            state.is_playing.set(false);
+            state.playback.is_playing().set(false);
             // Show bookmark popup briefly if any bookmarks were made during playback
             if !state.bookmarks.get_untracked().is_empty() {
                 state.dialogs.bookmark_popup().set(true);
@@ -646,7 +646,7 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
             return;
         }
 
-        state.playhead_time.set(current);
+        state.playback.playhead_time().set(current);
 
         let handle = window
             .request_animation_frame(

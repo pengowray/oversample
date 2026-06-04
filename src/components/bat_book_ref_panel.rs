@@ -114,8 +114,8 @@ pub fn BatBookRefPanel() -> impl IntoView {
 
             // Apply BandFF for the new entry via focus stack
             let entry = &manifest.entries[next];
-            if let Some(idx) = state.current_file_index.get_untracked() {
-                let files = state.files.get_untracked();
+            if let Some(idx) = state.library.current_index().get_untracked() {
+                let files = state.library.files().get_untracked();
                 if let Some(file) = files.get(idx) {
                     let nyquist = file.audio.sample_rate as f64 / 2.0;
                     if entry.freq_lo_hz < nyquist {

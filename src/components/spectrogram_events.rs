@@ -81,8 +81,8 @@ fn file_nyquist(state: AppState) -> f64 {
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
         crate::canvas::live_waterfall::max_freq()
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
@@ -186,8 +186,8 @@ pub fn resolve_freq_at_pointer(
     let file_max_freq = if wf_active {
         crate::canvas::live_waterfall::max_freq()
     } else {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
@@ -211,8 +211,8 @@ pub fn apply_hand_pan(
     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
     let cw = canvas.width() as f64;
     if cw == 0.0 { return; }
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked();
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked();
     let file = idx.and_then(|i| files.get(i));
     let timeline = state.timeline.active().get_untracked();
     let waterfall_active = (state.mic.recording().get_untracked()
@@ -247,7 +247,7 @@ pub fn apply_hand_pan(
         } else {
             file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
         };
-        let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
+        let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
         viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
     };
     state.view.scroll_offset().set(new_scroll);
@@ -338,7 +338,7 @@ pub fn on_pointerdown(
     if ev.button() != 0 { return; }
     // When viewport is pinch-zoomed, let the browser handle all gestures so
     // the user can zoom back out via native pinch.
-    if state.viewport_zoomed.get_untracked() { return; }
+    if state.status.viewport_zoomed().get_untracked() { return; }
 
     state.pointer_is_down.set(true);
 
@@ -437,8 +437,8 @@ pub fn on_pointerdown(
     ix.pending_selection_hit.set(false);
     if state.canvas_tool.get_untracked() == CanvasTool::Hand {
         if let Some((px_x, px_y, t, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-        let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-        let files = state.files.get_untracked();
+        let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
+        let files = state.library.files().get_untracked();
         let file = files.get(file_idx);
         let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
         let min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
@@ -623,11 +623,11 @@ pub fn on_pointermove(
                             && state.annotations.visible().get_untracked();
                         let selected_ids = state.annotations.selected_ids().get_untracked();
                         if annotations_focused && !selected_ids.is_empty() {
-                            let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+                            let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
                             let store = state.annotations.store().get_untracked();
                             if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                                 let scroll = state.view.scroll_offset().get_untracked();
-                                let files = state.files.get_untracked();
+                                let files = state.library.files().get_untracked();
                                 let time_res = files.get(file_idx)
                                     .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                                 let zoom = state.view.zoom_level().get_untracked();
@@ -766,8 +766,8 @@ pub fn on_pointerup(
                 }
             }
             // Bookmark while playing
-            if state.is_playing.get_untracked() {
-                let t = state.playhead_time.get_untracked();
+            if state.playback.is_playing().get_untracked() {
+                let t = state.playback.playhead_time().get_untracked();
                 state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
             }
         }
@@ -846,8 +846,8 @@ pub fn on_dblclick(
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                 let cw = canvas.width() as f64;
                 let ch = canvas.height() as f64;
-                let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-                let files = state.files.get_untracked();
+                let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
+                let files = state.library.files().get_untracked();
                 let file = files.get(file_idx);
                 let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
                 let min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
@@ -918,7 +918,7 @@ pub fn on_touchstart(
 ) {
     // When viewport is pinch-zoomed, let the browser handle all touch gestures
     // so the user can zoom back out via native pinch.
-    if state.viewport_zoomed.get_untracked() { return; }
+    if state.status.viewport_zoomed().get_untracked() { return; }
 
     // Cancel any ongoing inertia animation immediately
     crate::components::inertia::cancel_inertia(ix.inertia_generation);
@@ -932,8 +932,8 @@ pub fn on_touchstart(
         ev.prevent_default();
         use crate::components::pinch::{two_finger_geometry, PinchState};
         if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             let file = idx.and_then(|i| files.get(i));
             let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
             let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
@@ -944,7 +944,7 @@ pub fn on_touchstart(
                 initial_mid_client_x: mid_x,
                 time_res,
                 duration,
-                from_here_mode: state.play_start_mode.get_untracked() .uses_from_here(),
+                from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
             }));
         }
         // End any in-progress single-touch gesture
@@ -979,9 +979,9 @@ pub fn on_touchstart(
             let ch = canvas.height() as f64;
             let selected_ids = state.annotations.selected_ids().get_untracked();
             if !selected_ids.is_empty() {
-                let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
+                let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
                 let store = state.annotations.store().get_untracked();
-                let files = state.files.get_untracked();
+                let files = state.library.files().get_untracked();
                 let file_max_freq = files.get(file_idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
                 let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
                 let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
@@ -1036,8 +1036,8 @@ pub fn on_touchstart(
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
             let cw = canvas.width() as f64;
             let ch = canvas.height() as f64;
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             let file = idx.and_then(|i| files.get(i));
             let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
             let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
@@ -1110,7 +1110,7 @@ pub fn on_touchmove(
     state: AppState,
 ) {
     // When viewport is pinch-zoomed, let the browser handle all touch gestures.
-    if state.viewport_zoomed.get_untracked() { return; }
+    if state.status.viewport_zoomed().get_untracked() { return; }
 
     let touches = ev.touches();
     let n = touches.length();
@@ -1264,8 +1264,8 @@ pub fn on_touchend(
             if let Some(touch) = ev.changed_touches().get(0) {
                 let (start_x, _) = ix.hand_drag_start.get_untracked();
                 let dx = (touch.client_x() as f64 - start_x).abs();
-                if dx < 5.0 && state.is_playing.get_untracked() {
-                    let t = state.playhead_time.get_untracked();
+                if dx < 5.0 && state.playback.is_playing().get_untracked() {
+                    let t = state.playback.playhead_time().get_untracked();
                     state.bookmarks.update(|bm| bm.push(crate::state::Bookmark { time: t }));
                 } else if dx >= 5.0 {
                     // Flick → launch inertia
@@ -1273,8 +1273,8 @@ pub fn on_touchend(
                     if let Some(canvas_el) = canvas_ref.get() {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let cw = canvas.width() as f64;
-                        let files = state.files.get_untracked();
-                        let idx = state.current_file_index.get_untracked();
+                        let files = state.library.files().get_untracked();
+                        let idx = state.library.current_index().get_untracked();
                         let file = idx.and_then(|i| files.get(i));
                         let timeline = state.timeline.active().get_untracked();
                         let time_res = if let Some(ref tl) = timeline {
@@ -1288,7 +1288,7 @@ pub fn on_touchend(
                         } else {
                             file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX)
                         };
-                        let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+                        let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
                         crate::components::inertia::start_inertia(
                             state, velocity, cw, time_res, duration, from_here_mode, ix.inertia_generation,
                         );
@@ -1335,8 +1335,8 @@ pub fn on_wheel(
         let file_max_freq = if wf_active {
             crate::canvas::live_waterfall::max_freq()
         } else {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i))
                 .map(|f| f.spectrogram.max_freq)
                 .unwrap_or(96_000.0)
@@ -1368,7 +1368,7 @@ pub fn on_wheel(
         });
     } else {
         let raw_delta = ev.delta_y() + ev.delta_x();
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         let timeline = state.timeline.active().get_untracked();
         let (time_res, duration) = if wf_active {
             let tr = crate::canvas::live_waterfall::time_resolution();
@@ -1379,7 +1379,7 @@ pub fn on_wheel(
                 .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
             (tr, tl.total_duration_secs)
         } else {
-            let idx = state.current_file_index.get_untracked().unwrap_or(0);
+            let idx = state.library.current_index().get_untracked().unwrap_or(0);
             match files.get(idx) {
                 Some(file) => (file.spectrogram.time_resolution, file.audio.duration_secs),
                 None => return,
@@ -1389,7 +1389,7 @@ pub fn on_wheel(
             let zoom = state.view.zoom_level().get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
             let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
-            let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
+            let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
             // Scroll proportional to visible time (like arrow keys),
             // normalized so a typical wheel tick (~100px) scrolls ~10% of the view
             let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);

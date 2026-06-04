@@ -548,9 +548,9 @@ pub fn XcBrowser() -> impl IntoView {
                 load_result?;
 
                 // Switch to the newly loaded file
-                let file_count = state.files.with_untracked(|files| files.len());
+                let file_count = state.library.files().with_untracked(|files| files.len());
                 if file_count > 0 {
-                    state.current_file_index.set(Some(file_count - 1));
+                    state.library.current_index().set(Some(file_count - 1));
                 }
 
                 cached_ids.update(|s| { s.insert(id); });

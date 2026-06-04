@@ -37,8 +37,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
     // Run analysis (default: first 30s; full_file=true for full scan)
     let run_analysis = move |full_file: bool| {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         let file = idx.and_then(|i| files.get(i).cloned());
         let Some(file) = file else { return; };
 
@@ -145,8 +145,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     // Only compute expensive analysis when the Analysis tab is active
     Effect::new(move || {
         let tab = state.panels.right_tab().get();
-        let _files = state.files.get();
-        let idx = state.current_file_index.get();
+        let _files = state.library.files().get();
+        let idx = state.library.current_index().get();
 
         if tab != RightSidebarTab::Analysis {
             return;
@@ -157,7 +157,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             return;
         }
 
-        let files = state.files.get_untracked();
+        let files = state.library.files().get_untracked();
         let file = idx.and_then(|i| files.get(i).cloned());
         if file.is_none() {
             analysis.set(None);
@@ -175,8 +175,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     });
 
     let xc_quality = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         idx.and_then(|i| files.get(i).cloned())
             .and_then(|file| file.xc_metadata)
             .and_then(|meta| {
@@ -187,8 +187,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     });
 
     let report_text = Memo::new(move |_| {
-        let files = state.files.get();
-        let idx = state.current_file_index.get();
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
         let file = idx.and_then(|i| files.get(i).cloned());
 
         let mut report = "=== Audio Analysis ===\n".to_string();
@@ -532,8 +532,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             // Copy report button
             {move || {
                 let has_file = {
-                    let files = state.files.get();
-                    let idx = state.current_file_index.get();
+                    let files = state.library.files().get();
+                    let idx = state.library.current_index().get();
                     idx.and_then(|i| files.get(i)).is_some()
                 };
                 if has_file {
@@ -552,8 +552,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             }}
             // File info + signal stats
             {move || {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let file = idx.and_then(|i| files.get(i).cloned());
                 match file.as_ref() {
                     None => view! {
@@ -921,8 +921,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         let am_ref = audiomoth_result.get();
                         let bit_clone = a.clone();
                         let format_str: &'static str = {
-                            let files = state.files.get();
-                            let idx = state.current_file_index.get();
+                            let files = state.library.files().get();
+                            let idx = state.library.current_index().get();
                             idx.and_then(|i| files.get(i).map(|f| f.audio.metadata.format))
                                 .unwrap_or("WAV")
                         };
@@ -1069,8 +1069,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             }}
             // Device hints + metadata comparison
             {move || {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let file = idx.and_then(|i| files.get(i).cloned());
                 let (Some(file), Some(bit), Some(lsb), Some(pip)) = (
                     file,

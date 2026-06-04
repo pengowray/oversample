@@ -42,7 +42,7 @@ fn build_start_recording_args(
     state: &AppState,
     shared_fd: Option<i32>,
 ) -> oversample_ipc::mic::StartRecordingArgs {
-    let to_memory = state.record_mode.get_untracked() == crate::state::RecordMode::ToMemory;
+    let to_memory = state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
     let preroll = state.mic.preroll_samples().get_untracked();
     let stream_to_disk = state.is_tauri && !to_memory && preroll == 0;
 
@@ -51,7 +51,7 @@ fn build_start_recording_args(
     let filename = state
         .mic.live_file_idx()
         .get_untracked()
-        .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())));
+        .and_then(|idx| state.library.files().with_untracked(|f| f.get(idx).map(|f| f.name.clone())));
 
     let (device_make, device_model) = if state.recording_meta.device_model_enabled().get_untracked() {
         (state.recording_meta.cached_make().get_untracked(), state.recording_meta.cached_model().get_untracked())
@@ -643,12 +643,12 @@ pub fn take_native_buffer() -> Vec<f32> {
 /// On mobile Tauri, ask the MediaStore plugin to create a pending recording entry
 /// and return the raw POSIX fd. Returns `None` on non-mobile, or if the call fails.
 async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
-    if !state.is_mobile.get_untracked() {
+    if !state.status.is_mobile().get_untracked() {
         return None;
     }
     // Build filename from the live file if available, otherwise generate one
     let filename = state.mic.live_file_idx().get_untracked()
-        .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
+        .and_then(|idx| state.library.files().with_untracked(|f| f.get(idx).map(|f| f.name.clone())))
         .unwrap_or_else(|| {
             let now = js_sys::Date::new_0();
             format!(
@@ -729,7 +729,7 @@ async fn setup_het_context(state: &AppState) -> bool {
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to create HET AudioContext: {:?}", e);
-            state.status_message.set(Some("Failed to initialize audio output".into()));
+            state.status.message().set(Some("Failed to initialize audio output".into()));
             return false;
         }
     };
@@ -1002,7 +1002,7 @@ async fn open_web(state: &AppState) -> bool {
         Ok(md) => md,
         Err(e) => {
             state.log_debug("error", format!("open_web: no media devices: {:?}", e));
-            state.status_message.set(Some("Microphone not available on this device".into()));
+            state.status.message().set(Some("Microphone not available on this device".into()));
             return false;
         }
     };
@@ -1026,7 +1026,7 @@ async fn open_web(state: &AppState) -> bool {
         Ok(p) => p,
         Err(e) => {
             log::error!("getUserMedia failed: {:?}", e);
-            state.status_message.set(Some("Microphone not available".into()));
+            state.status.message().set(Some("Microphone not available".into()));
             return false;
         }
     };
@@ -1039,7 +1039,7 @@ async fn open_web(state: &AppState) -> bool {
         }
         Err(e) => {
             state.log_debug("error", format!("open_web: getUserMedia denied: {:?}", e));
-            state.status_message.set(Some("Microphone permission denied".into()));
+            state.status.message().set(Some("Microphone permission denied".into()));
             return false;
         }
     };
@@ -1056,7 +1056,7 @@ async fn open_web(state: &AppState) -> bool {
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to create AudioContext: {:?}", e);
-            state.status_message.set(Some("Failed to initialize audio".into()));
+            state.status.message().set(Some("Failed to initialize audio".into()));
             return false;
         }
     };
@@ -1236,7 +1236,7 @@ async fn open_cpal(state: &AppState) -> bool {
         Ok(v) => v,
         Err(e) => {
             log::warn!("Native mic failed: {}", e);
-            state.status_message.set(Some(format!("Native mic unavailable: {}", e)));
+            state.status.message().set(Some(format!("Native mic unavailable: {}", e)));
             return false;
         }
     };
@@ -1309,12 +1309,12 @@ async fn open_usb(state: &AppState) -> bool {
         Ok(v) => v,
         Err(e) => {
             log::warn!("USB device listing failed: {}", e);
-            state.status_message.set(Some(format!("USB: {}", e)));
+            state.status.message().set(Some(format!("USB: {}", e)));
             return false;
         }
     };
     let Some(audio_dev) = list.devices.into_iter().find(|d| d.is_audio_device) else {
-        state.status_message.set(Some("No USB audio device found".into()));
+        state.status.message().set(Some("No USB audio device found".into()));
         return false;
     };
     let device_name = audio_dev.device_name.clone();
@@ -1332,12 +1332,12 @@ async fn open_usb(state: &AppState) -> bool {
         ).await {
             Ok(result) => {
                 if !result.granted {
-                    state.status_message.set(Some("USB permission denied".into()));
+                    state.status.message().set(Some("USB permission denied".into()));
                     return false;
                 }
             }
             Err(e) => {
-                state.status_message.set(Some(format!("USB permission error: {}", e)));
+                state.status.message().set(Some(format!("USB permission error: {}", e)));
                 return false;
             }
         }
@@ -1354,7 +1354,7 @@ async fn open_usb(state: &AppState) -> bool {
     ).await {
         Ok(v) => v,
         Err(e) => {
-            state.status_message.set(Some(format!("USB open failed: {}", e)));
+            state.status.message().set(Some(format!("USB open failed: {}", e)));
             return false;
         }
     };
@@ -1362,7 +1362,7 @@ async fn open_usb(state: &AppState) -> bool {
     let sample_rate = info.sample_rate as u32;
     let product_name = info.product_name.clone();
     if info.fd < 0 || info.endpoint_address == 0 || info.max_packet_size == 0 {
-        state.status_message.set(Some("USB device: invalid fd or endpoint".into()));
+        state.status.message().set(Some("USB device: invalid fd or endpoint".into()));
         return false;
     }
 
@@ -1379,7 +1379,7 @@ async fn open_usb(state: &AppState) -> bool {
         uac_version: info.uac_version as u32,
     };
     if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
-        state.status_message.set(Some(format!("USB stream failed: {}", e)));
+        state.status.message().set(Some(format!("USB stream failed: {}", e)));
         let _ = tauri_invoke_no_args("plugin:usb-audio|closeUsbDevice").await;
         return false;
     }

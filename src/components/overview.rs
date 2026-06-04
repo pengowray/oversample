@@ -445,10 +445,10 @@ pub fn OverviewPanel() -> impl IntoView {
     // only triggers the cheap overlay Effect below instead of re-blitting
     // the entire waveform from the off-screen cache on every frame.
     Effect::new(move || {
-        state.files.track();
-        let files = state.files.get_untracked();
+        state.library.files().track();
+        let files = state.library.files().get_untracked();
         let _timeline_trigger = state.timeline.active().get();
-        let idx = state.current_file_index.get();
+        let idx = state.library.current_index().get();
         let overview_view = state.overview_view.get();
         let cv = state.channel_view.get();
         let _mic_recording = state.mic.recording().get();
@@ -662,8 +662,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
         // Redraw when file changes (duration, freq info)
-        state.files.track();
-        let _idx = state.current_file_index.get();
+        state.library.files().track();
+        let _idx = state.library.current_index().get();
 
         let Some(canvas_el) = overlay_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -686,7 +686,7 @@ pub fn OverviewPanel() -> impl IntoView {
             if total_duration <= 0.0 { return; }
             let px_per_sec = cw / total_duration;
 
-            let files = state.files.get_untracked();
+            let files = state.library.files().get_untracked();
             let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index));
             let max_freq = primary_file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
             let spec_time_res = primary_file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
@@ -746,8 +746,8 @@ pub fn OverviewPanel() -> impl IntoView {
             );
         } else {
             // ── Single file overlay ──
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             let file_opt = idx.and_then(|i| files.get(i));
             let Some(file) = file_opt else { return };
 
@@ -861,8 +861,8 @@ pub fn OverviewPanel() -> impl IntoView {
         if is_live && crate::canvas::live_waterfall::is_active() {
             return crate::canvas::live_waterfall::total_time();
         }
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i))
             .map(|f| f.audio.duration_secs)
             .unwrap_or(0.0)
@@ -877,8 +877,8 @@ pub fn OverviewPanel() -> impl IntoView {
 
     // Compute half the visible time window for centering clicks
     let half_visible_time = move || -> f64 {
-        let files = state.files.get_untracked();
-        let idx = state.current_file_index.get_untracked();
+        let files = state.library.files().get_untracked();
+        let idx = state.library.current_index().get_untracked();
         idx.and_then(|i| files.get(i)).map(|f| {
             let zoom = state.view.zoom_level().get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -887,7 +887,7 @@ pub fn OverviewPanel() -> impl IntoView {
     };
 
     let on_pointerdown = move |ev: web_sys::PointerEvent| {
-        if state.viewport_zoomed.get_untracked() { return; }
+        if state.status.viewport_zoomed().get_untracked() { return; }
         ev.prevent_default();
         let Some(canvas_el) = overlay_ref.get_untracked() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -924,8 +924,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let dx = ev.client_x() as f64 - drag_start_x.get_untracked();
         let dt = (dx / cw) * total_duration;
         let visible_time = {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -944,7 +944,7 @@ pub fn OverviewPanel() -> impl IntoView {
 
     // ── Touch event handlers (mobile) ──────────────────────────────────────────
     let on_touchstart = move |ev: web_sys::TouchEvent| {
-        if state.viewport_zoomed.get_untracked() { return; }
+        if state.status.viewport_zoomed().get_untracked() { return; }
         let touches = ev.touches();
         if touches.length() != 1 { return; }
         ev.prevent_default();
@@ -982,8 +982,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let dx = touch.client_x() as f64 - drag_start_x.get_untracked();
         let dt = (dx / cw) * total_duration;
         let visible_time = {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -1005,8 +1005,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let raw_delta = ev.delta_y() + ev.delta_x();
         let total_duration = file_duration();
         let visible_time = {
-            let files = state.files.get_untracked();
-            let idx = state.current_file_index.get_untracked();
+            let files = state.library.files().get_untracked();
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
                 let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
@@ -1038,8 +1038,8 @@ pub fn OverviewPanel() -> impl IntoView {
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
                 style=move || {
-                    let ta = if state.viewport_zoomed.get() { "pinch-zoom" } else { "none" };
-                    let pe = if state.viewport_zoomed.get() { "none" } else { "auto" };
+                    let ta = if state.status.viewport_zoomed().get() { "pinch-zoom" } else { "none" };
+                    let pe = if state.status.viewport_zoomed().get() { "none" } else { "auto" };
                     format!("position: absolute; top: 0; left: 0; cursor: crosshair; touch-action: {ta}; pointer-events: {pe};")
                 }
             />
@@ -1048,7 +1048,7 @@ pub fn OverviewPanel() -> impl IntoView {
             <div
                 class="playhead-dot"
                 style:left=move || {
-                    let playhead = state.playhead_time.get();
+                    let playhead = state.playback.playhead_time().get();
                     let duration = if let Some(ref tl) = state.timeline.active().get_untracked() {
                         tl.total_duration_secs
                     } else {
@@ -1057,8 +1057,8 @@ pub fn OverviewPanel() -> impl IntoView {
                         if is_live && crate::canvas::live_waterfall::is_active() {
                             crate::canvas::live_waterfall::total_time()
                         } else {
-                            let files = state.files.get_untracked();
-                            let idx = state.current_file_index.get_untracked();
+                            let files = state.library.files().get_untracked();
+                            let idx = state.library.current_index().get_untracked();
                             idx.and_then(|i| files.get(i))
                                 .map(|f| f.audio.duration_secs)
                                 .unwrap_or(0.0)
@@ -1069,7 +1069,7 @@ pub fn OverviewPanel() -> impl IntoView {
                     } else { 0.0 };
                     format!("{:.2}%", pct)
                 }
-                style:display=move || if state.is_playing.get() && !state.clean_view.get() { "block" } else { "none" }
+                style:display=move || if state.playback.is_playing().get() && !state.clean_view.get() { "block" } else { "none" }
             />
 
             // Layers button (bottom-left, after nav buttons)

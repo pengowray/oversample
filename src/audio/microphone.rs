@@ -215,7 +215,7 @@ pub async fn check_usb_status(state: &AppState) {
 /// MUST be reached from a foreground user gesture — Android 14+ forbids starting
 /// a microphone foreground service from the background.
 async fn start_foreground_service(state: &AppState, mode: &str) {
-    if !state.is_tauri || !state.is_mobile.get_untracked() {
+    if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
     let args = js_sys::Object::new();
@@ -227,7 +227,7 @@ async fn start_foreground_service(state: &AppState, mode: &str) {
 
 /// Stop the Android foreground audio service. No-op off mobile Tauri.
 async fn stop_foreground_service(state: &AppState) {
-    if !state.is_tauri || !state.is_mobile.get_untracked() {
+    if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
     if let Err(e) = tauri_invoke_no_args("plugin:audio-service|stopForegroundAudio").await {
@@ -247,7 +247,7 @@ pub(crate) fn mark_notif_asked(state: &AppState) {
 /// Invoke the native POST_NOTIFICATIONS request (called after the in-app
 /// rationale, so the OS prompt is never shown cold). No-op off mobile Tauri.
 pub(crate) async fn request_notification_permission(state: &AppState) {
-    if !state.is_tauri || !state.is_mobile.get_untracked() {
+    if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
     let _ = tauri_invoke_no_args("plugin:audio-service|requestNotificationPermission").await;
@@ -258,7 +258,7 @@ pub(crate) async fn request_notification_permission(state: &AppState) {
 /// needed (API 33+) and not yet granted; only then do we show the rationale.
 /// Persists `notif_perm_asked` so this happens at most once. Best-effort.
 async fn maybe_prompt_notifications(state: &AppState) {
-    if !state.is_tauri || !state.is_mobile.get_untracked() {
+    if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
     if state.dialogs.notif_perm_asked().get_untracked() {
@@ -333,7 +333,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                 state.mic.backend().set(None);
                 state.mic.device_info().set(None);
                 state.mic.selected_device().set(None);
-                state.status_message.set(Some("Browser mic failed. Please choose a microphone.".into()));
+                state.status.message().set(Some("Browser mic failed. Please choose a microphone.".into()));
                 None
             }
         }
@@ -354,7 +354,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                     state.mic.device_info().set(None);
                     state.mic.selected_device().set(None);
                     state.mic.acquisition_state().set(MicAcquisitionState::Idle);
-                    state.status_message.set(Some("Microphone failed. Please choose again.".into()));
+                    state.status.message().set(Some("Microphone failed. Please choose again.".into()));
                     return None;
                 }
             }
@@ -383,13 +383,13 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     let has_listen_file = was_listening && state.mic.live_file_idx().get_untracked().is_some();
 
     // Fetch device model on first recording (cached for future use)
-    if state.is_tauri && state.is_mobile.get_untracked() && state.recording_meta.device_model_enabled().get_untracked() {
+    if state.is_tauri && state.status.is_mobile().get_untracked() && state.recording_meta.device_model_enabled().get_untracked() {
         let _ = fetch_device_model(state).await;
     }
 
     // Acquire GPS location if enabled (one-shot, non-blocking).
     // Skip if connected to a home WiFi network (geofencing).
-    if state.recording_meta.gps_enabled().get_untracked() && state.is_tauri && state.is_mobile.get_untracked() {
+    if state.recording_meta.gps_enabled().get_untracked() && state.is_tauri && state.status.is_mobile().get_untracked() {
         let on_home_wifi = if state.recording_meta.home_wifi_ssids().with_untracked(|list| !list.is_empty()) {
             get_wifi_ssid().await
                 .map(|ssid| state.recording_meta.home_wifi_ssids().with_untracked(|list| list.contains(&ssid)))
@@ -491,7 +491,7 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         }
         Err(e) => {
             log::error!("start_recording failed: {}", e);
-            state.status_message.set(Some(format!("Failed to start recording: {}", e)));
+            state.status.message().set(Some(format!("Failed to start recording: {}", e)));
             // A shared-storage (Android MediaStore) entry + fd may have been
             // reserved before start failed; delete the orphaned pending row so
             // it doesn't linger as a 0-byte file. (The detached fd itself can
@@ -575,7 +575,7 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
         }
         StopResult::Error(e) => {
             log::error!("stop_recording failed: {}", e);
-            state.status_message.set(Some(format!("Recording failed: {}", e)));
+            state.status.message().set(Some(format!("Recording failed: {}", e)));
             cleanup_failed_recording(state);
         }
     }
@@ -747,7 +747,7 @@ pub fn clear_live_dsp_state(state: &AppState) {
 /// for an unbounded live stream — `process_live_audio` falls through to
 /// passthrough, but the user should know it's doing nothing.
 fn warn_if_te_for_live(state: &AppState) {
-    if state.playback_mode.get_untracked() == crate::state::PlaybackMode::TimeExpansion {
+    if state.playback.mode().get_untracked() == crate::state::PlaybackMode::TimeExpansion {
         state.show_info_toast(
             "Time-expansion isn't applicable to live audio — playing back at 1:1.",
         );
@@ -778,7 +778,7 @@ pub async fn arm_live_doc(state: &AppState) {
     if let Some(idx) = state.mic.live_file_idx().get_untracked() {
         if is_reusable_live_doc(state, idx) {
             convert_listen_to_armed(state); // no-op unless it's a stale listen entry
-            state.current_file_index.set(Some(idx));
+            state.library.current_index().set(Some(idx));
             return;
         }
     }

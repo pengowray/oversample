@@ -1465,6 +1465,9 @@ pub mod store_fields {
         DisplayStateStoreFields,
         PanelsStateStoreFields,
         DialogsStateStoreFields,
+        LibraryStateStoreFields,
+        PlaybackStateStoreFields,
+        StatusStateStoreFields,
     };
 }
 
@@ -1699,33 +1702,79 @@ pub struct DialogsState {
     pub xc_browser_open: bool,
 }
 
+/// Loaded-file library + load queue.
+#[derive(Clone, Store)]
+pub struct LibraryState {
+    pub files: Vec<LoadedFile>,
+    pub current_index: Option<usize>,
+    pub sort_mode: FileSortMode,
+    pub show_previews: bool,
+    pub loading: Vec<LoadingEntry>,
+    pub loading_next_id: u64,
+}
+
+/// Playback / transport state.
+#[derive(Clone, Store)]
+pub struct PlaybackState {
+    pub mode: PlaybackMode,
+    /// Extra ctrl-click-selected modes (in addition to `mode`).
+    pub modes_extra: Vec<PlaybackMode>,
+    /// HFR temporarily paused for a 1:1 play in a multi-mode selection.
+    pub paused_hfr_for_normal: bool,
+    pub is_playing: bool,
+    /// Frozen waiting for streaming chunks to decode.
+    pub is_buffering: bool,
+    pub playhead_time: f64,
+    pub active_selection: Option<Selection>,
+    pub start_mode: PlayStartMode,
+    pub record_mode: RecordMode,
+    pub from_here_time: f64,
+}
+
+/// Transient status / debug log / platform + viewport detection / file-hash.
+#[derive(Clone, Debug, Store)]
+pub struct StatusState {
+    pub message: Option<String>,
+    pub level: StatusLevel,
+    /// Debug log entries: (timestamp_ms, level, message).
+    pub debug_log: Vec<(f64, String, String)>,
+    pub is_mobile: bool,
+    /// True when the browser viewport is pinch-zoomed in.
+    pub viewport_zoomed: bool,
+    /// (offset_top, offset_left, vp_width, scale) for placing the zoom-out button.
+    pub visual_viewport_rect: (f64, f64, f64, f64),
+    /// Whether a full hash computation (Layer 3/4) is running.
+    pub hash_computing: bool,
+    /// Generation counter for cancelling in-progress hash computations.
+    pub hash_generation: u32,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 pub struct AppState {
-    pub files: RwSignal<Vec<LoadedFile>>,
-    pub current_file_index: RwSignal<Option<usize>>,
-    pub file_sort_mode: RwSignal<FileSortMode>,
-    pub show_file_previews: RwSignal<bool>,
     /// Sidebar / panel chrome (grouped reactive store).
     pub panels: Store<PanelsState>,
     /// Modal dialogs / one-time hint flags (grouped reactive store).
     pub dialogs: Store<DialogsState>,
+    /// Loaded-file library + load queue (grouped reactive store).
+    pub library: Store<LibraryState>,
+    /// Playback / transport state (grouped reactive store).
+    pub playback: Store<PlaybackState>,
+    /// Status / debug / platform / hash state (grouped reactive store).
+    pub status: Store<StatusState>,
     pub selection: RwSignal<Option<Selection>>,
     pub last_selection: RwSignal<Option<Selection>>,
-    pub playback_mode: RwSignal<PlaybackMode>,
     /// Modes selected via ctrl+click in the Mode radio group, in addition
     /// to `playback_mode`. When non-empty, the bottom toolbar renders one
     /// Play button per selected mode (in addition to `playback_mode`).
     /// `playback_mode` is always implicitly part of the selection — only
     /// extras are stored here so the simple "no ctrl-clicks yet" case
     /// stays a no-op.
-    pub playback_modes_extra: RwSignal<Vec<PlaybackMode>>,
     /// Set when the user clicked ▶ on a 1:1 button while HFR was on (in a
     /// multi-selection containing both 1:1 and an HFR-only mode). HFR is
     /// turned off for the duration of that playback and restored when
     /// playback stops or the user switches to another mode.
-    pub paused_hfr_for_normal: RwSignal<bool>,
     /// Transform / DSP playback parameters: heterodyne, time-expansion, pitch
     /// shift, phase vocoder, zero-crossing — plus BandFF-derived auto flags
     /// (grouped reactive store).
@@ -1736,14 +1785,8 @@ pub struct AppState {
     pub filter: Store<FilterState>,
     /// Gain (audio + waveform-view) settings (grouped reactive store).
     pub gain: Store<GainState>,
-    pub is_playing: RwSignal<bool>,
     /// True when playback is frozen waiting for streaming chunks to decode.
     /// Drives the "Buffering…" toast and pauses the playhead animation.
-    pub is_buffering: RwSignal<bool>,
-    pub playhead_time: RwSignal<f64>,
-    pub active_playback_selection: RwSignal<Option<Selection>>,
-    pub loading_files: RwSignal<Vec<LoadingEntry>>,
-    pub loading_next_id: RwSignal<u64>,
     pub is_dragging: RwSignal<bool>,
     /// True while any pointer button is held down on the spectrogram canvas.
     pub pointer_is_down: RwSignal<bool>,
@@ -1782,13 +1825,10 @@ pub struct AppState {
     pub bookmarks: RwSignal<Vec<Bookmark>>,
 
     // Play start mode (All / FromHere / Selected)
-    pub play_start_mode: RwSignal<PlayStartMode>,
 
     // Record mode (ToFile / ToMemory / ListenOnly)
-    pub record_mode: RwSignal<RecordMode>,
 
     // Play-from-here time (updated by Spectrogram on scroll/zoom change)
-    pub play_from_here_time: RwSignal<f64>,
 
     // Tile system: incrementing this triggers a spectrogram redraw
     pub tile_ready_signal: RwSignal<u32>,
@@ -1835,14 +1875,10 @@ pub struct AppState {
     /// (`oversample_notif_perm_asked`).
 
     // Transient status message (e.g. permission errors)
-    pub status_message: RwSignal<Option<String>>,
-    pub status_level: RwSignal<StatusLevel>,
 
     // Debug log entries: (timestamp_ms, level, message)
-    pub debug_log_entries: RwSignal<Vec<(f64, String, String)>>,
 
     // Platform detection
-    pub is_mobile: RwSignal<bool>,
     pub is_tauri: bool,
     /// Stable "running on a mobile platform" flag, fixed at startup from the
     /// user-agent only (NOT viewport width). Unlike `is_mobile` — which is a
@@ -1854,10 +1890,8 @@ pub struct AppState {
 
     /// True when the browser viewport is pinch-zoomed in (visualViewport.scale > 1).
     /// Used to show a zoom-out button and disable custom pinch handlers.
-    pub viewport_zoomed: RwSignal<bool>,
     /// Visual viewport position/size for placing the zoom-out button in the
     /// visible area when pinch-zoomed. (offset_top, offset_left, vp_width, scale)
-    pub visual_viewport_rect: RwSignal<(f64, f64, f64, f64)>,
 
     // XC browser
 
@@ -1891,9 +1925,7 @@ pub struct AppState {
 
     // File identity hashing
     /// Whether a full hash computation (Layer 3/4) is currently running.
-    pub hash_computing: RwSignal<bool>,
     /// Generation counter for cancelling in-progress hash computations.
-    pub hash_generation: RwSignal<u32>,
 
     /// Annotation subsystem (store/selection/drag/resize/undo) (grouped store).
     pub annotations: Store<AnnotationsState>,
@@ -1980,15 +2012,8 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         let s = Self {
-            files: RwSignal::new(Vec::new()),
-            current_file_index: RwSignal::new(None),
-            file_sort_mode: RwSignal::new(FileSortMode::AddOrder),
-            show_file_previews: RwSignal::new(false),
             selection: RwSignal::new(None),
             last_selection: RwSignal::new(None),
-            playback_mode: RwSignal::new(PlaybackMode::Normal),
-            playback_modes_extra: RwSignal::new(Vec::new()),
-            paused_hfr_for_normal: RwSignal::new(false),
             spect: Store::new(SpectState {
                 display: SpectrogramDisplay::FlowOptical,
                 floor_db: -120.0,
@@ -2063,14 +2088,38 @@ impl AppState {
                 wave_view_auto: false,
             }),
 
-            is_playing: RwSignal::new(false),
-            is_buffering: RwSignal::new(false),
-            playhead_time: RwSignal::new(0.0),
-            active_playback_selection: RwSignal::new(None),
-            loading_files: RwSignal::new(Vec::new()),
-            loading_next_id: RwSignal::new(0),
             is_dragging: RwSignal::new(false),
             pointer_is_down: RwSignal::new(false),
+            library: Store::new(LibraryState {
+                files: Vec::new(),
+                current_index: None,
+                sort_mode: FileSortMode::AddOrder,
+                show_previews: false,
+                loading: Vec::new(),
+                loading_next_id: 0,
+            }),
+            playback: Store::new(PlaybackState {
+                mode: PlaybackMode::Normal,
+                modes_extra: Vec::new(),
+                paused_hfr_for_normal: false,
+                is_playing: false,
+                is_buffering: false,
+                playhead_time: 0.0,
+                active_selection: None,
+                start_mode: PlayStartMode::Auto,
+                record_mode: if detect_tauri() { RecordMode::ToFile } else { RecordMode::ToMemory },
+                from_here_time: 0.0,
+            }),
+            status: Store::new(StatusState {
+                message: None,
+                level: StatusLevel::Error,
+                debug_log: Vec::new(),
+                is_mobile: detect_mobile(),
+                viewport_zoomed: false,
+                visual_viewport_rect: (0.0, 0.0, 0.0, 1.0),
+                hash_computing: false,
+                hash_generation: 0,
+            }),
             flow: Store::new(FlowState {
                 enabled: false,
                 intensity_gate: 0.5,
@@ -2100,9 +2149,6 @@ impl AppState {
             nav_history: RwSignal::new(Vec::new()),
             nav_index: RwSignal::new(0),
             bookmarks: RwSignal::new(Vec::new()),
-            play_start_mode: RwSignal::new(PlayStartMode::Auto),
-            record_mode: RwSignal::new(if detect_tauri() { RecordMode::ToFile } else { RecordMode::ToMemory }),
-            play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             bg_preload_gen: RwSignal::new(0),
             spectrogram_canvas_width: RwSignal::new(1000.0),
@@ -2205,14 +2251,8 @@ impl AppState {
                 },
                 xc_browser_open: false,
             }),
-            status_message: RwSignal::new(None),
-            status_level: RwSignal::new(StatusLevel::Error),
-            debug_log_entries: RwSignal::new(Vec::new()),
-            is_mobile: RwSignal::new(detect_mobile()),
             is_tauri: detect_tauri(),
             is_mobile_platform: detect_mobile_ua(),
-            viewport_zoomed: RwSignal::new(false),
-            visual_viewport_rect: RwSignal::new((0.0, 0.0, 0.0, 1.0)),
             axis_drag_start_freq: RwSignal::new(None),
             axis_drag_current_freq: RwSignal::new(None),
             cursor_time: RwSignal::new(None),
@@ -2257,8 +2297,6 @@ impl AppState {
                 detecting: false,
             }),
 
-            hash_computing: RwSignal::new(false),
-            hash_generation: RwSignal::new(0),
 
             annotations: Store::new(AnnotationsState {
                 store: AnnotationStore::default(),
@@ -2426,7 +2464,7 @@ impl AppState {
         };
 
         // On mobile, start with sidebar collapsed
-        if s.is_mobile.get_untracked() {
+        if s.status.is_mobile().get_untracked() {
             s.panels.left_collapsed().set(true);
         }
 
@@ -2440,8 +2478,8 @@ impl AppState {
     }
 
     pub fn current_file(&self) -> Option<LoadedFile> {
-        let files = self.files.get();
-        let idx = self.current_file_index.get()?;
+        let files = self.library.files().get();
+        let idx = self.library.current_index().get()?;
         files.get(idx).cloned()
     }
 
@@ -2451,8 +2489,8 @@ impl AppState {
     /// sense on a dot-plot recording (the underlying samples are a
     /// synthesised reconstruction, not the original data).
     pub fn current_is_zc(&self) -> bool {
-        let files = self.files.get();
-        let Some(idx) = self.current_file_index.get() else { return false };
+        let files = self.library.files().get();
+        let Some(idx) = self.library.current_index().get() else { return false };
         files.get(idx)
             .map(|f| f.audio.metadata.zc_data.is_some())
             .unwrap_or(false)
@@ -2481,17 +2519,17 @@ impl AppState {
 
     /// Stable annotation key for the file at list position `idx` (untracked).
     pub fn file_id_at(&self, idx: usize) -> Option<u64> {
-        self.files.with_untracked(|files| files.get(idx).map(|f| f.id))
+        self.library.files().with_untracked(|files| files.get(idx).map(|f| f.id))
     }
 
     /// List position of the file with stable id `id`, if it's still loaded.
     pub fn file_idx_for_id(&self, id: u64) -> Option<usize> {
-        self.files.with_untracked(|files| files.iter().position(|f| f.id == id))
+        self.library.files().with_untracked(|files| files.iter().position(|f| f.id == id))
     }
 
     /// Stable annotation key for the currently-selected file (untracked).
     pub fn current_file_id(&self) -> Option<u64> {
-        let idx = self.current_file_index.get_untracked()?;
+        let idx = self.library.current_index().get_untracked()?;
         self.file_id_at(idx)
     }
 
@@ -2499,8 +2537,8 @@ impl AppState {
     /// `current_file_index` so callers inside Effects/views re-run when the
     /// active file changes.
     pub fn current_file_id_tracked(&self) -> Option<u64> {
-        let idx = self.current_file_index.get()?;
-        self.files.with(|files| files.get(idx).map(|f| f.id))
+        let idx = self.library.current_index().get()?;
+        self.library.files().with(|files| files.get(idx).map(|f| f.id))
     }
 
     /// Apply a snapshot to the annotation store: `Some` inserts/replaces,
@@ -2597,20 +2635,20 @@ impl AppState {
     }
 
     pub fn show_info_toast(&self, msg: impl Into<String>) {
-        self.status_level.set(StatusLevel::Info);
-        self.status_message.set(Some(msg.into()));
+        self.status.level().set(StatusLevel::Info);
+        self.status.message().set(Some(msg.into()));
     }
 
     pub fn show_error_toast(&self, msg: impl Into<String>) {
-        self.status_level.set(StatusLevel::Error);
-        self.status_message.set(Some(msg.into()));
+        self.status.level().set(StatusLevel::Error);
+        self.status.message().set(Some(msg.into()));
     }
 
     /// Start tracking a loading file. Returns a unique ID for updates.
     pub fn loading_start(&self, name: &str) -> u64 {
-        let id = self.loading_next_id.get_untracked();
-        self.loading_next_id.set(id + 1);
-        self.loading_files.update(|v| {
+        let id = self.library.loading_next_id().get_untracked();
+        self.library.loading_next_id().set(id + 1);
+        self.library.loading().update(|v| {
             v.push(LoadingEntry {
                 id,
                 name: name.to_string(),
@@ -2622,7 +2660,7 @@ impl AppState {
 
     /// Update the stage for a loading file by ID.
     pub fn loading_update(&self, id: u64, stage: LoadingStage) {
-        self.loading_files.update(|v| {
+        self.library.loading().update(|v| {
             if let Some(entry) = v.iter_mut().find(|e| e.id == id) {
                 entry.stage = stage;
             }
@@ -2631,8 +2669,8 @@ impl AppState {
 
     /// Remove a loading entry (finished or failed) and clear the loading_id on the file.
     pub fn loading_done(&self, id: u64) {
-        self.loading_files.update(|v| v.retain(|e| e.id != id));
-        self.files.update(|files| {
+        self.library.loading().update(|v| v.retain(|e| e.id != id));
+        self.library.files().update(|files| {
             if let Some(f) = files.iter_mut().find(|f| f.loading_id == Some(id)) {
                 f.loading_id = None;
             }
@@ -2643,7 +2681,7 @@ impl AppState {
         let timestamp = js_sys::Date::now();
         let msg_str = msg.into();
         log::info!("[{}] {}", level, &msg_str);
-        self.debug_log_entries.update(|entries| {
+        self.status.debug_log().update(|entries| {
             entries.push((timestamp, level.to_string(), msg_str));
             if entries.len() > 500 {
                 entries.drain(0..entries.len() - 500);
@@ -2655,10 +2693,10 @@ impl AppState {
     /// Re-engagement happens automatically once the playhead is on-screen
     /// and 200ms have passed since the last scroll action.
     pub fn suspend_follow(&self) {
-        if self.is_playing.get_untracked() {
+        if self.playback.is_playing().get_untracked() {
             self.view.user_panned_during_playback().set(true);
         }
-        if self.view.follow_cursor().get_untracked() && self.is_playing.get_untracked() {
+        if self.view.follow_cursor().get_untracked() && self.playback.is_playing().get_untracked() {
             self.view.follow_suspended().set(true);
             self.view.follow_visible_since().set(Some(js_sys::Date::now()));
         }
@@ -2676,16 +2714,16 @@ impl AppState {
     }
 
     pub fn compute_auto_gain(&self) -> f64 {
-        let files = self.files.get();
-        let idx = self.current_file_index.get();
+        let files = self.library.files().get();
+        let idx = self.library.current_index().get();
         self.compute_auto_gain_inner(&files, idx)
     }
 
     /// Untracked version for use inside render Effects that already subscribe
     /// to `files` and `current_file_index`. Avoids redundant Vec clone + subscription.
     pub fn compute_auto_gain_untracked(&self) -> f64 {
-        self.files.with_untracked(|files| {
-            let idx = self.current_file_index.get_untracked();
+        self.library.files().with_untracked(|files| {
+            let idx = self.library.current_index().get_untracked();
             self.compute_auto_gain_inner(files, idx)
         })
     }
@@ -2700,7 +2738,7 @@ impl AppState {
                 // Fall back to 30s peak while full scan is in progress.
                 // If playing, prefer the 30s peak to avoid mid-play gain jumps
                 // when the full scan completes.
-                if self.is_playing.get_untracked() && file.cached_full_peak_db.is_none() {
+                if self.playback.is_playing().get_untracked() && file.cached_full_peak_db.is_none() {
                     file.cached_peak_db
                 } else {
                     file.cached_full_peak_db.or(file.cached_peak_db)
@@ -2738,7 +2776,7 @@ impl AppState {
         }
 
         // Don't start new scans while playing — avoid mid-play gain jumps
-        if self.is_playing.get_untracked() {
+        if self.playback.is_playing().get_untracked() {
             return None;
         }
 
@@ -2785,9 +2823,9 @@ impl AppState {
             }
         });
         // Ensure playback mode is not Normal when HFR is on
-        if self.playback_mode.get_untracked() == PlaybackMode::Normal {
+        if self.playback.mode().get_untracked() == PlaybackMode::Normal {
             let saved = self.focus_stack.get_untracked().saved_playback_mode();
-            self.playback_mode.set(saved.unwrap_or(PlaybackMode::PitchShift));
+            self.playback.mode().set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
         if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
             let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
@@ -2807,7 +2845,7 @@ impl AppState {
             if !range.is_active() {
                 // No active focus to restore — turn off HFR
                 self.focus_stack.update(|s| s.set_hfr_enabled(false));
-                self.playback_mode.set(PlaybackMode::Normal);
+                self.playback.mode().set(PlaybackMode::Normal);
                 self.filter.bandpass_mode().set(BandpassMode::Off);
             }
         }
@@ -2824,9 +2862,9 @@ impl AppState {
                 s.set_hfr_enabled(true);
             }
         });
-        if self.playback_mode.get_untracked() == PlaybackMode::Normal {
+        if self.playback.mode().get_untracked() == PlaybackMode::Normal {
             let saved = self.focus_stack.get_untracked().saved_playback_mode();
-            self.playback_mode.set(saved.unwrap_or(PlaybackMode::PitchShift));
+            self.playback.mode().set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
         if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
             let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
@@ -2845,7 +2883,7 @@ impl AppState {
         if let Some(range) = restore {
             if !range.is_active() && !self.focus_stack.get_untracked().has_override(FocusSource::BatBook) {
                 self.focus_stack.update(|s| s.set_hfr_enabled(false));
-                self.playback_mode.set(PlaybackMode::Normal);
+                self.playback.mode().set(PlaybackMode::Normal);
                 self.filter.bandpass_mode().set(BandpassMode::Off);
             }
         }
@@ -2923,7 +2961,7 @@ impl AppState {
         let stack = self.focus_stack.get_untracked();
         if stack.hfr_enabled() {
             // Turning off: save current mode
-            let current_mode = self.playback_mode.get_untracked();
+            let current_mode = self.playback.mode().get_untracked();
             let current_bp = self.filter.bandpass_mode().get_untracked();
             self.focus_stack.update(|s| {
                 s.set_saved_playback_mode(Some(current_mode));
@@ -2931,7 +2969,7 @@ impl AppState {
                 s.set_hfr_enabled(false);
             });
             self.filter.bandpass_mode().set(BandpassMode::Off);
-            self.playback_mode.set(PlaybackMode::Normal);
+            self.playback.mode().set(PlaybackMode::Normal);
         } else {
             // Turning on
             self.focus_stack.update(|s| {
@@ -2939,19 +2977,19 @@ impl AppState {
             });
             let stack = self.focus_stack.get_untracked();
             match stack.saved_playback_mode() {
-                Some(mode) => self.playback_mode.set(mode),
+                Some(mode) => self.playback.mode().set(mode),
                 None => {
-                    if self.playback_mode.get_untracked() == PlaybackMode::Normal {
+                    if self.playback.mode().get_untracked() == PlaybackMode::Normal {
                         // For ≤48 kHz files, keep 1:1 — HF is used for bandpass only.
-                        let sample_rate = self.files.with_untracked(|files| {
-                            self.current_file_index
+                        let sample_rate = self.library.files().with_untracked(|files| {
+                            self.library.current_index()
                                 .get_untracked()
                                 .and_then(|i| files.get(i))
                                 .map(|f| f.audio.sample_rate)
                                 .unwrap_or(0)
                         });
                         if sample_rate == 0 || sample_rate > 48_000 {
-                            self.playback_mode.set(PlaybackMode::PitchShift);
+                            self.playback.mode().set(PlaybackMode::PitchShift);
                         }
                     }
                 }
@@ -3000,7 +3038,7 @@ impl AppState {
     /// mic's Nyquist. Otherwise it's the file's spectrogram max_freq. Falls
     /// back to 96 kHz if neither source has reported a sample rate.
     pub fn active_nyquist(&self) -> f64 {
-        let cur = self.current_file_index.get_untracked();
+        let cur = self.library.current_index().get_untracked();
         let live = self.mic.live_file_idx().get_untracked();
         let is_live_doc = matches!((cur, live), (Some(c), Some(l)) if c == l);
         if is_live_doc {
@@ -3009,7 +3047,7 @@ impl AppState {
                 return sr as f64 / 2.0;
             }
         }
-        let files = self.files.get_untracked();
+        let files = self.library.files().get_untracked();
         cur.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .filter(|m| *m > 0.0)

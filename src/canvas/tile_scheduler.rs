@@ -85,7 +85,7 @@ pub fn schedule_normal_tiles(
         tile_cache::cancel_far_in_flight(file_idx, ideal_lod, viewport_center_tile, keep_cancel);
     }
 
-    let is_loading = state.loading_files.with_untracked(|v| !v.is_empty());
+    let is_loading = state.library.loading().with_untracked(|v| !v.is_empty());
     let use_reassign = reassign_on && ideal_lod > 1;
 
     let tile_order = visible_tile_order(first_tile, last_tile, viewport_center_tile);
@@ -267,7 +267,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let prev_decim = RwSignal::new(0u32);
         Effect::new(move || {
             let xform_on = state.display.transform().get();
-            let _mode = state.playback_mode.get();
+            let _mode = state.playback.mode().get();
             let _het = state.transform.het_frequency().get();
             let _het_cut = state.transform.het_cutoff().get();
             let _te = state.transform.te_factor().get();
@@ -333,8 +333,8 @@ pub fn setup_cache_clearing_effects(state: AppState) {
 
         // Target range at the moment of this change.
         let target_lo = min.unwrap_or(0.0);
-        let file_max = state.files.with_untracked(|files| {
-            let idx = state.current_file_index.get_untracked();
+        let file_max = state.library.files().with_untracked(|files| {
+            let idx = state.library.current_index().get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| f.spectrogram.max_freq).unwrap_or(192_000.0)
         });
         let target_hi = max.unwrap_or(file_max).min(file_max);

@@ -76,8 +76,8 @@ fn clear_band(state: AppState) {
 
 /// Range of the bat-book species auto-resolved from the file's metadata.
 fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
-    let files = state.files.get_untracked();
-    let idx = state.current_file_index.get_untracked()?;
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked()?;
     let file = files.get(idx)?;
     let favourites = state.bat_book.favourites().get_untracked();
     let resolved = crate::bat_book::auto_resolve::resolve_auto(Some(file), &favourites);
@@ -137,7 +137,7 @@ pub fn RangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::BandPresets));
-    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
+    let no_file = move || state.library.current_index().get().is_none() && state.timeline.active().get().is_none();
 
     let btn_class = Signal::derive(move || {
         let mut s = String::from("layer-btn range-btn lock-grow");

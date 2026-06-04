@@ -20,7 +20,7 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
         let ids = state.annotations.selected_ids().get();
         if ids.len() != 1 { return None; }
         let id = ids[0].clone();
-        let idx = state.current_file_index.get()?;
+        let idx = state.library.current_index().get()?;
         let file_id = state.current_file_id_tracked()?;
         let store = state.annotations.store().get();
         let set = store.get(file_id)?;
@@ -30,7 +30,7 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
             _ => return None,
         };
 
-        let files = state.files.get();
+        let files = state.library.files().get();
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;

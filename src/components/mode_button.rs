@@ -186,8 +186,8 @@ pub fn ModeRadioGroup() -> impl IntoView {
         if stack.hfr_enabled() {
             let eff = stack.effective_range();
             if !eff.is_active() {
-                let files = state.files.get();
-                let idx = state.current_file_index.get();
+                let files = state.library.files().get();
+                let idx = state.library.current_index().get();
                 let file = idx.and_then(|i| files.get(i));
                 let nyquist = file
                     .map(|f| f.spectrogram.max_freq)
@@ -284,9 +284,9 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Effect C: ZC mode display settings save/restore ──
     {
-        let prev_mode = RwSignal::new(state.playback_mode.get_untracked());
+        let prev_mode = RwSignal::new(state.playback.mode().get_untracked());
         Effect::new(move || {
-            let mode = state.playback_mode.get();
+            let mode = state.playback.mode().get();
             let old = prev_mode.get_untracked();
             if mode == old { return; }
             prev_mode.set(mode);
@@ -320,7 +320,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
         let bp_range = state.filter.bandpass_range().get();
         let band_ff_lo = state.filter.band_ff_freq_lo().get();
         let band_ff_hi = state.filter.band_ff_freq_hi().get();
-        let playback_mode = state.playback_mode.get();
+        let playback_mode = state.playback.mode().get();
 
         match bp_mode {
             BandpassMode::Off => {
@@ -368,7 +368,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Settings popup state ──
     let settings_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::HfrMode));
-    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
+    let no_file = move || state.library.current_index().get().is_none() && state.timeline.active().get().is_none();
     let muting = Signal::derive(move || state.mic.listening().get() && state.mic.mute_output().get());
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
@@ -376,15 +376,15 @@ pub fn ModeRadioGroup() -> impl IntoView {
     // Whether a bucket is part of the user's current selection (the
     // active playback mode, plus any extras added via ctrl+click).
     let bucket_is_selected = move |bucket: ModeBucket| -> bool {
-        let active = ModeBucket::from_mode(state.playback_mode.get());
+        let active = ModeBucket::from_mode(state.playback.mode().get());
         if active == bucket { return true; }
-        let extras = state.playback_modes_extra.get();
+        let extras = state.playback.modes_extra().get();
         extras.iter().any(|m| ModeBucket::from_mode(*m) == bucket)
     };
 
     let select_bucket = move |bucket: ModeBucket, multi: bool| {
         if no_file() { return; }
-        let active = ModeBucket::from_mode(state.playback_mode.get_untracked());
+        let active = ModeBucket::from_mode(state.playback.mode().get_untracked());
 
         if multi {
             // Ctrl+click: toggle this bucket in/out of the multi-selection.
@@ -392,13 +392,13 @@ pub fn ModeRadioGroup() -> impl IntoView {
             // ctrl-clicking it (we'd be left with nothing to play) —
             // ctrl-click on the active bucket is a no-op in that case.
             let bucket_mode = bucket.default_mode();
-            let mut extras = state.playback_modes_extra.get_untracked();
+            let mut extras = state.playback.modes_extra().get_untracked();
             let extras_has = extras.iter().any(|m| ModeBucket::from_mode(*m) == bucket);
             if bucket == active {
                 if extras_has {
                     // Already deduped — clean up just in case.
                     extras.retain(|m| ModeBucket::from_mode(*m) != bucket);
-                    state.playback_modes_extra.set(extras);
+                    state.playback.modes_extra().set(extras);
                 }
                 return;
             }
@@ -413,7 +413,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
                     state.toggle_hfr();
                 }
             }
-            state.playback_modes_extra.set(extras);
+            state.playback.modes_extra().set(extras);
             return;
         }
 
@@ -434,10 +434,10 @@ pub fn ModeRadioGroup() -> impl IntoView {
         } else {
             state.focus_stack.update(|s| s.set_saved_playback_mode(Some(mode)));
         }
-        state.playback_mode.set(mode);
+        state.playback.mode().set(mode);
         // A plain click clears any extras the user had added; if they
         // want multi-select they need to ctrl-click.
-        state.playback_modes_extra.set(Vec::new());
+        state.playback.modes_extra().set(Vec::new());
         state.panels.layer_panel_open().set(None);
     };
 
@@ -455,7 +455,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
         let label = bucket.label();
         let title = bucket.title();
         let class_sig = Signal::derive(move || {
-            let active = ModeBucket::from_mode(state.playback_mode.get());
+            let active = ModeBucket::from_mode(state.playback.mode().get());
             let on = state.hfr_enabled.get();
             let mut s = String::from("layer-btn mode-radio-btn");
             // Active bucket: same logic as before — Normal is "active"
@@ -553,7 +553,7 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
             state.transform.te_factor_auto().set(false);
-            state.playback_mode.set(PlaybackMode::TimeExpansion);
+            state.playback.mode().set(PlaybackMode::TimeExpansion);
             state.transform.te_factor().set(val);
         }
     };
@@ -563,7 +563,7 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
             state.transform.ps_factor_auto().set(false);
-            state.playback_mode.set(PlaybackMode::PitchShift);
+            state.playback.mode().set(PlaybackMode::PitchShift);
             state.transform.ps_factor().set(val);
         }
     };
@@ -573,7 +573,7 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
             state.transform.pv_factor_auto().set(false);
-            state.playback_mode.set(PlaybackMode::PhaseVocoder);
+            state.playback.mode().set(PlaybackMode::PhaseVocoder);
             state.transform.pv_factor().set(val);
         }
     };
@@ -582,7 +582,7 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
-            state.playback_mode.set(PlaybackMode::ZeroCrossing);
+            state.playback.mode().set(PlaybackMode::ZeroCrossing);
             state.transform.zc_factor().set(val);
         }
     };
@@ -630,7 +630,7 @@ fn ModeSettingsBody() -> impl IntoView {
         move |_: web_sys::MouseEvent| {
             auto_signal.set(false);
             factor_signal.set(value);
-            state.playback_mode.set(mode);
+            state.playback.mode().set(mode);
         }
     }
 
@@ -684,7 +684,7 @@ fn ModeSettingsBody() -> impl IntoView {
 
             // ── Body: per-mode controls ──
             {move || {
-                let mode = state.playback_mode.get();
+                let mode = state.playback.mode().get();
                 match mode {
                     PlaybackMode::Heterodyne => view! {
                         <div class="layer-panel-title">"Heterodyne"</div>
@@ -807,16 +807,16 @@ fn ModeSettingsBody() -> impl IntoView {
                             <div class="layer-panel-title">"Pitch Shift"</div>
                             <div class="layer-panel-slider-row algo-row">
                                 <label>"Algorithm"</label>
-                                <button class=move || if state.playback_mode.get() == PlaybackMode::PitchShift { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.playback_mode.set(PlaybackMode::PitchShift)
+                                <button class=move || if state.playback.mode().get() == PlaybackMode::PitchShift { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.playback.mode().set(PlaybackMode::PitchShift)
                                     title="Standard pitch shift — lower latency"
                                 >"PS"</button>
-                                <button class=move || if state.playback_mode.get() == PlaybackMode::PhaseVocoder { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.playback_mode.set(PlaybackMode::PhaseVocoder)
+                                <button class=move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.playback.mode().set(PlaybackMode::PhaseVocoder)
                                     title="Phase Vocoder — preserves transients better, higher quality"
                                 >"PV"</button>
                             </div>
-                            {move || if state.playback_mode.get() == PlaybackMode::PhaseVocoder {
+                            {move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder {
                                 view! {
                                     <div class="layer-panel-slider-row">
                                         <label>"Factor"</label>
@@ -896,7 +896,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                         on:mouseenter=move |ev: web_sys::MouseEvent| {
                                             // pv_factor()/ps_factor() are distinct subfield types, so
                                             // dispatch in separate branches rather than a unified handle.
-                                            if state.playback_mode.get_untracked() == PlaybackMode::PhaseVocoder {
+                                            if state.playback.mode().get_untracked() == PlaybackMode::PhaseVocoder {
                                                 set_output_highlight(state, state.transform.pv_factor())(ev);
                                             } else {
                                                 set_output_highlight(state, state.transform.ps_factor())(ev);
@@ -904,7 +904,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                         }
                                         on:mouseleave=clear_output_highlight
                                     >"Output: "{move || {
-                                        let mode = state.playback_mode.get();
+                                        let mode = state.playback.mode().get();
                                         let f = if mode == PlaybackMode::PhaseVocoder { state.transform.pv_factor().get() } else { state.transform.ps_factor().get() };
                                         let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
                                         let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
