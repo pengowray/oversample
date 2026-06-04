@@ -290,23 +290,37 @@ pub struct Tile {
     lru_stamp: u64,
 }
 
-struct TileCache {
-    tiles: HashMap<CacheKey, Tile>,
+/// LRU + byte-capped tile container, generic over key shape.
+///
+/// Magnitude / flow / reassign / resonator tiles key by `CacheKey`
+/// (file_idx, lod, tile_idx); chroma tiles key by `ChromaKey`
+/// (file_idx, tile_idx). They share the same stamp-based lazy LRU and byte
+/// budget — only the key arity and the LRU-compaction floor differ. Key-shaped
+/// `insert`/`get` helpers live in the per-key `impl` blocks below.
+struct TileCache<K: Eq + std::hash::Hash + Copy = CacheKey> {
+    tiles: HashMap<K, Tile>,
     /// LRU order with lazy stale-entry skipping.
-    lru: VecDeque<(CacheKey, u64)>,
+    lru: VecDeque<(K, u64)>,
     total_bytes: usize,
     max_bytes: usize,
     next_stamp: u64,
+    /// Lower bound on the LRU-compaction threshold (see `maybe_compact_lru`).
+    compact_floor: usize,
 }
 
-impl TileCache {
+impl<K: Eq + std::hash::Hash + Copy> TileCache<K> {
     fn new(max_bytes: usize) -> Self {
+        Self::with_floor(max_bytes, 1024)
+    }
+
+    fn with_floor(max_bytes: usize, compact_floor: usize) -> Self {
         Self {
             tiles: HashMap::new(),
             lru: VecDeque::new(),
             total_bytes: 0,
             max_bytes,
             next_stamp: 0,
+            compact_floor,
         }
     }
 
@@ -316,12 +330,12 @@ impl TileCache {
     }
 
     fn maybe_compact_lru(&mut self) {
-        let threshold = self.tiles.len().saturating_mul(8).max(1024);
+        let threshold = self.tiles.len().saturating_mul(8).max(self.compact_floor);
         if self.lru.len() <= threshold {
             return;
         }
 
-        let mut entries: Vec<(u64, CacheKey)> = self.tiles
+        let mut entries: Vec<(u64, K)> = self.tiles
             .iter()
             .map(|(&key, tile)| (tile.lru_stamp, key))
             .collect();
@@ -344,31 +358,62 @@ impl TileCache {
         }
     }
 
-    fn insert(&mut self, file_idx: usize, lod: u8, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, lod, tile_idx);
-        let bytes = rendered.byte_len();
+    /// Insert a pre-built tile under `key`, evicting to fit and stamping it for
+    /// LRU. `tile.lru_stamp` is overwritten with the freshly allocated stamp.
+    fn insert_keyed(&mut self, key: K, mut tile: Tile) {
+        let bytes = tile.rendered.byte_len();
         if let Some(old) = self.tiles.remove(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
         }
         self.evict_to_fit(bytes);
         let stamp = self.allocate_stamp();
+        tile.lru_stamp = stamp;
         self.total_bytes += bytes;
-        self.tiles.insert(key, Tile { tile_idx, file_idx, lod, rendered, lru_stamp: stamp });
+        self.tiles.insert(key, tile);
         self.lru.push_back((key, stamp));
         self.maybe_compact_lru();
     }
 
-    fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<&Tile> {
-        self.tiles.get(&(file_idx, lod, tile_idx))
+    fn get_keyed(&self, key: &K) -> Option<&Tile> {
+        self.tiles.get(key)
     }
 
-    fn touch(&mut self, key: CacheKey) {
+    fn touch(&mut self, key: K) {
         let stamp = self.allocate_stamp();
         if let Some(tile) = self.tiles.get_mut(&key) {
             tile.lru_stamp = stamp;
             self.lru.push_back((key, stamp));
             self.maybe_compact_lru();
         }
+    }
+
+    fn clear_all(&mut self) {
+        self.tiles.clear();
+        self.lru.clear();
+        self.total_bytes = 0;
+    }
+
+    /// Remove every tile whose key matches `pred`, adjusting the byte total and
+    /// leaving stale LRU entries to be skipped lazily. Used for per-file clears.
+    fn clear_keys(&mut self, pred: impl Fn(&K) -> bool) {
+        let keys: Vec<K> = self.tiles.keys().copied().filter(|k| pred(k)).collect();
+        for key in keys {
+            if let Some(evicted) = self.tiles.remove(&key) {
+                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
+            }
+        }
+    }
+}
+
+// Convenience wrappers for the (file_idx, lod, tile_idx) multi-LOD caches.
+impl TileCache<CacheKey> {
+    fn insert(&mut self, file_idx: usize, lod: u8, tile_idx: usize, rendered: PreRendered) {
+        let key = (file_idx, lod, tile_idx);
+        self.insert_keyed(key, Tile { tile_idx, file_idx, lod, rendered, lru_stamp: 0 });
+    }
+
+    fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<&Tile> {
+        self.get_keyed(&(file_idx, lod, tile_idx))
     }
 
     fn evict_far_from(&mut self, file_idx: usize, lod: u8, center_tile: usize, keep_radius: usize) {
@@ -385,104 +430,25 @@ impl TileCache {
     }
 
     fn clear_for_file(&mut self, file_idx: usize) {
-        let keys: Vec<_> = self.tiles.keys().copied().filter(|k| k.0 == file_idx).collect();
-        for key in keys {
-            if let Some(evicted) = self.tiles.remove(&key) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
-    }
-
-    fn clear_all(&mut self) {
-        self.tiles.clear();
-        self.lru.clear();
-        self.total_bytes = 0;
+        self.clear_keys(|k| k.0 == file_idx);
     }
 }
 
-// ── Flow cache (multi-LOD, same CacheKey as magnitude tiles) ─────────────────
+// Flow / reassign / resonator caches reuse TileCache<CacheKey> directly (same
+// multi-LOD key as magnitude tiles); see the thread_locals below.
 
-// Reuse FlowTileCache type for chroma too (same key shape)
+/// Chroma tiles key by (file_idx, tile_idx) — baseline LOD only.
 type ChromaKey = (usize, usize);
 
-struct ChromaTileCache {
-    tiles: HashMap<ChromaKey, Tile>,
-    lru: VecDeque<(ChromaKey, u64)>,
-    total_bytes: usize,
-    max_bytes: usize,
-    next_stamp: u64,
-}
-
-impl ChromaTileCache {
-    fn new(max_bytes: usize) -> Self {
-        Self {
-            tiles: HashMap::new(),
-            lru: VecDeque::new(),
-            total_bytes: 0,
-            max_bytes,
-            next_stamp: 0,
-        }
-    }
-
-    fn allocate_stamp(&mut self) -> u64 {
-        self.next_stamp = self.next_stamp.wrapping_add(1);
-        self.next_stamp
-    }
-
-    fn maybe_compact_lru(&mut self) {
-        let threshold = self.tiles.len().saturating_mul(8).max(512);
-        if self.lru.len() <= threshold {
-            return;
-        }
-
-        let mut entries: Vec<(u64, ChromaKey)> = self.tiles
-            .iter()
-            .map(|(&key, tile)| (tile.lru_stamp, key))
-            .collect();
-        entries.sort_by_key(|(stamp, _)| *stamp);
-        self.lru = entries.into_iter().map(|(stamp, key)| (key, stamp)).collect();
-    }
-
-    fn evict_to_fit(&mut self, incoming_bytes: usize) {
-        while self.total_bytes + incoming_bytes > self.max_bytes {
-            let Some((oldest, stamp)) = self.lru.pop_front() else { break };
-            let should_evict = self.tiles
-                .get(&oldest)
-                .map(|tile| tile.lru_stamp == stamp)
-                .unwrap_or(false);
-            if should_evict {
-                if let Some(evicted) = self.tiles.remove(&oldest) {
-                    self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                }
-            }
-        }
-    }
-
+// Convenience wrappers for the (file_idx, tile_idx) chroma cache.
+impl TileCache<ChromaKey> {
     fn insert(&mut self, file_idx: usize, tile_idx: usize, rendered: PreRendered) {
         let key = (file_idx, tile_idx);
-        let bytes = rendered.byte_len();
-        if let Some(old) = self.tiles.remove(&key) {
-            self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
-        }
-        self.evict_to_fit(bytes);
-        let stamp = self.allocate_stamp();
-        self.total_bytes += bytes;
-        self.tiles.insert(key, Tile { tile_idx, file_idx, lod: 1, rendered, lru_stamp: stamp });
-        self.lru.push_back((key, stamp));
-        self.maybe_compact_lru();
+        self.insert_keyed(key, Tile { tile_idx, file_idx, lod: 1, rendered, lru_stamp: 0 });
     }
 
     fn get(&self, file_idx: usize, tile_idx: usize) -> Option<&Tile> {
-        self.tiles.get(&(file_idx, tile_idx))
-    }
-
-    fn touch(&mut self, key: ChromaKey) {
-        let stamp = self.allocate_stamp();
-        if let Some(tile) = self.tiles.get_mut(&key) {
-            tile.lru_stamp = stamp;
-            self.lru.push_back((key, stamp));
-            self.maybe_compact_lru();
-        }
+        self.get_keyed(&(file_idx, tile_idx))
     }
 }
 
@@ -510,8 +476,10 @@ thread_local! {
         RefCell::new(HashMap::new());
     static REASSIGN_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
-    /// Chromagram tile cache (baseline-LOD only).
-    static CHROMA_CACHE: RefCell<ChromaTileCache> = RefCell::new(ChromaTileCache::new(CHROMA_MAX_BYTES));
+    /// Chromagram tile cache (baseline-LOD only). 512 LRU-compaction floor
+    /// matches the original ChromaTileCache (vs 1024 for the multi-LOD caches).
+    static CHROMA_CACHE: RefCell<TileCache<ChromaKey>> =
+        RefCell::new(TileCache::with_floor(CHROMA_MAX_BYTES, 512));
     static CHROMA_IN_FLIGHT: RefCell<HashMap<ChromaKey, f64>> =
         RefCell::new(HashMap::new());
 
@@ -1794,12 +1762,7 @@ pub fn borrow_chroma_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&T
 }
 
 pub fn clear_chroma_cache() {
-    CHROMA_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        cache.tiles.clear();
-        cache.lru.clear();
-        cache.total_bytes = 0;
-    });
+    CHROMA_CACHE.with(|c| c.borrow_mut().clear_all());
     CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().clear());
     CHROMA_GLOBAL_MAX.with(|m| m.borrow_mut().clear());
 }
@@ -1811,15 +1774,7 @@ pub fn clear_chroma_cache() {
 /// In-flight requests are left alone — they'll overwrite when they finish
 /// and any still-stale tiles will be caught by the next growth event.
 fn clear_chroma_tiles_for_file_keep_max(file_idx: usize) {
-    CHROMA_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let keys: Vec<_> = cache.tiles.keys().copied().filter(|k| k.0 == file_idx).collect();
-        for key in keys {
-            if let Some(evicted) = cache.tiles.remove(&key) {
-                cache.total_bytes = cache.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
-    });
+    CHROMA_CACHE.with(|c| c.borrow_mut().clear_keys(|k| k.0 == file_idx));
 }
 
 /// Schedule a chromagram tile for background generation (baseline LOD).
