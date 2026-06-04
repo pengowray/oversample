@@ -172,7 +172,10 @@ pub fn Waveform() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
-        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
+        // Guarded so a redraw doesn't churn canvas_width subscribers every frame.
+        if state.viewmode.spectrogram_canvas_width().get_untracked() != display_w as f64 {
+            state.viewmode.spectrogram_canvas_width().set(display_w as f64);
+        }
 
         // The time axis / selection lives in a sibling <TimeGutter/> strip
         // now, so the waveform paints into the full canvas height.

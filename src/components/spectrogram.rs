@@ -137,12 +137,21 @@ pub fn Spectrogram() -> impl IntoView {
         let Some(el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = el.as_ref();
         let Some(parent) = canvas.parent_element() else { return };
+        let parent_cb = parent.clone();
         let cb = Closure::<dyn Fn(js_sys::Array)>::new(move |_entries: js_sys::Array| {
             // Bail if the component (and this signal) was disposed between
             // the DOM mutation and the observer firing — otherwise
             // `get_untracked` on a disposed signal panics.
             let Some(cur) = canvas_size_tick.try_get_untracked() else { return };
             canvas_size_tick.set(cur.wrapping_add(1));
+            // Keep canvas_width fresh on every layout change, independent of
+            // whether a redraw has happened — so consumers (scroll-clamp,
+            // keyboard nav, switch_view) never read a stale width. Matches the
+            // render's `display_w` (parent box width as integer px).
+            let w = (parent_cb.get_bounding_client_rect().width() as u32) as f64;
+            if w > 0.0 && state.viewmode.spectrogram_canvas_width().get_untracked() != w {
+                state.viewmode.spectrogram_canvas_width().set(w);
+            }
         });
         if let Ok(observer) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             observer.observe(&parent);
@@ -283,8 +292,12 @@ pub fn Spectrogram() -> impl IntoView {
             canvas.set_width(display_w);
             canvas.set_height(display_h);
         }
-        // Keep overview in sync with actual canvas width
-        state.viewmode.spectrogram_canvas_width().set(display_w as f64);
+        // Keep overview in sync with actual canvas width — guarded so a redraw
+        // doesn't churn canvas_width subscribers every frame (the ResizeObserver
+        // above keeps it fresh on layout changes; this is just a fallback).
+        if state.viewmode.spectrogram_canvas_width().get_untracked() != display_w as f64 {
+            state.viewmode.spectrogram_canvas_width().set(display_w as f64);
+        }
 
         let ctx = canvas
             .get_context("2d")
