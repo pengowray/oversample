@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::prelude::*;
 use crate::state::AppState;
-use crate::tauri_bridge::tauri_invoke;
+use crate::tauri_bridge::{tauri_invoke, tauri_invoke_with_args};
 
 const XC_GROUPS: &[&str] = &["bats", "birds", "frogs", "grasshoppers", "land mammals"];
 
@@ -24,24 +24,6 @@ fn js_obj() -> js_sys::Object {
 
 fn set_str(obj: &js_sys::Object, key: &str, val: &str) {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_str(val)).ok();
-}
-
-fn set_u64(obj: &js_sys::Object, key: &str, val: u64) {
-    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_f64(val as f64)).ok();
-}
-
-fn set_opt_str(obj: &js_sys::Object, key: &str, val: &Option<String>) {
-    match val {
-        Some(v) => { set_str(obj, key, v); }
-        None => { js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::NULL).ok(); }
-    }
-}
-
-fn set_opt_u32(obj: &js_sys::Object, key: &str, val: Option<u32>) {
-    match val {
-        Some(v) => { js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_f64(v as f64)).ok(); }
-        None => { js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::NULL).ok(); }
-    }
 }
 
 // ── Data types (mirror Tauri response shapes) ────────────────────────
@@ -257,9 +239,10 @@ pub fn XcBrowser() -> impl IntoView {
             return;
         }
         spawn_local(async move {
-            let args = js_obj();
-            set_str(&args, "key", &key);
-            match invoke_with("xc_set_api_key", &args).await {
+            match tauri_invoke_with_args(
+                "xc_set_api_key",
+                &oversample_ipc::xc::XcSetApiKeyArgs { key: key.clone() },
+            ).await {
                 Ok(_) => {
                     has_key.set(true);
                     view.set(BrowserView::GroupBrowse);
@@ -281,11 +264,10 @@ pub fn XcBrowser() -> impl IntoView {
         species_list.set(Vec::new());
 
         spawn_local(async move {
-            let args = js_obj();
-            set_str(&args, "group", &group);
-            set_opt_str(&args, "country", &country);
-
-            match invoke_with("xc_browse_group", &args).await {
+            match tauri_invoke_with_args(
+                "xc_browse_group",
+                &oversample_ipc::xc::XcGroupArgs { group: group.clone(), country: country.clone() },
+            ).await {
                 Ok(val) => {
                     species_list.set(parse_species_list(&val));
                 }
@@ -293,10 +275,10 @@ pub fn XcBrowser() -> impl IntoView {
             }
 
             // Get cache age
-            let age_args = js_obj();
-            set_str(&age_args, "group", &group);
-            set_opt_str(&age_args, "country", &country);
-            if let Ok(val) = invoke_with("xc_taxonomy_age", &age_args).await {
+            if let Ok(val) = tauri_invoke_with_args(
+                "xc_taxonomy_age",
+                &oversample_ipc::xc::XcGroupArgs { group: group.clone(), country: country.clone() },
+            ).await {
                 taxonomy_age.set(val.as_string());
             }
 
@@ -322,11 +304,10 @@ pub fn XcBrowser() -> impl IntoView {
         error_msg.set(None);
 
         spawn_local(async move {
-            let args = js_obj();
-            set_str(&args, "group", &group);
-            set_opt_str(&args, "country", &country);
-
-            match invoke_with("xc_refresh_taxonomy", &args).await {
+            match tauri_invoke_with_args(
+                "xc_refresh_taxonomy",
+                &oversample_ipc::xc::XcGroupArgs { group: group.clone(), country: country.clone() },
+            ).await {
                 Ok(val) => {
                     species_list.set(parse_species_list(&val));
                     taxonomy_age.set(Some("just now".to_string()));
@@ -341,9 +322,10 @@ pub fn XcBrowser() -> impl IntoView {
         spawn_local(async move {
             let mut set = std::collections::HashSet::new();
             for id in ids {
-                let args = js_obj();
-                set_u64(&args, "id", id);
-                if let Ok(val) = invoke_with("xc_is_cached", &args).await {
+                if let Ok(val) = tauri_invoke_with_args(
+                    "xc_is_cached",
+                    &oversample_ipc::xc::XcIdArgs { id },
+                ).await {
                     if val.as_bool().unwrap_or(false) {
                         set.insert(id);
                     }
@@ -365,12 +347,14 @@ pub fn XcBrowser() -> impl IntoView {
         error_msg.set(None);
 
         spawn_local(async move {
-            let args = js_obj();
-            set_str(&args, "genus", &genus);
-            set_str(&args, "species", &species);
-            set_opt_u32(&args, "page", None);
-
-            match invoke_with("xc_species_recordings", &args).await {
+            match tauri_invoke_with_args(
+                "xc_species_recordings",
+                &oversample_ipc::xc::XcSpeciesArgs {
+                    genus: genus.clone(),
+                    species: species.clone(),
+                    page: None,
+                },
+            ).await {
                 Ok(val) => {
                     recordings.set(parse_recordings(&val));
                     recordings_page.set(parse_current_page(&val));
@@ -396,11 +380,10 @@ pub fn XcBrowser() -> impl IntoView {
         error_msg.set(None);
 
         spawn_local(async move {
-            let args = js_obj();
-            set_str(&args, "query", &query);
-            set_opt_u32(&args, "page", None);
-
-            match invoke_with("xc_search", &args).await {
+            match tauri_invoke_with_args(
+                "xc_search",
+                &oversample_ipc::xc::XcSearchArgs { query: query.clone(), page: None },
+            ).await {
                 Ok(val) => {
                     recordings.set(parse_recordings(&val));
                     recordings_page.set(parse_current_page(&val));
@@ -475,17 +458,23 @@ pub fn XcBrowser() -> impl IntoView {
         spawn_local(async move {
             let result = match &current_view {
                 BrowserView::SpeciesRecordings { genus, species, .. } => {
-                    let args = js_obj();
-                    set_str(&args, "genus", genus);
-                    set_str(&args, "species", species);
-                    set_opt_u32(&args, "page", Some(page_num));
-                    invoke_with("xc_species_recordings", &args).await
+                    tauri_invoke_with_args(
+                        "xc_species_recordings",
+                        &oversample_ipc::xc::XcSpeciesArgs {
+                            genus: genus.clone(),
+                            species: species.clone(),
+                            page: Some(page_num),
+                        },
+                    ).await
                 }
                 BrowserView::SearchResults => {
-                    let args = js_obj();
-                    set_str(&args, "query", &search_input.get_untracked());
-                    set_opt_u32(&args, "page", Some(page_num));
-                    invoke_with("xc_search", &args).await
+                    tauri_invoke_with_args(
+                        "xc_search",
+                        &oversample_ipc::xc::XcSearchArgs {
+                            query: search_input.get_untracked(),
+                            page: Some(page_num),
+                        },
+                    ).await
                 }
                 _ => return,
             };
@@ -510,10 +499,10 @@ pub fn XcBrowser() -> impl IntoView {
         error_msg.set(None);
         spawn_local(async move {
             let result: Result<(), String> = async {
-                let args = js_obj();
-                set_u64(&args, "id", id);
-
-                let val = invoke_with("xc_download", &args).await?;
+                let val = tauri_invoke_with_args(
+                    "xc_download",
+                    &oversample_ipc::xc::XcIdArgs { id },
+                ).await?;
                 let cached = parse_cached_file(&val)
                     .ok_or_else(|| "Failed to parse download result".to_string())?;
 

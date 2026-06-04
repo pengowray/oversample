@@ -137,6 +137,47 @@ pub struct XcIndexEntry {
 /// Available groups on xeno-canto.
 pub const XC_GROUPS: &[&str] = &["bats", "birds", "frogs", "grasshoppers", "land mammals"];
 
+// Command arg structs. Field names match the native command params (snake_case
+// single words), so no rename is needed; Optional fields are omitted from the
+// wire when None (matching the previous "set only if present" helpers).
+
+/// Args for `xc_set_api_key`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcSetApiKeyArgs {
+    pub key: String,
+}
+
+/// Args for `xc_browse_group` / `xc_refresh_taxonomy` / `xc_taxonomy_age`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcGroupArgs {
+    pub group: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+}
+
+/// Args for `xc_is_cached` / `xc_download`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcIdArgs {
+    pub id: u64,
+}
+
+/// Args for `xc_species_recordings`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcSpeciesArgs {
+    pub genus: String,
+    pub species: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+}
+
+/// Args for `xc_search`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct XcSearchArgs {
+    pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+}
+
 /// Result of downloading or loading a cached XC recording (the `xc_download`
 /// command and the cached-path lookup).
 #[derive(Clone, Debug, Serialize, Deserialize)]

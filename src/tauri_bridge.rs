@@ -76,6 +76,18 @@ pub async fn tauri_invoke_args<A: serde::Serialize>(cmd: &str, args: &A) -> Resu
     tauri_invoke(cmd, &js_args).await.map(|_| ())
 }
 
+/// Invoke a command with serde-serialized `args`, returning the raw `JsValue`
+/// result for callers that parse it themselves (e.g. binary/ArrayBuffer results
+/// or local `from_value` mapping helpers).
+pub async fn tauri_invoke_with_args<A: serde::Serialize>(
+    cmd: &str,
+    args: &A,
+) -> Result<JsValue, String> {
+    let js_args = serde_wasm_bindgen::to_value(args)
+        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
+    tauri_invoke(cmd, &js_args).await
+}
+
 /// Read a byte range from a native file via Tauri IPC.
 ///
 /// Returns the raw bytes for the range `[offset, offset + length)`.
