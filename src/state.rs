@@ -1805,177 +1805,80 @@ pub struct ViewModeState {
 
 // ── AppState ─────────────────────────────────────────────────────────────────
 
+/// Global application state — a `Copy` context handle whose fields are all
+/// cohesive `#[derive(Store)]` groups (reactive_stores). Access a field via
+/// `state.<group>.<subfield>().get()/.set()` etc. (the former ~290 flat
+/// `RwSignal`s now live as subfields of these groups). Shared via Leptos
+/// context; `provide_context`/`expect_context::<AppState>()`.
+///
+/// NB (reactive_stores): all subfields of one group share one borrow cell —
+/// never access a sibling subfield inside a `.update()/.with()/.read()` guard
+/// on the same group (the inner write silently no-ops). Hoist it out.
 #[derive(Clone, Copy)]
 pub struct AppState {
-    /// Sidebar / panel chrome (grouped reactive store).
-    pub panels: Store<PanelsState>,
-    /// Modal dialogs / one-time hint flags (grouped reactive store).
-    pub dialogs: Store<DialogsState>,
-    /// Loaded-file library + load queue (grouped reactive store).
+    /// Loaded-file library + load queue.
     pub library: Store<LibraryState>,
-    /// Playback / transport state (grouped reactive store).
+    /// Playback / transport state.
     pub playback: Store<PlaybackState>,
-    /// Status / debug / platform / hash state (grouped reactive store).
-    pub status: Store<StatusState>,
-    /// Pointer / selection / drag interaction state (grouped reactive store).
+    /// Pointer / selection / drag interaction state.
     pub interaction: Store<InteractionState>,
-    /// View mode / navigation / focus-stack / misc render state (grouped store).
+    /// View mode / navigation / focus-stack / misc render state.
     pub viewmode: Store<ViewModeState>,
-    /// Transform / DSP playback parameters: heterodyne, time-expansion, pitch
-    /// shift, phase vocoder, zero-crossing — plus BandFF-derived auto flags
-    /// (grouped reactive store).
-    pub transform: Store<TransformState>,
-    /// Viewport: zoom, scroll, display freq bounds, follow-cursor (grouped store).
+    /// Viewport: zoom, scroll, display freq bounds, follow-cursor.
     pub view: Store<ViewState>,
-    /// Bandpass / EQ filter + BandFF gutter settings (grouped reactive store).
-    pub filter: Store<FilterState>,
-    /// Gain (audio + waveform-view) settings (grouped reactive store).
-    pub gain: Store<GainState>,
-    /// True when playback is frozen waiting for streaming chunks to decode.
-    /// Drives the "Buffering…" toast and pauses the playhead animation.
-    /// True while any pointer button is held down on the spectrogram canvas.
-    /// Spectrogram display + colormap settings (grouped reactive store).
+    /// Spectrogram display + colormap settings.
     pub spect: Store<SpectState>,
-    /// Optical-flow overlay settings (grouped reactive store). Replaces the
-    /// former flat `flow_enabled` / `flow_gate` / `flow_*` signals.
+    /// Display-DSP / spectrogram-processing settings.
+    pub display: Store<DisplayState>,
+    /// Optical-flow overlay settings.
     pub flow: Store<FlowState>,
-
-    // Channel
-
-    // ── New signals ──────────────────────────────────────────────────────────
-
-    // Tool
-
-    // HFR (High Frequency Range) mode
-
-    // Waveform sub-view mode
-
-    // Overview
-
-    // Navigation history (for back/forward buttons in overview)
-
-    // Bookmarks
-
-    // Play start mode (All / FromHere / Selected)
-
-    // Record mode (ToFile / ToMemory / ListenOnly)
-
-    // Play-from-here time (updated by Spectrogram on scroll/zoom change)
-
-    // Tile system: incrementing this triggers a spectrogram redraw
-
-    /// Generation counter for background preload. Incremented when file/LOD changes
-    /// to cancel stale preload jobs.
-
-
-    // Which floating layer panel is currently open
-
-    // Actual pixel width of the main spectrogram canvas (written by Spectrogram, read by Overview)
-
-    // Main panel view mode
-
-    // Spectrogram drag handles (BandFF + HET)
-
-    /// Output frequency range to highlight on spectrogram (set by hover in HFR panel).
-    /// Snap policy for the Output Range gutter when dragging.
-    /// Free = continuous, Standard = powers of 2 + 10 / 5 kHz multiples,
-    /// EqualChroma = powers of 2 only (preserves musical intervals).
-
-    // Microphone (independent listen + record)
-    /// Mic capture + recording lifecycle (grouped reactive store).
+    /// Chromagram view settings.
+    pub chroma: Store<ChromaState>,
+    /// Resonator-view settings.
+    pub resonator: Store<ResonatorState>,
+    /// Transform / DSP playback parameters (het, TE, PS, PV, ZC + auto flags).
+    pub transform: Store<TransformState>,
+    /// Bandpass / EQ filter + BandFF gutter settings.
+    pub filter: Store<FilterState>,
+    /// Gain (audio + waveform-view) settings.
+    pub gain: Store<GainState>,
+    /// Notch noise-filtering settings.
+    pub notch: Store<NotchState>,
+    /// Spectral-subtraction noise-reduction settings.
+    pub noise_reduce: Store<NoiseReduceState>,
+    /// Pulse-detection overlay settings.
+    pub pulse: Store<PulseState>,
+    /// PSD (Power Spectral Density) panel settings.
+    pub psd: Store<PsdState>,
+    /// Mic capture + recording lifecycle.
     pub mic: Store<MicState>,
-    /// Recording metadata / privacy: GPS, device id, home-wifi (grouped store).
+    /// Recording metadata / privacy: GPS, device id, home-wifi.
     pub recording_meta: Store<RecordingMetaState>,
+    /// Annotation subsystem (store / selection / drag / resize / undo).
+    pub annotations: Store<AnnotationsState>,
+    /// Project (.batproj) state.
+    pub project: Store<ProjectState>,
+    /// Timeline / multi-file selection state.
+    pub timeline: Store<TimelineState>,
+    /// Bat Book reference subsystem state.
+    pub bat_book: Store<BatBookState>,
+    /// Export / video-export UI state.
+    pub export: Store<ExportState>,
+    /// Sidebar / panel chrome (left + right sidebars, layer panel, status bar).
+    pub panels: Store<PanelsState>,
+    /// Modal dialogs / one-time hint flags.
+    pub dialogs: Store<DialogsState>,
+    /// Transient status / debug log / platform + viewport detection / file-hash.
+    pub status: Store<StatusState>,
 
-    /// Whether the privacy settings modal dialog is visible.
-    /// Whether the about dialog is visible.
-    /// True when OS-throttled background audio was detected; surfaces the
-    /// one-time battery-optimization guidance. Cleared when acted on/dismissed.
-    /// Persisted flag: background-audio guidance already dismissed
-    /// (`oversample_bg_audio_hint_dismissed`).
-    /// True when the in-app notification-permission rationale modal should show
-    /// (Android, before the OS POST_NOTIFICATIONS prompt).
-    /// Persisted flag: notification rationale already surfaced
-    /// (`oversample_notif_perm_asked`).
-
-    // Transient status message (e.g. permission errors)
-
-    // Debug log entries: (timestamp_ms, level, message)
-
-    // Platform detection
+    // ── Non-signal platform flags (fixed at startup, never change) ──
     pub is_tauri: bool,
     /// Stable "running on a mobile platform" flag, fixed at startup from the
-    /// user-agent only (NOT viewport width). Unlike `is_mobile` — which is a
-    /// layout signal that flips when a desktop window is narrowed below the
-    /// mobile breakpoint — this stays put, so it's the correct discriminator
-    /// for platform-specific behaviour like Android MediaStore vs a desktop
-    /// save dialog.
+    /// user-agent only (NOT viewport width). Unlike the `status.is_mobile`
+    /// layout signal (which flips when a desktop window narrows below the mobile
+    /// breakpoint), this stays put — the correct discriminator for platform
+    /// behaviour like Android MediaStore vs a desktop save dialog.
     pub is_mobile_platform: bool,
-
-    /// True when the browser viewport is pinch-zoomed in (visualViewport.scale > 1).
-    /// Used to show a zoom-out button and disable custom pinch handlers.
-    /// Visual viewport position/size for placing the zoom-out button in the
-    /// visible area when pinch-zoomed. (offset_top, offset_left, vp_width, scale)
-
-    // XC browser
-
-    // (hfr_saved_* signals removed — now in FocusStack)
-
-    // Axis drag (left axis frequency range selection)
-
-    // Cursor time at mouse position (for bottom bar feedback)
-
-    // Left sidebar settings page
-
-    /// Chromagram view settings (grouped reactive store).
-    pub chroma: Store<ChromaState>,
-
-    /// Resonator-view settings (grouped reactive store).
-    pub resonator: Store<ResonatorState>,
-    // When false, the Range button is hidden at full range
-
-    /// Notch noise-filtering settings (grouped reactive store).
-    pub notch: Store<NotchState>,
-
-    /// Spectral-subtraction noise-reduction settings (grouped reactive store).
-    pub noise_reduce: Store<NoiseReduceState>,
-
-    /// Pulse-detection overlay settings (grouped reactive store).
-    pub pulse: Store<PulseState>,
-
-    // File identity hashing
-    /// Whether a full hash computation (Layer 3/4) is currently running.
-    /// Generation counter for cancelling in-progress hash computations.
-
-    /// Annotation subsystem (store/selection/drag/resize/undo) (grouped store).
-    pub annotations: Store<AnnotationsState>,
-
-    /// Project (.batproj) state (grouped reactive store).
-    pub project: Store<ProjectState>,
-
-    /// Timeline / multi-file selection state (grouped reactive store).
-    pub timeline: Store<TimelineState>,
-
-    /// Display-DSP / spectrogram-processing settings (grouped reactive store).
-    pub display: Store<DisplayState>,
-
-    /// PSD (Power Spectral Density) panel settings (grouped reactive store).
-    pub psd: Store<PsdState>,
-
-    /// Bat Book reference subsystem state (grouped reactive store).
-    pub bat_book: Store<BatBookState>,
-
-    /// Frequency shield/flag color bar style (persisted to localStorage).
-
-    /// Whether the analysis/status bar is visible (persisted to localStorage).
-
-    // Layered frequency focus stack
-
-    // Clean view: hide all overlays while holding backtick
-
-    /// Export / video-export UI state (grouped reactive store).
-    pub export: Store<ExportState>,
-
 }
 
 fn detect_tauri() -> bool {
