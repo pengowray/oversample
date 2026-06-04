@@ -22,6 +22,9 @@ class MainActivity : TauriActivity() {
     // Pass the WebView reference to the zoom plugin so the in-app
     // "reset zoom" button can call webView.zoomBy() on the UI thread.
     zoomPlugin?.setWebView(webView)
+    // Also hand it to the audio-service plugin so the notification "Stop"
+    // action can push a stop into the WASM frontend (evaluateJavascript).
+    audioServicePlugin?.setWebView(webView)
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {

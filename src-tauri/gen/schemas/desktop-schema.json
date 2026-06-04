@@ -183,10 +183,22 @@
           "markdownDescription": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope."
         },
         {
+          "description": "Enables the isNotificationPermissionGranted command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-isNotificationPermissionGranted",
+          "markdownDescription": "Enables the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
           "description": "Enables the requestDisableBatteryOptimization command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:allow-requestDisableBatteryOptimization",
           "markdownDescription": "Enables the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestNotificationPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-requestNotificationPermission",
+          "markdownDescription": "Enables the requestNotificationPermission command without any pre-configured scope."
         },
         {
           "description": "Enables the startForegroundAudio command without any pre-configured scope.",
@@ -213,10 +225,22 @@
           "markdownDescription": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope."
         },
         {
+          "description": "Denies the isNotificationPermissionGranted command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-isNotificationPermissionGranted",
+          "markdownDescription": "Denies the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
           "description": "Denies the requestDisableBatteryOptimization command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:deny-requestDisableBatteryOptimization",
           "markdownDescription": "Denies the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestNotificationPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-requestNotificationPermission",
+          "markdownDescription": "Denies the requestNotificationPermission command without any pre-configured scope."
         },
         {
           "description": "Denies the startForegroundAudio command without any pre-configured scope.",

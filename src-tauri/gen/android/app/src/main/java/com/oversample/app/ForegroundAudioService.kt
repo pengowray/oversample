@@ -36,6 +36,10 @@ class ForegroundAudioService : Service() {
     companion object {
         const val ACTION_START = "com.oversample.app.action.START_AUDIO"
         const val ACTION_STOP = "com.oversample.app.action.STOP_AUDIO"
+        // User tapped the notification's "Stop" action. Distinct from ACTION_STOP
+        // (frontend-initiated teardown): this one routes back into the WASM
+        // frontend so it can finalize/save the recording before the service dies.
+        const val ACTION_USER_STOP = "com.oversample.app.action.USER_STOP_AUDIO"
         const val EXTRA_MODE = "mode" // "listening" | "recording"
 
         /** Start (or update the notification of) the foreground audio service.
@@ -76,6 +80,18 @@ class ForegroundAudioService : Service() {
                 stopSelfCleanly()
                 return START_NOT_STICKY
             }
+            ACTION_USER_STOP -> {
+                // Route the stop into the WASM frontend so it tears capture down
+                // cleanly (finalize + save the WAV, then call stopForegroundAudio
+                // which delivers ACTION_STOP back here). If the frontend can't be
+                // reached, fall back to stopping the service directly so the
+                // notification can never get stuck.
+                if (!AudioServicePlugin.dispatchUserStop()) {
+                    Log.w(TAG, "user stop: no webview, stopping service directly")
+                    stopSelfCleanly()
+                }
+                return START_NOT_STICKY
+            }
             else -> {
                 val mode = intent?.getStringExtra(EXTRA_MODE) ?: "recording"
                 createChannel()
@@ -112,12 +128,20 @@ class ForegroundAudioService : Service() {
         val pi = PendingIntent.getActivity(
             this, 0, openIntent, PendingIntent.FLAG_IMMUTABLE,
         )
+        // "Stop" action → delivers ACTION_USER_STOP to this service.
+        val stopIntent = Intent(this, ForegroundAudioService::class.java).apply {
+            action = ACTION_USER_STOP
+        }
+        val stopPi = PendingIntent.getService(
+            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(label)
             .setOngoing(true)
             .setContentIntent(pi)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }

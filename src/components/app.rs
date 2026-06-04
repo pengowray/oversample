@@ -1215,6 +1215,26 @@ pub fn App() -> impl IntoView {
             }
         });
         crate::tauri_bridge::tauri_listen("tauri://drag-drop", callback);
+
+        // Expose a global the Android notification "Stop" action calls (via
+        // webView.evaluateJavascript from AudioServicePlugin) to tear down live
+        // capture cleanly — finalizing/saving the recording and stopping the
+        // foreground service. A native push is used (not a JS-timer poll) because
+        // the user typically hits this while the app is backgrounded, where JS
+        // timers are throttled but evaluateJavascript still runs.
+        let state_stop = state;
+        let stop_cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            log::info!("Native notification: stop capture requested");
+            crate::audio::microphone::stop_all(&state_stop);
+        });
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__oversampleStopCapture"),
+                stop_cb.as_ref().unchecked_ref(),
+            );
+        }
+        stop_cb.forget();
     }
 
     // Back button (Android/browser): close sidebar when open.

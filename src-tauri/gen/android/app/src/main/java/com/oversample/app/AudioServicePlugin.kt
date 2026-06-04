@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.webkit.WebView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
@@ -34,8 +35,36 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
 
     private var pendingNotifPermInvoke: Invoke? = null
 
+    /** Receive the WebView reference (set from MainActivity.onWebViewCreate) so the
+     *  notification "Stop" action can push a stop into the WASM frontend. */
+    fun setWebView(webView: WebView) {
+        webViewRef = webView
+    }
+
     companion object {
         const val REQUEST_NOTIF_PERM = 1102
+
+        // Held statically so ForegroundAudioService (a separate component) can
+        // reach the frontend without a binding. Cleared implicitly when the
+        // process dies, which is the only time it would be stale.
+        private var webViewRef: WebView? = null
+
+        /** Push a stop request into the WASM frontend (calls the global it exposes
+         *  in app.rs). Runs on the WebView's thread. Returns false if no WebView is
+         *  available, so the caller can fall back to stopping the service directly.
+         *  Used a native push rather than a poll because the user usually taps the
+         *  notification while the app is backgrounded, where JS timers are throttled
+         *  but evaluateJavascript still executes. */
+        fun dispatchUserStop(): Boolean {
+            val wv = webViewRef ?: return false
+            wv.post {
+                wv.evaluateJavascript(
+                    "window.__oversampleStopCapture && window.__oversampleStopCapture()",
+                    null,
+                )
+            }
+            return true
+        }
     }
 
     /** Start the foreground audio service. Must be invoked while the Activity is
