@@ -144,3 +144,16 @@ pub struct StopRecordingArgs {
 pub struct SetListeningArgs {
     pub listening: bool,
 }
+
+/// One entry from `mic_recover_recordings` — a crashed-session recording found on
+/// disk and recoverable.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RecoveredRecording {
+    pub path: String,
+    pub filename: String,
+    pub had_sidecar: bool,
+    pub sample_count: u64,
+    pub sample_rate: u32,
+    pub duration_secs: f64,
+    pub file_size_bytes: u64,
+}

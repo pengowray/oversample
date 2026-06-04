@@ -456,18 +456,9 @@ fn patch_header_with_extra(
     Ok(())
 }
 
-/// Recovered-recording report — returned to the WASM frontend so it can
-/// surface the list in a toast / file sidebar.
-#[derive(Serialize)]
-pub struct RecoveredRecording {
-    pub path: String,
-    pub filename: String,
-    pub had_sidecar: bool,
-    pub sample_count: u64,
-    pub sample_rate: u32,
-    pub duration_secs: f64,
-    pub file_size_bytes: u64,
-}
+/// Recovered-recording report — returned to the WASM frontend. Canonical
+/// definition lives in `oversample_ipc::mic` (shared with the frontend).
+pub use oversample_ipc::mic::RecoveredRecording;
 
 /// Scan the recovery directory and finalize any leftover `.wav.part` files.
 /// Returns a list of recovered recordings (now moved into the recordings dir).

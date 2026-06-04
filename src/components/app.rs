@@ -90,16 +90,16 @@ pub fn App() -> impl IntoView {
     // Cheap no-op if the recovery dir is empty or missing.
     if state.is_tauri {
         wasm_bindgen_futures::spawn_local(async move {
-            use crate::tauri_bridge::{tauri_invoke_no_args, tauri_invoke_typed_no_args};
-            let Ok(result) = tauri_invoke_no_args("mic_recover_recordings").await else {
+            use crate::tauri_bridge::tauri_invoke_typed_no_args;
+            let Ok(recordings) = tauri_invoke_typed_no_args::<Vec<oversample_ipc::mic::RecoveredRecording>>(
+                "mic_recover_recordings",
+            ).await else {
                 return;
             };
-            let arr = js_sys::Array::from(&result);
-            let count = arr.length();
+            let count = recordings.len();
             if count > 0 {
                 log::info!("Recovered {} crashed recording(s) from previous session", count);
-                let first_path = js_sys::Reflect::get(&arr.get(0), &JsValue::from_str("path"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_default();
+                let first_path = recordings.first().map(|r| r.path.clone()).unwrap_or_default();
                 state.show_info_toast(format!(
                     "Recovered {} recording{} from previous session ({})",
                     count,
@@ -1176,12 +1176,20 @@ pub fn App() -> impl IntoView {
     // Tauri: listen for native file drag-drop events (provides real filesystem paths)
     if state.is_tauri {
         let state_drop = state;
+        #[derive(serde::Deserialize)]
+        struct DragDropPayload {
+            paths: Vec<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct DragDropEvent {
+            payload: DragDropPayload,
+        }
         let callback = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(move |ev: wasm_bindgen::JsValue| {
-            // Payload shape: { event: "tauri://drag-drop", payload: { paths: [...], position: {x, y} } }
-            let payload = js_sys::Reflect::get(&ev, &wasm_bindgen::JsValue::from_str("payload")).unwrap_or_default();
-            let paths = js_sys::Reflect::get(&payload, &wasm_bindgen::JsValue::from_str("paths")).unwrap_or_default();
-            let paths_array = js_sys::Array::from(&paths);
-            let file_paths: Vec<String> = paths_array.iter().filter_map(|v| v.as_string()).collect();
+            // Payload shape: { event, payload: { paths: [...], position: {x, y} } }
+            let Ok(event) = serde_wasm_bindgen::from_value::<DragDropEvent>(ev) else {
+                return;
+            };
+            let file_paths = event.payload.paths;
             if file_paths.is_empty() { return; }
 
             log::info!("Tauri drag-drop: {} file(s)", file_paths.len());
