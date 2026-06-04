@@ -158,6 +158,52 @@ test.describe("Oversample web smoke", () => {
     failOnFatal(errors);
   });
 
+  test("cycling spectrogram view modes exercises the tile caches without crashing", async ({ page }) => {
+    // Regression guard for the tile-cache consolidation (TileCache<K> +
+    // CacheCtx). Each view drives a different schedule_* path / tile cache:
+    // Flow -> flow cache, Chroma -> chroma cache, Reson -> resonator cache,
+    // Spec -> magnitude cache. A scheduling regression (reentrant RefCell
+    // borrow panic, hung yield loop, lost generation guard) surfaces here as a
+    // fatal console error or a blocked responsiveness poll.
+    test.setTimeout(90_000);
+    const errors = attachErrorRecorder(page);
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+
+    // Load a demo bat — any bat file drives all the caches.
+    const loadDemo = page.locator("button.add-files-btn", { hasText: "Load demo" });
+    await expect(loadDemo).toBeVisible({ timeout: 15_000 });
+    await loadDemo.click();
+    const randomBat = page.locator(".demo-random-bat").first();
+    await expect(randomBat).toBeVisible({ timeout: 10_000 });
+    await randomBat.click();
+    await expect(page.locator(".spectrogram-container").first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // short_label() values from MainView. Cycle through the cache-backed views
+    // and end back on the plain spectrogram.
+    for (const label of ["Flow", "Chroma", "Reson", "Spec"]) {
+      const btn = page
+        .locator(".view-radio-group .mode-radio-btn", {
+          has: page.locator(".mode-radio-label", { hasText: new RegExp(`^${label}$`) }),
+        })
+        .first();
+      await expect(btn, `view button "${label}" present`).toBeVisible({ timeout: 10_000 });
+      await btn.click();
+      // Let the cache's schedule_* loop run several yield ticks and render tiles.
+      await page.waitForTimeout(1200);
+      // A hung schedule loop would block this poll; a panic would already have
+      // been recorded as a fatal console error.
+      await page.waitForFunction(() => Date.now() > 0, undefined, { timeout: 5_000 });
+      failOnFatal(errors);
+    }
+
+    // Back on the spectrogram the main canvas must be mounted and painting.
+    await expect(page.locator(".spectrogram-container canvas").first()).toBeVisible();
+    failOnFatal(errors);
+  });
+
   test("zoom-out button is hidden when not pinch-zoomed", async ({ page }) => {
     // Sanity check: the `.zoom-out-btn` only renders when
     // `state.viewport_zoomed.get()` is true, which is gated on
