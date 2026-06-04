@@ -789,9 +789,22 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         || samples.len().saturating_sub(last_snapshot_len) >= adaptive;
                     if do_snapshot {
                         let snapshot = Arc::new(samples.to_vec());
+                        // Keep `source` in lock-step with `samples`: during
+                        // capture the source was left as the empty placeholder
+                        // from arm time while `samples` grew, so they diverged.
+                        // Nothing reads the live source today, but the mismatch
+                        // is a latent wrong-read hazard — close it cheaply by
+                        // reusing the snapshot Arc we just allocated.
+                        let new_source = Arc::new(InMemorySource {
+                            samples: snapshot.clone(),
+                            raw_samples: None,
+                            sample_rate,
+                            channels: 1,
+                        });
                         state.files.update(|files| {
                             if let Some(f) = files.get_mut(file_index) {
                                 f.audio.samples = snapshot;
+                                f.audio.source = new_source;
                             }
                         });
                         last_snapshot_len = samples.len();

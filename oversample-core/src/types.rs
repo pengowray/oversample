@@ -26,9 +26,14 @@ pub struct FileMetadata {
 
 #[derive(Clone)]
 pub struct AudioData {
-    /// Mono-mixed samples. Kept during migration; new code should use `source`.
+    /// Zero-copy in-memory mono buffer. For in-memory sources this is the whole
+    /// file (sharing `source`'s Arc); for streaming sources it's the decoded
+    /// head. Kept in lock-step with `source` (e.g. the live-recording snapshot
+    /// rebuilds both together), so it stays the fast path for MonoMix reads —
+    /// prefer it over `source.read_region(MonoMix, ..)`, which allocates.
     pub samples: Arc<Vec<f32>>,
-    /// AudioSource abstraction for on-demand sample access.
+    /// AudioSource abstraction for on-demand sample access (random-access reads,
+    /// non-mono channel views, streaming prefetch).
     pub source: Arc<dyn AudioSource>,
     pub sample_rate: u32,
     /// Original channel count (before mono mixing).
