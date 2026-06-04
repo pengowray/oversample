@@ -477,57 +477,95 @@ fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity:
             }
         }
 
-        // Try central annotations store first
+        // Don't clobber a store that already has this file (user edits in
+        // progress, or a prior load already applied).
+        if state.annotation_store.get_untracked().contains(file_id) {
+            return;
+        }
+
+        // Gather BOTH persisted copies, then apply the NEWER one (by
+        // modified_at). Previously central was always tried first and won on any
+        // hit, so an externally-newer file-adjacent .batm sidecar was ignored —
+        // and the next autosave then overwrote it with the stale central copy,
+        // silently losing the external edit. Reconcile by timestamp instead.
         let mut keys_to_try = vec![key.clone()];
         let fallback = opfs_fallback_key(&identity.filename, identity.file_size);
         if fallback != key {
             keys_to_try.push(fallback);
         }
 
+        // Best central copy: first hit across the primary then fallback key.
+        let mut central: Option<crate::annotations::AnnotationSet> = None;
+        let mut central_via_fallback = false;
         for (i, try_key) in keys_to_try.iter().enumerate() {
             match tauri_load_central(try_key).await {
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
-                            let already_has = state.annotation_store.get_untracked().contains(file_id);
-                            if !already_has {
-                                apply_loaded_sidecar(state, file_id, loaded);
-                                log::debug!("Tauri loaded central annotations for file id {file_id}: {try_key}");
-                                if i > 0 {
-                                    if let Some(idx) = state.file_idx_for_id(file_id) {
-                                        save_annotations(state, idx);
-                                    }
-                                }
-                            }
+                            central = Some(loaded);
+                            central_via_fallback = i > 0;
                         }
                         Err(e) => log::warn!("Tauri central deserialize error for {try_key}: {e}"),
                     }
-                    return;
+                    break;
                 }
                 Ok(None) => {}
                 Err(e) => log::warn!("Tauri central load error for {try_key}: {e}"),
             }
         }
 
-        // Fall back to cached sidecar content
-        if let Some(yaml) = sidecar_yaml {
-            let path = file_path.as_ref().unwrap();
-            match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
-                Ok(loaded) => {
-                    let already_has = state.annotation_store.get_untracked().contains(file_id);
-                    if !already_has {
-                        apply_loaded_sidecar(state, file_id, loaded);
-                        log::debug!("Tauri loaded sidecar for file id {file_id}: {path}.batm");
-                        // Re-save to central store so it's found faster next time
-                        if let Some(idx) = state.file_idx_for_id(file_id) {
-                            save_annotations(state, idx);
-                        }
-                    }
+        let sidecar = sidecar_yaml.as_ref().and_then(|yaml| {
+            match yaml_serde::from_str::<crate::annotations::AnnotationSet>(yaml) {
+                Ok(loaded) => Some(loaded),
+                Err(e) => {
+                    log::warn!("Tauri sidecar deserialize error: {e}");
+                    None
                 }
-                Err(e) => log::warn!("Tauri sidecar deserialize error: {e}"),
+            }
+        });
+
+        // Pick the winner. Central wins ties (equal/absent timestamps) so it
+        // stays the canonical source when there's no reason to prefer otherwise.
+        let (winner, needs_resave) = match (central, sidecar) {
+            (Some(c), Some(s)) => {
+                if annotation_is_newer(&s, &c) {
+                    (Some(s), true) // sidecar newer → adopt + re-save to central
+                } else {
+                    (Some(c), central_via_fallback)
+                }
+            }
+            (Some(c), None) => (Some(c), central_via_fallback),
+            (None, Some(s)) => (Some(s), true),
+            (None, None) => (None, false),
+        };
+
+        if let Some(loaded) = winner {
+            apply_loaded_sidecar(state, file_id, loaded);
+            log::debug!("Tauri loaded annotations for file id {file_id} (resave={needs_resave})");
+            // Promote to the primary central key when we loaded from the sidecar
+            // or a fallback key, so it's found directly next time.
+            if needs_resave {
+                if let Some(idx) = state.file_idx_for_id(file_id) {
+                    save_annotations(state, idx);
+                }
             }
         }
     });
+}
+
+/// True if `a` has a strictly newer `modified_at` than `b`. `modified_at` is an
+/// ISO-8601 string (lexicographic order == chronological). A set with a
+/// timestamp beats one without; absent-vs-absent is "not newer" (caller's tie
+/// rule applies).
+fn annotation_is_newer(
+    a: &crate::annotations::AnnotationSet,
+    b: &crate::annotations::AnnotationSet,
+) -> bool {
+    match (&a.modified_at, &b.modified_at) {
+        (Some(ta), Some(tb)) => ta > tb,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 // ── Tauri IPC helpers for annotation persistence ──────────────────────
