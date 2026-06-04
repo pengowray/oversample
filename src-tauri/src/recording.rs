@@ -1,4 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use oversample_ipc::mic::{DeviceInfo, SampleRateRange};
 use serde::Serialize;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -111,20 +112,8 @@ pub struct MicInfo {
     pub host_name: String,
 }
 
-#[derive(Serialize)]
-pub struct SampleRateRange {
-    pub min: u32,
-    pub max: u32,
-    pub channels: u16,
-    pub format: String,
-}
-
-#[derive(Serialize)]
-pub struct DeviceInfo {
-    pub name: String,
-    pub is_default: bool,
-    pub sample_rate_ranges: Vec<SampleRateRange>,
-}
+// `SampleRateRange` and `DeviceInfo` are shared IPC wire types — see
+// `oversample_ipc::mic`, imported above.
 
 #[derive(Serialize)]
 pub struct RecordingResult {

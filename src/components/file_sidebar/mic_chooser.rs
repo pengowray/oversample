@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use crate::state::{AppState, MicBackend, MicAcquisitionState, MicPendingAction, MicDeviceInfo, MicStrategy};
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
+use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
 
 #[derive(Clone, Debug)]
 struct CpalDevice {
@@ -50,51 +50,22 @@ pub fn MicChooserModal() -> impl IntoView {
 
     // Fetch devices on mount
     spawn_local(async move {
-        // Fetch cpal devices (response is { devices: [...], host_name: "..." })
-        match tauri_invoke_no_args("mic_list_devices").await {
-            Ok(val) => {
-                // Extract host_name from response
-                if let Some(hn) = js_sys::Reflect::get(&val, &JsValue::from_str("host_name"))
-                    .ok().and_then(|v| v.as_string())
-                {
-                    cpal_host_name.set(hn);
-                }
-                let devices_val = js_sys::Reflect::get(&val, &JsValue::from_str("devices"))
-                    .ok().unwrap_or(val.clone());
-                let arr = js_sys::Array::from(&devices_val);
+        // Fetch cpal devices via the typed IPC boundary (oversample_ipc::mic).
+        match tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>("mic_list_devices").await {
+            Ok(result) => {
+                cpal_host_name.set(result.host_name);
                 let mut devs = Vec::new();
-                for i in 0..arr.length() {
-                    let item = arr.get(i);
-                    let name = js_sys::Reflect::get(&item, &JsValue::from_str("name"))
-                        .ok()
-                        .and_then(|v| v.as_string())
-                        .unwrap_or_else(|| "Unknown".into());
-                    let is_default = js_sys::Reflect::get(&item, &JsValue::from_str("is_default"))
-                        .ok()
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-
-                    // Parse sample rate ranges
-                    let ranges_val = js_sys::Reflect::get(&item, &JsValue::from_str("sample_rate_ranges"))
-                        .ok()
-                        .unwrap_or(JsValue::UNDEFINED);
-                    let ranges_arr = js_sys::Array::from(&ranges_val);
+                for dev in result.devices {
+                    // Collect the common rates each device's ranges support,
+                    // plus the distinct sample-format tags.
                     let mut rates = Vec::new();
                     let mut formats = std::collections::BTreeSet::new();
-                    for j in 0..ranges_arr.length() {
-                        let range = ranges_arr.get(j);
-                        let min = js_sys::Reflect::get(&range, &JsValue::from_str("min"))
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-                        let max = js_sys::Reflect::get(&range, &JsValue::from_str("max"))
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-                        let fmt = js_sys::Reflect::get(&range, &JsValue::from_str("format"))
-                            .ok().and_then(|v| v.as_string()).unwrap_or_default();
-                        if !fmt.is_empty() {
-                            formats.insert(fmt);
+                    for range in &dev.sample_rate_ranges {
+                        if !range.format.is_empty() {
+                            formats.insert(range.format.clone());
                         }
-                        // Collect common rates within range
                         for &r in &[44100u32, 48000, 96000, 192000, 256000, 384000, 500000] {
-                            if r >= min && r <= max && !rates.contains(&r) {
+                            if r >= range.min && r <= range.max && !rates.contains(&r) {
                                 rates.push(r);
                             }
                         }
@@ -120,7 +91,7 @@ pub fn MicChooserModal() -> impl IntoView {
                         else { None }
                     }).collect();
                     let format = formats.into_iter().collect::<Vec<_>>().join(", ");
-                    devs.push(CpalDevice { name, is_default, rates_summary, format, rates: rates.clone(), bit_depths });
+                    devs.push(CpalDevice { name: dev.name, is_default: dev.is_default, rates_summary, format, rates, bit_depths });
                 }
                 cpal_devices.set(devs);
             }

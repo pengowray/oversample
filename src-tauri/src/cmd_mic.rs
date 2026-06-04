@@ -1,6 +1,7 @@
-use crate::recording::{self, DeviceInfo, MicInfo, MicStatus, RecordingResult};
+use crate::recording::{self, MicInfo, MicStatus, RecordingResult};
 use crate::recovery;
 use crate::MicMutex;
+use oversample_ipc::mic::DeviceListResult;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
 
@@ -108,13 +109,6 @@ pub fn mic_open(
 
     *mic = Some(m);
     Ok(info)
-}
-
-#[derive(serde::Serialize)]
-pub struct DeviceListResult {
-    pub devices: Vec<DeviceInfo>,
-    /// Audio host backend: "WASAPI", "Oboe", "CoreAudio", "ALSA", "JACK", etc.
-    pub host_name: String,
 }
 
 #[tauri::command]

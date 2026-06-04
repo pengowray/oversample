@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod mic;
+
 /// Hash data extracted from an XC sidecar JSON file (stored under the `_app`
 /// key, with a fallback to legacy top-level keys).
 ///

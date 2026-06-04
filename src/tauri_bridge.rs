@@ -38,6 +38,25 @@ pub async fn tauri_invoke_no_args(cmd: &str) -> Result<JsValue, String> {
     tauri_invoke(cmd, &js_sys::Object::new().into()).await
 }
 
+/// Invoke a Tauri command and deserialize its result into a typed value via
+/// `serde_wasm_bindgen`. Prefer this with the shared `oversample-ipc` DTOs over
+/// parsing the returned `JsValue` field-by-field with `Reflect::get`.
+pub async fn tauri_invoke_typed<R: serde::de::DeserializeOwned>(
+    cmd: &str,
+    args: &JsValue,
+) -> Result<R, String> {
+    let val = tauri_invoke(cmd, args).await?;
+    serde_wasm_bindgen::from_value(val)
+        .map_err(|e| format!("Failed to deserialize '{}' result: {:?}", cmd, e))
+}
+
+/// Like [`tauri_invoke_typed`] but for a command that takes no arguments.
+pub async fn tauri_invoke_typed_no_args<R: serde::de::DeserializeOwned>(
+    cmd: &str,
+) -> Result<R, String> {
+    tauri_invoke_typed(cmd, &js_sys::Object::new().into()).await
+}
+
 /// Read a byte range from a native file via Tauri IPC.
 ///
 /// Returns the raw bytes for the range `[offset, offset + length)`.

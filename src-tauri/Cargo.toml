@@ -20,6 +20,7 @@ symphonia = { version = "0.6", default-features = false, features = ["mp3", "iso
 chrono = "0.4"
 xc-lib = { path = "../xc-lib" }
 oversample-core = { path = "../oversample-core" }
+oversample-ipc = { path = "../oversample-ipc" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["fs"] }
 [target.'cfg(not(target_os = "android"))'.dependencies]
