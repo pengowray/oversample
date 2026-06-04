@@ -16,7 +16,7 @@ use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::zc_divide::zc_divide;
 use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
-use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args};
+use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args, tauri_invoke_typed_args, tauri_invoke_args};
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use std::cell::RefCell;
 
@@ -1339,10 +1339,10 @@ async fn open_usb(state: &AppState) -> bool {
         return true;
     }
 
-    // Step 1: List USB devices via Kotlin plugin
-    let devices_result = tauri_invoke("plugin:usb-audio|listUsbDevices",
-        &js_sys::Object::new().into()).await;
-    let devices = match devices_result {
+    // Step 1: list USB devices via the Kotlin plugin and pick the audio device.
+    let list = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
+        "plugin:usb-audio|listUsbDevices",
+    ).await {
         Ok(v) => v,
         Err(e) => {
             log::warn!("USB device listing failed: {}", e);
@@ -1350,45 +1350,25 @@ async fn open_usb(state: &AppState) -> bool {
             return false;
         }
     };
-
-    let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
-        .ok()
-        .map(|v| js_sys::Array::from(&v))
-        .unwrap_or_default();
-
-    let mut audio_device_name: Option<String> = None;
-    let mut has_permission = false;
-    for i in 0..devices_arr.length() {
-        let dev = devices_arr.get(i);
-        let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
-            .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-        if is_audio {
-            audio_device_name = js_sys::Reflect::get(&dev, &JsValue::from_str("deviceName"))
-                .ok().and_then(|v| v.as_string());
-            has_permission = js_sys::Reflect::get(&dev, &JsValue::from_str("hasPermission"))
-                .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-            break;
-        }
-    }
-
-    let device_name = match audio_device_name {
-        Some(n) => n,
-        None => {
-            state.status_message.set(Some("No USB audio device found".into()));
-            return false;
-        }
+    let Some(audio_dev) = list.devices.into_iter().find(|d| d.is_audio_device) else {
+        state.status_message.set(Some("No USB audio device found".into()));
+        return false;
     };
+    let device_name = audio_dev.device_name.clone();
+    // `manufacturerName` is emitted by listUsbDevices (NOT by openUsbDevice), so
+    // capture it here; the Kotlin "Unknown" placeholder counts as absent.
+    let manufacturer_name = (!audio_dev.manufacturer_name.is_empty()
+        && audio_dev.manufacturer_name != "Unknown")
+        .then_some(audio_dev.manufacturer_name.clone());
 
-    // Step 2: Request permission if needed
-    if !has_permission {
-        let perm_args = js_sys::Object::new();
-        js_sys::Reflect::set(&perm_args, &JsValue::from_str("deviceName"),
-            &JsValue::from_str(&device_name)).ok();
-        match tauri_invoke("plugin:usb-audio|requestUsbPermission", &perm_args.into()).await {
+    // Step 2: request permission if needed.
+    if !audio_dev.has_permission {
+        match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbPermissionResult>(
+            "plugin:usb-audio|requestUsbPermission",
+            &oversample_ipc::plugins::UsbDeviceNameArgs { device_name: device_name.clone() },
+        ).await {
             Ok(result) => {
-                let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
-                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                if !granted {
+                if !result.granted {
                     state.status_message.set(Some("USB permission denied".into()));
                     return false;
                 }
@@ -1400,15 +1380,15 @@ async fn open_usb(state: &AppState) -> bool {
         }
     }
 
-    // Step 3: Open device via Kotlin plugin
+    // Step 3: open the device via the Kotlin plugin.
     let max_sr = state.mic_max_sample_rate.get_untracked();
-    let open_args = js_sys::Object::new();
-    js_sys::Reflect::set(&open_args, &JsValue::from_str("deviceName"),
-        &JsValue::from_str(&device_name)).ok();
-    js_sys::Reflect::set(&open_args, &JsValue::from_str("sampleRate"),
-        &JsValue::from_f64(max_sr as f64)).ok();
-
-    let device_info = match tauri_invoke("plugin:usb-audio|openUsbDevice", &open_args.into()).await {
+    let info = match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbOpenResult>(
+        "plugin:usb-audio|openUsbDevice",
+        &oversample_ipc::plugins::UsbOpenArgs {
+            device_name: device_name.clone(),
+            sample_rate: max_sr as i32,
+        },
+    ).await {
         Ok(v) => v,
         Err(e) => {
             state.status_message.set(Some(format!("USB open failed: {}", e)));
@@ -1416,67 +1396,35 @@ async fn open_usb(state: &AppState) -> bool {
         }
     };
 
-    let fd = js_sys::Reflect::get(&device_info, &JsValue::from_str("fd"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(-1.0) as i64;
-    let endpoint_address = js_sys::Reflect::get(&device_info, &JsValue::from_str("endpointAddress"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-    let max_packet_size = js_sys::Reflect::get(&device_info, &JsValue::from_str("maxPacketSize"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-    let sample_rate = js_sys::Reflect::get(&device_info, &JsValue::from_str("sampleRate"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(384000.0) as u32;
-    let num_channels = js_sys::Reflect::get(&device_info, &JsValue::from_str("numChannels"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(1.0) as u32;
-    let product_name = js_sys::Reflect::get(&device_info, &JsValue::from_str("productName"))
-        .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
-    let manufacturer_name = js_sys::Reflect::get(&device_info, &JsValue::from_str("manufacturerName"))
-        .ok().and_then(|v| v.as_string())
-        .filter(|s| !s.is_empty() && s != "Unknown");
-    let interface_number = js_sys::Reflect::get(&device_info, &JsValue::from_str("interfaceNumber"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-    let alternate_setting = js_sys::Reflect::get(&device_info, &JsValue::from_str("alternateSetting"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-
-    if fd < 0 || endpoint_address == 0 || max_packet_size == 0 {
+    let sample_rate = info.sample_rate as u32;
+    let product_name = info.product_name.clone();
+    if info.fd < 0 || info.endpoint_address == 0 || info.max_packet_size == 0 {
         state.status_message.set(Some("USB device: invalid fd or endpoint".into()));
         return false;
     }
 
-    // Step 4: Start USB stream in Rust backend
-    let stream_args = js_sys::Object::new();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("fd"),
-        &JsValue::from_f64(fd as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("endpointAddress"),
-        &JsValue::from_f64(endpoint_address as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("maxPacketSize"),
-        &JsValue::from_f64(max_packet_size as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("sampleRate"),
-        &JsValue::from_f64(sample_rate as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("numChannels"),
-        &JsValue::from_f64(num_channels as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("deviceName"),
-        &JsValue::from_str(&device_name)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("interfaceNumber"),
-        &JsValue::from_f64(interface_number as f64)).ok();
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("alternateSetting"),
-        &JsValue::from_f64(alternate_setting as f64)).ok();
-    let uac_version = js_sys::Reflect::get(&device_info, &JsValue::from_str("uacVersion"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-    js_sys::Reflect::set(&stream_args, &JsValue::from_str("uacVersion"),
-        &JsValue::from_f64(uac_version as f64)).ok();
-
-    match tauri_invoke("usb_start_stream", &stream_args.into()).await {
-        Ok(_) => {}
-        Err(e) => {
-            state.status_message.set(Some(format!("USB stream failed: {}", e)));
-            let _ = tauri_invoke("plugin:usb-audio|closeUsbDevice",
-                &js_sys::Object::new().into()).await;
-            return false;
-        }
+    // Step 4: start the USB stream in the Rust backend.
+    let stream_args = oversample_ipc::plugins::UsbStartStreamArgs {
+        fd: info.fd,
+        endpoint_address: info.endpoint_address as u32,
+        max_packet_size: info.max_packet_size as u32,
+        sample_rate,
+        num_channels: info.num_channels as u32,
+        device_name: device_name.clone(),
+        interface_number: info.interface_number as u32,
+        alternate_setting: info.alternate_setting as u32,
+        uac_version: info.uac_version as u32,
+    };
+    if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
+        state.status_message.set(Some(format!("USB stream failed: {}", e)));
+        let _ = tauri_invoke_no_args("plugin:usb-audio|closeUsbDevice").await;
+        return false;
     }
 
     state.mic_sample_rate.set(sample_rate);
-    let usb_bits = js_sys::Reflect::get(&device_info, &JsValue::from_str("bitDepth"))
-        .ok().and_then(|v| v.as_f64()).unwrap_or(16.0) as u16;
+    // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
+    // (never present) so usb_bits was always stuck at the 16 default.
+    let usb_bits = if info.bit_resolution > 0 { info.bit_resolution as u16 } else { 16 };
     state.mic_bits_per_sample.set(usb_bits);
 
     // Setup HET playback AudioContext and chunk handler (same as cpal)

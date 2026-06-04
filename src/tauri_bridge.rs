@@ -57,6 +57,25 @@ pub async fn tauri_invoke_typed_no_args<R: serde::de::DeserializeOwned>(
     tauri_invoke_typed(cmd, &js_sys::Object::new().into()).await
 }
 
+/// Invoke a command with serde-serialized `args` and deserialize the result into
+/// `R`. Replaces hand-built `Object` + `Reflect::set` arg plumbing.
+pub async fn tauri_invoke_typed_args<A: serde::Serialize, R: serde::de::DeserializeOwned>(
+    cmd: &str,
+    args: &A,
+) -> Result<R, String> {
+    let js_args = serde_wasm_bindgen::to_value(args)
+        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
+    tauri_invoke_typed(cmd, &js_args).await
+}
+
+/// Invoke a command with serde-serialized `args`, ignoring the (typed) result —
+/// only success/failure matters.
+pub async fn tauri_invoke_args<A: serde::Serialize>(cmd: &str, args: &A) -> Result<(), String> {
+    let js_args = serde_wasm_bindgen::to_value(args)
+        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
+    tauri_invoke(cmd, &js_args).await.map(|_| ())
+}
+
 /// Read a byte range from a native file via Tauri IPC.
 ///
 /// Returns the raw bytes for the range `[offset, offset + length)`.
