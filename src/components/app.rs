@@ -148,7 +148,7 @@ pub fn App() -> impl IntoView {
     // Poll for USB device changes every 3 seconds (Tauri only)
     if state.is_tauri {
         wasm_bindgen_futures::spawn_local(async move {
-            use crate::tauri_bridge::tauri_invoke;
+            use crate::tauri_bridge::tauri_invoke_typed_no_args;
             let mut was_connected = false;
             loop {
                 // Sleep 3 seconds
@@ -160,18 +160,15 @@ pub fn App() -> impl IntoView {
                 }
 
                 // Poll USB status via Kotlin plugin
-                let status = match tauri_invoke("plugin:usb-audio|checkUsbStatus",
-                    &js_sys::Object::new().into()).await {
+                let status = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbStatusResult>(
+                    "plugin:usb-audio|checkUsbStatus",
+                ).await {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
 
-                let is_connected = js_sys::Reflect::get(&status, &JsValue::from_str("audioDeviceAttached"))
-                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                let last_event = js_sys::Reflect::get(&status, &JsValue::from_str("lastEvent"))
-                    .ok().and_then(|v| v.as_string());
-                let _product_name = js_sys::Reflect::get(&status, &JsValue::from_str("productName"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
+                let is_connected = status.audio_device_attached;
+                let last_event = status.last_event;
 
                 // Update USB connected state
                 state.mic_usb_connected.set(is_connected);

@@ -147,3 +147,24 @@ pub struct UsbStartStreamArgs {
     pub alternate_setting: u32,
     pub uac_version: u32,
 }
+
+/// Generic `{ granted }` result, e.g. `plugin:usb-audio|requestAudioPermission`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PermissionGranted {
+    #[serde(default)]
+    pub granted: bool,
+}
+
+/// `plugin:usb-audio|checkUsbStatus`. The hotplug fields appear only when an
+/// event is pending (the Kotlin clears them after one poll).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbStatusResult {
+    pub audio_device_attached: bool,
+    #[serde(default)]
+    pub last_event: Option<String>,
+    #[serde(default)]
+    pub product_name: Option<String>,
+    #[serde(default)]
+    pub device_name: Option<String>,
+}

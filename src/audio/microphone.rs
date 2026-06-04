@@ -68,18 +68,17 @@ pub async fn request_audio_permission_tauri(state: &AppState) -> bool {
         return true;
     }
     state.log_debug("info", "Requesting RECORD_AUDIO permission via plugin...");
-    match tauri_invoke("plugin:usb-audio|requestAudioPermission",
-        &js_sys::Object::new().into()).await {
+    match tauri_invoke_typed_no_args::<oversample_ipc::plugins::PermissionGranted>(
+        "plugin:usb-audio|requestAudioPermission",
+    ).await {
         Ok(result) => {
-            let granted = js_sys::Reflect::get(&result, &JsValue::from_str("granted"))
-                .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-            if granted {
+            if result.granted {
                 state.log_debug("info", "RECORD_AUDIO permission granted");
             } else {
                 state.log_debug("error", "RECORD_AUDIO permission denied");
                 state.show_error_toast("Microphone permission denied");
             }
-            granted
+            result.granted
         }
         Err(e) => {
             state.log_debug("warn", format!("requestAudioPermission failed (may not be Android): {}", e));
