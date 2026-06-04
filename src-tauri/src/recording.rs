@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use oversample_ipc::mic::{DeviceInfo, SampleRateRange};
+pub use oversample_ipc::mic::{DeviceInfo, MicInfo, MicStatus, RecordingResult, SampleRateRange};
 use serde::Serialize;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,42 +100,8 @@ pub struct MicState {
     pub recovery: crate::recovery::RecoveryHandle,
 }
 
-#[derive(Serialize)]
-pub struct MicInfo {
-    pub device_name: String,
-    pub sample_rate: u32,
-    pub bits_per_sample: u16,
-    pub is_float: bool,
-    pub format: String,
-    pub supported_sample_rates: Vec<u32>,
-    /// Audio host backend name: "Oboe", "WASAPI", "ASIO", "CoreAudio", "ALSA", "JACK", etc.
-    pub host_name: String,
-}
-
-// `SampleRateRange` and `DeviceInfo` are shared IPC wire types — see
-// `oversample_ipc::mic`, imported above.
-
-#[derive(Serialize)]
-pub struct RecordingResult {
-    pub filename: String,
-    pub saved_path: String,
-    pub sample_rate: u32,
-    pub bits_per_sample: u16,
-    pub is_float: bool,
-    pub duration_secs: f64,
-    pub num_samples: usize,
-    pub samples_f32: Vec<f32>,
-    pub file_size_bytes: usize,
-}
-
-#[derive(Serialize)]
-pub struct MicStatus {
-    pub is_open: bool,
-    pub is_recording: bool,
-    pub is_streaming: bool,
-    pub samples_recorded: usize,
-    pub sample_rate: u32,
-}
+// `MicInfo`, `RecordingResult`, `MicStatus`, `SampleRateRange`, and `DeviceInfo`
+// are shared IPC wire types — see `oversample_ipc::mic` (re-exported above).
 
 fn detect_format(config: &cpal::SupportedStreamConfig) -> NativeSampleFormat {
     match config.sample_format() {

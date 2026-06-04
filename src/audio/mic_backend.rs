@@ -16,7 +16,7 @@ use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::zc_divide::zc_divide;
 use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
-use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args, tauri_invoke_typed_args, tauri_invoke_args};
+use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed, tauri_invoke_typed_no_args, tauri_invoke_typed_args, tauri_invoke_args};
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use std::cell::RefCell;
 
@@ -223,56 +223,26 @@ pub struct TauriRecordingResult {
 impl TauriRecordingResult {
     /// Parse from JsValue returned by Tauri IPC.
     pub fn from_js(result: &JsValue) -> Option<Self> {
-        let filename = js_sys::Reflect::get(result, &JsValue::from_str("filename"))
-            .ok().and_then(|v| v.as_string())
-            .unwrap_or_else(|| "recording.wav".into());
-        let sample_rate = js_sys::Reflect::get(result, &JsValue::from_str("sample_rate"))
-            .ok().and_then(|v| v.as_f64())
-            .unwrap_or(48000.0) as u32;
-        let bits_per_sample = js_sys::Reflect::get(result, &JsValue::from_str("bits_per_sample"))
-            .ok().and_then(|v| v.as_f64())
-            .unwrap_or(16.0) as u16;
-        let is_float = js_sys::Reflect::get(result, &JsValue::from_str("is_float"))
-            .ok().and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let duration_secs = js_sys::Reflect::get(result, &JsValue::from_str("duration_secs"))
-            .ok().and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let saved_path = js_sys::Reflect::get(result, &JsValue::from_str("saved_path"))
-            .ok().and_then(|v| v.as_string())
-            .unwrap_or_default();
-
-        let file_size_bytes = js_sys::Reflect::get(result, &JsValue::from_str("file_size_bytes"))
-            .ok().and_then(|v| v.as_f64())
-            .map(|v| v as usize);
-
-        let samples_js = js_sys::Reflect::get(result, &JsValue::from_str("samples_f32"))
-            .unwrap_or(JsValue::NULL);
-        let samples_array = js_sys::Array::from(&samples_js);
-        let samples: Vec<f32> = (0..samples_array.length())
-            .map(|i| samples_array.get(i).as_f64().unwrap_or(0.0) as f32)
-            .collect();
-
-        // A successful recording can legitimately have empty `samples` —
-        // streaming-to-disk mode (Tauri default) writes the WAV during
-        // capture and returns metadata only. The Rust side returns Err
-        // (not Ok) when there's nothing to save, so any Ok with a positive
-        // duration is a real recording. The skip-save / preroll path also
-        // returns empty samples + empty saved_path but with duration > 0;
-        // tauri_result_to_params re-encodes from the WASM buffer.
-        if duration_secs <= 0.0 && samples.is_empty() {
+        let r: oversample_ipc::mic::RecordingResult =
+            serde_wasm_bindgen::from_value(result.clone()).ok()?;
+        // A successful recording can legitimately have empty samples: streaming-
+        // to-disk mode (Tauri default) writes the WAV during capture and returns
+        // metadata only, and the skip-save / preroll path returns empty samples +
+        // empty saved_path with duration > 0 (re-encoded from the WASM buffer).
+        // The Rust side returns Err when there's nothing to save, so any Ok with
+        // positive duration is real; empty samples AND zero duration is nothing.
+        if r.duration_secs <= 0.0 && r.samples_f32.is_empty() {
             return None;
         }
-
         Some(TauriRecordingResult {
-            filename,
-            saved_path,
-            sample_rate,
-            bits_per_sample,
-            is_float,
-            duration_secs,
-            samples,
-            file_size_bytes,
+            filename: r.filename,
+            saved_path: r.saved_path,
+            sample_rate: r.sample_rate,
+            bits_per_sample: r.bits_per_sample,
+            is_float: r.is_float,
+            duration_secs: r.duration_secs,
+            samples: r.samples_f32,
+            file_size_bytes: Some(r.file_size_bytes),
         })
     }
 }
@@ -1250,7 +1220,7 @@ async fn open_cpal(state: &AppState) -> bool {
         js_sys::Reflect::set(&args, &JsValue::from_str("channels"),
             &JsValue::from_f64(ch as f64)).ok();
     }
-    let result = match tauri_invoke("mic_open", &args.into()).await {
+    let info = match tauri_invoke_typed::<oversample_ipc::mic::MicInfo>("mic_open", &args.into()).await {
         Ok(v) => v,
         Err(e) => {
             log::warn!("Native mic failed: {}", e);
@@ -1259,34 +1229,15 @@ async fn open_cpal(state: &AppState) -> bool {
         }
     };
 
-    // Parse MicInfo from the response
-    let sample_rate = js_sys::Reflect::get(&result, &JsValue::from_str("sample_rate"))
-        .ok().and_then(|v| v.as_f64())
-        .unwrap_or(48000.0) as u32;
-    let bits_per_sample = js_sys::Reflect::get(&result, &JsValue::from_str("bits_per_sample"))
-        .ok().and_then(|v| v.as_f64())
-        .unwrap_or(16.0) as u16;
-    let device_name = js_sys::Reflect::get(&result, &JsValue::from_str("device_name"))
-        .ok().and_then(|v| v.as_string())
-        .unwrap_or_else(|| "Unknown".into());
-    let host_label: Option<String> = js_sys::Reflect::get(&result, &JsValue::from_str("host_name"))
-        .ok().and_then(|v| v.as_string())
-        .filter(|s| !s.is_empty());
-
-    // Parse supported_sample_rates from MicInfo response
-    let supported_rates: Vec<u32> = js_sys::Reflect::get(&result, &JsValue::from_str("supported_sample_rates"))
-        .ok()
-        .and_then(|v| {
-            let arr = js_sys::Array::from(&v);
-            let mut rates = Vec::new();
-            for i in 0..arr.length() {
-                if let Some(r) = arr.get(i).as_f64() {
-                    rates.push(r as u32);
-                }
-            }
-            if rates.is_empty() { None } else { Some(rates) }
-        })
-        .unwrap_or_default();
+    let sample_rate = info.sample_rate;
+    let bits_per_sample = info.bits_per_sample;
+    let device_name = if info.device_name.is_empty() {
+        "Unknown".to_string()
+    } else {
+        info.device_name
+    };
+    let host_label: Option<String> = (!info.host_name.is_empty()).then_some(info.host_name);
+    let supported_rates = info.supported_sample_rates;
     if !supported_rates.is_empty() {
         state.mic_supported_rates.set(supported_rates);
     }
