@@ -235,7 +235,7 @@ pub fn mic_stop_recording(
             is_float,
             duration_secs,
             num_samples,
-            samples_f32: Vec::new(),
+            has_memory_samples: false,
             file_size_bytes: 0,
         });
     }
@@ -269,7 +269,7 @@ pub fn mic_stop_recording(
     );
     let guano_text = guano.to_text();
 
-    let (saved_path, file_size_bytes, samples_f32) = if streaming_mode {
+    let (saved_path, file_size_bytes, has_memory_samples) = if streaming_mode {
         // Streaming-to-disk: the partial file already contains every sample
         // that was flushed. Take whatever's still in the tail buffer, append
         // it + the GUANO chunk, patch the header, then move the finished file
@@ -312,11 +312,12 @@ pub fn mic_stop_recording(
                 .map_err(|e| format!("recovery: rename to final path: {}", e))?;
             target.to_string_lossy().to_string()
         };
-        (saved_path, final_size as usize, Vec::new())
+        (saved_path, final_size as usize, false)
     } else {
         // To-memory mode: encode from the accumulated in-memory samples (no
-        // streaming happened). Same path as before this refactor. Returns
-        // samples_f32 so the WASM side can finalize without touching disk.
+        // streaming happened). The captured samples are stashed on the native
+        // side for the WASM finalizer to fetch as raw f32 bytes via
+        // `mic_take_recorded_samples` (instead of a giant inline JSON array).
         let buf = m.buffer.lock().unwrap();
         let samples_f32 = recording::get_samples_f32(&buf);
         let mut wav_data = recording::encode_native_wav(&buf)?;
@@ -338,7 +339,10 @@ pub fn mic_stop_recording(
             std::fs::write(&full_path, &wav_data).map_err(|e| e.to_string())?;
             full_path.to_string_lossy().to_string()
         };
-        (path, file_size_bytes, samples_f32)
+        // Stash the captured samples for the WASM finalizer to pull as raw bytes.
+        let has_mem = !samples_f32.is_empty();
+        *app.state::<crate::RecordedMemoryMutex>().inner().lock().unwrap() = samples_f32;
+        (path, file_size_bytes, has_mem)
     };
 
     Ok(RecordingResult {
@@ -349,7 +353,7 @@ pub fn mic_stop_recording(
         is_float,
         duration_secs,
         num_samples,
-        samples_f32,
+        has_memory_samples,
         file_size_bytes,
     })
 }
@@ -399,6 +403,25 @@ pub fn mic_pull_audio(
             .unwrap_or_default(),
     };
 
+    let mut bytes = Vec::with_capacity(samples.len() * 4);
+    for s in samples {
+        bytes.extend_from_slice(&s.to_le_bytes());
+    }
+    tauri::ipc::Response::new(bytes)
+}
+
+/// Take the to-memory recording samples stashed by `mic_stop_recording` /
+/// `usb_stop_recording`, returned as raw little-endian f32 bytes (an
+/// ArrayBuffer to the frontend) and clearing the stash. Empty when no
+/// to-memory recording is awaiting pickup.
+#[tauri::command]
+pub fn mic_take_recorded_samples(
+    recorded: tauri::State<crate::RecordedMemoryMutex>,
+) -> tauri::ipc::Response {
+    let samples = recorded
+        .lock()
+        .map(|mut g| std::mem::take(&mut *g))
+        .unwrap_or_default();
     let mut bytes = Vec::with_capacity(samples.len() * 4);
     for s in samples {
         bytes.extend_from_slice(&s.to_le_bytes());

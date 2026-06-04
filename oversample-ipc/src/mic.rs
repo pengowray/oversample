@@ -45,8 +45,12 @@ pub struct MicInfo {
     pub host_name: String,
 }
 
-/// Result of `mic_stop_recording` / `usb_stop_recording`. `samples_f32` is the
-/// captured audio (can be large; raw-bytes transport is deferred to Phase 4).
+/// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).
+///
+/// To-memory recordings keep the captured audio on the native side; when
+/// `has_memory_samples` is set the frontend fetches it as raw f32 bytes via the
+/// `mic_take_recorded_samples` command (an ArrayBuffer) rather than receiving it
+/// inline as a JSON array of floats.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RecordingResult {
     pub filename: String,
@@ -56,7 +60,9 @@ pub struct RecordingResult {
     pub is_float: bool,
     pub duration_secs: f64,
     pub num_samples: usize,
-    pub samples_f32: Vec<f32>,
+    /// True when the native side has stashed to-memory samples for pickup via
+    /// `mic_take_recorded_samples`.
+    pub has_memory_samples: bool,
     pub file_size_bytes: usize,
 }
 

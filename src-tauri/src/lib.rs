@@ -19,6 +19,10 @@ use usb_audio::UsbStreamState;
 pub(crate) type MicMutex = Mutex<Option<MicState>>;
 pub(crate) type PlaybackMutex = Mutex<Option<PlaybackState>>;
 pub(crate) type UsbStreamMutex = Mutex<Option<UsbStreamState>>;
+/// To-memory recording samples stashed by `mic_stop_recording` /
+/// `usb_stop_recording` for the frontend to fetch as raw bytes via
+/// `mic_take_recorded_samples` (rather than an inline JSON array).
+pub(crate) type RecordedMemoryMutex = Mutex<Vec<f32>>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +34,7 @@ pub fn run() {
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))
+        .manage(Mutex::new(Vec::<f32>::new()))
         .setup(|app| {
             let cache_root = app
                 .path()
@@ -51,6 +56,7 @@ pub fn run() {
             cmd_mic::mic_stop_recording,
             cmd_mic::mic_set_listening,
             cmd_mic::mic_pull_audio,
+            cmd_mic::mic_take_recorded_samples,
             cmd_mic::mic_get_status,
             cmd_mic::mic_list_devices,
             cmd_mic::mic_recover_recordings,

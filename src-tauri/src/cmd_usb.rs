@@ -176,7 +176,7 @@ pub fn usb_stop_recording(
             is_float: false,
             duration_secs,
             num_samples,
-            samples_f32: Vec::new(),
+            has_memory_samples: false,
             file_size_bytes: 0,
         });
     }
@@ -218,7 +218,7 @@ pub fn usb_stop_recording(
     );
     let guano_text = guano.to_text();
 
-    let (saved_path, file_size_bytes, samples_f32) = if streaming_mode {
+    let (saved_path, file_size_bytes, has_memory_samples) = if streaming_mode {
         // Streaming-to-disk: partial file has every flushed sample. Append
         // the tail + GUANO, patch the header, then move to destination.
         let writer = recovery_writer.expect("streaming_mode implies writer");
@@ -246,9 +246,10 @@ pub fn usb_stop_recording(
                 .map_err(|e| format!("recovery: rename to final path: {}", e))?;
             target.to_string_lossy().to_string()
         };
-        (saved_path, final_size, Vec::new())
+        (saved_path, final_size, false)
     } else {
-        // To-memory mode: encode the accumulated i16 buffer, return samples.
+        // To-memory mode: encode the accumulated i16 buffer; stash the samples
+        // for the WASM finalizer to pull as raw bytes (mic_take_recorded_samples).
         let samples_f32 = usb_audio::get_usb_samples_f32(s);
         let mut wav_data = usb_audio::encode_usb_wav(s)?;
         oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
@@ -267,7 +268,9 @@ pub fn usb_stop_recording(
             std::fs::write(&full_path, &wav_data).map_err(|e| e.to_string())?;
             full_path.to_string_lossy().to_string()
         };
-        (path, file_size_bytes, samples_f32)
+        let has_mem = !samples_f32.is_empty();
+        *app.state::<crate::RecordedMemoryMutex>().inner().lock().unwrap() = samples_f32;
+        (path, file_size_bytes, has_mem)
     };
 
     Ok(RecordingResult {
@@ -278,7 +281,7 @@ pub fn usb_stop_recording(
         is_float: false,
         duration_secs,
         num_samples,
-        samples_f32,
+        has_memory_samples,
         file_size_bytes,
     })
 }

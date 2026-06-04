@@ -208,17 +208,24 @@ pub struct TauriRecordingResult {
 }
 
 impl TauriRecordingResult {
-    /// Parse from JsValue returned by Tauri IPC.
-    pub fn from_result(r: oversample_ipc::mic::RecordingResult) -> Option<Self> {
-        // A successful recording can legitimately have empty samples: streaming-
-        // to-disk mode (Tauri default) writes the WAV during capture and returns
-        // metadata only, and the skip-save / preroll path returns empty samples +
-        // empty saved_path with duration > 0 (re-encoded from the WASM buffer).
-        // The Rust side returns Err when there's nothing to save, so any Ok with
-        // positive duration is real; empty samples AND zero duration is nothing.
-        if r.duration_secs <= 0.0 && r.samples_f32.is_empty() {
+    /// Build from the IPC metadata, fetching to-memory samples as raw bytes when
+    /// the native side stashed them (`has_memory_samples`).
+    pub async fn from_result(r: oversample_ipc::mic::RecordingResult) -> Option<Self> {
+        // A successful recording can legitimately have no in-memory samples:
+        // streaming-to-disk mode (Tauri default) writes the WAV during capture
+        // and returns metadata only, and the skip-save / preroll path returns no
+        // samples + empty saved_path with duration > 0 (re-encoded from the WASM
+        // buffer). The Rust side returns Err when there's nothing to save, so any
+        // Ok with positive duration is real; no samples AND zero duration is
+        // nothing.
+        if r.duration_secs <= 0.0 && !r.has_memory_samples {
             return None;
         }
+        let samples = if r.has_memory_samples {
+            fetch_recorded_samples().await
+        } else {
+            Vec::new()
+        };
         Some(TauriRecordingResult {
             filename: r.filename,
             saved_path: r.saved_path,
@@ -226,9 +233,26 @@ impl TauriRecordingResult {
             bits_per_sample: r.bits_per_sample,
             is_float: r.is_float,
             duration_secs: r.duration_secs,
-            samples: r.samples_f32,
+            samples,
             file_size_bytes: Some(r.file_size_bytes),
         })
+    }
+}
+
+/// Fetch the to-memory recording samples the native side stashed (raw f32
+/// little-endian bytes as an ArrayBuffer) and decode them. Empty on failure or
+/// when nothing was stashed.
+async fn fetch_recorded_samples() -> Vec<f32> {
+    match crate::tauri_bridge::tauri_invoke_no_args("mic_take_recorded_samples").await {
+        Ok(val) => val
+            .dyn_into::<js_sys::ArrayBuffer>()
+            .ok()
+            .map(|buf| js_sys::Float32Array::new(&buf).to_vec())
+            .unwrap_or_default(),
+        Err(e) => {
+            log::warn!("mic_take_recorded_samples failed: {}", e);
+            Vec::new()
+        }
     }
 }
 
@@ -523,7 +547,7 @@ impl ActiveBackend {
                     &build_stop_recording_args(state),
                 ).await {
                     Ok(result) => {
-                        match TauriRecordingResult::from_result(result) {
+                        match TauriRecordingResult::from_result(result).await {
                             Some(r) => {
                                 if r.saved_path.starts_with("shared://") {
                                     finalize_shared_entry().await;
@@ -548,7 +572,7 @@ impl ActiveBackend {
                     &build_stop_recording_args(state),
                 ).await {
                     Ok(result) => {
-                        match TauriRecordingResult::from_result(result) {
+                        match TauriRecordingResult::from_result(result).await {
                             Some(r) => {
                                 if r.saved_path.starts_with("shared://") {
                                     finalize_shared_entry().await;
