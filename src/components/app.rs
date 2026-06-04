@@ -69,9 +69,13 @@ pub fn App() -> impl IntoView {
                                     state.show_error_toast(format!("Failed to load {}", xc_id));
                                 }
                             } else {
+                                // The live XC API is unavailable on the web build
+                                // (no CORS / proxy — see xc_browser.rs), so point
+                                // the user at the original recording instead.
+                                let numeric = xc_id.trim_start_matches("XC");
                                 state.show_info_toast(format!(
-                                    "{} is not available in the demo audio. Only a small selection of recordings are included.",
-                                    xc_id
+                                    "{} isn't in the included demo audio — view it at xeno-canto.org/{}",
+                                    xc_id, numeric
                                 ));
                             }
                         }

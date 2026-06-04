@@ -1,3 +1,17 @@
+//! Xeno-Canto browser — **Tauri-only, by necessity, not an oversight**.
+//!
+//! Every operation here calls a native `xc_*` command (reqwest backend, shared
+//! `xc-lib`) unconditionally — there is deliberately no browser `fetch()` path.
+//! The XC API (`xeno-canto.org/api/3`) and its audio CDN do not send permissive
+//! CORS headers and the project ships no proxy, so a browser fetch from
+//! app.oversample.com would fail with a CORS error. The "Explore XC" entry
+//! point is gated behind `state.is_tauri` (files_panel.rs), so this UI is never
+//! reachable on the web build.
+//!
+//! The web build's only XC affordance is the `#XC<id>` URL-hash deep-link
+//! (app.rs), which searches the curated demo index — NOT the live API. A real
+//! browser XC mode would require a CORS-enabled proxy (a new feature, not a fix).
+
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::prelude::*;
