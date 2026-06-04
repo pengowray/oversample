@@ -16,7 +16,7 @@ use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::zc_divide::zc_divide;
 use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
-use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed, tauri_invoke_typed_no_args, tauri_invoke_typed_args, tauri_invoke_args};
+use crate::tauri_bridge::{get_tauri_internals, tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args, tauri_invoke_typed_args, tauri_invoke_args};
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use std::cell::RefCell;
 
@@ -37,16 +37,13 @@ use std::cell::RefCell;
 /// - `mic_preroll_samples > 0`: pre-roll recording re-encodes the WAV on the
 ///   WASM side to splice in the pre-roll buffer + cue marker; any partial
 ///   written in that case would be thrown away.
-fn build_start_recording_args(state: &AppState, shared_fd: Option<i32>) -> JsValue {
-    let args = js_sys::Object::new();
-    if let Some(fd_val) = shared_fd {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("sharedFd"), &JsValue::from_f64(fd_val as f64));
-    }
-
+fn build_start_recording_args(
+    state: &AppState,
+    shared_fd: Option<i32>,
+) -> oversample_ipc::mic::StartRecordingArgs {
     let to_memory = state.record_mode.get_untracked() == crate::state::RecordMode::ToMemory;
     let preroll = state.mic_preroll_samples.get_untracked();
     let stream_to_disk = state.is_tauri && !to_memory && preroll == 0;
-    let _ = js_sys::Reflect::set(&args, &JsValue::from_str("enableRecovery"), &JsValue::from_bool(stream_to_disk));
 
     // Filename mirrors the one the WASM side uses for the live file so the
     // sidecar + partial match up with the final WAV name on recovery.
@@ -54,70 +51,61 @@ fn build_start_recording_args(state: &AppState, shared_fd: Option<i32>) -> JsVal
         .mic_live_file_idx
         .get_untracked()
         .and_then(|idx| state.files.with_untracked(|f| f.get(idx).map(|f| f.name.clone())));
-    if let Some(name) = filename {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(&name));
+
+    let (device_make, device_model) = if state.device_model_enabled.get_untracked() {
+        (state.cached_device_make.get_untracked(), state.cached_device_model.get_untracked())
+    } else {
+        (None, None)
+    };
+
+    let (loc_latitude, loc_longitude, loc_elevation, loc_accuracy) =
+        match state.recording_location.get_untracked() {
+            Some(loc) => (Some(loc.latitude), Some(loc.longitude), loc.elevation, loc.accuracy),
+            None => (None, None, None, None),
+        };
+
+    oversample_ipc::mic::StartRecordingArgs {
+        shared_fd,
+        enable_recovery: stream_to_disk,
+        filename,
+        connection_type: state.mic_connection_type.get_untracked(),
+        mic_name: state.mic_device_name.get_untracked(),
+        mic_make: state.mic_manufacturer.get_untracked(),
+        device_make,
+        device_model,
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        loc_latitude,
+        loc_longitude,
+        loc_elevation,
+        loc_accuracy,
     }
-    if let Some(c) = state.mic_connection_type.get_untracked() {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("connectionType"), &JsValue::from_str(&c));
-    }
-    if let Some(n) = state.mic_device_name.get_untracked() {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("micName"), &JsValue::from_str(&n));
-    }
-    if let Some(n) = state.mic_manufacturer.get_untracked() {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("micMake"), &JsValue::from_str(&n));
-    }
-    if state.device_model_enabled.get_untracked() {
-        if let Some(make) = state.cached_device_make.get_untracked() {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("deviceMake"), &JsValue::from_str(&make));
-        }
-        if let Some(model) = state.cached_device_model.get_untracked() {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("deviceModel"), &JsValue::from_str(&model));
-        }
-    }
-    let _ = js_sys::Reflect::set(&args, &JsValue::from_str("appVersion"), &JsValue::from_str(env!("CARGO_PKG_VERSION")));
-    if let Some(loc) = state.recording_location.get_untracked() {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLatitude"), &JsValue::from_f64(loc.latitude));
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLongitude"), &JsValue::from_f64(loc.longitude));
-        if let Some(e) = loc.elevation {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locElevation"), &JsValue::from_f64(e));
-        }
-        if let Some(a) = loc.accuracy {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locAccuracy"), &JsValue::from_f64(a));
-        }
-    }
-    args.into()
 }
 
 /// Build IPC args for mic_stop_recording / usb_stop_recording,
 /// including optional GPS location and device model fields from state.
-fn build_stop_recording_args(state: &AppState) -> JsValue {
-    let args = js_sys::Object::new();
-    if let Some(loc) = state.recording_location.get_untracked() {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLatitude"), &JsValue::from_f64(loc.latitude));
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locLongitude"), &JsValue::from_f64(loc.longitude));
-        if let Some(e) = loc.elevation {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locElevation"), &JsValue::from_f64(e));
-        }
-        if let Some(a) = loc.accuracy {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("locAccuracy"), &JsValue::from_f64(a));
-        }
+fn build_stop_recording_args(state: &AppState) -> oversample_ipc::mic::StopRecordingArgs {
+    let (loc_latitude, loc_longitude, loc_elevation, loc_accuracy) =
+        match state.recording_location.get_untracked() {
+            Some(loc) => (Some(loc.latitude), Some(loc.longitude), loc.elevation, loc.accuracy),
+            None => (None, None, None, None),
+        };
+    let (device_make, device_model) = if state.device_model_enabled.get_untracked() {
+        (state.cached_device_make.get_untracked(), state.cached_device_model.get_untracked())
+    } else {
+        (None, None)
+    };
+    oversample_ipc::mic::StopRecordingArgs {
+        loc_latitude,
+        loc_longitude,
+        loc_elevation,
+        loc_accuracy,
+        device_make,
+        device_model,
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        // Pre-roll: skip native WAV encoding/saving — the WASM side re-encodes
+        // with the full buffer + cue markers.
+        skip_native_save: (state.mic_preroll_samples.get_untracked() > 0).then_some(true),
     }
-    if state.device_model_enabled.get_untracked() {
-        if let Some(make) = state.cached_device_make.get_untracked() {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("deviceMake"), &JsValue::from_str(&make));
-        }
-        if let Some(model) = state.cached_device_model.get_untracked() {
-            let _ = js_sys::Reflect::set(&args, &JsValue::from_str("deviceModel"), &JsValue::from_str(&model));
-        }
-    }
-    // Pass the app version so the Tauri backend can embed the correct version in GUANO
-    let _ = js_sys::Reflect::set(&args, &JsValue::from_str("appVersion"), &JsValue::from_str(env!("CARGO_PKG_VERSION")));
-    // When pre-roll is active, tell the native backend to skip WAV encoding and
-    // file saving — the WASM side will re-encode with the full buffer + cue markers.
-    if state.mic_preroll_samples.get_untracked() > 0 {
-        let _ = js_sys::Reflect::set(&args, &JsValue::from_str("skipNativeSave"), &JsValue::TRUE);
-    }
-    args.into()
 }
 
 // ── Thread-local state: Web Audio mode ──────────────────────────────────
@@ -222,9 +210,7 @@ pub struct TauriRecordingResult {
 
 impl TauriRecordingResult {
     /// Parse from JsValue returned by Tauri IPC.
-    pub fn from_js(result: &JsValue) -> Option<Self> {
-        let r: oversample_ipc::mic::RecordingResult =
-            serde_wasm_bindgen::from_value(result.clone()).ok()?;
+    pub fn from_result(r: oversample_ipc::mic::RecordingResult) -> Option<Self> {
         // A successful recording can legitimately have empty samples: streaming-
         // to-disk mode (Tauri default) writes the WAV during capture and returns
         // metadata only, and the skip-save / preroll path returns empty samples +
@@ -504,13 +490,11 @@ impl ActiveBackend {
             ActiveBackend::Browser => Ok(()),
             ActiveBackend::Cpal => {
                 let fd = try_create_shared_fd(state).await;
-                let args = build_start_recording_args(state, fd);
-                tauri_invoke("mic_start_recording", &args).await.map(|_| ())
+                tauri_invoke_args("mic_start_recording", &build_start_recording_args(state, fd)).await
             }
             ActiveBackend::RawUsb => {
                 let fd = try_create_shared_fd(state).await;
-                let args = build_start_recording_args(state, fd);
-                tauri_invoke("usb_start_recording", &args).await.map(|_| ())
+                tauri_invoke_args("usb_start_recording", &build_start_recording_args(state, fd)).await
             }
         }
     }
@@ -535,10 +519,12 @@ impl ActiveBackend {
                 }
             }
             ActiveBackend::Cpal => {
-                let args = build_stop_recording_args(state);
-                match tauri_invoke("mic_stop_recording", &args).await {
+                match tauri_invoke_typed_args::<_, oversample_ipc::mic::RecordingResult>(
+                    "mic_stop_recording",
+                    &build_stop_recording_args(state),
+                ).await {
                     Ok(result) => {
-                        match TauriRecordingResult::from_js(&result) {
+                        match TauriRecordingResult::from_result(result) {
                             Some(r) => {
                                 if r.saved_path.starts_with("shared://") {
                                     finalize_shared_entry().await;
@@ -558,10 +544,12 @@ impl ActiveBackend {
                 }
             }
             ActiveBackend::RawUsb => {
-                let args = build_stop_recording_args(state);
-                match tauri_invoke("usb_stop_recording", &args).await {
+                match tauri_invoke_typed_args::<_, oversample_ipc::mic::RecordingResult>(
+                    "usb_stop_recording",
+                    &build_stop_recording_args(state),
+                ).await {
                     Ok(result) => {
-                        match TauriRecordingResult::from_js(&result) {
+                        match TauriRecordingResult::from_result(result) {
                             Some(r) => {
                                 if r.saved_path.starts_with("shared://") {
                                     finalize_shared_entry().await;
@@ -590,10 +578,10 @@ impl ActiveBackend {
         match self {
             ActiveBackend::Browser => { /* callback checks mic_listening signal */ }
             ActiveBackend::Cpal => {
-                let args = js_sys::Object::new();
-                js_sys::Reflect::set(&args, &"listening".into(),
-                    &JsValue::from_bool(enabled)).ok();
-                let _ = tauri_invoke("mic_set_listening", &args.into()).await;
+                let _ = tauri_invoke_args(
+                    "mic_set_listening",
+                    &oversample_ipc::mic::SetListeningArgs { listening: enabled },
+                ).await;
             }
             ActiveBackend::RawUsb => { /* USB streams continuously once open */ }
         }
@@ -1198,29 +1186,20 @@ async fn open_cpal(state: &AppState) -> bool {
     let max_bits = state.mic_max_bit_depth.get_untracked();
     let channel_mode = state.mic_channel_mode.get_untracked();
     let selected_device = state.mic_selected_device.get_untracked();
-    let args = js_sys::Object::new();
-    if max_sr > 0 {
-        js_sys::Reflect::set(&args, &JsValue::from_str("maxSampleRate"),
-            &JsValue::from_f64(max_sr as f64)).ok();
-    }
-    if let Some(ref name) = selected_device {
-        js_sys::Reflect::set(&args, &JsValue::from_str("deviceName"),
-            &JsValue::from_str(name)).ok();
-    }
-    if max_bits > 0 {
-        js_sys::Reflect::set(&args, &JsValue::from_str("maxBitDepth"),
-            &JsValue::from_f64(max_bits as f64)).ok();
-    }
-    {
+    let channels: u16 = {
         use crate::state::ChannelMode;
-        let ch: u16 = match channel_mode {
+        match channel_mode {
             ChannelMode::Mono => 1,
             ChannelMode::Stereo => 2,
-        };
-        js_sys::Reflect::set(&args, &JsValue::from_str("channels"),
-            &JsValue::from_f64(ch as f64)).ok();
-    }
-    let info = match tauri_invoke_typed::<oversample_ipc::mic::MicInfo>("mic_open", &args.into()).await {
+        }
+    };
+    let open_args = oversample_ipc::mic::MicOpenArgs {
+        max_sample_rate: (max_sr > 0).then_some(max_sr),
+        device_name: selected_device,
+        max_bit_depth: (max_bits > 0).then_some(max_bits as u16),
+        channels: Some(channels),
+    };
+    let info = match tauri_invoke_typed_args::<_, oversample_ipc::mic::MicInfo>("mic_open", &open_args).await {
         Ok(v) => v,
         Err(e) => {
             log::warn!("Native mic failed: {}", e);

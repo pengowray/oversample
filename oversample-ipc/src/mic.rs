@@ -69,3 +69,78 @@ pub struct MicStatus {
     pub samples_recorded: usize,
     pub sample_rate: u32,
 }
+
+// Arg structs (camelCase wire keys; Tauri maps them onto the snake_case command
+// params). Optional fields are omitted from the wire when None, matching the
+// previous "set only if present" behaviour.
+
+/// Args for `mic_open` (cpal).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicOpenArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bit_depth: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u16>,
+}
+
+/// Args for `mic_start_recording` / `usb_start_recording`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRecordingArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_fd: Option<i32>,
+    pub enable_recovery: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic_make: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_make: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_model: Option<String>,
+    pub app_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_latitude: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_longitude: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_elevation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_accuracy: Option<f64>,
+}
+
+/// Args for `mic_stop_recording` / `usb_stop_recording`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopRecordingArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_latitude: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_longitude: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_elevation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc_accuracy: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_make: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_model: Option<String>,
+    pub app_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_native_save: Option<bool>,
+}
+
+/// Args for `mic_set_listening`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SetListeningArgs {
+    pub listening: bool,
+}
