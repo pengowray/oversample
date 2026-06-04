@@ -85,10 +85,12 @@ fn remove_file_at(state: &AppState, i: usize) {
             files.remove(i);
         }
     });
+    // Read files len OUTSIDE the current_index().update() guard — siblings in
+    // the `library` store share one borrow cell (inner read would conflict).
+    let new_len = state.library.files().get_untracked().len();
     state.library.current_index().update(|idx| {
         *idx = match *idx {
             Some(cur) if cur == i => {
-                let new_len = state.library.files().get_untracked().len();
                 if new_len == 0 { None }
                 else if i > 0 { Some(i - 1) }
                 else { Some(0) }

@@ -244,8 +244,11 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // NB: must be OUTSIDE the files().update() closure — current_index and
+        // files are siblings in the `library` store, so setting one while the
+        // other's write guard is held silently no-ops (reactive_stores).
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 

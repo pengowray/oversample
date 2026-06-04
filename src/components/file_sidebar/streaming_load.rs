@@ -227,8 +227,11 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 
@@ -525,8 +528,11 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 
@@ -899,8 +905,11 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 
@@ -1279,8 +1288,11 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 
@@ -1904,8 +1916,11 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
                 min_display_freq: None,
                 max_display_freq: None,
             });
-            state.library.current_index().set(Some(idx));
         });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
         file_index = idx;
     }
 
