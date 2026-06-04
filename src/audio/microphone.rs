@@ -491,6 +491,14 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
         Err(e) => {
             log::error!("start_recording failed: {}", e);
             state.status_message.set(Some(format!("Failed to start recording: {}", e)));
+            // A shared-storage (Android MediaStore) entry + fd may have been
+            // reserved before start failed; delete the orphaned pending row so
+            // it doesn't linger as a 0-byte file. (The detached fd itself can
+            // only be reclaimed by the OS — see SharedFdGuard for the native
+            // stop-path leak fix.)
+            if state.is_tauri {
+                crate::audio::mic_backend::cancel_shared_entry().await;
+            }
             // If we were listening, clean up the orphaned listen file
             if has_listen_file {
                 state.mic_listening.set(false);

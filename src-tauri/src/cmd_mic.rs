@@ -204,6 +204,9 @@ pub fn mic_stop_recording(
         let mut buf = m.buffer.lock().unwrap();
         (buf.total_samples, buf.sample_rate, buf.shared_fd.take())
     };
+    // RAII-own the shared-storage fd so every early return below (no-samples,
+    // skip-save, finalize error) closes it instead of leaking it.
+    let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
     let bits_per_sample = m.format.bits_per_sample();
     let is_float = m.format.is_float();
     let duration_secs = num_samples as f64 / sample_rate as f64;
@@ -292,7 +295,7 @@ pub fn mic_stop_recording(
 
         let final_size = finalized_path.metadata().map(|m| m.len()).unwrap_or(0);
 
-        let saved_path = if let Some(fd) = shared_fd {
+        let saved_path = if let Some(fd) = shared_fd.take() {
             // Copy internal → shared fd (streaming, no big RAM blob), then
             // drop the internal copy. On Android this writes to the MediaStore
             // URI the frontend reserved at record start.
@@ -325,7 +328,7 @@ pub fn mic_stop_recording(
         oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
         let file_size_bytes = wav_data.len();
 
-        let path = if let Some(fd) = shared_fd {
+        let path = if let Some(fd) = shared_fd.take() {
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {

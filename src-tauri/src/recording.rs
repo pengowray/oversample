@@ -75,6 +75,42 @@ impl RecordingBuffer {
     }
 }
 
+/// RAII owner for the raw shared-storage (Android MediaStore) fd during a
+/// recording stop. Kotlin's `detachFd()` hands Rust a bare fd that nothing else
+/// will close, so any early return between taking it off the buffer and writing
+/// to it would leak it (fd exhaustion after enough no-sample / skip-save /
+/// finalize-error stops). Wrapping it means every `?`/return path closes it; the
+/// write path calls [`take`](Self::take) to assume ownership (handing it to
+/// `File::from_raw_fd`) and defuse the guard.
+///
+/// Off-Android there is never a shared fd (`try_create_shared_fd` is mobile-only,
+/// so `shared_fd` is always `None`), hence the close is `target_os = "android"`
+/// only — matching where `libc` is a dependency.
+pub(crate) struct SharedFdGuard(Option<i32>);
+
+impl SharedFdGuard {
+    pub(crate) fn new(fd: Option<i32>) -> Self {
+        Self(fd)
+    }
+
+    /// Assume ownership of the fd (for handoff to `File::from_raw_fd`), defusing
+    /// the guard. Returns `None` if there was no fd.
+    pub(crate) fn take(&mut self) -> Option<i32> {
+        self.0.take()
+    }
+}
+
+impl Drop for SharedFdGuard {
+    fn drop(&mut self) {
+        #[cfg(target_os = "android")]
+        if let Some(fd) = self.0.take() {
+            unsafe {
+                libc::close(fd);
+            }
+        }
+    }
+}
+
 /// Wrapper to allow cpal::Stream in Tauri managed state.
 /// Safe because we only store/drop the stream; we never access its internals
 /// from multiple threads simultaneously.

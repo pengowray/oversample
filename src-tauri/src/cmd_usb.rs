@@ -143,6 +143,8 @@ pub fn usb_stop_recording(
         let mut buf = s.buffer.lock().unwrap();
         (buf.total_samples, buf.sample_rate, buf.shared_fd.take())
     };
+    // RAII-own the shared-storage fd so every early return below closes it.
+    let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
 
     // Take the recovery writer out. Done under the writer lock so the emitter
     // can't race us and flush between here and the final tail drain below.
@@ -167,7 +169,7 @@ pub fn usb_stop_recording(
         if let Some(writer) = recovery_writer {
             recovery::cleanup(writer);
         }
-        let _ = shared_fd;
+        drop(shared_fd); // close the unused shared fd
         return Ok(RecordingResult {
             filename: String::new(),
             saved_path: String::new(),
@@ -230,7 +232,7 @@ pub fn usb_stop_recording(
             .map_err(|e| format!("recovery finalize failed: {}", e))?;
         let final_size = finalized_path.metadata().map(|m| m.len()).unwrap_or(0) as usize;
 
-        let saved_path = if let Some(fd) = shared_fd {
+        let saved_path = if let Some(fd) = shared_fd.take() {
             crate::cmd_mic::stream_finalized_to_shared_fd(&finalized_path, fd)?;
             let _ = std::fs::remove_file(&finalized_path);
             "shared://recording".to_string()
@@ -254,7 +256,7 @@ pub fn usb_stop_recording(
         let mut wav_data = usb_audio::encode_usb_wav(s)?;
         oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
         let file_size_bytes = wav_data.len();
-        let path = if let Some(fd) = shared_fd {
+        let path = if let Some(fd) = shared_fd.take() {
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {
