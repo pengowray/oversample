@@ -238,7 +238,7 @@ async fn stop_foreground_service(state: &AppState) {
 /// Persist that we've surfaced the notification-permission rationale so it never
 /// re-prompts. Shared by the rationale modal and the no-op fast path below.
 pub(crate) fn mark_notif_asked(state: &AppState) {
-    state.notif_perm_asked.set(true);
+    state.dialogs.notif_perm_asked().set(true);
     if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = ls.set_item("oversample_notif_perm_asked", "true");
     }
@@ -261,7 +261,7 @@ async fn maybe_prompt_notifications(state: &AppState) {
     if !state.is_tauri || !state.is_mobile.get_untracked() {
         return;
     }
-    if state.notif_perm_asked.get_untracked() {
+    if state.dialogs.notif_perm_asked().get_untracked() {
         return;
     }
     let status = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::NotificationPermissionStatus>(
@@ -276,7 +276,7 @@ async fn maybe_prompt_notifications(state: &AppState) {
         mark_notif_asked(state);
         return;
     }
-    state.show_notif_rationale.set(true);
+    state.dialogs.notif_rationale().set(true);
 }
 
 // ── Backend resolution ──────────────────────────────────────────────────

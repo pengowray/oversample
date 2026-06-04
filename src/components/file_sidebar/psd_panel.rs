@@ -54,7 +54,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
     // Trigger recomputation when tab is active and inputs change
     Effect::new(move || {
-        let tab = state.right_sidebar_tab.get();
+        let tab = state.panels.right_tab().get();
         if tab != RightSidebarTab::Psd {
             // Clear hover overlays when leaving the tab
             if !state.psd.hover_freqs().get_untracked().is_empty() {

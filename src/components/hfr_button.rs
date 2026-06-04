@@ -29,7 +29,7 @@ fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -63,7 +63,7 @@ fn apply_band(state: AppState, lo: f64, hi: f64) {
     if !state.focus_stack.get_untracked().hfr_enabled() {
         state.toggle_hfr();
     }
-    state.layer_panel_open.set(None);
+    state.panels.layer_panel_open().set(None);
 }
 
 fn clear_band(state: AppState) {
@@ -71,7 +71,7 @@ fn clear_band(state: AppState) {
     if state.focus_stack.get_untracked().hfr_enabled() {
         state.toggle_hfr();
     }
-    state.layer_panel_open.set(None);
+    state.panels.layer_panel_open().set(None);
 }
 
 /// Range of the bat-book species auto-resolved from the file's metadata.
@@ -136,7 +136,7 @@ fn focused_range(state: AppState) -> Option<(f64, f64)> {
 pub fn RangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::BandPresets));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::BandPresets));
     let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     let btn_class = Signal::derive(move || {

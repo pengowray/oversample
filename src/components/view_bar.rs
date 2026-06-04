@@ -17,7 +17,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -82,7 +82,7 @@ fn BookToggle() -> impl IntoView {
 #[component]
 fn ToolCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::Tool);
+    let is_open = move || state.panels.layer_panel_open().get() == Some(LayerPanel::Tool);
     let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     view! {
@@ -109,14 +109,14 @@ fn ToolCombo() -> impl IntoView {
                         class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
                         on:click=move |_| {
                             state.canvas_tool.set(CanvasTool::Hand);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"Hand (pan)"</button>
                     <button
                         class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
                         on:click=move |_| {
                             state.canvas_tool.set(CanvasTool::Selection);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"Selection"</button>
                 </div>
@@ -138,7 +138,7 @@ pub fn ViewBar() -> impl IntoView {
         // here used to be fine; the Tool button is a plain <button>
         // that doesn't, hence the menu was getting eaten.
         <div class="view-bar"
-            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::View))
+            class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::View))
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >

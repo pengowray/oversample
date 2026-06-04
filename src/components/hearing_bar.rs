@@ -36,7 +36,7 @@ use crate::state::{
 };
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -55,7 +55,7 @@ fn layer_opt_class_simple(active: bool) -> &'static str {
 fn GainCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Gain));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Gain));
     // Live monitoring uses `live_gain_db` (separate from file-playback gain).
     // When live is active, the slider rebinds and the AGC/AutoPeak modes are
     // ignored — the user wanted a simple slider for monitoring.
@@ -174,14 +174,14 @@ fn GainCombo() -> impl IntoView {
                 on:click=move |_| {
                     state.gain.mode().set(GainMode::Off);
                     state.gain.auto().set(false);
-                    state.layer_panel_open.set(None);
+                    state.panels.layer_panel_open().set(None);
                 }
             >"Off"</button>
             <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Manual)
                 on:click=move |_| {
                     state.gain.mode().set(GainMode::Manual);
                     state.gain.auto().set(false);
-                    state.layer_panel_open.set(None);
+                    state.panels.layer_panel_open().set(None);
                 }
             >"Manual \u{2014} Slider boost only"</button>
             <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::AutoPeak)
@@ -189,7 +189,7 @@ fn GainCombo() -> impl IntoView {
                     state.gain.mode().set(GainMode::AutoPeak);
                     state.gain.mode_last_auto().set(GainMode::AutoPeak);
                     state.gain.auto().set(true);
-                    state.layer_panel_open.set(None);
+                    state.panels.layer_panel_open().set(None);
                 }
             >"Peak \u{2014} Normalize to peak"</button>
             <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Adaptive)
@@ -197,7 +197,7 @@ fn GainCombo() -> impl IntoView {
                     state.gain.mode().set(GainMode::Adaptive);
                     state.gain.mode_last_auto().set(GainMode::Adaptive);
                     state.gain.auto().set(true);
-                    state.layer_panel_open.set(None);
+                    state.panels.layer_panel_open().set(None);
                 }
             >"AGC \u{2014} Automatic gain control"</button>
             <Show when=move || state.gain.mode().get() == GainMode::AutoPeak>
@@ -279,7 +279,7 @@ fn GainCombo() -> impl IntoView {
 fn BandpassCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Bandpass));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Bandpass));
     let no_file = move || {
         state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
@@ -602,7 +602,7 @@ pub fn HearingBar() -> impl IntoView {
         // having their panel-open clicks eaten by .main's catch-all.
         // ComboButton children already handle this themselves.
         <div class="hearing-bar"
-            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Hearing))
+            class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Hearing))
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >

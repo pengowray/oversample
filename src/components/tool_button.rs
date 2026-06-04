@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, CanvasTool, LayerPanel};
@@ -7,7 +8,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -16,7 +17,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 pub fn ToolButton() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open: Signal<bool> =
-        Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Tool));
+        Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Tool));
     let anchor = NodeRef::<leptos::html::Div>::new();
 
     view! {
@@ -49,14 +50,14 @@ pub fn ToolButton() -> impl IntoView {
                         class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Hand)
                         on:click=move |_| {
                             state.canvas_tool.set(CanvasTool::Hand);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"Hand (pan)"</button>
                     <button
                         class=move || layer_opt_class(state.canvas_tool.get() == CanvasTool::Selection)
                         on:click=move |_| {
                             state.canvas_tool.set(CanvasTool::Selection);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"Selection"</button>
                 </PopupPanel>

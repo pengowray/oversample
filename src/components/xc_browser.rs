@@ -12,6 +12,7 @@
 //! (app.rs), which searches the curated demo index — NOT the live API. A real
 //! browser XC mode would require a CORS-enabled proxy (a new feature, not a fix).
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::prelude::*;
@@ -239,7 +240,7 @@ pub fn XcBrowser() -> impl IntoView {
     });
 
     let on_close = move |_: web_sys::MouseEvent| {
-        state.xc_browser_open.set(false);
+        state.dialogs.xc_browser_open().set(false);
     };
 
     // Prevent click on modal content from closing it
@@ -553,7 +554,7 @@ pub fn XcBrowser() -> impl IntoView {
                 }
 
                 cached_ids.update(|s| { s.insert(id); });
-                state.xc_browser_open.set(false);
+                state.dialogs.xc_browser_open().set(false);
                 Ok(())
             }.await;
 

@@ -21,7 +21,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -49,7 +49,7 @@ pub fn NotchCombo() -> impl IntoView {
     // threshold 12..3 inverted). Stored only inside the popup.
     let sensitivity = RwSignal::new(6.0f64);
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Notch));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Notch));
     let no_file = move || {
         state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
@@ -361,7 +361,7 @@ pub fn NotchCombo() -> impl IntoView {
 pub fn NrCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::NoiseReduce));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::NoiseReduce));
     let no_file = move || {
         state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };

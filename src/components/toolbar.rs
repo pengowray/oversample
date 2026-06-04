@@ -9,7 +9,7 @@ use crate::components::file_sidebar::file_badges::{FileBadgeData, FileBadgeRow, 
 #[component]
 pub fn Toolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let show_about = state.show_about;
+    let show_about = state.dialogs.about();
     let seq_dropdown_open = RwSignal::new(false);
     let show_cc_modal = RwSignal::new(false);
     let track_dropdown_open = RwSignal::new(false);
@@ -280,19 +280,19 @@ pub fn Toolbar() -> impl IntoView {
         <div class="toolbar" node_ref=toolbar_ref>
             // Left: sidebar tab button
             <button
-                class=move || if !state.sidebar_collapsed.get() {
+                class=move || if !state.panels.left_collapsed().get() {
                     "toolbar-sidebar-tab toolbar-sidebar-tab-left active"
                 } else {
                     "toolbar-sidebar-tab toolbar-sidebar-tab-left"
                 }
                 on:click=move |ev: web_sys::MouseEvent| {
                     ev.stop_propagation();
-                    state.sidebar_collapsed.update(|c| *c = !*c);
-                    if !state.sidebar_collapsed.get_untracked() && state.is_mobile.get_untracked() {
-                        state.right_sidebar_collapsed.set(true);
+                    state.panels.left_collapsed().update(|c| *c = !*c);
+                    if !state.panels.left_collapsed().get_untracked() && state.is_mobile.get_untracked() {
+                        state.panels.right_collapsed().set(true);
                     }
                 }
-                title=move || if state.sidebar_collapsed.get() { "Show sidebar" } else { "Hide sidebar" }
+                title=move || if state.panels.left_collapsed().get() { "Show sidebar" } else { "Hide sidebar" }
             >{"\u{25E7}"}</button>
 
             // Center: brand + filename (row 1) + badges (row 2)
@@ -565,19 +565,19 @@ pub fn Toolbar() -> impl IntoView {
                     })}
                 </div>
                 <button
-                    class=move || if !state.right_sidebar_collapsed.get() {
+                    class=move || if !state.panels.right_collapsed().get() {
                         "toolbar-sidebar-tab toolbar-sidebar-tab-right active"
                     } else {
                         "toolbar-sidebar-tab toolbar-sidebar-tab-right"
                     }
                     on:click=move |ev: web_sys::MouseEvent| {
                         ev.stop_propagation();
-                        state.right_sidebar_collapsed.update(|c| *c = !*c);
-                        if !state.right_sidebar_collapsed.get_untracked() && state.is_mobile.get_untracked() {
-                            state.sidebar_collapsed.set(true);
+                        state.panels.right_collapsed().update(|c| *c = !*c);
+                        if !state.panels.right_collapsed().get_untracked() && state.is_mobile.get_untracked() {
+                            state.panels.left_collapsed().set(true);
                         }
                     }
-                    title=move || if state.right_sidebar_collapsed.get() { "Show info panel" } else { "Hide info panel" }
+                    title=move || if state.panels.right_collapsed().get() { "Show info panel" } else { "Hide info panel" }
                 >{"\u{25E8}"}</button>
             </div>
 
@@ -702,8 +702,8 @@ pub fn Toolbar() -> impl IntoView {
                                     <button class="cc-link-btn" on:click=move |e: web_sys::MouseEvent| {
                                         e.stop_propagation();
                                         show_cc_modal.set(false);
-                                        state.right_sidebar_tab.set(RightSidebarTab::Metadata);
-                                        state.right_sidebar_collapsed.set(false);
+                                        state.panels.right_tab().set(RightSidebarTab::Metadata);
+                                        state.panels.right_collapsed().set(false);
                                     }>"More metadata\u{2026}"</button>
                                 </div>
 

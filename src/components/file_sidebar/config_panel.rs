@@ -168,12 +168,12 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.show_status_bar.get()
+                        prop:checked=move || state.panels.show_status_bar().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             let show = input.checked();
-                            state.show_status_bar.set(show);
+                            state.panels.show_status_bar().set(show);
                             if let Some(ls) = web_sys::window()
                                 .and_then(|w| w.local_storage().ok().flatten())
                             {
@@ -227,7 +227,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             <div style="padding: 4px 12px 8px;">
                                 <button
                                     class="analysis-full-btn privacy-settings-btn"
-                                    on:click=move |_| { state.show_privacy_settings.set(true); }
+                                    on:click=move |_| { state.dialogs.privacy_settings().set(true); }
                                 >"Privacy settings\u{2026}"</button>
                             </div>
                         </div>

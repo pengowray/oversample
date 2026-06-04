@@ -47,7 +47,7 @@ const CHROMA_FACTORS: [f64; 7] = [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
 const HET_SNAP_STEP_HZ: f64 = 5_000.0;
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -279,7 +279,7 @@ fn snap_carrier(raw_hz: f64, snap: OutputSnap) -> f64 {
 pub fn OutputRangeCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::OutputRange));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::OutputRange));
     let no_file = move || {
         state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };

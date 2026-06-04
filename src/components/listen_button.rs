@@ -23,7 +23,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -32,7 +32,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 pub fn ListenButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let listen_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::ListenMode));
+    let listen_is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::ListenMode));
 
     let listen_left_class = Signal::derive(move || {
         if state.mic.strategy().get() == MicStrategy::None {

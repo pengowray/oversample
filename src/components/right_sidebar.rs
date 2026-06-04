@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -19,7 +20,7 @@ pub fn RightSidebar() -> impl IntoView {
     let on_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
         let start_x = ev.client_x() as f64;
-        let start_width = state.right_sidebar_width.get_untracked();
+        let start_width = state.panels.right_width().get_untracked();
         let doc = web_sys::window().unwrap().document().unwrap();
         let body = doc.body().unwrap();
         let _ = body.class_list().add_1("sidebar-resizing");
@@ -27,7 +28,7 @@ pub fn RightSidebar() -> impl IntoView {
         let on_move = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |ev: web_sys::MouseEvent| {
             let dx = ev.client_x() as f64 - start_x;
             let new_width = (start_width - dx).clamp(140.0, 500.0);
-            state.right_sidebar_width.set(new_width);
+            state.panels.right_width().set(new_width);
         });
         let on_move_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::MouseEvent)>>>> =
             Rc::new(RefCell::new(Some(on_move)));
@@ -67,7 +68,7 @@ pub fn RightSidebar() -> impl IntoView {
 
     let sidebar_class = move || {
         let mut cls = String::from("sidebar right-sidebar");
-        if state.right_sidebar_collapsed.get() {
+        if state.panels.right_collapsed().get() {
             cls.push_str(" collapsed");
         }
         if state.is_mobile.get() {
@@ -76,11 +77,11 @@ pub fn RightSidebar() -> impl IntoView {
         cls
     };
 
-    let dropdown_open = state.right_sidebar_dropdown_open;
+    let dropdown_open = state.panels.right_dropdown_open();
 
     let on_dropdown_toggle = move |_: web_sys::MouseEvent| {
-        if state.right_sidebar_collapsed.get_untracked() {
-            state.right_sidebar_collapsed.set(false);
+        if state.panels.right_collapsed().get_untracked() {
+            state.panels.right_collapsed().set(false);
         } else {
             dropdown_open.update(|v| *v = !*v);
         }
@@ -107,13 +108,13 @@ pub fn RightSidebar() -> impl IntoView {
             <div class="sidebar-tabs">
                 <div class="sidebar-tab-dropdown-wrap" tabindex="-1" on:focusout=on_dropdown_blur>
                     <button class="sidebar-tab-dropdown" on:click=on_dropdown_toggle>
-                        {move || state.right_sidebar_tab.get().label()}
+                        {move || state.panels.right_tab().get().label()}
                         <span class="dropdown-arrow">{move || if dropdown_open.get() { "\u{25B4}" } else { "\u{25BE}" }}</span>
                     </button>
                     {move || {
                         if dropdown_open.get() {
                             let items: Vec<_> = RightSidebarTab::ALL.iter().map(|&tab| {
-                                let is_active = move || state.right_sidebar_tab.get() == tab;
+                                let is_active = move || state.panels.right_tab().get() == tab;
                                 let label = tab.label();
                                 view! {
                                     <button
@@ -121,8 +122,8 @@ pub fn RightSidebar() -> impl IntoView {
                                         on:mousedown=move |ev: web_sys::MouseEvent| {
                                             ev.prevent_default();
                                             let callback = Closure::once_into_js(move || {
-                                                state.right_sidebar_collapsed.set(false);
-                                                state.right_sidebar_tab.set(tab);
+                                                state.panels.right_collapsed().set(false);
+                                                state.panels.right_tab().set(tab);
                                                 dropdown_open.set(false);
                                             });
                                             let _ = web_sys::window().unwrap().set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -144,7 +145,7 @@ pub fn RightSidebar() -> impl IntoView {
                     }}
                 </div>
             </div>
-            {move || match state.right_sidebar_tab.get() {
+            {move || match state.panels.right_tab().get() {
                 RightSidebarTab::Selection => view! { <SelectionPanel /> }.into_any(),
                 RightSidebarTab::Psd => view! { <PsdPanel /> }.into_any(),
                 RightSidebarTab::Analysis => view! { <SidebarAnalysisPanel /> }.into_any(),

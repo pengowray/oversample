@@ -23,7 +23,7 @@ use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, BandpassMode, BandpassRange, FilterQuality, LayerPanel, PlaybackMode, SpectrogramHandle};
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -367,7 +367,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
     });
 
     // ── Settings popup state ──
-    let settings_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
+    let settings_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::HfrMode));
     let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
     let muting = Signal::derive(move || state.mic.listening().get() && state.mic.mute_output().get());
 
@@ -422,7 +422,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
             if bucket.has_settings() {
                 toggle_panel(&state, LayerPanel::HfrMode);
             } else {
-                state.layer_panel_open.set(None);
+                state.panels.layer_panel_open().set(None);
             }
             return;
         }
@@ -438,7 +438,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
         // A plain click clears any extras the user had added; if they
         // want multi-select they need to ctrl-click.
         state.playback_modes_extra.set(Vec::new());
-        state.layer_panel_open.set(None);
+        state.panels.layer_panel_open().set(None);
     };
 
     // True when the active band is entirely above human hearing — picking

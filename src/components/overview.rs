@@ -456,10 +456,10 @@ pub fn OverviewPanel() -> impl IntoView {
         let auto_gain = state.gain.auto().get();
         let gain_db = if auto_gain { state.compute_auto_gain_untracked() } else { state.gain.db().get() };
         // Re-read canvas dimensions when sidebar layout changes
-        let _sidebar = state.sidebar_collapsed.get();
-        let _sidebar_width = state.sidebar_width.get();
-        let _rsidebar = state.right_sidebar_collapsed.get();
-        let _rsidebar_width = state.right_sidebar_width.get();
+        let _sidebar = state.panels.left_collapsed().get();
+        let _sidebar_width = state.panels.left_width().get();
+        let _rsidebar = state.panels.right_collapsed().get();
+        let _rsidebar_width = state.panels.right_width().get();
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -657,10 +657,10 @@ pub fn OverviewPanel() -> impl IntoView {
         let band_ff_hi_hz = state.filter.band_ff_freq_hi().get();
         let overview_view = state.overview_view.get();
         // Re-sync overlay dimensions when sidebar layout changes
-        let _sidebar = state.sidebar_collapsed.get();
-        let _sidebar_width = state.sidebar_width.get();
-        let _rsidebar = state.right_sidebar_collapsed.get();
-        let _rsidebar_width = state.right_sidebar_width.get();
+        let _sidebar = state.panels.left_collapsed().get();
+        let _sidebar_width = state.panels.left_width().get();
+        let _rsidebar = state.panels.right_collapsed().get();
+        let _rsidebar_width = state.panels.right_width().get();
         // Redraw when file changes (duration, freq info)
         state.files.track();
         let _idx = state.current_file_index.get();

@@ -693,7 +693,7 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
 #[component]
 pub(crate) fn MetadataPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let view_mode = state.metadata_view;
+    let view_mode = state.panels.metadata_view();
 
     view! {
         <div class="sidebar-panel">

@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -143,7 +144,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
     // Only compute expensive analysis when the Analysis tab is active
     Effect::new(move || {
-        let tab = state.right_sidebar_tab.get();
+        let tab = state.panels.right_tab().get();
         let _files = state.files.get();
         let idx = state.current_file_index.get();
 

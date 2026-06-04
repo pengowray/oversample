@@ -8,7 +8,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -29,7 +29,7 @@ fn range_label(min_f: Option<f64>, max_f: Option<f64>, file_max: f64) -> &'stati
 pub fn FreqRangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open: Signal<bool> =
-        Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::FreqRange));
+        Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::FreqRange));
     let anchor = NodeRef::<leptos::html::Div>::new();
 
     let file_max = move || {

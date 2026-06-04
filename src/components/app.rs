@@ -1002,8 +1002,8 @@ pub fn App() -> impl IntoView {
                 state_kb.bat_book.ref_open().set(false);
                 return;
             }
-            if state_kb.xc_browser_open.get_untracked() {
-                state_kb.xc_browser_open.set(false);
+            if state_kb.dialogs.xc_browser_open().get_untracked() {
+                state_kb.dialogs.xc_browser_open().set(false);
                 return;
             }
             if state_kb.mic.listening().get_untracked() || state_kb.mic.recording().get_untracked() {
@@ -1050,11 +1050,11 @@ pub fn App() -> impl IntoView {
                 state_resize.is_mobile.set(mobile);
                 if mobile {
                     // Switching to mobile: collapse sidebars (they become overlays)
-                    state_resize.sidebar_collapsed.set(true);
-                    state_resize.right_sidebar_collapsed.set(true);
+                    state_resize.panels.left_collapsed().set(true);
+                    state_resize.panels.right_collapsed().set(true);
                 } else {
                     // Switching to desktop: show left sidebar by default
-                    state_resize.sidebar_collapsed.set(false);
+                    state_resize.panels.left_collapsed().set(false);
                 }
             }
         });
@@ -1067,8 +1067,8 @@ pub fn App() -> impl IntoView {
             // Sidebars are position:fixed overlays, so single column for main content
             "grid-template-columns: 1fr; grid-template-rows: auto 1fr".to_string()
         } else {
-            let left = if state.sidebar_collapsed.get() { 0 } else { state.sidebar_width.get() as i32 };
-            let right = if state.right_sidebar_collapsed.get() { 0 } else { state.right_sidebar_width.get() as i32 };
+            let left = if state.panels.left_collapsed().get() { 0 } else { state.panels.left_width().get() as i32 };
+            let right = if state.panels.right_collapsed().get() { 0 } else { state.panels.right_width().get() as i32 };
             format!("grid-template-columns: {}px 1fr {}px; grid-template-rows: auto 1fr", left, right)
         }
     };
@@ -1113,8 +1113,8 @@ pub fn App() -> impl IntoView {
         ) {
             // Only meaningful on mobile Tauri, and only nag once.
             if !state.is_tauri || !state.is_mobile.get_untracked() { return; }
-            if state.background_hint_dismissed.get_untracked() { return; }
-            if state.show_background_audio_hint.get_untracked() { return; }
+            if state.dialogs.background_hint_dismissed().get_untracked() { return; }
+            if state.dialogs.background_audio_hint().get_untracked() { return; }
 
             let wall_elapsed = (js_sys::Date::now() - wall_hide) / 1000.0;
             // Need a non-trivial interval to judge — avoids false positives on a
@@ -1139,7 +1139,7 @@ pub fn App() -> impl IntoView {
             }
 
             if throttled {
-                state.show_background_audio_hint.set(true);
+                state.dialogs.background_audio_hint().set(true);
             }
         }
 
@@ -1250,12 +1250,12 @@ pub fn App() -> impl IntoView {
         let state_back = state;
         let on_popstate = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
             if !state_back.is_mobile.get_untracked() { return; }
-            if !state_back.right_sidebar_collapsed.get_untracked() {
-                state_back.right_sidebar_collapsed.set(true);
+            if !state_back.panels.right_collapsed().get_untracked() {
+                state_back.panels.right_collapsed().set(true);
                 let _ = web_sys::window().unwrap().history().unwrap()
                     .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", None);
-            } else if !state_back.sidebar_collapsed.get_untracked() {
-                state_back.sidebar_collapsed.set(true);
+            } else if !state_back.panels.left_collapsed().get_untracked() {
+                state_back.panels.left_collapsed().set(true);
                 let _ = web_sys::window().unwrap().history().unwrap()
                     .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", None);
             }
@@ -1357,16 +1357,16 @@ pub fn App() -> impl IntoView {
             <FileSidebar />
             {move || state.is_mobile.get().then(|| view! {
                 <div
-                    class=move || if !state.sidebar_collapsed.get() || !state.right_sidebar_collapsed.get() { "sidebar-backdrop open" } else { "sidebar-backdrop" }
+                    class=move || if !state.panels.left_collapsed().get() || !state.panels.right_collapsed().get() { "sidebar-backdrop open" } else { "sidebar-backdrop" }
                     on:click=move |_| {
-                        state.sidebar_collapsed.set(true);
-                        state.right_sidebar_collapsed.set(true);
+                        state.panels.left_collapsed().set(true);
+                        state.panels.right_collapsed().set(true);
                     }
                 ></div>
             })}
             <MainArea />
             <RightSidebar />
-            {move || state.xc_browser_open.get().then(|| view! { <XcBrowser /> })}
+            {move || state.dialogs.xc_browser_open().get().then(|| view! { <XcBrowser /> })}
             {cfg!(debug_assertions).then(|| view! {
                 <div class="debug-build-banner"
                     title="This is an unoptimised WASM build. It runs slower and can hit spurious panics that don't happen in release builds. Rebuild with `trunk serve --release`."
@@ -1386,19 +1386,19 @@ fn MainArea() -> impl IntoView {
 
     // Click/tap anywhere in the main area closes open layer panels (and sidebar on mobile)
     let on_main_click = move |_: web_sys::MouseEvent| {
-        state.layer_panel_open.set(None);
+        state.panels.layer_panel_open().set(None);
         if state.is_mobile.get_untracked() {
-            state.sidebar_collapsed.set(true);
-            state.right_sidebar_collapsed.set(true);
+            state.panels.left_collapsed().set(true);
+            state.panels.right_collapsed().set(true);
         }
     };
     // touchstart also closes menus — needed because mobile touch handlers often
     // call preventDefault() which suppresses the synthetic click event
     let on_main_touchstart = move |_: web_sys::TouchEvent| {
-        state.layer_panel_open.set(None);
+        state.panels.layer_panel_open().set(None);
         if state.is_mobile.get_untracked() {
-            state.sidebar_collapsed.set(true);
-            state.right_sidebar_collapsed.set(true);
+            state.panels.left_collapsed().set(true);
+            state.panels.right_collapsed().set(true);
         }
     };
 
@@ -1497,7 +1497,7 @@ fn MainArea() -> impl IntoView {
                         // Bat book strip (between main view and bottom toolbar)
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
 
-                        {move || state.show_status_bar.get().then(|| view! { <AnalysisPanel /> })}
+                        {move || state.panels.show_status_bar().get().then(|| view! { <AnalysisPanel /> })}
                     }.into_any()
                 } else {
                     let empty_msg = if state.is_mobile.get() {
@@ -1605,7 +1605,7 @@ fn MainArea() -> impl IntoView {
             })}
 
             // Privacy settings modal
-            {move || state.show_privacy_settings.get().then(|| view! {
+            {move || state.dialogs.privacy_settings().get().then(|| view! {
                 <crate::components::file_sidebar::privacy_settings::PrivacySettingsModal />
             })}
 
@@ -1641,7 +1641,7 @@ fn MainArea() -> impl IntoView {
 
             // Background-audio throttling guidance (one-time; raised by the
             // visibility watchdog when capture/monitoring stalled while hidden).
-            {move || state.show_background_audio_hint.get().then(|| {
+            {move || state.dialogs.background_audio_hint().get().then(|| {
                 let on_settings = move |_: web_sys::MouseEvent| {
                     wasm_bindgen_futures::spawn_local(async move {
                         let _ = crate::tauri_bridge::tauri_invoke_no_args(
@@ -1670,7 +1670,7 @@ fn MainArea() -> impl IntoView {
 
             // Notification-permission rationale (Android; shown during mic setup
             // before the OS POST_NOTIFICATIONS prompt so the user understands why).
-            {move || state.show_notif_rationale.get().then(|| {
+            {move || state.dialogs.notif_rationale().get().then(|| {
                 view! {
                     <div class="xc-modal-overlay" on:click=move |_: web_sys::MouseEvent| dismiss_notif_rationale(&state, false)>
                         <div class="xc-modal" style="width: min(92vw, 380px);" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
@@ -1693,7 +1693,7 @@ fn MainArea() -> impl IntoView {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -1701,8 +1701,8 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 /// Dismiss the background-audio guidance hint and persist that the user has seen
 /// it (so it never auto-shows again). Shared by both modal buttons.
 fn dismiss_background_hint(state: &AppState) {
-    state.show_background_audio_hint.set(false);
-    state.background_hint_dismissed.set(true);
+    state.dialogs.background_audio_hint().set(false);
+    state.dialogs.background_hint_dismissed().set(true);
     if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = ls.set_item("oversample_bg_audio_hint_dismissed", "true");
     }
@@ -1712,7 +1712,7 @@ fn dismiss_background_hint(state: &AppState) {
 /// it never re-prompts). When `enable`, kick off the native POST_NOTIFICATIONS
 /// request — the OS prompt now appears with the user already knowing why.
 fn dismiss_notif_rationale(state: &AppState, enable: bool) {
-    state.show_notif_rationale.set(false);
+    state.dialogs.notif_rationale().set(false);
     crate::audio::microphone::mark_notif_asked(state);
     if enable {
         let st = *state;
@@ -1746,7 +1746,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 pub fn MainViewButton() -> impl IntoView {
     use crate::components::popup::{Align, PopupPanel, Side};
     let state = expect_context::<AppState>();
-    let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::MainView));
+    let is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::MainView));
     let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     // Helper: handle all side-effects of a view switch synchronously,
@@ -1806,7 +1806,7 @@ pub fn MainViewButton() -> impl IntoView {
             return;
         }
         switch_view(new_view);
-        state.layer_panel_open.set(None);
+        state.panels.layer_panel_open().set(None);
     };
 
     // Playback active indicators (for DSP rows)

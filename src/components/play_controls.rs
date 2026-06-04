@@ -48,7 +48,7 @@ pub fn BookmarkPopup() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     view! {
-        {move || state.show_bookmark_popup.get().then(|| {
+        {move || state.dialogs.bookmark_popup().get().then(|| {
             let bms = state.bookmarks.get();
             let recent: Vec<_> = bms.iter().rev().take(8).cloned().collect();
             view! {
@@ -73,13 +73,13 @@ pub fn BookmarkPopup() -> impl IntoView {
                                     let new_scroll = (t - visible_time * 0.1).max(0.0);
                                     state2.suspend_follow();
                                     state2.view.scroll_offset().set(new_scroll);
-                                    state2.show_bookmark_popup.set(false);
+                                    state2.dialogs.bookmark_popup().set(false);
                                 }
                             >{crate::format_time::format_time_display(t, 2)}</button>
                         }
                     }).collect_view()}
                     <button class="bookmark-popup-close"
-                        on:click=move |_| state.show_bookmark_popup.set(false)
+                        on:click=move |_| state.dialogs.bookmark_popup().set(false)
                     >"Dismiss"</button>
                 </div>
             }

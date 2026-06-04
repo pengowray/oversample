@@ -123,10 +123,10 @@ pub fn BandGutter() -> impl IntoView {
             _ => None,
         };
         let (min_freq, max_freq) = display_range();
-        let _sidebar = state.sidebar_collapsed.get();
-        let _sidebar_width = state.sidebar_width.get();
-        let _rsidebar = state.right_sidebar_collapsed.get();
-        let _rsidebar_width = state.right_sidebar_width.get();
+        let _sidebar = state.panels.left_collapsed().get();
+        let _sidebar_width = state.panels.left_width().get();
+        let _rsidebar = state.panels.right_collapsed().get();
+        let _rsidebar_width = state.panels.right_width().get();
         let _tile_ready = state.tile_ready_signal.get();
         let _size_tick = canvas_size_tick.get();
 
@@ -578,10 +578,10 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
     // Redraw on any relevant signal change.
     Effect::new(move |_| {
         let selection = state.selection.get();
-        let _sidebar = state.sidebar_collapsed.get();
-        let _sidebar_width = state.sidebar_width.get();
-        let _rsidebar = state.right_sidebar_collapsed.get();
-        let _rsidebar_width = state.right_sidebar_width.get();
+        let _sidebar = state.panels.left_collapsed().get();
+        let _sidebar_width = state.panels.left_width().get();
+        let _rsidebar = state.panels.right_collapsed().get();
+        let _rsidebar_width = state.panels.right_width().get();
         let _main_view = state.main_view.get();
         let show_clock = state.timeline.show_clock_time().get();
         let _size_tick = canvas_size_tick.get();

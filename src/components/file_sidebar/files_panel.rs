@@ -604,7 +604,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             {state.is_mobile.get().then(|| view! {
                                 <div
                                     style="padding: 12px 12px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;"
-                                    on:click=move |_| state.show_about.set(true)
+                                    on:click=move |_| state.dialogs.about().set(true)
                                 >
                                     <span style="font-weight: bold; font-size: 14px; color: #ddd;">"Oversample"</span>
                                     " "
@@ -760,7 +760,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 </button>
                                 {is_tauri.then(|| view! {
                                     <button class="upload-btn add-files-btn xc-btn" on:click=move |_| {
-                                        state.xc_browser_open.set(true);
+                                        state.dialogs.xc_browser_open().set(true);
                                     }>"Explore XC"</button>
                                 })}
                             </div>

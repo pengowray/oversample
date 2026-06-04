@@ -1463,6 +1463,8 @@ pub mod store_fields {
         SpectStateStoreFields,
         AnnotationsStateStoreFields,
         DisplayStateStoreFields,
+        PanelsStateStoreFields,
+        DialogsStateStoreFields,
     };
 }
 
@@ -1663,6 +1665,40 @@ pub struct DisplayState {
     pub auto_noise_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
 
+/// Sidebar / panel chrome (left + right sidebars, layer panel, status bar).
+#[derive(Clone, Debug, Store)]
+pub struct PanelsState {
+    pub right_tab: RightSidebarTab,
+    pub right_collapsed: bool,
+    pub right_width: f64,
+    pub right_dropdown_open: bool,
+    pub metadata_view: MetadataView,
+    /// Left (main) sidebar collapsed.
+    pub left_collapsed: bool,
+    /// Left (main) sidebar width.
+    pub left_width: f64,
+    pub left_tab: LeftSidebarTab,
+    /// Which floating layer panel is currently open.
+    pub layer_panel_open: Option<LayerPanel>,
+    /// Whether the analysis/status bar is visible (persisted).
+    pub show_status_bar: bool,
+}
+
+/// Modal dialogs / one-time hint visibility flags.
+#[derive(Clone, Debug, Store)]
+pub struct DialogsState {
+    pub bookmark_popup: bool,
+    pub privacy_settings: bool,
+    pub about: bool,
+    pub background_audio_hint: bool,
+    /// Persisted: background-audio guidance already dismissed.
+    pub background_hint_dismissed: bool,
+    pub notif_rationale: bool,
+    /// Persisted: notification rationale already surfaced.
+    pub notif_perm_asked: bool,
+    pub xc_browser_open: bool,
+}
+
 // ── AppState ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -1671,6 +1707,10 @@ pub struct AppState {
     pub current_file_index: RwSignal<Option<usize>>,
     pub file_sort_mode: RwSignal<FileSortMode>,
     pub show_file_previews: RwSignal<bool>,
+    /// Sidebar / panel chrome (grouped reactive store).
+    pub panels: Store<PanelsState>,
+    /// Modal dialogs / one-time hint flags (grouped reactive store).
+    pub dialogs: Store<DialogsState>,
     pub selection: RwSignal<Option<Selection>>,
     pub last_selection: RwSignal<Option<Selection>>,
     pub playback_mode: RwSignal<PlaybackMode>,
@@ -1712,17 +1752,10 @@ pub struct AppState {
     /// Optical-flow overlay settings (grouped reactive store). Replaces the
     /// former flat `flow_enabled` / `flow_gate` / `flow_*` signals.
     pub flow: Store<FlowState>,
-    pub right_sidebar_tab: RwSignal<RightSidebarTab>,
-    pub right_sidebar_collapsed: RwSignal<bool>,
-    pub right_sidebar_width: RwSignal<f64>,
-    pub right_sidebar_dropdown_open: RwSignal<bool>,
-    pub metadata_view: RwSignal<MetadataView>,
     pub mouse_freq: RwSignal<Option<f64>>,
     pub mouse_canvas_x: RwSignal<f64>,
     pub mouse_in_label_area: RwSignal<bool>,
     pub label_hover_opacity: RwSignal<f64>,
-    pub sidebar_collapsed: RwSignal<bool>,
-    pub sidebar_width: RwSignal<f64>,
 
     // Channel
     pub channel_view: RwSignal<ChannelView>,
@@ -1747,7 +1780,6 @@ pub struct AppState {
 
     // Bookmarks
     pub bookmarks: RwSignal<Vec<Bookmark>>,
-    pub show_bookmark_popup: RwSignal<bool>,
 
     // Play start mode (All / FromHere / Selected)
     pub play_start_mode: RwSignal<PlayStartMode>,
@@ -1767,7 +1799,6 @@ pub struct AppState {
 
 
     // Which floating layer panel is currently open
-    pub layer_panel_open: RwSignal<Option<LayerPanel>>,
 
     // Actual pixel width of the main spectrogram canvas (written by Spectrogram, read by Overview)
     pub spectrogram_canvas_width: RwSignal<f64>,
@@ -1793,21 +1824,15 @@ pub struct AppState {
     pub recording_meta: Store<RecordingMetaState>,
 
     /// Whether the privacy settings modal dialog is visible.
-    pub show_privacy_settings: RwSignal<bool>,
     /// Whether the about dialog is visible.
-    pub show_about: RwSignal<bool>,
     /// True when OS-throttled background audio was detected; surfaces the
     /// one-time battery-optimization guidance. Cleared when acted on/dismissed.
-    pub show_background_audio_hint: RwSignal<bool>,
     /// Persisted flag: background-audio guidance already dismissed
     /// (`oversample_bg_audio_hint_dismissed`).
-    pub background_hint_dismissed: RwSignal<bool>,
     /// True when the in-app notification-permission rationale modal should show
     /// (Android, before the OS POST_NOTIFICATIONS prompt).
-    pub show_notif_rationale: RwSignal<bool>,
     /// Persisted flag: notification rationale already surfaced
     /// (`oversample_notif_perm_asked`).
-    pub notif_perm_asked: RwSignal<bool>,
 
     // Transient status message (e.g. permission errors)
     pub status_message: RwSignal<Option<String>>,
@@ -1835,7 +1860,6 @@ pub struct AppState {
     pub visual_viewport_rect: RwSignal<(f64, f64, f64, f64)>,
 
     // XC browser
-    pub xc_browser_open: RwSignal<bool>,
 
     // (hfr_saved_* signals removed — now in FocusStack)
 
@@ -1847,7 +1871,6 @@ pub struct AppState {
     pub cursor_time: RwSignal<Option<f64>>,
 
     // Left sidebar settings page
-    pub left_sidebar_tab: RwSignal<LeftSidebarTab>,
 
     /// Chromagram view settings (grouped reactive store).
     pub chroma: Store<ChromaState>,
@@ -1894,7 +1917,6 @@ pub struct AppState {
     pub shield_style: RwSignal<ShieldStyle>,
 
     /// Whether the analysis/status bar is visible (persisted to localStorage).
-    pub show_status_bar: RwSignal<bool>,
 
     // Layered frequency focus stack
     pub focus_stack: RwSignal<crate::focus_stack::FocusStack>,
@@ -2058,11 +2080,6 @@ impl AppState {
                 color_gamma: 1.0,
                 color_scheme: FlowColorScheme::default(),
             }),
-            right_sidebar_tab: RwSignal::new(RightSidebarTab::Metadata),
-            right_sidebar_collapsed: RwSignal::new(true),
-            right_sidebar_width: RwSignal::new(220.0),
-            right_sidebar_dropdown_open: RwSignal::new(false),
-            metadata_view: RwSignal::new(MetadataView::default()),
             mouse_freq: RwSignal::new(None),
             mouse_canvas_x: RwSignal::new(0.0),
             mouse_in_label_area: RwSignal::new(false),
@@ -2072,8 +2089,6 @@ impl AppState {
             // On by default — auto-fit carrier count + spacing to the
             // focus range. Toggle "A" off in the Carriers row to pick a
             // fixed count manually.
-            sidebar_collapsed: RwSignal::new(false),
-            sidebar_width: RwSignal::new(220.0),
 
             channel_view: RwSignal::new(ChannelView::Stereo),
 
@@ -2085,13 +2100,11 @@ impl AppState {
             nav_history: RwSignal::new(Vec::new()),
             nav_index: RwSignal::new(0),
             bookmarks: RwSignal::new(Vec::new()),
-            show_bookmark_popup: RwSignal::new(false),
             play_start_mode: RwSignal::new(PlayStartMode::Auto),
             record_mode: RwSignal::new(if detect_tauri() { RecordMode::ToFile } else { RecordMode::ToMemory }),
             play_from_here_time: RwSignal::new(0.0),
             tile_ready_signal: RwSignal::new(0),
             bg_preload_gen: RwSignal::new(0),
-            layer_panel_open: RwSignal::new(None),
             spectrogram_canvas_width: RwSignal::new(1000.0),
             main_view: RwSignal::new(MainView::Spectrogram),
             spec_drag_handle: RwSignal::new(None),
@@ -2170,23 +2183,27 @@ impl AppState {
                 cached_make: None,
                 cached_model: None,
             }),
-            show_privacy_settings: RwSignal::new(false),
-            show_about: RwSignal::new(false),
-            show_background_audio_hint: RwSignal::new(false),
-            background_hint_dismissed: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_bg_audio_hint_dismissed").ok().flatten())
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
-            }),
-            show_notif_rationale: RwSignal::new(false),
-            notif_perm_asked: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_notif_perm_asked").ok().flatten())
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            dialogs: Store::new(DialogsState {
+                bookmark_popup: false,
+                privacy_settings: false,
+                about: false,
+                background_audio_hint: false,
+                background_hint_dismissed: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_bg_audio_hint_dismissed").ok().flatten())
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                },
+                notif_rationale: false,
+                notif_perm_asked: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_notif_perm_asked").ok().flatten())
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                },
+                xc_browser_open: false,
             }),
             status_message: RwSignal::new(None),
             status_level: RwSignal::new(StatusLevel::Error),
@@ -2196,11 +2213,9 @@ impl AppState {
             is_mobile_platform: detect_mobile_ua(),
             viewport_zoomed: RwSignal::new(false),
             visual_viewport_rect: RwSignal::new((0.0, 0.0, 0.0, 1.0)),
-            xc_browser_open: RwSignal::new(false),
             axis_drag_start_freq: RwSignal::new(None),
             axis_drag_current_freq: RwSignal::new(None),
             cursor_time: RwSignal::new(None),
-            left_sidebar_tab: RwSignal::new(LeftSidebarTab::default()),
             chroma: Store::new(ChromaState {
                 colormap: ChromaColormap::PitchClass,
                 gain: 0.0,
@@ -2371,12 +2386,23 @@ impl AppState {
                     .map(|v| ShieldStyle::from_key(&v))
                     .unwrap_or_default()
             }),
-            show_status_bar: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w| w.local_storage().ok().flatten())
-                    .and_then(|ls| ls.get_item("oversample_show_status_bar").ok().flatten())
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            panels: Store::new(PanelsState {
+                right_tab: RightSidebarTab::Metadata,
+                right_collapsed: true,
+                right_width: 220.0,
+                right_dropdown_open: false,
+                metadata_view: MetadataView::default(),
+                left_collapsed: false,
+                left_width: 220.0,
+                left_tab: LeftSidebarTab::default(),
+                layer_panel_open: None,
+                show_status_bar: {
+                    web_sys::window()
+                        .and_then(|w| w.local_storage().ok().flatten())
+                        .and_then(|ls| ls.get_item("oversample_show_status_bar").ok().flatten())
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                },
             }),
             focus_stack: RwSignal::new(crate::focus_stack::FocusStack::new()),
             clean_view: RwSignal::new(false),
@@ -2401,7 +2427,7 @@ impl AppState {
 
         // On mobile, start with sidebar collapsed
         if s.is_mobile.get_untracked() {
-            s.sidebar_collapsed.set(true);
+            s.panels.left_collapsed().set(true);
         }
 
         s

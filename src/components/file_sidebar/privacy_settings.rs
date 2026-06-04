@@ -57,7 +57,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
     check_zone_status(state, zone_status);
 
     let on_close = move |_: web_sys::MouseEvent| {
-        state.show_privacy_settings.set(false);
+        state.dialogs.privacy_settings().set(false);
     };
 
     let on_content_click = move |ev: web_sys::MouseEvent| {

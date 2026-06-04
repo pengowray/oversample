@@ -630,10 +630,10 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
             state.is_playing.set(false);
             // Show bookmark popup briefly if any bookmarks were made during playback
             if !state.bookmarks.get_untracked().is_empty() {
-                state.show_bookmark_popup.set(true);
+                state.dialogs.bookmark_popup().set(true);
                 let state_bm = state;
                 let cb = wasm_bindgen::closure::Closure::once(move || {
-                    state_bm.show_bookmark_popup.set(false);
+                    state_bm.dialogs.bookmark_popup().set(false);
                 });
                 let _ = web_sys::window()
                     .unwrap()

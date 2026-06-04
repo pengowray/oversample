@@ -52,7 +52,7 @@ pub fn FileSidebar() -> impl IntoView {
     let on_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
         let start_x = ev.client_x() as f64;
-        let start_width = state.sidebar_width.get_untracked();
+        let start_width = state.panels.left_width().get_untracked();
         let doc = web_sys::window().unwrap().document().unwrap();
         let body = doc.body().unwrap();
         let _ = body.class_list().add_1("sidebar-resizing");
@@ -60,7 +60,7 @@ pub fn FileSidebar() -> impl IntoView {
         let on_move = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |ev: web_sys::MouseEvent| {
             let dx = ev.client_x() as f64 - start_x;
             let new_width = (start_width + dx).clamp(140.0, 500.0);
-            state.sidebar_width.set(new_width);
+            state.panels.left_width().set(new_width);
         });
         let on_move_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::MouseEvent)>>>> =
             Rc::new(RefCell::new(Some(on_move)));
@@ -100,7 +100,7 @@ pub fn FileSidebar() -> impl IntoView {
 
     let sidebar_class = move || {
         let mut cls = String::from("sidebar");
-        if state.sidebar_collapsed.get() {
+        if state.panels.left_collapsed().get() {
             cls.push_str(" collapsed");
         }
         if state.is_mobile.get() {
@@ -113,13 +113,13 @@ pub fn FileSidebar() -> impl IntoView {
         <div class=sidebar_class>
             <div class="sidebar-tabs">
                 <button
-                    class=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Files {
+                    class=move || if state.panels.left_tab().get() == LeftSidebarTab::Files {
                         "sidebar-header-label active"
                     } else {
                         "sidebar-header-label"
                     }
                     on:click=move |_| {
-                        state.left_sidebar_tab.set(LeftSidebarTab::Files);
+                        state.panels.left_tab().set(LeftSidebarTab::Files);
                     }
                     title="Files"
                 >
@@ -127,13 +127,13 @@ pub fn FileSidebar() -> impl IntoView {
                 </button>
                 {move || state.project.enabled().get().then(|| view! {
                     <button
-                        class=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Project {
+                        class=move || if state.panels.left_tab().get() == LeftSidebarTab::Project {
                             "sidebar-header-label active"
                         } else {
                             "sidebar-header-label"
                         }
                         on:click=move |_| {
-                            state.left_sidebar_tab.set(LeftSidebarTab::Project);
+                            state.panels.left_tab().set(LeftSidebarTab::Project);
                         }
                         title="Project (beta)"
                     >
@@ -148,20 +148,20 @@ pub fn FileSidebar() -> impl IntoView {
                     </button>
                 })}
                 <button
-                    class=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Settings {
+                    class=move || if state.panels.left_tab().get() == LeftSidebarTab::Settings {
                         "sidebar-settings-btn active"
                     } else {
                         "sidebar-settings-btn"
                     }
                     on:click=move |_| {
-                        let current = state.left_sidebar_tab.get();
+                        let current = state.panels.left_tab().get();
                         if current == LeftSidebarTab::Settings {
-                            state.left_sidebar_tab.set(LeftSidebarTab::Files);
+                            state.panels.left_tab().set(LeftSidebarTab::Files);
                         } else {
-                            state.left_sidebar_tab.set(LeftSidebarTab::Settings);
+                            state.panels.left_tab().set(LeftSidebarTab::Settings);
                         }
                     }
-                    title=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Settings {
+                    title=move || if state.panels.left_tab().get() == LeftSidebarTab::Settings {
                         "Back to files"
                     } else {
                         "Settings"
@@ -171,11 +171,11 @@ pub fn FileSidebar() -> impl IntoView {
                 </button>
             </div>
             {move || {
-                match state.left_sidebar_tab.get() {
+                match state.panels.left_tab().get() {
                     LeftSidebarTab::Files => view! { <FilesPanel /> }.into_any(),
                     LeftSidebarTab::Project if state.project.enabled().get() => view! { <ProjectPanel /> }.into_any(),
                     LeftSidebarTab::Project => {
-                        state.left_sidebar_tab.set(LeftSidebarTab::Files);
+                        state.panels.left_tab().set(LeftSidebarTab::Files);
                         view! { <FilesPanel /> }.into_any()
                     }
                     LeftSidebarTab::Settings => view! { <ConfigPanel /> }.into_any(),

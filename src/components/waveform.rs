@@ -134,10 +134,10 @@ pub fn Waveform() -> impl IntoView {
             state.gain.wave_view_db().get()
         };
         // Re-read canvas dimensions when sidebar layout changes
-        let _sidebar = state.sidebar_collapsed.get();
-        let _sidebar_width = state.sidebar_width.get();
-        let _rsidebar = state.right_sidebar_collapsed.get();
-        let _rsidebar_width = state.right_sidebar_width.get();
+        let _sidebar = state.panels.left_collapsed().get();
+        let _sidebar_width = state.panels.left_width().get();
+        let _rsidebar = state.panels.right_collapsed().get();
+        let _rsidebar_width = state.panels.right_width().get();
         let clean_view = state.clean_view.get();
         // Read band_split unconditionally so the Effect always subscribes to it.
         // If read only inside the match arms, the Effect may miss updates when

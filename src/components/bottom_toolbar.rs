@@ -30,7 +30,7 @@ fn layer_opt_class(active: bool) -> &'static str {
 }
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.layer_panel_open.update(|p| {
+    state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
     });
 }
@@ -69,7 +69,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     // ── Play ComboButton setup ──
-    let play_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::PlayMode));
+    let play_is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::PlayMode));
 
     // True when current mode is 1:1 (Normal) AND the active band is
     // entirely above human hearing — same warning state surfaced as the
@@ -265,7 +265,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     // ── Record ComboButton setup ──
-    let rec_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::RecordMode));
+    let rec_is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::RecordMode));
 
     let rec_left_class = Signal::derive(move || {
         if state.mic.recording().get() {
@@ -380,7 +380,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
     view! {
         <div class=move || if state.is_mobile.get() { "bottom-toolbar mobile" } else { "bottom-toolbar" }
-            class:panel-open=move || matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Transport))
+            class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Transport))
             node_ref=toolbar_node
             style=move || {
                 // Inline z-index is the load-bearing lift: keeps combo dropdowns
@@ -390,7 +390,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 // Scoped to transport-bar panels so opening a Hearing/View bar
                 // popup doesn't also lift this bar (which would otherwise win
                 // DOM order and cover the real popup).
-                let mut s = if matches!(state.layer_panel_open.get().map(LayerPanel::bar), Some(Bar::Transport)) {
+                let mut s = if matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Transport)) {
                     String::from("z-index: 25;")
                 } else {
                     String::new()
@@ -492,19 +492,19 @@ pub fn BottomToolbar() -> impl IntoView {
                     <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::Auto)
                         on:click=move |_| {
                             state.play_start_mode.set(PlayStartMode::Auto);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"Auto \u{2014} Selected / Here / All"</button>
                     <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::All)
                         on:click=move |_| {
                             state.play_start_mode.set(PlayStartMode::All);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"All \u{2014} Play from start"</button>
                     <button class=move || layer_opt_class(state.play_start_mode.get() == PlayStartMode::FromHere)
                         on:click=move |_| {
                             state.play_start_mode.set(PlayStartMode::FromHere);
-                            state.layer_panel_open.set(None);
+                            state.panels.layer_panel_open().set(None);
                         }
                     >"From here \u{2014} Current position"</button>
                     <button
@@ -524,7 +524,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         on:click=move |_| {
                             if playback::effective_selection(&state).is_some() {
                                 state.play_start_mode.set(PlayStartMode::Selected);
-                                state.layer_panel_open.set(None);
+                                state.panels.layer_panel_open().set(None);
                             }
                         }
                     >"Selected \u{2014} Play selection"</button>
@@ -551,7 +551,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     <button
                         class=move || {
                             if !is_multi() { "layer-btn disabled" }
-                            else if state.layer_panel_open.get() == Some(LayerPanel::Channel) { "layer-btn open" }
+                            else if state.panels.layer_panel_open().get() == Some(LayerPanel::Channel) { "layer-btn open" }
                             else { "layer-btn" }
                         }
                         on:click=move |_| { if is_multi() { toggle_panel(&state, LayerPanel::Channel); } }
@@ -576,7 +576,7 @@ pub fn BottomToolbar() -> impl IntoView {
                             }
                         }}</span>
                     </button>
-                    <Show when=move || state.layer_panel_open.get() == Some(LayerPanel::Channel)>
+                    <Show when=move || state.panels.layer_panel_open().get() == Some(LayerPanel::Channel)>
                         {
                             let set_ch = move |cv: ChannelView| {
                                 move |_: web_sys::MouseEvent| {
@@ -584,7 +584,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                     state.timeline.active_track().set(None); // Clear track when switching channel
                                     crate::canvas::tile_cache::clear_all_caches();
                                     state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-                                    state.layer_panel_open.set(None);
+                                    state.panels.layer_panel_open().set(None);
                                 }
                             };
 
@@ -641,7 +641,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                                         state.timeline.active_track().set(Some(label2.clone()));
                                                         crate::canvas::tile_cache::clear_all_caches();
                                                         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
-                                                        state.layer_panel_open.set(None);
+                                                        state.panels.layer_panel_open().set(None);
                                                     }
                                                 >{format!("Track: {}", label)}</button>
                                             }
@@ -676,7 +676,7 @@ pub fn BottomToolbar() -> impl IntoView {
             <div class="capture-group">
                 // ── Mic select chip with dropdown ──
                 {
-                    let mic_is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Mic));
+                    let mic_is_open = Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Mic));
                     // LED state: green when a mic is connected and ready to use.
                     // Red dot is rendered separately while recording (CSS pulses).
                     let led_class = Signal::derive(move || {
@@ -760,7 +760,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                     ev.stop_propagation();
                                     // Close the options popup if it happens to be open,
                                     // then surface the chooser modal.
-                                    state.layer_panel_open.set(None);
+                                    state.panels.layer_panel_open().set(None);
                                     state.mic.pending_action().set(None);
                                     state.mic.show_chooser().set(true);
                                 }

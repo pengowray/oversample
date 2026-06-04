@@ -24,7 +24,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
     // Trigger pulse detection when tab is active and file changes
     Effect::new(move || {
-        let tab = state.right_sidebar_tab.get();
+        let tab = state.panels.right_tab().get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
         let band_ff_lo = state.filter.band_ff_freq_lo().get();
