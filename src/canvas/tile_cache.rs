@@ -33,7 +33,7 @@
 //! missing tiles.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -279,178 +279,16 @@ fn aggregate_columns_max(
 
 // ── Cache data structures ────────────────────────────────────────────────────
 
-/// Cache key: (file_idx, lod, tile_idx)
-type CacheKey = (usize, u8, usize);
-
-pub struct Tile {
-    pub tile_idx: usize,
-    pub file_idx: usize,
-    pub lod: u8,
-    pub rendered: PreRendered,
-    lru_stamp: u64,
-}
-
-/// LRU + byte-capped tile container, generic over key shape.
-///
-/// Magnitude / flow / reassign / resonator tiles key by `CacheKey`
-/// (file_idx, lod, tile_idx); chroma tiles key by `ChromaKey`
-/// (file_idx, tile_idx). They share the same stamp-based lazy LRU and byte
-/// budget — only the key arity and the LRU-compaction floor differ. Key-shaped
-/// `insert`/`get` helpers live in the per-key `impl` blocks below.
-struct TileCache<K: Eq + std::hash::Hash + Copy = CacheKey> {
-    tiles: HashMap<K, Tile>,
-    /// LRU order with lazy stale-entry skipping.
-    lru: VecDeque<(K, u64)>,
-    total_bytes: usize,
-    max_bytes: usize,
-    next_stamp: u64,
-    /// Lower bound on the LRU-compaction threshold (see `maybe_compact_lru`).
-    compact_floor: usize,
-}
-
-impl<K: Eq + std::hash::Hash + Copy> TileCache<K> {
-    fn new(max_bytes: usize) -> Self {
-        Self::with_floor(max_bytes, 1024)
-    }
-
-    fn with_floor(max_bytes: usize, compact_floor: usize) -> Self {
-        Self {
-            tiles: HashMap::new(),
-            lru: VecDeque::new(),
-            total_bytes: 0,
-            max_bytes,
-            next_stamp: 0,
-            compact_floor,
-        }
-    }
-
-    fn allocate_stamp(&mut self) -> u64 {
-        self.next_stamp = self.next_stamp.wrapping_add(1);
-        self.next_stamp
-    }
-
-    fn maybe_compact_lru(&mut self) {
-        let threshold = self.tiles.len().saturating_mul(8).max(self.compact_floor);
-        if self.lru.len() <= threshold {
-            return;
-        }
-
-        let mut entries: Vec<(u64, K)> = self.tiles
-            .iter()
-            .map(|(&key, tile)| (tile.lru_stamp, key))
-            .collect();
-        entries.sort_by_key(|(stamp, _)| *stamp);
-        self.lru = entries.into_iter().map(|(stamp, key)| (key, stamp)).collect();
-    }
-
-    fn evict_to_fit(&mut self, incoming_bytes: usize) {
-        while self.total_bytes + incoming_bytes > self.max_bytes {
-            let Some((oldest, stamp)) = self.lru.pop_front() else { break };
-            let should_evict = self.tiles
-                .get(&oldest)
-                .map(|tile| tile.lru_stamp == stamp)
-                .unwrap_or(false);
-            if should_evict {
-                if let Some(evicted) = self.tiles.remove(&oldest) {
-                    self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-                }
-            }
-        }
-    }
-
-    /// Insert a pre-built tile under `key`, evicting to fit and stamping it for
-    /// LRU. `tile.lru_stamp` is overwritten with the freshly allocated stamp.
-    fn insert_keyed(&mut self, key: K, mut tile: Tile) {
-        let bytes = tile.rendered.byte_len();
-        if let Some(old) = self.tiles.remove(&key) {
-            self.total_bytes = self.total_bytes.saturating_sub(old.rendered.byte_len());
-        }
-        self.evict_to_fit(bytes);
-        let stamp = self.allocate_stamp();
-        tile.lru_stamp = stamp;
-        self.total_bytes += bytes;
-        self.tiles.insert(key, tile);
-        self.lru.push_back((key, stamp));
-        self.maybe_compact_lru();
-    }
-
-    fn get_keyed(&self, key: &K) -> Option<&Tile> {
-        self.tiles.get(key)
-    }
-
-    fn touch(&mut self, key: K) {
-        let stamp = self.allocate_stamp();
-        if let Some(tile) = self.tiles.get_mut(&key) {
-            tile.lru_stamp = stamp;
-            self.lru.push_back((key, stamp));
-            self.maybe_compact_lru();
-        }
-    }
-
-    fn clear_all(&mut self) {
-        self.tiles.clear();
-        self.lru.clear();
-        self.total_bytes = 0;
-    }
-
-    /// Remove every tile whose key matches `pred`, adjusting the byte total and
-    /// leaving stale LRU entries to be skipped lazily. Used for per-file clears.
-    fn clear_keys(&mut self, pred: impl Fn(&K) -> bool) {
-        let keys: Vec<K> = self.tiles.keys().copied().filter(|k| pred(k)).collect();
-        for key in keys {
-            if let Some(evicted) = self.tiles.remove(&key) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
-    }
-}
-
-// Convenience wrappers for the (file_idx, lod, tile_idx) multi-LOD caches.
-impl TileCache<CacheKey> {
-    fn insert(&mut self, file_idx: usize, lod: u8, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, lod, tile_idx);
-        self.insert_keyed(key, Tile { tile_idx, file_idx, lod, rendered, lru_stamp: 0 });
-    }
-
-    fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<&Tile> {
-        self.get_keyed(&(file_idx, lod, tile_idx))
-    }
-
-    fn evict_far_from(&mut self, file_idx: usize, lod: u8, center_tile: usize, keep_radius: usize) {
-        let keys_to_evict: Vec<CacheKey> = self.tiles.keys().copied()
-            .filter(|&(fi, l, ti)| {
-                fi == file_idx && l == lod && ti.abs_diff(center_tile) > keep_radius
-            })
-            .collect();
-        for key in keys_to_evict {
-            if let Some(evicted) = self.tiles.remove(&key) {
-                self.total_bytes = self.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
-    }
-
-    fn clear_for_file(&mut self, file_idx: usize) {
-        self.clear_keys(|k| k.0 == file_idx);
-    }
-}
-
-// Flow / reassign / resonator caches reuse TileCache<CacheKey> directly (same
-// multi-LOD key as magnitude tiles); see the thread_locals below.
-
-/// Chroma tiles key by (file_idx, tile_idx) — baseline LOD only.
-type ChromaKey = (usize, usize);
-
-// Convenience wrappers for the (file_idx, tile_idx) chroma cache.
-impl TileCache<ChromaKey> {
-    fn insert(&mut self, file_idx: usize, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, tile_idx);
-        self.insert_keyed(key, Tile { tile_idx, file_idx, lod: 1, rendered, lru_stamp: 0 });
-    }
-
-    fn get(&self, file_idx: usize, tile_idx: usize) -> Option<&Tile> {
-        self.get_keyed(&(file_idx, tile_idx))
-    }
-}
+// The tile container, `Tile`, and the in-flight timeout/spawn-count helpers
+// live in `oversample-core` so their eviction / byte-accounting / timeout logic
+// is host-testable (the WASM frontend crate can't be `cargo test`ed). See
+// `oversample-core/src/canvas/tile_cache_core.rs`. `Tile` is re-exported so
+// external callers keep using `tile_cache::Tile`; the wasm-coupled machinery
+// (thread-locals, scheduling, generations, `js_sys::Date` time) stays here.
+use oversample_core::canvas::tile_cache_core::{
+    in_flight_active_count, in_flight_is_active, CacheKey, ChromaKey, TileCache,
+};
+pub use oversample_core::canvas::tile_cache_core::Tile;
 
 thread_local! {
     /// Unified magnitude tile cache — all LOD levels in one cache.
@@ -501,23 +339,16 @@ thread_local! {
 /// categories has reached `MAX_CONCURRENT_SPAWNS`.
 fn at_spawn_limit() -> bool {
     let now = js_sys::Date::now();
-    let mag = IN_FLIGHT.with(|s| s.borrow().values().filter(|&&ts| now - ts <= IN_FLIGHT_TIMEOUT_MS).count());
-    let flow = FLOW_IN_FLIGHT.with(|s| s.borrow().values().filter(|&&ts| now - ts <= IN_FLIGHT_TIMEOUT_MS).count());
-    let reassign = REASSIGN_IN_FLIGHT.with(|s| s.borrow().values().filter(|&&ts| now - ts <= IN_FLIGHT_TIMEOUT_MS).count());
-    let chroma = CHROMA_IN_FLIGHT.with(|s| s.borrow().values().filter(|&&ts| now - ts <= IN_FLIGHT_TIMEOUT_MS).count());
-    let reson = RESONATOR_IN_FLIGHT.with(|s| s.borrow().values().filter(|&&ts| now - ts <= IN_FLIGHT_TIMEOUT_MS).count());
+    let mag = IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
+    let flow = FLOW_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
+    let reassign = REASSIGN_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
+    let chroma = CHROMA_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
+    let reson = RESONATOR_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
     mag + flow + reassign + chroma + reson >= MAX_CONCURRENT_SPAWNS
 }
 
 fn has_active_in_flight<K: Eq + std::hash::Hash>(map: &mut HashMap<K, f64>, key: &K) -> bool {
-    match map.get(key).copied() {
-        None => false,
-        Some(ts) if js_sys::Date::now() - ts <= IN_FLIGHT_TIMEOUT_MS => true,
-        Some(_) => {
-            map.remove(key);
-            false
-        }
-    }
+    in_flight_is_active(map, key, js_sys::Date::now(), IN_FLIGHT_TIMEOUT_MS)
 }
 
 // ── Public API: magnitude tile cache ─────────────────────────────────────────
@@ -530,11 +361,11 @@ pub fn borrow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl FnOnce(
     CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         let key = (file_idx, lod, tile_idx);
-        if cache.tiles.contains_key(&key) {
+        if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
             CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(f)
+                c.borrow().get_keyed(&key).map(f)
             })
         } else {
             None
@@ -575,18 +406,10 @@ pub fn evict_far(file_idx: usize, lod: u8, center_tile: usize, keep_radius: usiz
 /// outside every (center, radius) zone — tiles near any center are kept.
 pub fn evict_far_multi(file_idx: usize, lod: u8, centers: &[(usize, usize)]) {
     CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        let to_evict: Vec<CacheKey> = cache.tiles.keys().copied()
-            .filter(|&(fi, l, ti)| {
-                fi == file_idx && l == lod
-                    && centers.iter().all(|&(center, radius)| ti.abs_diff(center) > radius)
-            })
-            .collect();
-        for key in to_evict {
-            if let Some(evicted) = cache.tiles.remove(&key) {
-                cache.total_bytes = cache.total_bytes.saturating_sub(evicted.rendered.byte_len());
-            }
-        }
+        c.borrow_mut().clear_keys(|&(fi, l, ti)| {
+            fi == file_idx && l == lod
+                && centers.iter().all(|&(center, radius)| ti.abs_diff(center) > radius)
+        });
     });
 }
 
@@ -624,7 +447,7 @@ pub fn count_missing_visible(file_idx: usize, lod: u8, first_tile: usize, last_t
             let mut inflight = s.borrow_mut();
             (first_tile..=last_tile).filter(|&t| {
                 let key = (file_idx, lod, t);
-                !cache.tiles.contains_key(&key) && !has_active_in_flight(&mut inflight, &key)
+                !cache.contains_key(&key) && !has_active_in_flight(&mut inflight, &key)
             }).count()
         })
     })
@@ -634,7 +457,7 @@ pub fn count_missing_visible(file_idx: usize, lod: u8, first_tile: usize, last_t
 pub fn cache_usage() -> (usize, usize) {
     CACHE.with(|c| {
         let cache = c.borrow();
-        (cache.total_bytes, cache.max_bytes)
+        (cache.total_bytes(), cache.max_bytes())
     })
 }
 
@@ -695,13 +518,13 @@ pub fn magnitude_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_t
         IN_FLIGHT.with(|s| {
             let mut inflight = s.borrow_mut();
             let mut stats = collect_debug_stats(
-                cache.tiles.len(),
+                cache.len(),
                 &mut inflight,
                 (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.tiles.contains_key(key),
+                |key| cache.contains_key(key),
             );
-            stats.used_bytes = cache.total_bytes;
-            stats.max_bytes = cache.max_bytes;
+            stats.used_bytes = cache.total_bytes();
+            stats.max_bytes = cache.max_bytes();
             stats
         })
     })
@@ -713,13 +536,13 @@ pub fn flow_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_tile: 
         FLOW_IN_FLIGHT.with(|s| {
             let mut inflight = s.borrow_mut();
             let mut stats = collect_debug_stats(
-                cache.tiles.len(),
+                cache.len(),
                 &mut inflight,
                 (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.tiles.contains_key(key),
+                |key| cache.contains_key(key),
             );
-            stats.used_bytes = cache.total_bytes;
-            stats.max_bytes = cache.max_bytes;
+            stats.used_bytes = cache.total_bytes();
+            stats.max_bytes = cache.max_bytes();
             stats
         })
     })
@@ -769,7 +592,7 @@ fn spectrogram_fft_size(data: &crate::types::SpectrogramData) -> Option<usize> {
 pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
     CACHE.with(|c| {
         let cache = c.borrow();
-        (0..n_tiles).filter(|&i| cache.tiles.contains_key(&(file_idx, LOD_BASELINE, i))).count()
+        (0..n_tiles).filter(|&i| cache.contains_key(&(file_idx, LOD_BASELINE, i))).count()
     })
 }
 
@@ -783,7 +606,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
     use crate::dsp::fft::compute_stft_columns;
 
     let key: CacheKey = (file_idx, lod, tile_idx);
-    if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
@@ -946,7 +769,7 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
     }
 
     let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
-    if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
 
@@ -1025,7 +848,7 @@ pub fn render_tile_from_store_sync(file_idx: usize, tile_idx: usize, expected_ff
     use crate::canvas::spectral_store;
 
     let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
-    if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return true; }
+    if CACHE.with(|c| c.borrow().contains_key(&key)) { return true; }
     if !spectral_store::fft_matches(file_idx, expected_fft) { return false; }
 
     let col_start = tile_idx * TILE_COLS;
@@ -1126,7 +949,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
     }
 
     let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
-    if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
@@ -1298,7 +1121,7 @@ pub fn schedule_tile_on_demand(
     use crate::dsp::fft::compute_stft_columns;
 
     let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
-    if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
@@ -1403,11 +1226,11 @@ pub fn borrow_flow_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: impl Fn
     FLOW_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         let key = (file_idx, lod, tile_idx);
-        if cache.tiles.contains_key(&key) {
+        if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
             FLOW_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(f)
+                c.borrow().get_keyed(&key).map(f)
             })
         } else {
             None
@@ -1442,7 +1265,7 @@ pub fn schedule_flow_tile(
     use crate::dsp::fft::compute_stft_columns;
 
     let key: CacheKey = (file_idx, lod, tile_idx);
-    if FLOW_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if FLOW_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
@@ -1603,11 +1426,11 @@ pub fn borrow_reassign_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: imp
     REASSIGN_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         let key = (file_idx, lod, tile_idx);
-        if cache.tiles.contains_key(&key) {
+        if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
             REASSIGN_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(f)
+                c.borrow().get_keyed(&key).map(f)
             })
         } else {
             None
@@ -1640,7 +1463,7 @@ pub fn schedule_reassign_tile(
     use crate::dsp::fft::compute_reassigned_tile;
 
     let key: CacheKey = (file_idx, lod, tile_idx);
-    if REASSIGN_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if REASSIGN_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
@@ -1749,11 +1572,11 @@ pub fn borrow_chroma_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&T
     CHROMA_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         let key = (file_idx, tile_idx);
-        if cache.tiles.contains_key(&key) {
+        if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
             CHROMA_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(f)
+                c.borrow().get_keyed(&key).map(f)
             })
         } else {
             None
@@ -1793,7 +1616,7 @@ pub fn schedule_chroma_tile(
     use crate::state::ChromaSource;
 
     let key = (file_idx, tile_idx);
-    if CHROMA_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if CHROMA_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if CHROMA_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
     CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
@@ -2161,7 +1984,7 @@ fn run_preload_batch(state: AppState, generation: u32) {
         // Check if cache is near capacity (stop at 90%)
         let cache_full = CACHE.with(|c| {
             let cache = c.borrow();
-            cache.total_bytes >= cache.max_bytes / 10 * 9
+            cache.total_bytes() >= cache.max_bytes() / 10 * 9
         });
         if cache_full { return None; }
 
@@ -2192,7 +2015,7 @@ fn run_preload_batch(state: AppState, generation: u32) {
 
             for t in candidates {
                 let key = (s.file_idx, s.lod, t);
-                if CACHE.with(|c| c.borrow().tiles.contains_key(&key)) {
+                if CACHE.with(|c| c.borrow().contains_key(&key)) {
                     continue; // already cached
                 }
                 tiles_to_schedule.push((s.file_idx, s.lod, t));
@@ -2279,11 +2102,11 @@ pub fn borrow_resonator_tile<R>(file_idx: usize, lod: u8, tile_idx: usize, f: im
     RESONATOR_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         let key = (file_idx, lod, tile_idx);
-        if cache.tiles.contains_key(&key) {
+        if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
             RESONATOR_CACHE.with(|c| {
-                c.borrow().tiles.get(&key).map(f)
+                c.borrow().get_keyed(&key).map(f)
             })
         } else {
             None
@@ -2319,13 +2142,13 @@ pub fn resonator_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_t
         RESONATOR_IN_FLIGHT.with(|s| {
             let mut inflight = s.borrow_mut();
             let mut stats = collect_debug_stats(
-                cache.tiles.len(),
+                cache.len(),
                 &mut inflight,
                 (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
-                |key| cache.tiles.contains_key(key),
+                |key| cache.contains_key(key),
             );
-            stats.used_bytes = cache.total_bytes;
-            stats.max_bytes = cache.max_bytes;
+            stats.used_bytes = cache.total_bytes();
+            stats.max_bytes = cache.max_bytes();
             stats
         })
     })
@@ -2343,7 +2166,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     use crate::dsp::resonators::{compute_resonator_columns, warmup_samples};
 
     let key: CacheKey = (file_idx, lod, tile_idx);
-    if RESONATOR_CACHE.with(|c| c.borrow().tiles.contains_key(&key)) { return; }
+    if RESONATOR_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if RESONATOR_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
 
