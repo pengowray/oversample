@@ -595,16 +595,18 @@ async fn background_flac_decode(
     expected_name: String,
     source: Arc<StreamingFlacSource>,
 ) {
+    // Pin to the file's stable id: duplicate filenames are common in bat
+    // datasets and the index shifts if another file is closed mid-decode, so a
+    // name/index check could bind to the wrong file. Decoding writes into the
+    // shared `source` Arc, so we only need a liveness check here.
+    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+
     // Initial delay — let the UI settle
     sleep_ms(200).await;
 
     while !source.is_fully_decoded() {
-        // Check file still loaded
-        let still_valid = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == expected_name)
-            .unwrap_or(false);
-        if !still_valid { return; }
+        // Still loaded?
+        if state.file_idx_for_id(expected_id).is_none() { return; }
 
         // Defer while playing or loading
         let is_busy = state.is_playing.get_untracked()
@@ -969,6 +971,11 @@ async fn background_mp3_decode(
 ) {
     use crate::canvas::tile_cache::{self, TILE_COLS};
 
+    // Pin to the file's stable id; this decode schedules tiles by index, so
+    // re-resolve the index from the id each hop (duplicate names / index shift
+    // would otherwise schedule tiles against the wrong file).
+    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+
     // Initial delay — let the UI settle
     sleep_ms(200).await;
 
@@ -977,12 +984,8 @@ async fn background_mp3_decode(
     let mut last_tile_scheduled: Option<usize> = None;
 
     while !source.is_fully_decoded() {
-        // Check file still loaded
-        let still_valid = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == expected_name)
-            .unwrap_or(false);
-        if !still_valid { return; }
+        // Re-resolve our index by id (used below for tile scheduling).
+        let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
         // Defer while playing or loading
         let is_busy = state.is_playing.get_untracked()
@@ -1345,16 +1348,16 @@ async fn background_ogg_decode(
     expected_name: String,
     source: Arc<StreamingOggSource>,
 ) {
+    // Pin to the file's stable id (see background_flac_decode); decoding writes
+    // into the shared `source` Arc, so a liveness check is all we need.
+    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+
     // Initial delay — let the UI settle
     sleep_ms(200).await;
 
     while !source.is_fully_decoded() {
-        // Check file still loaded
-        let still_valid = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == expected_name)
-            .unwrap_or(false);
-        if !still_valid { return; }
+        // Still loaded?
+        if state.file_idx_for_id(expected_id).is_none() { return; }
 
         // Defer while playing or loading
         let is_busy = state.is_playing.get_untracked()
@@ -1389,11 +1392,17 @@ pub(super) async fn build_streaming_overview(
     use crate::canvas::colors::magnitude_to_greyscale;
     use crate::types::PreviewImage;
 
+    // Pin to the file's stable id before any await: the index shifts if another
+    // file is closed, and duplicate filenames (common in bat datasets) make a
+    // name check ambiguous. Re-resolve the index from the id at each use.
+    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+
     // Initial delay — let the UI settle after loading
     sleep_ms(500).await;
 
+    let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
     let file = match state.files.get_untracked().get(file_index).cloned() {
-        Some(f) if f.name == expected_name => f,
+        Some(f) => f,
         _ => return,
     };
 
@@ -1425,12 +1434,8 @@ pub(super) async fn build_streaming_overview(
 
     let mut col = 0;
     while col < n_cols {
-        // Check file still loaded and is still the current file
-        let still_valid = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == expected_name)
-            .unwrap_or(false);
-        if !still_valid { return; }
+        // Re-resolve our index by id (the file can be closed or shift mid-build).
+        let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
         // Defer while playing, loading new files, or if this isn't the current file
         let is_busy = state.is_playing.get_untracked()
@@ -1502,12 +1507,11 @@ pub(super) async fn build_streaming_overview(
         pixels: Arc::new(pixels),
     };
 
-    // Update the file's overview image
+    // Update the file's overview image (re-resolve by id).
+    let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
     state.files.update(|files| {
         if let Some(f) = files.get_mut(file_index) {
-            if f.name == expected_name {
-                f.overview_image = Some(overview);
-            }
+            f.overview_image = Some(overview);
         }
     });
 
@@ -1962,6 +1966,11 @@ async fn background_m4a_decode(
 ) {
     use crate::canvas::tile_cache::{self, TILE_COLS};
 
+    // Pin to the file's stable id before any await; this decode schedules tiles
+    // by index, so re-resolve the index from the id each hop (see
+    // background_mp3_decode).
+    let Some(expected_id) = state.files.get_untracked().get(file_index).map(|f| f.id) else { return };
+
     // Initial delay.
     sleep_ms(200).await;
 
@@ -1978,11 +1987,8 @@ async fn background_m4a_decode(
     let mut bg_cursor: u64 = source.decode_frame_cursor_value();
 
     while bg_cursor < total_frames && !source.is_fully_decoded() {
-        let still_valid = state.files.get_untracked()
-            .get(file_index)
-            .map(|f| f.name == expected_name)
-            .unwrap_or(false);
-        if !still_valid { return; }
+        // Re-resolve our index by id (used below for tile scheduling).
+        let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
 
         let is_busy = state.is_playing.get_untracked()
             || state.loading_files.with_untracked(|v| !v.is_empty());

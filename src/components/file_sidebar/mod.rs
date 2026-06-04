@@ -1,6 +1,6 @@
 pub(crate) mod file_groups;
 pub(crate) mod file_badges;
-mod files_panel;
+pub(crate) mod files_panel;
 mod config_panel;
 mod export_section;
 mod project_panel;

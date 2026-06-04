@@ -15,6 +15,43 @@ use crate::format_time::format_duration_compact;
 use super::loading::{read_and_load_file, load_native_file, DemoEntry, fetch_demo_index, find_open_demo, load_single_demo};
 use super::suggestions::BatsForYou;
 
+/// Reconcile the index-keyed state that `Vec::remove(removed)` invalidates,
+/// shared by every file-removal path (the close button via [`remove_file_at`]
+/// and the stop-listening cleanup in `live_recording`):
+///
+/// - the positional tile/spectral caches — cleared wholesale, because their
+///   keys are `(file_idx, …)` and the files that shift down would otherwise
+///   read their old neighbour's tiles under the reused index (a wrong-file
+///   render). They self-heal by lazily re-rendering the visible tiles.
+/// - `selected_file_indices` — drop `removed`, shift higher indices down.
+/// - `active_timeline` / `active_timeline_track` — segments embed `file_index`,
+///   so the timeline is rebuilt from the reconciled selection; dropping below
+///   two files tears it (and the track selection) down.
+///
+/// Callers remain responsible for `current_file_index` / `mic_live_file_idx`,
+/// which have path-specific fixup rules. Must be called AFTER `files` is
+/// mutated (the timeline rebuild reads the post-removal list).
+pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
+    tile_cache::clear_all_caches();
+    crate::canvas::spectral_store::clear();
+    state.selected_file_indices.update(|sel| {
+        sel.retain(|&x| x != removed);
+        for x in sel.iter_mut() {
+            if *x > removed { *x -= 1; }
+        }
+    });
+    if state.active_timeline.get_untracked().is_some() {
+        let sel = state.selected_file_indices.get_untracked();
+        let rebuilt = state.files.with_untracked(|files| {
+            crate::timeline::TimelineView::from_files(&sel, files)
+        });
+        if rebuilt.is_none() {
+            state.active_timeline_track.set(None);
+        }
+        state.active_timeline.set(rebuilt);
+    }
+}
+
 /// Remove the file at `idx` from the list and reconcile EVERY piece of state
 /// that keys off a file's positional index, because `Vec::remove(i)` shifts
 /// all files after `i` down by one.
@@ -41,10 +78,6 @@ fn remove_file_at(state: &AppState, i: usize) {
     if state.is_playing.get_untracked() && state.current_file_index.get_untracked() == Some(i) {
         playback::stop(state);
     }
-    // Indices shift on remove, so every positional cache becomes stale for the
-    // files after `i`, not just for `i`. Clear them all (cheap: lazy re-render).
-    tile_cache::clear_all_caches();
-    crate::canvas::spectral_store::clear();
     let was_current = state.current_file_index.get_untracked() == Some(i);
     state.files.update(|files| {
         if i < files.len() {
@@ -70,27 +103,9 @@ fn remove_file_at(state: &AppState, i: usize) {
             other => other,
         };
     });
-    // Multi-select set: drop the removed index, shift higher ones down.
-    state.selected_file_indices.update(|sel| {
-        sel.retain(|&x| x != i);
-        for x in sel.iter_mut() {
-            if *x > i { *x -= 1; }
-        }
-    });
-    // The active timeline embeds `file_index` in each segment, so it must be
-    // rebuilt from the (already-reconciled) selection against the new file
-    // list. Dropping below 2 files makes `from_files` return None, which also
-    // tears down the now-meaningless track selection.
-    if state.active_timeline.get_untracked().is_some() {
-        let sel = state.selected_file_indices.get_untracked();
-        let rebuilt = state.files.with_untracked(|files| {
-            crate::timeline::TimelineView::from_files(&sel, files)
-        });
-        if rebuilt.is_none() {
-            state.active_timeline_track.set(None);
-        }
-        state.active_timeline.set(rebuilt);
-    }
+    // Reconcile the positional caches + multi-select + timeline (shared with
+    // the stop-listening removal path in live_recording).
+    reconcile_after_file_removed(state, i);
     // If closing the current file left current_file_index unchanged (e.g.
     // closing file 0 when file 1 slides into slot 0), the per-file
     // vertical-zoom sync Effect won't fire — so reload the new current

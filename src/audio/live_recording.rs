@@ -548,6 +548,11 @@ pub(crate) fn cleanup_listen_file(state: &AppState) {
         }
     });
 
+    // A file may have been loaded while listening, putting the transient listen
+    // doc mid-list; reconcile the positional caches + multi-select + timeline
+    // the same way the close-button path does.
+    crate::components::file_sidebar::files_panel::reconcile_after_file_removed(state, idx);
+
     // Fix current_file_index after removal
     let len = state.files.with_untracked(|f| f.len());
     match state.current_file_index.get_untracked() {
@@ -648,6 +653,11 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
     // (before any async yield that could allow a spectrogram draw)
     live_waterfall::create(fft_size, hop_size, sample_rate);
 
+    // Pin to the live file's STABLE id, not its current index. Closing another
+    // file shifts this file's index, so the loop re-resolves the index each
+    // tick from the id (see the guard below).
+    let live_id = state.files.with_untracked(|f| f.get(file_index).map(|x| x.id));
+
     wasm_bindgen_futures::spawn_local(async move {
         let mut last_processed_col: usize = 0;
         let mut last_snapshot_len: usize = 0;
@@ -676,7 +686,15 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             if !is_recording && !is_listening {
                 break;
             }
-            // Check file still valid
+            // Re-resolve our file by its stable id every tick. Closing an
+            // earlier file shifts the live doc's index down (remove_file_at
+            // decrements mic_live_file_idx in lock-step), so a captured index
+            // would start writing recording data into the wrong file. Returns
+            // None once our file itself is closed -> stop the loop.
+            let Some(file_index) = live_id.and_then(|id| state.file_idx_for_id(id)) else {
+                break;
+            };
+            // It must still be the live-capture slot.
             if state.mic_live_file_idx.get_untracked() != Some(file_index) {
                 break;
             }
