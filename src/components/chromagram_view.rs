@@ -35,8 +35,8 @@ pub fn ChromagramView() -> impl IntoView {
     // Main render effect
     Effect::new(move || {
         let _tile_ready = state.tile_ready_signal.get();
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let chroma_colormap = state.chroma.colormap().get();
         let _chroma_gain = state.chroma.gain().get(); // triggers re-render after cache clear
         let _chroma_source = state.chroma.source().get(); // same — re-render after source-swap cache clear
@@ -163,14 +163,14 @@ pub fn ChromagramView() -> impl IntoView {
     Effect::new(move || {
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
-        let follow = state.follow_cursor.get();
-        let suspended = state.follow_suspended.get_untracked();
+        let follow = state.view.follow_cursor().get();
+        let suspended = state.view.follow_suspended().get_untracked();
 
         if !follow { return; }
         if !is_playing {
             if suspended {
-                state.follow_suspended.set(false);
-                state.follow_visible_since.set(None);
+                state.view.follow_suspended().set(false);
+                state.view.follow_visible_since().set(None);
             }
             return;
         }
@@ -186,8 +186,8 @@ pub fn ChromagramView() -> impl IntoView {
             .and_then(|i| files.get(i))
             .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
             .unwrap_or((1.0, 0.0));
-        let zoom = state.zoom_level.get_untracked();
-        let scroll = state.scroll_offset.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
         let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
 
         let visible_time = viewport::visible_time(display_w, zoom, time_res);
@@ -196,13 +196,13 @@ pub fn ChromagramView() -> impl IntoView {
         if suspended {
             let playhead_visible = playhead_rel >= 0.0 && playhead_rel <= visible_time;
             if playhead_visible {
-                let resume = match state.follow_visible_since.get_untracked() {
+                let resume = match state.view.follow_visible_since().get_untracked() {
                     Some(since) => js_sys::Date::now() - since >= 200.0,
                     None => true,
                 };
                 if resume {
-                    state.follow_suspended.set(false);
-                    state.follow_visible_since.set(None);
+                    state.view.follow_suspended().set(false);
+                    state.view.follow_visible_since().set(None);
                 }
             }
             return;
@@ -210,10 +210,10 @@ pub fn ChromagramView() -> impl IntoView {
 
         if visible_time < viewport::FOLLOW_EXACT_THRESHOLD_SECS {
             let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
-            state.scroll_offset.set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
+            state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
         } else if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
             let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
-            state.scroll_offset.set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
+            state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
         }
     });
 
@@ -221,13 +221,13 @@ pub fn ChromagramView() -> impl IntoView {
         ev.prevent_default();
         if ev.ctrl_key() {
             let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-            state.zoom_level.update(|z| *z = (*z * delta).clamp(0.02, 100.0));
+            state.view.zoom_level().update(|z| *z = (*z * delta).clamp(0.02, 100.0));
         } else {
             let raw_delta = ev.delta_y() + ev.delta_x();
             let files = state.files.get_untracked();
             let idx = state.current_file_index.get_untracked().unwrap_or(0);
             let (visible_time, duration) = if let Some(file) = files.get(idx) {
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 (viewport::visible_time(canvas_w, zoom, file.spectrogram.time_resolution), file.audio.duration_secs)
             } else {
@@ -236,7 +236,7 @@ pub fn ChromagramView() -> impl IntoView {
             let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
             state.suspend_follow();
             let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
-            state.scroll_offset.update(|s| *s = viewport::clamp_scroll_for_mode(*s + delta, duration, visible_time, from_here_mode));
+            state.view.scroll_offset().update(|s| *s = viewport::clamp_scroll_for_mode(*s + delta, duration, visible_time, from_here_mode));
         }
     };
 
@@ -245,7 +245,7 @@ pub fn ChromagramView() -> impl IntoView {
         if state.viewport_zoomed.get_untracked() { return; }
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         state.is_dragging.set(true);
-        hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+        hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
     let on_mousemove = move |ev: MouseEvent| {
@@ -259,13 +259,13 @@ pub fn ChromagramView() -> impl IntoView {
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-        let zoom = state.zoom_level.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
         let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
         let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
     };
 
     let on_mouseup = move |ev: MouseEvent| {
@@ -300,8 +300,8 @@ pub fn ChromagramView() -> impl IntoView {
                 let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
                 pinch_state.set(Some(PinchState {
                     initial_dist: dist,
-                    initial_zoom: state.zoom_level.get_untracked(),
-                    initial_scroll: state.scroll_offset.get_untracked(),
+                    initial_zoom: state.view.zoom_level().get_untracked(),
+                    initial_scroll: state.view.scroll_offset().get_untracked(),
                     initial_mid_client_x: mid_x,
                     time_res,
                     duration,
@@ -319,7 +319,7 @@ pub fn ChromagramView() -> impl IntoView {
         if state.canvas_tool.get_untracked() != CanvasTool::Hand { return; }
         ev.prevent_default();
         state.is_dragging.set(true);
-        hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+        hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
     };
 
     let on_touchmove = move |ev: web_sys::TouchEvent| {
@@ -338,8 +338,8 @@ pub fn ChromagramView() -> impl IntoView {
                     let cw = canvas.width() as f64;
                     let (new_zoom, new_scroll) = apply_pinch(&ps, dist, mid_x, rect.left(), cw);
                     state.suspend_follow();
-                    state.zoom_level.set(new_zoom);
-                    state.scroll_offset.set(new_scroll);
+                    state.view.zoom_level().set(new_zoom);
+                    state.view.scroll_offset().set(new_scroll);
                 }
             }
             return;
@@ -358,13 +358,13 @@ pub fn ChromagramView() -> impl IntoView {
         let idx = state.current_file_index.get_untracked();
         let file = idx.and_then(|i| files.get(i));
         let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-        let zoom = state.zoom_level.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let visible_time = viewport::visible_time(cw, zoom, time_res);
         let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(0.0);
         let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
         let dt = -(dx / cw) * visible_time;
         state.suspend_follow();
-        state.scroll_offset.set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
+        state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode));
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {
@@ -374,7 +374,7 @@ pub fn ChromagramView() -> impl IntoView {
         }
         if remaining == 1 {
             if let Some(touch) = _ev.touches().get(0) {
-                hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+                hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
                 if state.canvas_tool.get_untracked() == CanvasTool::Hand {
                     state.is_dragging.set(true);
                 }

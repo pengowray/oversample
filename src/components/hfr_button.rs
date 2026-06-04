@@ -151,8 +151,8 @@ pub fn RangeButton() -> impl IntoView {
         if !state.hfr_enabled.get() {
             return "OFF".to_string();
         }
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
+        let lo = state.filter.band_ff_freq_lo().get();
+        let hi = state.filter.band_ff_freq_hi().get();
         if hi > lo {
             format!("{}\u{2013}{} kHz", fmt_khz(lo), fmt_khz(hi))
         } else {

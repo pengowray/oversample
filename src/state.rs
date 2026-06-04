@@ -1352,6 +1352,92 @@ pub struct ExportState {
     pub video_view_mode: VideoViewMode,
 }
 
+/// Transform / DSP playback parameters (heterodyne, time-expansion, pitch
+/// shift, phase vocoder, zero-crossing) plus their BandFF-derived auto flags.
+#[derive(Clone, Debug, Store)]
+pub struct TransformState {
+    pub het_frequency: f64,
+    pub het_cutoff: f64,
+    /// Number of heterodyne carriers (1 = classic single-carrier, >1 = comb).
+    pub het_comb_count: u32,
+    /// Spacing (Hz) between adjacent comb carriers.
+    pub het_comb_spacing: f64,
+    /// When true, comb count/spacing are derived from BandFF width + LP cutoff.
+    pub het_comb_auto: bool,
+    pub het_interacting: bool,
+    pub het_freq_auto: bool,
+    pub het_cutoff_auto: bool,
+    pub te_factor: f64,
+    pub te_factor_auto: bool,
+    pub ps_factor: f64,
+    pub ps_factor_auto: bool,
+    /// Output-side shift (Hz) applied AFTER pitch shifting in PS/PV modes.
+    pub ps_shift_hz: f64,
+    pub pv_factor: f64,
+    pub pv_factor_auto: bool,
+    pub pv_hq: bool,
+    pub zc_factor: f64,
+}
+
+/// Viewport: zoom, scroll, display frequency bounds, follow-cursor behaviour.
+#[derive(Clone, Debug, Store)]
+pub struct ViewState {
+    pub zoom_level: f64,
+    pub scroll_offset: f64,
+    pub min_display_freq: Option<f64>,
+    pub max_display_freq: Option<f64>,
+    pub follow_cursor: bool,
+    pub follow_suspended: bool,
+    pub follow_visible_since: Option<f64>,
+    pub pre_play_scroll: f64,
+    pub user_panned_during_playback: bool,
+}
+
+/// Bandpass / EQ filter + BandFF gutter settings.
+#[derive(Clone, Debug, Store)]
+pub struct FilterState {
+    pub enabled: bool,
+    pub band_mode: u8,
+    pub freq_low: f64,
+    pub freq_high: f64,
+    pub db_below: f64,
+    pub db_selected: f64,
+    pub db_harmonics: f64,
+    pub db_above: f64,
+    pub hovering_band: Option<u8>,
+    pub quality: FilterQuality,
+    pub bandpass_mode: BandpassMode,
+    pub bandpass_range: BandpassRange,
+    /// BandFF frequency range (0.0 = no BandFF active).
+    pub band_ff_freq_lo: f64,
+    pub band_ff_freq_hi: f64,
+    /// True while the user is live-dragging the band gutter.
+    pub band_ff_dragging: bool,
+}
+
+/// Gain settings: audio playback/live gain + waveform-view (visual) gain.
+#[derive(Clone, Debug, Store)]
+pub struct GainState {
+    pub db: f64,
+    /// Stashed gain for the other HFR state (swapped on HFR toggle).
+    pub db_stash: f64,
+    /// Manual gain (dB) applied while live listening / recording.
+    pub live_db: f64,
+    pub auto: bool,
+    pub mode: GainMode,
+    /// Remembers last auto-gain mode so toggle restores it.
+    pub mode_last_auto: GainMode,
+    /// Where to measure peak for AutoPeak gain mode.
+    pub peak_source: PeakSource,
+    /// Cache for recently computed selection peak values.
+    pub selection_peak_cache: crate::audio::peak::PeakCache,
+    /// Whether a peak scan is currently in progress (for UI indicator).
+    pub peak_scanning: bool,
+    /// Waveform-view gain (visual only, independent of audio gain).
+    pub wave_view_db: f64,
+    pub wave_view_auto: bool,
+}
+
 /// Single-import prelude for the generated `#[derive(Store)]` accessor traits.
 /// Consumers `use crate::state::store_fields::*;` once instead of importing each
 /// `FooStateStoreFields` trait individually. Extend as more groups migrate.
@@ -1368,6 +1454,10 @@ pub mod store_fields {
         TimelineStateStoreFields,
         BatBookStateStoreFields,
         ExportStateStoreFields,
+        TransformStateStoreFields,
+        ViewStateStoreFields,
+        FilterStateStoreFields,
+        GainStateStoreFields,
     };
 }
 
@@ -1394,10 +1484,16 @@ pub struct AppState {
     /// turned off for the duration of that playback and restored when
     /// playback stops or the user switches to another mode.
     pub paused_hfr_for_normal: RwSignal<bool>,
-    pub het_frequency: RwSignal<f64>,
-    pub te_factor: RwSignal<f64>,
-    pub zoom_level: RwSignal<f64>,
-    pub scroll_offset: RwSignal<f64>,
+    /// Transform / DSP playback parameters: heterodyne, time-expansion, pitch
+    /// shift, phase vocoder, zero-crossing — plus BandFF-derived auto flags
+    /// (grouped reactive store).
+    pub transform: Store<TransformState>,
+    /// Viewport: zoom, scroll, display freq bounds, follow-cursor (grouped store).
+    pub view: Store<ViewState>,
+    /// Bandpass / EQ filter + BandFF gutter settings (grouped reactive store).
+    pub filter: Store<FilterState>,
+    /// Gain (audio + waveform-view) settings (grouped reactive store).
+    pub gain: Store<GainState>,
     pub is_playing: RwSignal<bool>,
     /// True when playback is frozen waiting for streaming chunks to decode.
     /// Drives the "Buffering…" toast and pauses the playhead animation.
@@ -1406,17 +1502,6 @@ pub struct AppState {
     pub active_playback_selection: RwSignal<Option<Selection>>,
     pub loading_files: RwSignal<Vec<LoadingEntry>>,
     pub loading_next_id: RwSignal<u64>,
-    pub ps_factor: RwSignal<f64>,
-    pub pv_factor: RwSignal<f64>,
-    pub pv_hq: RwSignal<bool>,
-    /// Output-side shift (Hz) applied AFTER pitch shifting in PS / PV
-    /// modes. Compound mapping is `out = |in/ps_factor − ps_shift_hz|`.
-    /// Value lives in output-Hz space, so it's small (typically 0–5 kHz)
-    /// and intuitive to set from the gutter. Zero means pure
-    /// multiplicative pitch shift (the original behaviour).
-    pub ps_shift_hz: RwSignal<f64>,
-    pub zc_factor: RwSignal<f64>,
-    pub het_interacting: RwSignal<bool>,
     pub is_dragging: RwSignal<bool>,
     /// True while any pointer button is held down on the spectrogram canvas.
     pub pointer_is_down: RwSignal<bool>,
@@ -1429,65 +1514,12 @@ pub struct AppState {
     pub right_sidebar_width: RwSignal<f64>,
     pub right_sidebar_dropdown_open: RwSignal<bool>,
     pub metadata_view: RwSignal<MetadataView>,
-    pub min_display_freq: RwSignal<Option<f64>>,
-    pub max_display_freq: RwSignal<Option<f64>>,
     pub mouse_freq: RwSignal<Option<f64>>,
     pub mouse_canvas_x: RwSignal<f64>,
     pub mouse_in_label_area: RwSignal<bool>,
     pub label_hover_opacity: RwSignal<f64>,
-    pub follow_cursor: RwSignal<bool>,
-    pub follow_suspended: RwSignal<bool>,
-    pub follow_visible_since: RwSignal<Option<f64>>,
-    pub pre_play_scroll: RwSignal<f64>,
-    pub user_panned_during_playback: RwSignal<bool>,
-    // Filter EQ (driven by bandpass_mode effect)
-    pub filter_enabled: RwSignal<bool>,
-    pub filter_band_mode: RwSignal<u8>,
-    pub filter_freq_low: RwSignal<f64>,
-    pub filter_freq_high: RwSignal<f64>,
-    pub filter_db_below: RwSignal<f64>,
-    pub filter_db_selected: RwSignal<f64>,
-    pub filter_db_harmonics: RwSignal<f64>,
-    pub filter_db_above: RwSignal<f64>,
-    pub filter_hovering_band: RwSignal<Option<u8>>,
-    pub filter_quality: RwSignal<FilterQuality>,
-    pub het_cutoff: RwSignal<f64>,
-    /// Number of heterodyne carriers (1 = classic single-carrier, >1 = comb).
-    /// Comb mode mixes N evenly-spaced carriers tiled UPWARD from
-    /// `het_frequency` (the lowest carrier) and sums the difference tones,
-    /// covering a wider ultrasonic range without retuning.
-    pub het_comb_count: RwSignal<u32>,
-    /// Spacing (Hz) between adjacent comb carriers. Roughly 2× `het_cutoff`
-    /// gives near-seamless coverage with minimal image overlap.
-    pub het_comb_spacing: RwSignal<f64>,
-    /// When true, `het_comb_count` and `het_comb_spacing` are derived from
-    /// the BandFF width and the LP cutoff so the carriers tile the focus
-    /// range with seamless coverage.
-    pub het_comb_auto: RwSignal<bool>,
     pub sidebar_collapsed: RwSignal<bool>,
     pub sidebar_width: RwSignal<f64>,
-    // Gain
-    pub gain_db: RwSignal<f64>,
-    /// Stashed gain_db for the other HFR state (swapped on HFR toggle).
-    pub gain_db_stash: RwSignal<f64>,
-    /// Manual gain (dB) applied while live listening / recording. Kept
-    /// separate from `gain_db` so the user can tune live monitoring
-    /// independently of file playback — switching between them doesn't
-    /// require remembering and resetting the slider.
-    pub live_gain_db: RwSignal<f64>,
-    pub auto_gain: RwSignal<bool>,
-    pub gain_mode: RwSignal<GainMode>,
-    /// Remembers last auto-gain mode so toggle restores it (default: Adaptive).
-    pub gain_mode_last_auto: RwSignal<GainMode>,
-    /// Where to measure peak for AutoPeak gain mode.
-    pub peak_source: RwSignal<PeakSource>,
-    /// Cache for recently computed selection peak values.
-    pub selection_peak_cache: RwSignal<crate::audio::peak::PeakCache>,
-    /// Whether a peak scan is currently in progress (for UI indicator).
-    pub peak_scanning: RwSignal<bool>,
-    // Waveform view gain (visual only, independent of audio gain)
-    pub wave_view_gain_db: RwSignal<f64>,
-    pub wave_view_auto_gain: RwSignal<bool>,
 
     // Channel
     pub channel_view: RwSignal<ChannelView>,
@@ -1502,10 +1534,6 @@ pub struct AppState {
 
     // Waveform sub-view mode
     pub waveform_view: RwSignal<WaveformView>,
-
-    // Bandpass
-    pub bandpass_mode: RwSignal<BandpassMode>,
-    pub bandpass_range: RwSignal<BandpassRange>,
 
     // Overview
     pub overview_view: RwSignal<OverviewView>,
@@ -1564,23 +1592,6 @@ pub struct AppState {
     // Spectrogram drag handles (BandFF + HET)
     pub spec_drag_handle: RwSignal<Option<SpectrogramHandle>>,
     pub spec_hover_handle: RwSignal<Option<SpectrogramHandle>>,
-
-    // BandFF frequency range (0.0 = no BandFF active)
-    pub band_ff_freq_lo: RwSignal<f64>,
-    pub band_ff_freq_hi: RwSignal<f64>,
-
-    /// True while the user is live-dragging the band gutter. Heavy consumers
-    /// (e.g. the waveform's full-file FFT band-split) can early-return with
-    /// a cached value while this is set, and recompute only when the drag
-    /// ends. Gutter repainting is cheap and still reflects every move.
-    pub band_ff_dragging: RwSignal<bool>,
-
-    // Per-parameter auto flags (true = computed from BandFF)
-    pub het_freq_auto: RwSignal<bool>,
-    pub het_cutoff_auto: RwSignal<bool>,
-    pub te_factor_auto: RwSignal<bool>,
-    pub ps_factor_auto: RwSignal<bool>,
-    pub pv_factor_auto: RwSignal<bool>,
 
     /// Output frequency range to highlight on spectrogram (set by hover in HFR panel).
     pub output_freq_highlight: RwSignal<Option<(f64, f64)>>,
@@ -1949,22 +1960,74 @@ impl AppState {
             playback_mode: RwSignal::new(PlaybackMode::Normal),
             playback_modes_extra: RwSignal::new(Vec::new()),
             paused_hfr_for_normal: RwSignal::new(false),
-            het_frequency: RwSignal::new(45_000.0),
-            te_factor: RwSignal::new(10.0),
-            zoom_level: RwSignal::new(1.0),
-            scroll_offset: RwSignal::new(0.0),
+
+            transform: Store::new(TransformState {
+                het_frequency: 45_000.0,
+                het_cutoff: 15_000.0,
+                het_comb_count: 1,
+                het_comb_spacing: 30_000.0,
+                het_comb_auto: true,
+                het_interacting: false,
+                het_freq_auto: true,
+                het_cutoff_auto: true,
+                te_factor: 10.0,
+                te_factor_auto: true,
+                ps_factor: 10.0,
+                ps_factor_auto: true,
+                ps_shift_hz: 0.0,
+                pv_factor: 10.0,
+                pv_factor_auto: true,
+                pv_hq: true,
+                zc_factor: 8.0,
+            }),
+            view: Store::new(ViewState {
+                zoom_level: 1.0,
+                scroll_offset: 0.0,
+                min_display_freq: None,
+                max_display_freq: None,
+                follow_cursor: true,
+                follow_suspended: false,
+                follow_visible_since: None,
+                pre_play_scroll: 0.0,
+                user_panned_during_playback: false,
+            }),
+            filter: Store::new(FilterState {
+                enabled: false,
+                band_mode: 3,
+                freq_low: 20_000.0,
+                freq_high: 60_000.0,
+                db_below: -60.0,
+                db_selected: 0.0,
+                db_harmonics: -30.0,
+                db_above: -60.0,
+                hovering_band: None,
+                quality: FilterQuality::Spectral,
+                bandpass_mode: BandpassMode::Auto,
+                bandpass_range: BandpassRange::FollowFocus,
+                band_ff_freq_lo: 0.0,
+                band_ff_freq_hi: 0.0,
+                band_ff_dragging: false,
+            }),
+            gain: Store::new(GainState {
+                db: 0.0,
+                db_stash: 0.0,
+                live_db: 0.0,
+                auto: false,
+                mode: GainMode::Off,
+                mode_last_auto: GainMode::AutoPeak,
+                peak_source: PeakSource::First30s,
+                selection_peak_cache: crate::audio::peak::PeakCache::default(),
+                peak_scanning: false,
+                wave_view_db: 0.0,
+                wave_view_auto: false,
+            }),
+
             is_playing: RwSignal::new(false),
             is_buffering: RwSignal::new(false),
             playhead_time: RwSignal::new(0.0),
             active_playback_selection: RwSignal::new(None),
             loading_files: RwSignal::new(Vec::new()),
             loading_next_id: RwSignal::new(0),
-            ps_factor: RwSignal::new(10.0),
-            pv_factor: RwSignal::new(10.0),
-            ps_shift_hz: RwSignal::new(0.0),
-            pv_hq: RwSignal::new(true),
-            zc_factor: RwSignal::new(8.0),
-            het_interacting: RwSignal::new(false),
             is_dragging: RwSignal::new(false),
             pointer_is_down: RwSignal::new(false),
             spectrogram_display: RwSignal::new(SpectrogramDisplay::FlowOptical),
@@ -1982,49 +2045,17 @@ impl AppState {
             right_sidebar_width: RwSignal::new(220.0),
             right_sidebar_dropdown_open: RwSignal::new(false),
             metadata_view: RwSignal::new(MetadataView::default()),
-            min_display_freq: RwSignal::new(None),
-            max_display_freq: RwSignal::new(None),
             mouse_freq: RwSignal::new(None),
             mouse_canvas_x: RwSignal::new(0.0),
             mouse_in_label_area: RwSignal::new(false),
             label_hover_opacity: RwSignal::new(0.0),
-            follow_cursor: RwSignal::new(true),
-            follow_suspended: RwSignal::new(false),
-            follow_visible_since: RwSignal::new(None),
-            pre_play_scroll: RwSignal::new(0.0),
-            user_panned_during_playback: RwSignal::new(false),
-            filter_enabled: RwSignal::new(false),
-            filter_band_mode: RwSignal::new(3),
-            filter_freq_low: RwSignal::new(20_000.0),
-            filter_freq_high: RwSignal::new(60_000.0),
-            filter_db_below: RwSignal::new(-60.0),
-            filter_db_selected: RwSignal::new(0.0),
-            filter_db_harmonics: RwSignal::new(-30.0),
-            filter_db_above: RwSignal::new(-60.0),
-            filter_hovering_band: RwSignal::new(None),
-            filter_quality: RwSignal::new(FilterQuality::Spectral),
-            het_cutoff: RwSignal::new(15_000.0),
             // Default: single carrier — comb engages only when the user opts in.
             // Default spacing ~ 2× cutoff so initial comb mode covers cleanly.
-            het_comb_count: RwSignal::new(1),
-            het_comb_spacing: RwSignal::new(30_000.0),
             // On by default — auto-fit carrier count + spacing to the
             // focus range. Toggle "A" off in the Carriers row to pick a
             // fixed count manually.
-            het_comb_auto: RwSignal::new(true),
             sidebar_collapsed: RwSignal::new(false),
             sidebar_width: RwSignal::new(220.0),
-            gain_db: RwSignal::new(0.0),
-            gain_db_stash: RwSignal::new(0.0),
-            live_gain_db: RwSignal::new(0.0),
-            auto_gain: RwSignal::new(false),
-            gain_mode: RwSignal::new(GainMode::Off),
-            gain_mode_last_auto: RwSignal::new(GainMode::AutoPeak),
-            peak_source: RwSignal::new(PeakSource::First30s),
-            selection_peak_cache: RwSignal::new(crate::audio::peak::PeakCache::default()),
-            peak_scanning: RwSignal::new(false),
-            wave_view_gain_db: RwSignal::new(0.0),
-            wave_view_auto_gain: RwSignal::new(false),
 
             channel_view: RwSignal::new(ChannelView::Stereo),
 
@@ -2032,8 +2063,6 @@ impl AppState {
             canvas_tool: RwSignal::new(CanvasTool::Hand),
             hfr_enabled: RwSignal::new(false),
             waveform_view: RwSignal::new(WaveformView::Frequency),
-            bandpass_mode: RwSignal::new(BandpassMode::Auto),
-            bandpass_range: RwSignal::new(BandpassRange::FollowFocus),
             overview_view: RwSignal::new(OverviewView::Waveform),
             nav_history: RwSignal::new(Vec::new()),
             nav_index: RwSignal::new(0),
@@ -2056,14 +2085,6 @@ impl AppState {
             main_view: RwSignal::new(MainView::Spectrogram),
             spec_drag_handle: RwSignal::new(None),
             spec_hover_handle: RwSignal::new(None),
-            band_ff_freq_lo: RwSignal::new(0.0),
-            band_ff_freq_hi: RwSignal::new(0.0),
-            band_ff_dragging: RwSignal::new(false),
-            het_freq_auto: RwSignal::new(true),
-            het_cutoff_auto: RwSignal::new(true),
-            te_factor_auto: RwSignal::new(true),
-            ps_factor_auto: RwSignal::new(true),
-            pv_factor_auto: RwSignal::new(true),
             output_freq_highlight: RwSignal::new(None),
             output_snap: RwSignal::new(OutputSnap::Standard),
             mic_listening: RwSignal::new(false),
@@ -2400,8 +2421,8 @@ impl AppState {
     /// Push current scroll/zoom onto the navigation history stack.
     pub fn push_nav(&self) {
         let entry = NavEntry {
-            scroll_offset: self.scroll_offset.get_untracked(),
-            zoom_level: self.zoom_level.get_untracked(),
+            scroll_offset: self.view.scroll_offset().get_untracked(),
+            zoom_level: self.view.zoom_level().get_untracked(),
         };
         let idx = self.nav_index.get_untracked();
         self.nav_history.update(|hist| {
@@ -2595,11 +2616,11 @@ impl AppState {
     /// and 200ms have passed since the last scroll action.
     pub fn suspend_follow(&self) {
         if self.is_playing.get_untracked() {
-            self.user_panned_during_playback.set(true);
+            self.view.user_panned_during_playback().set(true);
         }
-        if self.follow_cursor.get_untracked() && self.is_playing.get_untracked() {
-            self.follow_suspended.set(true);
-            self.follow_visible_since.set(Some(js_sys::Date::now()));
+        if self.view.follow_cursor().get_untracked() && self.is_playing.get_untracked() {
+            self.view.follow_suspended().set(true);
+            self.view.follow_visible_since().set(Some(js_sys::Date::now()));
         }
     }
 
@@ -2633,7 +2654,7 @@ impl AppState {
         let Some(file_index) = idx else { return 0.0 };
         let Some(file) = files.get(file_index) else { return 0.0 };
 
-        let peak_db = match self.peak_source.get() {
+        let peak_db = match self.gain.peak_source().get() {
             PeakSource::First30s => file.cached_peak_db,
             PeakSource::FullWave => {
                 // Fall back to 30s peak while full scan is in progress.
@@ -2672,7 +2693,7 @@ impl AppState {
         let key = (file_index, start_sample, end_sample);
 
         // Check cache (reactive read so we re-run when cache updates)
-        if let Some(&peak_db) = self.selection_peak_cache.get().get(&key) {
+        if let Some(&peak_db) = self.gain.selection_peak_cache().get().get(&key) {
             return peak_db;
         }
 
@@ -2704,13 +2725,13 @@ impl AppState {
 
     /// Set only the lower BandFF bound (for drag handles).
     pub fn set_band_ff_lo(&self, lo: f64) {
-        let hi = self.band_ff_freq_hi.get_untracked();
+        let hi = self.filter.band_ff_freq_hi().get_untracked();
         self.set_band_ff_range(lo, hi);
     }
 
     /// Set only the upper BandFF bound (for drag handles).
     pub fn set_band_ff_hi(&self, hi: f64) {
-        let lo = self.band_ff_freq_lo.get_untracked();
+        let lo = self.filter.band_ff_freq_lo().get_untracked();
         self.set_band_ff_range(lo, hi);
     }
 
@@ -2728,9 +2749,9 @@ impl AppState {
             let saved = self.focus_stack.get_untracked().saved_playback_mode();
             self.playback_mode.set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
-        if self.bandpass_mode.get_untracked() == BandpassMode::Off {
+        if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
             let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
-            self.bandpass_mode.set(saved.unwrap_or(BandpassMode::Auto));
+            self.filter.bandpass_mode().set(saved.unwrap_or(BandpassMode::Auto));
         }
         self.sync_focus_outputs();
     }
@@ -2747,7 +2768,7 @@ impl AppState {
                 // No active focus to restore — turn off HFR
                 self.focus_stack.update(|s| s.set_hfr_enabled(false));
                 self.playback_mode.set(PlaybackMode::Normal);
-                self.bandpass_mode.set(BandpassMode::Off);
+                self.filter.bandpass_mode().set(BandpassMode::Off);
             }
         }
         // If adopted (restore is None): user range is correct, HFR stays as-is
@@ -2767,9 +2788,9 @@ impl AppState {
             let saved = self.focus_stack.get_untracked().saved_playback_mode();
             self.playback_mode.set(saved.unwrap_or(PlaybackMode::PitchShift));
         }
-        if self.bandpass_mode.get_untracked() == BandpassMode::Off {
+        if self.filter.bandpass_mode().get_untracked() == BandpassMode::Off {
             let saved = self.focus_stack.get_untracked().saved_bandpass_mode();
-            self.bandpass_mode.set(saved.unwrap_or(BandpassMode::Auto));
+            self.filter.bandpass_mode().set(saved.unwrap_or(BandpassMode::Auto));
         }
         self.sync_focus_outputs();
     }
@@ -2785,7 +2806,7 @@ impl AppState {
             if !range.is_active() && !self.focus_stack.get_untracked().has_override(FocusSource::BatBook) {
                 self.focus_stack.update(|s| s.set_hfr_enabled(false));
                 self.playback_mode.set(PlaybackMode::Normal);
-                self.bandpass_mode.set(BandpassMode::Off);
+                self.filter.bandpass_mode().set(BandpassMode::Off);
             }
         }
         self.sync_focus_outputs();
@@ -2854,22 +2875,22 @@ impl AppState {
     /// Toggle HFR on/off. Saves/restores playback mode, bandpass, and gain.
     pub fn toggle_hfr(&self) {
         // Swap gain_db between HFR-on and HFR-off so we don't blast eardrums
-        let current_gain = self.gain_db.get_untracked();
-        let stashed_gain = self.gain_db_stash.get_untracked();
-        self.gain_db.set(stashed_gain);
-        self.gain_db_stash.set(current_gain);
+        let current_gain = self.gain.db().get_untracked();
+        let stashed_gain = self.gain.db_stash().get_untracked();
+        self.gain.db().set(stashed_gain);
+        self.gain.db_stash().set(current_gain);
 
         let stack = self.focus_stack.get_untracked();
         if stack.hfr_enabled() {
             // Turning off: save current mode
             let current_mode = self.playback_mode.get_untracked();
-            let current_bp = self.bandpass_mode.get_untracked();
+            let current_bp = self.filter.bandpass_mode().get_untracked();
             self.focus_stack.update(|s| {
                 s.set_saved_playback_mode(Some(current_mode));
                 s.set_saved_bandpass_mode(Some(current_bp));
                 s.set_hfr_enabled(false);
             });
-            self.bandpass_mode.set(BandpassMode::Off);
+            self.filter.bandpass_mode().set(BandpassMode::Off);
             self.playback_mode.set(PlaybackMode::Normal);
         } else {
             // Turning on
@@ -2895,7 +2916,7 @@ impl AppState {
                     }
                 }
             }
-            self.bandpass_mode.set(
+            self.filter.bandpass_mode().set(
                 stack.saved_bandpass_mode().unwrap_or(BandpassMode::Auto),
             );
         }
@@ -2923,11 +2944,11 @@ impl AppState {
         let nyq = self.active_nyquist();
         let clamped_lo = eff.lo.clamp(0.0, nyq);
         let clamped_hi = eff.hi.clamp(clamped_lo, nyq);
-        if self.band_ff_freq_lo.get_untracked() != clamped_lo {
-            self.band_ff_freq_lo.set(clamped_lo);
+        if self.filter.band_ff_freq_lo().get_untracked() != clamped_lo {
+            self.filter.band_ff_freq_lo().set(clamped_lo);
         }
-        if self.band_ff_freq_hi.get_untracked() != clamped_hi {
-            self.band_ff_freq_hi.set(clamped_hi);
+        if self.filter.band_ff_freq_hi().get_untracked() != clamped_hi {
+            self.filter.band_ff_freq_hi().set(clamped_hi);
         }
         if self.hfr_enabled.get_untracked() != hfr {
             self.hfr_enabled.set(hfr);

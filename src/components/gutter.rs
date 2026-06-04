@@ -108,8 +108,8 @@ pub fn BandGutter() -> impl IntoView {
 
     // Redraw when any relevant signal changes.
     Effect::new(move |_| {
-        let band_lo = state.band_ff_freq_lo.get();
-        let band_hi = state.band_ff_freq_hi.get();
+        let band_lo = state.filter.band_ff_freq_lo().get();
+        let band_hi = state.filter.band_ff_freq_hi().get();
         let hfr_on = state.hfr_enabled.get();
         let shield_style = state.shield_style.get();
         // Live drag range from either this gutter or the spectrogram's
@@ -230,7 +230,7 @@ pub fn BandGutter() -> impl IntoView {
                 drag_anchor.set_value(None);
                 drag_start_y.set_value(None);
                 drag_active.set_value(false);
-                state.band_ff_dragging.set(false);
+                state.filter.band_ff_dragging().set(false);
                 state.axis_drag_start_freq.set(None);
                 state.axis_drag_current_freq.set(None);
                 state.is_dragging.set(false);
@@ -241,8 +241,8 @@ pub fn BandGutter() -> impl IntoView {
 
         let freq = gutter_renderer::y_to_freq(y, min_freq, max_freq, h);
         let shift = ev.shift_key();
-        let band_lo = state.band_ff_freq_lo.get_untracked();
-        let band_hi = state.band_ff_freq_hi.get_untracked();
+        let band_lo = state.filter.band_ff_freq_lo().get_untracked();
+        let band_hi = state.filter.band_ff_freq_hi().get_untracked();
         let has_range = band_hi > band_lo;
 
         // Shift+click extend: anchor at the edge of the existing range
@@ -258,7 +258,7 @@ pub fn BandGutter() -> impl IntoView {
         drag_active.set_value(false);
         tooltip_y.set(Some(y));
         // Flag the drag so heavy consumers (waveform band-split) can cache.
-        state.band_ff_dragging.set(true);
+        state.filter.band_ff_dragging().set(true);
 
         // Seed the shared axis-drag state so the fog/shield glows in
         // response to the press. Both endpoints seed to the same snapped
@@ -318,7 +318,7 @@ pub fn BandGutter() -> impl IntoView {
         drag_start_y.set_value(None);
         drag_active.set_value(false);
         tooltip_y.set(None);
-        state.band_ff_dragging.set(false);
+        state.filter.band_ff_dragging().set(false);
 
         if was_active {
             // Shared finalize: meaningful drag auto-enables HFR and
@@ -372,7 +372,7 @@ pub fn BandGutter() -> impl IntoView {
             drag_start_y.set_value(None);
             drag_active.set_value(false);
             tooltip_y.set(None);
-            state.band_ff_dragging.set(false);
+            state.filter.band_ff_dragging().set(false);
             state.axis_drag_start_freq.set(None);
             state.axis_drag_current_freq.set(None);
             state.is_dragging.set(false);
@@ -384,8 +384,8 @@ pub fn BandGutter() -> impl IntoView {
             let Some((mid_client_y, dist_y)) = two_finger_y_geometry(&touches) else { return };
 
             let nyquist = gutter_nyquist(state);
-            let initial_min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let initial_max_freq = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+            let initial_min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let initial_max_freq = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
             pinch_state.set_value(Some(FreqPinchState {
                 initial_dist_y: dist_y.max(1.0),
                 initial_min_freq,
@@ -411,8 +411,8 @@ pub fn BandGutter() -> impl IntoView {
         let current_mid_canvas_y = mid_client_y - rect.top();
 
         let (new_min, new_max) = apply_freq_pinch(&ps, dist_y, current_mid_canvas_y, canvas_h);
-        state.min_display_freq.set(Some(new_min));
-        state.max_display_freq.set(Some(new_max));
+        state.view.min_display_freq().set(Some(new_min));
+        state.view.max_display_freq().set(Some(new_max));
     };
 
     let on_touchend = move |ev: web_sys::TouchEvent| {
@@ -434,8 +434,8 @@ pub fn BandGutter() -> impl IntoView {
         if h <= 0.0 { return; }
         let nyquist = gutter_nyquist(state);
         if nyquist <= 0.0 { return; }
-        let cur_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
-        let cur_max = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+        let cur_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+        let cur_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
         let range = (cur_max - cur_min).max(1.0);
 
         if ev.shift_key() || ev.ctrl_key() || ev.meta_key() {
@@ -449,8 +449,8 @@ pub fn BandGutter() -> impl IntoView {
             let mut new_min = new_max - new_range;
             if new_min < 0.0 { new_min = 0.0; new_max = new_range.min(nyquist); }
             if new_max > nyquist { new_max = nyquist; new_min = (new_max - new_range).max(0.0); }
-            state.min_display_freq.set(Some(new_min));
-            state.max_display_freq.set(Some(new_max));
+            state.view.min_display_freq().set(Some(new_min));
+            state.view.max_display_freq().set(Some(new_max));
         } else {
             // Plain wheel: pan by ~10% of the visible range per tick.
             // delta_y > 0 (wheel down) → see lower freqs (max decreases).
@@ -460,15 +460,15 @@ pub fn BandGutter() -> impl IntoView {
             let mut new_min = cur_min - step;
             if new_min < 0.0 { new_min = 0.0; new_max = range.min(nyquist); }
             if new_max > nyquist { new_max = nyquist; new_min = (new_max - range).max(0.0); }
-            state.min_display_freq.set(Some(new_min));
-            state.max_display_freq.set(Some(new_max));
+            state.view.min_display_freq().set(Some(new_min));
+            state.view.max_display_freq().set(Some(new_max));
         }
     };
 
     // Format "40.0 – 72.5 kHz" for the drag tooltip.
     let format_range = move || {
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
+        let lo = state.filter.band_ff_freq_lo().get();
+        let hi = state.filter.band_ff_freq_hi().get();
         if hi <= lo { return String::new(); }
         format!("{:.1} – {:.1} kHz", lo / 1000.0, hi / 1000.0)
     };
@@ -533,8 +533,8 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
     let time_window = move || -> Option<(f64, f64, f64, f64, Option<crate::canvas::time_markers::ClockTimeConfig>)> {
         let canvas_w = state.spectrogram_canvas_width.get();
         if canvas_w <= 0.0 { return None; }
-        let zoom = state.zoom_level.get();
-        let scroll = state.scroll_offset.get();
+        let zoom = state.view.zoom_level().get();
+        let scroll = state.view.scroll_offset().get();
         // Timeline mode has its own time_res/duration/clock.
         if let Some(tl) = state.timeline.active().get() {
             let files = state.files.get();

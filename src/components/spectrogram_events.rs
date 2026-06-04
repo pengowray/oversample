@@ -111,16 +111,16 @@ pub fn apply_freq_axis_pan(
     let max_low = (nyquist - span).max(0.0);
     let clamped_min = new_min.clamp(0.0, max_low);
     let clamped_max = (clamped_min + span).min(nyquist);
-    state.min_display_freq.set(Some(clamped_min));
-    state.max_display_freq.set(Some(clamped_max));
+    state.view.min_display_freq().set(Some(clamped_min));
+    state.view.max_display_freq().set(Some(clamped_max));
 }
 
 /// Reset the frequency display range to "auto" (None) so the spectrogram
 /// shows 0..Nyquist again. Used for tap-to-reset and double-click on the
 /// left axis.
 pub fn reset_freq_axis_view(state: AppState) {
-    state.min_display_freq.set(None);
-    state.max_display_freq.set(None);
+    state.view.min_display_freq().set(None);
+    state.view.max_display_freq().set(None);
 }
 
 /// Apply a frequency handle drag (BandFF or HET). Shared by mouse and touch handlers.
@@ -132,18 +132,18 @@ pub fn apply_handle_drag(
 ) {
     match handle {
         SpectrogramHandle::BandFfUpper => {
-            let lo = state.band_ff_freq_lo.get_untracked();
+            let lo = state.filter.band_ff_freq_lo().get_untracked();
             let clamped = freq_at_pointer.clamp(lo + 500.0, file_max_freq);
             state.set_band_ff_hi(clamped);
         }
         SpectrogramHandle::BandFfLower => {
-            let hi = state.band_ff_freq_hi.get_untracked();
+            let hi = state.filter.band_ff_freq_hi().get_untracked();
             let clamped = freq_at_pointer.clamp(0.0, hi - 500.0);
             state.set_band_ff_lo(clamped);
         }
         SpectrogramHandle::BandFfMiddle => {
-            let lo = state.band_ff_freq_lo.get_untracked();
-            let hi = state.band_ff_freq_hi.get_untracked();
+            let lo = state.filter.band_ff_freq_lo().get_untracked();
+            let hi = state.filter.band_ff_freq_hi().get_untracked();
             let bw = hi - lo;
             let mid = (lo + hi) / 2.0;
             let delta = freq_at_pointer - mid;
@@ -152,21 +152,21 @@ pub fn apply_handle_drag(
             state.set_band_ff_range(new_lo, new_hi);
         }
         SpectrogramHandle::HetCenter => {
-            state.het_freq_auto.set(false);
+            state.transform.het_freq_auto().set(false);
             let clamped = freq_at_pointer.clamp(1000.0, file_max_freq);
-            state.het_frequency.set(clamped);
+            state.transform.het_frequency().set(clamped);
         }
         SpectrogramHandle::HetBandUpper => {
-            state.het_cutoff_auto.set(false);
-            let het_freq = state.het_frequency.get_untracked();
+            state.transform.het_cutoff_auto().set(false);
+            let het_freq = state.transform.het_frequency().get_untracked();
             let new_cutoff = (freq_at_pointer - het_freq).clamp(1000.0, 30000.0);
-            state.het_cutoff.set(new_cutoff);
+            state.transform.het_cutoff().set(new_cutoff);
         }
         SpectrogramHandle::HetBandLower => {
-            state.het_cutoff_auto.set(false);
-            let het_freq = state.het_frequency.get_untracked();
+            state.transform.het_cutoff_auto().set(false);
+            let het_freq = state.transform.het_frequency().get_untracked();
             let new_cutoff = (het_freq - freq_at_pointer).clamp(1000.0, 30000.0);
-            state.het_cutoff.set(new_cutoff);
+            state.transform.het_cutoff().set(new_cutoff);
         }
     }
 }
@@ -192,8 +192,8 @@ pub fn resolve_freq_at_pointer(
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
     };
-    let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
-    let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+    let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+    let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
     let freq = spectrogram_renderer::y_to_freq(px_y, min_freq_val, max_freq_val, ch);
     Some((freq, file_max_freq))
 }
@@ -226,7 +226,7 @@ pub fn apply_hand_pan(
     } else {
         file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
     };
-    let zoom = state.zoom_level.get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let visible_time = viewport::visible_time(cw, zoom, time_res);
     let dt = -(dx / cw) * visible_time;
     state.suspend_follow();
@@ -250,7 +250,7 @@ pub fn apply_hand_pan(
         let from_here_mode = state.play_start_mode.get_untracked().uses_from_here();
         viewport::clamp_scroll_for_mode(start_scroll + dt, duration, visible_time, from_here_mode)
     };
-    state.scroll_offset.set(new_scroll);
+    state.view.scroll_offset().set(new_scroll);
 }
 
 /// Apply annotation resize based on which handle is being dragged.
@@ -414,8 +414,8 @@ pub fn on_pointerdown(
     if let Some((px_x, _, _, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
         if px_x < LABEL_AREA_WIDTH && !state.display_transform.get_untracked() {
             let nyquist = file_nyquist(state);
-            let start_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let start_max = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+            let start_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let start_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
             ix.freq_pan_start.set(Some((
                 ev.client_x() as f64, ev.client_y() as f64,
                 freq, start_min, start_max,
@@ -441,8 +441,8 @@ pub fn on_pointerdown(
         let files = state.files.get_untracked();
         let file = files.get(file_idx);
         let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-        let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
-        let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+        let min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+        let max_freq = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
 
         // Check annotation body first (highest priority; skipped when annotations are hidden)
         let mut hit_annotation = false;
@@ -453,9 +453,9 @@ pub fn on_pointerdown(
                     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                     let cw = canvas.width() as f64;
                     let ch = canvas.height() as f64;
-                    let scroll = state.scroll_offset.get_untracked();
+                    let scroll = state.view.scroll_offset().get_untracked();
                     let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                    let zoom = state.zoom_level.get_untracked();
+                    let zoom = state.view.zoom_level().get_untracked();
 
                     if let Some(hit_id) = hit_test_annotation_body(
                         set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
@@ -478,8 +478,8 @@ pub fn on_pointerdown(
                     if let Some(canvas_el) = canvas_ref.get() {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let ch = canvas.height() as f64;
-                        let band_ff_lo = state.band_ff_freq_lo.get_untracked();
-                        let band_ff_hi = state.band_ff_freq_hi.get_untracked();
+                        let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
+                        let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
                         if hit_test_band_ff_body(px_y, band_ff_lo, band_ff_hi, min_freq, max_freq, ch) {
                             ix.pending_band_ff_hit.set(true);
                         }
@@ -490,8 +490,8 @@ pub fn on_pointerdown(
                 if let Some(canvas_el) = canvas_ref.get() {
                     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                     let ch = canvas.height() as f64;
-                    let band_ff_lo = state.band_ff_freq_lo.get_untracked();
-                    let band_ff_hi = state.band_ff_freq_hi.get_untracked();
+                    let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
+                    let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
                     if hit_test_band_ff_body(px_y, band_ff_lo, band_ff_hi, min_freq, max_freq, ch) {
                         ix.pending_band_ff_hit.set(true);
                     }
@@ -515,7 +515,7 @@ pub fn on_pointerdown(
     match state.canvas_tool.get_untracked() {
         CanvasTool::Hand => {
             state.is_dragging.set(true);
-            ix.hand_drag_start.set((ev.client_x() as f64, state.scroll_offset.get_untracked()));
+            ix.hand_drag_start.set((ev.client_x() as f64, state.view.scroll_offset().get_untracked()));
         }
         CanvasTool::Selection => {
             if let Some((_, _, t, f)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
@@ -605,8 +605,8 @@ pub fn on_pointermove(
             // Skip handle hover when in label area (to allow axis drag)
             if !in_label_area {
                 if let Some((_, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
-                    let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                    let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+                    let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+                    let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
                     let canvas_el = canvas_ref.get();
                     if let Some(canvas_el) = canvas_el {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -626,11 +626,11 @@ pub fn on_pointermove(
                             let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
                             let store = state.annotation_store.get_untracked();
                             if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
-                                let scroll = state.scroll_offset.get_untracked();
+                                let scroll = state.view.scroll_offset().get_untracked();
                                 let files = state.files.get_untracked();
                                 let time_res = files.get(file_idx)
                                     .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                                let zoom = state.zoom_level.get_untracked();
+                                let zoom = state.view.zoom_level().get_untracked();
                                 let ann_handle = hit_test_annotation_handles(
                                     set, &selected_ids,
                                     px_x, px_y,
@@ -850,11 +850,11 @@ pub fn on_dblclick(
                 let files = state.files.get_untracked();
                 let file = files.get(file_idx);
                 let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                let min_freq = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                let max_freq = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
-                let scroll = state.scroll_offset.get_untracked();
+                let min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+                let max_freq = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
+                let scroll = state.view.scroll_offset().get_untracked();
                 let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let store = state.annotation_store.get_untracked();
                 if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                     if let Some(hit_id) = hit_test_annotation_body(
@@ -884,7 +884,7 @@ pub fn on_dblclick(
     }
 
     // Double-click on BandFF handle toggles HFR (label area tap handled by finalize_axis_drag)
-    let has_range = state.band_ff_freq_hi.get_untracked() > state.band_ff_freq_lo.get_untracked();
+    let has_range = state.filter.band_ff_freq_hi().get_untracked() > state.filter.band_ff_freq_lo().get_untracked();
     if !has_range { return; }
 
     let on_handle = matches!(
@@ -939,8 +939,8 @@ pub fn on_touchstart(
             let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
             ix.pinch_state.set(Some(PinchState {
                 initial_dist: dist,
-                initial_zoom: state.zoom_level.get_untracked(),
-                initial_scroll: state.scroll_offset.get_untracked(),
+                initial_zoom: state.view.zoom_level().get_untracked(),
+                initial_scroll: state.view.scroll_offset().get_untracked(),
                 initial_mid_client_x: mid_x,
                 time_res,
                 duration,
@@ -960,7 +960,7 @@ pub fn on_touchstart(
     if ix.pinch_state.get_untracked().is_some() {
         ix.pinch_state.set(None);
         if let Some(touch) = touches.get(0) {
-            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
             if state.canvas_tool.get_untracked() == CanvasTool::Hand {
                 state.is_dragging.set(true);
             }
@@ -983,11 +983,11 @@ pub fn on_touchstart(
                 let store = state.annotation_store.get_untracked();
                 let files = state.files.get_untracked();
                 let file_max_freq = files.get(file_idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
-                let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
-                let scroll = state.scroll_offset.get_untracked();
+                let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+                let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
+                let scroll = state.view.scroll_offset().get_untracked();
                 let time_res = files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let file_id = state.file_id_at(file_idx);
                 if let Some(set) = file_id.and_then(|id| store.get(id)) {
                     let ann_handle = hit_test_annotation_handles(
@@ -1040,8 +1040,8 @@ pub fn on_touchstart(
             let idx = state.current_file_index.get_untracked();
             let file = idx.and_then(|i| files.get(i));
             let file_max_freq = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-            let min_freq_val = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let max_freq_val = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
+            let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let max_freq_val = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
             let band_ff_focused = state.active_focus.get_untracked() == Some(ActiveFocus::FrequencyFocus);
             let handle = hit_test_spec_handles(
                 &state, px_y, min_freq_val, max_freq_val, ch, 16.0, band_ff_focused, // wider touch target
@@ -1076,8 +1076,8 @@ pub fn on_touchstart(
                 return;
             }
             let nyquist = file_nyquist(state);
-            let start_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let start_max = state.max_display_freq.get_untracked().unwrap_or(nyquist);
+            let start_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let start_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
             ix.freq_pan_start.set(Some((
                 touch.client_x() as f64, touch.client_y() as f64,
                 freq, start_min, start_max,
@@ -1095,7 +1095,7 @@ pub fn on_touchstart(
         CanvasTool::Hand => {
             ev.prevent_default();
             state.is_dragging.set(true);
-            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
         }
         CanvasTool::Selection => {
             ev.prevent_default();
@@ -1127,8 +1127,8 @@ pub fn on_touchmove(
                 let cw = canvas.width() as f64;
                 let (new_zoom, new_scroll) = apply_pinch(&ps, dist, mid_x, rect.left(), cw);
                 state.suspend_follow();
-                state.zoom_level.set(new_zoom);
-                state.scroll_offset.set(new_scroll);
+                state.view.zoom_level().set(new_zoom);
+                state.view.scroll_offset().set(new_scroll);
             }
         }
         return;
@@ -1196,7 +1196,7 @@ pub fn on_touchend(
     // One finger remains after pinch — re-anchor pan to avoid jump
     if remaining == 1 {
         if let Some(touch) = ev.touches().get(0) {
-            ix.hand_drag_start.set((touch.client_x() as f64, state.scroll_offset.get_untracked()));
+            ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
             if state.canvas_tool.get_untracked() == CanvasTool::Hand {
                 state.is_dragging.set(true);
             }
@@ -1341,8 +1341,8 @@ pub fn on_wheel(
                 .map(|f| f.spectrogram.max_freq)
                 .unwrap_or(96_000.0)
         };
-        let cur_max = state.max_display_freq.get_untracked().unwrap_or(file_max_freq);
-        let cur_min = state.min_display_freq.get_untracked().unwrap_or(0.0);
+        let cur_max = state.view.max_display_freq().get_untracked().unwrap_or(file_max_freq);
+        let cur_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
         let range = cur_max - cur_min;
         if range < 1.0 { return; }
 
@@ -1359,11 +1359,11 @@ pub fn on_wheel(
         let new_max = (new_min + new_range).min(file_max_freq);
         let new_min = (new_max - new_range).max(0.0);
 
-        state.min_display_freq.set(Some(new_min));
-        state.max_display_freq.set(Some(new_max));
+        state.view.min_display_freq().set(Some(new_min));
+        state.view.max_display_freq().set(Some(new_max));
     } else if ev.ctrl_key() {
         let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-        state.zoom_level.update(|z| {
+        state.view.zoom_level().update(|z| {
             *z = (*z * delta).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
         });
     } else {
@@ -1386,7 +1386,7 @@ pub fn on_wheel(
             }
         };
         {
-            let zoom = state.zoom_level.get_untracked();
+            let zoom = state.view.zoom_level().get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
             let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
             let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
@@ -1394,7 +1394,7 @@ pub fn on_wheel(
             // normalized so a typical wheel tick (~100px) scrolls ~10% of the view
             let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
             state.suspend_follow();
-            state.scroll_offset.update(|s| {
+            state.view.scroll_offset().update(|s| {
                 *s = viewport::clamp_scroll_for_mode(*s + delta, duration, visible_time, from_here_mode);
             });
         }

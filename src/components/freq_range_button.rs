@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, LayerPanel};
@@ -43,8 +44,8 @@ pub fn FreqRangeButton() -> impl IntoView {
         if state.always_show_view_range.get() {
             return true;
         }
-        let min_f = state.min_display_freq.get();
-        let max_f = state.max_display_freq.get();
+        let min_f = state.view.min_display_freq().get();
+        let max_f = state.view.max_display_freq().get();
         let fm = file_max();
         let is_full = match (min_f, max_f) {
             (None, None) | (Some(0.0), None) => true,
@@ -58,8 +59,8 @@ pub fn FreqRangeButton() -> impl IntoView {
 
     let set_range = move |lo: Option<f64>, hi: Option<f64>| {
         move |_: web_sys::MouseEvent| {
-            state.min_display_freq.set(lo);
-            state.max_display_freq.set(hi);
+            state.view.min_display_freq().set(lo);
+            state.view.max_display_freq().set(hi);
         }
     };
 
@@ -84,8 +85,8 @@ pub fn FreqRangeButton() -> impl IntoView {
                     <span class="layer-btn-category">"Range"</span>
                     <span class="layer-btn-value">{move || {
                         range_label(
-                            state.min_display_freq.get(),
-                            state.max_display_freq.get(),
+                            state.view.min_display_freq().get(),
+                            state.view.max_display_freq().get(),
                             file_max(),
                         )
                     }}</span>
@@ -99,7 +100,7 @@ pub fn FreqRangeButton() -> impl IntoView {
                 >
                     <div class="layer-panel-title">"Freq Range"</div>
                     <button class=move || {
-                        let cur_max = state.max_display_freq.get();
+                        let cur_max = state.view.max_display_freq().get();
                         let fm = file_max();
                         let full = cur_max.is_none() || cur_max == Some(fm);
                         layer_opt_class(full)
@@ -107,19 +108,19 @@ pub fn FreqRangeButton() -> impl IntoView {
                         on:click=set_range(None, None)
                     >"Full"</button>
                     <button class=move || {
-                        let is_22k = state.max_display_freq.get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
+                        let is_22k = state.view.max_display_freq().get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
                         layer_opt_class(is_22k)
                     }
                         on:click=set_range(Some(0.0), Some(22_000.0))
                     >"0 – 22 kHz"</button>
                     <button class=move || {
-                        let is_50k = state.max_display_freq.get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
+                        let is_50k = state.view.max_display_freq().get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
                         layer_opt_class(is_50k)
                     }
                         on:click=set_range(Some(0.0), Some(50_000.0))
                     >"0 – 50 kHz"</button>
                     <button class=move || {
-                        let is_100k = state.max_display_freq.get().is_some_and(|m| (m - 100_000.0).abs() < 100.0);
+                        let is_100k = state.view.max_display_freq().get().is_some_and(|m| (m - 100_000.0).abs() < 100.0);
                         layer_opt_class(is_100k)
                     }
                         on:click=set_range(Some(0.0), Some(100_000.0))

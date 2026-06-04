@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use web_sys::File;
 use std::sync::Arc;
@@ -238,8 +239,8 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {
@@ -258,8 +259,8 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     if let Some(f) = audio_ref {
         if let Some(streaming) = f.audio.source.as_any().downcast_ref::<StreamingWavSource>() {
             // Prefetch the head region — already loaded, but schedule visible tiles
-            let scroll = state.scroll_offset.get_untracked();
-            let zoom = state.zoom_level.get_untracked();
+            let scroll = state.view.scroll_offset().get_untracked();
+            let zoom = state.view.zoom_level().get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
             let time_res = HOP_SIZE as f64 / sample_rate as f64;
             let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
@@ -535,8 +536,8 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {
@@ -550,8 +551,8 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
 
     // Prefetch first viewport and schedule tiles
     {
-        let scroll = state.scroll_offset.get_untracked();
-        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
@@ -909,8 +910,8 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {
@@ -924,8 +925,8 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
 
     // Prefetch first viewport and schedule tiles
     {
-        let scroll = state.scroll_offset.get_untracked();
-        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
@@ -1289,8 +1290,8 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {
@@ -1304,8 +1305,8 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
 
     // Prefetch first viewport and schedule tiles
     {
-        let scroll = state.scroll_offset.get_untracked();
-        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
@@ -1913,8 +1914,8 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {
@@ -1928,8 +1929,8 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
 
     // Prefetch first viewport.
     {
-        let scroll = state.scroll_offset.get_untracked();
-        let zoom = state.zoom_level.get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let time_res = HOP_SIZE as f64 / sample_rate as f64;
         let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };

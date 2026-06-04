@@ -151,8 +151,8 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     // Snapshot rendering parameters from current state
     let time_res = file.spectrogram.time_resolution;
     let file_max_freq = file.spectrogram.max_freq;
-    let max_display_freq = state.max_display_freq.get_untracked();
-    let min_display_freq = state.min_display_freq.get_untracked();
+    let max_display_freq = state.view.max_display_freq().get_untracked();
+    let min_display_freq = state.view.min_display_freq().get_untracked();
     let max_freq = max_display_freq.unwrap_or(file_max_freq).min(file_max_freq);
     let min_freq = min_display_freq.unwrap_or(0.0);
     let freq_crop_lo = min_freq / file_max_freq;
@@ -161,8 +161,8 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let hfr_enabled = state.hfr_enabled.get_untracked();
     let colormap_pref = state.colormap_preference.get_untracked();
     let hfr_colormap_pref = state.hfr_colormap_preference.get_untracked();
-    let band_ff_lo = state.band_ff_freq_lo.get_untracked();
-    let band_ff_hi = state.band_ff_freq_hi.get_untracked();
+    let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
+    let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
 
     let colormap = if hfr_enabled && band_ff_hi > band_ff_lo {
         ColormapMode::HfrFocus {
@@ -481,7 +481,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         }
         VideoViewMode::ScrollingView => {
             // Compute zoom proportional to current app zoom
-            let current_zoom = state.zoom_level.get_untracked();
+            let current_zoom = state.view.zoom_level().get_untracked();
             let app_canvas_w = state.spectrogram_canvas_width.get_untracked();
             let zoom = if app_canvas_w > 0.0 {
                 current_zoom * (vid_w as f64 / app_canvas_w)

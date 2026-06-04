@@ -19,8 +19,8 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
 
     let transform = move || {
         let playhead = state.playhead_time.get();
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let cw = state.spectrogram_canvas_width.get();
         let files = state.files.get_untracked();
         // Timeline mode borrows time_res from the first segment's file;

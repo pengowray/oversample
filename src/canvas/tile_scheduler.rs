@@ -73,7 +73,7 @@ pub fn schedule_normal_tiles(
 
     // During playback, also protect tiles near the pre-play scroll position
     if is_playing {
-        let pre_scroll = state.pre_play_scroll.get_untracked();
+        let pre_scroll = state.view.pre_play_scroll().get_untracked();
         let pre_col = (pre_scroll / time_res).max(0.0).min((total_cols as f64 - 1.0).max(0.0));
         let pre_end_col = (pre_col + display_w / zoom).min(total_cols as f64);
         let pre_center = (((pre_col * ratio) + (pre_end_col * ratio)) / 2.0 / TILE_COLS as f64) as usize;
@@ -268,12 +268,12 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         Effect::new(move || {
             let xform_on = state.display_transform.get();
             let _mode = state.playback_mode.get();
-            let _het = state.het_frequency.get();
-            let _het_cut = state.het_cutoff.get();
-            let _te = state.te_factor.get();
-            let _ps = state.ps_factor.get();
-            let _pv = state.pv_factor.get();
-            let _zc = state.zc_factor.get();
+            let _het = state.transform.het_frequency().get();
+            let _het_cut = state.transform.het_cutoff().get();
+            let _te = state.transform.te_factor().get();
+            let _ps = state.transform.ps_factor().get();
+            let _pv = state.transform.pv_factor().get();
+            let _zc = state.transform.zc_factor().get();
             let decim = state.display_decimate_effective.get();
             let decim_changed = decim != prev_decim.get_untracked();
             if xform_on || prev_xform.get_untracked() || decim_changed {
@@ -315,8 +315,8 @@ pub fn setup_cache_clearing_effects(state: AppState) {
     }
     Effect::new(move || {
         let enabled = state.resonator.viewport_bins().get();
-        let min = state.min_display_freq.get();
-        let max = state.max_display_freq.get();
+        let min = state.view.min_display_freq().get();
+        let max = state.view.max_display_freq().get();
 
         if !enabled {
             // Disabling reverts to full-Nyquist bins immediately.
@@ -360,8 +360,8 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             // Verify the viewport is still what we want to commit (the
             // user might have toggled the feature off mid-debounce).
             if !state.resonator.viewport_bins().get_untracked() { return; }
-            let min_now = state.min_display_freq.get_untracked().unwrap_or(0.0);
-            let max_now = state.max_display_freq.get_untracked().unwrap_or(file_max).min(file_max);
+            let min_now = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let max_now = state.view.max_display_freq().get_untracked().unwrap_or(file_max).min(file_max);
             if (min_now - target_lo).abs() > 0.5 || (max_now - target_hi).abs() > 0.5 {
                 // View shifted after the last settled point — don't
                 // commit a stale target; the current Effect run will

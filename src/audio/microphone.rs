@@ -4,6 +4,7 @@
 //! Backend-specific operations (Web Audio, cpal, USB) are delegated to
 //! `mic_backend::ActiveBackend`. Finalization is handled by `live_recording`.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use crate::state::{AppState, GpsLocation, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
@@ -453,8 +454,8 @@ async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
     match backend.start_recording(state).await {
         Ok(()) => {
             // Reset frequency display so the waterfall shows the full mic range.
-            state.min_display_freq.set(None);
-            state.max_display_freq.set(None);
+            state.view.min_display_freq().set(None);
+            state.view.max_display_freq().set(None);
             state.mic_samples_recorded.set(0);
             state.mic_recording.set(true);
             // Now safe to clear listening — recording is active, loop won't exit.
@@ -608,8 +609,8 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
     warn_if_te_for_live(state);
     // Reset frequency display so the waterfall shows the full mic range
     // (not a zoomed range from a previously-open high-SR file).
-    state.min_display_freq.set(None);
-    state.max_display_freq.set(None);
+    state.view.min_display_freq().set(None);
+    state.view.max_display_freq().set(None);
     // Clear buffer and DSP state BEFORE enabling listening to prevent stale
     // audio from a previous listen session leaking into the new one. Also stop
     // any still-scheduled playback and reset the schedule cursor so a backlog

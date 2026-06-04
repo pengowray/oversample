@@ -148,8 +148,8 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
     // Use hop=256 to match the actual hop size in spawn_live_processing_loop.
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
-    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
-    state.scroll_offset.set(0.0);
+    state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.view.scroll_offset().set(0.0);
 
     file_index
 }
@@ -237,8 +237,8 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
     state.current_file_index.set(Some(file_index));
     state.mic_live_file_idx.set(Some(file_index));
     // Reset display so the gutter immediately picks up the mic Nyquist.
-    state.min_display_freq.set(None);
-    state.max_display_freq.set(None);
+    state.view.min_display_freq().set(None);
+    state.view.max_display_freq().set(None);
     // Pre-set the live recording zoom + scroll origin so the user sees the
     // same viewport they'll get once audio actually starts streaming.
     set_live_recording_zoom(state, sample_rate);
@@ -252,8 +252,8 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
 pub(crate) fn set_live_recording_zoom(state: &AppState, sample_rate: u32) {
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
-    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
-    state.scroll_offset.set(0.0);
+    state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.view.scroll_offset().set(0.0);
 }
 
 /// True when `f` is a throwaway live-mic placeholder with no recorded content
@@ -469,8 +469,8 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
     // Use LIVE_HOP to match the actual hop size in spawn_live_processing_loop.
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let live_time_res = LIVE_HOP as f64 / sample_rate as f64;
-    state.zoom_level.set(crate::viewport::recording_zoom(canvas_w, live_time_res));
-    state.scroll_offset.set(0.0);
+    state.view.zoom_level().set(crate::viewport::recording_zoom(canvas_w, live_time_res));
+    state.view.scroll_offset().set(0.0);
 
     file_index
 }
@@ -527,8 +527,8 @@ pub(crate) fn convert_listen_to_armed(state: &AppState) {
     });
 
     state.current_file_index.set(Some(idx));
-    state.min_display_freq.set(None);
-    state.max_display_freq.set(None);
+    state.view.min_display_freq().set(None);
+    state.view.max_display_freq().set(None);
 }
 
 /// Remove the transient listening file and fix indices.
@@ -884,7 +884,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     let time_res = hop_size as f64 / sample_rate as f64;
                     let recording_time = total_cols as f64 * time_res;
                     let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                    let zoom = state.zoom_level.get_untracked();
+                    let zoom = state.view.zoom_level().get_untracked();
                     if zoom > 0.0 && canvas_w > 0.0 {
                         let visible_cols = canvas_w / zoom;
                         let visible_time = visible_cols * time_res;
@@ -946,12 +946,12 @@ pub(crate) fn spawn_smooth_scroll_animation(state: AppState) {
         let suspended = pan_until > 0.0 && js_sys::Date::now() < pan_until;
         if !suspended {
             let target = state.mic_recording_target_scroll.get_untracked();
-            let current = state.scroll_offset.get_untracked();
+            let current = state.view.scroll_offset().get_untracked();
             let diff = target - current;
             if diff.abs() > 0.0001 {
                 // Exponential ease: move 30% of remaining distance each frame (~60fps)
                 let new_scroll = current + diff * 0.3;
-                state.scroll_offset.set(new_scroll);
+                state.view.scroll_offset().set(new_scroll);
             }
         }
         // Re-register for next frame
@@ -1393,8 +1393,8 @@ async fn finalize_in_memory_recording(
 
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let final_time_res = 512.0 / sample_rate as f64;
-    state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
-    state.scroll_offset.set(0.0);
+    state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
+    state.view.scroll_offset().set(0.0);
 
     spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
 }
@@ -1519,8 +1519,8 @@ async fn finalize_streaming_tauri_recording(
 
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let final_time_res = 512.0 / header.sample_rate as f64;
-    state.zoom_level.set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
-    state.scroll_offset.set(0.0);
+    state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
+    state.view.scroll_offset().set(0.0);
     if state.mic_preroll_samples.get_untracked() > 0 {
         state.mic_preroll_samples.set(0);
     }

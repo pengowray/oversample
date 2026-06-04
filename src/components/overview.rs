@@ -453,8 +453,8 @@ pub fn OverviewPanel() -> impl IntoView {
         let cv = state.channel_view.get();
         let _mic_recording = state.mic_recording.get();
         let _mic_listening = state.mic_listening.get();
-        let auto_gain = state.auto_gain.get();
-        let gain_db = if auto_gain { state.compute_auto_gain_untracked() } else { state.gain_db.get() };
+        let auto_gain = state.gain.auto().get();
+        let gain_db = if auto_gain { state.compute_auto_gain_untracked() } else { state.gain.db().get() };
         // Re-read canvas dimensions when sidebar layout changes
         let _sidebar = state.sidebar_collapsed.get();
         let _sidebar_width = state.sidebar_width.get();
@@ -558,7 +558,7 @@ pub fn OverviewPanel() -> impl IntoView {
                             true, // clean_view — overlays drawn by overlay Effect
                         );
                     } else if file.is_recording && !file.audio.samples.is_empty() {
-                        let scroll = state.scroll_offset.get_untracked();
+                        let scroll = state.view.scroll_offset().get_untracked();
                         let is_live_wf = (file.is_live_listen || file.is_recording)
                             && crate::canvas::live_waterfall::is_active();
                         let buf_scroll = if is_live_wf {
@@ -646,15 +646,15 @@ pub fn OverviewPanel() -> impl IntoView {
     // transparent canvas layered on top. This subscribes to scroll_offset and
     // zoom_level but is very cheap (no drawImage blit, just a few shapes).
     Effect::new(move || {
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let bookmarks = state.bookmarks.get();
         let clean_view = state.clean_view.get();
         let main_canvas_w = state.spectrogram_canvas_width.get();
-        let min_display_freq = state.min_display_freq.get();
-        let max_display_freq = state.max_display_freq.get();
-        let band_ff_lo_hz = state.band_ff_freq_lo.get();
-        let band_ff_hi_hz = state.band_ff_freq_hi.get();
+        let min_display_freq = state.view.min_display_freq().get();
+        let max_display_freq = state.view.max_display_freq().get();
+        let band_ff_lo_hz = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi_hz = state.filter.band_ff_freq_hi().get();
         let overview_view = state.overview_view.get();
         // Re-sync overlay dimensions when sidebar layout changes
         let _sidebar = state.sidebar_collapsed.get();
@@ -880,7 +880,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let files = state.files.get_untracked();
         let idx = state.current_file_index.get_untracked();
         idx.and_then(|i| files.get(i)).map(|f| {
-            let zoom = state.zoom_level.get_untracked();
+            let zoom = state.view.zoom_level().get_untracked();
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
             (canvas_w / zoom) * f.spectrogram.time_resolution / 2.0
         }).unwrap_or(0.0)
@@ -900,11 +900,11 @@ pub fn OverviewPanel() -> impl IntoView {
             let max_scroll = (file_duration() - visible).max(0.0);
             let centered = (t - half_visible_time()).clamp(0.0, max_scroll);
             state.suspend_follow();
-            state.scroll_offset.set(centered);
+            state.view.scroll_offset().set(centered);
         }
         drag_active.set(true);
         drag_start_x.set(ev.client_x() as f64);
-        drag_start_scroll.set(state.scroll_offset.get_untracked());
+        drag_start_scroll.set(state.view.scroll_offset().get_untracked());
         // Capture pointer so drag continues when cursor leaves the overview strip
         if let Some(target) = ev.target() {
             if let Ok(el) = target.dyn_into::<web_sys::Element>() {
@@ -927,7 +927,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let files = state.files.get_untracked();
             let idx = state.current_file_index.get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
@@ -935,7 +935,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let max_scroll = (total_duration - visible_time).max(0.0);
         let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
-        state.scroll_offset.set(new_scroll);
+        state.view.scroll_offset().set(new_scroll);
     };
 
     let on_pointerup = move |_: web_sys::PointerEvent| {
@@ -960,11 +960,11 @@ pub fn OverviewPanel() -> impl IntoView {
             let max_scroll = (file_duration() - visible).max(0.0);
             let centered = (t - half_visible_time()).clamp(0.0, max_scroll);
             state.suspend_follow();
-            state.scroll_offset.set(centered);
+            state.view.scroll_offset().set(centered);
         }
         drag_active.set(true);
         drag_start_x.set(touch.client_x() as f64);
-        drag_start_scroll.set(state.scroll_offset.get_untracked());
+        drag_start_scroll.set(state.view.scroll_offset().get_untracked());
     };
 
     let on_touchmove = move |ev: web_sys::TouchEvent| {
@@ -985,7 +985,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let files = state.files.get_untracked();
             let idx = state.current_file_index.get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
@@ -993,7 +993,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let max_scroll = (total_duration - visible_time).max(0.0);
         let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
-        state.scroll_offset.set(new_scroll);
+        state.view.scroll_offset().set(new_scroll);
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {
@@ -1008,7 +1008,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let files = state.files.get_untracked();
             let idx = state.current_file_index.get_untracked();
             idx.and_then(|i| files.get(i)).map(|f| {
-                let zoom = state.zoom_level.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
@@ -1016,7 +1016,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
         state.suspend_follow();
         let max_scroll = (total_duration - visible_time).max(0.0);
-        state.scroll_offset.update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
+        state.view.scroll_offset().update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
     };
 
     view! {

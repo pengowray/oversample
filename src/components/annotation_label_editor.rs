@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::AppState;
@@ -34,11 +35,11 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;
 
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
-        let min_freq = state.min_display_freq.get().unwrap_or(0.0);
-        let max_freq = state.max_display_freq.get().unwrap_or(file_max_freq);
+        let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
+        let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
         let canvas_h = web_sys::window()
             .and_then(|w| w.document())
             .and_then(|d| d.query_selector(".spectrogram-container canvas").ok().flatten())

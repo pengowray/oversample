@@ -27,8 +27,8 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         let tab = state.right_sidebar_tab.get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
-        let band_ff_lo = state.band_ff_freq_lo.get();
-        let band_ff_hi = state.band_ff_freq_hi.get();
+        let band_ff_lo = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi = state.filter.band_ff_freq_hi().get();
         let _trigger = redetect_trigger.get(); // subscribe so Re-detect re-runs this Effect
 
         if tab != RightSidebarTab::Pulses {
@@ -108,11 +108,11 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         let idx = state.current_file_index.get_untracked();
         if let Some(file) = idx.and_then(|i| files.get(i)) {
             let canvas_w = state.spectrogram_canvas_width.get_untracked();
-            let zoom = state.zoom_level.get_untracked();
+            let zoom = state.view.zoom_level().get_untracked();
             let time_res = file.spectrogram.time_resolution;
             let visible_time = (canvas_w / zoom) * time_res;
             let target_scroll = (pulse.peak_time - visible_time / 2.0).max(0.0);
-            state.scroll_offset.set(target_scroll);
+            state.view.scroll_offset().set(target_scroll);
         }
     };
 

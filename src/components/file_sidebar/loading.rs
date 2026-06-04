@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -279,8 +280,8 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     if let Some(check) = silence_check {
         match check {
             SilenceCheck::Silent => {
-                state.auto_gain.set(false);
-                state.gain_db.set(0.0);
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
                 state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
             }
             SilenceCheck::HighGain(db) => {

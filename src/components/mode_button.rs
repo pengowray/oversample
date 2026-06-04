@@ -216,8 +216,8 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Effect B: BandFF range → auto parameter values (smart auto) ──
     Effect::new(move || {
-        let band_ff_lo = state.band_ff_freq_lo.get();
-        let band_ff_hi = state.band_ff_freq_hi.get();
+        let band_ff_lo = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi = state.filter.band_ff_freq_hi().get();
 
         if band_ff_hi <= band_ff_lo {
             return;
@@ -228,44 +228,44 @@ pub fn ModeRadioGroup() -> impl IntoView {
         // Auto LP cutoff: half the focus band, capped. Computed first so the
         // carrier anchor below can sit one cutoff above the band's low edge.
         let auto_cutoff = (band_ff_bandwidth / 2.0).min(15_000.0);
-        if state.het_cutoff_auto.get_untracked() {
-            state.het_cutoff.set(auto_cutoff);
+        if state.transform.het_cutoff_auto().get_untracked() {
+            state.transform.het_cutoff().set(auto_cutoff);
         }
-        if state.het_freq_auto.get_untracked() {
+        if state.transform.het_freq_auto().get_untracked() {
             // Anchor the comb at the BOTTOM of the focus band: the lowest
             // carrier's lower LP edge lands on band_lo, and any comb teeth tile
             // upward from there. For a single full-band carrier this equals the
             // band centre, so single-carrier auto behaviour is unchanged.
-            let cutoff = if state.het_cutoff_auto.get_untracked() {
+            let cutoff = if state.transform.het_cutoff_auto().get_untracked() {
                 auto_cutoff
             } else {
-                state.het_cutoff.get_untracked()
+                state.transform.het_cutoff().get_untracked()
             };
-            state.het_frequency.set(band_ff_lo + cutoff);
+            state.transform.het_frequency().set(band_ff_lo + cutoff);
         }
 
-        if state.te_factor_auto.get_untracked() {
+        if state.transform.te_factor_auto().get_untracked() {
             let te = smart_auto_factor(band_ff_lo, band_ff_hi, 40.0);
-            state.te_factor.set(te);
+            state.transform.te_factor().set(te);
         }
-        if state.ps_factor_auto.get_untracked() {
+        if state.transform.ps_factor_auto().get_untracked() {
             let ps = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state.ps_factor.set(ps);
+            state.transform.ps_factor().set(ps);
         }
-        if state.pv_factor_auto.get_untracked() {
+        if state.transform.pv_factor_auto().get_untracked() {
             let pv = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state.pv_factor.set(pv);
+            state.transform.pv_factor().set(pv);
         }
     });
 
     // ── Effect B2: Comb-auto recompute ──
     Effect::new(move || {
-        if !state.het_comb_auto.get() {
+        if !state.transform.het_comb_auto().get() {
             return;
         }
-        let band_ff_lo = state.band_ff_freq_lo.get();
-        let band_ff_hi = state.band_ff_freq_hi.get();
-        let cutoff = state.het_cutoff.get();
+        let band_ff_lo = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi = state.filter.band_ff_freq_hi().get();
+        let cutoff = state.transform.het_cutoff().get();
 
         if band_ff_hi <= band_ff_lo {
             return;
@@ -274,11 +274,11 @@ pub fn ModeRadioGroup() -> impl IntoView {
         let cutoff = cutoff.max(1_000.0);
         let spacing = (cutoff * 2.0).max(5_000.0);
         let count = ((band_ff_bandwidth / spacing).ceil() as u32).clamp(1, 5);
-        if (state.het_comb_spacing.get_untracked() - spacing).abs() > 0.5 {
-            state.het_comb_spacing.set(spacing);
+        if (state.transform.het_comb_spacing().get_untracked() - spacing).abs() > 0.5 {
+            state.transform.het_comb_spacing().set(spacing);
         }
-        if state.het_comb_count.get_untracked() != count {
-            state.het_comb_count.set(count);
+        if state.transform.het_comb_count().get_untracked() != count {
+            state.transform.het_comb_count().set(count);
         }
     });
 
@@ -316,51 +316,51 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Effect D: bandpass_mode + bandpass_range + playback_mode → filter settings ──
     Effect::new(move || {
-        let bp_mode = state.bandpass_mode.get();
-        let bp_range = state.bandpass_range.get();
-        let band_ff_lo = state.band_ff_freq_lo.get();
-        let band_ff_hi = state.band_ff_freq_hi.get();
+        let bp_mode = state.filter.bandpass_mode().get();
+        let bp_range = state.filter.bandpass_range().get();
+        let band_ff_lo = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi = state.filter.band_ff_freq_hi().get();
         let playback_mode = state.playback_mode.get();
 
         match bp_mode {
             BandpassMode::Off => {
-                state.filter_enabled.set(false);
+                state.filter.enabled().set(false);
             }
             BandpassMode::Auto => {
                 let has_ff = band_ff_hi > band_ff_lo;
                 match playback_mode {
                     PlaybackMode::Heterodyne => {
-                        state.filter_enabled.set(false);
+                        state.filter.enabled().set(false);
                     }
                     PlaybackMode::ZeroCrossing => {
-                        state.filter_enabled.set(has_ff);
+                        state.filter.enabled().set(has_ff);
                         if has_ff {
-                            state.filter_freq_low.set(band_ff_lo);
-                            state.filter_freq_high.set(band_ff_hi);
-                            state.filter_quality.set(FilterQuality::Spectral);
-                            state.filter_db_below.set(-60.0);
-                            state.filter_db_selected.set(0.0);
-                            state.filter_db_above.set(-60.0);
+                            state.filter.freq_low().set(band_ff_lo);
+                            state.filter.freq_high().set(band_ff_hi);
+                            state.filter.quality().set(FilterQuality::Spectral);
+                            state.filter.db_below().set(-60.0);
+                            state.filter.db_selected().set(0.0);
+                            state.filter.db_above().set(-60.0);
                         }
                     }
                     _ => {
-                        state.filter_enabled.set(has_ff);
+                        state.filter.enabled().set(has_ff);
                         if has_ff {
-                            state.filter_freq_low.set(band_ff_lo);
-                            state.filter_freq_high.set(band_ff_hi);
-                            state.filter_quality.set(FilterQuality::Spectral);
-                            state.filter_db_below.set(-60.0);
-                            state.filter_db_selected.set(0.0);
-                            state.filter_db_above.set(-60.0);
+                            state.filter.freq_low().set(band_ff_lo);
+                            state.filter.freq_high().set(band_ff_hi);
+                            state.filter.quality().set(FilterQuality::Spectral);
+                            state.filter.db_below().set(-60.0);
+                            state.filter.db_selected().set(0.0);
+                            state.filter.db_above().set(-60.0);
                         }
                     }
                 }
             }
             BandpassMode::On => {
-                state.filter_enabled.set(true);
+                state.filter.enabled().set(true);
                 if bp_range == BandpassRange::FollowFocus && band_ff_hi > band_ff_lo {
-                    state.filter_freq_low.set(band_ff_lo);
-                    state.filter_freq_high.set(band_ff_hi);
+                    state.filter.freq_low().set(band_ff_lo);
+                    state.filter.freq_high().set(band_ff_hi);
                 }
             }
         }
@@ -446,8 +446,8 @@ pub fn ModeRadioGroup() -> impl IntoView {
     // badge on the 1:1 button (and an underline on the Play button via
     // bottom_toolbar.rs).
     let band_inaudible = Signal::derive(move || {
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
+        let lo = state.filter.band_ff_freq_lo().get();
+        let hi = state.filter.band_ff_freq_hi().get();
         hi > lo && lo >= 20_000.0
     });
 
@@ -552,9 +552,9 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
-            state.te_factor_auto.set(false);
+            state.transform.te_factor_auto().set(false);
             state.playback_mode.set(PlaybackMode::TimeExpansion);
-            state.te_factor.set(val);
+            state.transform.te_factor().set(val);
         }
     };
 
@@ -562,9 +562,9 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
-            state.ps_factor_auto.set(false);
+            state.transform.ps_factor_auto().set(false);
             state.playback_mode.set(PlaybackMode::PitchShift);
-            state.ps_factor.set(val);
+            state.transform.ps_factor().set(val);
         }
     };
 
@@ -572,9 +572,9 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
-            state.pv_factor_auto.set(false);
+            state.transform.pv_factor_auto().set(false);
             state.playback_mode.set(PlaybackMode::PhaseVocoder);
-            state.pv_factor.set(val);
+            state.transform.pv_factor().set(val);
         }
     };
 
@@ -583,7 +583,7 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = input.value().parse::<f64>() {
             state.playback_mode.set(PlaybackMode::ZeroCrossing);
-            state.zc_factor.set(val);
+            state.transform.zc_factor().set(val);
         }
     };
 
@@ -591,8 +591,8 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
-            state.te_factor_auto.set(false);
-            state.te_factor.set(val);
+            state.transform.te_factor_auto().set(false);
+            state.transform.te_factor().set(val);
         }
     };
 
@@ -600,8 +600,8 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
-            state.ps_factor_auto.set(false);
-            state.ps_factor.set(val);
+            state.transform.ps_factor_auto().set(false);
+            state.transform.ps_factor().set(val);
         }
     };
 
@@ -609,18 +609,30 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
-            state.pv_factor_auto.set(false);
-            state.pv_factor.set(val);
+            state.transform.pv_factor_auto().set(false);
+            state.transform.pv_factor().set(val);
         }
     };
 
-    let make_preset_click = move |factor_signal: RwSignal<f64>, auto_signal: RwSignal<bool>, mode: PlaybackMode, value: f64| {
+    // Generic over the signal handle so it accepts both `RwSignal` and store
+    // subfields (`state.transform.te_factor()` etc.), which are distinct types.
+    fn make_preset_click<F, A>(
+        state: AppState,
+        factor_signal: F,
+        auto_signal: A,
+        mode: PlaybackMode,
+        value: f64,
+    ) -> impl Fn(web_sys::MouseEvent) + Copy + 'static
+    where
+        F: leptos::prelude::Set<Value = f64> + Copy + 'static,
+        A: leptos::prelude::Set<Value = bool> + Copy + 'static,
+    {
         move |_: web_sys::MouseEvent| {
             auto_signal.set(false);
             factor_signal.set(value);
             state.playback_mode.set(mode);
         }
-    };
+    }
 
     let preset_values: [(f64, &str); 6] = [
         (-2.0, "\u{00f7}2x"),
@@ -631,11 +643,17 @@ fn ModeSettingsBody() -> impl IntoView {
         (16.0, "16x"),
     ];
 
-    let set_output_highlight = move |factor_signal: RwSignal<f64>| {
+    fn set_output_highlight<F>(
+        state: AppState,
+        factor_signal: F,
+    ) -> impl Fn(web_sys::MouseEvent) + Copy + 'static
+    where
+        F: leptos::prelude::GetUntracked<Value = f64> + Copy + 'static,
+    {
         move |_: web_sys::MouseEvent| {
             let f = factor_signal.get_untracked();
-            let band_ff_lo = state.band_ff_freq_lo.get_untracked();
-            let band_ff_hi = state.band_ff_freq_hi.get_untracked();
+            let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
+            let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
             if band_ff_hi > band_ff_lo {
                 let out_lo = output_freq(band_ff_lo, f);
                 let out_hi = output_freq(band_ff_hi, f);
@@ -643,7 +661,7 @@ fn ModeSettingsBody() -> impl IntoView {
                 state.output_freq_highlight.set(Some((lo, hi)));
             }
         }
-    };
+    }
     let clear_output_highlight = move |_: web_sys::MouseEvent| {
         state.output_freq_highlight.set(None);
     };
@@ -672,18 +690,18 @@ fn ModeSettingsBody() -> impl IntoView {
                         <div class="layer-panel-title">"Heterodyne"</div>
                         <div class="layer-panel-slider-row het-text-row"
                             on:mouseenter=move |_| {
-                                state.het_interacting.set(true);
+                                state.transform.het_interacting().set(true);
                                 state.spec_hover_handle.set(Some(SpectrogramHandle::HetBandUpper));
                             }
                             on:mouseleave=move |_| {
-                                state.het_interacting.set(false);
+                                state.transform.het_interacting().set(false);
                                 state.spec_hover_handle.set(None);
                             }
                         >
                             <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>
-                            <span class="het-value">{move || format!("{:.1} kHz", state.het_cutoff.get() / 1000.0)}</span>
-                            <button class=move || if state.het_cutoff_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                on:click=move |_| state.het_cutoff_auto.update(|v| *v = !*v)
+                            <span class="het-value">{move || format!("{:.1} kHz", state.transform.het_cutoff().get() / 1000.0)}</span>
+                            <button class=move || if state.transform.het_cutoff_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.transform.het_cutoff_auto().update(|v| *v = !*v)
                                 title="Toggle auto LP cutoff"
                             >"A"</button>
                         </div>
@@ -692,38 +710,38 @@ fn ModeSettingsBody() -> impl IntoView {
                             {(1u32..=5).map(|n| {
                                 view! {
                                     <button class=move || {
-                                        let auto = state.het_comb_auto.get();
-                                        let sel = !auto && state.het_comb_count.get() == n;
+                                        let auto = state.transform.het_comb_auto().get();
+                                        let sel = !auto && state.transform.het_comb_count().get() == n;
                                         if sel { "factor-preset sel" }
-                                        else if auto && state.het_comb_count.get() == n { "factor-preset auto-derived" }
+                                        else if auto && state.transform.het_comb_count().get() == n { "factor-preset auto-derived" }
                                         else { "factor-preset" }
                                     }
                                         on:click=move |_| {
-                                            state.het_comb_auto.set(false);
-                                            state.het_comb_count.set(n);
+                                            state.transform.het_comb_auto().set(false);
+                                            state.transform.het_comb_count().set(n);
                                         }
                                     >{n.to_string()}</button>
                                 }
                             }).collect::<Vec<_>>()}
-                            <button class=move || if state.het_comb_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                on:click=move |_| state.het_comb_auto.update(|v| *v = !*v)
+                            <button class=move || if state.transform.het_comb_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.transform.het_comb_auto().update(|v| *v = !*v)
                                 title="Auto-fit carrier count + spacing to the focus range"
                             >"A"</button>
                         </div>
-                        <Show when=move || { state.het_comb_count.get() > 1 }>
+                        <Show when=move || { state.transform.het_comb_count().get() > 1 }>
                             <div class="layer-panel-slider-row het-text-row">
                                 <label title="Spacing between adjacent carriers (Hz).">"Spacing"</label>
-                                <span class="het-value">{move || format!("{:.0} kHz", state.het_comb_spacing.get() / 1000.0)}</span>
+                                <span class="het-value">{move || format!("{:.0} kHz", state.transform.het_comb_spacing().get() / 1000.0)}</span>
                                 <input type="range" min="5" max="100" step="1"
-                                    prop:value=move || (state.het_comb_spacing.get() / 1000.0).round().to_string()
+                                    prop:value=move || (state.transform.het_comb_spacing().get() / 1000.0).round().to_string()
                                     on:input=move |ev| {
                                         let v: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(30.0);
-                                        state.het_comb_auto.set(false);
-                                        state.het_comb_spacing.set(v * 1000.0);
+                                        state.transform.het_comb_auto().set(false);
+                                        state.transform.het_comb_spacing().set(v * 1000.0);
                                     }
                                     on:dblclick=move |_| {
-                                        let two_cutoff = (state.het_cutoff.get_untracked() * 2.0).clamp(5_000.0, 100_000.0);
-                                        state.het_comb_spacing.set(two_cutoff);
+                                        let two_cutoff = (state.transform.het_cutoff().get_untracked() * 2.0).clamp(5_000.0, 100_000.0);
+                                        state.transform.het_comb_spacing().set(two_cutoff);
                                     }
                                 />
                             </div>
@@ -735,11 +753,11 @@ fn ModeSettingsBody() -> impl IntoView {
                         <div class="layer-panel-slider-row">
                             <label>"Factor"</label>
                             <input type="range" min="-40" max="40" step="1"
-                                prop:value=move || (state.te_factor.get() as i32).to_string()
+                                prop:value=move || (state.transform.te_factor().get() as i32).to_string()
                                 on:input=on_te_change
                             />
                             <input type="text" class="factor-input"
-                                prop:value=move || format_factor_value(state.te_factor.get())
+                                prop:value=move || format_factor_value(state.transform.te_factor().get())
                                 on:change=on_te_text
                                 on:focus=move |ev: web_sys::FocusEvent| {
                                     use wasm_bindgen::JsCast;
@@ -749,15 +767,15 @@ fn ModeSettingsBody() -> impl IntoView {
                                 }
                                 title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
                             />
-                            <button class=move || if state.te_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                on:click=move |_| state.te_factor_auto.update(|v| *v = !*v)
+                            <button class=move || if state.transform.te_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                on:click=move |_| state.transform.te_factor_auto().update(|v| *v = !*v)
                                 title="Auto: picks best factor for audible output"
                             >"A"</button>
                         </div>
                         <div class="factor-presets">
                             {preset_values.iter().map(|&(val, label)| {
-                                let on_click = make_preset_click(state.te_factor, state.te_factor_auto, PlaybackMode::TimeExpansion, val);
-                                let is_sel = move || (state.te_factor.get() - val).abs() < 0.01 && !state.te_factor_auto.get();
+                                let on_click = make_preset_click(state, state.transform.te_factor(), state.transform.te_factor_auto(), PlaybackMode::TimeExpansion, val);
+                                let is_sel = move || (state.transform.te_factor().get() - val).abs() < 0.01 && !state.transform.te_factor_auto().get();
                                 view! {
                                     <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
                                         on:click=on_click
@@ -765,16 +783,16 @@ fn ModeSettingsBody() -> impl IntoView {
                                 }
                             }).collect::<Vec<_>>()}
                         </div>
-                        <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
+                        <Show when=move || { let (h, l) = (state.filter.band_ff_freq_hi().get(), state.filter.band_ff_freq_lo().get()); h > l }>
                             <div class="freq-summary">
-                                <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
+                                <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                 <div class="freq-summary-output"
-                                    on:mouseenter=set_output_highlight(state.te_factor)
+                                    on:mouseenter=set_output_highlight(state, state.transform.te_factor())
                                     on:mouseleave=clear_output_highlight
                                 >"Output: "{move || {
-                                    let f = state.te_factor.get();
-                                    let lo = output_freq(state.band_ff_freq_lo.get(), f);
-                                    let hi = output_freq(state.band_ff_freq_hi.get(), f);
+                                    let f = state.transform.te_factor().get();
+                                    let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
+                                    let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
                                     let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
                                     format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
                                 }}</div>
@@ -803,11 +821,11 @@ fn ModeSettingsBody() -> impl IntoView {
                                     <div class="layer-panel-slider-row">
                                         <label>"Factor"</label>
                                         <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.pv_factor.get() as i32).to_string()
+                                            prop:value=move || (state.transform.pv_factor().get() as i32).to_string()
                                             on:input=on_pv_change
                                         />
                                         <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.pv_factor.get())
+                                            prop:value=move || format_factor_value(state.transform.pv_factor().get())
                                             on:change=on_pv_text
                                             on:focus=move |ev: web_sys::FocusEvent| {
                                                 use wasm_bindgen::JsCast;
@@ -817,15 +835,15 @@ fn ModeSettingsBody() -> impl IntoView {
                                             }
                                             title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
                                         />
-                                        <button class=move || if state.pv_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                            on:click=move |_| state.pv_factor_auto.update(|v| *v = !*v)
+                                        <button class=move || if state.transform.pv_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                            on:click=move |_| state.transform.pv_factor_auto().update(|v| *v = !*v)
                                             title="Auto: picks best factor for audible output"
                                         >"A"</button>
                                     </div>
                                     <div class="factor-presets">
                                         {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state.pv_factor, state.pv_factor_auto, PlaybackMode::PhaseVocoder, val);
-                                            let is_sel = move || (state.pv_factor.get() - val).abs() < 0.01 && !state.pv_factor_auto.get();
+                                            let on_click = make_preset_click(state, state.transform.pv_factor(), state.transform.pv_factor_auto(), PlaybackMode::PhaseVocoder, val);
+                                            let is_sel = move || (state.transform.pv_factor().get() - val).abs() < 0.01 && !state.transform.pv_factor_auto().get();
                                             view! {
                                                 <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
                                                     on:click=on_click
@@ -839,11 +857,11 @@ fn ModeSettingsBody() -> impl IntoView {
                                     <div class="layer-panel-slider-row">
                                         <label>"Factor"</label>
                                         <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.ps_factor.get() as i32).to_string()
+                                            prop:value=move || (state.transform.ps_factor().get() as i32).to_string()
                                             on:input=on_ps_change
                                         />
                                         <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.ps_factor.get())
+                                            prop:value=move || format_factor_value(state.transform.ps_factor().get())
                                             on:change=on_ps_text
                                             on:focus=move |ev: web_sys::FocusEvent| {
                                                 use wasm_bindgen::JsCast;
@@ -853,15 +871,15 @@ fn ModeSettingsBody() -> impl IntoView {
                                             }
                                             title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
                                         />
-                                        <button class=move || if state.ps_factor_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                                            on:click=move |_| state.ps_factor_auto.update(|v| *v = !*v)
+                                        <button class=move || if state.transform.ps_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                            on:click=move |_| state.transform.ps_factor_auto().update(|v| *v = !*v)
                                             title="Auto: picks best factor for audible output"
                                         >"A"</button>
                                     </div>
                                     <div class="factor-presets">
                                         {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state.ps_factor, state.ps_factor_auto, PlaybackMode::PitchShift, val);
-                                            let is_sel = move || (state.ps_factor.get() - val).abs() < 0.01 && !state.ps_factor_auto.get();
+                                            let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, val);
+                                            let is_sel = move || (state.transform.ps_factor().get() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
                                             view! {
                                                 <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
                                                     on:click=on_click
@@ -871,20 +889,25 @@ fn ModeSettingsBody() -> impl IntoView {
                                     </div>
                                 }.into_any()
                             }}
-                            <Show when=move || { let (h, l) = (state.band_ff_freq_hi.get(), state.band_ff_freq_lo.get()); h > l }>
+                            <Show when=move || { let (h, l) = (state.filter.band_ff_freq_hi().get(), state.filter.band_ff_freq_lo().get()); h > l }>
                                 <div class="freq-summary">
-                                    <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.band_ff_freq_lo.get()), format_freq_khz(state.band_ff_freq_hi.get()))}</div>
+                                    <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                     <div class="freq-summary-output"
                                         on:mouseenter=move |ev: web_sys::MouseEvent| {
-                                            let factor = if state.playback_mode.get_untracked() == PlaybackMode::PhaseVocoder { state.pv_factor } else { state.ps_factor };
-                                            set_output_highlight(factor)(ev);
+                                            // pv_factor()/ps_factor() are distinct subfield types, so
+                                            // dispatch in separate branches rather than a unified handle.
+                                            if state.playback_mode.get_untracked() == PlaybackMode::PhaseVocoder {
+                                                set_output_highlight(state, state.transform.pv_factor())(ev);
+                                            } else {
+                                                set_output_highlight(state, state.transform.ps_factor())(ev);
+                                            }
                                         }
                                         on:mouseleave=clear_output_highlight
                                     >"Output: "{move || {
                                         let mode = state.playback_mode.get();
-                                        let f = if mode == PlaybackMode::PhaseVocoder { state.pv_factor.get() } else { state.ps_factor.get() };
-                                        let lo = output_freq(state.band_ff_freq_lo.get(), f);
-                                        let hi = output_freq(state.band_ff_freq_hi.get(), f);
+                                        let f = if mode == PlaybackMode::PhaseVocoder { state.transform.pv_factor().get() } else { state.transform.ps_factor().get() };
+                                        let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
+                                        let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
                                         let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
                                         format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
                                     }}</div>
@@ -892,12 +915,12 @@ fn ModeSettingsBody() -> impl IntoView {
                             </Show>
                             <div class="layer-panel-slider-row">
                                 <label>"Quality"</label>
-                                <button class=move || if !state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.pv_hq.set(false)
+                                <button class=move || if !state.transform.pv_hq().get() { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.transform.pv_hq().set(false)
                                     title="Standard mode — uses filter warmup to reduce boundary clicks"
                                 >"Std"</button>
-                                <button class=move || if state.pv_hq.get() { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.pv_hq.set(true)
+                                <button class=move || if state.transform.pv_hq().get() { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.transform.pv_hq().set(true)
                                     title="HQ mode — overlapping crossfade eliminates boundary clicks"
                                 >"HQ"</button>
                             </div>
@@ -909,17 +932,17 @@ fn ModeSettingsBody() -> impl IntoView {
                         <div class="layer-panel-slider-row">
                             <label>"Division"</label>
                             <input type="range" min="2" max="32" step="1"
-                                prop:value=move || (state.zc_factor.get() as u32).to_string()
+                                prop:value=move || (state.transform.zc_factor().get() as u32).to_string()
                                 on:input=on_zc_change
                             />
-                            <span>{move || format!("\u{00f7}{}", state.zc_factor.get() as u32)}</span>
+                            <span>{move || format!("\u{00f7}{}", state.transform.zc_factor().get() as u32)}</span>
                         </div>
                     }.into_any(),
 
                     PlaybackMode::Normal => view! {
                         // 1:1 has no settings. The inaudible-band warning,
                         // when applicable, is the only thing worth showing.
-                        {move || (state.band_ff_freq_lo.get() >= 20_000.0).then(|| {
+                        {move || (state.filter.band_ff_freq_lo().get() >= 20_000.0).then(|| {
                             view! {
                                 <div style="padding: 8px 10px; font-size: 11px; color: #e0a030; line-height: 1.35;">
                                     "Band is above human hearing. 1:1 mode won\u{2019}t make it audible — try HET, TE, or PS."

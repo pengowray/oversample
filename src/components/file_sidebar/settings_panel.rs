@@ -368,7 +368,7 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                     let mode = state.resonator.fft_mode().get();
                                     let sr = current_resonator_sample_rate(state);
                                     let current_lod = crate::canvas::tile_cache::select_lod(
-                                        state.zoom_level.get(),
+                                        state.view.zoom_level().get(),
                                     );
                                     let f = mode.fft_for_lod(current_lod).max(2);
                                     let spacing = sr / f as f64;
@@ -1189,13 +1189,13 @@ fn jump_to_time(state: AppState, time: f64) {
     let files = state.files.get_untracked();
     let idx = state.current_file_index.get_untracked();
     if let Some(file) = idx.and_then(|i| files.get(i)) {
-        let zoom = state.zoom_level.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let canvas_w = state.spectrogram_canvas_width.get_untracked();
         let half_visible = (canvas_w / zoom) * file.spectrogram.time_resolution / 2.0;
         let visible = half_visible * 2.0;
         let max_scroll = (file.audio.duration_secs - visible).max(0.0);
         let centered = (time - half_visible).clamp(0.0, max_scroll);
-        state.scroll_offset.set(centered);
+        state.view.scroll_offset().set(centered);
     }
 }
 

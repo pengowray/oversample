@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{ActiveFocus, AppState, Selection};
 use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Marker, Region, generate_default_label, generate_uuid, now_iso8601};
@@ -137,8 +138,8 @@ fn get_freq_bounds(state: &AppState) -> (f64, f64) {
         let idx = state.current_file_index.get_untracked().unwrap_or(0);
         let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
         (
-            state.min_display_freq.get_untracked().unwrap_or(0.0),
-            state.max_display_freq.get_untracked().unwrap_or(file_max),
+            state.view.min_display_freq().get_untracked().unwrap_or(0.0),
+            state.view.max_display_freq().get_untracked().unwrap_or(file_max),
         )
     }
 }
@@ -305,8 +306,8 @@ fn SelectionOverflowMenu() -> impl IntoView {
     // Reactive position: top-right corner of selection
     let pos = Signal::derive(move || {
         let sel = state.selection.get()?;
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
 
         let files = state.files.get();
@@ -314,8 +315,8 @@ fn SelectionOverflowMenu() -> impl IntoView {
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;
-        let min_freq = state.min_display_freq.get().unwrap_or(0.0);
-        let max_freq = state.max_display_freq.get().unwrap_or(file_max_freq);
+        let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
+        let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
 
         let canvas_h = web_sys::window()
             .and_then(|w| w.document())
@@ -487,16 +488,16 @@ fn AnnotationOverflowMenu() -> impl IntoView {
             _ => return None,
         };
 
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
 
         let files = state.files.get();
         let file = files.get(idx)?;
         let time_res = file.spectrogram.time_resolution;
         let file_max_freq = file.spectrogram.max_freq;
-        let min_freq = state.min_display_freq.get().unwrap_or(0.0);
-        let max_freq = state.max_display_freq.get().unwrap_or(file_max_freq);
+        let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
+        let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
 
         let canvas_h = web_sys::window()
             .and_then(|w| w.document())

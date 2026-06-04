@@ -74,30 +74,89 @@ fn style_for(mode: PlaybackMode) -> Style {
     }
 }
 
-/// Factor signal for the current playback mode (None for Normal/Het).
-fn factor_signal(state: &AppState, mode: PlaybackMode) -> Option<RwSignal<f64>> {
+// `transform.*_factor()` are distinct store-subfield types, so we can't return
+// a single `RwSignal<f64>` handle selected at runtime. These mode-dispatch
+// value/action helpers replace the former `factor_signal`/`auto_signal`.
+
+/// Whether `mode` has a divide-factor (TE/PS/PV/ZC).
+fn has_factor(mode: PlaybackMode) -> bool {
+    matches!(
+        mode,
+        PlaybackMode::TimeExpansion
+            | PlaybackMode::PitchShift
+            | PlaybackMode::PhaseVocoder
+            | PlaybackMode::ZeroCrossing
+    )
+}
+
+/// Current divide-factor for `mode` (None for Normal/Het).
+fn factor_value(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
-        PlaybackMode::TimeExpansion => Some(state.te_factor),
-        PlaybackMode::PitchShift => Some(state.ps_factor),
-        PlaybackMode::PhaseVocoder => Some(state.pv_factor),
-        PlaybackMode::ZeroCrossing => Some(state.zc_factor),
+        PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get()),
+        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get()),
+        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get()),
+        PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get()),
         _ => None,
     }
 }
 
-/// Auto-derive-from-BandFF signal for the current mode (None where N/A).
-fn auto_signal(state: &AppState, mode: PlaybackMode) -> Option<RwSignal<bool>> {
+/// Untracked divide-factor for `mode`.
+fn factor_value_untracked(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
-        PlaybackMode::TimeExpansion => Some(state.te_factor_auto),
-        PlaybackMode::PitchShift => Some(state.ps_factor_auto),
-        PlaybackMode::PhaseVocoder => Some(state.pv_factor_auto),
-        PlaybackMode::Heterodyne => Some(state.het_freq_auto),
+        PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get_untracked()),
+        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get_untracked()),
+        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get_untracked()),
+        PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get_untracked()),
         _ => None,
+    }
+}
+
+/// Set the divide-factor for `mode` (no-op for Normal/Het).
+fn set_factor(state: &AppState, mode: PlaybackMode, v: f64) {
+    match mode {
+        PlaybackMode::TimeExpansion => state.transform.te_factor().set(v),
+        PlaybackMode::PitchShift => state.transform.ps_factor().set(v),
+        PlaybackMode::PhaseVocoder => state.transform.pv_factor().set(v),
+        PlaybackMode::ZeroCrossing => state.transform.zc_factor().set(v),
+        _ => {}
+    }
+}
+
+/// Auto-derive-from-BandFF flag for `mode` (None where N/A).
+fn auto_value(state: &AppState, mode: PlaybackMode) -> Option<bool> {
+    match mode {
+        PlaybackMode::TimeExpansion => Some(state.transform.te_factor_auto().get()),
+        PlaybackMode::PitchShift => Some(state.transform.ps_factor_auto().get()),
+        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor_auto().get()),
+        PlaybackMode::Heterodyne => Some(state.transform.het_freq_auto().get()),
+        _ => None,
+    }
+}
+
+/// Set the auto flag for `mode` (no-op where N/A).
+fn set_auto(state: &AppState, mode: PlaybackMode, v: bool) {
+    match mode {
+        PlaybackMode::TimeExpansion => state.transform.te_factor_auto().set(v),
+        PlaybackMode::PitchShift => state.transform.ps_factor_auto().set(v),
+        PlaybackMode::PhaseVocoder => state.transform.pv_factor_auto().set(v),
+        PlaybackMode::Heterodyne => state.transform.het_freq_auto().set(v),
+        _ => {}
+    }
+}
+
+/// Toggle the auto flag for `mode`.
+fn toggle_auto(state: &AppState, mode: PlaybackMode) {
+    match mode {
+        PlaybackMode::TimeExpansion => state.transform.te_factor_auto().update(|v| *v = !*v),
+        PlaybackMode::PitchShift => state.transform.ps_factor_auto().update(|v| *v = !*v),
+        PlaybackMode::PhaseVocoder => state.transform.pv_factor_auto().update(|v| *v = !*v),
+        PlaybackMode::Heterodyne => state.transform.het_freq_auto().update(|v| *v = !*v),
+        _ => {}
     }
 }
 
 fn band(state: &AppState) -> (f64, f64) {
-    (state.band_ff_freq_lo.get(), state.band_ff_freq_hi.get())
+    (state.filter.band_ff_freq_lo().get(), state.filter.band_ff_freq_hi().get())
 }
 
 /// Whether this mode supports a compound scale + shift mapping.
@@ -136,19 +195,19 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
     match style {
         Style::Passthrough => Some((in_lo, in_hi)),
         Style::Divide => {
-            let f = factor_signal(state, mode)?.get();
+            let f = factor_value(state, mode)?;
             // Optional output-side shift for PS/PV — divide first, then
             // subtract. Clamped to the post-divide low edge so the
             // output band never folds below zero.
             let shift = if supports_shift(mode) {
-                effective_ps_shift(state.ps_shift_hz.get(), in_lo, f)
+                effective_ps_shift(state.transform.ps_shift_hz().get(), in_lo, f)
             } else { 0.0 };
             let a = (output_freq(in_lo, f) - shift).abs();
             let b = (output_freq(in_hi, f) - shift).abs();
             Some(if a < b { (a, b) } else { (b, a) })
         }
         Style::LinearShift => {
-            let c = state.het_frequency.get();
+            let c = state.transform.het_frequency().get();
             let a = (in_lo - c).abs();
             let b = (in_hi - c).abs();
             Some(if a < b { (a, b) } else { (b, a) })
@@ -166,10 +225,10 @@ fn mapping_shorthand(state: &AppState, mode: PlaybackMode) -> String {
     match style_for(mode) {
         Style::Passthrough => "1:1".into(),
         Style::Divide => {
-            let Some(sig) = factor_signal(state, mode) else { return "\u{2014}".into(); };
-            let div = divide_shorthand(sig.get());
+            let Some(f) = factor_value(state, mode) else { return "\u{2014}".into(); };
+            let div = divide_shorthand(f);
             if supports_shift(mode) {
-                let shift = state.ps_shift_hz.get();
+                let shift = state.transform.ps_shift_hz().get();
                 if shift.abs() >= 50.0 {
                     return format!("{div} \u{2212}{}", format_freq_khz(shift));
                 }
@@ -177,7 +236,7 @@ fn mapping_shorthand(state: &AppState, mode: PlaybackMode) -> String {
             div
         }
         Style::LinearShift => {
-            let c = state.het_frequency.get();
+            let c = state.transform.het_frequency().get();
             // Negative because heterodyne shifts the band *down*.
             format!("\u{2212}{}", format_freq_khz(c))
         }
@@ -317,9 +376,9 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
 
     let click_preset = move |value: f64| {
         let m = mode.get_untracked();
-        if let Some(f_sig) = factor_signal(&state, m) {
-            if let Some(a_sig) = auto_signal(&state, m) { a_sig.set(false); }
-            f_sig.set(value);
+        if has_factor(m) {
+            set_auto(&state, m, false);
+            set_factor(&state, m, value);
         }
     };
 
@@ -328,13 +387,12 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
         <div class="output-range-presets">
             {move || {
                 let m = mode.get();
-                let a_sig = auto_signal(&state, m);
-                let on_auto = a_sig.map(|s| s.get()).unwrap_or(false);
+                let on_auto = auto_value(&state, m).unwrap_or(false);
                 view! {
                     <button
                         class=if on_auto { "factor-preset auto on" } else { "factor-preset auto" }
                         on:click=move |_| {
-                            if let Some(s) = a_sig { s.update(|v| *v = !*v); }
+                            toggle_auto(&state, m);
                         }
                         title="Auto-pick factor from current band"
                     >"Auto"</button>
@@ -343,8 +401,8 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
             {preset_values.iter().map(|&(val, label)| {
                 let sel = Signal::derive(move || {
                     let m = mode.get();
-                    let f = factor_signal(&state, m).map(|s| s.get()).unwrap_or(0.0);
-                    let auto = auto_signal(&state, m).map(|s| s.get()).unwrap_or(false);
+                    let f = factor_value(&state, m).unwrap_or(0.0);
+                    let auto = auto_value(&state, m).unwrap_or(false);
                     (f.abs() - val).abs() < 0.01 && !auto
                 });
                 let click = move |_: web_sys::MouseEvent| click_preset(val);
@@ -368,7 +426,7 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                 use wasm_bindgen::JsCast;
                 let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
                 if let Ok(khz) = el.value().parse::<f64>() {
-                    state.ps_shift_hz.set((khz * 1000.0).max(0.0));
+                    state.transform.ps_shift_hz().set((khz * 1000.0).max(0.0));
                 }
             };
             view! {
@@ -379,24 +437,24 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                     <input type="number"
                         class="output-range-num"
                         min="0" max="20" step="0.1"
-                        prop:value=move || format!("{:.2}", state.ps_shift_hz.get() / 1000.0)
+                        prop:value=move || format!("{:.2}", state.transform.ps_shift_hz().get() / 1000.0)
                         on:input=on_shift_input
                         title="Subtract this many kHz from the output (after pitch divide)"
                     />
                     <span class="output-range-num-suffix">"kHz"</span>
                     <button
                         class="auto-toggle"
-                        on:click=move |_| state.ps_shift_hz.set(0.0)
+                        on:click=move |_| state.transform.ps_shift_hz().set(0.0)
                         title="Clear output shift (back to pure divide)"
                     >"0"</button>
                 </div>
                 <div class="output-range-presets">
                     {[0.0, 0.5, 1.0, 2.0, 3.0, 5.0].iter().map(|&khz| {
                         let click = move |_: web_sys::MouseEvent| {
-                            state.ps_shift_hz.set(khz * 1000.0);
+                            state.transform.ps_shift_hz().set(khz * 1000.0);
                         };
                         let sel = Signal::derive(move || {
-                            (state.ps_shift_hz.get() - khz * 1000.0).abs() < 50.0
+                            (state.transform.ps_shift_hz().get() - khz * 1000.0).abs() < 50.0
                         });
                         let label = if khz == 0.0 {
                             "0".to_string()
@@ -426,8 +484,8 @@ fn LinearShiftControls() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(khz) = el.value().parse::<f64>() {
-            state.het_freq_auto.set(false);
-            state.het_frequency.set(khz * 1000.0);
+            state.transform.het_freq_auto().set(false);
+            state.transform.het_frequency().set(khz * 1000.0);
         }
     };
 
@@ -437,25 +495,25 @@ fn LinearShiftControls() -> impl IntoView {
             <input type="number"
                 class="output-range-num"
                 min="0" max="500" step="0.5"
-                prop:value=move || format!("{:.1}", state.het_frequency.get() / 1000.0)
+                prop:value=move || format!("{:.1}", state.transform.het_frequency().get() / 1000.0)
                 on:input=on_input
             />
             <span class="output-range-num-suffix">"kHz"</span>
             <button
-                class=move || if state.het_freq_auto.get() { "auto-toggle on" } else { "auto-toggle" }
-                on:click=move |_| state.het_freq_auto.update(|v| *v = !*v)
+                class=move || if state.transform.het_freq_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                on:click=move |_| state.transform.het_freq_auto().update(|v| *v = !*v)
                 title="Auto-derive carrier from current band"
             >"A"</button>
         </div>
         <div class="output-range-presets">
             {[10.0, 20.0, 40.0, 80.0].iter().map(|&khz| {
                 let click = move |_: web_sys::MouseEvent| {
-                    state.het_freq_auto.set(false);
-                    state.het_frequency.set(khz * 1000.0);
+                    state.transform.het_freq_auto().set(false);
+                    state.transform.het_frequency().set(khz * 1000.0);
                 };
                 let sel = Signal::derive(move || {
-                    !state.het_freq_auto.get()
-                        && (state.het_frequency.get() - khz * 1000.0).abs() < 100.0
+                    !state.transform.het_freq_auto().get()
+                        && (state.transform.het_frequency().get() - khz * 1000.0).abs() < 100.0
                 });
                 view! {
                     <button
@@ -490,14 +548,13 @@ fn BandSummary() -> impl IntoView {
             {move || {
                 let mode = state.playback_mode.get();
                 if !supports_shift(mode) { return view! { <span></span> }.into_any(); }
-                let stored_shift = state.ps_shift_hz.get();
+                let stored_shift = state.transform.ps_shift_hz().get();
                 if stored_shift.abs() < 50.0 { return view! { <span></span> }.into_any(); }
                 let (in_lo, in_hi) = band(&state);
                 if in_hi <= in_lo { return view! { <span></span> }.into_any(); }
-                let Some(f_sig) = factor_signal(&state, mode) else {
+                let Some(f) = factor_value(&state, mode) else {
                     return view! { <span></span> }.into_any();
                 };
-                let f = f_sig.get();
                 let post_lo = output_freq(in_lo, f);
                 let post_hi = output_freq(in_hi, f);
                 let (mlo, mhi) = if post_lo < post_hi { (post_lo, post_hi) } else { (post_hi, post_lo) };
@@ -586,28 +643,28 @@ fn OutputGutter() -> impl IntoView {
         match style_for(mode) {
             Style::Passthrough => {}
             Style::Divide => {
-                if let Some(f_sig) = factor_signal(&state, mode) {
-                    if let Some(a_sig) = auto_signal(&state, mode) { a_sig.set(false); }
+                if has_factor(mode) {
+                    set_auto(&state, mode, false);
                     // Honour any active output shift so the back-solve
                     // matches the compound mapping the user sees:
                     //   target = |anchor/factor − shift|   (post-shift)
                     // Solve for factor in the unfolded branch:
                     //   factor = anchor / (target + shift)
                     let stored_shift = if supports_shift(mode) {
-                        state.ps_shift_hz.get_untracked()
+                        state.transform.ps_shift_hz().get_untracked()
                     } else { 0.0 };
-                    let band_lo = state.band_ff_freq_lo.get_untracked();
-                    let current_f = f_sig.get_untracked();
+                    let band_lo = state.filter.band_ff_freq_lo().get_untracked();
+                    let current_f = factor_value_untracked(&state, mode).unwrap_or(0.0);
                     let shift = effective_ps_shift(stored_shift, band_lo, current_f);
                     let denom = (target + shift).max(1.0);
                     let raw = anchor / denom;
-                    f_sig.set(snap_factor(raw, snap));
+                    set_factor(&state, mode, snap_factor(raw, snap));
                 }
             }
             Style::LinearShift => {
-                state.het_freq_auto.set(false);
+                state.transform.het_freq_auto().set(false);
                 let raw = anchor - target;
-                state.het_frequency.set(snap_carrier(raw, snap));
+                state.transform.het_frequency().set(snap_carrier(raw, snap));
             }
         }
     };

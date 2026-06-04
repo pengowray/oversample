@@ -43,12 +43,12 @@ pub fn pointer_to_xtf(
         let file = files.get(idx)?;
         (file.spectrogram.time_resolution, file.spectrogram.max_freq)
     };
-    let max_freq = state.max_display_freq.get_untracked()
+    let max_freq = state.view.max_display_freq().get_untracked()
         .unwrap_or(file_max_freq);
-    let min_freq = state.min_display_freq.get_untracked()
+    let min_freq = state.view.min_display_freq().get_untracked()
         .unwrap_or(0.0);
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let visible_time = viewport::visible_time(cw, zoom, time_res);
     if visible_time <= 0.0 {
         return None;

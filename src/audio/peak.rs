@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::AppState;
 use crate::audio::source::ChannelView;
@@ -129,7 +130,7 @@ pub fn start_selection_peak_scan(
     let key: SelectionPeakKey = (file_index, start_sample, end_sample);
 
     // Already cached?
-    if state.selection_peak_cache.with_untracked(|c| c.get(&key).is_some()) {
+    if state.gain.selection_peak_cache().with_untracked(|c| c.get(&key).is_some()) {
         return;
     }
 
@@ -151,7 +152,7 @@ pub fn start_selection_peak_scan(
         } else {
             None
         };
-        state.selection_peak_cache.update(|c| c.insert(key, peak_db));
+        state.gain.selection_peak_cache().update(|c| c.insert(key, peak_db));
         return;
     }
 
@@ -194,6 +195,6 @@ pub fn start_selection_peak_scan(
             None
         };
 
-        state.selection_peak_cache.update(|c| c.insert(key, peak_db));
+        state.gain.selection_peak_cache().update(|c| c.insert(key, peak_db));
     });
 }

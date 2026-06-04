@@ -77,10 +77,10 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
         // Subscribe to relevant filter params when toggles are on
         if state.psd.apply_eq().get_untracked() {
-            let _ = state.filter_enabled.get();
-            let _ = state.filter_freq_low.get();
-            let _ = state.filter_freq_high.get();
-            let _ = state.filter_band_mode.get();
+            let _ = state.filter.enabled().get();
+            let _ = state.filter.freq_low().get();
+            let _ = state.filter.freq_high().get();
+            let _ = state.filter.band_mode().get();
         }
         if state.psd.apply_notch().get_untracked() {
             let _ = state.notch.enabled().get();
@@ -327,12 +327,12 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 <div class="psd-btn-group">
                     <button
                         class=move || {
-                            if !state.filter_enabled.get() { "psd-btn psd-btn-disabled" }
+                            if !state.filter.enabled().get() { "psd-btn psd-btn-disabled" }
                             else if state.psd.apply_eq().get() { "psd-btn psd-btn-active" }
                             else { "psd-btn" }
                         }
                         on:click=move |_| {
-                            if state.filter_enabled.get_untracked() {
+                            if state.filter.enabled().get_untracked() {
                                 state.psd.apply_eq().update(|v| *v = !*v);
                             }
                         }
@@ -973,14 +973,14 @@ fn start_psd_compute(
         }
     }
 
-    if apply_eq && state.filter_enabled.get_untracked() {
-        let freq_low = state.filter_freq_low.get_untracked();
-        let freq_high = state.filter_freq_high.get_untracked();
-        let db_below = state.filter_db_below.get_untracked();
-        let db_selected = state.filter_db_selected.get_untracked();
-        let db_harmonics = state.filter_db_harmonics.get_untracked();
-        let db_above = state.filter_db_above.get_untracked();
-        let band_mode = state.filter_band_mode.get_untracked();
+    if apply_eq && state.filter.enabled().get_untracked() {
+        let freq_low = state.filter.freq_low().get_untracked();
+        let freq_high = state.filter.freq_high().get_untracked();
+        let db_below = state.filter.db_below().get_untracked();
+        let db_selected = state.filter.db_selected().get_untracked();
+        let db_harmonics = state.filter.db_harmonics().get_untracked();
+        let db_above = state.filter.db_above().get_untracked();
+        let band_mode = state.filter.band_mode().get_untracked();
         samples = crate::dsp::filters::apply_eq_filter(
             &samples, sample_rate, freq_low, freq_high,
             db_below, db_selected, db_harmonics, db_above, band_mode,
@@ -999,8 +999,8 @@ fn start_psd_compute(
             }
             PsdFreqRangeMode::BandFF => {
                 if state.hfr_enabled.get_untracked() {
-                    let lo = state.filter_freq_low.get_untracked();
-                    let hi = state.filter_freq_high.get_untracked();
+                    let lo = state.filter.freq_low().get_untracked();
+                    let hi = state.filter.freq_high().get_untracked();
                     if lo < hi { Some((lo, hi)) } else { None }
                 } else {
                     None
@@ -1014,8 +1014,8 @@ fn start_psd_compute(
                 });
                 sel_range.or_else(|| {
                     if state.hfr_enabled.get_untracked() {
-                        let lo = state.filter_freq_low.get_untracked();
-                        let hi = state.filter_freq_high.get_untracked();
+                        let lo = state.filter.freq_low().get_untracked();
+                        let hi = state.filter.freq_high().get_untracked();
                         if lo < hi { Some((lo, hi)) } else { None }
                     } else {
                         None

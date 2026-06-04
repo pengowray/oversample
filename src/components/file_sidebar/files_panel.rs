@@ -122,11 +122,11 @@ fn remove_file_at(state: &AppState, i: usize) {
         } else {
             (None, None)
         };
-        if state.min_display_freq.get_untracked() != min {
-            state.min_display_freq.set(min);
+        if state.view.min_display_freq().get_untracked() != min {
+            state.view.min_display_freq().set(min);
         }
-        if state.max_display_freq.get_untracked() != max {
-            state.max_display_freq.set(max);
+        if state.view.max_display_freq().get_untracked() != max {
+            state.view.max_display_freq().set(max);
         }
     }
 }

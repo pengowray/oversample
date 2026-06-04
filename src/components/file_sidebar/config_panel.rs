@@ -24,10 +24,10 @@ pub(super) fn ConfigPanel() -> impl IntoView {
         let target = ev.target().unwrap();
         let input: web_sys::HtmlInputElement = target.unchecked_into();
         let checked = input.checked();
-        state.follow_cursor.set(checked);
+        state.view.follow_cursor().set(checked);
         if checked {
-            state.follow_suspended.set(false);
-            state.follow_visible_since.set(None);
+            state.view.follow_suspended().set(false);
+            state.view.follow_visible_since().set(None);
         }
     };
 
@@ -59,7 +59,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.follow_cursor.get()
+                        prop:checked=move || state.view.follow_cursor().get()
                         on:change=on_follow_cursor
                     />
                 </div>

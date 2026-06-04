@@ -70,12 +70,12 @@ fn GainCombo() -> impl IntoView {
         if no_file() {
             "layer-btn combo-btn-left disabled"
         } else if is_live() {
-            if state.live_gain_db.get().abs() > 0.001 {
+            if state.gain.live_db().get().abs() > 0.001 {
                 "layer-btn combo-btn-left active"
             } else {
                 "layer-btn combo-btn-left"
             }
-        } else if state.gain_mode.get() != GainMode::Off {
+        } else if state.gain.mode().get() != GainMode::Off {
             "layer-btn combo-btn-left active"
         } else {
             "layer-btn combo-btn-left no-annotation"
@@ -84,7 +84,7 @@ fn GainCombo() -> impl IntoView {
     let right_class = Signal::derive(move || {
         if no_file() { return "layer-btn combo-btn-right disabled"; }
         // While live, the mode label has no effect on the audio path — dim it.
-        let dim = if is_live() || state.gain_mode.get() == GainMode::Off { " dim" } else { "" };
+        let dim = if is_live() || state.gain.mode().get() == GainMode::Off { " dim" } else { "" };
         if is_open.get() {
             if dim.is_empty() { "layer-btn combo-btn-right open" } else { "layer-btn combo-btn-right dim open" }
         } else if dim.is_empty() { "layer-btn combo-btn-right" } else { "layer-btn combo-btn-right dim" }
@@ -92,11 +92,11 @@ fn GainCombo() -> impl IntoView {
 
     let left_value = Signal::derive(move || {
         if is_live() {
-            let db = state.live_gain_db.get();
+            let db = state.gain.live_db().get();
             return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
         }
-        let mode = state.gain_mode.get();
-        let manual_db = state.gain_db.get();
+        let mode = state.gain.mode().get();
+        let manual_db = state.gain.db().get();
         let pv_boost = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
         match mode {
             GainMode::Off => {
@@ -124,7 +124,7 @@ fn GainCombo() -> impl IntoView {
     });
     let right_value = Signal::derive(move || {
         if is_live() { return "LIVE".to_string(); }
-        match state.gain_mode.get() {
+        match state.gain.mode().get() {
             GainMode::Off => "OFF".to_string(),
             mode => mode.label().to_string(),
         }
@@ -137,17 +137,17 @@ fn GainCombo() -> impl IntoView {
             toggle_panel(&state, LayerPanel::Gain);
             return;
         }
-        let mode = state.gain_mode.get_untracked();
+        let mode = state.gain.mode().get_untracked();
         if mode == GainMode::Off {
-            let last = state.gain_mode_last_auto.get_untracked();
-            state.gain_mode.set(last);
-            state.auto_gain.set(last.is_auto());
+            let last = state.gain.mode_last_auto().get_untracked();
+            state.gain.mode().set(last);
+            state.gain.auto().set(last.is_auto());
         } else {
             if mode.is_auto() {
-                state.gain_mode_last_auto.set(mode);
+                state.gain.mode_last_auto().set(mode);
             }
-            state.gain_mode.set(GainMode::Off);
-            state.auto_gain.set(false);
+            state.gain.mode().set(GainMode::Off);
+            state.gain.auto().set(false);
         }
     });
     let toggle_menu = Callback::new(move |()| {
@@ -170,60 +170,60 @@ fn GainCombo() -> impl IntoView {
             panel_align="left"
             panel_style="min-width: 210px;"
         >
-            <button class=move || layer_opt_class_simple(state.gain_mode.get() == GainMode::Off)
+            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Off)
                 on:click=move |_| {
-                    state.gain_mode.set(GainMode::Off);
-                    state.auto_gain.set(false);
+                    state.gain.mode().set(GainMode::Off);
+                    state.gain.auto().set(false);
                     state.layer_panel_open.set(None);
                 }
             >"Off"</button>
-            <button class=move || layer_opt_class_simple(state.gain_mode.get() == GainMode::Manual)
+            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Manual)
                 on:click=move |_| {
-                    state.gain_mode.set(GainMode::Manual);
-                    state.auto_gain.set(false);
+                    state.gain.mode().set(GainMode::Manual);
+                    state.gain.auto().set(false);
                     state.layer_panel_open.set(None);
                 }
             >"Manual \u{2014} Slider boost only"</button>
-            <button class=move || layer_opt_class_simple(state.gain_mode.get() == GainMode::AutoPeak)
+            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::AutoPeak)
                 on:click=move |_| {
-                    state.gain_mode.set(GainMode::AutoPeak);
-                    state.gain_mode_last_auto.set(GainMode::AutoPeak);
-                    state.auto_gain.set(true);
+                    state.gain.mode().set(GainMode::AutoPeak);
+                    state.gain.mode_last_auto().set(GainMode::AutoPeak);
+                    state.gain.auto().set(true);
                     state.layer_panel_open.set(None);
                 }
             >"Peak \u{2014} Normalize to peak"</button>
-            <button class=move || layer_opt_class_simple(state.gain_mode.get() == GainMode::Adaptive)
+            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Adaptive)
                 on:click=move |_| {
-                    state.gain_mode.set(GainMode::Adaptive);
-                    state.gain_mode_last_auto.set(GainMode::Adaptive);
-                    state.auto_gain.set(true);
+                    state.gain.mode().set(GainMode::Adaptive);
+                    state.gain.mode_last_auto().set(GainMode::Adaptive);
+                    state.gain.auto().set(true);
                     state.layer_panel_open.set(None);
                 }
             >"AGC \u{2014} Automatic gain control"</button>
-            <Show when=move || state.gain_mode.get() == GainMode::AutoPeak>
+            <Show when=move || state.gain.mode().get() == GainMode::AutoPeak>
                 <div class="peak-source-row">
                     <span class="peak-source-label">"Peak from:"</span>
-                    <button class=move || if state.peak_source.get() == PeakSource::First30s { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.peak_source.set(PeakSource::First30s)
+                    <button class=move || if state.gain.peak_source().get() == PeakSource::First30s { "peak-src-btn sel" } else { "peak-src-btn" }
+                        on:click=move |_| state.gain.peak_source().set(PeakSource::First30s)
                         title="Peak from first 30 seconds"
                     >"30s"</button>
-                    <button class=move || if state.peak_source.get() == PeakSource::FullWave { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.peak_source.set(PeakSource::FullWave)
+                    <button class=move || if state.gain.peak_source().get() == PeakSource::FullWave { "peak-src-btn sel" } else { "peak-src-btn" }
+                        on:click=move |_| state.gain.peak_source().set(PeakSource::FullWave)
                         title="Peak from entire file"
                     >"Full"</button>
                     <button class=move || {
-                        let base = if state.peak_source.get() == PeakSource::Selection { "peak-src-btn sel" } else { "peak-src-btn" };
+                        let base = if state.gain.peak_source().get() == PeakSource::Selection { "peak-src-btn sel" } else { "peak-src-btn" };
                         if state.selection.get().is_none() { format!("{} disabled", base) } else { base.to_string() }
                     }
                         on:click=move |_| {
                             if state.selection.get_untracked().is_some() {
-                                state.peak_source.set(PeakSource::Selection);
+                                state.gain.peak_source().set(PeakSource::Selection);
                             }
                         }
                         title="Peak from current selection"
                     >"Sel"</button>
-                    <button class=move || if state.peak_source.get() == PeakSource::Processed { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.peak_source.set(PeakSource::Processed)
+                    <button class=move || if state.gain.peak_source().get() == PeakSource::Processed { "peak-src-btn sel" } else { "peak-src-btn" }
+                        on:click=move |_| state.gain.peak_source().set(PeakSource::Processed)
                         title="Peak after DSP processing"
                     >"DSP"</button>
                 </div>
@@ -232,10 +232,10 @@ fn GainCombo() -> impl IntoView {
                 <span class="slider-label">{move || if is_live() { "Live" } else { "Boost" }}</span>
                 <label>{move || {
                     if is_live() {
-                        let db = state.live_gain_db.get();
+                        let db = state.gain.live_db().get();
                         return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
                     }
-                    let db = state.gain_db.get();
+                    let db = state.gain.db().get();
                     let pv = if state.playback_mode.get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
                     let total = db + pv;
                     if total > 0.0 { format!("+{:.0}dB", total) }
@@ -243,26 +243,26 @@ fn GainCombo() -> impl IntoView {
                 }}</label>
                 <input type="range" min="-12" max="60" step="1"
                     prop:value=move || if is_live() {
-                        state.live_gain_db.get().to_string()
+                        state.gain.live_db().get().to_string()
                     } else {
-                        state.gain_db.get().to_string()
+                        state.gain.db().get().to_string()
                     }
                     on:input=move |ev| {
                         let val: f64 = leptos::prelude::event_target_value(&ev).parse().unwrap_or(0.0);
                         if is_live() {
-                            state.live_gain_db.set(val);
+                            state.gain.live_db().set(val);
                         } else {
-                            state.gain_db.set(val);
-                            if state.gain_mode.get_untracked() == GainMode::Off && val > 0.0 {
-                                state.gain_mode.set(GainMode::Manual);
+                            state.gain.db().set(val);
+                            if state.gain.mode().get_untracked() == GainMode::Off && val > 0.0 {
+                                state.gain.mode().set(GainMode::Manual);
                             }
                         }
                     }
                     on:dblclick=move |_| {
                         if is_live() {
-                            state.live_gain_db.set(0.0);
+                            state.gain.live_db().set(0.0);
                         } else {
-                            state.gain_db.set(0.0);
+                            state.gain.db().set(0.0);
                         }
                     }
                 />
@@ -284,7 +284,7 @@ fn BandpassCombo() -> impl IntoView {
         state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
 
-    let active = Signal::derive(move || state.bandpass_mode.get() != BandpassMode::Off);
+    let active = Signal::derive(move || state.filter.bandpass_mode().get() != BandpassMode::Off);
 
     let left_class = Signal::derive(move || {
         if no_file() {
@@ -310,11 +310,11 @@ fn BandpassCombo() -> impl IntoView {
     let left_value = Signal::derive(|| "PASS".to_string());
 
     let range_differs = Signal::derive(move || {
-        let lo = state.filter_freq_low.get();
-        let hi = state.filter_freq_high.get();
+        let lo = state.filter.freq_low().get();
+        let hi = state.filter.freq_high().get();
         if hi <= lo { return false; }
-        let ff_lo = state.band_ff_freq_lo.get();
-        let ff_hi = state.band_ff_freq_hi.get();
+        let ff_lo = state.filter.band_ff_freq_lo().get();
+        let ff_hi = state.filter.band_ff_freq_hi().get();
         if ff_hi <= ff_lo { return true; } // no FF set, but bandpass has a range
         (lo - ff_lo).abs() > 50.0 || (hi - ff_hi).abs() > 50.0
     });
@@ -328,14 +328,14 @@ fn BandpassCombo() -> impl IntoView {
         //       the HFR band),
         //   (C) the range tracks the HFR band exactly — redundant with
         //       the Range dropdown.
-        if state.bandpass_mode.get() == BandpassMode::Off { return String::new(); }
-        if !state.filter_enabled.get() { return String::new(); }
+        if state.filter.bandpass_mode().get() == BandpassMode::Off { return String::new(); }
+        if !state.filter.enabled().get() { return String::new(); }
         if !range_differs.get() { return String::new(); }
-        let lo = state.filter_freq_low.get();
-        let hi = state.filter_freq_high.get();
+        let lo = state.filter.freq_low().get();
+        let hi = state.filter.freq_high().get();
         format!("{:.1}\u{2013}{:.1}", lo / 1000.0, hi / 1000.0)
     });
-    let right_value = Signal::derive(move || match state.bandpass_mode.get() {
+    let right_value = Signal::derive(move || match state.filter.bandpass_mode().get() {
         BandpassMode::Off => "OFF".to_string(),
         BandpassMode::Auto => "AUTO".to_string(),
         BandpassMode::On => "ON".to_string(),
@@ -343,7 +343,7 @@ fn BandpassCombo() -> impl IntoView {
 
     let left_click = Callback::new(move |_: web_sys::MouseEvent| {
         if no_file() { return; }
-        let mode = state.bandpass_mode.get_untracked();
+        let mode = state.filter.bandpass_mode().get_untracked();
         if mode == BandpassMode::Off {
             // Turn on: prefer Auto when HFR is on (band-following), else On.
             let next = if state.focus_stack.get_untracked().hfr_enabled() {
@@ -351,46 +351,51 @@ fn BandpassCombo() -> impl IntoView {
             } else {
                 BandpassMode::On
             };
-            state.bandpass_mode.set(next);
+            state.filter.bandpass_mode().set(next);
         } else {
-            state.bandpass_mode.set(BandpassMode::Off);
+            state.filter.bandpass_mode().set(BandpassMode::Off);
         }
     });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::Bandpass);
     });
 
-    let make_db_handler = |signal: RwSignal<f64>| {
+    // Generic over the signal handle so it accepts store subfields
+    // (`state.filter.db_above()` etc.), which are each a distinct type.
+    fn make_db_handler<S>(state: AppState, signal: S) -> impl Fn(web_sys::Event) + Copy + 'static
+    where
+        S: leptos::prelude::Set<Value = f64> + Copy + 'static,
+    {
         move |ev: web_sys::Event| {
             use wasm_bindgen::JsCast;
             let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
             if let Ok(val) = input.value().parse::<f64>() {
-                if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
-                    state.bandpass_mode.set(BandpassMode::On);
+                if state.filter.bandpass_mode().get_untracked() == BandpassMode::Auto {
+                    state.filter.bandpass_mode().set(BandpassMode::On);
                 }
                 signal.set(val);
             }
         }
-    };
-    let on_above_change = make_db_handler(state.filter_db_above);
-    let on_selected_change = make_db_handler(state.filter_db_selected);
-    let on_harmonics_change = make_db_handler(state.filter_db_harmonics);
-    let on_below_change = make_db_handler(state.filter_db_below);
+    }
+    let on_above_change = make_db_handler(state, state.filter.db_above());
+    let on_selected_change = make_db_handler(state, state.filter.db_selected());
+    let on_harmonics_change = make_db_handler(state, state.filter.db_harmonics());
+    let on_below_change = make_db_handler(state, state.filter.db_below());
 
     let on_quality_click = move |q: FilterQuality| {
         move |_: web_sys::MouseEvent| {
-            if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
-                state.bandpass_mode.set(BandpassMode::On);
+            if state.filter.bandpass_mode().get_untracked() == BandpassMode::Auto {
+                state.filter.bandpass_mode().set(BandpassMode::On);
             }
-            state.filter_quality.set(q);
+            state.filter.quality().set(q);
         }
     };
     let on_band_click = move |b: u8| {
         move |_: web_sys::MouseEvent| {
-            if state.bandpass_mode.get_untracked() == BandpassMode::Auto {
-                state.bandpass_mode.set(BandpassMode::On);
+            if state.filter.bandpass_mode().get_untracked() == BandpassMode::Auto {
+                state.filter.bandpass_mode().set(BandpassMode::On);
             }
-            state.filter_band_mode.set(b);
+            state.filter.band_mode().set(b);
         }
     };
 
@@ -414,109 +419,109 @@ fn BandpassCombo() -> impl IntoView {
             <div class="layer-panel-title">"Bandpass"</div>
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                 <Show when=move || state.hfr_enabled.get()>
-                    <button class=move || layer_opt_class_simple(state.bandpass_mode.get() == BandpassMode::Auto)
-                        on:click=move |_| state.bandpass_mode.set(BandpassMode::Auto)
+                    <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::Auto)
+                        on:click=move |_| state.filter.bandpass_mode().set(BandpassMode::Auto)
                     >"AUTO"</button>
                 </Show>
-                <button class=move || layer_opt_class_simple(state.bandpass_mode.get() == BandpassMode::Off)
-                    on:click=move |_| state.bandpass_mode.set(BandpassMode::Off)
+                <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::Off)
+                    on:click=move |_| state.filter.bandpass_mode().set(BandpassMode::Off)
                 >"OFF"</button>
-                <button class=move || layer_opt_class_simple(state.bandpass_mode.get() == BandpassMode::On)
+                <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::On)
                     on:click=move |_| {
                         if !state.focus_stack.get_untracked().hfr_enabled() {
                             state.focus_stack.update(|s| s.set_saved_playback_mode(Some(PlaybackMode::Normal)));
                             state.toggle_hfr();
                         }
-                        state.bandpass_mode.set(BandpassMode::On);
+                        state.filter.bandpass_mode().set(BandpassMode::On);
                     }
                 >"ON"</button>
             </div>
             <Show when=move || {
-                let bp = state.bandpass_mode.get();
+                let bp = state.filter.bandpass_mode().get();
                 bp == BandpassMode::On
-                    || (bp == BandpassMode::Auto && state.band_ff_freq_hi.get() > state.band_ff_freq_lo.get())
+                    || (bp == BandpassMode::Auto && state.filter.band_ff_freq_hi().get() > state.filter.band_ff_freq_lo().get())
             }>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
-                    <button class=move || layer_opt_class_simple(state.bandpass_range.get() == BandpassRange::FollowFocus)
-                        on:click=move |_| state.bandpass_range.set(BandpassRange::FollowFocus)
+                    <button class=move || layer_opt_class_simple(state.filter.bandpass_range().get() == BandpassRange::FollowFocus)
+                        on:click=move |_| state.filter.bandpass_range().set(BandpassRange::FollowFocus)
                         title="Range tracks the active FF/HFR focus"
                     >"Follow"</button>
-                    <button class=move || layer_opt_class_simple(state.bandpass_range.get() == BandpassRange::Locked)
-                        on:click=move |_| state.bandpass_range.set(BandpassRange::Locked)
+                    <button class=move || layer_opt_class_simple(state.filter.bandpass_range().get() == BandpassRange::Locked)
+                        on:click=move |_| state.filter.bandpass_range().set(BandpassRange::Locked)
                         title="Lock the range here \u{2014} won't track focus changes"
                     >"Locked"</button>
                 </div>
                 <div class="bandpass-range-readout">
                     {move || format!("{:.1}\u{2013}{:.1} kHz",
-                        state.filter_freq_low.get() / 1000.0,
-                        state.filter_freq_high.get() / 1000.0
+                        state.filter.freq_low().get() / 1000.0,
+                        state.filter.freq_high().get() / 1000.0
                     )}
-                    <Show when=move || state.bandpass_range.get() == BandpassRange::Locked>
+                    <Show when=move || state.filter.bandpass_range().get() == BandpassRange::Locked>
                         <span class="bandpass-lock-icon" title="Locked">{"\u{00A0}\u{1F512}"}</span>
                     </Show>
                 </div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
-                    <button class=move || layer_opt_class_simple(state.filter_quality.get() == FilterQuality::Fast)
+                    <button class=move || layer_opt_class_simple(state.filter.quality().get() == FilterQuality::Fast)
                         on:click=on_quality_click(FilterQuality::Fast)
                         title="IIR band-split \u{2014} low latency, softer edges"
                     >"Fast"</button>
-                    <button class=move || layer_opt_class_simple(state.filter_quality.get() == FilterQuality::Spectral)
+                    <button class=move || layer_opt_class_simple(state.filter.quality().get() == FilterQuality::Spectral)
                         on:click=on_quality_click(FilterQuality::Spectral)
                         title="FFT spectral EQ \u{2014} sharp edges, higher latency"
                     >"HQ"</button>
                     <span style="width: 8px;"></span>
-                    <button class=move || layer_opt_class_simple(state.filter_band_mode.get() == 3)
+                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == 3)
                         on:click=on_band_click(3)
                     >"3"</button>
-                    <button class=move || layer_opt_class_simple(state.filter_band_mode.get() == 4)
+                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == 4)
                         on:click=on_band_click(4)
                     >"4"</button>
                 </div>
                 <div class="layer-panel-slider-row"
-                    on:mouseenter=move |_| state.filter_hovering_band.set(Some(3))
-                    on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                    on:mouseenter=move |_| state.filter.hovering_band().set(Some(3))
+                    on:mouseleave=move |_| state.filter.hovering_band().set(None)
                 >
                     <label>"Above"</label>
                     <input type="range" min="-60" max="6" step="1"
-                        prop:value=move || state.filter_db_above.get().to_string()
+                        prop:value=move || state.filter.db_above().get().to_string()
                         on:input=on_above_change
                     />
-                    <span>{move || format!("{:.0}", state.filter_db_above.get())}</span>
+                    <span>{move || format!("{:.0}", state.filter.db_above().get())}</span>
                 </div>
-                <Show when=move || { state.filter_band_mode.get() >= 4 }>
+                <Show when=move || { state.filter.band_mode().get() >= 4 }>
                     <div class="layer-panel-slider-row"
-                        on:mouseenter=move |_| state.filter_hovering_band.set(Some(2))
-                        on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                        on:mouseenter=move |_| state.filter.hovering_band().set(Some(2))
+                        on:mouseleave=move |_| state.filter.hovering_band().set(None)
                     >
                         <label>"Harm"</label>
                         <input type="range" min="-60" max="6" step="1"
-                            prop:value=move || state.filter_db_harmonics.get().to_string()
+                            prop:value=move || state.filter.db_harmonics().get().to_string()
                             on:input=on_harmonics_change
                         />
-                        <span>{move || format!("{:.0}", state.filter_db_harmonics.get())}</span>
+                        <span>{move || format!("{:.0}", state.filter.db_harmonics().get())}</span>
                     </div>
                 </Show>
                 <div class="layer-panel-slider-row"
-                    on:mouseenter=move |_| state.filter_hovering_band.set(Some(1))
-                    on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                    on:mouseenter=move |_| state.filter.hovering_band().set(Some(1))
+                    on:mouseleave=move |_| state.filter.hovering_band().set(None)
                 >
                     <label>"Band"</label>
                     <input type="range" min="-60" max="6" step="1"
-                        prop:value=move || state.filter_db_selected.get().to_string()
+                        prop:value=move || state.filter.db_selected().get().to_string()
                         on:input=on_selected_change
                     />
-                    <span>{move || format!("{:.0}", state.filter_db_selected.get())}</span>
+                    <span>{move || format!("{:.0}", state.filter.db_selected().get())}</span>
                 </div>
                 <div class="layer-panel-slider-row"
-                    on:mouseenter=move |_| state.filter_hovering_band.set(Some(0))
-                    on:mouseleave=move |_| state.filter_hovering_band.set(None)
+                    on:mouseenter=move |_| state.filter.hovering_band().set(Some(0))
+                    on:mouseleave=move |_| state.filter.hovering_band().set(None)
                 >
                     <label>"Below"</label>
                     <input type="range" min="-60" max="6" step="1"
-                        prop:value=move || state.filter_db_below.get().to_string()
+                        prop:value=move || state.filter.db_below().get().to_string()
                         on:input=on_below_change
                     />
-                    <span>{move || format!("{:.0}", state.filter_db_below.get())}</span>
+                    <span>{move || format!("{:.0}", state.filter.db_below().get())}</span>
                 </div>
             </Show>
         </ComboButton>
@@ -541,8 +546,8 @@ fn BandHfrCell() -> impl IntoView {
     let cell_class = Signal::derive(move || {
         let on = state.hfr_enabled.get();
         let h_dim = on && {
-            let lo = state.band_ff_freq_lo.get();
-            let hi = state.band_ff_freq_hi.get();
+            let lo = state.filter.band_ff_freq_lo().get();
+            let hi = state.filter.band_ff_freq_hi().get();
             hi > lo && hi < 24_000.0
         };
         let mut s = String::from("band-cell band-cell-hfr");
@@ -575,9 +580,9 @@ fn BandHfrCell() -> impl IntoView {
 /// Whether the bandpass is currently "locked" (range is fixed regardless
 /// of the active HFR band). Drives the grey overline above PASS.
 fn pass_is_locked(state: AppState) -> bool {
-    match state.bandpass_mode.get() {
+    match state.filter.bandpass_mode().get() {
         BandpassMode::Off => false,
-        _ => state.bandpass_range.get() == BandpassRange::Locked,
+        _ => state.filter.bandpass_range().get() == BandpassRange::Locked,
     }
 }
 

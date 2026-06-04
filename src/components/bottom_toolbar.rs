@@ -77,8 +77,8 @@ pub fn BottomToolbar() -> impl IntoView {
     let play_inaudible = Signal::derive(move || {
         use crate::state::PlaybackMode;
         if state.playback_mode.get() != PlaybackMode::Normal { return false; }
-        let lo = state.band_ff_freq_lo.get();
-        let hi = state.band_ff_freq_hi.get();
+        let lo = state.filter.band_ff_freq_lo().get();
+        let hi = state.filter.band_ff_freq_hi().get();
         hi > lo && lo >= 20_000.0
     });
 
@@ -141,8 +141,8 @@ pub fn BottomToolbar() -> impl IntoView {
                 // Subscribe to signals that affect auto-play mode for reactivity
                 let _sel = state.selection.get();
                 let _ann = state.selected_annotation_ids.get();
-                let _scroll = state.scroll_offset.get();
-                let _zoom = state.zoom_level.get();
+                let _scroll = state.view.scroll_offset().get();
+                let _zoom = state.view.zoom_level().get();
                 if let Some(sel) = playback::effective_selection(&state) {
                     if playback::is_selection_in_viewport(&state, &sel) {
                         "Sel".to_string()
@@ -196,12 +196,12 @@ pub fn BottomToolbar() -> impl IntoView {
                 if let Some(sel) = playback::effective_selection(&state) {
                     if playback::is_selection_in_viewport(&state, &sel) {
                         playback::play(&state);
-                    } else if state.scroll_offset.get_untracked() <= 0.0 {
+                    } else if state.view.scroll_offset().get_untracked() <= 0.0 {
                         playback::play_from_start(&state);
                     } else {
                         playback::play_from_here(&state);
                     }
-                } else if state.scroll_offset.get_untracked() <= 0.0 {
+                } else if state.view.scroll_offset().get_untracked() <= 0.0 {
                     playback::play_from_start(&state);
                 } else {
                     playback::play_from_here(&state);
@@ -434,8 +434,8 @@ pub fn BottomToolbar() -> impl IntoView {
                     let bucket = ModeBucket::from_mode(mode);
                     let label = bucket.label();
                     let is_band_inaudible = mode == PlaybackMode::Normal && {
-                        let lo = state.band_ff_freq_lo.get_untracked();
-                        let hi = state.band_ff_freq_hi.get_untracked();
+                        let lo = state.filter.band_ff_freq_lo().get_untracked();
+                        let hi = state.filter.band_ff_freq_hi().get_untracked();
                         hi > lo && lo >= 20_000.0
                     };
                     let extra_btn_class = Signal::derive(move || {

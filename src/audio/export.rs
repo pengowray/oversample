@@ -1,5 +1,6 @@
 //! WAV export: process audio regions through the DSP pipeline and download as WAV files.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -533,7 +534,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     let mode_label = match mode {
         PlaybackMode::Normal if hfr => Some("HF".to_string()),
         PlaybackMode::TimeExpansion => {
-            let te = state.te_factor.get();
+            let te = state.transform.te_factor().get();
             Some(format!("TE {te}x"))
         }
         PlaybackMode::PitchShift => Some("pitch shift".to_string()),
@@ -544,7 +545,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     };
 
     let estimated_duration_secs = source_duration.map(|d| match mode {
-        PlaybackMode::TimeExpansion => d * state.te_factor.get(),
+        PlaybackMode::TimeExpansion => d * state.transform.te_factor().get(),
         _ => d,
     });
 

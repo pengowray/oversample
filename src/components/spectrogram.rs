@@ -162,36 +162,36 @@ pub fn Spectrogram() -> impl IntoView {
         move || {
         let _tile_ready = state.tile_ready_signal.get(); // trigger redraw when tiles arrive
         let _size_tick = canvas_size_tick.get(); // trigger redraw when canvas resizes
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let bookmarks = state.bookmarks.get();
         let canvas_tool = state.canvas_tool.get();
         let selection = state.selection.get();
         let is_playing = state.is_playing.get();
-        let het_interacting = state.het_interacting.get();
+        let het_interacting = state.transform.het_interacting().get();
         let dragging = state.is_dragging.get();
-        let het_freq = state.het_frequency.get();
-        let het_cutoff = state.het_cutoff.get();
-        let het_comb_count = state.het_comb_count.get();
-        let het_comb_spacing = state.het_comb_spacing.get();
-        let te_factor = state.te_factor.get();
-        let ps_factor = state.ps_factor.get();
-        let pv_factor = state.pv_factor.get();
+        let het_freq = state.transform.het_frequency().get();
+        let het_cutoff = state.transform.het_cutoff().get();
+        let het_comb_count = state.transform.het_comb_count().get();
+        let het_comb_spacing = state.transform.het_comb_spacing().get();
+        let te_factor = state.transform.te_factor().get();
+        let ps_factor = state.transform.ps_factor().get();
+        let pv_factor = state.transform.pv_factor().get();
         let playback_mode = state.playback_mode.get();
-        let min_display_freq = state.min_display_freq.get();
-        let max_display_freq = state.max_display_freq.get();
+        let min_display_freq = state.view.min_display_freq().get();
+        let max_display_freq = state.view.max_display_freq().get();
         let mouse_freq = state.mouse_freq.get();
         let mouse_cx = state.mouse_canvas_x.get();
         let label_opacity = state.label_hover_opacity.get();
-        let filter_hovering = state.filter_hovering_band.get();
-        let filter_enabled = state.filter_enabled.get();
+        let filter_hovering = state.filter.hovering_band().get();
+        let filter_enabled = state.filter.enabled().get();
         let spec_hover = state.spec_hover_handle.get();
         let spec_drag = state.spec_drag_handle.get();
         let pointer_down = state.pointer_is_down.get();
-        let band_ff_lo = state.band_ff_freq_lo.get();
-        let band_ff_hi = state.band_ff_freq_hi.get();
-        let het_freq_auto = state.het_freq_auto.get();
-        let het_cutoff_auto = state.het_cutoff_auto.get();
+        let band_ff_lo = state.filter.band_ff_freq_lo().get();
+        let band_ff_hi = state.filter.band_ff_freq_hi().get();
+        let het_freq_auto = state.transform.het_freq_auto().get();
+        let het_cutoff_auto = state.transform.het_cutoff_auto().get();
         let hfr_enabled = state.hfr_enabled.get();
         let output_freq_hl = state.output_freq_highlight.get();
         let flow_on = state.flow.enabled().get_untracked();
@@ -223,13 +223,13 @@ pub fn Spectrogram() -> impl IntoView {
         let display_auto_gain = state.display_auto_gain.get();
         let _display_eq = state.display_eq.get();
         let _display_noise_filter = state.display_noise_filter.get();
-        let _f_freq_lo = state.filter_freq_low.get();
-        let _f_freq_hi = state.filter_freq_high.get();
-        let _f_db_below = state.filter_db_below.get();
-        let _f_db_selected = state.filter_db_selected.get();
-        let _f_db_harmonics = state.filter_db_harmonics.get();
-        let _f_db_above = state.filter_db_above.get();
-        let _f_band_mode = state.filter_band_mode.get();
+        let _f_freq_lo = state.filter.freq_low().get();
+        let _f_freq_hi = state.filter.freq_high().get();
+        let _f_db_below = state.filter.db_below().get();
+        let _f_db_selected = state.filter.db_selected().get();
+        let _f_db_harmonics = state.filter.db_harmonics().get();
+        let _f_db_above = state.filter.db_above().get();
+        let _f_band_mode = state.filter.band_mode().get();
         let _nr_enabled = state.noise_reduce.enabled().get();
         let _nr_strength = state.noise_reduce.strength().get();
         let _nr_floor_v = state.noise_reduce.floor().get();
@@ -779,7 +779,7 @@ pub fn Spectrogram() -> impl IntoView {
                     PlaybackMode::PitchShift if ps_factor < -1.0 => FreqShiftMode::Multiply(ps_factor.abs()),
                     PlaybackMode::PhaseVocoder if pv_factor > 1.0 => FreqShiftMode::Divide(pv_factor),
                     PlaybackMode::PhaseVocoder if pv_factor < -1.0 => FreqShiftMode::Multiply(pv_factor.abs()),
-                    PlaybackMode::ZeroCrossing => FreqShiftMode::Divide(state.zc_factor.get()),
+                    PlaybackMode::ZeroCrossing => FreqShiftMode::Divide(state.transform.zc_factor().get()),
                     _ => FreqShiftMode::None,
                 }
             };
@@ -1060,9 +1060,9 @@ pub fn Spectrogram() -> impl IntoView {
                     spectrogram_renderer::draw_filter_overlay(
                         &ctx,
                         band,
-                        state.filter_freq_low.get_untracked(),
-                        state.filter_freq_high.get_untracked(),
-                        state.filter_band_mode.get_untracked(),
+                        state.filter.freq_low().get_untracked(),
+                        state.filter.freq_high().get_untracked(),
+                        state.filter.band_mode().get_untracked(),
                         min_freq,
                         max_freq,
                         display_w as f64,
@@ -1141,10 +1141,10 @@ pub fn Spectrogram() -> impl IntoView {
     Effect::new(move || {
         let playhead = state.playhead_time.get();
         let is_playing = state.is_playing.get();
-        let follow = state.follow_cursor.get();
+        let follow = state.view.follow_cursor().get();
         // Use get_untracked to avoid recursive Effect invocation — this Effect
         // already re-runs via playhead_time / is_playing / follow_cursor changes.
-        let suspended = state.follow_suspended.get_untracked();
+        let suspended = state.view.follow_suspended().get_untracked();
 
         if !follow {
             return;
@@ -1152,8 +1152,8 @@ pub fn Spectrogram() -> impl IntoView {
         if !is_playing {
             // Reset suspension when playback stops so next play starts fresh
             if suspended {
-                state.follow_suspended.set(false);
-                state.follow_visible_since.set(None);
+                state.view.follow_suspended().set(false);
+                state.view.follow_visible_since().set(None);
             }
             return;
         }
@@ -1169,8 +1169,8 @@ pub fn Spectrogram() -> impl IntoView {
             .and_then(|i| files.get(i))
             .map(|f| (f.spectrogram.time_resolution, f.audio.duration_secs))
             .unwrap_or((1.0, 0.0));
-        let zoom = state.zoom_level.get_untracked();
-        let scroll = state.scroll_offset.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
         let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
 
         let visible_time = viewport::visible_time(display_w, zoom, time_res);
@@ -1180,13 +1180,13 @@ pub fn Spectrogram() -> impl IntoView {
             // Resume once the playhead is on-screen and user stopped scrolling
             let playhead_visible = playhead_rel >= 0.0 && playhead_rel <= visible_time;
             if playhead_visible {
-                let resume = match state.follow_visible_since.get_untracked() {
+                let resume = match state.view.follow_visible_since().get_untracked() {
                     Some(since) => js_sys::Date::now() - since >= 200.0,
                     None => true, // no recorded scroll time — safe to resume
                 };
                 if resume {
-                    state.follow_suspended.set(false);
-                    state.follow_visible_since.set(None);
+                    state.view.follow_suspended().set(false);
+                    state.view.follow_visible_since().set(None);
                 }
             }
             return;
@@ -1197,12 +1197,12 @@ pub fn Spectrogram() -> impl IntoView {
         // trigger would fire too frequently and look jarring.
         if visible_time < viewport::FOLLOW_EXACT_THRESHOLD_SECS {
             let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
-            state.scroll_offset.set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
+            state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
         }
         // Normal follow: scroll when playhead nears the edge
         else if playhead_rel > visible_time * viewport::FOLLOW_CURSOR_EDGE_FRACTION || playhead_rel < 0.0 {
             let target_scroll = playhead - visible_time * viewport::FOLLOW_CURSOR_FRACTION;
-            state.scroll_offset.set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
+            state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(target_scroll, duration, visible_time, from_here_mode));
         }
     });
 
@@ -1215,8 +1215,8 @@ pub fn Spectrogram() -> impl IntoView {
             let disposed = disposed.clone();
             move || {
             // Subscribe to coarse-grained signals (NOT playhead_time)
-            let _scroll = state.scroll_offset.get();
-            let _zoom = state.zoom_level.get();
+            let _scroll = state.view.scroll_offset().get();
+            let _zoom = state.view.zoom_level().get();
             let _playing = state.is_playing.get();
             let _file_idx = state.current_file_index.get();
             let _main_view = state.main_view.get();
@@ -1252,8 +1252,8 @@ pub fn Spectrogram() -> impl IntoView {
                 }).unwrap_or((0, 44100, 0.01));
                 if total_samples == 0 { return; }
 
-                let zoom = state.zoom_level.get_untracked();
-                let scroll = state.scroll_offset.get_untracked();
+                let zoom = state.view.zoom_level().get_untracked();
+                let scroll = state.view.scroll_offset().get_untracked();
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 let visible_time = if zoom > 0.0 { (canvas_w / zoom) * time_res } else { 1.0 };
                 let viewport_right = scroll + visible_time;
@@ -1315,8 +1315,8 @@ pub fn Spectrogram() -> impl IntoView {
     // at the current LOD, expanding outward from the viewport center.
     Effect::new(move || {
         let _file_idx = state.current_file_index.get();
-        let _scroll = state.scroll_offset.get();
-        let _zoom = state.zoom_level.get();
+        let _scroll = state.view.scroll_offset().get();
+        let _zoom = state.view.zoom_level().get();
         let _loading = state.loading_files.get();
         let _fft = state.spect_fft_mode.get();
 
@@ -1340,13 +1340,13 @@ pub fn Spectrogram() -> impl IntoView {
             return;
         }
 
-        let zoom = state.zoom_level.get_untracked();
+        let zoom = state.view.zoom_level().get_untracked();
         let lod = tile_cache::select_lod(zoom);
         let max_tiles = tile_cache::tile_count_for_samples(total_samples, lod);
         if max_tiles == 0 { return; }
 
         // Compute center tile from current viewport
-        let scroll = state.scroll_offset.get_untracked();
+        let scroll = state.view.scroll_offset().get_untracked();
         let time_res = state.files.with_untracked(|files| {
             files.get(file_idx).map(|f| f.spectrogram.time_resolution).unwrap_or(0.01)
         });

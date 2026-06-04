@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{AppState, StatusLevel};
 use crate::viewport;
@@ -61,7 +62,7 @@ pub fn BookmarkPopup() -> impl IntoView {
                         view! {
                             <button class="bookmark-item"
                                 on:click=move |_| {
-                                    let zoom = state2.zoom_level.get_untracked();
+                                    let zoom = state2.view.zoom_level().get_untracked();
                                     let files = state2.files.get_untracked();
                                     let idx = state2.current_file_index.get_untracked();
                                     let time_res = idx.and_then(|i| files.get(i))
@@ -71,7 +72,7 @@ pub fn BookmarkPopup() -> impl IntoView {
                                     let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
                                     let new_scroll = (t - visible_time * 0.1).max(0.0);
                                     state2.suspend_follow();
-                                    state2.scroll_offset.set(new_scroll);
+                                    state2.view.scroll_offset().set(new_scroll);
                                     state2.show_bookmark_popup.set(false);
                                 }
                             >{crate::format_time::format_time_display(t, 2)}</button>

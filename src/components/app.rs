@@ -206,31 +206,31 @@ pub fn App() -> impl IntoView {
         Effect::new(move |_| {
             // Track all playback-relevant signals (subscribes to changes)
             let _ = state.playback_mode.get();
-            let _ = state.te_factor.get();
-            let _ = state.ps_factor.get();
-            let _ = state.pv_factor.get();
-            let _ = state.pv_hq.get();
-            let _ = state.ps_shift_hz.get();
+            let _ = state.transform.te_factor().get();
+            let _ = state.transform.ps_factor().get();
+            let _ = state.transform.pv_factor().get();
+            let _ = state.transform.pv_hq().get();
+            let _ = state.transform.ps_shift_hz().get();
             // BandFF lower edge affects the effective output shift clamp
             // for PS / PV; retrigger replay so the DSP picks up the
             // newly-bounded shift even when bandpass is off.
-            let _ = state.band_ff_freq_lo.get();
-            let _ = state.zc_factor.get();
-            let _ = state.het_frequency.get();
-            let _ = state.het_cutoff.get();
-            let _ = state.gain_db.get();
-            let _ = state.auto_gain.get();
-            let _ = state.gain_mode.get();
-            let _ = state.filter_enabled.get();
-            let _ = state.filter_freq_low.get();
-            let _ = state.filter_freq_high.get();
-            let _ = state.filter_db_below.get();
-            let _ = state.filter_db_selected.get();
-            let _ = state.filter_db_harmonics.get();
-            let _ = state.filter_db_above.get();
-            let _ = state.filter_band_mode.get();
-            let _ = state.filter_quality.get();
-            let _ = state.bandpass_mode.get();
+            let _ = state.filter.band_ff_freq_lo().get();
+            let _ = state.transform.zc_factor().get();
+            let _ = state.transform.het_frequency().get();
+            let _ = state.transform.het_cutoff().get();
+            let _ = state.gain.db().get();
+            let _ = state.gain.auto().get();
+            let _ = state.gain.mode().get();
+            let _ = state.filter.enabled().get();
+            let _ = state.filter.freq_low().get();
+            let _ = state.filter.freq_high().get();
+            let _ = state.filter.db_below().get();
+            let _ = state.filter.db_selected().get();
+            let _ = state.filter.db_harmonics().get();
+            let _ = state.filter.db_above().get();
+            let _ = state.filter.band_mode().get();
+            let _ = state.filter.quality().get();
+            let _ = state.filter.bandpass_mode().get();
             let _ = state.channel_view.get();
             let notch_on = state.notch.enabled().get();
             let _ = state.notch.bands().get();
@@ -265,15 +265,15 @@ pub fn App() -> impl IntoView {
         let prev_mode = std::cell::Cell::new(state.playback_mode.get_untracked());
         Effect::new(move |_| {
             let mode = state.playback_mode.get();
-            let _ = state.filter_enabled.get();
-            let _ = state.filter_freq_low.get();
-            let _ = state.filter_freq_high.get();
-            let _ = state.filter_quality.get();
-            let _ = state.filter_band_mode.get();
-            let _ = state.bandpass_mode.get();
-            let _ = state.het_frequency.get();
-            let _ = state.het_cutoff.get();
-            let _ = state.ps_shift_hz.get();
+            let _ = state.filter.enabled().get();
+            let _ = state.filter.freq_low().get();
+            let _ = state.filter.freq_high().get();
+            let _ = state.filter.quality().get();
+            let _ = state.filter.band_mode().get();
+            let _ = state.filter.bandpass_mode().get();
+            let _ = state.transform.het_frequency().get();
+            let _ = state.transform.het_cutoff().get();
+            let _ = state.transform.ps_shift_hz().get();
 
             if first_run.get() {
                 first_run.set(false);
@@ -381,8 +381,8 @@ pub fn App() -> impl IntoView {
     // resizing while a non-spectrogram view is active can leave scroll outside
     // the valid data window and the waveform view renders a blank canvas.
     Effect::new(move |_| {
-        let scroll = state.scroll_offset.get();
-        let zoom = state.zoom_level.get();
+        let scroll = state.view.scroll_offset().get();
+        let zoom = state.view.zoom_level().get();
         let canvas_w = state.spectrogram_canvas_width.get();
         let from_here_mode = state.play_start_mode.get().uses_from_here();
         let timeline = state.timeline.active().get();
@@ -422,7 +422,7 @@ pub fn App() -> impl IntoView {
         let effective_from_here = from_here_mode && !is_live;
         let clamped = viewport::clamp_scroll_for_mode(scroll, effective_duration, visible_time, effective_from_here);
         if (clamped - scroll).abs() > f64::EPSILON {
-            state.scroll_offset.set(clamped);
+            state.view.scroll_offset().set(clamped);
         }
     });
 
@@ -468,18 +468,18 @@ pub fn App() -> impl IntoView {
         } else {
             (None, None)
         };
-        if state.min_display_freq.get_untracked() != min {
-            state.min_display_freq.set(min);
+        if state.view.min_display_freq().get_untracked() != min {
+            state.view.min_display_freq().set(min);
         }
-        if state.max_display_freq.get_untracked() != max {
-            state.max_display_freq.set(max);
+        if state.view.max_display_freq().get_untracked() != max {
+            state.view.max_display_freq().set(max);
         }
     });
 
     // Persist vertical zoom back to the current file whenever it changes.
     Effect::new(move |_| {
-        let min = state.min_display_freq.get();
-        let max = state.max_display_freq.get();
+        let min = state.view.min_display_freq().get();
+        let max = state.view.max_display_freq().get();
         let idx = state.current_file_index.get_untracked();
         if let Some(i) = idx {
             let needs_write = state.files.with_untracked(|files| {
@@ -517,8 +517,8 @@ pub fn App() -> impl IntoView {
         // EQ
         let eq_on = match state.display_filter_eq.get() {
             DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => state.filter_enabled.get(), // auto = show if playback EQ is on
-            DisplayFilterMode::Same => state.filter_enabled.get(),
+            DisplayFilterMode::Auto => state.filter.enabled().get(), // auto = show if playback EQ is on
+            DisplayFilterMode::Same => state.filter.enabled().get(),
             DisplayFilterMode::Custom => false, // not yet implemented
         };
         state.display_eq.set(eq_on);
@@ -558,8 +558,8 @@ pub fn App() -> impl IntoView {
             }
             DisplayFilterMode::Same => {
                 // Mirror whatever the playback gain pipeline does
-                let manual = state.gain_db.get() as f32;
-                match state.gain_mode.get() {
+                let manual = state.gain.db().get() as f32;
+                match state.gain.mode().get() {
                     GainMode::Off => (false, 0.0),
                     GainMode::Manual => (false, manual),
                     GainMode::AutoPeak => {
@@ -676,18 +676,18 @@ pub fn App() -> impl IntoView {
                 && old_idx != new_idx
                 && state.focus_stack.get_untracked().hfr_enabled();
             if was_hfr {
-                let current_gain = state.gain_db.get_untracked();
-                let stashed_gain = state.gain_db_stash.get_untracked();
-                state.gain_db.set(stashed_gain);
-                state.gain_db_stash.set(current_gain);
+                let current_gain = state.gain.db().get_untracked();
+                let stashed_gain = state.gain.db_stash().get_untracked();
+                state.gain.db().set(stashed_gain);
+                state.gain.db_stash().set(current_gain);
             }
 
             // Save current settings to the outgoing file
             if let Some(oi) = old_idx {
                 let settings = FileSettings {
-                    gain_mode: state.gain_mode.get_untracked(),
-                    gain_db: state.gain_db.get_untracked(),
-                    gain_db_stash: state.gain_db_stash.get_untracked(),
+                    gain_mode: state.gain.mode().get_untracked(),
+                    gain_db: state.gain.db().get_untracked(),
+                    gain_db_stash: state.gain.db_stash().get_untracked(),
                     notch_enabled: state.notch.enabled().get_untracked(),
                     notch_bands: state.notch.bands().get_untracked(),
                     notch_profile_name: state.notch.profile_name().get_untracked(),
@@ -726,9 +726,9 @@ pub fn App() -> impl IntoView {
                 state.focus_stack.set(crate::focus_stack::FocusStack::new());
                 if was_hfr {
                     state.playback_mode.set(PlaybackMode::Normal);
-                    state.bandpass_mode.set(crate::state::BandpassMode::Off);
-                    state.min_display_freq.set(None);
-                    state.max_display_freq.set(None);
+                    state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
+                    state.view.min_display_freq().set(None);
+                    state.view.max_display_freq().set(None);
                 }
             }
 
@@ -737,10 +737,10 @@ pub fn App() -> impl IntoView {
                 let files = state.files.get_untracked();
                 if let Some(file) = files.get(ni) {
                     let s = &file.settings;
-                    state.gain_mode.set(s.gain_mode);
-                    state.auto_gain.set(s.gain_mode.is_auto());
-                    state.gain_db.set(s.gain_db);
-                    state.gain_db_stash.set(s.gain_db_stash);
+                    state.gain.mode().set(s.gain_mode);
+                    state.gain.auto().set(s.gain_mode.is_auto());
+                    state.gain.db().set(s.gain_db);
+                    state.gain.db_stash().set(s.gain_db_stash);
                     state.notch.enabled().set(s.notch_enabled);
                     state.notch.bands().set(s.notch_bands.clone());
                     state.notch.profile_name().set(s.notch_profile_name.clone());
@@ -797,12 +797,12 @@ pub fn App() -> impl IntoView {
                             if let Some(sel) = playback::effective_selection(&state_kb) {
                                 if playback::is_selection_in_viewport(&state_kb, &sel) {
                                     playback::play(&state_kb);
-                                } else if state_kb.scroll_offset.get_untracked() <= 0.0 {
+                                } else if state_kb.view.scroll_offset().get_untracked() <= 0.0 {
                                     playback::play_from_start(&state_kb);
                                 } else {
                                     playback::play_from_here(&state_kb);
                                 }
-                            } else if state_kb.scroll_offset.get_untracked() <= 0.0 {
+                            } else if state_kb.view.scroll_offset().get_untracked() <= 0.0 {
                                 playback::play_from_start(&state_kb);
                             } else {
                                 playback::play_from_here(&state_kb);
@@ -864,8 +864,8 @@ pub fn App() -> impl IntoView {
                         let files = state_kb.files.get_untracked();
                         let idx = state_kb.current_file_index.get_untracked().unwrap_or(0);
                         let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                        (state_kb.min_display_freq.get_untracked().unwrap_or(0.0),
-                         state_kb.max_display_freq.get_untracked().unwrap_or(file_max))
+                        (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
+                         state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
                     };
                     state_kb.selection.set(Some(crate::state::Selection {
                         freq_low: Some(lo),
@@ -918,8 +918,8 @@ pub fn App() -> impl IntoView {
                         } else {
                             let files = state_kb.files.get_untracked();
                             let file_max = files.get(idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-                            (state_kb.min_display_freq.get_untracked().unwrap_or(0.0),
-                             state_kb.max_display_freq.get_untracked().unwrap_or(file_max))
+                            (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
+                             state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
                         };
                         state_kb.annotation_store.update(|store| {
                             if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
@@ -979,7 +979,7 @@ pub fn App() -> impl IntoView {
                 }
             };
             {
-                let zoom = state_kb.zoom_level.get_untracked();
+                let zoom = state_kb.view.zoom_level().get_untracked();
                 let canvas_w = state_kb.spectrogram_canvas_width.get_untracked();
                 let visible_time = viewport::visible_time(canvas_w, zoom, time_res);
                 let from_here_mode = state_kb.play_start_mode.get_untracked().uses_from_here();
@@ -987,14 +987,14 @@ pub fn App() -> impl IntoView {
                 let new_scroll = match key.as_str() {
                     "Home" => viewport::clamp_scroll_for_mode(0.0, duration, visible_time, from_here_mode),
                     "End" => max_scroll,
-                    "ArrowLeft" => viewport::clamp_scroll_for_mode(state_kb.scroll_offset.get_untracked() - visible_time * 0.2, duration, visible_time, from_here_mode),
-                    "ArrowRight" => viewport::clamp_scroll_for_mode(state_kb.scroll_offset.get_untracked() + visible_time * 0.2, duration, visible_time, from_here_mode),
-                    "PageUp" => viewport::clamp_scroll_for_mode(state_kb.scroll_offset.get_untracked() - visible_time * 0.8, duration, visible_time, from_here_mode),
-                    "PageDown" => viewport::clamp_scroll_for_mode(state_kb.scroll_offset.get_untracked() + visible_time * 0.8, duration, visible_time, from_here_mode),
-                    _ => state_kb.scroll_offset.get_untracked(),
+                    "ArrowLeft" => viewport::clamp_scroll_for_mode(state_kb.view.scroll_offset().get_untracked() - visible_time * 0.2, duration, visible_time, from_here_mode),
+                    "ArrowRight" => viewport::clamp_scroll_for_mode(state_kb.view.scroll_offset().get_untracked() + visible_time * 0.2, duration, visible_time, from_here_mode),
+                    "PageUp" => viewport::clamp_scroll_for_mode(state_kb.view.scroll_offset().get_untracked() - visible_time * 0.8, duration, visible_time, from_here_mode),
+                    "PageDown" => viewport::clamp_scroll_for_mode(state_kb.view.scroll_offset().get_untracked() + visible_time * 0.8, duration, visible_time, from_here_mode),
+                    _ => state_kb.view.scroll_offset().get_untracked(),
                 };
                 state_kb.suspend_follow();
-                state_kb.scroll_offset.set(new_scroll);
+                state_kb.view.scroll_offset().set(new_scroll);
             }
         }
         if ev.key() == "Escape" {
@@ -1770,7 +1770,7 @@ pub fn MainViewButton() -> impl IntoView {
             state.display_filter_gain.set(DisplayFilterMode::Same);
             state.display_filter_decimate.set(DisplayFilterMode::Same);
             // Eagerly resolve "Same" → mirror current playback state
-            state.display_eq.set(state.filter_enabled.get_untracked());
+            state.display_eq.set(state.filter.enabled().get_untracked());
             state.display_noise_filter.set(
                 state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked()
             );
@@ -1810,11 +1810,11 @@ pub fn MainViewButton() -> impl IntoView {
     };
 
     // Playback active indicators (for DSP rows)
-    let eq_active = Signal::derive(move || state.filter_enabled.get());
+    let eq_active = Signal::derive(move || state.filter.enabled().get());
     let notch_active = Signal::derive(move || state.notch.enabled().get());
     let nr_active = Signal::derive(move || state.noise_reduce.enabled().get());
     let transform_active = Signal::derive(move || state.playback_mode.get() != PlaybackMode::Normal);
-    let gain_active = Signal::derive(move || state.gain_mode.get() != GainMode::Off);
+    let gain_active = Signal::derive(move || state.gain.mode().get() != GainMode::Off);
     let decim_active = Signal::derive(move || false);
 
     let browser_is_resampling = Signal::derive(move || {
@@ -1999,7 +1999,7 @@ pub fn MainViewButton() -> impl IntoView {
                             let mode = state.resonator.fft_mode().get();
                             let sr = resonator_quick_sample_rate(state);
                             let current_lod = crate::canvas::tile_cache::select_lod(
-                                state.zoom_level.get(),
+                                state.view.zoom_level().get(),
                             );
                             let f = mode.fft_for_lod(current_lod).max(2);
                             let spacing = sr / f as f64;
@@ -2230,8 +2230,8 @@ pub fn MainViewButton() -> impl IntoView {
                         .unwrap_or(96_000.0)
                 };
                 let is_range = move |lo: Option<f64>, hi: Option<f64>| -> bool {
-                    let cur_min = state.min_display_freq.get();
-                    let cur_max = state.max_display_freq.get();
+                    let cur_min = state.view.min_display_freq().get();
+                    let cur_max = state.view.max_display_freq().get();
                     match (lo, hi) {
                         (None, None) => {
                             let fm = file_max();
@@ -2255,24 +2255,24 @@ pub fn MainViewButton() -> impl IntoView {
                             let val = select.value();
                             match val.as_str() {
                                 "full" => {
-                                    state.min_display_freq.set(None);
-                                    state.max_display_freq.set(None);
+                                    state.view.min_display_freq().set(None);
+                                    state.view.max_display_freq().set(None);
                                 }
                                 "22k" => {
-                                    state.min_display_freq.set(Some(0.0));
-                                    state.max_display_freq.set(Some(22_000.0));
+                                    state.view.min_display_freq().set(Some(0.0));
+                                    state.view.max_display_freq().set(Some(22_000.0));
                                 }
                                 "50k" => {
-                                    state.min_display_freq.set(Some(0.0));
-                                    state.max_display_freq.set(Some(50_000.0));
+                                    state.view.min_display_freq().set(Some(0.0));
+                                    state.view.max_display_freq().set(Some(50_000.0));
                                 }
                                 "100k" => {
-                                    state.min_display_freq.set(Some(0.0));
-                                    state.max_display_freq.set(Some(100_000.0));
+                                    state.view.min_display_freq().set(Some(0.0));
+                                    state.view.max_display_freq().set(Some(100_000.0));
                                 }
                                 "192k" => {
-                                    state.min_display_freq.set(Some(0.0));
-                                    state.max_display_freq.set(Some(192_000.0));
+                                    state.view.min_display_freq().set(Some(0.0));
+                                    state.view.max_display_freq().set(Some(192_000.0));
                                 }
                                 _ => {}
                             }
@@ -2426,14 +2426,14 @@ pub fn MainViewButton() -> impl IntoView {
                         <div class="dsp-custom-title">"Waveform Gain"</div>
                         <div class="dsp-custom-slider-row">
                             <button
-                                class=move || if state.wave_view_auto_gain.get() {
+                                class=move || if state.gain.wave_view_auto().get() {
                                     "layer-panel-opt selected"
                                 } else {
                                     "layer-panel-opt"
                                 }
                                 style="font-size: 9px; padding: 2px 6px; width: auto; display: inline;"
                                 on:click=move |_| {
-                                    state.wave_view_auto_gain.set(!state.wave_view_auto_gain.get_untracked());
+                                    state.gain.wave_view_auto().set(!state.gain.wave_view_auto().get_untracked());
                                 }
                             >"Auto"</button>
                         </div>
@@ -2443,31 +2443,31 @@ pub fn MainViewButton() -> impl IntoView {
                                 type="range"
                                 class="setting-range"
                                 min="-12" max="60" step="1"
-                                prop:value=move || if state.wave_view_auto_gain.get() {
+                                prop:value=move || if state.gain.wave_view_auto().get() {
                                     state.compute_auto_gain().to_string()
                                 } else {
-                                    state.wave_view_gain_db.get().to_string()
+                                    state.gain.wave_view_db().get().to_string()
                                 }
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f64>() {
-                                        state.wave_view_gain_db.set(v);
-                                        state.wave_view_auto_gain.set(false);
+                                        state.gain.wave_view_db().set(v);
+                                        state.gain.wave_view_auto().set(false);
                                     }
                                 }
                                 on:dblclick=move |_| {
-                                    state.wave_view_gain_db.set(0.0);
-                                    state.wave_view_auto_gain.set(false);
+                                    state.gain.wave_view_db().set(0.0);
+                                    state.gain.wave_view_auto().set(false);
                                 }
                             />
                             <span class="dsp-custom-value">{move || {
-                                if state.wave_view_auto_gain.get() {
+                                if state.gain.wave_view_auto().get() {
                                     let db = state.compute_auto_gain();
                                     if db.abs() < 0.5 { "auto".to_string() }
                                     else { format!("a{:+.0}", db) }
                                 } else {
-                                    format!("{:+.0} dB", state.wave_view_gain_db.get())
+                                    format!("{:+.0} dB", state.gain.wave_view_db().get())
                                 }
                             }}</span>
                         </div>

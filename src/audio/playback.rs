@@ -144,8 +144,8 @@ fn cancel_replay_timer() {
 /// Check whether the current playhead position is within the visible viewport.
 fn is_playhead_visible(state: &AppState) -> bool {
     let playhead = state.playhead_time.get_untracked();
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let time_res = state.current_file_index.get_untracked()
         .and_then(|i| state.files.get_untracked().get(i).cloned())
@@ -158,8 +158,8 @@ fn is_playhead_visible(state: &AppState) -> bool {
 
 /// Check whether any part of a selection overlaps the visible viewport.
 pub fn is_selection_in_viewport(state: &AppState, sel: &Selection) -> bool {
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
     let time_res = state.current_file_index.get_untracked()
         .and_then(|i| state.files.get_untracked().get(i).cloned())
@@ -180,7 +180,7 @@ pub fn stop(state: &AppState) {
     streaming_playback::stop_stream();
     state.is_buffering.set(false);
     if was_playing {
-        if state.user_panned_during_playback.get_untracked()
+        if state.view.user_panned_during_playback().get_untracked()
             && !is_playhead_visible(state)
         {
             // User scrolled the playhead off-screen — don't snap back.
@@ -188,7 +188,7 @@ pub fn stop(state: &AppState) {
             // started, so the back button can still return there.
         } else {
             // Playhead is still on-screen (or user didn't pan) — snap back.
-            state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+            state.view.scroll_offset().set(state.view.pre_play_scroll().get_untracked());
         }
     }
     state.is_playing.set(false);
@@ -235,7 +235,7 @@ pub fn replay_live(state: &AppState) {
     };
 
     // Compute correct playback speed for the current mode
-    let te_factor = state.te_factor.get_untracked();
+    let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
@@ -272,9 +272,9 @@ pub fn schedule_replay_live(state: &AppState) {
 
 /// Play from the very start of the current file (ignores selection).
 pub fn play_from_start(state: &AppState) {
-    let pre = state.scroll_offset.get_untracked();
+    let pre = state.view.scroll_offset().get_untracked();
     stop(state);
-    state.pre_play_scroll.set(pre);
+    state.view.pre_play_scroll().set(pre);
     // Use play_from_time_inner directly to avoid double-stop (play() calls stop() again,
     // which would restore scroll_offset to pre_play_scroll, undoing our scroll_offset=0).
     play_from_time_inner(state, 0.0, None);
@@ -282,10 +282,10 @@ pub fn play_from_start(state: &AppState) {
 
 /// Play from the current "here" time (play_from_here_time signal).
 pub fn play_from_here(state: &AppState) {
-    let pre = state.scroll_offset.get_untracked();
+    let pre = state.view.scroll_offset().get_untracked();
     let start_secs = current_play_from_here_time(state);
     stop(state);
-    state.pre_play_scroll.set(pre);
+    state.view.pre_play_scroll().set(pre);
     // Ignore selection for end time — "play from here" should always play to end of file.
     // If the user has a selection and the "here" marker is past the selection end,
     // this previously caused silent failure.
@@ -298,8 +298,8 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
     };
 
     let canvas_width = state.spectrogram_canvas_width.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
-    let scroll = state.scroll_offset.get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
     let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
         let files = state.files.get_untracked();
         tl.segments.first().and_then(|s| files.get(s.file_index))
@@ -361,7 +361,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     };
 
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
-    let te_factor = state.te_factor.get_untracked();
+    let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
@@ -413,7 +413,7 @@ pub fn play(state: &AppState) {
         params,
     ) else { return };
 
-    let te_factor = state.te_factor.get_untracked();
+    let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback_mode.get_untracked() {
         PlaybackMode::TimeExpansion => {
             let abs_f = te_factor.abs().max(1.0);
@@ -423,8 +423,8 @@ pub fn play(state: &AppState) {
     };
 
     state.push_nav(); // save pre-play position so the back button can return here
-    state.pre_play_scroll.set(state.scroll_offset.get_untracked());
-    state.user_panned_during_playback.set(false);
+    state.view.pre_play_scroll().set(state.view.scroll_offset().get_untracked());
+    state.view.user_panned_during_playback().set(false);
     state.active_playback_selection.set(selection);
     state.is_playing.set(true);
     state.playhead_time.set(play_start_time);
@@ -448,46 +448,46 @@ fn extract_selection_range(sample_rate: u32, total: usize, selection: Option<Sel
 pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sample_rate: u32) -> PlaybackParams {
     PlaybackParams {
         mode: state.playback_mode.get_untracked(),
-        het_freq: state.het_frequency.get_untracked(),
-        het_cutoff: state.het_cutoff.get_untracked(),
-        het_comb_count: state.het_comb_count.get_untracked().max(1),
-        het_comb_spacing: state.het_comb_spacing.get_untracked(),
-        te_factor: state.te_factor.get_untracked(),
-        ps_factor: state.ps_factor.get_untracked(),
-        pv_factor: state.pv_factor.get_untracked(),
-        pv_hq: state.pv_hq.get_untracked(),
+        het_freq: state.transform.het_frequency().get_untracked(),
+        het_cutoff: state.transform.het_cutoff().get_untracked(),
+        het_comb_count: state.transform.het_comb_count().get_untracked().max(1),
+        het_comb_spacing: state.transform.het_comb_spacing().get_untracked(),
+        te_factor: state.transform.te_factor().get_untracked(),
+        ps_factor: state.transform.ps_factor().get_untracked(),
+        pv_factor: state.transform.pv_factor().get_untracked(),
+        pv_hq: state.transform.pv_hq().get_untracked(),
         ps_shift_hz: {
             // Clamp stored shift to the post-divide low edge so the
             // heterodyne stage never folds output below zero. The user's
             // stored value stays unchanged; we just bound what the DSP
             // actually uses.
-            let stored = state.ps_shift_hz.get_untracked();
-            let band_lo = state.band_ff_freq_lo.get_untracked();
+            let stored = state.transform.ps_shift_hz().get_untracked();
+            let band_lo = state.filter.band_ff_freq_lo().get_untracked();
             let f = match state.playback_mode.get_untracked() {
-                crate::state::PlaybackMode::PitchShift => state.ps_factor.get_untracked(),
-                crate::state::PlaybackMode::PhaseVocoder => state.pv_factor.get_untracked(),
+                crate::state::PlaybackMode::PitchShift => state.transform.ps_factor().get_untracked(),
+                crate::state::PlaybackMode::PhaseVocoder => state.transform.pv_factor().get_untracked(),
                 _ => 1.0,
             };
             crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)
         },
-        zc_factor: state.zc_factor.get_untracked(),
-        gain_db: state.gain_db.get_untracked(),
-        gain_mode: state.gain_mode.get_untracked(),
-        auto_peak_gain_db: if state.gain_mode.get_untracked() == GainMode::AutoPeak {
+        zc_factor: state.transform.zc_factor().get_untracked(),
+        gain_db: state.gain.db().get_untracked(),
+        gain_mode: state.gain.mode().get_untracked(),
+        auto_peak_gain_db: if state.gain.mode().get_untracked() == GainMode::AutoPeak {
             state.compute_auto_gain()
         } else {
             0.0
         },
-        live_gain_db: state.live_gain_db.get_untracked(),
-        filter_enabled: state.filter_enabled.get_untracked(),
-        filter_freq_low: state.filter_freq_low.get_untracked(),
-        filter_freq_high: state.filter_freq_high.get_untracked(),
-        filter_db_below: state.filter_db_below.get_untracked(),
-        filter_db_selected: state.filter_db_selected.get_untracked(),
-        filter_db_harmonics: state.filter_db_harmonics.get_untracked(),
-        filter_db_above: state.filter_db_above.get_untracked(),
-        filter_band_mode: state.filter_band_mode.get_untracked(),
-        filter_quality: state.filter_quality.get_untracked(),
+        live_gain_db: state.gain.live_db().get_untracked(),
+        filter_enabled: state.filter.enabled().get_untracked(),
+        filter_freq_low: state.filter.freq_low().get_untracked(),
+        filter_freq_high: state.filter.freq_high().get_untracked(),
+        filter_db_below: state.filter.db_below().get_untracked(),
+        filter_db_selected: state.filter.db_selected().get_untracked(),
+        filter_db_harmonics: state.filter.db_harmonics().get_untracked(),
+        filter_db_above: state.filter.db_above().get_untracked(),
+        filter_band_mode: state.filter.band_mode().get_untracked(),
+        filter_quality: state.filter.quality().get_untracked(),
         sel_freq_low: selection.and_then(|s| s.freq_low).unwrap_or(0.0),
         sel_freq_high: selection
             .and_then(|s| s.freq_high)
@@ -622,10 +622,10 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
         if current >= end_time {
             state.playhead_time.set(end_time);
             state.is_buffering.set(false);
-            if !(state.user_panned_during_playback.get_untracked()
+            if !(state.view.user_panned_during_playback().get_untracked()
                 && !is_playhead_visible(&state))
             {
-                state.scroll_offset.set(state.pre_play_scroll.get_untracked());
+                state.view.scroll_offset().set(state.view.pre_play_scroll().get_untracked());
             }
             state.is_playing.set(false);
             // Show bookmark popup briefly if any bookmarks were made during playback

@@ -92,17 +92,17 @@ pub fn AnalysisPanel() -> impl IntoView {
                 if let Some(handle) = state.spec_drag_handle.get() {
                     let msg = match handle {
                         SpectrogramHandle::BandFfUpper | SpectrogramHandle::BandFfLower | SpectrogramHandle::BandFfMiddle => {
-                            let lo = state.band_ff_freq_lo.get();
-                            let hi = state.band_ff_freq_hi.get();
+                            let lo = state.filter.band_ff_freq_lo().get();
+                            let hi = state.filter.band_ff_freq_hi().get();
                             format!("Band: {} – {}", fmt_freq(lo), fmt_freq(hi))
                         }
                         SpectrogramHandle::HetCenter => {
-                            let f = state.het_frequency.get();
+                            let f = state.transform.het_frequency().get();
                             format!("Heterodyne: {}", fmt_freq(f))
                         }
                         SpectrogramHandle::HetBandUpper | SpectrogramHandle::HetBandLower => {
-                            let f = state.het_frequency.get();
-                            let c = state.het_cutoff.get();
+                            let f = state.transform.het_frequency().get();
+                            let c = state.transform.het_cutoff().get();
                             format!("Heterodyne: {} ± {}", fmt_freq(f), fmt_freq(c))
                         }
                     };

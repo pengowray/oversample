@@ -73,8 +73,8 @@ fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f6
     let file = files.get(file_idx)?;
     let file_time_res = file.spectrogram.time_resolution;
     let file_duration = file.audio.duration_secs;
-    let scroll = state.scroll_offset.get_untracked();
-    let zoom = state.zoom_level.get_untracked();
+    let scroll = state.view.scroll_offset().get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let canvas_w = state.spectrogram_canvas_width.get_untracked();
 
     if state.current_file_index.get_untracked() == Some(file_idx) {
@@ -2092,7 +2092,7 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             samples.to_vec()
         }
         PlaybackMode::TimeExpansion => {
-            let factor = state.te_factor.get_untracked();
+            let factor = state.transform.te_factor().get_untracked();
             if factor.abs() > 1.0 {
                 crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
             } else {
@@ -2100,20 +2100,20 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             }
         }
         PlaybackMode::Heterodyne => {
-            let lo = state.het_frequency.get_untracked();
-            let cutoff = state.het_cutoff.get_untracked();
+            let lo = state.transform.het_frequency().get_untracked();
+            let cutoff = state.transform.het_cutoff().get_untracked();
             crate::dsp::heterodyne::heterodyne_mix(samples, sample_rate, lo, cutoff)
         }
         PlaybackMode::PitchShift => {
-            let factor = state.ps_factor.get_untracked();
+            let factor = state.transform.ps_factor().get_untracked();
             crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
         }
         PlaybackMode::PhaseVocoder => {
-            let factor = state.pv_factor.get_untracked();
+            let factor = state.transform.pv_factor().get_untracked();
             crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(samples, factor)
         }
         PlaybackMode::ZeroCrossing => {
-            let factor = state.zc_factor.get_untracked() as u32;
+            let factor = state.transform.zc_factor().get_untracked() as u32;
             crate::dsp::zc_divide::zc_divide(samples, sample_rate, factor, false)
         }
     }

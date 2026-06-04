@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::annotations::{AnnotationId, AnnotationKind, AnnotationSet};
 use crate::canvas::spectrogram_renderer;
@@ -23,8 +24,8 @@ pub fn hit_test_spec_handles(
     let mut candidates: Vec<(SpectrogramHandle, f64)> = Vec::new();
 
     // BandFF handles — only hittable when BandFF has active focus
-    let band_ff_lo = state.band_ff_freq_lo.get_untracked();
-    let band_ff_hi = state.band_ff_freq_hi.get_untracked();
+    let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
+    let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
     if band_ff_focused && band_ff_hi > band_ff_lo {
         let y_upper = spectrogram_renderer::freq_to_y(band_ff_hi.min(max_freq), min_freq, max_freq, canvas_height);
         let y_lower = spectrogram_renderer::freq_to_y(band_ff_lo.max(min_freq), min_freq, max_freq, canvas_height);
@@ -41,15 +42,15 @@ pub fn hit_test_spec_handles(
 
     // HET handles (only when in HET mode and parameter is manual)
     if state.playback_mode.get_untracked() == PlaybackMode::Heterodyne {
-        let het_freq = state.het_frequency.get_untracked();
-        let het_cutoff = state.het_cutoff.get_untracked();
+        let het_freq = state.transform.het_frequency().get_untracked();
+        let het_cutoff = state.transform.het_cutoff().get_untracked();
 
-        if !state.het_freq_auto.get_untracked() {
+        if !state.transform.het_freq_auto().get_untracked() {
             let y_center = spectrogram_renderer::freq_to_y(het_freq, min_freq, max_freq, canvas_height);
             let d = (mouse_y - y_center).abs();
             if d <= threshold { candidates.push((SpectrogramHandle::HetCenter, d)); }
         }
-        if !state.het_cutoff_auto.get_untracked() {
+        if !state.transform.het_cutoff_auto().get_untracked() {
             let y_upper = spectrogram_renderer::freq_to_y(
                 (het_freq + het_cutoff).min(max_freq), min_freq, max_freq, canvas_height,
             );

@@ -18,14 +18,14 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
     tile_height.hash(&mut h);
     state.display_eq.get_untracked().hash(&mut h);
     state.display_noise_filter.get_untracked().hash(&mut h);
-    state.filter_enabled.get_untracked().hash(&mut h);
-    state.filter_freq_low.get_untracked().to_bits().hash(&mut h);
-    state.filter_freq_high.get_untracked().to_bits().hash(&mut h);
-    (state.filter_db_below.get_untracked() as i32).hash(&mut h);
-    (state.filter_db_selected.get_untracked() as i32).hash(&mut h);
-    (state.filter_db_harmonics.get_untracked() as i32).hash(&mut h);
-    (state.filter_db_above.get_untracked() as i32).hash(&mut h);
-    state.filter_band_mode.get_untracked().hash(&mut h);
+    state.filter.enabled().get_untracked().hash(&mut h);
+    state.filter.freq_low().get_untracked().to_bits().hash(&mut h);
+    state.filter.freq_high().get_untracked().to_bits().hash(&mut h);
+    (state.filter.db_below().get_untracked() as i32).hash(&mut h);
+    (state.filter.db_selected().get_untracked() as i32).hash(&mut h);
+    (state.filter.db_harmonics().get_untracked() as i32).hash(&mut h);
+    (state.filter.db_above().get_untracked() as i32).hash(&mut h);
+    state.filter.band_mode().get_untracked().hash(&mut h);
     state.notch.enabled().get_untracked().hash(&mut h);
     let bands = state.notch.bands().get_untracked();
     bands.len().hash(&mut h);
@@ -86,14 +86,14 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
     let mut adj = vec![0.0f32; tile_height];
 
     // EQ: apply per-band dB offsets
-    if show_eq && state.filter_enabled.get_untracked() {
-        let freq_low = state.filter_freq_low.get_untracked();
-        let freq_high = state.filter_freq_high.get_untracked();
-        let db_below = state.filter_db_below.get_untracked() as f32;
-        let db_selected = state.filter_db_selected.get_untracked() as f32;
-        let db_harmonics = state.filter_db_harmonics.get_untracked() as f32;
-        let db_above = state.filter_db_above.get_untracked() as f32;
-        let band_mode = state.filter_band_mode.get_untracked();
+    if show_eq && state.filter.enabled().get_untracked() {
+        let freq_low = state.filter.freq_low().get_untracked();
+        let freq_high = state.filter.freq_high().get_untracked();
+        let db_below = state.filter.db_below().get_untracked() as f32;
+        let db_selected = state.filter.db_selected().get_untracked() as f32;
+        let db_harmonics = state.filter.db_harmonics().get_untracked() as f32;
+        let db_above = state.filter.db_above().get_untracked() as f32;
+        let band_mode = state.filter.band_mode().get_untracked();
         let harmonics_bounds = harmonics_band_bounds(freq_low, freq_high, band_mode);
 
         for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {

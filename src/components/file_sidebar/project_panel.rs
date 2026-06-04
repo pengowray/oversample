@@ -477,12 +477,12 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 state.suspend_follow();
                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
                     let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
-                    state.zoom_level.set(fit_zoom);
+                    state.view.zoom_level().set(fit_zoom);
                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
                     let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
-                    state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
+                    state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
                 } else {
-                    state.scroll_offset.set(0.0);
+                    state.view.scroll_offset().set(0.0);
                 }
                 selected_proj_indices.set(Vec::new());
             }
@@ -719,12 +719,12 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                                 state.suspend_follow();
                                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
                                     let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
-                                    state.zoom_level.set(fit_zoom);
+                                    state.view.zoom_level().set(fit_zoom);
                                     let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
                                     let from_here_mode = state.play_start_mode.get_untracked() .uses_from_here();
-                                    state.scroll_offset.set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
+                                    state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
                                 } else {
-                                    state.scroll_offset.set(0.0);
+                                    state.view.scroll_offset().set(0.0);
                                 }
                             }
                         }

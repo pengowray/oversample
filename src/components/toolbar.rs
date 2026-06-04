@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::{AppState, RightSidebarTab, MicAcquisitionState, PlaybackMode, RecordReadyState};
@@ -528,8 +529,8 @@ pub fn Toolbar() -> impl IntoView {
                                     let hist = state.nav_history.get_untracked();
                                     if let Some(entry) = hist.get(new_idx) {
                                         state.suspend_follow();
-                                        state.scroll_offset.set(entry.scroll_offset);
-                                        state.zoom_level.set(entry.zoom_level);
+                                        state.view.scroll_offset().set(entry.scroll_offset);
+                                        state.view.zoom_level().set(entry.zoom_level);
                                     }
                                 }
                                 disabled=move || state.nav_index.get() == 0
@@ -547,8 +548,8 @@ pub fn Toolbar() -> impl IntoView {
                                     state.nav_index.set(new_idx);
                                     if let Some(entry) = hist.get(new_idx) {
                                         state.suspend_follow();
-                                        state.scroll_offset.set(entry.scroll_offset);
-                                        state.zoom_level.set(entry.zoom_level);
+                                        state.view.scroll_offset().set(entry.scroll_offset);
+                                        state.view.zoom_level().set(entry.zoom_level);
                                     }
                                 }
                                 disabled=move || {

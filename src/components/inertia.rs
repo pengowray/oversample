@@ -3,6 +3,7 @@
 //! Tracks finger velocity during touchmove, then animates a decaying
 //! scroll after touchend via requestAnimationFrame.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
@@ -124,11 +125,11 @@ pub fn start_inertia(
     cancel_inertia(generation);
     let my_gen = generation.get_value();
 
-    let zoom = state.zoom_level.get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
     let visible_time = viewport::visible_time(canvas_width, zoom, time_resolution);
     // Convert px velocity to time velocity (same sign convention as apply_hand_pan: negate)
     let v0_time = -(velocity_px_per_sec / canvas_width) * visible_time;
-    let start_scroll = state.scroll_offset.get_untracked();
+    let start_scroll = state.view.scroll_offset().get_untracked();
     let waterfall_active = (state.mic_recording.get_untracked()
         || state.mic_listening.get_untracked())
         && crate::canvas::live_waterfall::is_active();
@@ -170,7 +171,7 @@ pub fn start_inertia(
         let scroll = start_scroll + (v0_time / FRICTION) * (1.0 - decay);
         let clamped = scroll.clamp(min_scroll, max_scroll);
 
-        state.scroll_offset.set(clamped);
+        state.view.scroll_offset().set(clamped);
         state.suspend_follow();
         state.suspend_waterfall_follow(2000.0);
 
