@@ -220,7 +220,7 @@ pub fn download_recording_wav(
 /// via the Kotlin MediaStore plugin. Skips internal storage entirely.
 /// Only meaningful on Android.
 pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
-    use crate::tauri_bridge::tauri_invoke;
+    use crate::tauri_bridge::tauri_invoke_typed;
 
     let args = js_sys::Object::new();
     js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
@@ -229,13 +229,12 @@ pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
     array.copy_from(wav_data);
     js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
 
-    match tauri_invoke("plugin:media-store|saveWavBytes", &args.into()).await {
+    match tauri_invoke_typed::<oversample_ipc::plugins::SavePathResult>(
+        "plugin:media-store|saveWavBytes",
+        &args.into(),
+    ).await {
         Ok(result) => {
-            let path = js_sys::Reflect::get(&result, &JsValue::from_str("path"))
-                .ok()
-                .and_then(|v| v.as_string())
-                .unwrap_or_default();
-            log::info!("Saved to shared storage: {}", path);
+            log::info!("Saved to shared storage: {}", result.path);
         }
         Err(e) => {
             log::warn!("Failed to save to shared storage: {}", e);

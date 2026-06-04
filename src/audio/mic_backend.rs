@@ -634,19 +634,13 @@ async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
             )
         });
 
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(&filename)).ok();
-
-    match tauri_invoke("plugin:media-store|createRecordingEntry", &args.into()).await {
+    match tauri_invoke_typed_args::<_, oversample_ipc::plugins::CreateRecordingEntryResult>(
+        "plugin:media-store|createRecordingEntry",
+        &oversample_ipc::plugins::CreateRecordingEntryArgs { filename: filename.clone() },
+    ).await {
         Ok(result) => {
-            let fd = js_sys::Reflect::get(&result, &JsValue::from_str("fd"))
-                .ok()
-                .and_then(|v| v.as_f64())
-                .map(|v| v as i32);
-            if let Some(fd) = fd {
-                log::info!("Got shared storage fd={} for {}", fd, filename);
-            }
-            fd
+            log::info!("Got shared storage fd={} for {}", result.fd, filename);
+            Some(result.fd)
         }
         Err(e) => {
             log::warn!("createRecordingEntry failed (will fall back to internal storage): {}", e);

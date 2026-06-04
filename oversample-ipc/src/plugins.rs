@@ -168,3 +168,37 @@ pub struct UsbStatusResult {
     #[serde(default)]
     pub device_name: Option<String>,
 }
+
+// ── media-store plugin ──────────────────────────────────────────────────
+//
+// NOTE: the byte payloads (`saveWavBytes.data`, `saveExportBytes.data`) are NOT
+// modelled here — they are attached as a JS `Uint8Array` directly (serializing a
+// Vec<u8> as a JSON number array would be huge/slow). Raw-bytes IPC is Phase 4.
+
+/// Args for `plugin:media-store|createRecordingEntry`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CreateRecordingEntryArgs {
+    pub filename: String,
+}
+
+/// Result of `plugin:media-store|createRecordingEntry`. `fd` is a raw POSIX file
+/// descriptor (owned by Rust after detachFd); `uri` is the MediaStore row.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CreateRecordingEntryResult {
+    pub fd: i32,
+    pub uri: String,
+}
+
+/// Result of `plugin:media-store|saveWavBytes` / `saveExportBytes`. An empty
+/// `path` means a permission-retry (pre-Q first run), not a real save.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SavePathResult {
+    pub path: String,
+}
+
+/// Result of `plugin:media-store|cleanupPendingEntries`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CleanupResult {
+    pub deleted: u32,
+    pub skipped: bool,
+}

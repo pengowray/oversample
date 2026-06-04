@@ -317,7 +317,7 @@ async fn save_export_to_media_store(
     relative_path: &str,
     mime: &str,
 ) -> ExportSave {
-    use crate::tauri_bridge::tauri_invoke;
+    use crate::tauri_bridge::tauri_invoke_typed;
     let args = js_sys::Object::new();
     js_sys::Reflect::set(&args, &JsValue::from_str("filename"), &JsValue::from_str(filename)).ok();
     js_sys::Reflect::set(&args, &JsValue::from_str("relativePath"), &JsValue::from_str(relative_path)).ok();
@@ -326,21 +326,20 @@ async fn save_export_to_media_store(
     array.copy_from(data);
     js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
 
-    match tauri_invoke("plugin:media-store|saveExportBytes", &args.into()).await {
+    match tauri_invoke_typed::<oversample_ipc::plugins::SavePathResult>(
+        "plugin:media-store|saveExportBytes",
+        &args.into(),
+    ).await {
         Ok(result) => {
-            let path = js_sys::Reflect::get(&result, &JsValue::from_str("path"))
-                .ok()
-                .and_then(|v| v.as_string())
-                .unwrap_or_default();
-            if path.is_empty() {
+            if result.path.is_empty() {
                 // e.g. pre-Q first run: storage permission was just granted and
                 // nothing is written yet (the plugin asks the UI to retry). Don't
                 // report this as a successful save.
                 log::warn!("Export not saved (permission/retry) — needs another tap");
                 ExportSave::Cancelled
             } else {
-                log::info!("Export saved to shared storage: {}", path);
-                ExportSave::Saved(path)
+                log::info!("Export saved to shared storage: {}", result.path);
+                ExportSave::Saved(result.path)
             }
         }
         Err(e) => {

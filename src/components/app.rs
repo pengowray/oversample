@@ -90,7 +90,7 @@ pub fn App() -> impl IntoView {
     // Cheap no-op if the recovery dir is empty or missing.
     if state.is_tauri {
         wasm_bindgen_futures::spawn_local(async move {
-            use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args};
+            use crate::tauri_bridge::{tauri_invoke_no_args, tauri_invoke_typed_no_args};
             let Ok(result) = tauri_invoke_no_args("mic_recover_recordings").await else {
                 return;
             };
@@ -114,14 +114,11 @@ pub fn App() -> impl IntoView {
             // on desktop) is dropped silently. Quick call regardless of
             // whether any .wav.part files were found — the MediaStore row can
             // outlive the internal partial file.
-            if let Ok(result) = tauri_invoke(
+            if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::CleanupResult>(
                 "plugin:media-store|cleanupPendingEntries",
-                &js_sys::Object::new().into(),
             ).await {
-                let deleted = js_sys::Reflect::get(&result, &JsValue::from_str("deleted"))
-                    .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-                if deleted > 0 {
-                    log::info!("Cleaned up {} orphaned MediaStore pending entries", deleted);
+                if result.deleted > 0 {
+                    log::info!("Cleaned up {} orphaned MediaStore pending entries", result.deleted);
                 }
             }
         });
