@@ -901,10 +901,14 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
         }
 }
 
-/// Interval between native audio pulls. The native emitters fill `pending_f32`
-/// in real time; pulling every ~40 ms keeps live-listening latency close to the
-/// old 80 ms event push without spamming empty pulls.
-const AUDIO_PULL_INTERVAL_MS: i32 = 40;
+/// Target wall-clock interval between native audio pulls. Matches the old 80 ms
+/// event-emit cadence so each chunk holds ~the same number of samples — heavy
+/// modes (pitch-shift / phase-vocoder) were tuned around that chunk size, and
+/// smaller/more-frequent chunks raised their per-chunk overhead enough to stutter.
+const AUDIO_PULL_INTERVAL_MS: f64 = 80.0;
+/// Floor on the post-processing sleep so the loop can't busy-spin when the DSP
+/// nearly fills (or exceeds) the interval.
+const AUDIO_PULL_MIN_SLEEP_MS: f64 = 5.0;
 
 /// Drive the native audio stream by polling `mic_pull_audio` for raw f32 bytes
 /// (an ArrayBuffer) and feeding each chunk to [`process_native_chunk`]. Runs
@@ -922,10 +926,20 @@ fn start_audio_pull_loop(state: AppState) {
             if NATIVE_PULL_GEN.with(|c| c.get()) != gen {
                 break;
             }
-            if NATIVE_MIC_OPEN.with(|o| o.borrow().is_none()) {
+            let Some(mode) = NATIVE_MIC_OPEN.with(|o| *o.borrow()) else {
                 break;
-            }
-            match crate::tauri_bridge::tauri_invoke_no_args("mic_pull_audio").await {
+            };
+            // Drain the source we actually opened, so a not-fully-torn-down
+            // previous device can't shadow it.
+            let source = if mode == NativeMode::Usb { "usb" } else { "cpal" };
+            let t0 = js_sys::Date::now();
+            let pull_args = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &pull_args,
+                &JsValue::from_str("source"),
+                &JsValue::from_str(source),
+            );
+            match crate::tauri_bridge::tauri_invoke("mic_pull_audio", &pull_args.into()).await {
                 Ok(val) => {
                     if let Ok(buf) = val.dyn_into::<js_sys::ArrayBuffer>() {
                         let samples = js_sys::Float32Array::new(&buf).to_vec();
@@ -936,7 +950,15 @@ fn start_audio_pull_loop(state: AppState) {
                 }
                 Err(e) => log::warn!("mic_pull_audio failed: {}", e),
             }
-            crate::web_util::sleep_ms(AUDIO_PULL_INTERVAL_MS).await;
+            // Hold a steady wall-clock cadence: subtract the time spent
+            // pulling + running the DSP so a heavy chunk (e.g. pitch-shift /
+            // phase-vocoder) doesn't push the next pull out and starve the
+            // playback buffer. Under the old event-push the native side emitted
+            // every 80 ms regardless of frontend processing time; this restores
+            // that decoupling for the pull model.
+            let elapsed = js_sys::Date::now() - t0;
+            let remaining = (AUDIO_PULL_INTERVAL_MS - elapsed).max(AUDIO_PULL_MIN_SLEEP_MS);
+            crate::web_util::sleep_ms(remaining as i32).await;
         }
     });
 }

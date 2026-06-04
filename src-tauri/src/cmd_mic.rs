@@ -378,29 +378,32 @@ pub fn mic_set_listening(state: tauri::State<MicMutex>, listening: bool) -> Resu
     Ok(())
 }
 
-/// Drain the active native mic source's pending streamed samples as raw
-/// little-endian f32 bytes, returned to the frontend's pull loop as an
-/// ArrayBuffer. Replaces the JSON `mic-audio-chunk` event push (an array of
-/// numbers is ~5x the bytes and parses element-by-element in WASM). cpal and
-/// USB never stream simultaneously, so cpal takes precedence and USB is drained
-/// only when no cpal mic is open. Returns an empty buffer when nothing is
-/// pending.
+/// Drain the pending streamed samples of the source the frontend is actively
+/// using (`source == "usb"` → USB engine, else the cpal mic), returned to the
+/// pull loop as raw little-endian f32 bytes (an ArrayBuffer). Replaces the JSON
+/// `mic-audio-chunk` event push (an array of numbers is ~5x the bytes and parses
+/// element-by-element in WASM).
+///
+/// Draining the explicitly-selected source (rather than guessing by which mutex
+/// is `Some`) avoids reading a stale device's buffer if a previous backend
+/// wasn't fully torn down during a device switch. Returns an empty buffer when
+/// nothing is pending or the selected source isn't open.
 #[tauri::command]
 pub fn mic_pull_audio(
+    source: String,
     mic: tauri::State<MicMutex>,
     usb: tauri::State<crate::UsbStreamMutex>,
 ) -> tauri::ipc::Response {
-    let from_cpal = mic
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.buffer.lock().ok().map(|mut b| b.drain_pending())));
-    let samples: Vec<f32> = match from_cpal {
-        Some(s) => s,
-        None => usb
-            .lock()
+    let samples: Vec<f32> = if source == "usb" {
+        usb.lock()
             .ok()
             .and_then(|g| g.as_ref().and_then(|u| u.buffer.lock().ok().map(|mut b| b.drain_pending())))
-            .unwrap_or_default(),
+            .unwrap_or_default()
+    } else {
+        mic.lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|m| m.buffer.lock().ok().map(|mut b| b.drain_pending())))
+            .unwrap_or_default()
     };
 
     let mut bytes = Vec::with_capacity(samples.len() * 4);
