@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use crate::state::{AppState, MicBackend, MicAcquisitionState, MicPendingAction, MicDeviceInfo, MicStrategy};
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
+use crate::tauri_bridge::tauri_invoke_typed_no_args;
 
 #[derive(Clone, Debug)]
 struct CpalDevice {
@@ -99,26 +99,20 @@ pub fn MicChooserModal() -> impl IntoView {
         }
 
         // Fetch USB devices (if available)
-        let usb_args = js_sys::Object::new();
-        if let Ok(val) = tauri_invoke("plugin:usb-audio|listUsbDevices", &usb_args.into()).await {
-            let devices_val = js_sys::Reflect::get(&val, &JsValue::from_str("devices"))
-                .ok()
-                .unwrap_or(JsValue::UNDEFINED);
-            let arr = js_sys::Array::from(&devices_val);
-            let mut devs = Vec::new();
-            for i in 0..arr.length() {
-                let item = arr.get(i);
-                let is_audio = js_sys::Reflect::get(&item, &JsValue::from_str("isAudioDevice"))
-                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                if !is_audio { continue; }
-                let device_name = js_sys::Reflect::get(&item, &JsValue::from_str("deviceName"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_default();
-                let product_name = js_sys::Reflect::get(&item, &JsValue::from_str("productName"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_else(|| device_name.clone());
-                let has_permission = js_sys::Reflect::get(&item, &JsValue::from_str("hasPermission"))
-                    .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                devs.push(UsbDevice { device_name, product_name, has_permission });
-            }
+        if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
+            "plugin:usb-audio|listUsbDevices",
+        ).await {
+            let devs = result.devices.into_iter()
+                .filter(|d| d.is_audio_device)
+                .map(|d| {
+                    let product_name = if d.product_name.is_empty() {
+                        d.device_name.clone()
+                    } else {
+                        d.product_name
+                    };
+                    UsbDevice { device_name: d.device_name, product_name, has_permission: d.has_permission }
+                })
+                .collect();
             usb_devices.set(devs);
         }
 

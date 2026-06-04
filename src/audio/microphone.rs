@@ -129,25 +129,14 @@ pub async fn query_mic_info(state: &AppState) {
 
     match backend {
         Some(MicBackend::RawUsb) => {
-            let devices_result = tauri_invoke("plugin:usb-audio|listUsbDevices",
-                &js_sys::Object::new().into()).await;
-            if let Ok(devices) = devices_result {
-                let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
-                    .ok()
-                    .map(|v| js_sys::Array::from(&v))
-                    .unwrap_or_default();
-                for i in 0..devices_arr.length() {
-                    let dev = devices_arr.get(i);
-                    let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
-                        .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-                    if is_audio {
-                        let name = js_sys::Reflect::get(&dev, &JsValue::from_str("productName"))
-                            .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
-                        state.mic_device_name.set(Some(name));
-                        state.mic_connection_type.set(Some("USB".to_string()));
-                        state.mic_usb_connected.set(true);
-                        return;
-                    }
+            if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
+                "plugin:usb-audio|listUsbDevices",
+            ).await {
+                if let Some(dev) = result.devices.iter().find(|d| d.is_audio_device) {
+                    state.mic_device_name.set(Some(dev.product_name.clone()));
+                    state.mic_connection_type.set(Some("USB".to_string()));
+                    state.mic_usb_connected.set(true);
+                    return;
                 }
             }
             state.mic_usb_connected.set(false);
@@ -196,43 +185,22 @@ pub async fn query_mic_info(state: &AppState) {
     }
 
     // Also check for USB devices to update usb_connected status
-    if let Ok(devices) = tauri_invoke("plugin:usb-audio|listUsbDevices",
-        &js_sys::Object::new().into()).await {
-        let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
-            .ok()
-            .map(|v| js_sys::Array::from(&v))
-            .unwrap_or_default();
-        let has_audio = (0..devices_arr.length()).any(|i| {
-            let dev = devices_arr.get(i);
-            js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
-                .ok().and_then(|v| v.as_bool()).unwrap_or(false)
-        });
-        state.mic_usb_connected.set(has_audio);
+    if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
+        "plugin:usb-audio|listUsbDevices",
+    ).await {
+        state.mic_usb_connected.set(result.devices.iter().any(|d| d.is_audio_device));
     }
 }
 
 /// Check for USB audio devices and update `mic_usb_connected` signal.
 pub async fn check_usb_status(state: &AppState) {
-    let devices_result = tauri_invoke("plugin:usb-audio|listUsbDevices",
-        &js_sys::Object::new().into()).await;
-
-    if let Ok(devices) = devices_result {
-        let devices_arr = js_sys::Reflect::get(&devices, &JsValue::from_str("devices"))
-            .ok()
-            .map(|v| js_sys::Array::from(&v))
-            .unwrap_or_default();
-
-        for i in 0..devices_arr.length() {
-            let dev = devices_arr.get(i);
-            let is_audio = js_sys::Reflect::get(&dev, &JsValue::from_str("isAudioDevice"))
-                .ok().and_then(|v| v.as_bool()).unwrap_or(false);
-            if is_audio {
-                let product_name = js_sys::Reflect::get(&dev, &JsValue::from_str("productName"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_else(|| "USB Audio".into());
-                state.mic_usb_connected.set(true);
-                state.show_info_toast(format!("USB mic: {}", product_name));
-                return;
-            }
+    if let Ok(result) = tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbDeviceListResult>(
+        "plugin:usb-audio|listUsbDevices",
+    ).await {
+        if let Some(dev) = result.devices.iter().find(|d| d.is_audio_device) {
+            state.mic_usb_connected.set(true);
+            state.show_info_toast(format!("USB mic: {}", dev.product_name));
+            return;
         }
     }
 

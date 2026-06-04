@@ -58,3 +58,26 @@ pub struct NotificationPermissionStatus {
     pub granted: bool,
     pub runtime_required: bool,
 }
+
+// ── usb-audio plugin ────────────────────────────────────────────────────
+
+/// One entry from `plugin:usb-audio|listUsbDevices`. All keys are always
+/// present (the Kotlin uses `?: "Unknown"` for nullable strings).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbDeviceEntry {
+    pub device_name: String,
+    pub vendor_id: i32,
+    pub product_id: i32,
+    pub product_name: String,
+    pub manufacturer_name: String,
+    pub device_class: i32,
+    pub has_permission: bool,
+    pub is_audio_device: bool,
+}
+
+/// `plugin:usb-audio|listUsbDevices`
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct UsbDeviceListResult {
+    pub devices: Vec<UsbDeviceEntry>,
+}
