@@ -1,4 +1,4 @@
-use crate::native_playback::{self, NativePlayParams, PlaybackStatus};
+use crate::native_playback::{self, NativePlayParams};
 use crate::PlaybackMutex;
 
 #[tauri::command]
@@ -21,19 +21,4 @@ pub fn native_stop(state: tauri::State<PlaybackMutex>) -> Result<(), String> {
     let mut pb = state.lock().map_err(|e| e.to_string())?;
     native_playback::stop(&mut pb);
     Ok(())
-}
-
-#[tauri::command]
-pub fn native_playback_status(state: tauri::State<PlaybackMutex>) -> PlaybackStatus {
-    let pb = state.lock().unwrap_or_else(|e| e.into_inner());
-    match pb.as_ref() {
-        Some(s) => PlaybackStatus {
-            is_playing: s.is_playing(),
-            playhead_secs: s.playhead_secs(),
-        },
-        None => PlaybackStatus {
-            is_playing: false,
-            playhead_secs: 0.0,
-        },
-    }
 }

@@ -57,7 +57,6 @@ pub fn run() {
             cmd_audio_files::read_file_range,
             cmd_playback::native_play,
             cmd_playback::native_stop,
-            cmd_playback::native_playback_status,
             xc::xc_set_api_key,
             xc::xc_get_api_key,
             xc::xc_browse_group,

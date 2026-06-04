@@ -5,7 +5,7 @@
 //! into a ring buffer; the cpal callback drains it.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,12 +28,6 @@ pub struct NativePlayParams {
     pub auto_gain: bool,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct PlaybackStatus {
-    pub is_playing: bool,
-    pub playhead_secs: f64,
-}
-
 /// Wraps cpal::Stream to be Send (cpal::Stream is Send on desktop platforms).
 /// The inner stream is only kept alive for its RAII drop side-effect (it stops
 /// playback when dropped); it is never read directly.
@@ -48,16 +42,6 @@ pub struct PlaybackState {
     playhead_bits: Arc<AtomicU64>,
     producer_stop: Arc<AtomicBool>,
     emitter_stop: Arc<AtomicBool>,
-}
-
-impl PlaybackState {
-    pub fn is_playing(&self) -> bool {
-        self.is_playing.load(Ordering::Relaxed)
-    }
-
-    pub fn playhead_secs(&self) -> f64 {
-        f64::from_bits(self.playhead_bits.load(Ordering::Relaxed))
-    }
 }
 
 /// Number of source samples per processing chunk (~0.5s at 192kHz).
