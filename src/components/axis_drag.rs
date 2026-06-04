@@ -2,6 +2,7 @@
 // gutter strips. Both gutters (see `gutter.rs`) and the ZC-chart's
 // y-axis wrap these instead of duplicating the snap/autotoggle logic.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{ActiveFocus, AppState, Selection};
 
@@ -78,7 +79,7 @@ pub fn select_all_frequencies(state: AppState) {
 /// otherwise it's time-only (segment).
 /// Used by double-click on the time gutter.
 pub fn select_all_time(state: AppState) {
-    let duration = if let Some(ref tl) = state.active_timeline.get_untracked() {
+    let duration = if let Some(ref tl) = state.timeline.active().get_untracked() {
         tl.total_duration_secs
     } else {
         let files = state.files.get_untracked();

@@ -313,16 +313,16 @@ pub fn App() -> impl IntoView {
             });
         }
         Effect::new(move |_| {
-            let dirty = state.project_dirty.get();
-            let has_project = state.current_project.with(|p| p.is_some());
+            let dirty = state.project.dirty().get();
+            let has_project = state.project.current().with(|p| p.is_some());
             if !dirty || !has_project {
                 cancel_autosave_timer();
                 return;
             }
             cancel_autosave_timer();
             let cb = wasm_bindgen::closure::Closure::once(move || {
-                if state.project_dirty.get_untracked()
-                    && state.current_project.with_untracked(|p| p.is_some())
+                if state.project.dirty().get_untracked()
+                    && state.project.current().with_untracked(|p| p.is_some())
                 {
                     crate::components::file_sidebar::save_project_async(state);
                 }
@@ -385,7 +385,7 @@ pub fn App() -> impl IntoView {
         let zoom = state.zoom_level.get();
         let canvas_w = state.spectrogram_canvas_width.get();
         let from_here_mode = state.play_start_mode.get().uses_from_here();
-        let timeline = state.active_timeline.get();
+        let timeline = state.timeline.active().get();
         let files = state.files.get();
         let idx = state.current_file_index.get();
 
@@ -832,7 +832,7 @@ pub fn App() -> impl IntoView {
         }
         if (ev.key() == "b" || ev.key() == "B") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
-            state_kb.bat_book_open.update(|v| *v = !*v);
+            state_kb.bat_book.open().update(|v| *v = !*v);
         }
         // M = drop a marker annotation at the current playhead position.
         if (ev.key() == "m" || ev.key() == "M") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
@@ -966,7 +966,7 @@ pub fn App() -> impl IntoView {
         if let Some(key) = nav_action {
             ev.prevent_default();
             let files = state_kb.files.get_untracked();
-            let timeline = state_kb.active_timeline.get_untracked();
+            let timeline = state_kb.timeline.active().get_untracked();
             let (time_res, duration) = if let Some(ref tl) = timeline {
                 let tr = tl.segments.first().and_then(|s| files.get(s.file_index))
                     .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
@@ -998,8 +998,8 @@ pub fn App() -> impl IntoView {
             }
         }
         if ev.key() == "Escape" {
-            if state_kb.bat_book_ref_open.get_untracked() {
-                state_kb.bat_book_ref_open.set(false);
+            if state_kb.bat_book.ref_open().get_untracked() {
+                state_kb.bat_book.ref_open().set(false);
                 return;
             }
             if state_kb.xc_browser_open.get_untracked() {
@@ -1382,7 +1382,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn MainArea() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let has_file = move || state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
+    let has_file = move || state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
 
     // Click/tap anywhere in the main area closes open layer panels (and sidebar on mobile)
     let on_main_click = move |_: web_sys::MouseEvent| {
@@ -1491,11 +1491,11 @@ fn MainArea() -> impl IntoView {
                             </div>
 
                             // Bat book reference panel (floating overlay, right side)
-                            {move || (state.bat_book_ref_open.get() && !state.clean_view.get()).then(|| view! { <BatBookRefPanel /> })}
+                            {move || (state.bat_book.ref_open().get() && !state.clean_view.get()).then(|| view! { <BatBookRefPanel /> })}
                         </div>
 
                         // Bat book strip (between main view and bottom toolbar)
-                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
+                        {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
 
                         {move || state.show_status_bar.get().then(|| view! { <AnalysisPanel /> })}
                     }.into_any()
@@ -1509,8 +1509,8 @@ fn MainArea() -> impl IntoView {
                         <div class="empty-state">
                             {empty_msg}
                         </div>
-                        {move || state.bat_book_open.get().then(|| view! { <BatBookStrip /> })}
-                        {move || state.bat_book_ref_open.get().then(|| view! { <BatBookRefPanel /> })}
+                        {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
+                        {move || state.bat_book.ref_open().get().then(|| view! { <BatBookRefPanel /> })}
                     }.into_any()
                 }
             }}
@@ -1747,7 +1747,7 @@ pub fn MainViewButton() -> impl IntoView {
     use crate::components::popup::{Align, PopupPanel, Side};
     let state = expect_context::<AppState>();
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::MainView));
-    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     // Helper: handle all side-effects of a view switch synchronously,
     // so the spectrogram render Effect always sees consistent state.

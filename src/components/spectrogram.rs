@@ -248,7 +248,7 @@ pub fn Spectrogram() -> impl IntoView {
         let annotation_hover_handle = state.annotation_hover_handle.get();
         let annotations_visible = state.annotations_visible.get();
         let active_focus = state.active_focus.get();
-        let _timeline = state.active_timeline.get(); // trigger redraw on timeline change
+        let _timeline = state.timeline.active().get(); // trigger redraw on timeline change
         pre_rendered.track();
         // Re-read canvas dimensions when sidebar layout changes
         let _sidebar = state.sidebar_collapsed.get();
@@ -294,7 +294,7 @@ pub fn Spectrogram() -> impl IntoView {
             .unwrap();
 
         let files = state.files.get_untracked();
-        let timeline = state.active_timeline.get_untracked();
+        let timeline = state.timeline.active().get_untracked();
         let idx = if timeline.is_some() { None } else { state.current_file_index.get_untracked() };
 
         // In timeline mode, use the first segment's file for freq/resolution defaults

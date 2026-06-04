@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
@@ -27,18 +28,18 @@ fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
 
 /// Save the current project to OPFS (fire-and-forget).
 pub(crate) fn save_project_async(state: AppState) {
-    let proj = state.current_project.get_untracked();
+    let proj = state.project.current().get_untracked();
     if let Some(proj) = proj {
-        state.project_save_status.set("Saving...");
+        state.project.save_status().set("Saving...");
         spawn_local(async move {
             match project_store::save_project(&proj).await {
                 Ok(()) => {
-                    state.project_dirty.set(false);
-                    state.project_save_status.set("Saved");
+                    state.project.dirty().set(false);
+                    state.project.save_status().set("Saved");
                     // Clear "Saved" after 3 seconds
                     let cb = wasm_bindgen::closure::Closure::once(move || {
-                        if state.project_save_status.get_untracked() == "Saved" {
-                            state.project_save_status.set("");
+                        if state.project.save_status().get_untracked() == "Saved" {
+                            state.project.save_status().set("");
                         }
                     });
                     let _ = web_sys::window().unwrap()
@@ -49,7 +50,7 @@ pub(crate) fn save_project_async(state: AppState) {
                 }
                 Err(e) => {
                     log::error!("Failed to save project: {e}");
-                    state.project_save_status.set("");
+                    state.project.save_status().set("");
                 }
             }
         });
@@ -63,7 +64,7 @@ pub fn ProjectPanel() -> impl IntoView {
     view! {
         <div class="project-panel">
             {move || {
-                let project = state.current_project.get();
+                let project = state.project.current().get();
                 match project {
                     Some(proj) => view! { <ProjectView project=proj /> }.into_any(),
                     None => view! { <NoProjectView /> }.into_any(),
@@ -89,8 +90,8 @@ fn NoProjectView() -> impl IntoView {
                 proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
             }
         }
-        state.current_project.set(Some(proj.clone()));
-        state.project_dirty.set(true);
+        state.project.current().set(Some(proj.clone()));
+        state.project.dirty().set(true);
         save_project_async(state);
     };
 
@@ -138,8 +139,8 @@ fn NoProjectView() -> impl IntoView {
                     if let Some(yaml_str) = val.as_string() {
                         match yaml_serde::from_str::<BatProject>(&yaml_str) {
                             Ok(proj) => {
-                                state.current_project.set(Some(proj.clone()));
-                                state.project_dirty.set(false);
+                                state.project.current().set(Some(proj.clone()));
+                                state.project.dirty().set(false);
                                 // Save to OPFS so it persists
                                 if let Err(e) = project_store::save_project(&proj).await {
                                     log::error!("Failed to save imported project: {e}");
@@ -204,8 +205,8 @@ fn NoProjectView() -> impl IntoView {
                                 spawn_local(async move {
                                     match project_store::load_project(&id).await {
                                         Ok(Some(proj)) => {
-                                            state.current_project.set(Some(proj));
-                                            state.project_dirty.set(false);
+                                            state.project.current().set(Some(proj));
+                                            state.project.dirty().set(false);
                                             project_list.set(None);
                                         }
                                         Ok(None) => log::warn!("Project {id} not found"),
@@ -299,32 +300,32 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         let target = ev.target().unwrap();
         let input: web_sys::HtmlInputElement = target.unchecked_into();
         let new_name = input.value();
-        state.current_project.update(|p| {
+        state.project.current().update(|p| {
             if let Some(proj) = p {
                 proj.name = if new_name.is_empty() { None } else { Some(new_name) };
                 proj.touch();
             }
         });
-        state.project_dirty.set(true);
+        state.project.dirty().set(true);
     };
 
     let on_notes_change = move |ev: web_sys::Event| {
         let target = ev.target().unwrap();
         let textarea: web_sys::HtmlTextAreaElement = target.unchecked_into();
         let new_notes = textarea.value();
-        state.current_project.update(|p| {
+        state.project.current().update(|p| {
             if let Some(proj) = p {
                 proj.notes = if new_notes.is_empty() { None } else { Some(new_notes) };
                 proj.touch();
             }
         });
-        state.project_dirty.set(true);
+        state.project.dirty().set(true);
     };
 
     let on_save = move |_: web_sys::MouseEvent| { save_project_async(state); };
 
     let on_export = move |_: web_sys::MouseEvent| {
-        let proj = state.current_project.get_untracked();
+        let proj = state.project.current().get_untracked();
         if let Some(proj) = proj {
             match project_store::export_project_yaml(&proj) {
                 Ok(yaml) => {
@@ -337,15 +338,15 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     };
 
     let on_close = move |_: web_sys::MouseEvent| {
-        if state.project_dirty.get_untracked() {
+        if state.project.dirty().get_untracked() {
             let window = web_sys::window().unwrap();
             if !window.confirm_with_message("You have unsaved changes. Close project anyway?").unwrap_or(true) {
                 return;
             }
         }
-        state.current_project.set(None);
-        state.project_dirty.set(false);
-        state.project_save_status.set("");
+        state.project.current().set(None);
+        state.project.dirty().set(false);
+        state.project.save_status().set("");
     };
 
     // Merge .batm sidecars from loaded files into the project
@@ -362,7 +363,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 let key = opfs::opfs_key(identity);
 
                 // Check if already merged
-                let already = state.current_project.with_untracked(|p| {
+                let already = state.project.current().with_untracked(|p| {
                     p.as_ref().is_some_and(|proj| proj.was_merged(&key))
                 });
                 if already { skipped += 1; continue; }
@@ -370,12 +371,12 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 // Try to load the .batm
                 match opfs::load_batm_by_key(&key).await {
                     Ok(Some(set)) => {
-                        let did_merge = state.current_project.try_update(|p| {
+                        let did_merge = state.project.current().try_update(|p| {
                             p.as_mut().is_some_and(|proj| proj.merge_batm(&set, &key))
                         }).unwrap_or(false);
                         if did_merge {
                             merged_count += 1;
-                            state.project_dirty.set(true);
+                            state.project.dirty().set(true);
                         }
                     }
                     Ok(None) => {} // No sidecar for this file
@@ -399,7 +400,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
     // Add new loaded files that aren't in the project yet
     let on_sync_files = move |_: web_sys::MouseEvent| {
         let loaded = state.files.get_untracked();
-        state.current_project.update(|p| {
+        state.project.current().update(|p| {
             let Some(proj) = p else { return };
             for f in loaded.iter() {
                 if let Some(ref identity) = f.identity {
@@ -409,7 +410,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 }
             }
         });
-        state.project_dirty.set(true);
+        state.project.dirty().set(true);
     };
 
     // ── File selection for timeline creation ──
@@ -445,7 +446,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     .unwrap_or(1.0);
                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
                 // Save to project
-                state.current_project.update(|p| {
+                state.project.current().update(|p| {
                     let Some(proj) = p else { return };
                     let entries: Vec<_> = tv.segments.iter().filter_map(|seg| {
                         let loaded = files.get(seg.file_index)?;
@@ -467,11 +468,11 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         proj.touch();
                     }
                 });
-                state.project_dirty.set(true);
+                state.project.dirty().set(true);
 
-                state.selected_file_indices.set(runtime_indices);
-                state.active_timeline.set(Some(tv));
-                state.active_timeline_track.set(None);
+                state.timeline.selected_file_indices().set(runtime_indices);
+                state.timeline.active().set(Some(tv));
+                state.timeline.active_track().set(None);
                 state.current_file_index.set(None);
                 state.suspend_follow();
                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
@@ -583,8 +584,8 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 <span class="project-meta-sep">{"\u{00B7}"}</span>
                 <span title=format!("Created: {created}")>{created_short}</span>
                 {move || {
-                    let dirty = state.project_dirty.get();
-                    let status = state.project_save_status.get();
+                    let dirty = state.project.dirty().get();
+                    let status = state.project.save_status().get();
                     if !status.is_empty() {
                         let cls = if status == "Saved" { "project-save-status saved" } else { "project-save-status" };
                         view! { <span class=cls>{format!(" {status}")}</span> }.into_any()
@@ -680,7 +681,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     // Activate this saved timeline
                     let on_activate = move |_: web_sys::MouseEvent| {
                         let files = state.files.get_untracked();
-                        let proj = state.current_project.get_untracked();
+                        let proj = state.project.current().get_untracked();
                         let Some(proj) = proj else { return };
 
                         // Map project file indices → runtime file indices
@@ -711,9 +712,9 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                                     .map(|f| f.spectrogram.time_resolution)
                                     .unwrap_or(1.0);
                                 let canvas_w = state.spectrogram_canvas_width.get_untracked();
-                                state.selected_file_indices.set(runtime_indices);
-                                state.active_timeline.set(Some(tv));
-                                state.active_timeline_track.set(None);
+                                state.timeline.selected_file_indices().set(runtime_indices);
+                                state.timeline.active().set(Some(tv));
+                                state.timeline.active_track().set(None);
                                 state.current_file_index.set(None);
                                 state.suspend_follow();
                                 if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
@@ -734,12 +735,12 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     let on_delete = move |ev: web_sys::MouseEvent| {
                         ev.stop_propagation();
                         let id = tl_id_del.clone();
-                        state.current_project.update(|p| {
+                        state.project.current().update(|p| {
                             let Some(proj) = p else { return };
                             proj.timelines.retain(|t| t.id != id);
                             proj.touch();
                         });
-                        state.project_dirty.set(true);
+                        state.project.dirty().set(true);
                     };
 
                     view! {
@@ -809,7 +810,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             // Actions
             <div class="project-panel-actions">
                 <button class="project-btn" on:click=on_save
-                    disabled=move || !state.project_dirty.get()
+                    disabled=move || !state.project.dirty().get()
                 >"Save"</button>
                 <button class="project-btn project-btn-secondary" on:click=on_export>"Export"</button>
                 <button class="project-btn project-btn-danger" on:click=on_close>"Close"</button>

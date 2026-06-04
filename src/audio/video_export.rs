@@ -1,6 +1,7 @@
 //! MP4 video export: render spectrogram frames + DSP-processed audio into an MP4 file
 //! using the WebCodecs API and mp4-muxer JS library.
 
+use crate::state::store_fields::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -56,15 +57,15 @@ pub fn is_available() -> bool {
 pub fn start_export(state: &AppState) {
     let state = *state;
     leptos::task::spawn_local(async move {
-        state.video_export_cancel.set(false);
-        state.video_export_progress.set(Some(0.0));
-        state.video_export_status.set(Some("Preparing...".to_string()));
+        state.export.video_cancel().set(false);
+        state.export.video_progress().set(Some(0.0));
+        state.export.video_status().set(Some("Preparing...".to_string()));
 
         match export_video_impl(&state).await {
             Ok(()) => {
-                state.video_export_progress.set(None);
-                state.video_export_status.set(None);
-                if state.video_export_cancel.get_untracked() {
+                state.export.video_progress().set(None);
+                state.export.video_status().set(None);
+                if state.export.video_cancel().get_untracked() {
                     log::info!("Video export cancelled");
                 } else {
                     log::info!("Video export complete");
@@ -73,18 +74,18 @@ pub fn start_export(state: &AppState) {
             Err(e) => {
                 let msg = format!("{:?}", e);
                 log::error!("Video export failed: {msg}");
-                state.video_export_progress.set(None);
-                state.video_export_status.set(Some(format!("Export failed: {msg}")));
+                state.export.video_progress().set(None);
+                state.export.video_status().set(Some(format!("Export failed: {msg}")));
                 // Clear error after 10 seconds
                 let state2 = state;
                 leptos::task::spawn_local(async move {
                     sleep_ms(10_000).await;
-                    if state2.video_export_status.get_untracked()
+                    if state2.export.video_status().get_untracked()
                         .as_ref()
                         .map(|s| s.starts_with("Export failed"))
                         .unwrap_or(false)
                     {
-                        state2.video_export_status.set(None);
+                        state2.export.video_status().set(None);
                     }
                 });
             }
@@ -121,7 +122,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     }
 
     // Video resolution
-    let resolution = state.video_resolution.get_untracked();
+    let resolution = state.export.video_resolution().get_untracked();
     let canvas_w_hint = state.spectrogram_canvas_width.get_untracked().max(320.0) as u32;
     let canvas_h_hint = 400u32; // reasonable default for spectrogram height
     let (vid_w, vid_h) = resolution.dimensions(canvas_w_hint, canvas_h_hint);
@@ -130,7 +131,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let vid_h = ((vid_h + 1) & !1).max(2);
 
     // Codec
-    let codec_str = match state.video_codec.get_untracked() {
+    let codec_str = match state.export.video_codec().get_untracked() {
         VideoCodec::H264 => wc::H264_CODEC,
         VideoCodec::Av1 => wc::AV1_CODEC,
     };
@@ -223,7 +224,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     };
 
     // ── Process audio ────────────────────────────────────────────────────────
-    state.video_export_status.set(Some("Processing audio...".to_string()));
+    state.export.video_status().set(Some("Processing audio...".to_string()));
     yield_now().await;
 
     let region = if !regions.is_empty() { Some(&regions[0].1) } else { None };
@@ -256,11 +257,11 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         .dyn_into()?;
 
     // ── Set up encoders and muxer ────────────────────────────────────────────
-    state.video_export_status.set(Some("Setting up encoders...".to_string()));
+    state.export.video_status().set(Some("Setting up encoders...".to_string()));
     yield_now().await;
 
     // Resolve audio codec: (webcodecs_codec_str, muxer_codec_str) or None
-    let audio_codec_choice = state.video_audio_codec.get_untracked();
+    let audio_codec_choice = state.export.video_audio_codec().get_untracked();
     let resolved_audio: Option<(&str, &str)> = match audio_codec_choice {
         AudioCodecOption::NoAudio => {
             log::info!("Video export: audio disabled by user");
@@ -375,7 +376,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
 
     // ── Encode audio ─────────────────────────────────────────────────────────
     if let Some(ref enc) = audio_encoder {
-        state.video_export_status.set(Some("Encoding audio...".to_string()));
+        state.export.video_status().set(Some("Encoding audio...".to_string()));
         yield_now().await;
 
         log::info!("Video export: encoding {} audio samples at {}Hz...", final_samples.len(), final_rate);
@@ -407,9 +408,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     // ── Encode video frames ──────────────────────────────────────────────────
     let total_frames = (audio_duration * FPS).ceil() as u32;
     log::info!("Video export: encoding {total_frames} video frames ({audio_duration:.2}s at {FPS}fps)...");
-    state.video_export_status.set(Some("Encoding video...".to_string()));
+    state.export.video_status().set(Some("Encoding video...".to_string()));
 
-    let view_mode = state.video_view_mode.get_untracked();
+    let view_mode = state.export.video_view_mode().get_untracked();
     let export_duration = render.end_time - render.start_time;
 
     // In time expansion mode, the audio is longer than the original time range.
@@ -440,7 +441,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
             log::info!("Video export: static playhead mode, {total_frames} frames");
 
             for frame_idx in 0..total_frames {
-                if state.video_export_cancel.get_untracked() {
+                if state.export.video_cancel().get_untracked() {
                     break;
                 }
                 if let Some(ref e) = *video_error.borrow() {
@@ -469,9 +470,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
                 wc::close_video_frame(&frame)?;
 
                 let progress = (frame_idx + 1) as f64 / total_frames as f64;
-                state.video_export_progress.set(Some(progress));
+                state.export.video_progress().set(Some(progress));
                 if frame_idx % 5 == 0 {
-                    state.video_export_status.set(Some(
+                    state.export.video_status().set(Some(
                         format!("Encoding video... {}%", (progress * 100.0) as u32)
                     ));
                     yield_now().await;
@@ -492,7 +493,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
             let scrolling_keyframe_interval = 15u32;
 
             for frame_idx in 0..total_frames {
-                if state.video_export_cancel.get_untracked() {
+                if state.export.video_cancel().get_untracked() {
                     break;
                 }
                 if let Some(ref e) = *video_error.borrow() {
@@ -526,9 +527,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
                 wc::close_video_frame(&frame)?;
 
                 let progress = (frame_idx + 1) as f64 / total_frames as f64;
-                state.video_export_progress.set(Some(progress));
+                state.export.video_progress().set(Some(progress));
                 if frame_idx % 5 == 0 {
-                    state.video_export_status.set(Some(
+                    state.export.video_status().set(Some(
                         format!("Encoding video... {}%", (progress * 100.0) as u32)
                     ));
                     yield_now().await;
@@ -538,7 +539,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     }
 
     // If cancelled, close encoders and return early (skip finalize/download)
-    if state.video_export_cancel.get_untracked() {
+    if state.export.video_cancel().get_untracked() {
         let _ = wc::close_encoder(&video_encoder);
         if let Some(ref enc) = audio_encoder {
             let _ = wc::close_encoder(enc);
@@ -547,7 +548,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     }
 
     // Flush video encoder
-    state.video_export_status.set(Some("Finalizing...".to_string()));
+    state.export.video_status().set(Some("Finalizing...".to_string()));
     yield_now().await;
     wc::flush_encoder(&video_encoder).await?;
     wc::close_encoder(&video_encoder)?;

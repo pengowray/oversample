@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::AppState;
@@ -19,11 +20,11 @@ pub fn BatBookRefPanel() -> impl IntoView {
     let body_ref = NodeRef::<leptos::html::Div>::new();
 
     let selected_entries = Memo::new(move |_| {
-        let sel_ids = state.bat_book_selected_ids.get();
+        let sel_ids = state.bat_book.selected_ids().get();
         if sel_ids.is_empty() {
             return Vec::new();
         }
-        let region = state.bat_book_region.get();
+        let region = state.bat_book.region().get();
         let manifest = get_manifest(region);
         let mut entries: Vec<_> = manifest.entries.into_iter()
             .filter(|e| sel_ids.iter().any(|id| id == e.id))
@@ -42,13 +43,13 @@ pub fn BatBookRefPanel() -> impl IntoView {
 
     // Reset focused_index when selection changes
     Effect::new(move |_| {
-        let _ = state.bat_book_selected_ids.get();
+        let _ = state.bat_book.selected_ids().get();
         focused_index.set(0);
     });
 
     let on_close = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
-        state.bat_book_ref_open.set(false);
+        state.bat_book.ref_open().set(false);
     };
 
     // Scroll the body to bring the Nth .ref-panel-entry into view
@@ -71,7 +72,7 @@ pub fn BatBookRefPanel() -> impl IntoView {
         let delta = ev.delta_y();
         if delta.abs() < 1.0 { return; }
 
-        let ids = state.bat_book_selected_ids.get_untracked();
+        let ids = state.bat_book.selected_ids().get_untracked();
 
         if ids.len() > 1 {
             // Multi-select: scroll through selected entries in the body
@@ -89,7 +90,7 @@ pub fn BatBookRefPanel() -> impl IntoView {
             scroll_body_to_entry(next);
         } else {
             // Single select: navigate through full manifest
-            let region = state.bat_book_region.get_untracked();
+            let region = state.bat_book.region().get_untracked();
             let manifest = get_manifest(region);
             if ids.is_empty() || manifest.entries.is_empty() { return; }
 
@@ -109,7 +110,7 @@ pub fn BatBookRefPanel() -> impl IntoView {
             };
 
             let new_id = manifest.entries[next].id.to_string();
-            state.bat_book_selected_ids.set(vec![new_id]);
+            state.bat_book.selected_ids().set(vec![new_id]);
 
             // Apply BandFF for the new entry via focus stack
             let entry = &manifest.entries[next];
@@ -137,7 +138,7 @@ pub fn BatBookRefPanel() -> impl IntoView {
         if let Some(touch) = ev.changed_touches().get(0) {
             let dy = touch_start_y.get_untracked() - touch.client_y() as f64;
             if dy > 60.0 {
-                state.bat_book_ref_open.set(false);
+                state.bat_book.ref_open().set(false);
             }
         }
     };
@@ -167,10 +168,10 @@ pub fn BatBookRefPanel() -> impl IntoView {
                                 }.into_any()
                             }
                         } else if n == 1 {
-                            let region = state.bat_book_region.get();
+                            let region = state.bat_book.region().get();
                             let manifest = get_manifest(region);
                             let total = manifest.entries.len();
-                            let ids = state.bat_book_selected_ids.get();
+                            let ids = state.bat_book.selected_ids().get();
                             let pos = ids.first()
                                 .and_then(|id| manifest.entries.iter().position(|e| e.id == id.as_str()))
                                 .map(|i| i + 1);

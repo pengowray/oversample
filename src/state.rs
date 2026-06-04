@@ -1284,6 +1284,74 @@ pub struct PsdState {
     pub hover_freqs: Vec<(f64, String, String)>,
 }
 
+/// Project (.batproj) state.
+#[derive(Clone, Debug, Store)]
+pub struct ProjectState {
+    /// Whether the Projects beta feature is enabled (persisted to localStorage).
+    pub enabled: bool,
+    /// Currently loaded .batproj project (None = no project open).
+    pub current: Option<crate::project::BatProject>,
+    /// Whether the project has unsaved changes.
+    pub dirty: bool,
+    /// Save status for UI feedback: "", "Saving...", "Saved".
+    pub save_status: &'static str,
+}
+
+/// Timeline / multi-file selection state.
+#[derive(Clone, Debug, Store)]
+pub struct TimelineState {
+    /// Multi-selected file indices for timeline creation (separate from current_file_index).
+    pub selected_file_indices: Vec<usize>,
+    /// Active timeline view (when Some, spectrogram/waveform render in timeline mode).
+    pub active: Option<crate::timeline::TimelineView>,
+    /// Currently selected multitrack track label (None = primary/default).
+    pub active_track: Option<String>,
+    /// Show wall-clock time instead of file-relative time.
+    pub show_clock_time: bool,
+}
+
+/// Bat Book reference subsystem state.
+#[derive(Clone, Debug, Store)]
+pub struct BatBookState {
+    pub open: bool,
+    /// Auto or Manual(region). Drives `region` via an Effect.
+    pub mode: crate::bat_book::types::BatBookMode,
+    /// Effective region — set by the auto-resolve Effect or manual selection.
+    pub region: crate::bat_book::types::BatBookRegion,
+    /// Result of auto-resolution (None when in Manual mode).
+    pub auto_resolved: Option<crate::bat_book::types::AutoResolved>,
+    /// User's starred/favourite bat book regions.
+    pub favourites: Vec<crate::bat_book::types::BatBookRegion>,
+    /// Currently selected bat book entry IDs (multi-select via shift-click).
+    pub selected_ids: Vec<String>,
+    pub ref_open: bool,
+    /// Last-clicked bat book entry ID, used for shift-click range selection.
+    pub last_clicked_id: Option<String>,
+    /// When true, selecting bat book entries pushes their frequency focus override.
+    pub auto_focus: bool,
+}
+
+/// Export / video-export UI state.
+#[derive(Clone, Debug, Store)]
+pub struct ExportState {
+    /// Whether the export section is expanded/collapsed.
+    pub section_open: bool,
+    /// Selected export format: WAV or MP4.
+    pub format: ExportFormat,
+    /// Video export progress (0.0 to 1.0), None = not exporting.
+    pub video_progress: Option<f64>,
+    /// Video export status message.
+    pub video_status: Option<String>,
+    /// Set to true to request cancellation of an in-progress video export.
+    pub video_cancel: bool,
+    pub video_resolution: VideoResolution,
+    pub video_codec: VideoCodec,
+    /// Selected audio codec for video export.
+    pub video_audio_codec: AudioCodecOption,
+    /// Video view mode: static playhead vs scrolling.
+    pub video_view_mode: VideoViewMode,
+}
+
 /// Single-import prelude for the generated `#[derive(Store)]` accessor traits.
 /// Consumers `use crate::state::store_fields::*;` once instead of importing each
 /// `FooStateStoreFields` trait individually. Extend as more groups migrate.
@@ -1296,6 +1364,10 @@ pub mod store_fields {
         NoiseReduceStateStoreFields,
         PulseStateStoreFields,
         PsdStateStoreFields,
+        ProjectStateStoreFields,
+        TimelineStateStoreFields,
+        BatBookStateStoreFields,
+        ExportStateStoreFields,
     };
 }
 
@@ -1744,23 +1816,11 @@ pub struct AppState {
     /// Whether saved annotations are drawn on the spectrogram.
     pub annotations_visible: RwSignal<bool>,
 
-    // Project
-    /// Whether the Projects beta feature is enabled (persisted to localStorage).
-    pub projects_enabled: RwSignal<bool>,
-    /// Currently loaded .batproj project (None = no project open).
-    pub current_project: RwSignal<Option<crate::project::BatProject>>,
-    /// Whether the project has unsaved changes.
-    pub project_dirty: RwSignal<bool>,
-    /// Save status for UI feedback: "", "Saving...", "Saved"
-    pub project_save_status: RwSignal<&'static str>,
+    /// Project (.batproj) state (grouped reactive store).
+    pub project: Store<ProjectState>,
 
-    // Timeline
-    /// Multi-selected file indices for timeline creation (separate from current_file_index).
-    pub selected_file_indices: RwSignal<Vec<usize>>,
-    /// Active timeline view (when Some, spectrogram/waveform render in timeline mode).
-    pub active_timeline: RwSignal<Option<crate::timeline::TimelineView>>,
-    /// Currently selected multitrack track label (None = primary/default).
-    pub active_timeline_track: RwSignal<Option<String>>,
+    /// Timeline / multi-file selection state (grouped reactive store).
+    pub timeline: Store<TimelineState>,
 
     // Display-affecting checkboxes (spectrogram intensity settings)
     pub display_auto_gain: RwSignal<bool>,
@@ -1809,28 +1869,8 @@ pub struct AppState {
     /// PSD (Power Spectral Density) panel settings (grouped reactive store).
     pub psd: Store<PsdState>,
 
-    // Bat Book
-    pub bat_book_open: RwSignal<bool>,
-    /// Auto or Manual(region). Drives `bat_book_region` via an Effect.
-    pub bat_book_mode: RwSignal<crate::bat_book::types::BatBookMode>,
-    /// Effective region — set by the auto-resolve Effect or manual selection.
-    /// Downstream code (manifest Memo, ref panel, etc.) reads this.
-    pub bat_book_region: RwSignal<crate::bat_book::types::BatBookRegion>,
-    /// Result of auto-resolution (None when in Manual mode).
-    pub bat_book_auto_resolved: RwSignal<Option<crate::bat_book::types::AutoResolved>>,
-    /// User's starred/favourite bat book regions.
-    pub bat_book_favourites: RwSignal<Vec<crate::bat_book::types::BatBookRegion>>,
-    /// Currently selected bat book entry IDs (supports multi-select via shift-click).
-    pub bat_book_selected_ids: RwSignal<Vec<String>>,
-    pub bat_book_ref_open: RwSignal<bool>,
-    // (bat_book_saved_* signals removed — now in FocusStack)
-    /// Last-clicked bat book entry ID, used for shift-click range selection.
-    pub bat_book_last_clicked_id: RwSignal<Option<String>>,
-    /// When true, selecting bat book entries pushes their frequency focus override.
-    pub bat_book_auto_focus: RwSignal<bool>,
-
-    // Timeline display: show wall-clock time instead of file-relative time
-    pub show_clock_time: RwSignal<bool>,
+    /// Bat Book reference subsystem state (grouped reactive store).
+    pub bat_book: Store<BatBookState>,
 
     /// Frequency shield/flag color bar style (persisted to localStorage).
     pub shield_style: RwSignal<ShieldStyle>,
@@ -1844,25 +1884,8 @@ pub struct AppState {
     // Clean view: hide all overlays while holding backtick
     pub clean_view: RwSignal<bool>,
 
-    // Export UI
-    /// Whether the export section is expanded/collapsed.
-    pub export_section_open: RwSignal<bool>,
-    /// Selected export format: WAV or MP4.
-    pub export_format: RwSignal<ExportFormat>,
-    /// Video export progress (0.0 to 1.0), None = not exporting.
-    pub video_export_progress: RwSignal<Option<f64>>,
-    /// Video export status message.
-    pub video_export_status: RwSignal<Option<String>>,
-    /// Set to true to request cancellation of an in-progress video export.
-    pub video_export_cancel: RwSignal<bool>,
-    /// Selected video resolution preset.
-    pub video_resolution: RwSignal<VideoResolution>,
-    /// Selected video codec.
-    pub video_codec: RwSignal<VideoCodec>,
-    /// Selected audio codec for video export.
-    pub video_audio_codec: RwSignal<AudioCodecOption>,
-    /// Video view mode: static playhead vs scrolling.
-    pub video_view_mode: RwSignal<VideoViewMode>,
+    /// Export / video-export UI state (grouped reactive store).
+    pub export: Store<ExportState>,
 
     // Selection focus
     /// Which entity type currently has interactive focus (handles, overflow menu).
@@ -2205,20 +2228,25 @@ impl AppState {
             annotation_is_new_edit: RwSignal::new(false),
             annotations_visible: RwSignal::new(true),
 
-            projects_enabled: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                    .and_then(|ls: web_sys::Storage| ls.get_item("oversample_projects_enabled").ok().flatten())
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            project: Store::new(ProjectState {
+                enabled: {
+                    web_sys::window()
+                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
+                        .and_then(|ls: web_sys::Storage| ls.get_item("oversample_projects_enabled").ok().flatten())
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                },
+                current: None,
+                dirty: false,
+                save_status: "",
             }),
-            current_project: RwSignal::new(None),
-            project_dirty: RwSignal::new(false),
-            project_save_status: RwSignal::new(""),
 
-            selected_file_indices: RwSignal::new(Vec::new()),
-            active_timeline: RwSignal::new(None),
-            active_timeline_track: RwSignal::new(None),
+            timeline: Store::new(TimelineState {
+                selected_file_indices: Vec::new(),
+                active: None,
+                active_track: None,
+                show_clock_time: false,
+            }),
 
             display_auto_gain: RwSignal::new(false),
             display_eq: RwSignal::new(false),
@@ -2259,47 +2287,48 @@ impl AppState {
                 hover_freqs: Vec::new(),
             }),
 
-            bat_book_open: RwSignal::new(false),
-            bat_book_mode: RwSignal::new({
-                use crate::bat_book::types::{BatBookMode, BatBookRegion};
-                let ls = web_sys::window()
-                    .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
-                // Try new-format key first
-                let new_key = ls.as_ref()
-                    .and_then(|s| s.get_item("oversample_bat_book_mode").ok().flatten());
-                match new_key {
-                    Some(k) => BatBookMode::from_storage_key(&k),
-                    None => {
-                        // Migration: check legacy key
-                        let legacy = ls.as_ref()
-                            .and_then(|s| s.get_item("oversample_bat_book_region").ok().flatten());
-                        match legacy {
-                            Some(k) => BatBookRegion::from_storage_key(&k)
-                                .map(BatBookMode::Manual)
-                                .unwrap_or(BatBookMode::Auto),
-                            None => BatBookMode::Auto, // brand new user
+            bat_book: Store::new(BatBookState {
+                open: false,
+                mode: {
+                    use crate::bat_book::types::{BatBookMode, BatBookRegion};
+                    let ls = web_sys::window()
+                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+                    // Try new-format key first
+                    let new_key = ls.as_ref()
+                        .and_then(|s| s.get_item("oversample_bat_book_mode").ok().flatten());
+                    match new_key {
+                        Some(k) => BatBookMode::from_storage_key(&k),
+                        None => {
+                            // Migration: check legacy key
+                            let legacy = ls.as_ref()
+                                .and_then(|s| s.get_item("oversample_bat_book_region").ok().flatten());
+                            match legacy {
+                                Some(k) => BatBookRegion::from_storage_key(&k)
+                                    .map(BatBookMode::Manual)
+                                    .unwrap_or(BatBookMode::Auto),
+                                None => BatBookMode::Auto, // brand new user
+                            }
                         }
                     }
-                }
+                },
+                region: crate::bat_book::types::BatBookRegion::Global,
+                auto_resolved: None,
+                favourites: {
+                    web_sys::window()
+                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
+                        .and_then(|ls: web_sys::Storage| ls.get_item("oversample_bat_book_favourites").ok().flatten())
+                        .map(|v| {
+                            v.split(',')
+                                .filter_map(|k| crate::bat_book::types::BatBookRegion::from_storage_key(k.trim()))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                },
+                selected_ids: Vec::new(),
+                ref_open: false,
+                last_clicked_id: None,
+                auto_focus: true,
             }),
-            bat_book_region: RwSignal::new(crate::bat_book::types::BatBookRegion::Global),
-            bat_book_auto_resolved: RwSignal::new(None),
-            bat_book_favourites: RwSignal::new({
-                web_sys::window()
-                    .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                    .and_then(|ls: web_sys::Storage| ls.get_item("oversample_bat_book_favourites").ok().flatten())
-                    .map(|v| {
-                        v.split(',')
-                            .filter_map(|k| crate::bat_book::types::BatBookRegion::from_storage_key(k.trim()))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }),
-            bat_book_selected_ids: RwSignal::new(Vec::new()),
-            bat_book_ref_open: RwSignal::new(false),
-            bat_book_last_clicked_id: RwSignal::new(None),
-            bat_book_auto_focus: RwSignal::new(true),
-            show_clock_time: RwSignal::new(false),
             shield_style: RwSignal::new({
                 web_sys::window()
                     .and_then(|w| w.local_storage().ok().flatten())
@@ -2318,15 +2347,17 @@ impl AppState {
             clean_view: RwSignal::new(false),
 
             // Export UI
-            export_section_open: RwSignal::new(false),
-            export_format: RwSignal::new(ExportFormat::default()),
-            video_export_progress: RwSignal::new(None),
-            video_export_status: RwSignal::new(None),
-            video_export_cancel: RwSignal::new(false),
-            video_resolution: RwSignal::new(VideoResolution::default()),
-            video_codec: RwSignal::new(VideoCodec::default()),
-            video_audio_codec: RwSignal::new(AudioCodecOption::default()),
-            video_view_mode: RwSignal::new(VideoViewMode::default()),
+            export: Store::new(ExportState {
+                section_open: false,
+                format: ExportFormat::default(),
+                video_progress: None,
+                video_status: None,
+                video_cancel: false,
+                video_resolution: VideoResolution::default(),
+                video_codec: VideoCodec::default(),
+                video_audio_codec: AudioCodecOption::default(),
+                video_view_mode: VideoViewMode::default(),
+            }),
 
             active_focus: RwSignal::new(None),
             selection_overflow_open: RwSignal::new(false),

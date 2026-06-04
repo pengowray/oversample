@@ -12,6 +12,7 @@
 // Replaces the previous `HfrButton` combo, whose left half (the HFR
 // toggle) has moved to the BAND cell — see [BandHfrCell] in hearing_bar.rs.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::popup::{Align, PopupPanel, Side};
@@ -78,7 +79,7 @@ fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
     let files = state.files.get_untracked();
     let idx = state.current_file_index.get_untracked()?;
     let file = files.get(idx)?;
-    let favourites = state.bat_book_favourites.get_untracked();
+    let favourites = state.bat_book.favourites().get_untracked();
     let resolved = crate::bat_book::auto_resolve::resolve_auto(Some(file), &favourites);
     let species_id = resolved.matched_species_id?;
     let entry = crate::bat_book::auto_resolve::find_entry_in_manifest(resolved.region, &species_id)
@@ -92,7 +93,7 @@ fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
 
 /// Range covering all currently-selected bat book species (min lo, max hi).
 fn selected_species_range(state: AppState) -> Option<(f64, f64)> {
-    let ids = state.bat_book_selected_ids.get_untracked();
+    let ids = state.bat_book.selected_ids().get_untracked();
     if ids.is_empty() {
         return None;
     }
@@ -136,7 +137,7 @@ pub fn RangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::BandPresets));
-    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     let btn_class = Signal::derive(move || {
         let mut s = String::from("layer-btn range-btn lock-grow");

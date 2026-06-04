@@ -22,6 +22,7 @@
 // The Listen button lives in the bottom toolbar's capture group alongside
 // Record (and the Mic / New-recording bookends) — see `bottom_toolbar.rs`.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
@@ -62,7 +63,7 @@ fn GainCombo() -> impl IntoView {
     let no_file = move || {
         !is_live()
             && state.current_file_index.get().is_none()
-            && state.active_timeline.get().is_none()
+            && state.timeline.active().get().is_none()
     };
 
     let left_class = Signal::derive(move || {
@@ -280,7 +281,7 @@ fn BandpassCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Bandpass));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
 
     let active = Signal::derive(move || state.bandpass_mode.get() != BandpassMode::Off);
@@ -534,7 +535,7 @@ fn BandpassCombo() -> impl IntoView {
 fn BandHfrCell() -> impl IntoView {
     let state = expect_context::<AppState>();
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
 
     let cell_class = Signal::derive(move || {

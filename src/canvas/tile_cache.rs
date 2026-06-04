@@ -82,7 +82,7 @@ fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f6
         return viewport::data_window(scroll, visible_time, file_duration);
     }
 
-    let timeline = state.active_timeline.get_untracked();
+    let timeline = state.timeline.active().get_untracked();
     let tl = timeline.as_ref()?;
     let global_time_res = tl.segments.first()
         .and_then(|s| files.get(s.file_index))

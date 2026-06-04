@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::AppState;
 use crate::bat_book::data::get_manifest;
@@ -32,36 +33,36 @@ pub fn BatBookStrip() -> impl IntoView {
     // and bat_book_auto_resolved so downstream code (manifest Memo, etc.)
     // continues to work unchanged.
     Effect::new(move |_| {
-        let mode = state.bat_book_mode.get();
+        let mode = state.bat_book.mode().get();
         match mode {
             BatBookMode::Manual(region) => {
-                state.bat_book_region.set(region);
-                state.bat_book_auto_resolved.set(None);
+                state.bat_book.region().set(region);
+                state.bat_book.auto_resolved().set(None);
             }
             BatBookMode::Auto => {
                 let files = state.files.get();
                 let idx = state.current_file_index.get();
                 let file = idx.and_then(|i| files.get(i));
-                let favourites = state.bat_book_favourites.get_untracked();
+                let favourites = state.bat_book.favourites().get_untracked();
                 let resolved = auto_resolve::resolve_auto(file, &favourites);
-                state.bat_book_region.set(resolved.region);
-                state.bat_book_auto_resolved.set(Some(resolved));
+                state.bat_book.region().set(resolved.region);
+                state.bat_book.auto_resolved().set(Some(resolved));
             }
         }
     });
 
     let manifest = Memo::new(move |_| {
-        let region = state.bat_book_region.get();
+        let region = state.bat_book.region().get();
         get_manifest(region)
     });
 
     let on_close = move |_: web_sys::MouseEvent| {
-        state.bat_book_open.set(false);
+        state.bat_book.open().set(false);
     };
 
     let on_title_click = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
-        state.bat_book_open.set(false);
+        state.bat_book.open().set(false);
     };
 
     let on_config = move |ev: web_sys::MouseEvent| {
@@ -86,8 +87,8 @@ pub fn BatBookStrip() -> impl IntoView {
     let auto_selected_for: RwSignal<Option<(usize, String)>> = RwSignal::new(None);
 
     Effect::new(move |_| {
-        let is_open = state.bat_book_open.get();
-        let resolved = state.bat_book_auto_resolved.get();
+        let is_open = state.bat_book.open().get();
+        let resolved = state.bat_book.auto_resolved().get();
         let file_idx = state.current_file_index.get();
 
         let Some(idx) = file_idx else { return };
@@ -96,7 +97,7 @@ pub fn BatBookStrip() -> impl IntoView {
 
         // Only auto-select when the book is open and in Auto mode
         if !is_open { return; }
-        if state.bat_book_mode.get_untracked() != BatBookMode::Auto { return; }
+        if state.bat_book.mode().get_untracked() != BatBookMode::Auto { return; }
 
         // Don't re-select if we already did for this file+species
         if auto_selected_for.get_untracked() == Some((idx, species_id.clone())) {
@@ -105,20 +106,20 @@ pub fn BatBookStrip() -> impl IntoView {
         auto_selected_for.set(Some((idx, species_id.clone())));
 
         // Select the species
-        state.bat_book_selected_ids.set(vec![species_id.clone()]);
-        state.bat_book_last_clicked_id.set(Some(species_id.clone()));
-        state.bat_book_ref_open.set(true);
-        if state.bat_book_auto_focus.get_untracked() {
+        state.bat_book.selected_ids().set(vec![species_id.clone()]);
+        state.bat_book.last_clicked_id().set(Some(species_id.clone()));
+        state.bat_book.ref_open().set(true);
+        if state.bat_book.auto_focus().get_untracked() {
             apply_bat_book_ff(&state);
         }
     });
 
     // The auto-matched species entry (if any) to show before the divider
     let auto_matched_entry = Memo::new(move |_| {
-        let resolved = state.bat_book_auto_resolved.get()?;
+        let resolved = state.bat_book.auto_resolved().get()?;
         let species_id = resolved.matched_species_id.as_deref()?;
         // Try to find the entry in the current region's manifest first
-        let region = state.bat_book_region.get();
+        let region = state.bat_book.region().get();
         auto_resolve::find_entry_in_manifest(region, species_id)
             .or_else(|| auto_resolve::find_entry_any_book(species_id))
     });
@@ -129,10 +130,10 @@ pub fn BatBookStrip() -> impl IntoView {
                 <span class="bat-book-title" on:click=on_title_click style="cursor:pointer">"Bat Book"</span>
                 <span class="bat-book-region-label">
                     {move || {
-                        let mode = state.bat_book_mode.get();
+                        let mode = state.bat_book.mode().get();
                         match mode {
                             BatBookMode::Auto => {
-                                if let Some(resolved) = state.bat_book_auto_resolved.get() {
+                                if let Some(resolved) = state.bat_book.auto_resolved().get() {
                                     if resolved.from_favourite {
                                         format!("Auto: {} \u{2605}", resolved.source_label)
                                     } else {
@@ -217,12 +218,12 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
 
     let select_auto = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
-        state.bat_book_mode.set(BatBookMode::Auto);
+        state.bat_book.mode().set(BatBookMode::Auto);
         persist_mode(&BatBookMode::Auto);
         region_menu_open.set(false);
     };
 
-    let is_auto_active = move || state.bat_book_mode.get() == BatBookMode::Auto;
+    let is_auto_active = move || state.bat_book.mode().get() == BatBookMode::Auto;
 
     view! {
         <div class="bat-book-region-menu" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
@@ -237,7 +238,7 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
 
             // ── Favourites section ───────────────────
             {move || {
-                let favs = state.bat_book_favourites.get();
+                let favs = state.bat_book.favourites().get();
                 if favs.is_empty() {
                     return Vec::new();
                 }
@@ -272,11 +273,11 @@ fn RegionOption(
     let r = region;
 
     let is_active = move || {
-        match state.bat_book_mode.get() {
+        match state.bat_book.mode().get() {
             BatBookMode::Manual(mr) => mr == r,
             BatBookMode::Auto => {
                 // In auto mode, highlight the resolved region
-                state.bat_book_auto_resolved.get()
+                state.bat_book.auto_resolved().get()
                     .map(|res| res.region == r)
                     .unwrap_or(false)
             }
@@ -287,26 +288,26 @@ fn RegionOption(
         if is_favourite {
             true // already in fav section
         } else {
-            state.bat_book_favourites.get().contains(&r)
+            state.bat_book.favourites().get().contains(&r)
         }
     };
 
     let on_star = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
-        state.bat_book_favourites.update(|favs| {
+        state.bat_book.favourites().update(|favs| {
             if let Some(pos) = favs.iter().position(|&f| f == r) {
                 favs.remove(pos);
             } else {
                 favs.push(r);
             }
         });
-        persist_favourites(&state.bat_book_favourites.get_untracked());
+        persist_favourites(&state.bat_book.favourites().get_untracked());
     };
 
     let on_select = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
         let mode = BatBookMode::Manual(r);
-        state.bat_book_mode.set(mode);
+        state.bat_book.mode().set(mode);
         persist_mode(&mode);
         region_menu_open.set(false);
     };
@@ -330,15 +331,15 @@ fn RegionOption(
 /// Compute the combined BandFF range from all selected entries.
 /// Returns (lo, hi) or None if nothing selected.
 fn combined_band_ff_range(state: &AppState) -> Option<(f64, f64)> {
-    let ids = state.bat_book_selected_ids.get_untracked();
+    let ids = state.bat_book.selected_ids().get_untracked();
     if ids.is_empty() {
         return None;
     }
-    let region = state.bat_book_region.get_untracked();
+    let region = state.bat_book.region().get_untracked();
     let manifest = get_manifest(region);
 
     // Also check auto-matched entry (may be from a different book)
-    let auto_entry = state.bat_book_auto_resolved.get_untracked()
+    let auto_entry = state.bat_book.auto_resolved().get_untracked()
         .and_then(|res| res.matched_species_id)
         .and_then(|id| auto_resolve::find_entry_any_book(&id));
 
@@ -414,7 +415,7 @@ fn BatBookChip(
     let is_selected = {
         let eid = entry_id.clone();
         move || {
-            state.bat_book_selected_ids.get().iter().any(|id| id == &eid)
+            state.bat_book.selected_ids().get().iter().any(|id| id == &eid)
         }
     };
 
@@ -424,34 +425,34 @@ fn BatBookChip(
         let shift = ev.shift_key();
         let eid = entry_id_for_click.clone();
 
-        let was_selected = state.bat_book_selected_ids.get_untracked().iter().any(|id| id == &eid);
+        let was_selected = state.bat_book.selected_ids().get_untracked().iter().any(|id| id == &eid);
 
         if was_selected && !ctrl && !shift {
             // Click selected bat again: deselect and restore previous BandFF
-            state.bat_book_selected_ids.set(Vec::new());
-            state.bat_book_ref_open.set(false);
-            state.bat_book_last_clicked_id.set(None);
+            state.bat_book.selected_ids().set(Vec::new());
+            state.bat_book.ref_open().set(false);
+            state.bat_book.last_clicked_id().set(None);
             state.pop_bat_book_ff();
             return;
         }
 
         if ctrl && was_selected {
-            state.bat_book_selected_ids.update(|ids| ids.retain(|id| id != &eid));
-            if state.bat_book_selected_ids.get_untracked().is_empty() {
-                state.bat_book_ref_open.set(false);
-                state.bat_book_last_clicked_id.set(None);
+            state.bat_book.selected_ids().update(|ids| ids.retain(|id| id != &eid));
+            if state.bat_book.selected_ids().get_untracked().is_empty() {
+                state.bat_book.ref_open().set(false);
+                state.bat_book.last_clicked_id().set(None);
                 state.pop_bat_book_ff();
-            } else if state.bat_book_auto_focus.get_untracked() {
+            } else if state.bat_book.auto_focus().get_untracked() {
                 apply_bat_book_ff(&state);
             }
-            state.bat_book_last_clicked_id.set(Some(eid));
+            state.bat_book.last_clicked_id().set(Some(eid));
             return;
         }
 
         if shift {
-            let region = state.bat_book_region.get_untracked();
+            let region = state.bat_book.region().get_untracked();
             let manifest = get_manifest(region);
-            let last_id = state.bat_book_last_clicked_id.get_untracked();
+            let last_id = state.bat_book.last_clicked_id().get_untracked();
             let anchor = last_id.as_deref().unwrap_or("");
             let anchor_idx = manifest.entries.iter().position(|e| e.id == anchor);
             let click_idx = manifest.entries.iter().position(|e| e.id == eid.as_str());
@@ -464,7 +465,7 @@ fn BatBookChip(
                     .map(|e| e.id.to_string())
                     .collect();
                 if ctrl {
-                    state.bat_book_selected_ids.update(|ids| {
+                    state.bat_book.selected_ids().update(|ids| {
                         for rid in &range_ids {
                             if !ids.iter().any(|id| id == rid) {
                                 ids.push(rid.clone());
@@ -472,24 +473,24 @@ fn BatBookChip(
                         }
                     });
                 } else {
-                    state.bat_book_selected_ids.set(range_ids);
+                    state.bat_book.selected_ids().set(range_ids);
                 }
             } else {
-                state.bat_book_selected_ids.set(vec![eid.clone()]);
+                state.bat_book.selected_ids().set(vec![eid.clone()]);
             }
         } else if ctrl {
-            state.bat_book_selected_ids.update(|ids| {
+            state.bat_book.selected_ids().update(|ids| {
                 if !ids.iter().any(|id| id == &eid) {
                     ids.push(eid.clone());
                 }
             });
         } else {
-            state.bat_book_selected_ids.set(vec![eid.clone()]);
+            state.bat_book.selected_ids().set(vec![eid.clone()]);
         }
 
-        state.bat_book_last_clicked_id.set(Some(eid));
-        state.bat_book_ref_open.set(true);
-        if state.bat_book_auto_focus.get_untracked() {
+        state.bat_book.last_clicked_id().set(Some(eid));
+        state.bat_book.ref_open().set(true);
+        if state.bat_book.auto_focus().get_untracked() {
             apply_bat_book_ff(&state);
         }
     };

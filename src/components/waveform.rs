@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
@@ -118,7 +119,7 @@ pub fn Waveform() -> impl IntoView {
         // re-subscribing (avoids redundant signal subscription in compute_auto_gain).
         state.files.track();
         let files = state.files.get_untracked();
-        let _timeline_trigger = state.active_timeline.get(); // trigger redraw on timeline change
+        let _timeline_trigger = state.timeline.active().get(); // trigger redraw on timeline change
         let idx = state.current_file_index.get();
         let mode = state.playback_mode.get();
         let waveform_view = state.waveform_view.get();
@@ -184,7 +185,7 @@ pub fn Waveform() -> impl IntoView {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
 
-        let timeline = state.active_timeline.get_untracked();
+        let timeline = state.timeline.active().get_untracked();
 
         if let Some(ref tl) = timeline {
             // ── Timeline mode: render waveform for each visible segment ──

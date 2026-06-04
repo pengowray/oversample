@@ -1,6 +1,7 @@
 //! Collapsible export section: WAV / MP4 export with format radio buttons,
 //! video settings, progress bar, and .batm import/export.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::audio::export;
@@ -38,7 +39,7 @@ pub fn ExportSection(
 
     // Export button text (reactive)
     let export_button_text = move || {
-        let format = state.export_format.get();
+        let format = state.export.format().get();
         let ext = match format {
             ExportFormat::Wav => ".wav",
             ExportFormat::Mp4 => ".mp4",
@@ -56,11 +57,11 @@ pub fn ExportSection(
 
     let export_disabled = move || {
         export::get_export_info(&state).is_none()
-            || state.video_export_progress.get().is_some()
+            || state.export.video_progress().get().is_some()
     };
 
     let on_export_click = move |_: web_sys::MouseEvent| {
-        match state.export_format.get_untracked() {
+        match state.export.format().get_untracked() {
             ExportFormat::Wav => {
                 export::export_selected(&state);
             }
@@ -71,16 +72,16 @@ pub fn ExportSection(
     };
 
     let on_format_change = move |format: ExportFormat| {
-        state.export_format.set(format);
+        state.export.format().set(format);
     };
 
     view! {
         <div class="export-section">
             <div
                 class="export-section-header"
-                on:click=move |_| state.export_section_open.update(|v| *v = !*v)
+                on:click=move |_| state.export.section_open().update(|v| *v = !*v)
             >
-                <span class=move || if state.export_section_open.get() {
+                <span class=move || if state.export.section_open().get() {
                     "export-toggle-arrow open"
                 } else {
                     "export-toggle-arrow"
@@ -90,7 +91,7 @@ pub fn ExportSection(
                 " Export"
             </div>
 
-            <div class=move || if state.export_section_open.get() {
+            <div class=move || if state.export.section_open().get() {
                 "export-section-body open"
             } else {
                 "export-section-body"
@@ -102,7 +103,7 @@ pub fn ExportSection(
                         <input
                             type="radio"
                             name="export-format"
-                            checked=move || state.export_format.get() == ExportFormat::Wav
+                            checked=move || state.export.format().get() == ExportFormat::Wav
                             on:change=move |_| on_format_change(ExportFormat::Wav)
                         />
                         " WAV"
@@ -115,7 +116,7 @@ pub fn ExportSection(
                         <input
                             type="radio"
                             name="export-format"
-                            checked=move || state.export_format.get() == ExportFormat::Mp4
+                            checked=move || state.export.format().get() == ExportFormat::Mp4
                             on:change=move |_| on_format_change(ExportFormat::Mp4)
                             disabled=move || !webcodecs_available
                         />
@@ -132,7 +133,7 @@ pub fn ExportSection(
 
                 // MP4-specific options (shown when MP4 selected)
                 {move || {
-                    if state.export_format.get() == ExportFormat::Mp4 && webcodecs_available {
+                    if state.export.format().get() == ExportFormat::Mp4 && webcodecs_available {
                         Some(view! {
                             <div class="export-mp4-options">
                                 <div class="setting-row" style="gap: 4px; align-items: center;">
@@ -145,13 +146,13 @@ pub fn ExportSection(
                                                 "scroll" => VideoViewMode::ScrollingView,
                                                 _ => VideoViewMode::StaticPlayhead,
                                             };
-                                            state.video_view_mode.set(mode);
+                                            state.export.video_view_mode().set(mode);
                                         }
                                     >
-                                        <option value="static" selected=move || state.video_view_mode.get() == VideoViewMode::StaticPlayhead>
+                                        <option value="static" selected=move || state.export.video_view_mode().get() == VideoViewMode::StaticPlayhead>
                                             "Static + playhead"
                                         </option>
-                                        <option value="scroll" selected=move || state.video_view_mode.get() == VideoViewMode::ScrollingView>
+                                        <option value="scroll" selected=move || state.export.video_view_mode().get() == VideoViewMode::ScrollingView>
                                             "Scrolling"
                                         </option>
                                     </select>
@@ -168,16 +169,16 @@ pub fn ExportSection(
                                                 "canvas" => VideoResolution::MatchCanvas,
                                                 _ => VideoResolution::Hd720,
                                             };
-                                            state.video_resolution.set(res);
+                                            state.export.video_resolution().set(res);
                                         }
                                     >
-                                        <option value="720" selected=move || state.video_resolution.get() == VideoResolution::Hd720>
+                                        <option value="720" selected=move || state.export.video_resolution().get() == VideoResolution::Hd720>
                                             "720p"
                                         </option>
-                                        <option value="1080" selected=move || state.video_resolution.get() == VideoResolution::Hd1080>
+                                        <option value="1080" selected=move || state.export.video_resolution().get() == VideoResolution::Hd1080>
                                             "1080p"
                                         </option>
-                                        <option value="canvas" selected=move || state.video_resolution.get() == VideoResolution::MatchCanvas>
+                                        <option value="canvas" selected=move || state.export.video_resolution().get() == VideoResolution::MatchCanvas>
                                             "Match canvas"
                                         </option>
                                     </select>
@@ -192,13 +193,13 @@ pub fn ExportSection(
                                                 "av1" => VideoCodec::Av1,
                                                 _ => VideoCodec::H264,
                                             };
-                                            state.video_codec.set(codec);
+                                            state.export.video_codec().set(codec);
                                         }
                                     >
-                                        <option value="h264" selected=move || state.video_codec.get() == VideoCodec::H264>
+                                        <option value="h264" selected=move || state.export.video_codec().get() == VideoCodec::H264>
                                             "H.264"
                                         </option>
-                                        <option value="av1" selected=move || state.video_codec.get() == VideoCodec::Av1>
+                                        <option value="av1" selected=move || state.export.video_codec().get() == VideoCodec::Av1>
                                             "AV1"
                                         </option>
                                     </select>
@@ -215,12 +216,12 @@ pub fn ExportSection(
                                                 "none" => AudioCodecOption::NoAudio,
                                                 _ => AudioCodecOption::Auto,
                                             };
-                                            state.video_audio_codec.set(opt);
+                                            state.export.video_audio_codec().set(opt);
                                         }
                                     >
                                         <option
                                             value="auto"
-                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Auto
+                                            selected=move || state.export.video_audio_codec().get() == AudioCodecOption::Auto
                                         >
                                             {move || {
                                                 let aac = aac_supported.get();
@@ -239,21 +240,21 @@ pub fn ExportSection(
                                         </option>
                                         <option
                                             value="aac"
-                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Aac
+                                            selected=move || state.export.video_audio_codec().get() == AudioCodecOption::Aac
                                             disabled=move || !aac_supported.get()
                                         >
                                             {move || if aac_supported.get() { "AAC" } else { "AAC (unavailable)" }}
                                         </option>
                                         <option
                                             value="opus"
-                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::Opus
+                                            selected=move || state.export.video_audio_codec().get() == AudioCodecOption::Opus
                                             disabled=move || !opus_supported.get()
                                         >
                                             {move || if opus_supported.get() { "Opus" } else { "Opus (unavailable)" }}
                                         </option>
                                         <option
                                             value="none"
-                                            selected=move || state.video_audio_codec.get() == AudioCodecOption::NoAudio
+                                            selected=move || state.export.video_audio_codec().get() == AudioCodecOption::NoAudio
                                         >
                                             "No audio"
                                         </option>
@@ -291,8 +292,8 @@ pub fn ExportSection(
 
                 // Progress bar and status text
                 {move || {
-                    let progress = state.video_export_progress.get();
-                    let status = state.video_export_status.get();
+                    let progress = state.export.video_progress().get();
+                    let status = state.export.video_status().get();
 
                     if progress.is_some() || status.is_some() {
                         let status_text = status.unwrap_or_else(|| "Exporting...".to_string());
@@ -318,7 +319,7 @@ pub fn ExportSection(
                                             class="sidebar-btn"
                                             style="margin-top: 4px;"
                                             on:click=move |_| {
-                                                state.video_export_cancel.set(true);
+                                                state.export.video_cancel().set(true);
                                             }
                                         >
                                             "Cancel"

@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
@@ -213,7 +214,7 @@ pub fn apply_hand_pan(
     let files = state.files.get_untracked();
     let idx = state.current_file_index.get_untracked();
     let file = idx.and_then(|i| files.get(i));
-    let timeline = state.active_timeline.get_untracked();
+    let timeline = state.timeline.active().get_untracked();
     let waterfall_active = (state.mic_recording.get_untracked()
         || state.mic_listening.get_untracked())
         && crate::canvas::live_waterfall::is_active();
@@ -1275,7 +1276,7 @@ pub fn on_touchend(
                         let files = state.files.get_untracked();
                         let idx = state.current_file_index.get_untracked();
                         let file = idx.and_then(|i| files.get(i));
-                        let timeline = state.active_timeline.get_untracked();
+                        let timeline = state.timeline.active().get_untracked();
                         let time_res = if let Some(ref tl) = timeline {
                             tl.segments.first().and_then(|s| files.get(s.file_index))
                                 .map(|f| f.spectrogram.time_resolution).unwrap_or(1.0)
@@ -1368,7 +1369,7 @@ pub fn on_wheel(
     } else {
         let raw_delta = ev.delta_y() + ev.delta_x();
         let files = state.files.get_untracked();
-        let timeline = state.active_timeline.get_untracked();
+        let timeline = state.timeline.active().get_untracked();
         let (time_res, duration) = if wf_active {
             let tr = crate::canvas::live_waterfall::time_resolution();
             let dur = crate::canvas::live_waterfall::total_columns() as f64 * tr;

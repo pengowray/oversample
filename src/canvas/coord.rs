@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use web_sys::HtmlCanvasElement;
 use crate::canvas::spectrogram_renderer;
@@ -24,7 +25,7 @@ pub fn pointer_to_xtf(
     let ch = canvas.height() as f64;
 
     let files = state.files.get_untracked();
-    let timeline = state.active_timeline.get_untracked();
+    let timeline = state.timeline.active().get_untracked();
 
     // When the waterfall is active, use its parameters so interactions work
     // even without a file loaded (listening/recording mode).

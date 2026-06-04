@@ -17,6 +17,7 @@
 // live in this component because they're playback-mode-coupled. They
 // were previously inside `ModeButton`.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, BandpassMode, BandpassRange, FilterQuality, LayerPanel, PlaybackMode, SpectrogramHandle};
@@ -194,7 +195,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
                 let species_range = file.and_then(|f| {
                     use crate::bat_book::auto_resolve;
-                    let favourites = state.bat_book_favourites.get_untracked();
+                    let favourites = state.bat_book.favourites().get_untracked();
                     let resolved = auto_resolve::resolve_auto(Some(f), &favourites);
                     let species_id = resolved.matched_species_id?;
                     let entry = auto_resolve::find_entry_in_manifest(
@@ -367,7 +368,7 @@ pub fn ModeRadioGroup() -> impl IntoView {
 
     // ── Settings popup state ──
     let settings_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::HfrMode));
-    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
     let muting = Signal::derive(move || state.mic_listening.get() && state.mic_mute_output.get());
 
     let row_ref = NodeRef::<leptos::html::Div>::new();

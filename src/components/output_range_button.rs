@@ -18,6 +18,7 @@
 // perspective. The Snap toggle constrains dragging to canonical stops
 // (powers of 2 / 10 for factors; multiples of 5 kHz for carriers).
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -221,7 +222,7 @@ pub fn OutputRangeCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::OutputRange));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
 
     let mode = Signal::derive(move || state.playback_mode.get());

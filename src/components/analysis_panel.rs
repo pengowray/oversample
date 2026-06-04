@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle};
 use crate::annotations::AnnotationKind;
@@ -65,7 +66,7 @@ pub fn AnalysisPanel() -> impl IntoView {
     view! {
         <div class="analysis-panel">
             {move || {
-                let has_file = state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
+                let has_file = state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
 
                 if !has_file {
                     return view! {

@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use std::collections::HashMap;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -34,21 +35,21 @@ use super::suggestions::BatsForYou;
 pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
     tile_cache::clear_all_caches();
     crate::canvas::spectral_store::clear();
-    state.selected_file_indices.update(|sel| {
+    state.timeline.selected_file_indices().update(|sel| {
         sel.retain(|&x| x != removed);
         for x in sel.iter_mut() {
             if *x > removed { *x -= 1; }
         }
     });
-    if state.active_timeline.get_untracked().is_some() {
-        let sel = state.selected_file_indices.get_untracked();
+    if state.timeline.active().get_untracked().is_some() {
+        let sel = state.timeline.selected_file_indices().get_untracked();
         let rebuilt = state.files.with_untracked(|files| {
             crate::timeline::TimelineView::from_files(&sel, files)
         });
         if rebuilt.is_none() {
-            state.active_timeline_track.set(None);
+            state.timeline.active_track().set(None);
         }
-        state.active_timeline.set(rebuilt);
+        state.timeline.active().set(rebuilt);
     }
 }
 
@@ -329,7 +330,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         let is_streaming = streaming_source::is_streaming(f.audio.source.as_ref());
                         let file_loading_id = f.loading_id;
                         let is_active = move || current_idx.get() == Some(i);
-                        let is_selected = move || state.selected_file_indices.with(|sel| sel.contains(&i));
+                        let is_selected = move || state.timeline.selected_file_indices().with(|sel| sel.contains(&i));
 
                         // Determine if group badges should show for this file
                         let show_groups = seq_badge.as_ref()
@@ -372,7 +373,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             let shift = ev.shift_key();
 
                             if ctrl {
-                                state.selected_file_indices.update(|sel| {
+                                state.timeline.selected_file_indices().update(|sel| {
                                     if let Some(pos) = sel.iter().position(|&x| x == i) {
                                         sel.remove(pos);
                                     } else {
@@ -385,13 +386,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             if shift {
                                 let anchor = current_idx.get_untracked().unwrap_or(0);
                                 let (lo, hi) = if anchor <= i { (anchor, i) } else { (i, anchor) };
-                                state.selected_file_indices.set((lo..=hi).collect());
+                                state.timeline.selected_file_indices().set((lo..=hi).collect());
                                 return;
                             }
 
-                            state.selected_file_indices.set(Vec::new());
-                            state.active_timeline.set(None);
-                            state.active_timeline_track.set(None);
+                            state.timeline.selected_file_indices().set(Vec::new());
+                            state.timeline.active().set(None);
+                            state.timeline.active_track().set(None);
                             state.nav_history.set(vec![]);
                             state.nav_index.set(0);
                             state.bookmarks.set(vec![]);
@@ -589,9 +590,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     let show_sort = file_vec.len() > 1;
 
                     let on_exit_timeline = move |_: web_sys::MouseEvent| {
-                        state.active_timeline.set(None);
-                        state.active_timeline_track.set(None);
-                        state.selected_file_indices.set(Vec::new());
+                        state.timeline.active().set(None);
+                        state.timeline.active_track().set(None);
+                        state.timeline.selected_file_indices().set(Vec::new());
                         // Restore to first file if none active
                         if state.current_file_index.get_untracked().is_none() && !state.files.with_untracked(|f| f.is_empty()) {
                             state.current_file_index.set(Some(0));
@@ -616,8 +617,8 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 None
                             }}
                             // Active timeline banner
-                            {state.active_timeline.with(|t| t.is_some()).then(|| {
-                                let (seg_count, total_dur) = state.active_timeline.with(|t| {
+                            {state.timeline.active().with(|t| t.is_some()).then(|| {
+                                let (seg_count, total_dur) = state.timeline.active().with(|t| {
                                     t.as_ref().map(|tv| (tv.segments.len(), tv.total_duration_secs))
                                         .unwrap_or((0, 0.0))
                                 });

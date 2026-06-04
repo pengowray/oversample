@@ -6,6 +6,7 @@
 // strip below a view, owning time-range selection and rendering the
 // time axis labels that previously sat inside the main canvas.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen::closure::Closure;
@@ -535,7 +536,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let zoom = state.zoom_level.get();
         let scroll = state.scroll_offset.get();
         // Timeline mode has its own time_res/duration/clock.
-        if let Some(tl) = state.active_timeline.get() {
+        if let Some(tl) = state.timeline.active().get() {
             let files = state.files.get();
             let time_res = tl.segments.first()
                 .and_then(|s| files.get(s.file_index))
@@ -582,7 +583,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let _rsidebar = state.right_sidebar_collapsed.get();
         let _rsidebar_width = state.right_sidebar_width.get();
         let _main_view = state.main_view.get();
-        let show_clock = state.show_clock_time.get();
+        let show_clock = state.timeline.show_clock_time().get();
         let _size_tick = canvas_size_tick.get();
         let Some((scroll, visible_time, duration, _time_res, clock)) = time_window() else { return };
 

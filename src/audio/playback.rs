@@ -26,7 +26,7 @@ fn timeline_selection(state: &AppState) -> Option<Selection> {
 fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
     let files = state.files.get_untracked();
 
-    if let Some(timeline) = state.active_timeline.get_untracked() {
+    if let Some(timeline) = state.timeline.active().get_untracked() {
         let mut sample_rate = None;
         let mut segments = Vec::with_capacity(timeline.segments.len());
 
@@ -78,7 +78,7 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
         }
     }
 
-    if state.active_timeline.get_untracked().is_some() {
+    if state.timeline.active().get_untracked().is_some() {
         return None;
     }
 
@@ -300,7 +300,7 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
     let canvas_width = state.spectrogram_canvas_width.get_untracked();
     let zoom = state.zoom_level.get_untracked();
     let scroll = state.scroll_offset.get_untracked();
-    let time_res = if let Some(ref tl) = state.active_timeline.get_untracked() {
+    let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
         let files = state.files.get_untracked();
         tl.segments.first().and_then(|s| files.get(s.file_index))
             .map(|f| f.spectrogram.time_resolution)
@@ -381,7 +381,7 @@ pub fn play(state: &AppState) {
 
     let Some(target) = playback_target(state) else { return; };
 
-    let selection = if state.active_timeline.get_untracked().is_some() {
+    let selection = if state.timeline.active().get_untracked().is_some() {
         timeline_selection(state)
     } else {
         let sel = effective_selection(state);

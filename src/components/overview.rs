@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use std::cell::RefCell;
 use leptos::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
@@ -446,7 +447,7 @@ pub fn OverviewPanel() -> impl IntoView {
     Effect::new(move || {
         state.files.track();
         let files = state.files.get_untracked();
-        let _timeline_trigger = state.active_timeline.get();
+        let _timeline_trigger = state.timeline.active().get();
         let idx = state.current_file_index.get();
         let overview_view = state.overview_view.get();
         let cv = state.channel_view.get();
@@ -469,7 +470,7 @@ pub fn OverviewPanel() -> impl IntoView {
         ctx.set_fill_style_str("#000");
         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
 
-        let timeline = state.active_timeline.get_untracked();
+        let timeline = state.timeline.active().get_untracked();
 
         if let Some(ref tl) = timeline {
             // ── Timeline mode: render segment previews ──
@@ -677,7 +678,7 @@ pub fn OverviewPanel() -> impl IntoView {
         let cw = w as f64;
         let ch = h as f64;
 
-        let timeline = state.active_timeline.get_untracked();
+        let timeline = state.timeline.active().get_untracked();
 
         if let Some(ref tl) = timeline {
             // ── Timeline overlay ──
@@ -740,7 +741,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 ch,
                 total_duration,
                 clock_cfg,
-                state.show_clock_time.get(),
+                state.timeline.show_clock_time().get(),
                 1.0,
             );
         } else {
@@ -843,7 +844,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 ch,
                 ov_duration,
                 clock_cfg,
-                state.show_clock_time.get(),
+                state.timeline.show_clock_time().get(),
                 1.0,
             );
         }
@@ -853,7 +854,7 @@ pub fn OverviewPanel() -> impl IntoView {
 
     // Get the true total duration (timeline, live waterfall, or single file)
     let file_duration = move || -> f64 {
-        if let Some(ref tl) = state.active_timeline.get_untracked() {
+        if let Some(ref tl) = state.timeline.active().get_untracked() {
             return tl.total_duration_secs;
         }
         let is_live = state.mic_recording.get_untracked() || state.mic_listening.get_untracked();
@@ -1048,7 +1049,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 class="playhead-dot"
                 style:left=move || {
                     let playhead = state.playhead_time.get();
-                    let duration = if let Some(ref tl) = state.active_timeline.get_untracked() {
+                    let duration = if let Some(ref tl) = state.timeline.active().get_untracked() {
                         tl.total_duration_secs
                     } else {
                         let is_live = state.mic_recording.get_untracked()

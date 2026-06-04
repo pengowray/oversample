@@ -126,11 +126,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.show_clock_time.get()
+                        prop:checked=move || state.timeline.show_clock_time().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.show_clock_time.set(input.checked());
+                            state.timeline.show_clock_time().set(input.checked());
                         }
                         prop:disabled=move || {
                             state.current_file()
@@ -270,11 +270,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.bat_book_auto_focus.get()
+                        prop:checked=move || state.bat_book.auto_focus().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.bat_book_auto_focus.set(input.checked());
+                            state.bat_book.auto_focus().set(input.checked());
                         }
                     />
                 </div>
@@ -287,12 +287,12 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.projects_enabled.get()
+                        prop:checked=move || state.project.enabled().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             let checked = input.checked();
-                            state.projects_enabled.set(checked);
+                            state.project.enabled().set(checked);
                             if let Some(ls) = web_sys::window()
                                 .and_then(|w| w.local_storage().ok().flatten())
                             {

@@ -15,6 +15,7 @@
 // Hearing-DSP controls (HFR, Band, EQ, Notch, Gain) live in `HearingBar`.
 // Visualization controls (View, Anno, Book, Tool) live in `ViewBar`.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use crate::state::{AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, PlaybackMode, RecordMode};
@@ -40,7 +41,7 @@ pub fn BottomToolbar() -> impl IntoView {
     // Always show all buttons; use has_file/is_file_disabled for enable/disable logic
     let has_file = move || true;
     let is_file_disabled = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
 
     // ── Recording timer ──
@@ -82,7 +83,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let play_left_class = Signal::derive(move || {
-        let no_file = state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+        let no_file = state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
         let recording_and_listening = state.mic_recording.get() && state.mic_listening.get();
         if no_file || recording_and_listening {
             "layer-btn combo-btn-left disabled"
@@ -214,7 +215,7 @@ pub fn BottomToolbar() -> impl IntoView {
     // playback_mode, handle the special "1:1 needs HFR off" case, and
     // start playback.
     let do_play_in_mode = move |mode: PlaybackMode| {
-        let no_file = state.current_file_index.get_untracked().is_none() && state.active_timeline.get_untracked().is_none();
+        let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
         let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
         if no_file || recording_and_listening { return; }
         // Stop anything currently playing (lets the HFR-restore Effect
@@ -250,7 +251,7 @@ pub fn BottomToolbar() -> impl IntoView {
     };
 
     let play_left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        let no_file = state.current_file_index.get_untracked().is_none() && state.active_timeline.get_untracked().is_none();
+        let no_file = state.current_file_index.get_untracked().is_none() && state.timeline.active().get_untracked().is_none();
         let recording_and_listening = state.mic_recording.get_untracked() && state.mic_listening.get_untracked();
         if no_file || recording_and_listening { return; }
         if state.is_playing.get_untracked() {
@@ -540,7 +541,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     let files = state.files.get();
                     let idx = state.current_file_index.get();
                     let has_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
-                    let has_mt = state.active_timeline.with(|t| {
+                    let has_mt = state.timeline.active().with(|t| {
                         t.as_ref().map(|tv| !tv.multitrack_groups.is_empty()).unwrap_or(false)
                     });
                     has_stereo || has_mt
@@ -560,7 +561,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         <span class="layer-btn-value">{move || {
                             if !is_multi() { return "Mono".to_string(); }
                             // Show active track label if in timeline mode with multitrack
-                            if let Some(ref track) = state.active_timeline_track.get() {
+                            if let Some(ref track) = state.timeline.active_track().get() {
                                 return format!("Trk {}", track);
                             }
                             match state.channel_view.get() {
@@ -580,7 +581,7 @@ pub fn BottomToolbar() -> impl IntoView {
                             let set_ch = move |cv: ChannelView| {
                                 move |_: web_sys::MouseEvent| {
                                     state.channel_view.set(cv);
-                                    state.active_timeline_track.set(None); // Clear track when switching channel
+                                    state.timeline.active_track().set(None); // Clear track when switching channel
                                     crate::canvas::tile_cache::clear_all_caches();
                                     state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
                                     state.layer_panel_open.set(None);
@@ -593,7 +594,7 @@ pub fn BottomToolbar() -> impl IntoView {
                             let is_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
 
                             // Get multitrack options from active timeline
-                            let mt_groups: Vec<crate::timeline::MultitrackOption> = state.active_timeline.with_untracked(|t| {
+                            let mt_groups: Vec<crate::timeline::MultitrackOption> = state.timeline.active().with_untracked(|t| {
                                 t.as_ref().map(|tv| tv.multitrack_groups.clone()).unwrap_or_default()
                             });
 
@@ -603,23 +604,23 @@ pub fn BottomToolbar() -> impl IntoView {
                                     {if is_stereo {
                                         Some(view! {
                                             <button
-                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Stereo && state.active_timeline_track.with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Stereo && state.timeline.active_track().with(|t| t.is_none()))
                                                 on:click=set_ch(ChannelView::Stereo)
                                             >"Stereo"</button>
                                             <button
-                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::MonoMix && state.active_timeline_track.with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::MonoMix && state.timeline.active_track().with(|t| t.is_none()))
                                                 on:click=set_ch(ChannelView::MonoMix)
                                             >"Mono (L+R)"</button>
                                             <button
-                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Channel(0) && state.active_timeline_track.with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Channel(0) && state.timeline.active_track().with(|t| t.is_none()))
                                                 on:click=set_ch(ChannelView::Channel(0))
                                             >"Left"</button>
                                             <button
-                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Channel(1) && state.active_timeline_track.with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Channel(1) && state.timeline.active_track().with(|t| t.is_none()))
                                                 on:click=set_ch(ChannelView::Channel(1))
                                             >"Right"</button>
                                             <button
-                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Difference && state.active_timeline_track.with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.channel_view.get() == ChannelView::Difference && state.timeline.active_track().with(|t| t.is_none()))
                                                 on:click=set_ch(ChannelView::Difference)
                                             >"Diff (L-R)"</button>
                                         })
@@ -634,10 +635,10 @@ pub fn BottomToolbar() -> impl IntoView {
                                             view! {
                                                 <button
                                                     class=move || layer_opt_class(
-                                                        state.active_timeline_track.with(|t| t.as_deref() == Some(&label3))
+                                                        state.timeline.active_track().with(|t| t.as_deref() == Some(&label3))
                                                     )
                                                     on:click=move |_: web_sys::MouseEvent| {
-                                                        state.active_timeline_track.set(Some(label2.clone()));
+                                                        state.timeline.active_track().set(Some(label2.clone()));
                                                         crate::canvas::tile_cache::clear_all_caches();
                                                         state.tile_ready_signal.update(|n| *n = n.wrapping_add(1));
                                                         state.layer_panel_open.set(None);

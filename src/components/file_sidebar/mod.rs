@@ -17,6 +17,7 @@ mod suggestions;
 pub mod mic_chooser;
 pub mod privacy_settings;
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -124,7 +125,7 @@ pub fn FileSidebar() -> impl IntoView {
                 >
                     "Files"
                 </button>
-                {move || state.projects_enabled.get().then(|| view! {
+                {move || state.project.enabled().get().then(|| view! {
                     <button
                         class=move || if state.left_sidebar_tab.get() == LeftSidebarTab::Project {
                             "sidebar-header-label active"
@@ -138,7 +139,7 @@ pub fn FileSidebar() -> impl IntoView {
                     >
                         "Project"
                         {move || {
-                            if state.current_project.with(|p| p.is_some()) {
+                            if state.project.current().with(|p| p.is_some()) {
                                 Some(view! { <span class="project-tab-dot">{"\u{25CF}"}</span> })
                             } else {
                                 None
@@ -172,7 +173,7 @@ pub fn FileSidebar() -> impl IntoView {
             {move || {
                 match state.left_sidebar_tab.get() {
                     LeftSidebarTab::Files => view! { <FilesPanel /> }.into_any(),
-                    LeftSidebarTab::Project if state.projects_enabled.get() => view! { <ProjectPanel /> }.into_any(),
+                    LeftSidebarTab::Project if state.project.enabled().get() => view! { <ProjectPanel /> }.into_any(),
                     LeftSidebarTab::Project => {
                         state.left_sidebar_tab.set(LeftSidebarTab::Files);
                         view! { <FilesPanel /> }.into_any()

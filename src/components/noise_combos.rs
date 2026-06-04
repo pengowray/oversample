@@ -51,7 +51,7 @@ pub fn NotchCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::Notch));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
     let band_count = Signal::derive(move || state.notch.bands().get().len());
     let enabled = Signal::derive(move || state.notch.enabled().get());
@@ -363,7 +363,7 @@ pub fn NrCombo() -> impl IntoView {
 
     let is_open = Signal::derive(move || state.layer_panel_open.get() == Some(LayerPanel::NoiseReduce));
     let no_file = move || {
-        state.current_file_index.get().is_none() && state.active_timeline.get().is_none()
+        state.current_file_index.get().is_none() && state.timeline.active().get().is_none()
     };
     let enabled = Signal::derive(move || state.noise_reduce.enabled().get());
     let has_floor = Signal::derive(move || state.noise_reduce.floor().get().is_some());

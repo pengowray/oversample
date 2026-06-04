@@ -6,6 +6,7 @@
 // Kept deliberately flexible — flex-wrap + a `.bar-spacer` separator lets
 // new toggles be added on either end without breaking narrow layouts.
 
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::app::MainViewButton;
@@ -59,14 +60,14 @@ fn AnnoToggle() -> impl IntoView {
 #[component]
 fn BookToggle() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let is_on = move || state.bat_book_open.get() || state.bat_book_ref_open.get();
+    let is_on = move || state.bat_book.open().get() || state.bat_book.ref_open().get();
     view! {
         <button
             class=move || if is_on() { "layer-btn active" } else { "layer-btn" }
             on:click=move |_| {
                 let on = is_on();
-                state.bat_book_open.set(!on);
-                state.bat_book_ref_open.set(!on);
+                state.bat_book.open().set(!on);
+                state.bat_book.ref_open().set(!on);
             }
             title=move || if is_on() { "Hide bat book" } else { "Show bat book" }
         >
@@ -82,7 +83,7 @@ fn BookToggle() -> impl IntoView {
 fn ToolCombo() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = move || state.layer_panel_open.get() == Some(LayerPanel::Tool);
-    let no_file = move || state.current_file_index.get().is_none() && state.active_timeline.get().is_none();
+    let no_file = move || state.current_file_index.get().is_none() && state.timeline.active().get().is_none();
 
     view! {
         <div style="position: relative;">
@@ -127,7 +128,7 @@ fn ToolCombo() -> impl IntoView {
 #[component]
 pub fn ViewBar() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let has_file = move || state.current_file_index.get().is_some() || state.active_timeline.get().is_some();
+    let has_file = move || state.current_file_index.get().is_some() || state.timeline.active().get().is_some();
 
     view! {
         // Stop clicks/taps inside the bar from bubbling to .main's
