@@ -437,7 +437,7 @@ pub fn Waveform() -> impl IntoView {
                     );
                 }
                 if let Some(file_id_val) = state.current_file_id_tracked() {
-                    let store = state.annotation_store.get();
+                    let store = state.annotations.store().get();
                     if let Some(set) = store.get(file_id_val) {
                         let ann_markers: Vec<(f64, Option<String>)> = set.annotations.iter()
                             .filter_map(|a| match &a.kind {

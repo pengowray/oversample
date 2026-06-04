@@ -264,7 +264,7 @@ pub fn apply_annotation_resize(
     use crate::state::ResizeHandlePosition::*;
 
     let Some(file_id) = state.current_file_id() else { return };
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
             if let Some(ann) = set.annotations.iter_mut().find(|a| a.id == ann_id) {
                 if let crate::annotations::AnnotationKind::Region(ref mut r) = ann.kind {
@@ -344,11 +344,11 @@ pub fn on_pointerdown(
 
     // Check for annotation resize handle drag first (selected annotations take
     // priority over BandFF/HET handles when they overlap). Skipped when annotations are hidden.
-    if state.annotations_visible.get_untracked() {
-    if let Some((ref ann_id, handle_pos)) = state.annotation_hover_handle.get_untracked() {
+    if state.annotations.visible().get_untracked() {
+    if let Some((ref ann_id, handle_pos)) = state.annotations.hover_handle().get_untracked() {
         // Check if the annotation is locked
         let Some(file_id) = state.current_file_id() else { return };
-        let store = state.annotation_store.get_untracked();
+        let store = state.annotations.store().get_untracked();
         let locked = store.get(file_id)
             .and_then(|set| set.annotations.iter().find(|a| a.id == *ann_id))
             .and_then(|a| match &a.kind {
@@ -360,18 +360,18 @@ pub fn on_pointerdown(
         if !locked {
             // Snapshot for undo
             let snapshot = store.get(file_id).cloned();
-            state.undo_stack.update(|stack| {
+            state.annotations.undo_stack().update(|stack| {
                 stack.push_undo(UndoEntry { file_id, snapshot });
             });
             // Store original bounds
             if let Some(set) = store.get(file_id) {
                 if let Some(a) = set.annotations.iter().find(|a| a.id == *ann_id) {
                     if let crate::annotations::AnnotationKind::Region(ref r) = a.kind {
-                        state.annotation_drag_original.set(Some((r.time_start, r.time_end, r.freq_low, r.freq_high)));
+                        state.annotations.drag_original().set(Some((r.time_start, r.time_end, r.freq_low, r.freq_high)));
                     }
                 }
             }
-            state.annotation_drag_handle.set(Some((ann_id.clone(), handle_pos)));
+            state.annotations.drag_handle().set(Some((ann_id.clone(), handle_pos)));
             state.is_dragging.set(true);
             capture_pointer(&ev);
             ev.prevent_default();
@@ -446,8 +446,8 @@ pub fn on_pointerdown(
 
         // Check annotation body first (highest priority; skipped when annotations are hidden)
         let mut hit_annotation = false;
-        if state.annotations_visible.get_untracked() {
-            let store = state.annotation_store.get_untracked();
+        if state.annotations.visible().get_untracked() {
+            let store = state.annotations.store().get_untracked();
             if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                 if let Some(canvas_el) = canvas_ref.get() {
                     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -505,9 +505,9 @@ pub fn on_pointerdown(
     // For Hand tool: defer to mouseup so panning isn't blocked
     if state.canvas_tool.get_untracked() != CanvasTool::Hand
         && !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
-            let ids = state.selected_annotation_ids.get_untracked();
+            let ids = state.annotations.selected_ids().get_untracked();
             if !ids.is_empty() {
-                state.selected_annotation_ids.set(Vec::new());
+                state.annotations.selected_ids().set(Vec::new());
             }
             state.active_focus.set(None);
         }
@@ -581,7 +581,7 @@ pub fn on_pointermove(
             }
 
             // Annotation resize handle drag takes second priority
-            if let Some((ref ann_id, handle_pos)) = state.annotation_drag_handle.get_untracked() {
+            if let Some((ref ann_id, handle_pos)) = state.annotations.drag_handle().get_untracked() {
                 apply_annotation_resize(state, ann_id.clone(), handle_pos, t, f);
                 return;
             }
@@ -620,11 +620,11 @@ pub fn on_pointermove(
 
                         // Annotation resize handle hover detection (only when annotations have focus and are visible)
                         let annotations_focused = state.active_focus.get_untracked() == Some(ActiveFocus::Annotations)
-                            && state.annotations_visible.get_untracked();
-                        let selected_ids = state.selected_annotation_ids.get_untracked();
+                            && state.annotations.visible().get_untracked();
+                        let selected_ids = state.annotations.selected_ids().get_untracked();
                         if annotations_focused && !selected_ids.is_empty() {
                             let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-                            let store = state.annotation_store.get_untracked();
+                            let store = state.annotations.store().get_untracked();
                             if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                                 let scroll = state.view.scroll_offset().get_untracked();
                                 let files = state.files.get_untracked();
@@ -638,18 +638,18 @@ pub fn on_pointermove(
                                     scroll, time_res, zoom, cw, ch,
                                     crate::canvas::hit_test::ANNOTATION_HANDLE_HIT_RADIUS,
                                 );
-                                state.annotation_hover_handle.set(ann_handle);
+                                state.annotations.hover_handle().set(ann_handle);
                             } else {
-                                state.annotation_hover_handle.set(None);
+                                state.annotations.hover_handle().set(None);
                             }
                         } else {
-                            state.annotation_hover_handle.set(None);
+                            state.annotations.hover_handle().set(None);
                         }
                     }
                 }
             } else {
                 state.spec_hover_handle.set(None);
-                state.annotation_hover_handle.set(None);
+                state.annotations.hover_handle().set(None);
             }
         }
     }
@@ -672,7 +672,7 @@ pub fn on_pointerleave(
     state.cursor_time.set(None);
     ix.label_hover_target.set(0.0);
     state.spec_hover_handle.set(None);
-    state.annotation_hover_handle.set(None);
+    state.annotations.hover_handle().set(None);
     ix.pending_annotation_hit.set(None);
 }
 
@@ -708,10 +708,10 @@ pub fn on_pointerup(
     }
 
     // End annotation resize handle drag
-    if let Some((ref ann_id, _)) = state.annotation_drag_handle.get_untracked() {
+    if let Some((ref ann_id, _)) = state.annotations.drag_handle().get_untracked() {
         if let Some(file_id) = state.current_file_id() {
             let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
-            state.annotation_store.update(|store| {
+            state.annotations.store().update(|store| {
                 if let Some(set) = store.get_mut(file_id) {
                     if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
                         a.modified_at = now;
@@ -719,9 +719,9 @@ pub fn on_pointerup(
                 }
             });
         }
-        state.annotations_dirty.set(true);
-        state.annotation_drag_handle.set(None);
-        state.annotation_drag_original.set(None);
+        state.annotations.dirty().set(true);
+        state.annotations.drag_handle().set(None);
+        state.annotations.drag_original().set(None);
         state.is_dragging.set(false);
         return;
     }
@@ -737,7 +737,7 @@ pub fn on_pointerup(
             // Handle deferred annotation selection on click
             if let Some((hit_id, ctrl)) = ix.pending_annotation_hit.get_untracked() {
                 if ctrl {
-                    state.selected_annotation_ids.update(|ids| {
+                    state.annotations.selected_ids().update(|ids| {
                         if let Some(pos) = ids.iter().position(|id| *id == hit_id) {
                             ids.remove(pos);
                         } else {
@@ -745,9 +745,9 @@ pub fn on_pointerup(
                         }
                     });
                 } else {
-                    state.selected_annotation_ids.set(vec![hit_id.clone()]);
+                    state.annotations.selected_ids().set(vec![hit_id.clone()]);
                 }
-                state.last_clicked_annotation_id.set(Some(hit_id));
+                state.annotations.last_clicked_id().set(Some(hit_id));
                 state.active_focus.set(Some(ActiveFocus::Annotations));
             } else if ix.pending_selection_hit.get_untracked() {
                 // Deferred transient selection body click-to-refocus
@@ -758,9 +758,9 @@ pub fn on_pointerup(
             } else {
                 // Click on empty area deselects annotations and clears focus
                 if !ev.ctrl_key() && !ev.meta_key() && !ev.shift_key() {
-                    let ids = state.selected_annotation_ids.get_untracked();
+                    let ids = state.annotations.selected_ids().get_untracked();
                     if !ids.is_empty() {
-                        state.selected_annotation_ids.set(Vec::new());
+                        state.annotations.selected_ids().set(Vec::new());
                     }
                     state.active_focus.set(None);
                 }
@@ -789,7 +789,7 @@ pub fn on_pointerup(
         if sel.time_end - sel.time_start > 0.0001 {
             state.selection.set(Some(sel));
             state.active_focus.set(Some(ActiveFocus::TransientSelection));
-            if state.selection_auto_focus.get_untracked() {
+            if state.annotations.selection_auto_focus().get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {
                         state.set_band_ff_range(lo, hi);
@@ -840,7 +840,7 @@ pub fn on_dblclick(
     }
 
     // Double-click inside an annotation body: enter label edit for that annotation.
-    if state.annotations_visible.get_untracked() {
+    if state.annotations.visible().get_untracked() {
         if let Some((px_x, px_y, _, _)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
             if let Some(canvas_el) = canvas_ref.get() {
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -855,7 +855,7 @@ pub fn on_dblclick(
                 let scroll = state.view.scroll_offset().get_untracked();
                 let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let zoom = state.view.zoom_level().get_untracked();
-                let store = state.annotation_store.get_untracked();
+                let store = state.annotations.store().get_untracked();
                 if let Some(set) = state.file_id_at(file_idx).and_then(|id| store.get(id)) {
                     if let Some(hit_id) = hit_test_annotation_body(
                         set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
@@ -867,13 +867,13 @@ pub fn on_dblclick(
                                 _ => None,
                             })
                             .unwrap_or(false);
-                        state.selected_annotation_ids.set(vec![hit_id]);
+                        state.annotations.selected_ids().set(vec![hit_id]);
                         state.active_focus.set(Some(ActiveFocus::Annotations));
                         if is_locked {
                             state.show_info_toast("Annotation is locked \u{2014} unlock to edit label by double-click");
                         } else {
-                            state.annotation_is_new_edit.set(false);
-                            state.annotation_editing.set(true);
+                            state.annotations.is_new_edit().set(false);
+                            state.annotations.editing().set(true);
                         }
                         ev.prevent_default();
                         return;
@@ -977,10 +977,10 @@ pub fn on_touchstart(
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
             let cw = canvas.width() as f64;
             let ch = canvas.height() as f64;
-            let selected_ids = state.selected_annotation_ids.get_untracked();
+            let selected_ids = state.annotations.selected_ids().get_untracked();
             if !selected_ids.is_empty() {
                 let file_idx = state.current_file_index.get_untracked().unwrap_or(0);
-                let store = state.annotation_store.get_untracked();
+                let store = state.annotations.store().get_untracked();
                 let files = state.files.get_untracked();
                 let file_max_freq = files.get(file_idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
                 let min_freq_val = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
@@ -1010,16 +1010,16 @@ pub fn on_touchstart(
                             // found via it above), so unwrap_or(0) never triggers.
                             let file_id = file_id.unwrap_or(0);
                             let snapshot = store.get(file_id).cloned();
-                            state.undo_stack.update(|stack| {
+                            state.annotations.undo_stack().update(|stack| {
                                 stack.push_undo(UndoEntry { file_id, snapshot });
                             });
                             // Store original bounds
                             if let Some(a) = set.annotations.iter().find(|a| a.id == *ann_id) {
                                 if let crate::annotations::AnnotationKind::Region(ref r) = a.kind {
-                                    state.annotation_drag_original.set(Some((r.time_start, r.time_end, r.freq_low, r.freq_high)));
+                                    state.annotations.drag_original().set(Some((r.time_start, r.time_end, r.freq_low, r.freq_high)));
                                 }
                             }
-                            state.annotation_drag_handle.set(Some((ann_id.clone(), handle_pos)));
+                            state.annotations.drag_handle().set(Some((ann_id.clone(), handle_pos)));
                             state.is_dragging.set(true);
                             ev.prevent_default();
                             return;
@@ -1163,7 +1163,7 @@ pub fn on_touchmove(
     }
 
     // Annotation resize handle drag
-    if let Some((ref ann_id, handle_pos)) = state.annotation_drag_handle.get_untracked() {
+    if let Some((ref ann_id, handle_pos)) = state.annotations.drag_handle().get_untracked() {
         if let Some((_, _, t, f)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
             apply_annotation_resize(state, ann_id.clone(), handle_pos, t, f);
         }
@@ -1211,10 +1211,10 @@ pub fn on_touchend(
             return;
         }
         // End annotation resize handle drag
-        if let Some((ref ann_id, _)) = state.annotation_drag_handle.get_untracked() {
+        if let Some((ref ann_id, _)) = state.annotations.drag_handle().get_untracked() {
             if let Some(file_id) = state.current_file_id() {
                 let now = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
-                state.annotation_store.update(|store| {
+                state.annotations.store().update(|store| {
                     if let Some(set) = store.get_mut(file_id) {
                         if let Some(a) = set.annotations.iter_mut().find(|a| a.id == *ann_id) {
                             a.modified_at = now;
@@ -1222,9 +1222,9 @@ pub fn on_touchend(
                     }
                 });
             }
-            state.annotations_dirty.set(true);
-            state.annotation_drag_handle.set(None);
-            state.annotation_drag_original.set(None);
+            state.annotations.dirty().set(true);
+            state.annotations.drag_handle().set(None);
+            state.annotations.drag_original().set(None);
             state.is_dragging.set(false);
             return;
         }
@@ -1298,7 +1298,7 @@ pub fn on_touchend(
         }
 
         // Update frequency focus from selection (if auto-focus enabled)
-        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.selection_auto_focus.get_untracked() {
+        if state.canvas_tool.get_untracked() == CanvasTool::Selection && state.annotations.selection_auto_focus().get_untracked() {
             if let Some(sel) = state.selection.get_untracked() {
                 if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
                     if hi - lo > 100.0 {

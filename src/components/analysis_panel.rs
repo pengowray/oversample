@@ -39,10 +39,10 @@ pub fn AnalysisPanel() -> impl IntoView {
     };
 
     let annotation_dims = move || {
-        let ids = state.selected_annotation_ids.get();
+        let ids = state.annotations.selected_ids().get();
         if ids.is_empty() { return None; }
         let id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(id)?;
         // Show dims for single selected annotation
         if ids.len() == 1 {
@@ -122,7 +122,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                 }
 
                 // Annotation resize drag
-                if state.annotation_drag_handle.get().is_some() {
+                if state.annotations.drag_handle().get().is_some() {
                     return view! {
                         <span style="color: #888">"Resizing annotation..."</span>
                     }.into_any();

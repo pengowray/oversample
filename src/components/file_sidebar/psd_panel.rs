@@ -73,7 +73,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
         let _fr = freq_range_mode.get();
         // Subscribe to selection/annotation changes when freq range mode cares
         let _ = state.selection.get();
-        let _ = state.selected_annotation_ids.get();
+        let _ = state.annotations.selected_ids().get();
 
         // Subscribe to relevant filter params when toggles are on
         if state.psd.apply_eq().get_untracked() {
@@ -253,7 +253,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             }
 
             if let Some(file_id) = state.file_id_at(idx) {
-                state.annotation_store.update(|store| {
+                state.annotations.store().update(|store| {
                     let set = store.entry_or_insert_with(file_id, || {
                         state.files.with_untracked(|files| {
                             files.get(idx).map(|f| {
@@ -271,8 +271,8 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                     }
                 });
             }
-            state.annotations_dirty.set(true);
-            state.annotations_visible.set(true);
+            state.annotations.dirty().set(true);
+            state.annotations.visible().set(true);
             state.show_info_toast("PSD peaks annotated");
         }
     };

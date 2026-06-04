@@ -243,10 +243,10 @@ pub fn Spectrogram() -> impl IntoView {
         let _dsp_auto_floor = state.display_auto_noise_floor.get();
         let _dsp_transform = state.display_transform.get();
         let _dsp_decimate = state.display_decimate_effective.get();
-        let annotation_store = state.annotation_store.get();
-        let selected_annotation_ids = state.selected_annotation_ids.get();
-        let annotation_hover_handle = state.annotation_hover_handle.get();
-        let annotations_visible = state.annotations_visible.get();
+        let annotation_store = state.annotations.store().get();
+        let selected_annotation_ids = state.annotations.selected_ids().get();
+        let annotation_hover_handle = state.annotations.hover_handle().get();
+        let annotations_visible = state.annotations.visible().get();
         let active_focus = state.active_focus.get();
         let _timeline = state.timeline.active().get(); // trigger redraw on timeline change
         pre_rendered.track();
@@ -1426,7 +1426,7 @@ pub fn Spectrogram() -> impl IntoView {
                     }
                 }
                 // Annotation resize handle cursor
-                if let Some((_, pos)) = state.annotation_hover_handle.get() {
+                if let Some((_, pos)) = state.annotations.hover_handle().get() {
                     use crate::state::ResizeHandlePosition::*;
                     let cursor = match pos {
                         TopLeft | BottomRight => "nwse-resize",
@@ -1437,7 +1437,7 @@ pub fn Spectrogram() -> impl IntoView {
                     return format!("cursor: {cursor}; touch-action: {ta};");
                 }
                 // Annotation drag in progress
-                if state.annotation_drag_handle.get().is_some() {
+                if state.annotations.drag_handle().get().is_some() {
                     return format!("cursor: move; touch-action: {ta};");
                 }
                 match state.canvas_tool.get() {

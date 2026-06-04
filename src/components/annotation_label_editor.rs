@@ -9,20 +9,20 @@ use crate::components::file_sidebar::settings_panel::{
 };
 
 /// Floating label editor anchored to the selected annotation's top-left corner on the spectrogram.
-/// Shown when `state.annotation_editing` is true and exactly one annotation is selected.
+/// Shown when `state.annotations.editing()` is true and exactly one annotation is selected.
 #[component]
 pub fn AnnotationLabelEditor() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     // Position + initial label, reactive.
     let editor_state = Signal::derive(move || {
-        if !state.annotation_editing.get() { return None; }
-        let ids = state.selected_annotation_ids.get();
+        if !state.annotations.editing().get() { return None; }
+        let ids = state.annotations.selected_ids().get();
         if ids.len() != 1 { return None; }
         let id = ids[0].clone();
         let idx = state.current_file_index.get()?;
         let file_id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| a.id == id)?;
         let region = match &ann.kind {
@@ -85,8 +85,8 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
                 let val = el.value();
                 let label = if val.trim().is_empty() { None } else { Some(val.trim().to_string()) };
                 update_annotation_label(state, aid, label);
-                state.annotation_is_new_edit.set(false);
-                state.annotation_editing.set(false);
+                state.annotations.is_new_edit().set(false);
+                state.annotations.editing().set(false);
             };
             Some(view! {
                 <input
@@ -107,15 +107,15 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
                         } else if ev.key() == "Escape" {
                             ev.prevent_default();
                             ev.stop_propagation();
-                            if state.annotation_is_new_edit.get_untracked() {
+                            if state.annotations.is_new_edit().get_untracked() {
                                 delete_annotation(state, &id_esc);
                             }
-                            state.annotation_is_new_edit.set(false);
-                            state.annotation_editing.set(false);
+                            state.annotations.is_new_edit().set(false);
+                            state.annotations.editing().set(false);
                         }
                     }
                     on:focusout=move |ev: web_sys::FocusEvent| {
-                        if !state.annotation_editing.get_untracked() { return; }
+                        if !state.annotations.editing().get_untracked() { return; }
                         let input = ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
                         save_from(&input, &id_blur);
                     }

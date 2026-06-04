@@ -1,3 +1,4 @@
+use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{AppState, MetadataView};
 
@@ -572,7 +573,7 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
 
     // Key off this section's own file id (not the current-file index) so the
     // sidecar hashes always match the file being rendered.
-    let sidecar_identity = state.annotation_store.with_untracked(|store| {
+    let sidecar_identity = state.annotations.store().with_untracked(|store| {
         store.get(f.id).map(|set| set.file_identity.clone())
     });
     let xc = &f.xc_hashes;

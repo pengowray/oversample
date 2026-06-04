@@ -244,11 +244,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.selection_auto_focus.get()
+                        prop:checked=move || state.annotations.selection_auto_focus().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.selection_auto_focus.set(input.checked());
+                            state.annotations.selection_auto_focus().set(input.checked());
                         }
                     />
                 </div>
@@ -257,11 +257,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                     <input
                         type="checkbox"
                         class="setting-checkbox"
-                        prop:checked=move || state.annotation_auto_focus.get()
+                        prop:checked=move || state.annotations.auto_focus().get()
                         on:change=move |ev: web_sys::Event| {
                             let target = ev.target().unwrap();
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            state.annotation_auto_focus.set(input.checked());
+                            state.annotations.auto_focus().set(input.checked());
                         }
                     />
                 </div>

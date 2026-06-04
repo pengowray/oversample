@@ -556,7 +556,7 @@ pub(crate) fn SelectionPanel() -> impl IntoView {
 
     let has_annotations = move || {
         let id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(id)?;
         if set.annotations.is_empty() { None } else { Some(()) }
     };
@@ -730,7 +730,7 @@ fn AnnotationsList() -> impl IntoView {
 
     let annotation_tree = move || {
         let id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(id)?;
         if set.annotations.is_empty() { return None; }
         Some(build_annotation_tree(&set.annotations))
@@ -753,7 +753,7 @@ fn AnnotationsList() -> impl IntoView {
 
     let has_annotations = move || {
         let id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(id)?;
         if set.annotations.is_empty() { None } else { Some(true) }
     };
@@ -761,7 +761,7 @@ fn AnnotationsList() -> impl IntoView {
     let selected_is_group = move || {
         let sel_id = state.selected_annotation_id()?;
         let id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(id)?;
         set.annotations.iter().find(|a| a.id == sel_id)
             .filter(|a| matches!(a.kind, AnnotationKind::Group(_)))
@@ -788,7 +788,7 @@ fn AnnotationsList() -> impl IntoView {
                             <button class="sidebar-btn annotation-toolbar-btn"
                                 title="Group selected"
                                 on:click=on_group
-                                disabled=move || state.selected_annotation_ids.get().is_empty()
+                                disabled=move || state.annotations.selected_ids().get().is_empty()
                             >"Group"</button>
                             <button class="sidebar-btn annotation-toolbar-btn"
                                 title="Ungroup"
@@ -862,9 +862,9 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
         view! {
             <div
                 class="annotation-tree-item"
-                class:annotation-selected=move || state.selected_annotation_ids.get().contains(&id_click)
+                class:annotation-selected=move || state.annotations.selected_ids().get().contains(&id_click)
                 class:annotation-drop-target=move || {
-                    state.drop_target.get().as_ref().map(|(tid, _)| tid.as_str()) == Some(id_dragover.as_str())
+                    state.annotations.drop_target().get().as_ref().map(|(tid, _)| tid.as_str()) == Some(id_dragover.as_str())
                 }
                 class:annotation-group-item=is_group
                 style:padding-left=format!("{}px", 8 + indent_px)
@@ -880,7 +880,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
 
                     if ctrl {
                         // Toggle this annotation in/out of selection
-                        state.selected_annotation_ids.update(|ids| {
+                        state.annotations.selected_ids().update(|ids| {
                             if let Some(pos) = ids.iter().position(|x| x == &click_id) {
                                 ids.remove(pos);
                             } else {
@@ -889,9 +889,9 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                         });
                     } else if shift {
                         // Range select from last-clicked to this one
-                        if let Some(anchor) = state.last_clicked_annotation_id.get_untracked() {
+                        if let Some(anchor) = state.annotations.last_clicked_id().get_untracked() {
                             if let Some(id) = state.current_file_id() {
-                                let store = state.annotation_store.get_untracked();
+                                let store = state.annotations.store().get_untracked();
                                 if let Some(set) = store.get(id) {
                                     let flat_ids: Vec<String> = set.annotations.iter().map(|a| a.id.clone()).collect();
                                     let anchor_pos = flat_ids.iter().position(|x| x == &anchor);
@@ -902,7 +902,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                         let range_ids: Vec<String> = flat_ids[lo..=hi].to_vec();
                                         if ev.ctrl_key() || ev.meta_key() {
                                             // Add range to existing selection
-                                            state.selected_annotation_ids.update(|ids| {
+                                            state.annotations.selected_ids().update(|ids| {
                                                 for rid in &range_ids {
                                                     if !ids.contains(rid) {
                                                         ids.push(rid.clone());
@@ -910,7 +910,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                                 }
                                             });
                                         } else {
-                                            state.selected_annotation_ids.set(range_ids);
+                                            state.annotations.selected_ids().set(range_ids);
                                         }
                                     }
                                 }
@@ -918,10 +918,10 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                         }
                     } else {
                         // Plain click: select only this one
-                        state.selected_annotation_ids.set(vec![click_id.clone()]);
+                        state.annotations.selected_ids().set(vec![click_id.clone()]);
                     }
 
-                    state.last_clicked_annotation_id.set(Some(click_id.clone()));
+                    state.annotations.last_clicked_id().set(Some(click_id.clone()));
 
                     // Restore selection for last-clicked non-group annotation
                     if !is_group {
@@ -929,7 +929,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                     }
                 }
                 on:dragstart=move |ev: web_sys::DragEvent| {
-                    state.dragging_annotation_id.set(Some(id_drag.clone()));
+                    state.annotations.dragging_id().set(Some(id_drag.clone()));
                     if let Some(dt) = ev.data_transfer() {
                         let _ = dt.set_data("text/plain", &id_drag);
                         dt.set_effect_allowed("move");
@@ -952,11 +952,11 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                     } else {
                         "after".to_string()
                     };
-                    state.drop_target.set(Some((id_dragover2.clone(), position)));
+                    state.annotations.drop_target().set(Some((id_dragover2.clone(), position)));
                 }
                 on:dragleave=move |_: web_sys::DragEvent| {
                     // Only clear if we're leaving the tree item
-                    state.drop_target.set(None);
+                    state.annotations.drop_target().set(None);
                 }
                 on:drop=move |ev: web_sys::DragEvent| {
                     ev.prevent_default();
@@ -1080,13 +1080,13 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                                             ev.stop_propagation();
                                                             let target_tag = tag_click.clone();
                                                             if let Some(id) = state.current_file_id() {
-                                                                let store = state.annotation_store.get_untracked();
+                                                                let store = state.annotations.store().get_untracked();
                                                                 if let Some(set) = store.get(id) {
                                                                     let matching: Vec<String> = set.annotations.iter()
                                                                         .filter(|a| a.tags.contains(&target_tag))
                                                                         .map(|a| a.id.clone())
                                                                         .collect();
-                                                                    state.selected_annotation_ids.set(matching);
+                                                                    state.annotations.selected_ids().set(matching);
                                                                 }
                                                             }
                                                         }
@@ -1150,7 +1150,7 @@ fn restore_selection(state: AppState, annotation_id: &str) {
         Some(i) => i,
         None => return,
     };
-    let store = state.annotation_store.get_untracked();
+    let store = state.annotations.store().get_untracked();
     let set = match store.get(id) {
         Some(s) => s,
         None => return,
@@ -1204,7 +1204,7 @@ pub(crate) fn toggle_annotation_lock(state: AppState, annotation_id: &str, locke
         Some(i) => i,
         None => return,
     };
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             if let Some(ann) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
                 if let AnnotationKind::Region(ref mut r) = ann.kind {
@@ -1214,7 +1214,7 @@ pub(crate) fn toggle_annotation_lock(state: AppState, annotation_id: &str, locke
             }
         }
     });
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 pub(crate) fn delete_annotation(state: AppState, annotation_id: &str) {
@@ -1225,23 +1225,23 @@ pub(crate) fn delete_annotation(state: AppState, annotation_id: &str) {
     state.snapshot_annotations();
     // Also delete all descendants
     let descendants = {
-        let store = state.annotation_store.get_untracked();
+        let store = state.annotations.store().get_untracked();
         let set = match store.get(id) {
             Some(s) => s,
             None => return,
         };
         collect_descendants(&set.annotations, annotation_id)
     };
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             set.annotations.retain(|a| a.id != annotation_id && !descendants.contains(&a.id));
         }
     });
-    let was_selected = state.selected_annotation_ids.get_untracked().iter().any(|x| x == annotation_id);
+    let was_selected = state.annotations.selected_ids().get_untracked().iter().any(|x| x == annotation_id);
     if was_selected {
-        state.selected_annotation_ids.update(|ids| ids.retain(|x| x != annotation_id));
+        state.annotations.selected_ids().update(|ids| ids.retain(|x| x != annotation_id));
     }
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 pub(crate) fn update_annotation_label(state: AppState, annotation_id: &str, label: Option<String>) {
@@ -1250,7 +1250,7 @@ pub(crate) fn update_annotation_label(state: AppState, annotation_id: &str, labe
         None => return,
     };
     state.snapshot_annotations();
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             // If user cleared the label, regenerate a default ("Region 4" etc.)
             // and mark it so the UI renders it in italic.
@@ -1278,7 +1278,7 @@ pub(crate) fn update_annotation_label(state: AppState, annotation_id: &str, labe
             }
         }
     });
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 pub(crate) fn update_annotation_tags(state: AppState, annotation_id: &str, tags: Vec<String>) {
@@ -1286,7 +1286,7 @@ pub(crate) fn update_annotation_tags(state: AppState, annotation_id: &str, tags:
         Some(i) => i,
         None => return,
     };
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             if let Some(a) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
                 a.tags = tags;
@@ -1294,7 +1294,7 @@ pub(crate) fn update_annotation_tags(state: AppState, annotation_id: &str, tags:
             }
         }
     });
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 fn toggle_group_collapsed(state: AppState, annotation_id: &str) {
@@ -1302,7 +1302,7 @@ fn toggle_group_collapsed(state: AppState, annotation_id: &str) {
         Some(i) => i,
         None => return,
     };
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             if let Some(a) = set.annotations.iter_mut().find(|a| a.id == annotation_id) {
                 if let AnnotationKind::Group(ref mut g) = a.kind {
@@ -1312,11 +1312,11 @@ fn toggle_group_collapsed(state: AppState, annotation_id: &str) {
             }
         }
     });
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 fn group_selected(state: AppState) {
-    let sel_ids = state.selected_annotation_ids.get_untracked();
+    let sel_ids = state.annotations.selected_ids().get_untracked();
     if sel_ids.is_empty() { return; }
     let id = match state.current_file_id() {
         Some(i) => i,
@@ -1329,7 +1329,7 @@ fn group_selected(state: AppState) {
     let group_id = generate_uuid();
     let now = now_iso8601();
 
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             // Use the first selected annotation's parent and sort_order for the group
             let (parent, order) = set.annotations.iter()
@@ -1375,9 +1375,9 @@ fn group_selected(state: AppState) {
             renumber_children(&mut set.annotations, parent_key.as_deref());
         }
     });
-    state.selected_annotation_ids.set(vec![group_id]);
-    state.annotations_dirty.set(true);
-    state.annotations_visible.set(true);
+    state.annotations.selected_ids().set(vec![group_id]);
+    state.annotations.dirty().set(true);
+    state.annotations.visible().set(true);
 }
 
 fn ungroup_selected(state: AppState) {
@@ -1391,7 +1391,7 @@ fn ungroup_selected(state: AppState) {
     };
 
     state.snapshot_annotations();
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             // Verify it's a group
             let group_parent = match set.annotations.iter().find(|a| a.id == group_id) {
@@ -1413,23 +1413,23 @@ fn ungroup_selected(state: AppState) {
             renumber_children(&mut set.annotations, group_parent.as_deref());
         }
     });
-    state.selected_annotation_ids.set(Vec::new());
-    state.annotations_dirty.set(true);
+    state.annotations.selected_ids().set(Vec::new());
+    state.annotations.dirty().set(true);
 }
 
 fn perform_drop(state: AppState) {
-    let dragged_id = match state.dragging_annotation_id.get_untracked() {
+    let dragged_id = match state.annotations.dragging_id().get_untracked() {
         Some(id) => id,
         None => return,
     };
-    let (target_id, position) = match state.drop_target.get_untracked() {
+    let (target_id, position) = match state.annotations.drop_target().get_untracked() {
         Some(t) => t,
-        None => { state.dragging_annotation_id.set(None); return; }
+        None => { state.annotations.dragging_id().set(None); return; }
     };
 
     // Clear drag state
-    state.dragging_annotation_id.set(None);
-    state.drop_target.set(None);
+    state.annotations.dragging_id().set(None);
+    state.annotations.drop_target().set(None);
 
     if dragged_id == target_id { return; }
 
@@ -1439,7 +1439,7 @@ fn perform_drop(state: AppState) {
     };
 
     state.snapshot_annotations();
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(id) {
             // Don't allow dropping into own descendants
             let descendants = collect_descendants(&set.annotations, &dragged_id);
@@ -1480,7 +1480,7 @@ fn perform_drop(state: AppState) {
             }
         }
     });
-    state.annotations_dirty.set(true);
+    state.annotations.dirty().set(true);
 }
 
 fn export_annotations(state: AppState) {
@@ -1488,7 +1488,7 @@ fn export_annotations(state: AppState) {
         Some(i) => i,
         None => { state.show_error_toast("No file selected"); return; }
     };
-    let store = state.annotation_store.get_untracked();
+    let store = state.annotations.store().get_untracked();
     let set = match store.get(id) {
         Some(s) => s,
         None => { state.show_error_toast("No annotations to export"); return; }
@@ -1558,14 +1558,14 @@ fn import_annotations(state: AppState) {
                         return;
                     };
                     state.snapshot_annotations();
-                    state.annotation_store.update(|store| {
+                    state.annotations.store().update(|store| {
                         if let Some(existing) = store.get_mut(id) {
                             existing.annotations.extend(imported.annotations);
                         } else {
                             store.insert(id, imported);
                         }
                     });
-                    state.annotations_dirty.set(true);
+                    state.annotations.dirty().set(true);
                     state.show_info_toast("Annotations imported");
                 }
                 Err(e) => {

@@ -28,25 +28,25 @@ fn AnnoToggle() -> impl IntoView {
     let state = expect_context::<AppState>();
     view! {
         <button
-            class=move || if state.annotations_visible.get() { "layer-btn active" } else { "layer-btn" }
+            class=move || if state.annotations.visible().get() { "layer-btn active" } else { "layer-btn" }
             on:click=move |_| {
-                let new_visible = !state.annotations_visible.get_untracked();
-                state.annotations_visible.set(new_visible);
+                let new_visible = !state.annotations.visible().get_untracked();
+                state.annotations.visible().set(new_visible);
                 if !new_visible {
                     // Drop annotation focus/selection and clear interaction state.
                     if state.active_focus.get_untracked() == Some(ActiveFocus::Annotations) {
                         state.active_focus.set(None);
                     }
-                    if !state.selected_annotation_ids.get_untracked().is_empty() {
-                        state.selected_annotation_ids.set(Vec::new());
+                    if !state.annotations.selected_ids().get_untracked().is_empty() {
+                        state.annotations.selected_ids().set(Vec::new());
                     }
-                    state.annotation_hover_handle.set(None);
-                    state.annotation_drag_handle.set(None);
-                    state.annotation_editing.set(false);
-                    state.annotation_is_new_edit.set(false);
+                    state.annotations.hover_handle().set(None);
+                    state.annotations.drag_handle().set(None);
+                    state.annotations.editing().set(false);
+                    state.annotations.is_new_edit().set(false);
                 }
             }
-            title=move || if state.annotations_visible.get() { "Hide annotations" } else { "Show annotations" }
+            title=move || if state.annotations.visible().get() { "Hide annotations" } else { "Show annotations" }
         >
             <span class="layer-btn-category">"\u{00A0}"</span>
             <span class="layer-btn-value">"Anno"</span>

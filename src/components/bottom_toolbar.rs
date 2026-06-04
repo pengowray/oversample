@@ -140,7 +140,7 @@ pub fn BottomToolbar() -> impl IntoView {
             PlayStartMode::Auto => {
                 // Subscribe to signals that affect auto-play mode for reactivity
                 let _sel = state.selection.get();
-                let _ann = state.selected_annotation_ids.get();
+                let _ann = state.annotations.selected_ids().get();
                 let _scroll = state.view.scroll_offset().get();
                 let _zoom = state.view.zoom_level().get();
                 if let Some(sel) = playback::effective_selection(&state) {
@@ -511,7 +511,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         class=move || {
                             let active = state.play_start_mode.get() == PlayStartMode::Selected;
                             let _sel = state.selection.get();
-                            let _ann = state.selected_annotation_ids.get();
+                            let _ann = state.annotations.selected_ids().get();
                             let enabled = playback::effective_selection(&state).is_some();
                             if !enabled {
                                 "layer-panel-opt disabled"

@@ -31,7 +31,7 @@ pub fn annotate_selection(state: &AppState) {
         let Some(new_set) = new_set else { return; };
         state.snapshot_annotations();
         let ann_id = generate_uuid();
-        state.annotation_store.update(|store| {
+        state.annotations.store().update(|store| {
             let set = store.entry_or_insert_with(file_id, || new_set);
             {
                 let mut kind = AnnotationKind::Region(Region {
@@ -60,14 +60,14 @@ pub fn annotate_selection(state: &AppState) {
                 });
             }
         });
-        state.annotations_dirty.set(true);
-        state.annotations_visible.set(true);
+        state.annotations.dirty().set(true);
+        state.annotations.visible().set(true);
         state.selection.set(None);
-        state.selected_annotation_ids.set(vec![ann_id]);
+        state.annotations.selected_ids().set(vec![ann_id]);
         state.active_focus.set(Some(ActiveFocus::Annotations));
         // Auto-enter label editing for the new annotation (floating editor)
-        state.annotation_editing.set(true);
-        state.annotation_is_new_edit.set(true);
+        state.annotations.editing().set(true);
+        state.annotations.is_new_edit().set(true);
         state.show_info_toast(if has_freq { "Region annotated" } else { "Segment annotated" });
     }
 }
@@ -94,7 +94,7 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
     let Some(new_set) = new_set else { return; };
     state.snapshot_annotations();
     let ann_id = generate_uuid();
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         let set = store.entry_or_insert_with(file_id, || new_set);
         {
             let mut kind = AnnotationKind::Marker(Marker {
@@ -119,12 +119,12 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
             });
         }
     });
-    state.annotations_dirty.set(true);
-    state.annotations_visible.set(true);
-    state.selected_annotation_ids.set(vec![ann_id]);
+    state.annotations.dirty().set(true);
+    state.annotations.visible().set(true);
+    state.annotations.selected_ids().set(vec![ann_id]);
     state.active_focus.set(Some(ActiveFocus::Annotations));
-    state.annotation_editing.set(true);
-    state.annotation_is_new_edit.set(true);
+    state.annotations.editing().set(true);
+    state.annotations.is_new_edit().set(true);
     state.show_info_toast("Marker added");
 }
 
@@ -225,7 +225,7 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
                     }
                 }
                 Some(ActiveFocus::Annotations) => {
-                    let ids = state.selected_annotation_ids.get();
+                    let ids = state.annotations.selected_ids().get();
                     if !ids.is_empty() {
                         Some(view! { <AnnotationOverflowMenu /> }.into_any())
                     } else {
@@ -475,11 +475,11 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     // Reactive position: top-right corner of first selected annotation
     let pos = Signal::derive(move || {
-        let ids = state.selected_annotation_ids.get();
+        let ids = state.annotations.selected_ids().get();
         if ids.is_empty() { return None; }
         let idx = state.current_file_index.get()?;
         let file_id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| ids.contains(&a.id))?;
 
@@ -514,10 +514,10 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     // Get annotation info for display
     let ann_info = Signal::derive(move || {
-        let ids = state.selected_annotation_ids.get();
+        let ids = state.annotations.selected_ids().get();
         if ids.len() != 1 { return None; }
         let file_id = state.current_file_id_tracked()?;
-        let store = state.annotation_store.get();
+        let store = state.annotations.store().get();
         let set = store.get(file_id)?;
         let ann = set.annotations.iter().find(|a| a.id == ids[0])?;
         let is_default = ann.label_default.unwrap_or(false);
@@ -560,7 +560,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         if thi <= tlo { return false; }
         // Re-read annotation freq
         let file_id = match state.current_file_id() { Some(i) => i, None => return false };
-        let store = state.annotation_store.get_untracked();
+        let store = state.annotations.store().get_untracked();
         let set = match store.get(file_id) { Some(s) => s, None => return false };
         let ann = match set.annotations.iter().find(|a| a.id == info.0) { Some(a) => a, None => return false };
         if let AnnotationKind::Region(r) = &ann.kind {
@@ -577,11 +577,11 @@ fn AnnotationOverflowMenu() -> impl IntoView {
     });
 
     let on_expand = Callback::new(move |_: ()| {
-        let ids = state.selected_annotation_ids.get_untracked();
+        let ids = state.annotations.selected_ids().get_untracked();
         let file_id = match state.current_file_id() { Some(i) => i, None => return };
         if ids.is_empty() { return; }
         state.snapshot_annotations();
-        state.annotation_store.update(|store| {
+        state.annotations.store().update(|store| {
             if let Some(set) = store.get_mut(file_id) {
                 for ann in set.annotations.iter_mut() {
                     if ids.contains(&ann.id) {
@@ -594,17 +594,17 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                 }
             }
         });
-        state.annotations_dirty.set(true);
+        state.annotations.dirty().set(true);
     });
 
     let on_contract = Callback::new(move |_: ()| {
-        let ids = state.selected_annotation_ids.get_untracked();
+        let ids = state.annotations.selected_ids().get_untracked();
         let file_id = match state.current_file_id() { Some(i) => i, None => return };
         if ids.is_empty() { return; }
         let (lo, hi) = get_freq_bounds(&state);
         if hi <= lo { return; }
         state.snapshot_annotations();
-        state.annotation_store.update(|store| {
+        state.annotations.store().update(|store| {
             if let Some(set) = store.get_mut(file_id) {
                 for ann in set.annotations.iter_mut() {
                     if ids.contains(&ann.id) {
@@ -617,7 +617,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                 }
             }
         });
-        state.annotations_dirty.set(true);
+        state.annotations.dirty().set(true);
     });
 
     view! {
@@ -695,8 +695,8 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                             <button
                                                 class="canvas-overflow-item"
                                                 on:click=move |_| {
-                                                    state.annotation_is_new_edit.set(false);
-                                                    state.annotation_editing.set(true);
+                                                    state.annotations.is_new_edit().set(false);
+                                                    state.annotations.editing().set(true);
                                                     is_open.set(false);
                                                 }
                                             >

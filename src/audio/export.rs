@@ -490,13 +490,13 @@ pub struct ExportInfo {
 
 /// Determine what will be exported and return info for the button label.
 pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
-    let selected_ids = state.selected_annotation_ids.get();
+    let selected_ids = state.annotations.selected_ids().get();
     let selection = state.selection.get();
 
     // Count selected annotations that are regions/segments (have time bounds)
     let (region_count, region_duration_sum) = if !selected_ids.is_empty() {
         if let Some(id) = state.current_file_id_tracked() {
-            let store = state.annotation_store.get();
+            let store = state.annotations.store().get();
             if let Some(set) = store.get(id) {
                 let mut count = 0usize;
                 let mut dur = 0.0f64;
@@ -570,7 +570,7 @@ pub fn format_duration(secs: f64) -> String {
 
 /// Get the list of selected Region annotations.
 pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
-    let selected_ids = state.selected_annotation_ids.get_untracked();
+    let selected_ids = state.annotations.selected_ids().get_untracked();
     if selected_ids.is_empty() {
         return Vec::new();
     }
@@ -578,7 +578,7 @@ pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
         Some(i) => i,
         None => return Vec::new(),
     };
-    let store = state.annotation_store.get_untracked();
+    let store = state.annotations.store().get_untracked();
     let set = match store.get(id) {
         Some(s) => s,
         None => return Vec::new(),
@@ -603,7 +603,7 @@ pub fn export_selected(state: &AppState) {
     };
     let source = &file.audio.source;
     let sample_rate = file.audio.sample_rate;
-    let use_region_focus = state.export_use_region_focus.get_untracked();
+    let use_region_focus = state.annotations.export_use_region_focus().get_untracked();
     let source_filename = &file.name;
     let source_guano = file.audio.metadata.guano.as_ref();
 

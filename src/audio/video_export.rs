@@ -104,7 +104,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
 
     // Determine time range (same logic as WAV export)
     let regions = get_selected_regions(state);
-    let use_region_focus = state.export_use_region_focus.get_untracked();
+    let use_region_focus = state.annotations.export_use_region_focus().get_untracked();
 
     let (start_time, end_time) = if !regions.is_empty() {
         let r = &regions[0].1;

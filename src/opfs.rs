@@ -191,7 +191,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     };
 
     // Sync file identity, noise profile, and touch modified_at before saving
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
             // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
             if let Some(id) = state.files.with_untracked(|files| {
@@ -205,7 +205,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         }
     });
 
-    let store = state.annotation_store.get_untracked();
+    let store = state.annotations.store().get_untracked();
     let set = match store.get(file_id) {
         Some(s) => s.clone(),
         None => return,
@@ -273,7 +273,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     };
 
     // Ensure an AnnotationSet exists, creating one if needed
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         // Build a fresh set from the LoadedFile only if one isn't already stored.
         let new_set = if store.contains(file_id) {
             None
@@ -302,7 +302,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         }
     });
 
-    let store = state.annotation_store.get_untracked();
+    let store = state.annotations.store().get_untracked();
     let set = match store.get(file_id) {
         Some(s) => s.clone(),
         None => { state.show_error_toast("Failed to create annotation set"); return; }
@@ -374,7 +374,7 @@ fn apply_loaded_sidecar(state: crate::state::AppState, file_id: u64, loaded: cra
         });
     }
 
-    state.annotation_store.update(|store| {
+    state.annotations.store().update(|store| {
         store.insert(file_id, loaded);
     });
 }
@@ -427,7 +427,7 @@ fn load_annotations_opfs(state: crate::state::AppState, file_id: u64, identity: 
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
-                            let already_has = state.annotation_store.get_untracked().contains(file_id);
+                            let already_has = state.annotations.store().get_untracked().contains(file_id);
                             if !already_has {
                                 apply_loaded_sidecar(state, file_id, loaded);
                                 log::debug!("OPFS loaded annotations for file id {file_id}: {try_key}");
@@ -480,7 +480,7 @@ fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity:
 
         // Don't clobber a store that already has this file (user edits in
         // progress, or a prior load already applied).
-        if state.annotation_store.get_untracked().contains(file_id) {
+        if state.annotations.store().get_untracked().contains(file_id) {
             return;
         }
 

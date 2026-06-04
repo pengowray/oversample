@@ -448,9 +448,9 @@ pub fn App() -> impl IntoView {
     // from the sidebar or directly on the canvas.
     Effect::new(move |_| {
         let _ = state.current_file_index.get();
-        let _ = state.annotation_auto_focus.get();
-        let _ = state.selected_annotation_ids.get();
-        let _ = state.annotation_store.get();
+        let _ = state.annotations.auto_focus().get();
+        let _ = state.annotations.selected_ids().get();
+        let _ = state.annotations.store().get();
         state.sync_annotation_auto_focus();
     });
 
@@ -716,7 +716,7 @@ pub fn App() -> impl IntoView {
 
             // Clear annotation selection and save outgoing file's sidecar when switching
             if old_idx != new_idx {
-                state.selected_annotation_ids.set(Vec::new());
+                state.annotations.selected_ids().set(Vec::new());
                 state.pop_annotation_ff();
                 // Save outgoing file's annotations
                 if let Some(oi) = old_idx {
@@ -755,9 +755,9 @@ pub fn App() -> impl IntoView {
 
     // Auto-save annotations to OPFS (browser) or central store (Tauri) when dirty.
     Effect::new(move |_| {
-        let dirty = state.annotations_dirty.get();
+        let dirty = state.annotations.dirty().get();
         if !dirty { return; }
-        state.annotations_dirty.set(false);
+        state.annotations.dirty().set(false);
         let idx = match state.current_file_index.get_untracked() {
             Some(i) => i,
             None => return,
@@ -837,7 +837,7 @@ pub fn App() -> impl IntoView {
         // M = drop a marker annotation at the current playhead position.
         if (ev.key() == "m" || ev.key() == "M") && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             // If something else wants the key (label editor, etc.), skip.
-            if state_kb.annotation_editing.get_untracked() { return; }
+            if state_kb.annotations.editing().get_untracked() { return; }
             ev.prevent_default();
             let t = state_kb.playhead_time.get_untracked();
             crate::components::overflow_menu::add_marker_at_time(&state_kb, t);
@@ -876,12 +876,12 @@ pub fn App() -> impl IntoView {
                 }
             } else {
                 // No transient selection — toggle selected annotations
-                let sel_ids = state_kb.selected_annotation_ids.get_untracked();
+                let sel_ids = state_kb.annotations.selected_ids().get_untracked();
                 if let (false, Some(idx)) = (sel_ids.is_empty(), state_kb.current_file_index.get_untracked()) {
                     ev.prevent_default();
                     let file_id = state_kb.current_file_id();
                     // Check if all selected annotations are regions (have freq bounds)
-                    let store = state_kb.annotation_store.get_untracked();
+                    let store = state_kb.annotations.store().get_untracked();
                     let all_have_freq = if let Some(set) = file_id.and_then(|id| store.get(id)) {
                         sel_ids.iter().all(|id| {
                             set.annotations.iter().find(|a| &a.id == id).is_some_and(|a| {
@@ -895,7 +895,7 @@ pub fn App() -> impl IntoView {
                     state_kb.snapshot_annotations();
                     if all_have_freq {
                         // Region → Segment: strip freq bounds, don't reset BandFF
-                        state_kb.annotation_store.update(|store| {
+                        state_kb.annotations.store().update(|store| {
                             if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
                                 for ann in set.annotations.iter_mut() {
                                     if sel_ids.contains(&ann.id) {
@@ -908,7 +908,7 @@ pub fn App() -> impl IntoView {
                                 }
                             }
                         });
-                        state_kb.annotations_dirty.set(true);
+                        state_kb.annotations.dirty().set(true);
                         state_kb.show_info_toast("Region → Segment (Q)");
                     } else {
                         // Segment → Region: use BandFF height
@@ -921,7 +921,7 @@ pub fn App() -> impl IntoView {
                             (state_kb.view.min_display_freq().get_untracked().unwrap_or(0.0),
                              state_kb.view.max_display_freq().get_untracked().unwrap_or(file_max))
                         };
-                        state_kb.annotation_store.update(|store| {
+                        state_kb.annotations.store().update(|store| {
                             if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
                                 for ann in set.annotations.iter_mut() {
                                     if sel_ids.contains(&ann.id) {
@@ -936,7 +936,7 @@ pub fn App() -> impl IntoView {
                                 }
                             }
                         });
-                        state_kb.annotations_dirty.set(true);
+                        state_kb.annotations.dirty().set(true);
                         state_kb.show_info_toast("Segment → Region (Q)");
                     }
                 }
@@ -1307,7 +1307,7 @@ pub fn App() -> impl IntoView {
             if prev && !zoomed {
                 state_vp.is_dragging.set(false);
                 state_vp.spec_drag_handle.set(None);
-                state_vp.annotation_drag_handle.set(None);
+                state_vp.annotations.drag_handle().set(None);
             }
         });
         let window = web_sys::window().unwrap();

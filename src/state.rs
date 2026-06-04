@@ -1461,6 +1461,7 @@ pub mod store_fields {
         MicStateStoreFields,
         RecordingMetaStateStoreFields,
         SpectStateStoreFields,
+        AnnotationsStateStoreFields,
     };
 }
 
@@ -1581,6 +1582,40 @@ pub struct SpectState {
     pub colormap_preference: Colormap,
     /// Colormap preference used when HFR mode is active.
     pub hfr_colormap_preference: Colormap,
+}
+
+/// Annotation subsystem: store, selection, drag/drop, resize, undo, editing.
+#[derive(Clone, Debug, Store)]
+pub struct AnnotationsState {
+    pub store: AnnotationStore,
+    pub dirty: bool,
+    pub selected_ids: Vec<AnnotationId>,
+    /// Anchor for shift-click range selection in the annotation tree.
+    pub last_clicked_id: Option<AnnotationId>,
+    /// When true, finalizing a transient selection sets the frequency focus to match.
+    pub selection_auto_focus: bool,
+    /// When true, clicking an annotation pushes its frequency focus override.
+    pub auto_focus: bool,
+    /// When true, export uses each region's own freq bounds for DSP (else global HFR).
+    pub export_use_region_focus: bool,
+    /// Id of annotation currently being dragged in the sidebar tree.
+    pub dragging_id: Option<AnnotationId>,
+    /// Drop target: (target_id, position "before"/"after"/"inside").
+    pub drop_target: Option<(AnnotationId, String)>,
+    /// Undo/redo stack for annotation operations.
+    pub undo_stack: UndoStack,
+    /// Active annotation resize drag: (annotation_id, handle position).
+    pub drag_handle: Option<(AnnotationId, ResizeHandlePosition)>,
+    /// Hovered annotation resize handle (for cursor + highlight).
+    pub hover_handle: Option<(AnnotationId, ResizeHandlePosition)>,
+    /// Snapshot of original bounds before resize drag.
+    pub drag_original: Option<(f64, f64, Option<f64>, Option<f64>)>,
+    /// Whether the annotation label editing panel is active.
+    pub editing: bool,
+    /// True when editing a just-created annotation (Escape = cancel/delete).
+    pub is_new_edit: bool,
+    /// Whether saved annotations are drawn on the spectrogram.
+    pub visible: bool,
 }
 
 // ── AppState ─────────────────────────────────────────────────────────────────
@@ -1792,36 +1827,8 @@ pub struct AppState {
     /// Generation counter for cancelling in-progress hash computations.
     pub hash_generation: RwSignal<u32>,
 
-    // Annotations
-    pub annotation_store: RwSignal<AnnotationStore>,
-    pub annotations_dirty: RwSignal<bool>,
-    pub selected_annotation_ids: RwSignal<Vec<AnnotationId>>,
-    /// Anchor for shift-click range selection in annotation tree.
-    pub last_clicked_annotation_id: RwSignal<Option<AnnotationId>>,
-    /// When true, finalizing a transient selection sets the frequency focus range to match.
-    pub selection_auto_focus: RwSignal<bool>,
-    /// When true, clicking an annotation pushes its frequency focus override.
-    pub annotation_auto_focus: RwSignal<bool>,
-    /// When true, export uses each region's own freq bounds for DSP; when false, uses global HFR.
-    pub export_use_region_focus: RwSignal<bool>,
-    /// Id of annotation currently being dragged in the sidebar tree.
-    pub dragging_annotation_id: RwSignal<Option<AnnotationId>>,
-    /// Drop target: (target_id, position) where position is "before", "after", or "inside" (for groups).
-    pub drop_target: RwSignal<Option<(AnnotationId, String)>>,
-    /// Undo/redo stack for annotation operations.
-    pub undo_stack: RwSignal<UndoStack>,
-    /// Active annotation resize drag: (annotation_id, handle position).
-    pub annotation_drag_handle: RwSignal<Option<(AnnotationId, ResizeHandlePosition)>>,
-    /// Hovered annotation resize handle (for cursor + highlight).
-    pub annotation_hover_handle: RwSignal<Option<(AnnotationId, ResizeHandlePosition)>>,
-    /// Snapshot of original bounds before resize drag: (time_start, time_end, freq_low, freq_high).
-    pub annotation_drag_original: RwSignal<Option<(f64, f64, Option<f64>, Option<f64>)>>,
-    /// Whether the annotation label editing panel is active in the selection combo button.
-    pub annotation_editing: RwSignal<bool>,
-    /// True when editing a just-created annotation (Escape = cancel/delete).
-    pub annotation_is_new_edit: RwSignal<bool>,
-    /// Whether saved annotations are drawn on the spectrogram.
-    pub annotations_visible: RwSignal<bool>,
+    /// Annotation subsystem (store/selection/drag/resize/undo) (grouped store).
+    pub annotations: Store<AnnotationsState>,
 
     /// Project (.batproj) state (grouped reactive store).
     pub project: Store<ProjectState>,
@@ -2234,22 +2241,24 @@ impl AppState {
             hash_computing: RwSignal::new(false),
             hash_generation: RwSignal::new(0),
 
-            annotation_store: RwSignal::new(AnnotationStore::default()),
-            annotations_dirty: RwSignal::new(false),
-            selected_annotation_ids: RwSignal::new(Vec::new()),
-            last_clicked_annotation_id: RwSignal::new(None),
-            selection_auto_focus: RwSignal::new(false),
-            annotation_auto_focus: RwSignal::new(false),
-            export_use_region_focus: RwSignal::new(true),
-            dragging_annotation_id: RwSignal::new(None),
-            drop_target: RwSignal::new(None),
-            undo_stack: RwSignal::new(UndoStack::default()),
-            annotation_drag_handle: RwSignal::new(None),
-            annotation_hover_handle: RwSignal::new(None),
-            annotation_drag_original: RwSignal::new(None),
-            annotation_editing: RwSignal::new(false),
-            annotation_is_new_edit: RwSignal::new(false),
-            annotations_visible: RwSignal::new(true),
+            annotations: Store::new(AnnotationsState {
+                store: AnnotationStore::default(),
+                dirty: false,
+                selected_ids: Vec::new(),
+                last_clicked_id: None,
+                selection_auto_focus: false,
+                auto_focus: false,
+                export_use_region_focus: true,
+                dragging_id: None,
+                drop_target: None,
+                undo_stack: UndoStack::default(),
+                drag_handle: None,
+                hover_handle: None,
+                drag_original: None,
+                editing: false,
+                is_new_edit: false,
+                visible: true,
+            }),
 
             project: Store::new(ProjectState {
                 enabled: {
@@ -2397,7 +2406,7 @@ impl AppState {
 
     /// Returns the single selected annotation ID, or None if zero or multiple are selected.
     pub fn selected_annotation_id(&self) -> Option<AnnotationId> {
-        let ids = self.selected_annotation_ids.get();
+        let ids = self.annotations.selected_ids().get();
         if ids.len() == 1 { Some(ids[0].clone()) } else { None }
     }
 
@@ -2468,7 +2477,7 @@ impl AppState {
     /// Apply a snapshot to the annotation store: `Some` inserts/replaces,
     /// `None` clears the file's entry. Used by undo/redo restore.
     fn restore_annotation_snapshot(&self, file_id: u64, snapshot: Option<crate::annotations::AnnotationSet>) {
-        self.annotation_store.update(|store| {
+        self.annotations.store().update(|store| {
             match snapshot {
                 Some(set) => store.insert(file_id, set),
                 None => { store.remove(file_id); }
@@ -2491,9 +2500,9 @@ impl AppState {
             Some(id) => id,
             None => return,
         };
-        let store = self.annotation_store.get_untracked();
+        let store = self.annotations.store().get_untracked();
         let snapshot = store.get(file_id).cloned();
-        self.undo_stack.update(|stack| {
+        self.annotations.undo_stack().update(|stack| {
             stack.push_undo(UndoEntry { file_id, snapshot });
         });
     }
@@ -2502,7 +2511,7 @@ impl AppState {
     pub fn undo_annotations(&self) {
         let entry = {
             let mut popped = None;
-            self.undo_stack.update(|stack| {
+            self.annotations.undo_stack().update(|stack| {
                 popped = stack.undo.pop();
             });
             match popped {
@@ -2512,22 +2521,22 @@ impl AppState {
         };
 
         // Save current state to redo before restoring
-        let store = self.annotation_store.get_untracked();
+        let store = self.annotations.store().get_untracked();
         let current = store.get(entry.file_id).cloned();
-        self.undo_stack.update(|stack| {
+        self.annotations.undo_stack().update(|stack| {
             stack.redo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot
         self.restore_annotation_snapshot(entry.file_id, entry.snapshot);
-        self.annotations_dirty.set(true);
+        self.annotations.dirty().set(true);
     }
 
     /// Redo the last undone annotation operation.
     pub fn redo_annotations(&self) {
         let entry = {
             let mut popped = None;
-            self.undo_stack.update(|stack| {
+            self.annotations.undo_stack().update(|stack| {
                 popped = stack.redo.pop();
             });
             match popped {
@@ -2537,25 +2546,25 @@ impl AppState {
         };
 
         // Save current state to undo before restoring
-        let store = self.annotation_store.get_untracked();
+        let store = self.annotations.store().get_untracked();
         let current = store.get(entry.file_id).cloned();
-        self.undo_stack.update(|stack| {
+        self.annotations.undo_stack().update(|stack| {
             stack.undo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot
         self.restore_annotation_snapshot(entry.file_id, entry.snapshot);
-        self.annotations_dirty.set(true);
+        self.annotations.dirty().set(true);
     }
 
     /// Whether there's something to undo.
     pub fn can_undo(&self) -> bool {
-        !self.undo_stack.get().undo.is_empty()
+        !self.annotations.undo_stack().get().undo.is_empty()
     }
 
     /// Whether there's something to redo.
     pub fn can_redo(&self) -> bool {
-        !self.undo_stack.get().redo.is_empty()
+        !self.annotations.undo_stack().get().redo.is_empty()
     }
 
     pub fn show_info_toast(&self, msg: impl Into<String>) {
@@ -2817,12 +2826,12 @@ impl AppState {
     /// Frequency bounds implied by the current annotation selection, if any.
     pub fn selected_annotation_focus_range(&self) -> Option<(f64, f64)> {
         let file_id = self.current_file_id()?;
-        let ids = self.selected_annotation_ids.get_untracked();
+        let ids = self.annotations.selected_ids().get_untracked();
         if ids.is_empty() {
             return None;
         }
 
-        let store = self.annotation_store.get_untracked();
+        let store = self.annotations.store().get_untracked();
         let set = store.get(file_id)?;
 
         let mut freq_lo = f64::MAX;
@@ -2862,7 +2871,7 @@ impl AppState {
 
     /// Keep the annotation focus override in sync with the current selection.
     pub fn sync_annotation_auto_focus(&self) {
-        if !self.annotation_auto_focus.get_untracked() {
+        if !self.annotations.auto_focus().get_untracked() {
             self.pop_annotation_ff();
             return;
         }
