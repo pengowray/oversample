@@ -30,6 +30,12 @@ pub use crate::types::{PreRendered, SpectDisplaySettings};
 /// Width = number of columns, Height = number of frequency bins.
 /// Frequency axis: row 0 = highest frequency (top), last row = 0 Hz (bottom).
 pub fn pre_render(data: &SpectrogramData) -> PreRendered {
+    debug_assert!(
+        !data.is_store_backed(),
+        "pre_render: store-backed spectrogram ({} cols resident, {} total) — \
+         `columns` is not the full set; use the tiled path instead",
+        data.columns_in_memory(), data.total_columns,
+    );
     if data.columns.is_empty() {
         return PreRendered {
             width: 0,

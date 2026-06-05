@@ -30,6 +30,12 @@ pub struct FlowData {
 /// Compute flow data (expensive): greyscale + shift values for every pixel.
 /// Only needs to re-run when the file or algorithm changes.
 pub fn compute_flow_data(data: &SpectrogramData, algo: FlowAlgo) -> FlowData {
+    debug_assert!(
+        !data.is_store_backed(),
+        "compute_flow_data: store-backed spectrogram ({} cols resident, {} total) — \
+         `columns` is not the full set; use the tiled path instead",
+        data.columns_in_memory(), data.total_columns,
+    );
     if data.columns.is_empty() {
         return FlowData {
             width: 0,

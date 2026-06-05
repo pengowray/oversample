@@ -246,15 +246,21 @@ impl InMemorySource {
         };
         let ch = ch as usize;
         let channels = self.channels as usize;
+        // Bound the read in u64 so a `start` past the buffer (or, on wasm32,
+        // past usize::MAX) saturates to 0 instead of truncating into a
+        // valid-looking offset. Only the final, provably in-range index is cast.
+        let frames = self.frame_count() as u64;
+        let avail = frames.saturating_sub(start);
         if ch >= channels {
             // Invalid channel index — return silence
             for s in buf.iter_mut() { *s = 0.0; }
-            return buf.len().min(self.frame_count().saturating_sub(start as usize));
+            return (buf.len() as u64).min(avail) as usize;
         }
-        let start = start as usize;
-        let frames = self.frame_count();
-        let avail = frames.saturating_sub(start);
-        let n = buf.len().min(avail);
+        let n = (buf.len() as u64).min(avail) as usize;
+        if n == 0 {
+            return 0;
+        }
+        let start = start as usize; // lossless: start < frames <= usize::MAX
         for i in 0..n {
             buf[i] = raw[(start + i) * channels + ch];
         }
@@ -263,9 +269,15 @@ impl InMemorySource {
 
     /// Read from the mono-mixed buffer.
     fn read_mono(&self, start: u64, buf: &mut [f32]) -> usize {
-        let start = start as usize;
-        let avail = self.samples.len().saturating_sub(start);
-        let n = buf.len().min(avail);
+        // Bound the read in u64 (see `extract_channel`): a `start` at/after the
+        // end saturates to 0 rather than wrapping on a 32-bit `usize`.
+        let len = self.samples.len() as u64;
+        let avail = len.saturating_sub(start);
+        let n = (buf.len() as u64).min(avail) as usize;
+        if n == 0 {
+            return 0;
+        }
+        let start = start as usize; // lossless: start < len <= usize::MAX
         buf[..n].copy_from_slice(&self.samples[start..start + n]);
         n
     }

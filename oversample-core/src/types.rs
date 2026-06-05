@@ -62,6 +62,11 @@ pub struct SpectrogramColumn {
 
 #[derive(Clone, Debug)]
 pub struct SpectrogramData {
+    /// In-memory STFT columns. May NOT be the full spectrogram — for large
+    /// files this is empty and the columns live in the spectral store instead
+    /// (see `total_columns` and [`SpectrogramData::is_store_backed`]). Treat
+    /// `total_columns` as the authoritative width; only iterate `columns`
+    /// directly after checking `is_store_backed()`.
     pub columns: Arc<Vec<SpectrogramColumn>>,
     /// Total number of STFT columns in the full spectrogram.
     /// For large files, `columns` may be empty while `total_columns` is non-zero
@@ -71,6 +76,24 @@ pub struct SpectrogramData {
     pub time_resolution: f64,
     pub max_freq: f64,
     pub sample_rate: u32,
+}
+
+impl SpectrogramData {
+    /// True when `columns` is NOT the full spectrogram — the columns live in the
+    /// spectral store (LRU) and must be read through it, not by iterating
+    /// `columns` directly. For large files `columns` is empty while
+    /// `total_columns` is non-zero (see the field docs). Consumers that walk
+    /// `columns` assuming completeness (e.g. the non-tiled renderers) should
+    /// check this first, or use `total_columns` as the authoritative width.
+    pub fn is_store_backed(&self) -> bool {
+        self.columns.len() != self.total_columns
+    }
+
+    /// Number of columns actually resident in the in-memory `columns` vec
+    /// (0 for a store-backed spectrogram).
+    pub fn columns_in_memory(&self) -> usize {
+        self.columns.len()
+    }
 }
 
 #[derive(Clone, Debug)]
