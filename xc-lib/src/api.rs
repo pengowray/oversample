@@ -3,8 +3,22 @@ use crate::types::{XcRecording, XcSearchResult};
 const API_BASE: &str = "https://xeno-canto.org/api/3/recordings";
 
 /// Parse an XC recording from API JSON.
+///
+/// Rejects (returns `None` for) records missing the fields that make a record
+/// usable, rather than letting them through with empty values that fail opaquely
+/// later:
+///  - `id` must be present AND numeric — `id_num()` parses it and falls back to
+///    0, which would collide as `XC0` in the cache/index filename scheme.
+///  - `file` (the download URL) must be present and non-empty, else the record
+///    is undownloadable and would only fail at download time.
 fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
-    let _id = rec["id"].as_str()?; // ensure id exists
+    let id = rec["id"].as_str()?;
+    if id.parse::<u64>().is_err() {
+        return None; // non-numeric id → would collide at XC0
+    }
+    if rec["file"].as_str().unwrap_or("").is_empty() {
+        return None; // no download URL → undownloadable record
+    }
     let s = |key: &str| rec[key].as_str().unwrap_or("").to_string();
     let also = rec["also"]
         .as_array()
@@ -78,6 +92,13 @@ fn parse_search_response(body: &serde_json::Value) -> Result<XcSearchResult, Str
         .map(|n| n as u32)
         .unwrap_or(1);
 
+    // Surface a schema mismatch rather than silently returning zero results: a
+    // present-but-non-array `recordings` means the response shape changed.
+    if let Some(v) = body.get("recordings") {
+        if !v.is_array() {
+            return Err("unexpected XC response: `recordings` is not an array".to_string());
+        }
+    }
     let recordings = body["recordings"]
         .as_array()
         .map(|arr| arr.iter().filter_map(parse_recording).collect())
@@ -259,4 +280,43 @@ pub fn parse_xc_number(input: &str) -> Result<u64, String> {
     }
 
     Err(format!("Can't parse XC number from: {s}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_recording_rejects_missing_critical_fields() {
+        // No id → rejected.
+        assert!(parse_recording(&json!({ "file": "https://x/a.mp3" })).is_none());
+        // Non-numeric id → rejected (would collide at XC0).
+        assert!(parse_recording(&json!({ "id": "abc", "file": "https://x/a.mp3" })).is_none());
+        // Missing / empty download URL → rejected (would fail opaquely later).
+        assert!(parse_recording(&json!({ "id": "123" })).is_none());
+        assert!(parse_recording(&json!({ "id": "123", "file": "" })).is_none());
+    }
+
+    #[test]
+    fn parse_recording_accepts_valid() {
+        let rec = parse_recording(&json!({
+            "id": "928094", "file": "https://x/a.mp3", "gen": "Myotis", "sp": "daubentonii"
+        }));
+        let rec = rec.expect("valid record");
+        assert_eq!(rec.id, "928094");
+        assert_eq!(rec.id_num(), 928094);
+        assert_eq!(rec.file_url, "https://x/a.mp3");
+    }
+
+    #[test]
+    fn parse_search_response_flags_schema_mismatch() {
+        // `recordings` present but not an array → error, not silent empty.
+        assert!(parse_search_response(&json!({ "recordings": "oops" })).is_err());
+        // A top-level error is surfaced.
+        assert!(parse_search_response(&json!({ "error": "bad key" })).is_err());
+        // A well-formed empty result is fine.
+        let ok = parse_search_response(&json!({ "numRecordings": "0", "recordings": [] }));
+        assert_eq!(ok.unwrap().recordings.len(), 0);
+    }
 }
