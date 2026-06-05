@@ -3,33 +3,7 @@
 //! Computes averaged periodograms over overlapping Hann-windowed segments,
 //! with peak detection and bandwidth analysis (-6 dB, -10 dB).
 
-use realfft::RealFftPlanner;
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-// ── Thread-local caches ─────────────────────────────────────────────────────
-
-thread_local! {
-    static PSD_FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
-    static PSD_HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
-}
-
-fn hann_window(size: usize) -> Vec<f32> {
-    PSD_HANN_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(size)
-            .or_insert_with(|| {
-                (0..size)
-                    .map(|i| {
-                        0.5 * (1.0
-                            - (2.0 * std::f32::consts::PI * i as f32 / (size - 1) as f32).cos())
-                    })
-                    .collect()
-            })
-            .clone()
-    })
-}
+use crate::dsp::fft::{hann_window, plan_fft_forward};
 
 /// Hann window power correction factor: sum of squared window values.
 fn hann_power_sum(size: usize) -> f64 {
@@ -89,7 +63,7 @@ pub fn compute_psd(samples: &[f32], sample_rate: u32, nfft: usize, peak_freq_ran
     let window = hann_window(nfft);
     let power_norm = hann_power_sum(nfft) * sample_rate as f64;
 
-    let fft = PSD_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(nfft));
+    let fft = plan_fft_forward(nfft);
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 
@@ -175,7 +149,7 @@ where
     let window = hann_window(nfft);
     let power_norm = hann_power_sum(nfft) * sample_rate as f64;
 
-    let fft = PSD_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(nfft));
+    let fft = plan_fft_forward(nfft);
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 

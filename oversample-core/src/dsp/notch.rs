@@ -149,31 +149,7 @@ pub fn apply_notch_filters(
 
 // ── Noise detection ─────────────────────────────────────────────────────────
 
-use realfft::RealFftPlanner;
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-thread_local! {
-    static NOTCH_FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
-    static NOTCH_HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
-}
-
-fn hann_window(size: usize) -> Vec<f32> {
-    NOTCH_HANN_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(size)
-            .or_insert_with(|| {
-                (0..size)
-                    .map(|i| {
-                        0.5 * (1.0
-                            - (2.0 * std::f32::consts::PI * i as f32 / (size - 1) as f32).cos())
-                    })
-                    .collect()
-            })
-            .clone()
-    })
-}
+use crate::dsp::fft::{hann_window, plan_fft_forward};
 
 /// Configuration for noise detection.
 pub struct DetectionConfig {
@@ -220,7 +196,7 @@ pub fn detect_noise_bands(
 
     let window = hann_window(fft_size);
 
-    let fft = NOTCH_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 
@@ -380,7 +356,7 @@ where
 
     let window = hann_window(fft_size);
 
-    let fft = NOTCH_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 

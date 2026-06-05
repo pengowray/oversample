@@ -5,9 +5,7 @@
 
 use serde::{Serialize, Deserialize};
 use realfft::num_complex::Complex;
-use realfft::RealFftPlanner;
-use std::cell::RefCell;
-use std::collections::HashMap;
+use crate::dsp::fft::{hann_window, plan_fft_forward, plan_fft_inverse};
 
 /// A learned noise floor spectrum for spectral subtraction.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,30 +20,6 @@ pub struct NoiseFloor {
     pub analysis_duration_secs: f64,
     /// Number of STFT frames averaged.
     pub frame_count: u64,
-}
-
-// ── Thread-local caches ─────────────────────────────────────────────────────
-
-thread_local! {
-    static SS_FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
-    static SS_HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
-}
-
-fn hann_window(size: usize) -> Vec<f32> {
-    SS_HANN_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(size)
-            .or_insert_with(|| {
-                (0..size)
-                    .map(|i| {
-                        0.5 * (1.0
-                            - (2.0 * std::f32::consts::PI * i as f32 / (size - 1) as f32).cos())
-                    })
-                    .collect()
-            })
-            .clone()
-    })
 }
 
 // ── Noise floor learning ────────────────────────────────────────────────────
@@ -79,7 +53,7 @@ where
 
     let window = hann_window(fft_size);
 
-    let fft = SS_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 
@@ -181,10 +155,7 @@ pub fn apply_spectral_subtraction(
         noise_floor.bin_magnitudes.clone()
     };
 
-    let (fft_fwd, fft_inv) = SS_FFT_PLANNER.with(|p| {
-        let mut p = p.borrow_mut();
-        (p.plan_fft_forward(fft_size), p.plan_fft_inverse(fft_size))
-    });
+    let (fft_fwd, fft_inv) = (plan_fft_forward(fft_size), plan_fft_inverse(fft_size));
 
     let mut output = vec![0.0f32; len];
     let mut window_sum = vec![0.0f32; len];

@@ -1,34 +1,10 @@
 use realfft::num_complex::Complex;
-use realfft::RealFftPlanner;
 use crate::audio::source::ChannelView;
 use crate::types::{AudioData, SpectrogramData, SpectrogramColumn};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use crate::dsp::fft::{hann_window, plan_fft_forward};
 use std::f32::consts::PI;
 
 type Complex32 = Complex<f32>;
-
-thread_local! {
-    static HARM_FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
-    static HARM_HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
-}
-
-fn hann_window(size: usize) -> Vec<f32> {
-    HARM_HANN_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(size)
-            .or_insert_with(|| {
-                (0..size)
-                    .map(|i| {
-                        0.5 * (1.0
-                            - (2.0 * PI * i as f32 / (size - 1) as f32).cos())
-                    })
-                    .collect()
-            })
-            .clone()
-    })
-}
 
 #[derive(Clone)]
 pub struct HarmonicsAnalysis {
@@ -220,7 +196,7 @@ fn compute_complex_stft(
 ) -> Vec<Vec<Complex32>> {
     let total = audio.source.total_samples() as usize;
     let samples = audio.source.read_region(ChannelView::MonoMix, 0, total);
-    let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let window = hann_window(fft_size);
     let mut frames = Vec::new();
     let mut input = fft.make_input_vec();
@@ -591,7 +567,7 @@ pub fn compute_tile_phase_data(
     // Compute complex STFT frames. We need col_count + 1 frames to produce
     // col_count phase-deviation columns (deviation between consecutive frames).
     let n_frames_needed = col_count + 1;
-    let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let window = hann_window(fft_size);
     let n_bins = fft_size / 2 + 1;
 
@@ -674,7 +650,7 @@ pub fn compute_tile_phase_angle_data(
 ) -> crate::types::PreRendered {
     use crate::canvas::colors::magnitude_to_db;
 
-    let fft = HARM_FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(fft_size));
+    let fft = plan_fft_forward(fft_size);
     let window = hann_window(fft_size);
     let n_bins = fft_size / 2 + 1;
 

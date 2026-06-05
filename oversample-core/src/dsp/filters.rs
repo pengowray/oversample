@@ -1,11 +1,4 @@
-use realfft::RealFftPlanner;
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-thread_local! {
-    static FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
-    static HANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
-}
+use crate::dsp::fft::{hann_window, plan_fft_forward, plan_fft_inverse};
 
 pub fn harmonics_band_bounds(freq_low: f64, freq_high: f64, band_mode: u8) -> Option<(f64, f64)> {
     if band_mode < 4 || freq_high <= 0.0 || freq_low >= freq_high {
@@ -19,23 +12,6 @@ pub fn harmonics_band_bounds(freq_low: f64, freq_high: f64, band_mode: u8) -> Op
     } else {
         None
     }
-}
-
-fn hann_window(size: usize) -> Vec<f32> {
-    HANN_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(size)
-            .or_insert_with(|| {
-                (0..size)
-                    .map(|i| {
-                        0.5 * (1.0
-                            - (2.0 * std::f32::consts::PI * i as f32 / (size - 1) as f32).cos())
-                    })
-                    .collect()
-            })
-            .clone()
-    })
 }
 
 /// Apply a multi-band EQ filter in the frequency domain using overlap-add FFT processing.
@@ -96,10 +72,7 @@ pub fn apply_eq_filter(
         })
         .collect();
 
-    let (fft_fwd, fft_inv) = FFT_PLANNER.with(|p| {
-        let mut p = p.borrow_mut();
-        (p.plan_fft_forward(fft_size), p.plan_fft_inverse(fft_size))
-    });
+    let (fft_fwd, fft_inv) = (plan_fft_forward(fft_size), plan_fft_inverse(fft_size));
 
     // Overlap-add output buffer
     let mut output = vec![0.0f32; len];
@@ -270,10 +243,7 @@ pub fn split_three_bands_fft(
     let num_bins = fft_size / 2 + 1;
     let freq_per_bin = sample_rate as f64 / fft_size as f64;
 
-    let (fft_fwd, fft_inv) = FFT_PLANNER.with(|p| {
-        let mut p = p.borrow_mut();
-        (p.plan_fft_forward(fft_size), p.plan_fft_inverse(fft_size))
-    });
+    let (fft_fwd, fft_inv) = (plan_fft_forward(fft_size), plan_fft_inverse(fft_size));
 
     let mut below = vec![0.0f32; len];
     let mut middle = vec![0.0f32; len];

@@ -13,7 +13,21 @@ thread_local! {
     static DHANN_CACHE: RefCell<HashMap<usize, Vec<f32>>> = RefCell::new(HashMap::new());
 }
 
-fn hann_window(size: usize) -> Vec<f32> {
+/// Plan (and cache) a forward real FFT of `size` via the shared thread-local
+/// planner. Single source of truth — other DSP modules call this instead of
+/// each keeping their own `RealFftPlanner`.
+pub fn plan_fft_forward(size: usize) -> Arc<dyn realfft::RealToComplex<f32>> {
+    FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(size))
+}
+
+/// Plan (and cache) an inverse real FFT of `size` via the shared planner.
+pub fn plan_fft_inverse(size: usize) -> Arc<dyn realfft::ComplexToReal<f32>> {
+    FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_inverse(size))
+}
+
+/// Symmetric Hann window of `size`, cached. Single source of truth — other DSP
+/// modules call this instead of each keeping their own identical copy + cache.
+pub fn hann_window(size: usize) -> Vec<f32> {
     HANN_CACHE.with(|cache| {
         cache
             .borrow_mut()

@@ -25,8 +25,11 @@ pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64, cutoff_hz
         .collect();
 
     // Step 2: Cascaded low-pass filter to remove the sum frequency component.
-    // 4 passes of a single-pole IIR gives -24 dB/octave rolloff
-    // (equivalent to a 4th-order Butterworth).
+    // 4 passes of a single-pole IIR (EMA) give a -24 dB/octave ASYMPTOTIC
+    // rolloff. NOTE: this is NOT a 4th-order Butterworth — the four real poles
+    // sit at the same cutoff (a "synchronously-tuned" cascade), so the knee is
+    // gentle, the effective -3 dB point falls below `cutoff_hz`, and there is no
+    // maximally-flat passband. Only the far-stopband slope matches Butterworth.
     let mut filtered = mixed;
     for _ in 0..4 {
         filtered = lowpass_filter(&filtered, cutoff_hz, sample_rate);
