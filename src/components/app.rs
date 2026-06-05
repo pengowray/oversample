@@ -445,10 +445,21 @@ pub fn App() -> impl IntoView {
                     .unwrap_or(false)
             });
             if needs_write {
+                // Vertical zoom is a VIEWPORT setting: it follows the MULTITRACK
+                // group (simultaneous channels of one recording → same frequency
+                // content of interest), so switching tracks keeps the same window.
+                // [cross-file state-scoping model]
+                let mt_members = state.library.files().with_untracked(|files| {
+                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(&names, files);
+                    crate::components::file_sidebar::file_groups::multitrack_members(&groups, i)
+                });
                 state.library.files().update(|files| {
-                    if let Some(f) = files.get_mut(i) {
-                        f.min_display_freq = min;
-                        f.max_display_freq = max;
+                    for &j in &mt_members {
+                        if let Some(f) = files.get_mut(j) {
+                            f.min_display_freq = min;
+                            f.max_display_freq = max;
+                        }
                     }
                 });
             }
