@@ -619,18 +619,33 @@ pub fn App() -> impl IntoView {
     // Save/restore per-file settings (gain, noise filter) when switching files.
     // Files in the same sequence group share settings.
     // Also resets HFR to OFF for each new file.
+    //
+    // We pin the "previous file" to its STABLE `LoadedFile.id`, not its
+    // positional index: `remove_file_at` shifts indices (and so changes
+    // `current_index`'s value) without changing WHICH file is current. Keying on
+    // the index would mistake such a reindex for a switch and (a) save the
+    // current globals onto a now-shifted neighbour, (b) discard the current
+    // file's unsaved edits, and (c) reset its HFR/focus/annotation selection.
     {
-        let prev_idx: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+        let prev_id: std::cell::Cell<Option<u64>> = std::cell::Cell::new(None);
         Effect::new(move |_| {
             let new_idx = state.library.current_index().get();
+            let new_id = new_idx.and_then(|i| {
+                state.library.files().with_untracked(|f| f.get(i).map(|lf| lf.id))
+            });
 
-            let old_idx = prev_idx.get();
-            prev_idx.set(new_idx);
+            let old_id = prev_id.get();
+            prev_id.set(new_id);
 
-            // If HFR is on and we're switching files, swap gain back to
-            // "normal" orientation before saving the outgoing file settings.
-            let was_hfr = old_idx.is_some()
-                && old_idx != new_idx
+            // Same file (incl. a pure reindex from removing some OTHER file):
+            // nothing to save or restore.
+            if old_id == new_id {
+                return;
+            }
+
+            // If HFR is on, swap gain back to "normal" orientation before saving
+            // the outgoing file settings.
+            let was_hfr = old_id.is_some()
                 && state.viewmode.focus_stack().get_untracked().hfr_enabled();
             if was_hfr {
                 let current_gain = state.gain.db().get_untracked();
@@ -639,11 +654,15 @@ pub fn App() -> impl IntoView {
                 state.gain.db_stash().set(current_gain);
             }
 
-            // Save current settings to the outgoing file
-            if let Some(oi) = old_idx {
-                let settings = FileSettings::from_state(&state);
+            // Resolve the outgoing file's CURRENT index by id (it may have
+            // shifted; `None` means it was removed → nothing to save).
+            let old_oi = old_id.and_then(|oid| {
+                state.library.files().with_untracked(|f| f.iter().position(|lf| lf.id == oid))
+            });
 
-                // Save to the outgoing file and all files in its sequence group
+            // Save current settings to the outgoing file + its sequence group.
+            if let Some(oi) = old_oi {
+                let settings = FileSettings::from_state(&state);
                 let names: Vec<String> = state.library.files().get_untracked().iter().map(|f| f.name.clone()).collect();
                 let groups = crate::components::file_sidebar::file_groups::compute_file_groups(&names);
                 let group_key = groups.get(oi).and_then(|g| g.as_ref()).map(|ti| ti.group_key.clone());
@@ -660,22 +679,19 @@ pub fn App() -> impl IntoView {
                 });
             }
 
-            // Clear annotation selection and save outgoing file's sidecar when switching
-            if old_idx != new_idx {
-                state.annotations.selected_ids().set(Vec::new());
-                state.pop_annotation_ff();
-                // Save outgoing file's annotations
-                if let Some(oi) = old_idx {
-                    crate::opfs::save_annotations(state, oi);
-                }
-                // Reset HFR and focus stack for the new file (HFR defaults to OFF).
-                state.viewmode.focus_stack().set(crate::focus_stack::FocusStack::new());
-                if was_hfr {
-                    state.playback.mode().set(PlaybackMode::Normal);
-                    state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
-                    state.view.min_display_freq().set(None);
-                    state.view.max_display_freq().set(None);
-                }
+            // Genuine switch: clear annotation selection, save the outgoing
+            // file's sidecar, reset HFR/focus for the new file.
+            state.annotations.selected_ids().set(Vec::new());
+            state.pop_annotation_ff();
+            if let Some(oi) = old_oi {
+                crate::opfs::save_annotations(state, oi);
+            }
+            state.viewmode.focus_stack().set(crate::focus_stack::FocusStack::new());
+            if was_hfr {
+                state.playback.mode().set(PlaybackMode::Normal);
+                state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
+                state.view.min_display_freq().set(None);
+                state.view.max_display_freq().set(None);
             }
 
             // Restore settings from the incoming file (single restore boundary).
