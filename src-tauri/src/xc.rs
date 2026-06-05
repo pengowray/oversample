@@ -179,7 +179,8 @@ pub async fn xc_download(
         .await
         .map_err(|e| format!("XC{id}: {e}"))?;
 
-    // Compute hashes before saving (save_recording also computes them internally)
+    // Compute hashes once, here, and hand them to save_recording so it doesn't
+    // re-hash the full buffer (sha256 + blake3 + spot + content) a second time.
     let file_hashes = cache::compute_file_hashes(&audio_bytes);
     let hashes = Some(xc_lib::cache::SidecarHashes {
         blake3: Some(file_hashes.blake3.clone()),
@@ -192,7 +193,7 @@ pub async fn xc_download(
     });
 
     // Save to cache
-    let audio_path = cache::save_recording(&cache_root, &rec, &audio_bytes)
+    let audio_path = cache::save_recording(&cache_root, &rec, &audio_bytes, Some(&file_hashes))
         .map_err(|e| format!("XC{id}: {e}"))?;
 
     let filename = audio_path

@@ -498,6 +498,7 @@ pub fn save_recording(
     root: &Path,
     rec: &XcRecording,
     audio_bytes: &[u8],
+    precomputed_hashes: Option<&FileHashes>,
 ) -> Result<PathBuf, String> {
     // Validate audio bytes before writing anything
     if audio_bytes.is_empty() {
@@ -524,10 +525,19 @@ pub fn save_recording(
     fs::write(&audio_path, audio_bytes)
         .map_err(|e| format!("Failed to write audio: {e}"))?;
 
-    // Write metadata sidecar (with file hashes)
+    // Write metadata sidecar (with file hashes). Reuse the caller's hashes when
+    // provided — hashing a large recording (sha256 + blake3 + spot + content) is
+    // expensive and `xc_download` already computed them for its return value.
     let meta_path = sounds_dir.join(&meta_filename);
-    let hashes = compute_file_hashes(audio_bytes);
-    let metadata = build_metadata_json_with_hashes(rec, &hashes);
+    let computed;
+    let hashes = match precomputed_hashes {
+        Some(h) => h,
+        None => {
+            computed = compute_file_hashes(audio_bytes);
+            &computed
+        }
+    };
+    let metadata = build_metadata_json_with_hashes(rec, hashes);
     let json_str = serde_json::to_string_pretty(&metadata)
         .map_err(|e| format!("Serialize error: {e}"))?;
     fs::write(&meta_path, format!("{json_str}\n"))

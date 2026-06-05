@@ -243,7 +243,7 @@ async fn main() {
                         std::process::exit(1);
                     });
 
-                let audio_path = cache::save_recording(&cache_root, &rec, &audio_bytes)
+                let audio_path = cache::save_recording(&cache_root, &rec, &audio_bytes, None)
                     .unwrap_or_else(|e| {
                         eprintln!("Error: {e}");
                         std::process::exit(1);
@@ -455,7 +455,7 @@ async fn main() {
 
                     match api::download_audio(&client, &rec.file_url).await {
                         Ok(audio_bytes) => {
-                            match cache::save_recording(&cache_root, rec, &audio_bytes) {
+                            match cache::save_recording(&cache_root, rec, &audio_bytes, None) {
                                 Ok(path) => {
                                     eprintln!(
                                         "    Saved {} ({:.1} MB)",
