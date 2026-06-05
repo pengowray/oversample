@@ -28,33 +28,69 @@ fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
 
 /// Save the current project to OPFS (fire-and-forget).
 pub(crate) fn save_project_async(state: AppState) {
-    let proj = state.project.current().get_untracked();
-    if let Some(proj) = proj {
-        state.project.save_status().set("Saving...");
-        spawn_local(async move {
-            match project_store::save_project(&proj).await {
-                Ok(()) => {
-                    state.project.dirty().set(false);
-                    state.project.save_status().set("Saved");
-                    // Clear "Saved" after 3 seconds
-                    let cb = wasm_bindgen::closure::Closure::once(move || {
-                        if state.project.save_status().get_untracked() == "Saved" {
-                            state.project.save_status().set("");
-                        }
-                    });
-                    let _ = web_sys::window().unwrap()
-                        .set_timeout_with_callback_and_timeout_and_arguments_0(
-                            cb.as_ref().unchecked_ref(), 3000,
-                        );
-                    cb.forget();
-                }
-                Err(e) => {
-                    log::error!("Failed to save project: {e}");
-                    state.project.save_status().set("");
-                }
-            }
-        });
+    use std::cell::Cell;
+    // Single-flight guard. Without it, the 2s autosave timer and a manual Save
+    // (or a second autosave) can run two concurrent writes to the SAME project
+    // file — last finisher wins, possibly with stale data. While a save is in
+    // flight we just record that another is wanted and coalesce it afterward.
+    thread_local! {
+        static SAVING: Cell<bool> = const { Cell::new(false) };
+        static PENDING: Cell<bool> = const { Cell::new(false) };
     }
+    if SAVING.with(|s| s.get()) {
+        PENDING.with(|p| p.set(true));
+        return;
+    }
+
+    let proj = match state.project.current().get_untracked() {
+        Some(p) => p,
+        None => return,
+    };
+    SAVING.with(|s| s.set(true));
+    // Clear `dirty` BEFORE the await, not after. The snapshot `proj` is frozen
+    // here; any edit made DURING the write re-marks dirty, and the follow-up
+    // pass below saves that newer state — so edits during a save are never lost.
+    state.project.dirty().set(false);
+    state.project.save_status().set("Saving...");
+    spawn_local(async move {
+        let result = project_store::save_project(&proj).await;
+        SAVING.with(|s| s.set(false));
+        let ok = result.is_ok();
+        match result {
+            Ok(()) => {
+                state.project.save_status().set("Saved");
+                // Clear "Saved" after 3 seconds
+                let cb = wasm_bindgen::closure::Closure::once(move || {
+                    if state.project.save_status().get_untracked() == "Saved" {
+                        state.project.save_status().set("");
+                    }
+                });
+                let _ = web_sys::window().unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.as_ref().unchecked_ref(), 3000,
+                    );
+                cb.forget();
+            }
+            Err(e) => {
+                log::error!("Failed to save project: {e}");
+                // The write didn't land — restore dirty so the next autosave
+                // (2s debounce) retries instead of leaving it falsely "clean".
+                state.project.dirty().set(true);
+                state.project.save_status().set("");
+            }
+        }
+        // Coalesced follow-up: a save requested while busy (PENDING), or an edit
+        // that arrived during the write (dirty re-set), needs one more pass.
+        // Only chain after a SUCCESSFUL save — on failure dirty is already true
+        // and the 2s autosave retries, so recursing here would tight-loop.
+        let pending = PENDING.with(|p| p.replace(false));
+        if ok
+            && (pending || state.project.dirty().get_untracked())
+            && state.project.current().with_untracked(|p| p.is_some())
+        {
+            save_project_async(state);
+        }
+    });
 }
 
 #[component]
