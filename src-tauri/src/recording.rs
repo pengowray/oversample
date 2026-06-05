@@ -593,19 +593,27 @@ pub fn open_mic(
 }
 
 /// Encode the recording buffer to WAV at native bit depth.
-pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
-    // Auto bit depth: a 32-bit-container stream that is actually delivering
-    // 24-bit data (low 8 bits always zero — the DUO-CAPTURE EX and most USB/
-    // pro interfaces) is stored as 24-bit. That's a third smaller, carries the
-    // correct bit depth in the header, and is LOSSLESS for a true 24-bit device
-    // (the I24 branch shifts off the always-zero low 8 bits). Falls back to the
-    // container format until detection has settled or for genuine 32-bit input.
-    let out_format = match buffer.format {
-        NativeSampleFormat::I32 if buffer.effective_bits(32).is_some_and(|b| b <= 24) => {
-            NativeSampleFormat::I24
-        }
+/// The WAV format to actually write. Auto-detect down-converts a 32-bit
+/// container to the smallest format that holds the detected effective bit depth:
+/// 16-bit for <=16-bit data (which zero-pads a 12-bit recorder cleanly — the low
+/// bits drop out in the shift), 24-bit for <=24-bit (e.g. DUO-CAPTURE EX). It's
+/// lossless for a device that genuinely delivers that depth, a half/third
+/// smaller, and labels the header correctly. Falls back to the container until
+/// detection settles or for genuine 32-bit input. (A per-device override can
+/// force a specific depth — wired separately.)
+fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
+    match buffer.format {
+        NativeSampleFormat::I32 => match buffer.effective_bits(32) {
+            Some(b) if b <= 16 => NativeSampleFormat::I16,
+            Some(b) if b <= 24 => NativeSampleFormat::I24,
+            _ => NativeSampleFormat::I32,
+        },
         other => other,
-    };
+    }
+}
+
+pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
+    let out_format = output_format(buffer);
 
     let spec = hound::WavSpec {
         channels: 1,
@@ -622,35 +630,29 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     let mut writer =
         hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV writer error: {}", e))?;
 
-    match out_format {
+    let werr = |e: hound::Error| format!("WAV write error: {}", e);
+    match buffer.format {
         NativeSampleFormat::I16 => {
             for &s in &buffer.samples_i16 {
-                writer
-                    .write_sample(s)
-                    .map_err(|e| format!("WAV write error: {}", e))?;
+                writer.write_sample(s).map_err(werr)?;
             }
         }
-        NativeSampleFormat::I24 => {
+        // i32 container source: write at the (possibly down-converted) out depth.
+        // The shifts drop only the always-zero low bits, so this is lossless for a
+        // device that genuinely delivers `out_format` bits.
+        NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
             for &s in &buffer.samples_i32 {
-                // Mask to 24-bit range
-                let s24 = (s >> 8) as i32;
-                writer
-                    .write_sample(s24)
-                    .map_err(|e| format!("WAV write error: {}", e))?;
-            }
-        }
-        NativeSampleFormat::I32 => {
-            for &s in &buffer.samples_i32 {
-                writer
-                    .write_sample(s)
-                    .map_err(|e| format!("WAV write error: {}", e))?;
+                match out_format {
+                    NativeSampleFormat::I16 => writer.write_sample((s >> 16) as i16),
+                    NativeSampleFormat::I24 => writer.write_sample(s >> 8),
+                    _ => writer.write_sample(s),
+                }
+                .map_err(werr)?;
             }
         }
         NativeSampleFormat::F32 => {
             for &s in &buffer.samples_f32 {
-                writer
-                    .write_sample(s)
-                    .map_err(|e| format!("WAV write error: {}", e))?;
+                writer.write_sample(s).map_err(werr)?;
             }
         }
     }
