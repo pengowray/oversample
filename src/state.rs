@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use reactive_stores::Store;
+use std::collections::VecDeque;
 use crate::audio::source::ChannelView;
 use crate::canvas::spectrogram_renderer::Colormap;
 use crate::canvas::flow::FlowAlgo;
@@ -1033,17 +1034,19 @@ pub struct UndoEntry {
 /// Undo/redo stack for annotation operations.
 #[derive(Clone, Debug, Default)]
 pub struct UndoStack {
-    pub undo: Vec<UndoEntry>,
-    pub redo: Vec<UndoEntry>,
+    // VecDeque so overflow-trimming the oldest entry is O(1) pop_front rather
+    // than Vec::remove(0)'s O(n) shift (these are bounded ring buffers).
+    pub undo: VecDeque<UndoEntry>,
+    pub redo: VecDeque<UndoEntry>,
 }
 
 impl UndoStack {
     const MAX_SIZE: usize = 100;
 
     pub fn push_undo(&mut self, entry: UndoEntry) {
-        self.undo.push(entry);
+        self.undo.push_back(entry);
         if self.undo.len() > Self::MAX_SIZE {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
         self.redo.clear();
     }
@@ -1956,7 +1959,7 @@ pub struct ViewModeState {
     pub hfr_enabled: bool,
     pub waveform_view: WaveformView,
     pub overview_view: OverviewView,
-    pub nav_history: Vec<NavEntry>,
+    pub nav_history: VecDeque<NavEntry>,
     pub nav_index: usize,
     pub bookmarks: Vec<Bookmark>,
     /// Incrementing this triggers a spectrogram redraw.
@@ -2502,7 +2505,7 @@ impl AppState {
                 hfr_enabled: false,
                 waveform_view: WaveformView::Frequency,
                 overview_view: OverviewView::Waveform,
-                nav_history: Vec::new(),
+                nav_history: VecDeque::new(),
                 nav_index: 0,
                 bookmarks: Vec::new(),
                 tile_ready_signal: 0,
@@ -2660,12 +2663,12 @@ impl AppState {
         let idx = self.viewmode.nav_index().get_untracked();
         self.viewmode.nav_history().update(|hist| {
             hist.truncate(idx + 1);
-            if hist.last().map(|e: &NavEntry| (e.scroll_offset - entry.scroll_offset).abs() < 0.05).unwrap_or(false) {
+            if hist.back().map(|e: &NavEntry| (e.scroll_offset - entry.scroll_offset).abs() < 0.05).unwrap_or(false) {
                 return;
             }
-            hist.push(entry);
+            hist.push_back(entry);
             if hist.len() > 100 {
-                hist.remove(0);
+                hist.pop_front();
             }
         });
         let new_len = self.viewmode.nav_history().get_untracked().len();
@@ -2734,7 +2737,7 @@ impl AppState {
         let entry = {
             let mut popped = None;
             self.annotations.undo_stack().update(|stack| {
-                popped = stack.undo.pop();
+                popped = stack.undo.pop_back();
             });
             match popped {
                 Some(e) => e,
@@ -2746,7 +2749,7 @@ impl AppState {
         let store = self.annotations.store().get_untracked();
         let current = store.get(entry.file_id).cloned();
         self.annotations.undo_stack().update(|stack| {
-            stack.redo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
+            stack.redo.push_back(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot
@@ -2759,7 +2762,7 @@ impl AppState {
         let entry = {
             let mut popped = None;
             self.annotations.undo_stack().update(|stack| {
-                popped = stack.redo.pop();
+                popped = stack.redo.pop_back();
             });
             match popped {
                 Some(e) => e,
@@ -2771,7 +2774,7 @@ impl AppState {
         let store = self.annotations.store().get_untracked();
         let current = store.get(entry.file_id).cloned();
         self.annotations.undo_stack().update(|stack| {
-            stack.undo.push(UndoEntry { file_id: entry.file_id, snapshot: current });
+            stack.undo.push_back(UndoEntry { file_id: entry.file_id, snapshot: current });
         });
 
         // Restore the snapshot

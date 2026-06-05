@@ -395,7 +395,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             state.timeline.selected_file_indices().set(Vec::new());
                             state.timeline.active().set(None);
                             state.timeline.active_track().set(None);
-                            state.viewmode.nav_history().set(vec![]);
+                            state.viewmode.nav_history().set(std::collections::VecDeque::new());
                             state.viewmode.nav_index().set(0);
                             state.viewmode.bookmarks().set(vec![]);
                             current_idx.set(Some(i));

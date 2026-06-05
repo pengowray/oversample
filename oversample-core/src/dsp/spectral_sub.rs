@@ -123,8 +123,16 @@ pub fn apply_spectral_subtraction(
         return samples.to_vec();
     }
 
-    // Skip if sample rate doesn't match the learned floor
+    // Skip if sample rate doesn't match the learned floor — the per-bin
+    // frequencies wouldn't line up, so subtraction would be wrong. Fail SAFE
+    // (return the input untouched) but warn so the no-op is diagnosable rather
+    // than silent.
     if noise_floor.sample_rate != sample_rate {
+        log::warn!(
+            "spectral subtraction skipped: noise floor learned at {} Hz but audio is {} Hz",
+            noise_floor.sample_rate,
+            sample_rate
+        );
         return samples.to_vec();
     }
 

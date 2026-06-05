@@ -107,17 +107,24 @@ pub struct BatBookEntry {
     pub echolocates: bool,
 }
 
+/// Format Hz as kHz, showing one decimal only when it carries information
+/// (45000 -> "45", 45500 -> "45.5") so sub-kHz precision isn't truncated away.
+fn fmt_khz(hz: f64) -> String {
+    let khz = hz / 1000.0;
+    if (khz - khz.round()).abs() < 0.05 {
+        format!("{}", khz.round() as i64)
+    } else {
+        format!("{khz:.1}")
+    }
+}
+
 impl BatBookEntry {
     /// Format frequency range as "XX\u{2013}YY kHz"
     pub fn freq_range_label(&self) -> String {
         if self.freq_lo_hz == 0.0 && self.freq_hi_hz == 0.0 {
             return "\u{2014}".to_string(); // em dash for no echolocation
         }
-        format!(
-            "{}\u{2013}{} kHz",
-            (self.freq_lo_hz / 1000.0) as u32,
-            (self.freq_hi_hz / 1000.0) as u32,
-        )
+        format!("{}\u{2013}{} kHz", fmt_khz(self.freq_lo_hz), fmt_khz(self.freq_hi_hz))
     }
 }
 
