@@ -1583,7 +1583,12 @@ pub struct FilterState {
     pub quality: FilterQuality,
     pub bandpass_mode: BandpassMode,
     pub bandpass_range: BandpassRange,
-    /// BandFF frequency range (0.0 = no BandFF active).
+    /// BandFF frequency range. SENTINEL INVARIANT: the focus is "active" iff
+    /// `band_ff_freq_hi > band_ff_freq_lo`; the inactive state is encoded as a
+    /// zero-width range (typically `0.0 == 0.0`). Do NOT test `lo == 0.0` raw —
+    /// read the pair through [`AppState::band_ff_range`] /
+    /// [`AppState::band_ff_range_untracked`], which return `Some((lo, hi))` only
+    /// when active. (Mirrors `FocusRange::is_active`.)
     pub band_ff_freq_lo: f64,
     pub band_ff_freq_hi: f64,
     /// True while the user is live-dragging the band gutter.
@@ -2907,6 +2912,23 @@ impl AppState {
     }
 
     // ── Focus Stack helpers ─────────────────────────────────────────────
+
+    /// The active BandFF focus range as `(lo, hi)`, or `None` when inactive.
+    /// Single source of the `hi > lo` sentinel that the `band_ff_freq_lo/hi`
+    /// signal pair encodes — prefer this over reading the pair and testing
+    /// `hi > lo` (or `lo == 0.0`) inline. Subscribes to both signals.
+    pub fn band_ff_range(&self) -> Option<(f64, f64)> {
+        let lo = self.filter.band_ff_freq_lo().get();
+        let hi = self.filter.band_ff_freq_hi().get();
+        (hi > lo).then_some((lo, hi))
+    }
+
+    /// Untracked variant of [`Self::band_ff_range`] for event handlers / one-shot reads.
+    pub fn band_ff_range_untracked(&self) -> Option<(f64, f64)> {
+        let lo = self.filter.band_ff_freq_lo().get_untracked();
+        let hi = self.filter.band_ff_freq_hi().get_untracked();
+        (hi > lo).then_some((lo, hi))
+    }
 
     /// Called by drag handles, axis drag, input fields.
     /// Updates the focus stack and syncs output signals immediately.

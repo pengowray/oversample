@@ -783,7 +783,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                 }
                             }).collect::<Vec<_>>()}
                         </div>
-                        <Show when=move || { let (h, l) = (state.filter.band_ff_freq_hi().get(), state.filter.band_ff_freq_lo().get()); h > l }>
+                        <Show when=move || state.band_ff_range().is_some()>
                             <div class="freq-summary">
                                 <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                 <div class="freq-summary-output"
@@ -889,7 +889,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                     </div>
                                 }.into_any()
                             }}
-                            <Show when=move || { let (h, l) = (state.filter.band_ff_freq_hi().get(), state.filter.band_ff_freq_lo().get()); h > l }>
+                            <Show when=move || state.band_ff_range().is_some()>
                                 <div class="freq-summary">
                                     <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                     <div class="freq-summary-output"

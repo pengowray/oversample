@@ -439,7 +439,7 @@ fn BandpassCombo() -> impl IntoView {
             <Show when=move || {
                 let bp = state.filter.bandpass_mode().get();
                 bp == BandpassMode::On
-                    || (bp == BandpassMode::Auto && state.filter.band_ff_freq_hi().get() > state.filter.band_ff_freq_lo().get())
+                    || (bp == BandpassMode::Auto && state.band_ff_range().is_some())
             }>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
                     <button class=move || layer_opt_class_simple(state.filter.bandpass_range().get() == BandpassRange::FollowFocus)

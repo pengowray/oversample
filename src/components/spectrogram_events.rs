@@ -971,8 +971,7 @@ pub fn on_dblclick(
     }
 
     // Double-click on BandFF handle toggles HFR (label area tap handled by finalize_axis_drag)
-    let has_range = state.filter.band_ff_freq_hi().get_untracked() > state.filter.band_ff_freq_lo().get_untracked();
-    if !has_range { return; }
+    if state.band_ff_range_untracked().is_none() { return; }
 
     let on_handle = matches!(
         state.interaction.spec_hover_handle().get_untracked(),
