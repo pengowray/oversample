@@ -452,7 +452,7 @@ pub fn App() -> impl IntoView {
                 let mt_members = state.library.files().with_untracked(|files| {
                     let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
                     let groups = crate::components::file_sidebar::file_groups::compute_all_groups(&names, files);
-                    crate::components::file_sidebar::file_groups::multitrack_members(&groups, i)
+                    crate::scope::share_members(crate::scope::Setting::VerticalRange, &groups, i)
                 });
                 state.library.files().update(|files| {
                     for &j in &mt_members {
@@ -681,7 +681,7 @@ pub fn App() -> impl IntoView {
                 let seq_members = state.library.files().with_untracked(|files| {
                     let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
                     let groups = crate::components::file_sidebar::file_groups::compute_all_groups(&names, files);
-                    crate::components::file_sidebar::file_groups::sequential_members(&groups, oi)
+                    crate::scope::share_members(crate::scope::Setting::AudioCharacter, &groups, oi)
                 });
                 state.library.files().update(|files| {
                     for &i in &seq_members {
@@ -721,6 +721,39 @@ pub fn App() -> impl IntoView {
                     s.set_focus_selections(snap.user_range, snap.overrides.clone());
                 }
             });
+
+            // Horizontal scroll is a VIEWPORT setting: PerFile, shared across the
+            // MULTITRACK group (switch channels → stay at the same place). Save the
+            // outgoing file's position to it + its multitrack members; restore the
+            // incoming file's, or reset to the start for a fresh/unrelated file.
+            // (zoom_level is snapshotted too but kept global for now — deferred.)
+            // [cross-file state-scoping: view position]
+            if let Some(oi) = old_oi {
+                let pos = crate::state::ViewPos {
+                    scroll_offset: state.view.scroll_offset().get_untracked(),
+                    zoom_level: state.view.zoom_level().get_untracked(),
+                };
+                let mt_ids = state.library.files().with_untracked(|files| {
+                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(&names, files);
+                    crate::scope::share_members(crate::scope::Setting::HorizontalScroll, &groups, oi)
+                        .iter()
+                        .filter_map(|&j| files.get(j).map(|f| f.id))
+                        .collect::<Vec<u64>>()
+                });
+                state.library.per_file_view().update(|m| {
+                    for id in mt_ids {
+                        m.entry(id).or_default().view = Some(pos);
+                    }
+                });
+            }
+            let incoming_view = new_id.and_then(|nid| {
+                state.library.per_file_view().with_untracked(|m| m.get(&nid).and_then(|s| s.view))
+            });
+            state
+                .view
+                .scroll_offset()
+                .set(incoming_view.map(|v| v.scroll_offset).unwrap_or(0.0));
 
             if was_hfr {
                 state.playback.mode().set(PlaybackMode::Normal);

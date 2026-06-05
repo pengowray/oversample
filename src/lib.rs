@@ -13,6 +13,7 @@ pub mod format_time;
 pub mod opfs;
 pub mod project;
 pub mod project_store;
+pub mod scope;
 pub mod timeline;
 pub mod viewport;
 pub mod web_util;
