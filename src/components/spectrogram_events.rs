@@ -125,14 +125,6 @@ pub struct SpectInteraction {
     pub pending_band_ff_hit: RwSignal<bool>,
     /// Pending transient selection body click — deferred to mouseup so panning takes priority
     pub pending_selection_hit: RwSignal<bool>,
-    /// Left-axis viewport pan state — None when no pan is active, otherwise
-    /// (client_x, client_y, anchor_freq, start_min, start_max). The anchor
-    /// is the frequency under the pointer at pointerdown; pan keeps it
-    /// pinned under the pointer as it moves, so dragging the axis drags
-    /// the visible frequency range with it. The stored client-x/y is used
-    /// to decide whether pointerup was a tap (short distance = reset view
-    /// to full range) or a real drag.
-    pub freq_pan_start: RwSignal<Option<(f64, f64, f64, f64, f64)>>,
 }
 
 impl Default for SpectInteraction {
@@ -156,7 +148,6 @@ impl SpectInteraction {
             pending_annotation_hit: RwSignal::new(None),
             pending_band_ff_hit: RwSignal::new(false),
             pending_selection_hit: RwSignal::new(false),
-            freq_pan_start: RwSignal::new(None),
         }
     }
 }
@@ -174,32 +165,6 @@ fn file_nyquist(state: AppState) -> f64 {
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
     }
-}
-
-/// Pan the frequency display range so that `anchor_freq` stays pinned to
-/// the current pointer y. The span (start_max - start_min) is preserved,
-/// and the new range is clamped to [0, nyquist]. Called on every
-/// pointermove / touchmove during a left-axis viewport pan.
-pub fn apply_freq_axis_pan(
-    state: AppState,
-    canvas_y: f64,
-    canvas_h: f64,
-    anchor_freq: f64,
-    start_min: f64,
-    start_max: f64,
-) {
-    if canvas_h <= 0.0 { return; }
-    let span = (start_max - start_min).max(1.0);
-    let nyquist = file_nyquist(state);
-    // freq_to_y: y = h * (1 - (f - min) / span). Solve for min to pin
-    // anchor_freq at canvas_y.
-    let new_min = anchor_freq - span * (1.0 - (canvas_y / canvas_h));
-    // Clamp so neither edge escapes the file's frequency range.
-    let max_low = (nyquist - span).max(0.0);
-    let clamped_min = new_min.clamp(0.0, max_low);
-    let clamped_max = (clamped_min + span).min(nyquist);
-    state.view.min_display_freq().set(Some(clamped_min));
-    state.view.max_display_freq().set(Some(clamped_max));
 }
 
 /// Reset the frequency display range to "auto" (None) so the spectrogram
@@ -490,29 +455,10 @@ pub fn on_pointerdown(
         }
     }
 
-    // Corner drag is gone: with the time axis moved out to the TimeGutter
-    // below the canvas, the bottom-left corner is no longer an ambiguous
-    // dual-axis zone — the left edge routes to freq-axis viewport pan,
-    // and time selection happens in the gutter strip.
-
-    // Left-axis viewport pan. Band selection lives on the right-side band
-    // gutter now; the left axis is for navigating what you *look at*
-    // (drag to pan the visible frequency range, tap to reset to full).
-    if let Some((px_x, _, _, freq)) = pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state) {
-        if px_x < LABEL_AREA_WIDTH && !state.display.transform().get_untracked() {
-            let nyquist = file_nyquist(state);
-            let start_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
-            let start_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
-            ix.freq_pan_start.set(Some((
-                ev.client_x() as f64, ev.client_y() as f64,
-                freq, start_min, start_max,
-            )));
-            state.interaction.is_dragging().set(true);
-            capture_pointer(&ev);
-            ev.prevent_default();
-            return;
-        }
-    }
+    // The left edge used to be a freq-axis viewport-pan zone, cued by the now-
+    // removed hover markers. That zone is retired with them: the left edge falls
+    // through to the normal pan/drag below like the rest of the spectrogram.
+    // Frequency navigation now lives on the sibling BandGutter.
 
     // Time-axis selection moved out to the <TimeGutter/> strip; the
     // bottom pixels of the spectrogram canvas no longer have special
@@ -631,13 +577,6 @@ pub fn on_pointermove(
         state.interaction.mouse_canvas_x().set(px_x);
         state.interaction.cursor_time().set(Some(t));
 
-        // Canvas height for time-axis zone detection (reuse single rect query)
-        let canvas_height = canvas_ref.get()
-            .map(|el| {
-                let canvas: &HtmlCanvasElement = el.as_ref();
-                canvas.get_bounding_client_rect().height()
-            });
-
         // Update label hover target + in-label-area state. (Time-axis
         // interactions live on the sibling <TimeGutter/> now.)
         let in_label_area = px_x < LABEL_AREA_WIDTH;
@@ -649,16 +588,6 @@ pub fn on_pointermove(
         }
 
         if state.interaction.is_dragging().get_untracked() {
-            // Left-axis viewport pan takes priority over every other drag —
-            // once the user grabs the axis, they're navigating the display
-            // window, not selecting or panning the main canvas.
-            if let Some((_cx, _cy, anchor_freq, start_min, start_max)) = ix.freq_pan_start.get_untracked() {
-                if let Some(ch) = canvas_height {
-                    apply_freq_axis_pan(state, px_y, ch, anchor_freq, start_min, start_max);
-                }
-                return;
-            }
-
             // Spec handle drag takes priority
             if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
                 if let Some((freq_at_mouse, file_max_freq)) = resolve_freq_at_pointer(px_y, canvas_ref, state) {
@@ -776,21 +705,6 @@ pub fn on_pointerup(
     if state.interaction.spec_drag_handle().get_untracked().is_some() {
         state.interaction.spec_drag_handle().set(None);
         state.interaction.is_dragging().set(false);
-        return;
-    }
-
-    // End left-axis viewport pan. If the pointer barely moved, treat as
-    // a tap and reset the display range to full (0..Nyquist). Otherwise
-    // the pan has already been applied live, so just clear the state.
-    if let Some((cx, cy, _anchor, _smin, _smax)) = ix.freq_pan_start.get_untracked() {
-        let dx = (ev.client_x() as f64 - cx).abs();
-        let dy = (ev.client_y() as f64 - cy).abs();
-        let was_tap = dx < 3.0 && dy < 3.0;
-        ix.freq_pan_start.set(None);
-        state.interaction.is_dragging().set(false);
-        if was_tap {
-            reset_freq_axis_view(state);
-        }
         return;
     }
 
@@ -1146,33 +1060,8 @@ pub fn on_touchstart(
 
     // Corner drag gone — see pointer variant above.
 
-    // Left-axis viewport pan (touch). Band selection lives on the right-
-    // side band gutter. Double-tap resets the view; single-tap after
-    // touchend also resets (handled in on_touchend).
-    if let Some((px_x, _, _, freq)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
-        if px_x < LABEL_AREA_WIDTH && !state.display.transform().get_untracked() {
-            let now = js_sys::Date::now();
-            let last_time = ix.last_tap_time.get_untracked();
-            let last_x = ix.last_tap_x.get_untracked();
-            if now - last_time < 400.0 && last_x < LABEL_AREA_WIDTH {
-                // Double-tap: reset display range.
-                reset_freq_axis_view(state);
-                ix.last_tap_time.set(0.0);
-                ev.prevent_default();
-                return;
-            }
-            let nyquist = file_nyquist(state);
-            let start_min = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
-            let start_max = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
-            ix.freq_pan_start.set(Some((
-                touch.client_x() as f64, touch.client_y() as f64,
-                freq, start_min, start_max,
-            )));
-            state.interaction.is_dragging().set(true);
-            ev.prevent_default();
-            return;
-        }
-    }
+    // Left-axis freq-pan zone retired (see on_pointerdown) — touch on the left
+    // edge falls through to the normal pan/drag below.
 
     // Time-axis touch interactions (drag-to-select, double-tap) moved to
     // the <TimeGutter/> strip.
@@ -1226,17 +1115,6 @@ pub fn on_touchmove(
     if !state.interaction.is_dragging().get_untracked() { return; }
     ev.prevent_default();
 
-    // Left-axis viewport pan (touch). Takes priority over every other
-    // drag so grabbing the axis always navigates the display window.
-    if let Some((_cx, _cy, anchor_freq, start_min, start_max)) = ix.freq_pan_start.get_untracked() {
-        if let Some((_, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
-            let Some(canvas_el) = canvas_ref.get() else { return };
-            let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-            let ch = canvas.get_bounding_client_rect().height();
-            apply_freq_axis_pan(state, px_y, ch, anchor_freq, start_min, start_max);
-        }
-        return;
-    }
 
     // Spec handle drag takes priority
     if let Some(handle) = state.interaction.spec_drag_handle().get_untracked() {
@@ -1314,35 +1192,6 @@ pub fn on_touchend(
             state.interaction.is_dragging().set(false);
             return;
         }
-        // End left-axis viewport pan (touch). Tap with no movement resets
-        // the display range; an actual drag has already been applied live.
-        if let Some((cx, cy, _anchor, _smin, _smax)) = ix.freq_pan_start.get_untracked() {
-            let end_touch = ev.changed_touches().get(0);
-            let (dx, dy) = match end_touch.as_ref() {
-                Some(t) => (
-                    (t.client_x() as f64 - cx).abs(),
-                    (t.client_y() as f64 - cy).abs(),
-                ),
-                None => (0.0, 0.0),
-            };
-            let was_tap = dx < 3.0 && dy < 3.0;
-            ix.freq_pan_start.set(None);
-            state.interaction.is_dragging().set(false);
-            if was_tap {
-                reset_freq_axis_view(state);
-                // Track tap for double-tap detection so a second tap still
-                // registers (even though single-tap already reset the view).
-                if let Some(touch) = end_touch {
-                    if let Some((px_x, px_y, _, _)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
-                        ix.last_tap_time.set(js_sys::Date::now());
-                        ix.last_tap_x.set(px_x);
-                        ix.last_tap_y.set(px_y);
-                    }
-                }
-            }
-            return;
-        }
-
         state.interaction.is_dragging().set(false);
 
         // Hand tool: bookmark on tap (no significant drag) while playing, or launch inertia
