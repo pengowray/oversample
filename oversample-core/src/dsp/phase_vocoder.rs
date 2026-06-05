@@ -4,17 +4,21 @@ use std::f32::consts::PI;
 const FFT_SIZE: usize = 4096;
 const HOP: usize = 1024; // 75% overlap
 
-/// Phase-vocoder pitch shift via direct spectral bin shifting.
+/// Phase-vocoder pitch shift via direct spectral bin shifting, with
+/// Laroche–Dolson identity phase locking.
 ///
-/// Shifts frequency content by remapping STFT bins each frame, using the source
-/// bin's analysis phase (scaled by pitch_factor) directly rather than
-/// accumulating a synthesis phase. Each frame is stateless, which (a) eliminates
-/// phase discontinuities at streaming chunk boundaries and (b) keeps the noise
-/// floor INCOHERENT. A true propagating synthesis accumulator was tried (commit
-/// 1dc2590) but made the noise floor tonal — audible "musical noise" / buzz that
-/// scales with gain — because this PV has no peak-locking. Trade-off of the
-/// stateless approach: some warble on strong tonal content. A proper quality
-/// improvement would need Laroche–Dolson peak-locking (future work).
+/// Shifts frequency content by remapping STFT bins each frame. Synthesis phase is
+/// derived per frame WITHOUT a propagating accumulator, so it (a) has no phase
+/// discontinuities at streaming chunk boundaries and (b) keeps the noise floor
+/// INCOHERENT — a true propagating accumulator was tried (commit 1dc2590) but
+/// tonalised the noise into an audible "musical noise" buzz that scaled with gain.
+///
+/// To avoid the warble that a plain stateless per-bin phase scaling produces on
+/// strong tonal content, each frame's spectral peaks are found and every bin is
+/// phase-locked to its nearest peak: its synthesis phase is the peak's scaled
+/// phase plus the bin's own analysis-phase offset from that peak. This keeps the
+/// phase coherence within each sinusoid (less warble) while remaining stateless
+/// (no buzz). See the synthesis loop for detail.
 ///
 /// - `factor > 1.0`: shift DOWN (divide frequencies). E.g. factor=10 shifts 50 kHz → 5 kHz.
 /// - `factor < -1.0`: shift UP (multiply frequencies). E.g. factor=-10 shifts 5 Hz → 50 Hz.
@@ -89,6 +93,10 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
     // Per-frame scratch for analysis.
     let mut mag = vec![0.0f32; n_bins];
     let mut phase = vec![0.0f32; n_bins];
+    // Peak-locking scratch: the spectral peaks of the frame, and for each bin the
+    // peak that governs its "region of influence" (Laroche–Dolson).
+    let mut peaks: Vec<usize> = Vec::new();
+    let mut peak_of = vec![0usize; n_bins];
 
     for frame in 0..n_frames {
         let offset = frame * HOP;
@@ -115,15 +123,45 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
             phase[k] = im.atan2(re);
         }
 
+        // ── Peak-locking (Laroche–Dolson identity phase locking) ─────────────
+        // Find spectral peaks (local magnitude maxima above a small fraction of
+        // the frame peak) and assign every bin to its nearest peak. The synthesis
+        // phase below is then locked to the governing peak's scaled phase plus the
+        // bin's analysis-phase offset from that peak. This preserves phase
+        // coherence WITHIN each sinusoid (killing the per-bin-scaling warble)
+        // while staying STATELESS across frames/chunks — so the noise floor stays
+        // incoherent and there is no propagating "musical noise" buzz (the failure
+        // mode of a synthesis-phase accumulator, commit 1dc2590).
+        peaks.clear();
+        let max_mag = mag.iter().copied().fold(0.0f32, f32::max);
+        let peak_thresh = max_mag * 1e-3;
+        for k in 1..n_bins - 1 {
+            if mag[k] > peak_thresh && mag[k] > mag[k - 1] && mag[k] >= mag[k + 1] {
+                peaks.push(k);
+            }
+        }
+        if peaks.is_empty() {
+            // No clear peaks (near-silence): each bin governs itself, reducing to
+            // the plain stateless nearest-bin behaviour.
+            for (k, p) in peak_of.iter_mut().enumerate() {
+                *p = k;
+            }
+        } else {
+            // Assign each bin to the nearest peak (boundary at the midpoint between
+            // consecutive peaks).
+            let mut pi = 0usize;
+            for (k, p) in peak_of.iter_mut().enumerate() {
+                while pi + 1 < peaks.len()
+                    && (peaks[pi + 1] as i32 - k as i32).abs()
+                        < (peaks[pi] as i32 - k as i32).abs()
+                {
+                    pi += 1;
+                }
+                *p = peaks[pi];
+            }
+        }
+
         // Shift bins: for each output bin j, read from source bin j / pitch_factor.
-        // Use the source bin's analysis phase (scaled by pitch_factor) DIRECTLY,
-        // statelessly per frame — deliberately NOT accumulating a synthesis-phase
-        // accumulator. A propagating accumulator (the "canonical" phase vocoder)
-        // makes the noise floor coherent → audible "musical noise" / buzz that
-        // scales with gain (a basic PV without peak-locking can't avoid this).
-        // Taking the nearest source bin's own phase keeps the noise incoherent;
-        // the cost is some warble on strong tonal content. (Proper quality fix =
-        // Laroche–Dolson peak-locking — a future improvement.)
         for (j, spec_bin) in spectrum.iter_mut().enumerate().take(n_bins) {
             let source = j as f32 / pitch_factor;
             let s_idx = source as usize;
@@ -141,7 +179,13 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
                 (0.0, 0.0)
             };
 
-            let out_phase = src_phase * pitch_factor;
+            // Identity phase locking: anchor to the governing peak's scaled phase
+            // and add this bin's analysis-phase offset from that peak. At the peak
+            // itself this is peak_phase * pitch_factor (frequency-correct); away
+            // from it the intra-sinusoid relationship (src_phase - peak_phase) is
+            // preserved instead of independently scaled.
+            let kp = peak_of[s_idx.min(n_bins - 1)];
+            let out_phase = phase[kp] * pitch_factor + (src_phase - phase[kp]);
             spec_bin.re = m * out_phase.cos();
             spec_bin.im = m * out_phase.sin();
         }
