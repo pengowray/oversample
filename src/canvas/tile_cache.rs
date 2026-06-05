@@ -1693,8 +1693,10 @@ fn schedule_chroma_tile_fft(
         let floor_db = state.chroma.floor_db().get_untracked();
 
         // Try spectral_store first, then file columns, then compute on-demand from audio
+        // This path needs OWNED columns (used later, outside the store borrow),
+        // so clone here — unlike the immediate-use tile renders above.
         let cols_from_store = spectral_store::with_columns(file_idx, col_start, col_start + TILE_COLS, |cols, _| {
-            cols.to_vec()
+            cols.iter().map(|&c| c.clone()).collect::<Vec<crate::types::SpectrogramColumn>>()
         });
         let cols_from_file = if cols_from_store.is_some() {
             None

@@ -80,17 +80,17 @@ pub fn pre_render(data: &SpectrogramData) -> PreRendered {
 /// Stores f32 absolute dB values (`20 * log10(mag)`) per pixel so that gain,
 /// contrast, dynamic range, and reference level can all be adjusted at render
 /// time without regenerating the tile.
-pub fn pre_render_columns(
-    columns: &[crate::types::SpectrogramColumn],
+pub fn pre_render_columns<C: std::borrow::Borrow<crate::types::SpectrogramColumn>>(
+    columns: &[C],
 ) -> PreRendered {
     if columns.is_empty() {
         return PreRendered { width: 0, height: 0, pixels: Vec::new(), db_data: Vec::new(), flow_shifts: Vec::new() };
     }
     let width = columns.len() as u32;
-    let height = columns[0].magnitudes.len() as u32;
+    let height = columns[0].borrow().magnitudes.len() as u32;
     let mut db_data = vec![f32::NEG_INFINITY; (width * height) as usize];
     for (col_idx, col) in columns.iter().enumerate() {
-        for (bin_idx, &mag) in col.magnitudes.iter().enumerate() {
+        for (bin_idx, &mag) in col.borrow().magnitudes.iter().enumerate() {
             if bin_idx >= height as usize { break; }
             let db = magnitude_to_db(mag);
             let y = height as usize - 1 - bin_idx;

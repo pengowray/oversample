@@ -179,17 +179,19 @@ pub fn with_columns<R>(
     file_idx: usize,
     start: usize,
     end: usize,
-    f: impl FnOnce(&[SpectrogramColumn], f32) -> R,
+    f: impl FnOnce(&[&SpectrogramColumn], f32) -> R,
 ) -> Option<R> {
     STORES.with(|s| {
         let stores = s.borrow();
         let store = stores.get(&file_idx)?;
         let end = end.min(store.columns.len());
+        // References, not clones — the callback gets a borrowed view of the
+        // stored columns (each is a Vec<f32> spectrum, so cloning the range on
+        // every tile read was real per-render allocation). [render-path perf]
         let cols: Vec<&SpectrogramColumn> = (start..end)
             .map(|i| store.columns.get(i)?.as_ref())
             .collect::<Option<Vec<_>>>()?;
-        let owned: Vec<SpectrogramColumn> = cols.into_iter().cloned().collect();
-        Some(f(&owned, store.max_magnitude))
+        Some(f(&cols, store.max_magnitude))
     })
 }
 

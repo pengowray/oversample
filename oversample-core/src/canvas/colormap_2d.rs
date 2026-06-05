@@ -8,6 +8,7 @@
 use crate::canvas::colors::flow_rgb;
 
 /// A 2D colormap: 256 × 256 → RGB lookup table (192 KB).
+#[derive(Clone)]
 pub struct Colormap2D {
     /// Row-major: `lut[secondary * 256 + primary]`.
     lut: Vec<[u8; 3]>,
@@ -80,6 +81,13 @@ pub fn build_flow_colormap(
 /// dim warm color (energy in the pitch class, but not this specific octave).
 /// When both are low: black.
 pub fn build_chromagram_colormap() -> Colormap2D {
+    // Cached: the LUT is a pure constant (no runtime input), so build it once
+    // per thread instead of every render. [render-path perf]
+    thread_local! { static CACHE: Colormap2D = build_chromagram_colormap_inner(); }
+    CACHE.with(|c| c.clone())
+}
+
+fn build_chromagram_colormap_inner() -> Colormap2D {
     let mut lut = vec![[0u8; 3]; 256 * 256];
 
     for sec in 0..256u16 {
@@ -116,6 +124,11 @@ pub fn build_chromagram_colormap() -> Colormap2D {
 /// Naturals (C, D, E, F, G, A, B) get higher saturation; sharps/flats are muted.
 /// Hues are spread across the spectrum avoiding pure red (0°) and pure blue (240°).
 pub fn build_chromagram_pitch_class_colormaps() -> [Colormap2D; 12] {
+    thread_local! { static CACHE: [Colormap2D; 12] = build_chromagram_pitch_class_colormaps_inner(); }
+    CACHE.with(|c| c.clone())
+}
+
+fn build_chromagram_pitch_class_colormaps_inner() -> [Colormap2D; 12] {
     // Hues in degrees: C=50, C#=75, D=100, D#=130, E=160, F=190,
     // F#=215, G=260, G#=285, A=310, A#=335, B=40
     const HUES: [f32; 12] = [
@@ -157,6 +170,11 @@ pub fn build_chromagram_pitch_class_colormaps() -> [Colormap2D; 12] {
 /// class are rendered identically — brightness depends only on the overall pitch
 /// class intensity (R channel), ignoring per-octave detail (G channel).
 pub fn build_chromagram_solid_colormaps() -> [Colormap2D; 12] {
+    thread_local! { static CACHE: [Colormap2D; 12] = build_chromagram_solid_colormaps_inner(); }
+    CACHE.with(|c| c.clone())
+}
+
+fn build_chromagram_solid_colormaps_inner() -> [Colormap2D; 12] {
     const HUES: [f32; 12] = [
         50.0, 75.0, 100.0, 130.0, 160.0, 190.0,
         215.0, 260.0, 285.0, 310.0, 335.0, 40.0,
@@ -190,6 +208,11 @@ pub fn build_chromagram_solid_colormaps() -> [Colormap2D; 12] {
 /// Octave 0 (lowest) = warm orange (30°), octave 9 (highest) = violet (270°).
 /// Same rainbow pattern repeats for every pitch class band.
 pub fn build_chromagram_octave_colormaps() -> [Colormap2D; 10] {
+    thread_local! { static CACHE: [Colormap2D; 10] = build_chromagram_octave_colormaps_inner(); }
+    CACHE.with(|c| c.clone())
+}
+
+fn build_chromagram_octave_colormaps_inner() -> [Colormap2D; 10] {
     std::array::from_fn(|oct| {
         // Rainbow from warm (30°) to cool (270°)
         let hue = 30.0 + (oct as f32 / 9.0) * 240.0;
