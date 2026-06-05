@@ -1724,9 +1724,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 fn dismiss_background_hint(state: &AppState) {
     state.dialogs.background_audio_hint().set(false);
     state.dialogs.background_hint_dismissed().set(true);
-    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = ls.set_item("oversample_bg_audio_hint_dismissed", "true");
-    }
+    crate::settings::set_bool(crate::settings::keys::BG_AUDIO_HINT_DISMISSED, true);
 }
 
 /// Dismiss the notification-permission rationale (persisting that we've asked so

@@ -7,17 +7,13 @@ use crate::bat_book::auto_resolve;
 
 /// Persist bat book mode to localStorage.
 fn persist_mode(mode: &BatBookMode) {
-    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = ls.set_item("oversample_bat_book_mode", mode.storage_key());
-    }
+    crate::settings::set_raw(crate::settings::keys::BAT_BOOK_MODE, mode.storage_key());
 }
 
 /// Persist favourites to localStorage.
 fn persist_favourites(favs: &[BatBookRegion]) {
-    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let val: String = favs.iter().map(|r| r.storage_key()).collect::<Vec<_>>().join(",");
-        let _ = ls.set_item("oversample_bat_book_favourites", &val);
-    }
+    let val: String = favs.iter().map(|r| r.storage_key()).collect::<Vec<_>>().join(",");
+    crate::settings::set_raw(crate::settings::keys::BAT_BOOK_FAVOURITES, &val);
 }
 
 /// Horizontal scrolling strip of bat family chips.

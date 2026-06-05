@@ -239,9 +239,7 @@ async fn stop_foreground_service(state: &AppState) {
 /// re-prompts. Shared by the rationale modal and the no-op fast path below.
 pub(crate) fn mark_notif_asked(state: &AppState) {
     state.dialogs.notif_perm_asked().set(true);
-    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = ls.set_item("oversample_notif_perm_asked", "true");
-    }
+    crate::settings::set_bool(crate::settings::keys::NOTIF_PERM_ASKED, true);
 }
 
 /// Invoke the native POST_NOTIFICATIONS request (called after the in-app

@@ -2267,33 +2267,20 @@ impl AppState {
                 mute_output: false,
             }),
             recording_meta: Store::new(RecordingMetaState {
-                gps_enabled: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_gps_enabled").ok().flatten())
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                },
+                gps_enabled: crate::settings::get_bool(crate::settings::keys::GPS_ENABLED, false),
                 location: None,
-                home_wifi_ssids: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_home_wifi").ok().flatten())
-                        .map(|v| {
-                            v.split('\n')
-                                .filter(|s| !s.is_empty())
-                                .map(|s| s.to_string())
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                },
-                device_model_enabled: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_device_model").ok().flatten())
-                        .map(|v| v != "false")
-                        .unwrap_or(true) // default on
-                },
+                home_wifi_ssids: crate::settings::get_raw(crate::settings::keys::HOME_WIFI)
+                    .map(|v| {
+                        v.split('\n')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                device_model_enabled: crate::settings::get_bool(
+                    crate::settings::keys::DEVICE_MODEL,
+                    true, // default on
+                ),
                 cached_make: None,
                 cached_model: None,
             }),
@@ -2302,21 +2289,15 @@ impl AppState {
                 privacy_settings: false,
                 about: false,
                 background_audio_hint: false,
-                background_hint_dismissed: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_bg_audio_hint_dismissed").ok().flatten())
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                },
+                background_hint_dismissed: crate::settings::get_bool(
+                    crate::settings::keys::BG_AUDIO_HINT_DISMISSED,
+                    false,
+                ),
                 notif_rationale: false,
-                notif_perm_asked: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_notif_perm_asked").ok().flatten())
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                },
+                notif_perm_asked: crate::settings::get_bool(
+                    crate::settings::keys::NOTIF_PERM_ASKED,
+                    false,
+                ),
                 xc_browser_open: false,
             }),
             is_tauri: detect_tauri(),
@@ -2382,13 +2363,7 @@ impl AppState {
             }),
 
             project: Store::new(ProjectState {
-                enabled: {
-                    web_sys::window()
-                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                        .and_then(|ls: web_sys::Storage| ls.get_item("oversample_projects_enabled").ok().flatten())
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                },
+                enabled: crate::settings::get_bool(crate::settings::keys::PROJECTS_ENABLED, false),
                 current: None,
                 dirty: false,
                 save_status: "",
@@ -2443,18 +2418,13 @@ impl AppState {
                 open: false,
                 mode: {
                     use crate::bat_book::types::{BatBookMode, BatBookRegion};
-                    let ls = web_sys::window()
-                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+                    use crate::settings::{get_raw, keys};
                     // Try new-format key first
-                    let new_key = ls.as_ref()
-                        .and_then(|s| s.get_item("oversample_bat_book_mode").ok().flatten());
-                    match new_key {
+                    match get_raw(keys::BAT_BOOK_MODE) {
                         Some(k) => BatBookMode::from_storage_key(&k),
                         None => {
-                            // Migration: check legacy key
-                            let legacy = ls.as_ref()
-                                .and_then(|s| s.get_item("oversample_bat_book_region").ok().flatten());
-                            match legacy {
+                            // Migration: fall back to the legacy region key
+                            match get_raw(keys::BAT_BOOK_REGION) {
                                 Some(k) => BatBookRegion::from_storage_key(&k)
                                     .map(BatBookMode::Manual)
                                     .unwrap_or(BatBookMode::Auto),
@@ -2465,17 +2435,13 @@ impl AppState {
                 },
                 region: crate::bat_book::types::BatBookRegion::Global,
                 auto_resolved: None,
-                favourites: {
-                    web_sys::window()
-                        .and_then(|w: web_sys::Window| w.local_storage().ok().flatten())
-                        .and_then(|ls: web_sys::Storage| ls.get_item("oversample_bat_book_favourites").ok().flatten())
-                        .map(|v| {
-                            v.split(',')
-                                .filter_map(|k| crate::bat_book::types::BatBookRegion::from_storage_key(k.trim()))
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                },
+                favourites: crate::settings::get_raw(crate::settings::keys::BAT_BOOK_FAVOURITES)
+                    .map(|v| {
+                        v.split(',')
+                            .filter_map(|k| crate::bat_book::types::BatBookRegion::from_storage_key(k.trim()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 selected_ids: Vec::new(),
                 ref_open: false,
                 last_clicked_id: None,
@@ -2515,13 +2481,9 @@ impl AppState {
                 output_freq_highlight: None,
                 output_snap: OutputSnap::Standard,
                 always_show_view_range: false,
-                shield_style: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_shield_style").ok().flatten())
-                        .map(|v| ShieldStyle::from_key(&v))
-                        .unwrap_or_default()
-                },
+                shield_style: crate::settings::get_raw(crate::settings::keys::SHIELD_STYLE)
+                    .map(|v| ShieldStyle::from_key(&v))
+                    .unwrap_or_default(),
                 focus_stack: crate::focus_stack::FocusStack::new(),
                 clean_view: false,
             }),
@@ -2535,13 +2497,10 @@ impl AppState {
                 left_width: 220.0,
                 left_tab: LeftSidebarTab::default(),
                 layer_panel_open: None,
-                show_status_bar: {
-                    web_sys::window()
-                        .and_then(|w| w.local_storage().ok().flatten())
-                        .and_then(|ls| ls.get_item("oversample_show_status_bar").ok().flatten())
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                },
+                show_status_bar: crate::settings::get_bool(
+                    crate::settings::keys::SHOW_STATUS_BAR,
+                    false,
+                ),
             }),
 
             // Export UI

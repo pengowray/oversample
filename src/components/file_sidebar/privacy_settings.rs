@@ -8,10 +8,8 @@ use crate::state::AppState;
 use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
 
 fn persist_home_wifi(state: &AppState) {
-    if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let val = state.recording_meta.home_wifi_ssids().with_untracked(|list| list.join("\n"));
-        let _ = ls.set_item("oversample_home_wifi", &val);
-    }
+    let val = state.recording_meta.home_wifi_ssids().with_untracked(|list| list.join("\n"));
+    crate::settings::set_raw(crate::settings::keys::HOME_WIFI, &val);
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -229,11 +227,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     let checked = input.checked();
                                     state.recording_meta.device_model_enabled().set(checked);
-                                    if let Some(ls) = web_sys::window()
-                                        .and_then(|w| w.local_storage().ok().flatten())
-                                    {
-                                        let _ = ls.set_item("oversample_device_model", if checked { "true" } else { "false" });
-                                    }
+                                    crate::settings::set_bool(crate::settings::keys::DEVICE_MODEL, checked);
                                 }
                             />
                         </div>

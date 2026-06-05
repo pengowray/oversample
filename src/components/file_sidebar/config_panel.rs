@@ -148,11 +148,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             let select: web_sys::HtmlSelectElement = target.unchecked_into();
                             let style = ShieldStyle::from_key(&select.value());
                             state.viewmode.shield_style().set(style);
-                            if let Some(ls) = web_sys::window()
-                                .and_then(|w| w.local_storage().ok().flatten())
-                            {
-                                let _ = ls.set_item("oversample_shield_style", style.key());
-                            }
+                            crate::settings::set_raw(crate::settings::keys::SHIELD_STYLE, style.key());
                         }
                     >
                         {ShieldStyle::ALL.iter().map(|&s| view! {
@@ -174,11 +170,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             let show = input.checked();
                             state.panels.show_status_bar().set(show);
-                            if let Some(ls) = web_sys::window()
-                                .and_then(|w| w.local_storage().ok().flatten())
-                            {
-                                let _ = ls.set_item("oversample_show_status_bar", if show { "true" } else { "false" });
-                            }
+                            crate::settings::set_bool(crate::settings::keys::SHOW_STATUS_BAR, show);
                         }
                     />
                 </div>
@@ -200,11 +192,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                                         let input: web_sys::HtmlInputElement = target.unchecked_into();
                                         let checked = input.checked();
                                         state.recording_meta.gps_enabled().set(checked);
-                                        if let Some(ls) = web_sys::window()
-                                            .and_then(|w| w.local_storage().ok().flatten())
-                                        {
-                                            let _ = ls.set_item("oversample_gps_enabled", if checked { "true" } else { "false" });
-                                        }
+                                        crate::settings::set_bool(crate::settings::keys::GPS_ENABLED, checked);
                                     }
                                 />
                             </div>
@@ -293,11 +281,7 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                             let input: web_sys::HtmlInputElement = target.unchecked_into();
                             let checked = input.checked();
                             state.project.enabled().set(checked);
-                            if let Some(ls) = web_sys::window()
-                                .and_then(|w| w.local_storage().ok().flatten())
-                            {
-                                let _ = ls.set_item("oversample_projects_enabled", if checked { "true" } else { "false" });
-                            }
+                            crate::settings::set_bool(crate::settings::keys::PROJECTS_ENABLED, checked);
                         }
                     />
                 </div>
