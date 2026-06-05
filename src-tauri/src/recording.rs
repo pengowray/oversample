@@ -43,6 +43,15 @@ pub struct RecordingBuffer {
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
     /// Set before recording starts, consumed on stop.
     pub shared_fd: Option<i32>,
+    /// Effective-bit-depth detection (I24/I32 streams only). `detect_or` is the
+    /// bitwise OR of every raw i32 sample seen on the current stream; the count
+    /// of low bits that are ALWAYS zero across all samples (its trailing zeros)
+    /// is the number of unused LSBs, so `container_bits - trailing_zeros` is the
+    /// effective depth — e.g. a 24-bit interface delivering 24-bit data in a
+    /// 32-bit container leaves the low 8 bits zero (effective 24). Reset when a
+    /// new stream opens. `detect_samples` gates on having enough data.
+    pub detect_or: i32,
+    pub detect_samples: u64,
 }
 
 impl RecordingBuffer {
@@ -56,7 +65,23 @@ impl RecordingBuffer {
             pending_f32: Vec::new(),
             total_samples: 0,
             shared_fd: None,
+            detect_or: 0,
+            detect_samples: 0,
         }
+    }
+
+    /// Effective bit depth detected from the i32 sample stream so far, or `None`
+    /// until enough samples have been seen (and there is real signal — silence is
+    /// all zeros and would read as 0 bits). `container_bits` is the stream's
+    /// container width (32 for I24/I32). Saturates at `container_bits`.
+    pub fn effective_bits(&self, container_bits: u16) -> Option<u16> {
+        // ~0.25 s at 192 kHz; enough to see the LSB usage settle.
+        const MIN_SAMPLES: u64 = 48_000;
+        if self.detect_samples < MIN_SAMPLES || self.detect_or == 0 {
+            return None;
+        }
+        let trailing = self.detect_or.trailing_zeros().min(container_bits as u32);
+        Some(container_bits.saturating_sub(trailing as u16))
     }
 
     pub fn clear(&mut self) {
@@ -65,6 +90,8 @@ impl RecordingBuffer {
         self.samples_f32.clear();
         self.pending_f32.clear();
         self.total_samples = 0;
+        self.detect_or = 0;
+        self.detect_samples = 0;
         // Note: shared_fd is NOT cleared here — it persists across clear()
         // because it's set before recording starts and consumed on stop.
     }
@@ -466,6 +493,17 @@ pub fn open_mic(
                 &stream_config,
                 move |data: &[i32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buf.lock().unwrap();
+                    // Accumulate effective-bit-depth detection over the raw i32
+                    // samples (cheap: one OR per sample) whenever the stream is
+                    // active — covers both live listen and recording.
+                    if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
+                        let mut or = buf.detect_or;
+                        for &s in data {
+                            or |= s;
+                        }
+                        buf.detect_or = or;
+                        buf.detect_samples += data.len() as u64;
+                    }
                     if rec.load(Ordering::Relaxed) {
                         if channels > 1 {
                             let mono: Vec<i32> = data.chunks(channels)

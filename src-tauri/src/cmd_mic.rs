@@ -440,13 +440,25 @@ pub fn mic_get_status(state: tauri::State<MicMutex>) -> MicStatus {
     let mic = state.lock().unwrap_or_else(|e| e.into_inner());
     match mic.as_ref() {
         Some(m) => {
-            let samples = m.buffer.lock().map(|b| b.total_samples).unwrap_or(0);
+            use crate::recording::NativeSampleFormat;
+            let (samples, effective_bits) = m
+                .buffer
+                .lock()
+                .map(|b| {
+                    // Detection only applies to i32 (24/32-bit) container streams.
+                    let eff = matches!(b.format, NativeSampleFormat::I24 | NativeSampleFormat::I32)
+                        .then(|| b.effective_bits(32))
+                        .flatten();
+                    (b.total_samples, eff)
+                })
+                .unwrap_or((0, None));
             MicStatus {
                 is_open: true,
                 is_recording: m.is_recording.load(Ordering::Relaxed),
                 is_streaming: m.is_streaming.load(Ordering::Relaxed),
                 samples_recorded: samples,
                 sample_rate: m.sample_rate,
+                effective_bits,
             }
         }
         None => MicStatus {
@@ -455,6 +467,7 @@ pub fn mic_get_status(state: tauri::State<MicMutex>) -> MicStatus {
             is_streaming: false,
             samples_recorded: 0,
             sample_rate: 0,
+            effective_bits: None,
         },
     }
 }

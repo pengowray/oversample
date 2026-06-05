@@ -74,6 +74,11 @@ pub struct MicStatus {
     pub is_streaming: bool,
     pub samples_recorded: usize,
     pub sample_rate: u32,
+    /// Effective bit depth auto-detected from the live i32 sample stream (unused
+    /// LSBs imply the real depth, e.g. a 24-bit interface in a 32-bit container).
+    /// `None` until enough signal has been seen, or for non-i32 streams.
+    #[serde(default)]
+    pub effective_bits: Option<u16>,
 }
 
 // Arg structs (camelCase wire keys; Tauri maps them onto the snake_case command
