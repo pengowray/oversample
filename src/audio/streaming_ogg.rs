@@ -35,7 +35,11 @@ pub struct StreamingOggSource {
     decode_frame_cursor: RefCell<u64>,
 }
 
-// SAFETY: WASM is single-threaded; these are required by AudioSource: Send + Sync.
+// SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
+// caches/cursors so it is NOT inherently Sync. Sound ONLY because the app is
+// single-threaded (WASM) and the source is touched from that one thread; unsound
+// from a real worker thread. Invariant: never call a read_* method while an
+// internal cache.borrow_mut() is alive (BorrowMutError).
 unsafe impl Send for StreamingOggSource {}
 unsafe impl Sync for StreamingOggSource {}
 

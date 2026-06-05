@@ -179,7 +179,12 @@ pub struct StreamingWavSource {
     cache: RefCell<ChunkCache>,
 }
 
-// SAFETY: WASM is single-threaded; these are required by AudioSource: Send + Sync.
+// SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
+// caches/cursors so it is NOT inherently Sync. Sound ONLY because the app is
+// single-threaded (WASM) and the source is touched from that one thread; unsound
+// from a real worker thread. Invariant: never call a read_* method while an
+// internal cache.borrow_mut() is alive (BorrowMutError — see the
+// ChannelView::Difference recursion in read_samples).
 unsafe impl Send for StreamingWavSource {}
 unsafe impl Sync for StreamingWavSource {}
 
@@ -460,7 +465,14 @@ impl AudioSource for StreamingWavSource {
                     for s in buf.iter_mut() { *s = 0.0; }
                     return total_len;
                 }
-                // Read L and R separately, compute difference
+                // Read L and R separately, compute difference.
+                // RE-ENTRANCY INVARIANT: read_samples recurses here. This is only
+                // sound because every `self.cache.borrow_mut()` inside the channel
+                // reads is released BEFORE returning — so no RefCell borrow is
+                // alive across these recursive calls. Never call a read_* method
+                // while holding a cache borrow, or it panics with BorrowMutError
+                // (the RefCell can't catch it at compile time). See the unsafe
+                // Send/Sync impls for the single-threaded (WASM) invariant.
                 let mut left = vec![0.0f32; total_len];
                 let mut right = vec![0.0f32; total_len];
                 self.read_samples(ChannelView::Channel(0), start, &mut left);
@@ -568,7 +580,12 @@ pub struct StreamingFlacSource {
     decode_frame_cursor: RefCell<u64>,
 }
 
-// SAFETY: WASM is single-threaded; these are required by AudioSource: Send + Sync.
+// SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
+// caches/cursors so it is NOT inherently Sync. Sound ONLY because the app is
+// single-threaded (WASM) and the source is touched from that one thread; unsound
+// from a real worker thread. Invariant: never call a read_* method while an
+// internal cache.borrow_mut() is alive (BorrowMutError — see the
+// ChannelView::Difference recursion in read_samples).
 unsafe impl Send for StreamingFlacSource {}
 unsafe impl Sync for StreamingFlacSource {}
 

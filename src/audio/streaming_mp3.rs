@@ -43,7 +43,11 @@ pub struct StreamingMp3Source {
     pub(crate) is_vbr: Cell<bool>,
 }
 
-// SAFETY: WASM is single-threaded; these are required by AudioSource: Send + Sync.
+// SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
+// caches/cursors so it is NOT inherently Sync. Sound ONLY because the app is
+// single-threaded (WASM) and the source is touched from that one thread; unsound
+// from a real worker thread. Invariant: never call a read_* method while an
+// internal cache.borrow_mut() is alive (BorrowMutError).
 unsafe impl Send for StreamingMp3Source {}
 unsafe impl Sync for StreamingMp3Source {}
 
