@@ -654,16 +654,9 @@ pub fn App() -> impl IntoView {
                 return;
             }
 
-            // If HFR is on, swap gain back to "normal" orientation before saving
-            // the outgoing file settings.
-            let was_hfr = old_id.is_some()
-                && state.viewmode.focus_stack().get_untracked().hfr_enabled();
-            if was_hfr {
-                let current_gain = state.gain.db().get_untracked();
-                let stashed_gain = state.gain.db_stash().get_untracked();
-                state.gain.db().set(stashed_gain);
-                state.gain.db_stash().set(current_gain);
-            }
+            // (No gain swap here anymore: HFR is global and the gain is stored in
+            // a fixed off/hfr orientation, so from_state/apply_to_state keep it
+            // ear-safe under any HFR state.)
 
             // Resolve the outgoing file's CURRENT index by id (it may have
             // shifted; `None` means it was removed → nothing to save).
@@ -692,35 +685,44 @@ pub fn App() -> impl IntoView {
                 });
             }
 
-            // Genuine switch: clear annotation selection, save the outgoing
-            // file's sidecar, reset HFR/focus for the new file.
+            // Genuine switch: clear the annotation selection (its focus override
+            // is cleared below by the focus reset — note we do NOT call
+            // pop_annotation_ff(), which would disable the now-global HFR), and
+            // save the outgoing file's sidecar.
             state.annotations.selected_ids().set(Vec::new());
-            state.pop_annotation_ff();
             if let Some(oi) = old_oi {
                 crate::opfs::save_annotations(state, oi);
             }
 
-            // Frequency focus SELECTIONS are PerFile (shares None): save the
-            // outgoing file's, then restore the incoming file's. The HFR mode
-            // (on/off + saved playback/bandpass) is NOT snapshotted — it resets
-            // here as before (HFR off for the new file). [state-scoping: focus]
+            // The user's MANUAL focus RANGE is PerFile (shares None): save the
+            // outgoing file's, restore the incoming file's. Override layers
+            // (bat-book / annotation) are transient — they follow the live
+            // selection — so they're cleared on switch, not persisted. The HFR
+            // MODE (on/off + saved playback/bandpass) is GLOBAL and persists.
+            // [state-scoping: focus + HFR-global]
             if let Some(oid) = old_id {
-                let (user_range, overrides) =
-                    state.viewmode.focus_stack().with_untracked(|s| s.focus_selections());
+                let user_range = state.viewmode.focus_stack().with_untracked(|s| s.user_range());
                 state.library.per_file_view().update(|m| {
                     m.entry(oid).or_default().focus =
-                        Some(crate::state::FocusSnapshot { user_range, overrides });
+                        Some(crate::state::FocusSnapshot { user_range, overrides: Vec::new() });
                 });
             }
-            let incoming_focus = new_id.and_then(|nid| {
-                state.library.per_file_view().with_untracked(|m| m.get(&nid).and_then(|s| s.focus.clone()))
+            let incoming_range = new_id.and_then(|nid| {
+                state.library.per_file_view().with_untracked(|m| {
+                    m.get(&nid).and_then(|s| s.focus.as_ref().map(|f| f.user_range))
+                })
             });
+            // Keep the HFR mode (global); set the per-file user range and clear
+            // the transient override layers.
             state.viewmode.focus_stack().update(|s| {
-                *s = crate::focus_stack::FocusStack::new();
-                if let Some(snap) = &incoming_focus {
-                    s.set_focus_selections(snap.user_range, snap.overrides.clone());
-                }
+                s.set_focus_selections(
+                    incoming_range.unwrap_or(crate::focus_stack::FocusRange::inactive()),
+                    Vec::new(),
+                );
             });
+            // Re-derive the effective BandFF band for the new file's focus (and
+            // keep the viewmode `hfr_enabled` mirror in sync).
+            state.sync_focus_outputs();
 
             // Horizontal scroll is a VIEWPORT setting: PerFile, shared across the
             // MULTITRACK group (switch channels → stay at the same place). Save the
@@ -755,12 +757,9 @@ pub fn App() -> impl IntoView {
                 .scroll_offset()
                 .set(incoming_view.map(|v| v.scroll_offset).unwrap_or(0.0));
 
-            if was_hfr {
-                state.playback.mode().set(PlaybackMode::Normal);
-                state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
-                state.view.min_display_freq().set(None);
-                state.view.max_display_freq().set(None);
-            }
+            // (No HFR-exit reset on switch anymore: HFR is global, so playback
+            // mode + bandpass persist; the per-file vertical-range Effect restores
+            // min/max_display_freq.)
 
             // Restore settings from the incoming file (single restore boundary).
             if let Some(ni) = new_idx {

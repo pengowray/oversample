@@ -70,8 +70,10 @@ impl Default for FilterSettings {
 #[derive(Clone, Debug)]
 pub struct FileSettings {
     pub gain_mode: GainMode,
+    /// FIXED orientation: the HFR-OFF gain (always). See `from_state`.
     pub gain_db: f64,
-    /// Stashed gain for the other HFR state (swapped on HFR toggle).
+    /// FIXED orientation: the HFR-ON gain (always). The live signals
+    /// `gain.db`/`gain.db_stash` hold active/inactive; these store off/hfr.
     pub gain_db_stash: f64,
     pub notch_enabled: bool,
     pub notch_bands: Vec<crate::dsp::notch::NoiseBand>,
@@ -90,10 +92,18 @@ impl FileSettings {
     /// signals are per-file" on the SAVE side — adding a per-file setting means
     /// adding it here AND in `apply_to_state` (and to the struct), nowhere else.
     pub fn from_state(state: &AppState) -> Self {
+        // Gain is stored in a FIXED orientation: `gain_db` is ALWAYS the HFR-off
+        // gain and `gain_db_stash` ALWAYS the HFR-on gain (regardless of which is
+        // currently active). That makes restore correct — and EAR-SAFE — under
+        // any global HFR state. The live `gain.db`/`db_stash` hold active/inactive.
+        let hfr_on = state.viewmode.focus_stack().get_untracked().hfr_enabled();
+        let g_active = state.gain.db().get_untracked();
+        let g_stash = state.gain.db_stash().get_untracked();
+        let (gain_db, gain_db_stash) = if hfr_on { (g_stash, g_active) } else { (g_active, g_stash) };
         FileSettings {
             gain_mode: state.gain.mode().get_untracked(),
-            gain_db: state.gain.db().get_untracked(),
-            gain_db_stash: state.gain.db_stash().get_untracked(),
+            gain_db,
+            gain_db_stash,
             notch_enabled: state.notch.enabled().get_untracked(),
             notch_bands: state.notch.bands().get_untracked(),
             notch_profile_name: state.notch.profile_name().get_untracked(),
@@ -121,8 +131,16 @@ impl FileSettings {
     pub fn apply_to_state(&self, state: &AppState) {
         state.gain.mode().set(self.gain_mode);
         state.gain.auto().set(self.gain_mode.is_auto());
-        state.gain.db().set(self.gain_db);
-        state.gain.db_stash().set(self.gain_db_stash);
+        // Gain is stored fixed (gain_db = HFR-off, gain_db_stash = HFR-on);
+        // orient the live active/inactive signals to the CURRENT global HFR state.
+        let hfr_on = state.viewmode.focus_stack().get_untracked().hfr_enabled();
+        let (g_active, g_stash) = if hfr_on {
+            (self.gain_db_stash, self.gain_db)
+        } else {
+            (self.gain_db, self.gain_db_stash)
+        };
+        state.gain.db().set(g_active);
+        state.gain.db_stash().set(g_stash);
         state.notch.enabled().set(self.notch_enabled);
         state.notch.bands().set(self.notch_bands.clone());
         state.notch.profile_name().set(self.notch_profile_name.clone());
@@ -3124,7 +3142,7 @@ impl AppState {
     /// otherwise) so the band can never exceed what the source can resolve.
     /// The unclamped user intent stays in the focus stack and re-applies when
     /// the source changes back.
-    fn sync_focus_outputs(&self) {
+    pub fn sync_focus_outputs(&self) {
         let stack = self.viewmode.focus_stack().get_untracked();
         let eff = stack.effective_range();
         let hfr = stack.hfr_enabled();
