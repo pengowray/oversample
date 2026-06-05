@@ -240,6 +240,8 @@ pub fn MicChooserModal() -> impl IntoView {
                                 let dev_name_for_class = dev.name.clone();
                                 let dev_name_for_badge = dev.name.clone();
                                 let dev_name_for_bits = dev.name.clone();
+                                let dev_name_for_sel = dev.name.clone();
+                                let dev_name_for_selval = dev.name.clone();
                                 let is_default = dev.is_default;
                                 let click_rates = dev.rates.clone();
                                 let click_bit_depths = dev.bit_depths.clone();
@@ -314,6 +316,38 @@ pub fn MicChooserModal() -> impl IntoView {
                                                     .map(|bits| format!(" \u{2022} appears {bits}-bit"))
                                                     .unwrap_or_default()
                                             }}
+                                        </div>
+                                        // Per-device bit-depth override. Auto uses the auto-detected
+                                        // depth; an explicit choice forces it (12-bit zero-pads).
+                                        // stop_propagation so using the control doesn't select the device.
+                                        <div
+                                            class="mic-chooser-device-caps"
+                                            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+                                        >
+                                            "Record at: "
+                                            <select
+                                                prop:value=move || state.mic.bit_depth_override()
+                                                    .with(|m| m.get(&dev_name_for_selval).map(|b| b.to_string()))
+                                                    .unwrap_or_else(|| "auto".to_string())
+                                                on:change=move |ev| {
+                                                    let v = event_target_value(&ev);
+                                                    let dev = dev_name_for_sel.clone();
+                                                    state.mic.bit_depth_override().update(|m| {
+                                                        match v.parse::<u16>() {
+                                                            Ok(b) => { m.insert(dev, b); }
+                                                            Err(_) => { m.remove(&dev); }
+                                                        }
+                                                    });
+                                                    let map = state.mic.bit_depth_override().get_untracked();
+                                                    crate::settings::set_mic_bit_depth_overrides(&map);
+                                                }
+                                            >
+                                                <option value="auto">"Auto"</option>
+                                                <option value="12">"12-bit"</option>
+                                                <option value="16">"16-bit"</option>
+                                                <option value="24">"24-bit"</option>
+                                                <option value="32">"32-bit"</option>
+                                            </select>
                                         </div>
                                     </div>
                                 }

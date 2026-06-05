@@ -148,6 +148,7 @@ pub fn mic_start_recording(
     loc_elevation: Option<f64>,
     loc_accuracy: Option<f64>,
     enable_recovery: Option<bool>,
+    force_bits: Option<u16>,
 ) -> Result<(), String> {
     let mic = state.lock().map_err(|e| e.to_string())?;
     let m = mic.as_ref().ok_or("Microphone not open")?;
@@ -155,6 +156,7 @@ pub fn mic_start_recording(
         let mut buf = m.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
+        buf.force_bits = force_bits;
     }
 
     let args = recovery::StartArgs {

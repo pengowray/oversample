@@ -65,9 +65,15 @@ fn build_start_recording_args(
             None => (None, None, None, None),
         };
 
+    // Per-device manual bit-depth override for the current device (None = Auto).
+    let force_bits = state.mic.device_name().get_untracked().and_then(|dev| {
+        state.mic.bit_depth_override().with_untracked(|m| m.get(&dev).copied())
+    });
+
     oversample_ipc::mic::StartRecordingArgs {
         shared_fd,
         enable_recovery: stream_to_disk,
+        force_bits,
         filename,
         connection_type: state.mic.connection_type().get_untracked(),
         mic_name: state.mic.device_name().get_untracked(),

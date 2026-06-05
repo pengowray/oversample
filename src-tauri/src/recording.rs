@@ -52,6 +52,10 @@ pub struct RecordingBuffer {
     /// new stream opens. `detect_samples` gates on having enough data.
     pub detect_or: i32,
     pub detect_samples: u64,
+    /// Per-device user override of the output bit depth (12/16/24/32). When set,
+    /// the recording is written at this effective depth instead of the
+    /// auto-detected one. `None` = Auto (use detection).
+    pub force_bits: Option<u16>,
 }
 
 impl RecordingBuffer {
@@ -67,6 +71,7 @@ impl RecordingBuffer {
             shared_fd: None,
             detect_or: 0,
             detect_samples: 0,
+            force_bits: None,
         }
     }
 
@@ -602,8 +607,10 @@ pub fn open_mic(
 /// detection settles or for genuine 32-bit input. (A per-device override can
 /// force a specific depth — wired separately.)
 fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
+    // A per-device override (force_bits) wins; otherwise the auto-detected depth.
+    let target = buffer.force_bits.or_else(|| buffer.effective_bits(32));
     match buffer.format {
-        NativeSampleFormat::I32 => match buffer.effective_bits(32) {
+        NativeSampleFormat::I32 => match target {
             Some(b) if b <= 16 => NativeSampleFormat::I16,
             Some(b) if b <= 24 => NativeSampleFormat::I24,
             _ => NativeSampleFormat::I32,
@@ -631,10 +638,18 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
         hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV writer error: {}", e))?;
 
     let werr = |e: hound::Error| format!("WAV write error: {}", e);
+    // For a target depth that doesn't match the 16-bit WAV size (e.g. a forced or
+    // detected 12-bit), zero the surplus low bits so the file is honestly N-bit
+    // (12-bit zero-padded). No-op (mask = all ones) for native 16-bit output.
+    let target = buffer.force_bits.or_else(|| buffer.effective_bits(32));
+    let mask16: i16 = match (out_format, target) {
+        (NativeSampleFormat::I16, Some(b)) if b < 16 => !((1i16 << (16 - b)) - 1),
+        _ => -1,
+    };
     match buffer.format {
         NativeSampleFormat::I16 => {
             for &s in &buffer.samples_i16 {
-                writer.write_sample(s).map_err(werr)?;
+                writer.write_sample(s & mask16).map_err(werr)?;
             }
         }
         // i32 container source: write at the (possibly down-converted) out depth.
@@ -643,7 +658,7 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
         NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
             for &s in &buffer.samples_i32 {
                 match out_format {
-                    NativeSampleFormat::I16 => writer.write_sample((s >> 16) as i16),
+                    NativeSampleFormat::I16 => writer.write_sample(((s >> 16) as i16) & mask16),
                     NativeSampleFormat::I24 => writer.write_sample(s >> 8),
                     _ => writer.write_sample(s),
                 }

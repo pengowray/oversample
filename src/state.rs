@@ -1686,6 +1686,9 @@ pub struct MicState {
     /// loaded from + persisted to localStorage. Lets the UI show "appears to be
     /// N-bit" for a device seen in any prior session, and record at that depth.
     pub bit_depths: std::collections::HashMap<String, u16>,
+    /// Per-device MANUAL bit-depth override (device name -> forced bits). Absent
+    /// = Auto (use detection). Set via the chooser, applied on record.
+    pub bit_depth_override: std::collections::HashMap<String, u16>,
     /// Connection type: "USB", "Internal", "Bluetooth", etc.
     pub connection_type: Option<String>,
     /// USB mic manufacturer name (from USB descriptors), if available.
@@ -2252,6 +2255,7 @@ impl AppState {
                 timer_tick: 0,
                 device_name: None,
                 bit_depths: crate::settings::get_mic_bit_depths(),
+                bit_depth_override: crate::settings::get_mic_bit_depth_overrides(),
                 connection_type: None,
                 manufacturer: None,
                 usb_connected: false,

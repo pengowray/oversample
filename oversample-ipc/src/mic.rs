@@ -106,6 +106,10 @@ pub struct StartRecordingArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_fd: Option<i32>,
     pub enable_recovery: bool,
+    /// Per-device bit-depth override: force the recording to this effective depth
+    /// (12/16/24/32) instead of the auto-detected one. `None` = Auto.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force_bits: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

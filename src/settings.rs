@@ -25,6 +25,8 @@ pub mod keys {
     /// JSON map of mic device name -> auto-detected effective bit depth, so a
     /// device seen in a prior session is known ahead of time.
     pub const MIC_BIT_DEPTHS: &str = "oversample_mic_bit_depths";
+    /// JSON map of mic device name -> manual bit-depth override (Auto if absent).
+    pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
 }
 
 /// Load the persisted per-device effective-bit-depth map (device name -> bits).
@@ -38,6 +40,21 @@ pub fn get_mic_bit_depths() -> std::collections::HashMap<String, u16> {
 pub fn set_mic_bit_depths(map: &std::collections::HashMap<String, u16>) {
     if let Ok(s) = serde_json::to_string(map) {
         set_raw(keys::MIC_BIT_DEPTHS, &s);
+    }
+}
+
+/// Load the per-device manual bit-depth OVERRIDE map (device name -> forced bits;
+/// absent = Auto). Distinct from the auto-detected map above.
+pub fn get_mic_bit_depth_overrides() -> std::collections::HashMap<String, u16> {
+    get_raw(keys::MIC_BIT_DEPTH_OVERRIDES)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the per-device manual bit-depth override map.
+pub fn set_mic_bit_depth_overrides(map: &std::collections::HashMap<String, u16>) {
+    if let Ok(s) = serde_json::to_string(map) {
+        set_raw(keys::MIC_BIT_DEPTH_OVERRIDES, &s);
     }
 }
 
