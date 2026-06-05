@@ -1160,7 +1160,20 @@ pub fn Spectrogram() -> impl IntoView {
     // Effect 5: pre-fetch tiles ahead of the viewport and at the start of the file.
     // Debounced at 200ms so it doesn't fire at 60fps during playback.
     {
-        let prefetch_handle: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+        // StoredValue (Copy + Send) rather than Rc<Cell> so the handle can also
+        // be reached from on_cleanup (which requires Send) below.
+        let prefetch_handle: StoredValue<Option<i32>> = StoredValue::new(None);
+
+        // Cancel any pending debounce timer on disposal, so a stale prefetch
+        // can't fire (and leak its closure + handle) after the component is gone,
+        // rather than relying solely on the `disposed` flag check in the callback.
+        on_cleanup(move || {
+            if let Some(Some(h)) = prefetch_handle.try_get_value() {
+                if let Some(w) = web_sys::window() {
+                    w.clear_timeout_with_handle(h);
+                }
+            }
+        });
 
         Effect::new({
             let disposed = disposed.clone();
@@ -1178,17 +1191,17 @@ pub fn Spectrogram() -> impl IntoView {
             // Scroll/zoom/playing changes are sufficient triggers for prefetch.
 
             // Cancel previous debounce timer
-            if let Some(h) = prefetch_handle.get() {
+            if let Some(h) = prefetch_handle.get_value() {
                 web_sys::window().unwrap().clear_timeout_with_handle(h);
             }
 
-            let handle_rc = prefetch_handle.clone();
+            let handle = prefetch_handle;
             let disposed_rc = disposed.clone();
             let cb = Closure::once(move || {
                 if disposed_rc.load(Ordering::Relaxed) { return; }
                 use crate::canvas::tile_cache;
 
-                handle_rc.set(None);
+                handle.set_value(None);
 
                 let main_view = state.viewmode.main_view().get_untracked();
                 if matches!(main_view, MainView::Waveform | MainView::ZcChart) {
@@ -1255,7 +1268,7 @@ pub fn Spectrogram() -> impl IntoView {
                 )
                 .unwrap_or(0);
             cb.forget();
-            prefetch_handle.set(Some(h));
+            prefetch_handle.set_value(Some(h));
         }});
 
         // Note: pending prefetch timeout (200ms) is not explicitly cancelled on
