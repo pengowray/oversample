@@ -327,6 +327,11 @@ pub fn mic_stop_recording(
         let samples_f32 = recording::get_samples_f32(&buf);
         let mut wav_data = recording::encode_native_wav(&buf)?;
         drop(buf);
+        // All mic-state reads are done; release the MicMutex before the GUANO
+        // append + (possibly large) shared-storage write, mirroring the
+        // streaming branch above so mic_get_status / other mic commands don't
+        // block for the write's duration.
+        drop(mic);
         oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
         let file_size_bytes = wav_data.len();
 

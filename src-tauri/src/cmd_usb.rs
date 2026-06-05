@@ -228,6 +228,11 @@ pub fn usb_stop_recording(
             let mut buf = s.buffer.lock().unwrap();
             usb_audio::drain_usb_recovery_bytes(&mut buf)
         };
+        // Everything below operates on the owned writer / bytes / paths, not the
+        // USB state. Release the UsbStreamMutex before the (possibly multi-GB)
+        // in-place finalize + shared-storage copy so it can't block
+        // usb_stream_status or a concurrent USB command for the copy's duration.
+        drop(usb);
         let finalized_path = recovery::finalize_in_place_and_take(writer, &final_bytes, &guano_text)
             .map_err(|e| format!("recovery finalize failed: {}", e))?;
         let final_size = finalized_path.metadata().map(|m| m.len()).unwrap_or(0) as usize;
@@ -254,6 +259,10 @@ pub fn usb_stop_recording(
         // for the WASM finalizer to pull as raw bytes (mic_take_recorded_samples).
         let samples_f32 = usb_audio::get_usb_samples_f32(s);
         let mut wav_data = usb_audio::encode_usb_wav(s)?;
+        // All USB-state reads are done; release the UsbStreamMutex before the
+        // GUANO append + (possibly large) shared-storage write so concurrent
+        // status polls / USB commands don't block for the write's duration.
+        drop(usb);
         oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
         let file_size_bytes = wav_data.len();
         let path = if let Some(fd) = shared_fd.take() {
