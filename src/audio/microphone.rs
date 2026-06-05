@@ -801,6 +801,48 @@ pub async fn arm_live_doc(state: &AppState) {
     let _ = start_live_armed(state, sr);
 }
 
+/// RAII guard for the `starting_recording` debounce gate.
+///
+/// The gate blocks a second Record tap while a start flow is mid-flight (see
+/// [`toggle_record`]). It must be cleared on *every* terminal path, and the flow
+/// has several early returns plus a cross-call hold for the "Ready to record"
+/// dialog — historically each exit cleared the flag by hand, so any new early
+/// return risked leaving it stuck `true` (every later Record tap then silently
+/// swallowed with a "Recording is starting…" toast). This guard clears the flag
+/// on drop; call [`StartGate::disarm`] to hand the gate off to a path that clears
+/// it itself — `do_start_recording`'s tail, or the dialog's confirm/cancel.
+struct StartGate {
+    state: AppState,
+    armed: bool,
+}
+
+impl StartGate {
+    /// Set the gate and arm a guard that clears it on drop.
+    fn engage(state: &AppState) -> Self {
+        state.mic.starting_recording().set(true);
+        Self { state: *state, armed: true }
+    }
+
+    /// Adopt a gate already set by an earlier call (the dialog hold), arming the
+    /// guard so the current flow's early returns still release it.
+    fn adopt(state: &AppState) -> Self {
+        Self { state: *state, armed: true }
+    }
+
+    /// Hand off responsibility for clearing the gate; drop becomes a no-op.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StartGate {
+    fn drop(&mut self) {
+        if self.armed {
+            self.state.mic.starting_recording().set(false);
+        }
+    }
+}
+
 /// Toggle recording on/off. When stopping, finalizes the recording.
 pub async fn toggle_record(state: &AppState) {
     // If already recording, stop
@@ -823,12 +865,15 @@ pub async fn toggle_record(state: &AppState) {
         state.show_info_toast("Recording is starting\u{2026}");
         return;
     }
-    state.mic.starting_recording().set(true);
+    // Engage the start-debounce gate. The guard clears it on every early return
+    // below; `disarm()` hands it off to a path that clears it itself.
+    let gate = StartGate::engage(state);
 
     // If already listening, the mic is ready — go straight to recording
     if state.mic.listening().get_untracked() {
         if let Some(backend) = resolve_active_backend(state) {
             state.log_debug("info", format!("toggle_record: already listening, starting immediate with {:?}", backend));
+            gate.disarm(); // do_start_recording clears the gate at its tail
             do_start_recording(state, backend).await;
             return;
         }
@@ -839,8 +884,7 @@ pub async fn toggle_record(state: &AppState) {
         Some(b) => b,
         None => {
             state.log_debug("info", "toggle_record: acquire_mic returned None (chooser shown or failed)");
-            state.mic.starting_recording().set(false);
-            return;
+            return; // `gate` drops → releases the debounce gate
         }
     };
 
@@ -849,13 +893,15 @@ pub async fn toggle_record(state: &AppState) {
     // If OS permission dialog was shown (detected by timing), skip our dialog
     if state.mic.permission_dialog_shown().get_untracked() {
         state.log_debug("info", format!("toggle_record: backend={:?}, permission dialog detected, starting immediately", backend));
+        gate.disarm(); // do_start_recording clears the gate at its tail
         do_start_recording(state, backend).await;
     } else {
-        // Show "Ready to record" dialog — user must confirm. The flag stays
-        // set so a stray tap during the dialog can't kick off a second flow;
-        // confirm_record_start / cancel_record_start clear it.
+        // Show "Ready to record" dialog — user must confirm. The gate stays set
+        // so a stray tap during the dialog can't kick off a second flow;
+        // confirm_record_start / cancel_record_start own clearing it.
         state.log_debug("info", format!("toggle_record: backend={:?}, showing Ready to Record dialog", backend));
         state.mic.record_ready_state().set(crate::state::RecordReadyState::AwaitingConfirmation);
+        gate.disarm(); // dialog confirm/cancel now owns the gate
     }
 }
 
@@ -876,13 +922,14 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
         state.log_debug("info", "toggle_record_with_preroll: ignored — start already in flight");
         return;
     }
-    state.mic.starting_recording().set(true);
+    let gate = StartGate::engage(state);
 
     // Must be listening to have a pre-roll buffer
     if !state.mic.listening().get_untracked() {
-        // Not listening — fall back to normal toggle_record. Clear our flag
-        // first so toggle_record's own debounce check doesn't bounce.
-        state.mic.starting_recording().set(false);
+        // Not listening — fall back to normal toggle_record. Release the gate
+        // *before* re-dispatching so toggle_record's own debounce check doesn't
+        // bounce; that call then owns the gate.
+        drop(gate);
         toggle_record(state).await;
         return;
     }
@@ -914,21 +961,24 @@ pub async fn toggle_record_with_preroll(state: &AppState) {
 
     if let Some(backend) = resolve_active_backend(state) {
         log::info!("Long-press record: capturing {} pre-roll samples (raw={}, gesture compensated)", preroll, raw_preroll);
+        gate.disarm(); // do_start_recording clears the gate at its tail
         do_start_recording(state, backend).await;
     } else {
-        // No backend to start with; do_start_recording won't run to clear the flag.
-        state.mic.starting_recording().set(false);
+        // No backend to start with — `gate` drops → releases the debounce gate.
     }
 }
 
 /// Called by the "Ready to record" dialog's OK button.
 pub async fn confirm_record_start(state: &AppState) {
     state.mic.record_ready_state().set(crate::state::RecordReadyState::None);
+    // The gate is still held from toggle_record's dialog branch; adopt it so the
+    // no-backend path below releases it.
+    let gate = StartGate::adopt(state);
     if let Some(backend) = resolve_active_backend(state) {
+        gate.disarm(); // do_start_recording clears the gate at its tail
         do_start_recording(state, backend).await;
     } else {
-        // No backend resolvable; do_start_recording won't run to clear the flag.
-        state.mic.starting_recording().set(false);
+        // No backend resolvable — `gate` drops → releases the debounce gate.
     }
 }
 
