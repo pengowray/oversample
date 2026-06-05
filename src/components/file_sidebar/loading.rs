@@ -252,6 +252,17 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
         file_index = idx;
     }
 
+    // Stable id of the file we just pushed. Background/async writes below guard on
+    // this rather than the (positional index, name) pair — removing a file shifts
+    // indices and a duplicate-named file could otherwise pass a name check and get
+    // someone else's decoded data written into it.
+    let expected_id = state
+        .library
+        .files()
+        .get_untracked()
+        .get(file_index)
+        .map(|f| f.id);
+
     // Auto-switch main_view to ZcChart for Anabat .zc files. The
     // recording has no continuous waveform, so the Spectrogram view
     // would render a blank canvas; the dot plot is the only correct
@@ -312,7 +323,7 @@ pub(crate) async fn load_named_bytes(name: String, bytes: &[u8], xc_metadata: Op
     };
     state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
-            if f.name == name_check {
+            if Some(f.id) == expected_id {
                 f.spectrogram = spectrogram;
             }
         }
