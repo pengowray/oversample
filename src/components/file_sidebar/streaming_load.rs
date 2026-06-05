@@ -28,6 +28,113 @@ fn should_stream_from_decoded_size(decoded_bytes: u64, force_streaming: bool) ->
     }
 }
 
+/// The per-decoder data for registering a freshly-decoded streaming file.
+/// Everything else about the post-decode finalize is shared — see
+/// `push_streaming_file` / `prefetch_window` / `finish_streaming_file`, which
+/// replace what used to be ~90 copy-pasted lines in each of the 5 decoders.
+pub(super) struct NewStreamingFile {
+    pub name: String,
+    pub audio: AudioData,
+    pub spectrogram: SpectrogramData,
+    pub preview: crate::types::PreviewImage,
+    pub cached_peak_db: Option<f64>,
+    pub wav_markers: Vec<crate::types::WavMarker>,
+    pub file: File,
+    pub load_id: u64,
+    pub total_cols: usize,
+    pub fft_size: usize,
+    pub silence_check: Option<SilenceCheck>,
+}
+
+/// Push a freshly-decoded streaming file into the library, select it, and run the
+/// shared post-load work (full-file peak scan, silent/quiet toast, spectral-store
+/// init). Returns the new file's index.
+pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize {
+    let NewStreamingFile {
+        name, audio, spectrogram, preview, cached_peak_db, wav_markers, file,
+        load_id, total_cols, fft_size, silence_check,
+    } = f;
+    let file_index;
+    {
+        let mut idx = 0;
+        state.library.files().update(|files| {
+            idx = files.len();
+            files.push(LoadedFile {
+                id: crate::state::next_file_id(),
+                name,
+                audio,
+                spectrogram,
+                preview: Some(preview),
+                overview_image: None,
+                xc_metadata: None,
+                xc_hashes: None,
+                is_demo: false,
+                is_recording: false,
+                is_live_listen: false,
+                settings: FileSettings::default(),
+                add_order: idx,
+                last_modified_ms: None,
+                identity: None,
+                file_handle: Some(FileHandle::WebFile(file)),
+                cached_peak_db,
+                cached_full_peak_db: None,
+                read_only: false,
+                had_sidecar: false,
+                verify_outcome: crate::state::VerifyOutcome::Pending,
+                all_hashes_verified: false,
+                wav_markers,
+                loading_id: Some(load_id),
+                min_display_freq: None,
+                max_display_freq: None,
+            });
+        });
+        // Set current_index OUTSIDE the files().update() closure — they are
+        // siblings in the `library` store; an inner set can't acquire the write
+        // guard (files() holds it) and silently no-ops in reactive_stores.
+        state.library.current_index().set(Some(idx));
+        file_index = idx;
+    }
+
+    crate::audio::peak::start_full_peak_scan(state, file_index);
+
+    if let Some(check) = silence_check {
+        match check {
+            SilenceCheck::Silent => {
+                state.gain.auto().set(false);
+                state.gain.db().set(0.0);
+                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
+            }
+            SilenceCheck::HighGain(db) => {
+                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
+            }
+        }
+    }
+
+    crate::canvas::spectral_store::init(file_index, total_cols, fft_size);
+    file_index
+}
+
+/// The (start_sample, sample_count) window to prefetch for the initial viewport.
+pub(super) fn prefetch_window(state: AppState, sample_rate: u32, fft_size: usize) -> (u64, usize) {
+    const HOP_SIZE: usize = 512; // baseline LOD hop (matches each decoder's local)
+    let scroll = state.view.scroll_offset().get_untracked();
+    let zoom = state.view.zoom_level().get_untracked();
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
+    let time_res = HOP_SIZE as f64 / sample_rate as f64;
+    let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
+    let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
+    let visible_samples = (visible_time * sample_rate as f64) as usize;
+    (start_sample, visible_samples + fft_size)
+}
+
+/// Schedule the initial visible tiles, bump the tile-ready signal, and spawn the
+/// background overview build. Call after the per-decoder prefetch.
+pub(super) fn finish_streaming_file(state: AppState, file_index: usize, name: &str, total_cols: usize) {
+    crate::canvas::tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
+    wasm_bindgen_futures::spawn_local(build_streaming_overview(state, file_index, name.to_string()));
+}
+
 /// Attempt to open a large WAV file using the streaming path.
 /// Returns Ok(()) if successful, Err if the file is not suitable for streaming
 /// (not WAV, decoded size below threshold, unsupported format).
@@ -193,100 +300,29 @@ pub(super) async fn try_streaming_wav(file: &File, name: &str, state: AppState, 
     };
 
     let wav_markers = header.wav_markers.clone();
-    let name_owned = name.to_string();
-    let file_index;
-    {
-        let mut idx = 0;
-        state.library.files().update(|files| {
-            idx = files.len();
-            files.push(LoadedFile {
-                id: crate::state::next_file_id(),
-                name: name_owned.clone(),
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                xc_metadata: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file.clone())),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers,
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
-        });
-        // Set current_index OUTSIDE the files().update() closure — they are
-        // siblings in the `library` store; an inner set can't acquire the write
-        // guard (files() holds it) and silently no-ops in reactive_stores.
-        state.library.current_index().set(Some(idx));
-        file_index = idx;
-    }
+    let file_index = push_streaming_file(state, NewStreamingFile {
+        name: name.to_string(),
+        audio,
+        spectrogram,
+        preview,
+        cached_peak_db,
+        wav_markers,
+        file: file.clone(),
+        load_id,
+        total_cols,
+        fft_size,
+        silence_check,
+    });
 
-    // Schedule async full-file peak scan (for files > 30s)
-    crate::audio::peak::start_full_peak_scan(state, file_index);
-
-    // Notify user about silent/quiet files
-    if let Some(check) = silence_check {
-        match check {
-            SilenceCheck::Silent => {
-                state.gain.auto().set(false);
-                state.gain.db().set(0.0);
-                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
-            }
-            SilenceCheck::HighGain(db) => {
-                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
-            }
-        }
-    }
-
-    // For streaming files, tiles are computed on-demand by tile_cache.
-    // Schedule visible tiles to kick off the initial view.
-    use crate::canvas::{spectral_store, tile_cache};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Prefetch first viewport worth of audio, then schedule tiles
+    // WAV is random-access: prefetch the initial viewport via the file's source.
+    let (start_sample, count) = prefetch_window(state, sample_rate, fft_size);
     let audio_ref = state.library.files().get_untracked().get(file_index).cloned();
     if let Some(f) = audio_ref {
         if let Some(streaming) = f.audio.source.as_any().downcast_ref::<StreamingWavSource>() {
-            // Prefetch the head region — already loaded, but schedule visible tiles
-            let scroll = state.view.scroll_offset().get_untracked();
-            let zoom = state.view.zoom_level().get_untracked();
-            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-            let time_res = HOP_SIZE as f64 / sample_rate as f64;
-            let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-            let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
-            let visible_samples = (visible_time * sample_rate as f64) as usize;
-            streaming.prefetch_region(start_sample, visible_samples + fft_size).await;
+            streaming.prefetch_region(start_sample, count).await;
         }
-
-        tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
     }
-
-    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-
-    // Spawn low-priority background task to build the full overview spectrogram.
-    // This only runs when the system is idle (not playing, not actively rendering tiles).
-    {
-        let name_for_overview = name.to_string();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(
-            state,
-            file_index,
-            name_for_overview,
-        ));
-    }
+    finish_streaming_file(state, file_index, name, total_cols);
 
     Ok(())
 }
@@ -494,103 +530,31 @@ pub(super) async fn try_streaming_flac(file: &File, name: &str, state: AppState,
         sample_rate,
     };
 
-    let name_owned = name.to_string();
-    let file_index;
-    {
-        let mut idx = 0;
-        state.library.files().update(|files| {
-            idx = files.len();
-            files.push(LoadedFile {
-                id: crate::state::next_file_id(),
-                name: name_owned.clone(),
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                xc_metadata: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file.clone())),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers: Vec::new(),
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
-        });
-        // Set current_index OUTSIDE the files().update() closure — they are
-        // siblings in the `library` store; an inner set can't acquire the write
-        // guard (files() holds it) and silently no-ops in reactive_stores.
-        state.library.current_index().set(Some(idx));
-        file_index = idx;
-    }
+    let file_index = push_streaming_file(state, NewStreamingFile {
+        name: name.to_string(),
+        audio,
+        spectrogram,
+        preview,
+        cached_peak_db,
+        wav_markers: Vec::new(),
+        file: file.clone(),
+        load_id,
+        total_cols,
+        fft_size,
+        silence_check,
+    });
 
-    // Schedule async full-file peak scan (for files > 30s)
-    crate::audio::peak::start_full_peak_scan(state, file_index);
+    let (start_sample, count) = prefetch_window(state, sample_rate, fft_size);
+    source.prefetch_region(start_sample, count).await;
+    finish_streaming_file(state, file_index, name, total_cols);
 
-    if let Some(check) = silence_check {
-        match check {
-            SilenceCheck::Silent => {
-                state.gain.auto().set(false);
-                state.gain.db().set(0.0);
-                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
-            }
-            SilenceCheck::HighGain(db) => {
-                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
-            }
-        }
-    }
-
-    use crate::canvas::{spectral_store, tile_cache};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Prefetch first viewport and schedule tiles
-    {
-        let scroll = state.view.scroll_offset().get_untracked();
-        let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-        let time_res = HOP_SIZE as f64 / sample_rate as f64;
-        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
-        let visible_samples = (visible_time * sample_rate as f64) as usize;
-        source.prefetch_region(start_sample, visible_samples + fft_size).await;
-    }
-
-    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-
-    // Spawn background progressive decode
-    {
-        let source_bg = source.clone();
-        let name_bg = name.to_string();
-        wasm_bindgen_futures::spawn_local(background_flac_decode(
-            state,
-            file_index,
-            name_bg.clone(),
-            source_bg,
-        ));
-    }
-
-    // Spawn background overview
-    {
-        let name_for_overview = name.to_string();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(
-            state,
-            file_index,
-            name_for_overview,
-        ));
-    }
+    // Background progressive decode of the remaining chunks.
+    wasm_bindgen_futures::spawn_local(background_flac_decode(
+        state,
+        file_index,
+        name.to_string(),
+        source.clone(),
+    ));
 
     Ok(())
 }
@@ -871,103 +835,31 @@ pub(super) async fn try_streaming_mp3(file: &File, name: &str, state: AppState, 
         sample_rate,
     };
 
-    let name_owned = name.to_string();
-    let file_index;
-    {
-        let mut idx = 0;
-        state.library.files().update(|files| {
-            idx = files.len();
-            files.push(LoadedFile {
-                id: crate::state::next_file_id(),
-                name: name_owned.clone(),
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                xc_metadata: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file.clone())),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers: Vec::new(),
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
-        });
-        // Set current_index OUTSIDE the files().update() closure — they are
-        // siblings in the `library` store; an inner set can't acquire the write
-        // guard (files() holds it) and silently no-ops in reactive_stores.
-        state.library.current_index().set(Some(idx));
-        file_index = idx;
-    }
+    let file_index = push_streaming_file(state, NewStreamingFile {
+        name: name.to_string(),
+        audio,
+        spectrogram,
+        preview,
+        cached_peak_db,
+        wav_markers: Vec::new(),
+        file: file.clone(),
+        load_id,
+        total_cols,
+        fft_size,
+        silence_check,
+    });
 
-    // Schedule async full-file peak scan (for files > 30s)
-    crate::audio::peak::start_full_peak_scan(state, file_index);
+    let (start_sample, count) = prefetch_window(state, sample_rate, fft_size);
+    source.prefetch_region(start_sample, count).await;
+    finish_streaming_file(state, file_index, name, total_cols);
 
-    if let Some(check) = silence_check {
-        match check {
-            SilenceCheck::Silent => {
-                state.gain.auto().set(false);
-                state.gain.db().set(0.0);
-                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
-            }
-            SilenceCheck::HighGain(db) => {
-                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
-            }
-        }
-    }
-
-    use crate::canvas::{spectral_store, tile_cache};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Prefetch first viewport and schedule tiles
-    {
-        let scroll = state.view.scroll_offset().get_untracked();
-        let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-        let time_res = HOP_SIZE as f64 / sample_rate as f64;
-        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
-        let visible_samples = (visible_time * sample_rate as f64) as usize;
-        source.prefetch_region(start_sample, visible_samples + fft_size).await;
-    }
-
-    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-
-    // Spawn background progressive decode
-    {
-        let source_bg = source.clone();
-        let name_bg = name.to_string();
-        wasm_bindgen_futures::spawn_local(background_mp3_decode(
-            state,
-            file_index,
-            name_bg,
-            source_bg,
-        ));
-    }
-
-    // Spawn background overview
-    {
-        let name_for_overview = name.to_string();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(
-            state,
-            file_index,
-            name_for_overview,
-        ));
-    }
+    // Background progressive decode of the remaining chunks.
+    wasm_bindgen_futures::spawn_local(background_mp3_decode(
+        state,
+        file_index,
+        name.to_string(),
+        source.clone(),
+    ));
 
     Ok(())
 }
@@ -1254,103 +1146,31 @@ pub(super) async fn try_streaming_ogg(file: &File, name: &str, state: AppState, 
         sample_rate,
     };
 
-    let name_owned = name.to_string();
-    let file_index;
-    {
-        let mut idx = 0;
-        state.library.files().update(|files| {
-            idx = files.len();
-            files.push(LoadedFile {
-                id: crate::state::next_file_id(),
-                name: name_owned.clone(),
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                xc_metadata: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file.clone())),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers: Vec::new(),
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
-        });
-        // Set current_index OUTSIDE the files().update() closure — they are
-        // siblings in the `library` store; an inner set can't acquire the write
-        // guard (files() holds it) and silently no-ops in reactive_stores.
-        state.library.current_index().set(Some(idx));
-        file_index = idx;
-    }
+    let file_index = push_streaming_file(state, NewStreamingFile {
+        name: name.to_string(),
+        audio,
+        spectrogram,
+        preview,
+        cached_peak_db,
+        wav_markers: Vec::new(),
+        file: file.clone(),
+        load_id,
+        total_cols,
+        fft_size,
+        silence_check,
+    });
 
-    // Schedule async full-file peak scan (for files > 30s)
-    crate::audio::peak::start_full_peak_scan(state, file_index);
+    let (start_sample, count) = prefetch_window(state, sample_rate, fft_size);
+    source.prefetch_region(start_sample, count).await;
+    finish_streaming_file(state, file_index, name, total_cols);
 
-    if let Some(check) = silence_check {
-        match check {
-            SilenceCheck::Silent => {
-                state.gain.auto().set(false);
-                state.gain.db().set(0.0);
-                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
-            }
-            SilenceCheck::HighGain(db) => {
-                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
-            }
-        }
-    }
-
-    use crate::canvas::{spectral_store, tile_cache};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Prefetch first viewport and schedule tiles
-    {
-        let scroll = state.view.scroll_offset().get_untracked();
-        let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-        let time_res = HOP_SIZE as f64 / sample_rate as f64;
-        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
-        let visible_samples = (visible_time * sample_rate as f64) as usize;
-        source.prefetch_region(start_sample, visible_samples + fft_size).await;
-    }
-
-    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-
-    // Spawn background progressive decode
-    {
-        let source_bg = source.clone();
-        let name_bg = name.to_string();
-        wasm_bindgen_futures::spawn_local(background_ogg_decode(
-            state,
-            file_index,
-            name_bg,
-            source_bg,
-        ));
-    }
-
-    // Spawn background overview
-    {
-        let name_for_overview = name.to_string();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(
-            state,
-            file_index,
-            name_for_overview,
-        ));
-    }
+    // Background progressive decode of the remaining chunks.
+    wasm_bindgen_futures::spawn_local(background_ogg_decode(
+        state,
+        file_index,
+        name.to_string(),
+        source.clone(),
+    ));
 
     Ok(())
 }
@@ -1882,93 +1702,31 @@ pub(super) async fn try_streaming_m4a(file: &File, name: &str, state: AppState, 
         sample_rate,
     };
 
-    let name_owned = name.to_string();
-    let file_index;
-    {
-        let mut idx = 0;
-        state.library.files().update(|files| {
-            idx = files.len();
-            files.push(LoadedFile {
-                id: crate::state::next_file_id(),
-                name: name_owned.clone(),
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                xc_metadata: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file.clone())),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers,
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
-        });
-        // Set current_index OUTSIDE the files().update() closure — they are
-        // siblings in the `library` store; an inner set can't acquire the write
-        // guard (files() holds it) and silently no-ops in reactive_stores.
-        state.library.current_index().set(Some(idx));
-        file_index = idx;
-    }
+    let file_index = push_streaming_file(state, NewStreamingFile {
+        name: name.to_string(),
+        audio,
+        spectrogram,
+        preview,
+        cached_peak_db,
+        wav_markers,
+        file: file.clone(),
+        load_id,
+        total_cols,
+        fft_size,
+        silence_check,
+    });
 
-    crate::audio::peak::start_full_peak_scan(state, file_index);
+    let (start_sample, count) = prefetch_window(state, sample_rate, fft_size);
+    source.prefetch_region(start_sample, count).await;
+    finish_streaming_file(state, file_index, name, total_cols);
 
-    if let Some(check) = silence_check {
-        match check {
-            SilenceCheck::Silent => {
-                state.gain.auto().set(false);
-                state.gain.db().set(0.0);
-                state.show_info_toast("File appears silent \u{2014} auto-gain disabled");
-            }
-            SilenceCheck::HighGain(db) => {
-                state.show_info_toast(format!("Quiet file \u{2014} auto-gain: +{:.0} dB", db));
-            }
-        }
-    }
-
-    use crate::canvas::{spectral_store, tile_cache};
-    spectral_store::init(file_index, total_cols, fft_size);
-
-    // Prefetch first viewport.
-    {
-        let scroll = state.view.scroll_offset().get_untracked();
-        let zoom = state.view.zoom_level().get_untracked();
-        let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-        let time_res = HOP_SIZE as f64 / sample_rate as f64;
-        let visible_time = if zoom > 0.0 { canvas_w / zoom * time_res } else { 1.0 };
-        let start_sample = (scroll / time_res * HOP_SIZE as f64) as u64;
-        let visible_samples = (visible_time * sample_rate as f64) as usize;
-        source.prefetch_region(start_sample, visible_samples + fft_size).await;
-    }
-
-    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
-    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-
-    // Spawn background progressive decode to fill remaining chunks.
-    {
-        let source_bg = source.clone();
-        let name_bg = name.to_string();
-        wasm_bindgen_futures::spawn_local(background_m4a_decode(state, file_index, name_bg, source_bg));
-    }
-
-    // Spawn background overview build.
-    {
-        let name_for_overview = name.to_string();
-        wasm_bindgen_futures::spawn_local(build_streaming_overview(state, file_index, name_for_overview));
-    }
+    // Background progressive decode of the remaining chunks.
+    wasm_bindgen_futures::spawn_local(background_m4a_decode(
+        state,
+        file_index,
+        name.to_string(),
+        source.clone(),
+    ));
 
     Ok(())
 }
