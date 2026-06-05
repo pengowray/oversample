@@ -1682,6 +1682,10 @@ pub struct MicState {
     pub timer_tick: u32,
     /// Current mic device name (populated on open or query).
     pub device_name: Option<String>,
+    /// Per-device auto-detected effective bit depth (device name -> bits),
+    /// loaded from + persisted to localStorage. Lets the UI show "appears to be
+    /// N-bit" for a device seen in any prior session, and record at that depth.
+    pub bit_depths: std::collections::HashMap<String, u16>,
     /// Connection type: "USB", "Internal", "Bluetooth", etc.
     pub connection_type: Option<String>,
     /// USB mic manufacturer name (from USB descriptors), if available.
@@ -2247,6 +2251,7 @@ impl AppState {
                 recording_start_time: None,
                 timer_tick: 0,
                 device_name: None,
+                bit_depths: crate::settings::get_mic_bit_depths(),
                 connection_type: None,
                 manufacturer: None,
                 usb_connected: false,

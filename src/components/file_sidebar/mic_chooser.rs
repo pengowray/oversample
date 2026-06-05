@@ -239,6 +239,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                 let dev_name2 = dev.name.clone();
                                 let dev_name_for_class = dev.name.clone();
                                 let dev_name_for_badge = dev.name.clone();
+                                let dev_name_for_bits = dev.name.clone();
                                 let is_default = dev.is_default;
                                 let click_rates = dev.rates.clone();
                                 let click_bit_depths = dev.bit_depths.clone();
@@ -303,6 +304,15 @@ pub fn MicChooserModal() -> impl IntoView {
                                                 format!(" \u{2022} {}", dev.format)
                                             } else {
                                                 String::new()
+                                            }}
+                                            // Auto-detected effective bit depth, remembered per-device.
+                                            // Shows when the device delivers fewer real bits than its
+                                            // container (e.g. a 24-bit interface in a 32-bit stream).
+                                            {move || {
+                                                state.mic.bit_depths()
+                                                    .with(|m| m.get(&dev_name_for_bits).copied())
+                                                    .map(|bits| format!(" \u{2022} appears {bits}-bit"))
+                                                    .unwrap_or_default()
                                             }}
                                         </div>
                                     </div>

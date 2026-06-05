@@ -922,6 +922,7 @@ fn start_audio_pull_loop(state: AppState) {
         g
     });
     wasm_bindgen_futures::spawn_local(async move {
+        let mut poll_tick = 0u32;
         loop {
             // Superseded by a newer loop, or mic closed → exit.
             if NATIVE_PULL_GEN.with(|c| c.get()) != gen {
@@ -951,6 +952,35 @@ fn start_audio_pull_loop(state: AppState) {
                 }
                 Err(e) => log::warn!("mic_pull_audio failed: {}", e),
             }
+
+            // ~once a second, poll the mic status for the auto-detected effective
+            // bit depth and remember it per-device (persisted), so the chooser can
+            // show "appears to be N-bit" now and ahead of time next session.
+            poll_tick = poll_tick.wrapping_add(1);
+            if poll_tick.is_multiple_of(12) {
+                if let Ok(status) = crate::tauri_bridge::tauri_invoke_typed_no_args::<
+                    oversample_ipc::mic::MicStatus,
+                >("mic_get_status")
+                .await
+                {
+                    if let (Some(bits), Some(dev)) =
+                        (status.effective_bits, state.mic.device_name().get_untracked())
+                    {
+                        let changed = state
+                            .mic
+                            .bit_depths()
+                            .with_untracked(|m| m.get(&dev) != Some(&bits));
+                        if changed {
+                            state.mic.bit_depths().update(|m| {
+                                m.insert(dev, bits);
+                            });
+                            let map = state.mic.bit_depths().get_untracked();
+                            crate::settings::set_mic_bit_depths(&map);
+                        }
+                    }
+                }
+            }
+
             // Hold a steady wall-clock cadence: subtract the time spent
             // pulling + running the DSP so a heavy chunk (e.g. pitch-shift /
             // phase-vocoder) doesn't push the next pull out and starve the

@@ -22,6 +22,23 @@ pub mod keys {
     pub const BAT_BOOK_FAVOURITES: &str = "oversample_bat_book_favourites";
     pub const SHIELD_STYLE: &str = "oversample_shield_style";
     pub const SHOW_STATUS_BAR: &str = "oversample_show_status_bar";
+    /// JSON map of mic device name -> auto-detected effective bit depth, so a
+    /// device seen in a prior session is known ahead of time.
+    pub const MIC_BIT_DEPTHS: &str = "oversample_mic_bit_depths";
+}
+
+/// Load the persisted per-device effective-bit-depth map (device name -> bits).
+pub fn get_mic_bit_depths() -> std::collections::HashMap<String, u16> {
+    get_raw(keys::MIC_BIT_DEPTHS)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the per-device effective-bit-depth map.
+pub fn set_mic_bit_depths(map: &std::collections::HashMap<String, u16>) {
+    if let Ok(s) = serde_json::to_string(map) {
+        set_raw(keys::MIC_BIT_DEPTHS, &s);
+    }
 }
 
 /// Pure: interpret a stored value as a bool. `"true"`/`"false"` map literally;
