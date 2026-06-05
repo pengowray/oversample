@@ -841,10 +841,11 @@ pub fn Spectrogram() -> impl IntoView {
             // [0, Nyquist] range — the sibling <BandGutter/> already
             // provides the frequency scale there, and the axis just adds
             // clutter over the data. Draw it only when vertically zoomed
-            // (so the user has a visible cue that a sub-range is active),
-            // when the pointer is over the label-hover area (keeps the
-            // drag-to-pan affordance discoverable), or when the
-            // transform/decimation label column is in play.
+            // (so the user has a visible cue that a sub-range is active) or
+            // when the transform/decimation label column is in play.
+            // Note: hovering near the gutter no longer pops up the freq
+            // markers/values/het-conversions — that hover readout was removed
+            // as no longer needed (so `mouse_in_label_area` is not a trigger).
             let vertically_zoomed = {
                 let nyq = file_max_freq;
                 let lo = min_display_freq.unwrap_or(0.0);
@@ -852,7 +853,6 @@ pub fn Spectrogram() -> impl IntoView {
                 lo > 1.0 || (nyq - hi).abs() > 1.0
             };
             let show_freq_axis = vertically_zoomed
-                || marker_state.mouse_in_label_area
                 || xform_on
                 || decim_effective > 0;
             if show_freq_axis {

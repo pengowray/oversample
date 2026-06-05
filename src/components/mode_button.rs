@@ -116,7 +116,9 @@ fn parse_factor_input(s: &str) -> Option<f64> {
 
 /// Logical "bucket" for the mode radio group. PS bucket spans the
 /// PitchShift and PhaseVocoder playback modes; everything else maps 1:1.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+// Ord follows declaration order (Normal < Het < Te < Ps < Zc) — the canonical
+// display order used to keep the extra play buttons in a stable position.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModeBucket {
     Normal,
     Het,

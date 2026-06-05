@@ -428,8 +428,15 @@ pub fn BottomToolbar() -> impl IntoView {
             // restore it on stop) via the Effect above.
             {move || {
                 if !has_file() { return None; }
-                let extras = state.playback.modes_extra().get();
+                let mut extras = state.playback.modes_extra().get();
                 if extras.is_empty() { return None; }
+                // Render in a STABLE canonical order so the extra ▶ buttons keep
+                // their positions when one is pressed. do_play_in_mode swaps the
+                // pressed mode into the primary combo and the old primary back
+                // into the extras (appended), which used to reshuffle the whole
+                // row; sorting here means only the swapped pair changes place and
+                // every other button stays put (the disorienting part).
+                extras.sort_by_key(|m| ModeBucket::from_mode(*m));
                 let buttons = extras.into_iter().map(|mode| {
                     let bucket = ModeBucket::from_mode(mode);
                     let label = bucket.label();
