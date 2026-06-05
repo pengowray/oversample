@@ -28,10 +28,11 @@ pub enum VerifyOutcome {
     Mismatch,
 }
 
-/// The user's per-file bandpass-EQ settings (the multi-band filter curve), part
-/// of the per-file denoise bucket. NOTE: deliberately excludes `bandpass_mode`,
-/// which is currently overloaded with HFR's transient bandpass — until that's
-/// untangled (Phase D), bandpass_mode stays global/HFR-controlled.
+/// The user's per-file bandpass-EQ settings (the multi-band filter curve + the
+/// user's manual bandpass), part of the per-file denoise bucket. `bandpass_mode`
+/// is the USER's bandpass; HFR's transient bandpass lives on the live
+/// `filter.bandpass_mode` while HFR is on, so the orientation is handled in
+/// `from_state`/`apply_to_state` (like the gain off/hfr orientation).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilterSettings {
     pub enabled: bool,
@@ -44,11 +45,17 @@ pub struct FilterSettings {
     pub db_above: f64,
     pub quality: FilterQuality,
     pub bandpass_range: BandpassRange,
+    /// The user's MANUAL bandpass (the HFR-off value). When HFR is on, the live
+    /// `filter.bandpass_mode` holds HFR's transient bandpass and this is sourced
+    /// from the focus_stack's stashed value — see `from_state`/`apply_to_state`.
+    pub bandpass_mode: BandpassMode,
 }
 
 impl Default for FilterSettings {
     fn default() -> Self {
-        // Must match the global FilterState defaults in `AppState::new()`.
+        // Mostly mirrors the global FilterState defaults in `AppState::new()`,
+        // EXCEPT bandpass_mode: a fresh file starts with no user bandpass (Off),
+        // not the global Auto.
         Self {
             enabled: false,
             band_mode: 3,
@@ -60,6 +67,7 @@ impl Default for FilterSettings {
             db_above: -60.0,
             quality: FilterQuality::Spectral,
             bandpass_range: BandpassRange::FollowFocus,
+            bandpass_mode: BandpassMode::Off,
         }
     }
 }
@@ -100,6 +108,14 @@ impl FileSettings {
         let g_active = state.gain.db().get_untracked();
         let g_stash = state.gain.db_stash().get_untracked();
         let (gain_db, gain_db_stash) = if hfr_on { (g_stash, g_active) } else { (g_active, g_stash) };
+        // The user's MANUAL bandpass (per-file): when HFR is on, the live
+        // bandpass_mode is HFR's transient one, so the user's is the focus_stack's
+        // stashed value; when HFR is off, the live one IS the user's.
+        let user_bandpass = if hfr_on {
+            state.viewmode.focus_stack().get_untracked().saved_bandpass_mode().unwrap_or(BandpassMode::Off)
+        } else {
+            state.filter.bandpass_mode().get_untracked()
+        };
         FileSettings {
             gain_mode: state.gain.mode().get_untracked(),
             gain_db,
@@ -122,6 +138,7 @@ impl FileSettings {
                 db_above: state.filter.db_above().get_untracked(),
                 quality: state.filter.quality().get_untracked(),
                 bandpass_range: state.filter.bandpass_range().get_untracked(),
+                bandpass_mode: user_bandpass,
             },
         }
     }
@@ -159,6 +176,17 @@ impl FileSettings {
         state.filter.db_above().set(f.db_above);
         state.filter.quality().set(f.quality);
         state.filter.bandpass_range().set(f.bandpass_range);
+        // User's manual bandpass: when HFR is off it's the live value; when HFR
+        // is on, HFR's transient bandpass stays active on `filter.bandpass_mode`
+        // and we stash this file's user bandpass so toggling HFR off restores it.
+        if hfr_on {
+            state
+                .viewmode
+                .focus_stack()
+                .update(|s| s.set_saved_bandpass_mode(Some(f.bandpass_mode)));
+        } else {
+            state.filter.bandpass_mode().set(f.bandpass_mode);
+        }
     }
 }
 
