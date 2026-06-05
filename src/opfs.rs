@@ -114,6 +114,7 @@ pub async fn load_batm_by_key(key: &str) -> Result<Option<crate::annotations::An
         Some(yaml) => {
             let set: crate::annotations::AnnotationSet = yaml_serde::from_str(&yaml)
                 .map_err(|e| format!("YAML parse: {e}"))?;
+            set.warn_if_future_version();
             Ok(Some(set))
         }
         None => Ok(None),
@@ -427,6 +428,7 @@ fn load_annotations_opfs(state: crate::state::AppState, file_id: u64, identity: 
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
+                            loaded.warn_if_future_version();
                             let already_has = state.annotations.store().get_untracked().contains(file_id);
                             if !already_has {
                                 apply_loaded_sidecar(state, file_id, loaded);
@@ -503,6 +505,7 @@ fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity:
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
+                            loaded.warn_if_future_version();
                             central = Some(loaded);
                             central_via_fallback = i > 0;
                         }
@@ -517,7 +520,10 @@ fn load_annotations_tauri(state: crate::state::AppState, file_id: u64, identity:
 
         let sidecar = sidecar_yaml.as_ref().and_then(|yaml| {
             match yaml_serde::from_str::<crate::annotations::AnnotationSet>(yaml) {
-                Ok(loaded) => Some(loaded),
+                Ok(loaded) => {
+                    loaded.warn_if_future_version();
+                    Some(loaded)
+                }
                 Err(e) => {
                     log::warn!("Tauri sidecar deserialize error: {e}");
                     None

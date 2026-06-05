@@ -91,6 +91,15 @@ pub async fn load_project(id: &str) -> Result<Option<BatProject>, String> {
     let project: BatProject = yaml_serde::from_str(&yaml_str)
         .map_err(|e| format!("YAML deserialize: {e}"))?;
 
+    if project.version > crate::project::PROJECT_FORMAT_VERSION {
+        log::warn!(
+            "Project {id} is format version {} but this app supports {}; loading \
+             best-effort — some data may be missing or misread.",
+            project.version,
+            crate::project::PROJECT_FORMAT_VERSION
+        );
+    }
+
     Ok(Some(project))
 }
 
@@ -152,7 +161,9 @@ pub async fn list_projects() -> Result<Vec<ProjectSummary>, String> {
         }
     }
 
-    // Sort by modified_at descending (most recent first)
+    // Sort by modified_at descending (most recent first). modified_at is ISO-8601,
+    // which is lexically sortable in chronological order, so a plain string compare
+    // is correct; projects with no timestamp (None < Some) consistently sort last.
     result.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
 
     Ok(result)

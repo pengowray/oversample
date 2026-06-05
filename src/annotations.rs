@@ -282,12 +282,17 @@ pub struct AudioFileMetadata {
     pub peak_db_full: Option<f64>,
 }
 
+/// Current `.batm` sidecar on-disk format version. A file whose `version`
+/// exceeds this was written by a newer app: still loaded best-effort (serde fills
+/// defaults), but unknown fields may be dropped or misread.
+pub const ANNOTATION_FORMAT_VERSION: u32 = 3;
+
 /// Per-file annotation collection — serialized to .batm sidecar files (YAML).
 /// Field order matters: serde serializes in declaration order, and we want
 /// noise_profile (with its large bin_magnitudes) at the end for readability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnnotationSet {
-    /// Sidecar format version.
+    /// Sidecar format version. See [`ANNOTATION_FORMAT_VERSION`].
     pub version: u32,
     /// Unique ID for this sidecar file (UUID v4).
     #[serde(default = "generate_uuid")]
@@ -316,10 +321,24 @@ pub struct AnnotationSet {
 }
 
 impl AnnotationSet {
+    /// Warn (don't fail) if this sidecar was written by a newer app whose format
+    /// version exceeds what we support — fields may be dropped or misread.
+    pub fn warn_if_future_version(&self) {
+        if self.version > ANNOTATION_FORMAT_VERSION {
+            log::warn!(
+                "Annotation sidecar {} is format version {} but this app supports {}; \
+                 loading best-effort.",
+                self.id,
+                self.version,
+                ANNOTATION_FORMAT_VERSION
+            );
+        }
+    }
+
     /// Create a new empty AnnotationSet for a file.
     pub fn new(file_identity: FileIdentity) -> Self {
         Self {
-            version: 3,
+            version: ANNOTATION_FORMAT_VERSION,
             id: generate_uuid(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: Some(now_iso8601()),

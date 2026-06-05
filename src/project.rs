@@ -2,13 +2,19 @@ use serde::{Serialize, Deserialize};
 use crate::annotations::{FileIdentity, AudioFileMetadata, Annotation, generate_uuid, now_iso8601};
 use crate::dsp::notch::NoiseProfile;
 
+/// Current `.batproj` on-disk format version. Bump when the schema changes in a
+/// way older apps can't safely read. A file whose `version` exceeds this was
+/// written by a newer app: we still load best-effort (serde fills defaults) but
+/// warn, since unknown fields may be dropped or misinterpreted.
+pub const PROJECT_FORMAT_VERSION: u32 = 1;
+
 /// An Oversample project file (.batproj) — groups multiple audio files with their
 /// annotations, sequence/multitrack definitions, and shared settings.
 ///
 /// Serialized as YAML. Stored in OPFS on web, filesystem on Tauri.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BatProject {
-    /// Format version (currently 1).
+    /// Format version. See [`PROJECT_FORMAT_VERSION`].
     pub version: u32,
     /// Unique project ID (UUID v4).
     pub id: String,
@@ -181,7 +187,7 @@ impl BatProject {
     /// Create a new empty project.
     pub fn new() -> Self {
         Self {
-            version: 1,
+            version: PROJECT_FORMAT_VERSION,
             id: generate_uuid(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: Some(now_iso8601()),
