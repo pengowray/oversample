@@ -12,11 +12,9 @@ use crate::audio::streaming_playback::{apply_dsp_mode, apply_filters, PlaybackPa
 use crate::audio::playback::apply_gain;
 use crate::state::{AppState, PlaybackMode, Selection};
 
-/// Number of source samples per export chunk (same as streaming playback).
-const CHUNK_SAMPLES: usize = 96_000;
-
-/// Extra overlap samples prepended for IIR filter warmup.
-const FILTER_WARMUP: usize = 4096;
+// Chunk size + filter warmup are shared with streaming playback so the offline
+// and live DSP pipelines stay consistent. See audio::chunk_params.
+use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 
 /// Overlap samples for PV/PS crossfade (same as streaming_playback::PV_HQ_OVERLAP).
 const PV_HQ_OVERLAP: usize = 8192;

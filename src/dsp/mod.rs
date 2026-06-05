@@ -1,8 +1,5 @@
-// Re-export all DSP modules from oversample-core.
-// Individual module re-exports so `crate::dsp::fft`, `crate::dsp::filters`, etc. work.
-pub use oversample_core::dsp::{
-    agc, bit_analysis, fft, filters, harmonics, heterodyne, notch,
-    phase_vocoder, pitch_shift, spectral_sub, zc_divide, wsnr,
-    zero_crossing, chromagram, psd, pulse_detect, resonators,
-    lsb_autocorr, pipistrelle,
-};
+// Re-export all DSP modules from oversample-core so `crate::dsp::fft`,
+// `crate::dsp::filters`, etc. resolve. Glob (not a hand-maintained list) so this
+// shim can never drift from the core module list — the previous explicit list
+// had already fallen behind (audiomoth + effective_nyquist were missing).
+pub use oversample_core::dsp::*;

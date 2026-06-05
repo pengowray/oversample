@@ -20,13 +20,10 @@ use crate::dsp::zc_divide::zc_divide;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::audio::playback::{apply_bandpass, apply_gain};
 
-/// Number of source samples per chunk. ~0.5s at 192kHz, ~2s at 44.1kHz.
-const CHUNK_SAMPLES: usize = 96_000;
-
-/// Extra overlap samples prepended to each chunk for IIR filter warmup.
-/// This lets filters (heterodyne lowpass, bandpass) settle before the
-/// actual chunk data, avoiding clicks at boundaries.
-const FILTER_WARMUP: usize = 4096;
+// Chunk size (~0.5s at 192kHz, ~2s at 44.1kHz) + filter warmup (lets the
+// heterodyne lowpass / bandpass settle before the audible region, avoiding
+// boundary clicks) are shared with offline export. See audio::chunk_params.
+use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 
 /// Overlap samples for PV HQ mode. Each chunk extends by this amount past
 /// its nominal end. The trailing overlap gets a Hann fade-out, while the
