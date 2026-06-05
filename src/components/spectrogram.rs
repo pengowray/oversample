@@ -119,7 +119,9 @@ pub fn Spectrogram() -> impl IntoView {
     // The active draw path is tile-based for normal spectrogram rendering, so
     // building a full-image pre-render here only duplicates load-time work.
     Effect::new(move || {
-        let _files = state.library.files().get();
+        // Subscribe to the file list without cloning the whole Vec<LoadedFile>
+        // — this Effect only needs to re-run when it changes, not read it.
+        state.library.files().track();
         let _idx = state.library.current_index().get();
         let _enabled = state.flow.enabled().get();
         pre_rendered.set(None);

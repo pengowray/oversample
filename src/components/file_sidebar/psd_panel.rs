@@ -63,7 +63,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             return;
         }
 
-        let _files = state.library.files().get();
+        state.library.files().track(); // subscribe without cloning the Vec
         let _idx = state.library.current_index().get();
         let _sel = state.interaction.selection().get();
         let _nfft = state.psd.nfft().get();

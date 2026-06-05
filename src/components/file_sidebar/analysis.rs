@@ -145,7 +145,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     // Only compute expensive analysis when the Analysis tab is active
     Effect::new(move || {
         let tab = state.panels.right_tab().get();
-        let _files = state.library.files().get();
+        state.library.files().track(); // subscribe without cloning the Vec
         let idx = state.library.current_index().get();
 
         if tab != RightSidebarTab::Analysis {

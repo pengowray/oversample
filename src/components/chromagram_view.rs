@@ -22,7 +22,7 @@ pub fn ChromagramView() -> impl IntoView {
     // pre-render baked controls change (gain / adapt / floor are all applied
     // before quantising to u8, so each must invalidate the tile cache).
     Effect::new(move || {
-        let _files = state.library.files().get();
+        state.library.files().track(); // subscribe without cloning the Vec
         let _idx = state.library.current_index().get();
         let _range = state.chroma.range().get();
         let _gain = state.chroma.gain().get();
