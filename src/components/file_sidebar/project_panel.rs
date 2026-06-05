@@ -398,9 +398,9 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 let Some(ref identity) = f.identity else { continue };
                 let key = opfs::opfs_key(identity);
 
-                // Check if already merged
+                // Check if already merged (by current key OR stable identity)
                 let already = state.project.current().with_untracked(|p| {
-                    p.as_ref().is_some_and(|proj| proj.was_merged(&key))
+                    p.as_ref().is_some_and(|proj| proj.was_merged(&key, identity))
                 });
                 if already { skipped += 1; continue; }
 

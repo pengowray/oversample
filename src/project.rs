@@ -157,6 +157,12 @@ pub struct MergeRecord {
     pub batm_key: String,
     /// Filename of the audio file (for display).
     pub filename: String,
+    /// Stable file size in bytes (part of the layer-1 identity). Paired with
+    /// `filename` to dedup merges by STABLE identity, so a later hash upgrade
+    /// (which changes `batm_key`) can't let the same sidecar merge twice.
+    /// Defaults to 0 on records written before this field existed.
+    #[serde(default)]
+    pub file_size: u64,
     /// Whether the original .batm was deleted after merging.
     #[serde(default)]
     pub deleted: bool,
@@ -236,6 +242,7 @@ impl BatProject {
             merged_at: now_iso8601(),
             batm_key: batm_key.to_string(),
             filename: set.file_identity.filename.clone(),
+            file_size: set.file_identity.file_size,
             deleted: false,
         });
 
@@ -243,9 +250,18 @@ impl BatProject {
         true
     }
 
-    /// Check if a .batm key has already been merged (avoids re-prompting).
-    pub fn was_merged(&self, batm_key: &str) -> bool {
-        self.merge_history.iter().any(|r| r.batm_key == batm_key)
+    /// Check if a .batm has already been merged (avoids re-prompting + duplicate
+    /// merges). Matches by the current OPFS key OR — crucially — by the file's
+    /// STABLE identity (filename + size), so a hash upgrade that changed the key
+    /// since the merge can't let the same sidecar merge again. (Old records have
+    /// `file_size == 0` and are matched by key only, as before.)
+    pub fn was_merged(&self, batm_key: &str, identity: &FileIdentity) -> bool {
+        self.merge_history.iter().any(|r| {
+            r.batm_key == batm_key
+                || (r.file_size != 0
+                    && r.file_size == identity.file_size
+                    && r.filename == identity.filename)
+        })
     }
 
     /// Add a file to the project from a FileIdentity and optional audio metadata.
