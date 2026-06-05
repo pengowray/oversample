@@ -229,6 +229,20 @@ impl FocusStack {
         }
     }
 
+    /// Snapshot the per-file focus SELECTIONS (user range + override layers),
+    /// excluding the global HFR mode (enabled + saved playback/bandpass). Used to
+    /// save/restore the focus per file on switch. [cross-file state-scoping]
+    pub fn focus_selections(&self) -> (FocusRange, Vec<FocusLayer>) {
+        (self.user_range, self.overrides.clone())
+    }
+
+    /// Replace the focus SELECTIONS from a snapshot, leaving the HFR mode fields
+    /// untouched (those are global / carry across files).
+    pub fn set_focus_selections(&mut self, user_range: FocusRange, overrides: Vec<FocusLayer>) {
+        self.user_range = user_range;
+        self.overrides = overrides;
+    }
+
     /// Set HFR enabled/disabled.
     pub fn set_hfr_enabled(&mut self, enabled: bool) {
         self.hfr_enabled = enabled;

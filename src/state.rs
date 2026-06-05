@@ -28,8 +28,45 @@ pub enum VerifyOutcome {
     Mismatch,
 }
 
+/// The user's per-file bandpass-EQ settings (the multi-band filter curve), part
+/// of the per-file denoise bucket. NOTE: deliberately excludes `bandpass_mode`,
+/// which is currently overloaded with HFR's transient bandpass — until that's
+/// untangled (Phase D), bandpass_mode stays global/HFR-controlled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterSettings {
+    pub enabled: bool,
+    pub band_mode: u8,
+    pub freq_low: f64,
+    pub freq_high: f64,
+    pub db_below: f64,
+    pub db_selected: f64,
+    pub db_harmonics: f64,
+    pub db_above: f64,
+    pub quality: FilterQuality,
+    pub bandpass_range: BandpassRange,
+}
+
+impl Default for FilterSettings {
+    fn default() -> Self {
+        // Must match the global FilterState defaults in `AppState::new()`.
+        Self {
+            enabled: false,
+            band_mode: 3,
+            freq_low: 20_000.0,
+            freq_high: 60_000.0,
+            db_below: -60.0,
+            db_selected: 0.0,
+            db_harmonics: -30.0,
+            db_above: -60.0,
+            quality: FilterQuality::Spectral,
+            bandpass_range: BandpassRange::FollowFocus,
+        }
+    }
+}
+
 /// Per-file settings that persist when switching between files.
-/// Files in the same sequence group share settings.
+/// gain + denoise (notch / spectral-sub / EQ) follow the SEQUENTIAL group
+/// (same mic/session) — see the cross-file state-scoping model.
 #[derive(Clone, Debug)]
 pub struct FileSettings {
     pub gain_mode: GainMode,
@@ -43,6 +80,8 @@ pub struct FileSettings {
     pub noise_reduce_enabled: bool,
     pub noise_reduce_strength: f64,
     pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
+    /// Bandpass-EQ curve (denoise). See `FilterSettings`.
+    pub filter: FilterSettings,
 }
 
 impl FileSettings {
@@ -62,6 +101,18 @@ impl FileSettings {
             noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
             noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
             noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
+            filter: FilterSettings {
+                enabled: state.filter.enabled().get_untracked(),
+                band_mode: state.filter.band_mode().get_untracked(),
+                freq_low: state.filter.freq_low().get_untracked(),
+                freq_high: state.filter.freq_high().get_untracked(),
+                db_below: state.filter.db_below().get_untracked(),
+                db_selected: state.filter.db_selected().get_untracked(),
+                db_harmonics: state.filter.db_harmonics().get_untracked(),
+                db_above: state.filter.db_above().get_untracked(),
+                quality: state.filter.quality().get_untracked(),
+                bandpass_range: state.filter.bandpass_range().get_untracked(),
+            },
         }
     }
 
@@ -79,6 +130,17 @@ impl FileSettings {
         state.noise_reduce.enabled().set(self.noise_reduce_enabled);
         state.noise_reduce.strength().set(self.noise_reduce_strength);
         state.noise_reduce.floor().set(self.noise_reduce_floor.clone());
+        let f = &self.filter;
+        state.filter.enabled().set(f.enabled);
+        state.filter.band_mode().set(f.band_mode);
+        state.filter.freq_low().set(f.freq_low);
+        state.filter.freq_high().set(f.freq_high);
+        state.filter.db_below().set(f.db_below);
+        state.filter.db_selected().set(f.db_selected);
+        state.filter.db_harmonics().set(f.db_harmonics);
+        state.filter.db_above().set(f.db_above);
+        state.filter.quality().set(f.quality);
+        state.filter.bandpass_range().set(f.bandpass_range);
     }
 }
 
@@ -95,8 +157,35 @@ impl Default for FileSettings {
             noise_reduce_enabled: false,
             noise_reduce_strength: 0.6,
             noise_reduce_floor: None,
+            filter: FilterSettings::default(),
         }
     }
+}
+
+/// Horizontal viewport position for a file. A VIEWPORT setting: shared across the
+/// MULTITRACK group (switch channels → stay at the same place / zoom).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewPos {
+    pub scroll_offset: f64,
+    pub zoom_level: f64,
+}
+
+/// A file's frequency-focus selections (the focus-stack's per-file half). PerFile,
+/// shares None — each recording keeps its own focus; the HFR on/off mode and its
+/// saved playback/bandpass live globally on the focus_stack and are not snapshotted.
+#[derive(Clone, Debug)]
+pub struct FocusSnapshot {
+    pub user_range: crate::focus_stack::FocusRange,
+    pub overrides: Vec<crate::focus_stack::FocusLayer>,
+}
+
+/// Per-file scope state held in a side-table keyed by the stable `LoadedFile.id`,
+/// so we don't thread it through the ~12 `LoadedFile` constructors. `None` for a
+/// field means "never set for this file" → use the current/default value.
+#[derive(Clone, Debug, Default)]
+pub struct PerFileScope {
+    pub view: Option<ViewPos>,
+    pub focus: Option<FocusSnapshot>,
 }
 
 thread_local! {
@@ -1750,6 +1839,9 @@ pub struct LibraryState {
     pub show_previews: bool,
     pub loading: Vec<LoadingEntry>,
     pub loading_next_id: u64,
+    /// Per-file viewport + focus selections, keyed by `LoadedFile.id`
+    /// (cross-file state-scoping side-table). Entries are pruned on file removal.
+    pub per_file_view: std::collections::HashMap<u64, PerFileScope>,
 }
 
 /// Playback / transport state.
@@ -2043,6 +2135,7 @@ impl AppState {
                 show_previews: false,
                 loading: Vec::new(),
                 loading_next_id: 0,
+                per_file_view: std::collections::HashMap::new(),
             }),
             playback: Store::new(PlaybackState {
                 mode: PlaybackMode::Normal,

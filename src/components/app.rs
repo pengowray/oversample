@@ -699,7 +699,29 @@ pub fn App() -> impl IntoView {
             if let Some(oi) = old_oi {
                 crate::opfs::save_annotations(state, oi);
             }
-            state.viewmode.focus_stack().set(crate::focus_stack::FocusStack::new());
+
+            // Frequency focus SELECTIONS are PerFile (shares None): save the
+            // outgoing file's, then restore the incoming file's. The HFR mode
+            // (on/off + saved playback/bandpass) is NOT snapshotted — it resets
+            // here as before (HFR off for the new file). [state-scoping: focus]
+            if let Some(oid) = old_id {
+                let (user_range, overrides) =
+                    state.viewmode.focus_stack().with_untracked(|s| s.focus_selections());
+                state.library.per_file_view().update(|m| {
+                    m.entry(oid).or_default().focus =
+                        Some(crate::state::FocusSnapshot { user_range, overrides });
+                });
+            }
+            let incoming_focus = new_id.and_then(|nid| {
+                state.library.per_file_view().with_untracked(|m| m.get(&nid).and_then(|s| s.focus.clone()))
+            });
+            state.viewmode.focus_stack().update(|s| {
+                *s = crate::focus_stack::FocusStack::new();
+                if let Some(snap) = &incoming_focus {
+                    s.set_focus_selections(snap.user_range, snap.overrides.clone());
+                }
+            });
+
             if was_hfr {
                 state.playback.mode().set(PlaybackMode::Normal);
                 state.filter.bandpass_mode().set(crate::state::BandpassMode::Off);
