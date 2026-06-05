@@ -1323,6 +1323,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs4"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8640e34b88f7652208ce9e88b1a37a2ae95227d84abec377ccd3c5cfeb141ed4"
+dependencies = [
+ "rustix",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "futf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3179,7 +3189,7 @@ checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
 
 [[package]]
 name = "oversample"
-version = "0.4.109"
+version = "0.4.110"
 dependencies = [
  "blake3",
  "claxon",
@@ -3223,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "oversample-desktop"
-version = "0.4.109"
+version = "0.4.110"
 dependencies = [
  "chrono",
  "claxon",
@@ -6977,6 +6987,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "chrono",
+ "fs4",
  "oversample-ipc",
  "reqwest 0.12.28",
  "serde",

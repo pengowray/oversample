@@ -582,8 +582,12 @@ pub fn delete_recording(root: &Path, id: u64) -> Result<Vec<String>, String> {
     Ok(deleted)
 }
 
-/// Remove a recording entry from index.json by XC ID.
+/// Remove a recording entry from index.json by XC ID (under the index lock).
 fn remove_from_index(root: &Path, id: u64) -> Result<(), String> {
+    with_index_lock(root, || remove_from_index_inner(root, id))
+}
+
+fn remove_from_index_inner(root: &Path, id: u64) -> Result<(), String> {
     let index_path = root.join("index.json");
     if !index_path.exists() {
         return Ok(());
@@ -612,6 +616,28 @@ fn remove_from_index(root: &Path, id: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Run `f` while holding an exclusive advisory lock on the cache index, so the
+/// read-modify-write of `index.json` is serialized across processes — the Tauri
+/// backend and `xc-cli` share this cache dir. Without it, two concurrent writers
+/// both read the old index and the later atomic rename clobbers the earlier's
+/// new entry (the rename only prevents torn writes, not lost updates). The lock
+/// is released when the handle drops, including on process exit/crash.
+fn with_index_lock<T>(root: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    use fs4::fs_std::FileExt;
+    let lock_path = root.join("index.json.lock");
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("Failed to open index lock {}: {e}", lock_path.display()))?;
+    lock.lock_exclusive()
+        .map_err(|e| format!("Failed to acquire index lock: {e}"))?;
+    let result = f();
+    let _ = FileExt::unlock(&lock);
+    result
+}
+
 /// Read and parse the cache index, falling back gracefully on errors.
 fn read_index(root: &Path) -> serde_json::Value {
     let index_path = root.join("index.json");
@@ -637,6 +663,15 @@ fn read_index(root: &Path) -> serde_json::Value {
 /// Update (or create) index.json with a new recording entry.
 /// Writes atomically via a temp file to prevent corruption on crash.
 fn update_index(
+    root: &Path,
+    rec: &XcRecording,
+    audio_filename: &str,
+    meta_filename: &str,
+) -> Result<(), String> {
+    with_index_lock(root, || update_index_inner(root, rec, audio_filename, meta_filename))
+}
+
+fn update_index_inner(
     root: &Path,
     rec: &XcRecording,
     audio_filename: &str,
