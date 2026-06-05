@@ -107,7 +107,11 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
 
     let scientific_name = get_scientific_name(file);
     let country = get_country(file);
-    let country_region = country.as_deref().and_then(country_to_region);
+    let country_match = country.as_deref().and_then(country_to_region);
+    let country_region = country_match.map(|m| m.region);
+    // Marker appended to the country in the source label when the country was
+    // routed to a region only APPROXIMATELY (no dedicated/continental book).
+    let approx_suffix = if country_match.is_some_and(|m| m.approximate) { ", approx." } else { "" };
 
     // Try species lookup
     if let Some(ref sci) = scientific_name {
@@ -128,7 +132,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
                 (region, species_id)
             };
             let label = if let Some(ref cnt) = country {
-                format!("{} ({})", final_region.short_label(), cnt)
+                format!("{} ({}{})", final_region.short_label(), cnt, approx_suffix)
             } else {
                 final_region.short_label().to_string()
             };
@@ -144,7 +148,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
     // No species match — try country only
     if let Some(region) = country_region {
         let label = if let Some(ref cnt) = country {
-            format!("{} ({})", region.short_label(), cnt)
+            format!("{} ({}{})", region.short_label(), cnt, approx_suffix)
         } else {
             region.short_label().to_string()
         };
