@@ -594,11 +594,24 @@ pub fn open_mic(
 
 /// Encode the recording buffer to WAV at native bit depth.
 pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
+    // Auto bit depth: a 32-bit-container stream that is actually delivering
+    // 24-bit data (low 8 bits always zero — the DUO-CAPTURE EX and most USB/
+    // pro interfaces) is stored as 24-bit. That's a third smaller, carries the
+    // correct bit depth in the header, and is LOSSLESS for a true 24-bit device
+    // (the I24 branch shifts off the always-zero low 8 bits). Falls back to the
+    // container format until detection has settled or for genuine 32-bit input.
+    let out_format = match buffer.format {
+        NativeSampleFormat::I32 if buffer.effective_bits(32).is_some_and(|b| b <= 24) => {
+            NativeSampleFormat::I24
+        }
+        other => other,
+    };
+
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: buffer.sample_rate,
-        bits_per_sample: buffer.format.bits_per_sample(),
-        sample_format: if buffer.format.is_float() {
+        bits_per_sample: out_format.bits_per_sample(),
+        sample_format: if out_format.is_float() {
             hound::SampleFormat::Float
         } else {
             hound::SampleFormat::Int
@@ -609,7 +622,7 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     let mut writer =
         hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV writer error: {}", e))?;
 
-    match buffer.format {
+    match out_format {
         NativeSampleFormat::I16 => {
             for &s in &buffer.samples_i16 {
                 writer
