@@ -1,14 +1,15 @@
 //! Microphone control: unified record/listen API.
 //!
 //! This module provides the public API for microphone recording and listening.
-//! Backend-specific operations (Web Audio, cpal, USB) are delegated to
-//! `mic_backend::ActiveBackend`. Finalization is handled by `live_recording`.
+//! Backend-specific operations (Web Audio, cpal, USB) are delegated to the
+//! `MicBackend` methods in `mic_backend`. Finalization is handled by
+//! `live_recording`.
 
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use crate::state::{AppState, GpsLocation, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
-use crate::audio::mic_backend::{ActiveBackend, StopResult};
+use crate::audio::mic_backend::StopResult;
 use crate::audio::live_recording::FinalizeParams;
 use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args};
 
@@ -279,14 +280,14 @@ async fn maybe_prompt_notifications(state: &AppState) {
 
 // ── Backend resolution ──────────────────────────────────────────────────
 
-/// Convert `state.mic.backend()` to `ActiveBackend`.
-fn resolve_active_backend(state: &AppState) -> Option<ActiveBackend> {
-    state.mic.backend().get_untracked().map(ActiveBackend::from)
+/// The currently selected mic backend, if any.
+fn resolve_active_backend(state: &AppState) -> Option<MicBackend> {
+    state.mic.backend().get_untracked()
 }
 
 /// Open the appropriate mic backend based on a resolved MicBackend.
 async fn open_backend(state: &AppState, backend: MicBackend) -> bool {
-    ActiveBackend::from(backend).open(state).await
+    backend.open(state).await
 }
 
 // ── Unified mic acquisition ─────────────────────────────────────────────
@@ -298,7 +299,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
     // If mic is already open and streaming, return current backend immediately
     if state.mic.acquisition_state().get_untracked() == MicAcquisitionState::Ready {
         if let Some(backend) = state.mic.backend().get_untracked() {
-            let still_open = ActiveBackend::from(backend).is_open();
+            let still_open = backend.is_open();
             if still_open {
                 return Some(backend);
             }
@@ -317,7 +318,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
         MicStrategy::Browser => {
             state.mic.acquisition_state().set(MicAcquisitionState::Acquiring);
             let t0 = js_sys::Date::now();
-            if ActiveBackend::Browser.open(state).await {
+            if MicBackend::Browser.open(state).await {
                 let elapsed = js_sys::Date::now() - t0;
                 state.mic.permission_dialog_shown().set(elapsed > 1500.0);
                 state.mic.backend().set(Some(MicBackend::Browser));
@@ -375,7 +376,7 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
 // ── Unified flows (private) ─────────────────────────────────────────────
 
 /// Start recording with the given backend (mic already open).
-async fn do_start_recording(state: &AppState, backend: ActiveBackend) {
+async fn do_start_recording(state: &AppState, backend: MicBackend) {
     warn_if_te_for_live(state);
     let was_listening = state.mic.listening().get_untracked();
     let has_listen_file = was_listening && state.mic.live_file_idx().get_untracked().is_some();
@@ -580,7 +581,7 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
 }
 
 /// Stop recording and finalize.
-async fn do_stop_recording(state: &AppState, backend: ActiveBackend) {
+async fn do_stop_recording(state: &AppState, backend: MicBackend) {
     let was_listening = state.mic.listening().get_untracked();
     state.mic.recording().set(false);
     state.mic.recording_start_time().set(None);
@@ -603,7 +604,7 @@ async fn do_stop_recording(state: &AppState, backend: ActiveBackend) {
 }
 
 /// Start listening with the given backend (mic already open).
-async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
+async fn do_start_listening(state: &AppState, backend: MicBackend) {
     warn_if_te_for_live(state);
     // Reset frequency display so the waterfall shows the full mic range
     // (not a zoomed range from a previously-open high-SR file).
@@ -656,7 +657,7 @@ async fn do_start_listening(state: &AppState, backend: ActiveBackend) {
 /// Stop listening. Leaves the live file in place as an empty "armed" doc
 /// (mic stays open) so the user can adjust HFR / band and press Listen or
 /// Record again without re-acquiring the mic or creating a new entry.
-async fn do_stop_listening(state: &AppState, backend: ActiveBackend) {
+async fn do_stop_listening(state: &AppState, backend: MicBackend) {
     state.mic.listening().set(false);
     // Stop scheduled playback immediately so Stop is instant (no backlog tail).
     crate::audio::mic_backend::stop_het_playback();
@@ -725,7 +726,7 @@ pub async fn toggle_listen(state: &AppState) {
         }
     };
 
-    let backend = ActiveBackend::from(mic_backend);
+    let backend = mic_backend;
     state.log_debug("info", format!("toggle_listen: backend={:?}, starting listen", backend));
     do_start_listening(state, backend).await;
 }
@@ -788,7 +789,7 @@ pub async fn arm_live_doc(state: &AppState) {
             return;
         }
     };
-    let backend = ActiveBackend::from(mic_backend);
+    let backend = mic_backend;
     state.log_debug("info", format!("arm_live_doc: mic acquired ({:?})", backend));
 
     // Reset DSP state and tile caches so the empty doc starts clean.
@@ -843,7 +844,7 @@ pub async fn toggle_record(state: &AppState) {
         }
     };
 
-    let backend = ActiveBackend::from(mic_backend);
+    let backend = mic_backend;
 
     // If OS permission dialog was shown (detected by timing), skip our dialog
     if state.mic.permission_dialog_shown().get_untracked() {
@@ -949,10 +950,10 @@ pub fn stop_all(state: &AppState) {
 
     let backend = resolve_active_backend(state).or_else(|| {
         // Legacy: infer from what's open
-        if ActiveBackend::RawUsb.is_open() {
-            Some(ActiveBackend::RawUsb)
-        } else if ActiveBackend::Cpal.is_open() {
-            Some(ActiveBackend::Cpal)
+        if MicBackend::RawUsb.is_open() {
+            Some(MicBackend::RawUsb)
+        } else if MicBackend::Cpal.is_open() {
+            Some(MicBackend::Cpal)
         } else {
             None
         }
@@ -988,7 +989,7 @@ pub fn stop_all(state: &AppState) {
             state.mic.recording().set(false);
             state.mic.recording_start_time().set(None);
             wasm_bindgen_futures::spawn_local(async move {
-                ActiveBackend::Browser.close(&state_copy).await;
+                MicBackend::Browser.close(&state_copy).await;
                 stop_foreground_service(&state_copy).await;
                 state_copy.mic.acquisition_state().set(MicAcquisitionState::Idle);
             });

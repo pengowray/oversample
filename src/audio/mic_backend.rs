@@ -1,8 +1,9 @@
 //! Backend-specific microphone operations.
 //!
 //! Abstracts the three mic backends (Browser/Web Audio, cpal/Tauri native,
-//! Raw USB) behind an `ActiveBackend` enum with uniform open/close/record/listen
-//! methods. All thread-local state for each backend lives here.
+//! Raw USB) behind the `MicBackend` enum (defined in `state`) with uniform
+//! open/close/record/listen methods. All thread-local state for each backend
+//! lives here.
 
 use crate::state::store_fields::*;
 use leptos::prelude::*;
@@ -168,26 +169,6 @@ thread_local! {
 enum NativeMode {
     Cpal,
     Usb,
-}
-
-// ── ActiveBackend enum ──────────────────────────────────────────────────
-
-/// Runtime mic backend, used internally by the recording system.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ActiveBackend {
-    Browser,
-    Cpal,
-    RawUsb,
-}
-
-impl From<MicBackend> for ActiveBackend {
-    fn from(b: MicBackend) -> Self {
-        match b {
-            MicBackend::Browser => ActiveBackend::Browser,
-            MicBackend::Cpal => ActiveBackend::Cpal,
-            MicBackend::RawUsb => ActiveBackend::RawUsb,
-        }
-    }
 }
 
 /// Result of stopping a recording.
@@ -450,23 +431,23 @@ fn process_live_audio(
     result
 }
 
-// ── Public API on ActiveBackend ─────────────────────────────────────────
+// ── Public API on MicBackend ─────────────────────────────────────────
 
-impl ActiveBackend {
+impl MicBackend {
     /// Check if this backend's mic is currently open.
     pub fn is_open(&self) -> bool {
         match self {
-            ActiveBackend::Browser => MIC_CTX.with(|c| c.borrow().is_some()),
-            ActiveBackend::Cpal => NATIVE_MIC_OPEN.with(|o| *o.borrow() == Some(NativeMode::Cpal)),
-            ActiveBackend::RawUsb => NATIVE_MIC_OPEN.with(|o| *o.borrow() == Some(NativeMode::Usb)),
+            MicBackend::Browser => MIC_CTX.with(|c| c.borrow().is_some()),
+            MicBackend::Cpal => NATIVE_MIC_OPEN.with(|o| *o.borrow() == Some(NativeMode::Cpal)),
+            MicBackend::RawUsb => NATIVE_MIC_OPEN.with(|o| *o.borrow() == Some(NativeMode::Usb)),
         }
     }
 
     /// Clear the live sample buffer for this backend.
     pub fn clear_buffer(&self) {
         match self {
-            ActiveBackend::Browser => MIC_BUFFER.with(|buf| buf.borrow_mut().clear()),
-            ActiveBackend::Cpal | ActiveBackend::RawUsb => {
+            MicBackend::Browser => MIC_BUFFER.with(|buf| buf.borrow_mut().clear()),
+            MicBackend::Cpal | MicBackend::RawUsb => {
                 NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
             }
         }
@@ -476,11 +457,11 @@ impl ActiveBackend {
     /// to prevent stale audio from a previous session leaking into a new one.
     pub fn clear_dsp_state(&self) {
         match self {
-            ActiveBackend::Browser => {
+            MicBackend::Browser => {
                 WEB_RT_HET.with(|h| h.borrow_mut().reset());
                 WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
             }
-            ActiveBackend::Cpal | ActiveBackend::RawUsb => {
+            MicBackend::Cpal | MicBackend::RawUsb => {
                 NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
                 NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
             }
@@ -490,18 +471,18 @@ impl ActiveBackend {
     /// Open the mic. Returns true on success.
     pub async fn open(&self, state: &AppState) -> bool {
         match self {
-            ActiveBackend::Browser => open_web(state).await,
-            ActiveBackend::Cpal => open_cpal(state).await,
-            ActiveBackend::RawUsb => open_usb(state).await,
+            MicBackend::Browser => open_web(state).await,
+            MicBackend::Cpal => open_cpal(state).await,
+            MicBackend::RawUsb => open_usb(state).await,
         }
     }
 
     /// Close the mic unconditionally.
     pub async fn close(&self, state: &AppState) {
         match self {
-            ActiveBackend::Browser => close_web(state),
-            ActiveBackend::Cpal => close_cpal(state).await,
-            ActiveBackend::RawUsb => close_usb(state).await,
+            MicBackend::Browser => close_web(state),
+            MicBackend::Cpal => close_cpal(state).await,
+            MicBackend::RawUsb => close_usb(state).await,
         }
     }
 
@@ -517,12 +498,12 @@ impl ActiveBackend {
     /// On mobile Tauri, acquires a ContentResolver fd for direct shared storage write.
     pub async fn start_recording(&self, state: &AppState) -> Result<(), String> {
         match self {
-            ActiveBackend::Browser => Ok(()),
-            ActiveBackend::Cpal => {
+            MicBackend::Browser => Ok(()),
+            MicBackend::Cpal => {
                 let fd = try_create_shared_fd(state).await;
                 tauri_invoke_args("mic_start_recording", &build_start_recording_args(state, fd)).await
             }
-            ActiveBackend::RawUsb => {
+            MicBackend::RawUsb => {
                 let fd = try_create_shared_fd(state).await;
                 tauri_invoke_args("usb_start_recording", &build_start_recording_args(state, fd)).await
             }
@@ -533,7 +514,7 @@ impl ActiveBackend {
     /// from the JS callback buffer. For native modes, calls the Tauri command.
     pub async fn stop_recording(&self, state: &AppState) -> StopResult {
         match self {
-            ActiveBackend::Browser => {
+            MicBackend::Browser => {
                 state.mic.recording().set(false);
                 state.mic.recording_start_time().set(None);
                 let sample_rate = state.mic.sample_rate().get_untracked();
@@ -548,7 +529,7 @@ impl ActiveBackend {
                     StopResult::Samples { samples, sample_rate }
                 }
             }
-            ActiveBackend::Cpal => {
+            MicBackend::Cpal => {
                 match tauri_invoke_typed_args::<_, oversample_ipc::mic::RecordingResult>(
                     "mic_stop_recording",
                     &build_stop_recording_args(state),
@@ -573,7 +554,7 @@ impl ActiveBackend {
                     }
                 }
             }
-            ActiveBackend::RawUsb => {
+            MicBackend::RawUsb => {
                 match tauri_invoke_typed_args::<_, oversample_ipc::mic::RecordingResult>(
                     "usb_stop_recording",
                     &build_stop_recording_args(state),
@@ -606,14 +587,14 @@ impl ActiveBackend {
     /// the `mic_set_listening` command. For USB, no backend command needed.
     pub async fn set_listening(&self, _state: &AppState, enabled: bool) {
         match self {
-            ActiveBackend::Browser => { /* callback checks mic_listening signal */ }
-            ActiveBackend::Cpal => {
+            MicBackend::Browser => { /* callback checks mic_listening signal */ }
+            MicBackend::Cpal => {
                 let _ = tauri_invoke_args(
                     "mic_set_listening",
                     &oversample_ipc::mic::SetListeningArgs { listening: enabled },
                 ).await;
             }
-            ActiveBackend::RawUsb => { /* USB streams continuously once open */ }
+            MicBackend::RawUsb => { /* USB streams continuously once open */ }
         }
     }
 }
