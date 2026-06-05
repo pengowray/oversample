@@ -660,20 +660,22 @@ pub fn App() -> impl IntoView {
                 state.library.files().with_untracked(|f| f.iter().position(|lf| lf.id == oid))
             });
 
-            // Save current settings to the outgoing file + its sequence group.
+            // Save current settings (gain + denoise) to the outgoing file and its
+            // SEQUENTIAL group. These are AUDIO-CHARACTER settings: they follow
+            // consecutive recordings from the same mic/session, NOT the
+            // simultaneous channels of a multitrack recording (which have their
+            // own levels/noise). [cross-file state-scoping model]
             if let Some(oi) = old_oi {
                 let settings = FileSettings::from_state(&state);
-                let names: Vec<String> = state.library.files().get_untracked().iter().map(|f| f.name.clone()).collect();
-                let groups = crate::components::file_sidebar::file_groups::compute_file_groups(&names);
-                let group_key = groups.get(oi).and_then(|g| g.as_ref()).map(|ti| ti.group_key.clone());
-
+                let seq_members = state.library.files().with_untracked(|files| {
+                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(&names, files);
+                    crate::components::file_sidebar::file_groups::sequential_members(&groups, oi)
+                });
                 state.library.files().update(|files| {
-                    for (i, file) in files.iter_mut().enumerate() {
-                        let dominated = i == oi || group_key.as_ref().is_some_and(|gk| {
-                            groups.get(i).and_then(|g| g.as_ref()).map(|ti| &ti.group_key) == Some(gk)
-                        });
-                        if dominated {
-                            file.settings = settings.clone();
+                    for &i in &seq_members {
+                        if let Some(f) = files.get_mut(i) {
+                            f.settings = settings.clone();
                         }
                     }
                 });

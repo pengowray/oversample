@@ -214,6 +214,51 @@ pub fn compute_all_groups(
     }).collect()
 }
 
+/// Indices of every file in `idx`'s MULTITRACK group — simultaneous channels of
+/// one recording, sharing `track.group_key` — including `idx` itself. Returns
+/// `[idx]` when the file isn't part of a multitrack group.
+///
+/// Per the cross-file state-scoping model: multitrack groups share VIEWPORT
+/// settings (horizontal position + vertical frequency range).
+pub fn multitrack_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
+    let Some(key) = groups
+        .get(idx)
+        .and_then(|g| g.track.as_ref())
+        .map(|t| t.group_key.clone())
+    else {
+        return vec![idx];
+    };
+    (0..groups.len())
+        .filter(|&i| groups[i].track.as_ref().map(|t| t.group_key.as_str()) == Some(key.as_str()))
+        .collect()
+}
+
+/// Indices of every file in `idx`'s SEQUENTIAL group — consecutive recordings in
+/// a series on the same channel, sharing `sequence.sequence_key` AND
+/// `track_label` — including `idx` itself. Returns `[idx]` when the file isn't
+/// part of a sequence.
+///
+/// Per the cross-file state-scoping model: sequential groups share AUDIO-CHARACTER
+/// settings (gain + denoise) — same mic/session/environment.
+pub fn sequential_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
+    let Some((seq_key, track_label)) = groups
+        .get(idx)
+        .and_then(|g| g.sequence.as_ref())
+        .map(|s| (s.sequence_key.clone(), s.track_label.clone()))
+    else {
+        return vec![idx];
+    };
+    (0..groups.len())
+        .filter(|&i| {
+            groups[i]
+                .sequence
+                .as_ref()
+                .map(|s| (s.sequence_key.as_str(), s.track_label.as_str()))
+                == Some((seq_key.as_str(), track_label.as_str()))
+        })
+        .collect()
+}
+
 /// Compute the time gap between two files: how many seconds between the end of
 /// `prev` and the start of `next`. Returns None if timestamps are unavailable.
 fn compute_gap(files: &[LoadedFile], prev_idx: usize, next_idx: usize) -> Option<f64> {
@@ -225,4 +270,60 @@ fn compute_gap(files: &[LoadedFile], prev_idx: usize, next_idx: usize) -> Option
     let next_start_ms = next.recording_start_epoch_ms()?;
 
     Some((next_start_ms - prev_end_ms) / 1000.0)
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    fn ti(key: &str, label: &str) -> Option<TrackInfo> {
+        Some(TrackInfo { group_key: key.into(), label: label.into() })
+    }
+    fn si(key: &str, label: &str, n: u32) -> Option<SequenceInfo> {
+        Some(SequenceInfo {
+            sequence_key: key.into(),
+            track_label: label.into(),
+            sequence_number: n,
+            gap_from_prev_secs: None,
+        })
+    }
+
+    #[test]
+    fn multitrack_members_group_by_track_key() {
+        // 0,1 are channels of recA; 2 is a lone file.
+        let groups = vec![
+            FileGroupInfo { track: ti("recA", "1"), sequence: None },
+            FileGroupInfo { track: ti("recA", "2"), sequence: None },
+            FileGroupInfo { track: None, sequence: None },
+        ];
+        assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
+        assert_eq!(multitrack_members(&groups, 1), vec![0, 1]);
+        assert_eq!(multitrack_members(&groups, 2), vec![2]); // singleton
+    }
+
+    #[test]
+    fn sequential_members_group_by_seq_key_and_track_label() {
+        // (site,"1") has takes 0 and 2; file 1 is track "2", alone in its sequence.
+        let groups = vec![
+            FileGroupInfo { track: ti("site", "1"), sequence: si("site", "1", 1) },
+            FileGroupInfo { track: ti("site", "2"), sequence: si("site", "2", 1) },
+            FileGroupInfo { track: ti("site", "1"), sequence: si("site", "1", 2) },
+        ];
+        assert_eq!(sequential_members(&groups, 0), vec![0, 2]);
+        assert_eq!(sequential_members(&groups, 2), vec![0, 2]);
+        assert_eq!(sequential_members(&groups, 1), vec![1]);
+    }
+
+    #[test]
+    fn multitrack_and_sequential_are_orthogonal() {
+        // One multitrack recording (recA, channels 1 & 2), no sequence.
+        let groups = vec![
+            FileGroupInfo { track: ti("recA", "1"), sequence: None },
+            FileGroupInfo { track: ti("recA", "2"), sequence: None },
+        ];
+        // Multitrack groups them; sequential does not (each is its own sequence).
+        assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
+        assert_eq!(sequential_members(&groups, 0), vec![0]);
+        assert_eq!(sequential_members(&groups, 1), vec![1]);
+    }
 }
