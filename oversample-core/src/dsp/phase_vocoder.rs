@@ -1,4 +1,4 @@
-use realfft::RealFftPlanner;
+use crate::dsp::fft::{plan_fft_forward, plan_fft_inverse};
 use std::f32::consts::PI;
 
 const FFT_SIZE: usize = 4096;
@@ -70,10 +70,9 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         })
         .collect();
 
-    // Set up FFT
-    let mut planner = RealFftPlanner::<f32>::new();
-    let fft_forward = planner.plan_fft_forward(FFT_SIZE);
-    let fft_inverse = planner.plan_fft_inverse(FFT_SIZE);
+    // FFT plans from the shared thread-local planner (no per-call allocation).
+    let fft_forward = plan_fft_forward(FFT_SIZE);
+    let fft_inverse = plan_fft_inverse(FFT_SIZE);
 
     let mut output = vec![0.0f32; out_len];
     let mut window_sum = vec![0.0f32; out_len];
@@ -97,8 +96,11 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
             fft_in[i] = samples[offset + i] * hann[i];
         }
 
-        // Forward FFT
-        fft_forward.process(&mut fft_in, &mut spectrum).unwrap();
+        // Forward FFT (skip the frame on the impossible size-mismatch error
+        // rather than panicking in the audio thread).
+        if fft_forward.process(&mut fft_in, &mut spectrum).is_err() {
+            continue;
+        }
 
         // Extract magnitude and phase per bin
         for k in 0..n_bins {
@@ -142,8 +144,10 @@ pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
         spectrum[0].im = 0.0;
         spectrum[n_bins - 1].im = 0.0;
 
-        // Inverse FFT
-        fft_inverse.process(&mut spectrum, &mut ifft_out).unwrap();
+        // Inverse FFT (skip this frame's overlap-add on the impossible error).
+        if fft_inverse.process(&mut spectrum, &mut ifft_out).is_err() {
+            continue;
+        }
 
         // Normalize + overlap-add
         let norm = 1.0 / fft_f;
