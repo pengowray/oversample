@@ -49,6 +49,60 @@ pub(super) struct NewStreamingFile {
 /// Push a freshly-decoded streaming file into the library, select it, and run the
 /// shared post-load work (full-file peak scan, silent/quiet toast, spectral-store
 /// init). Returns the new file's index.
+/// Hop size (samples) used for streaming-file spectrogram column counts.
+/// Mirrors the `HOP_SIZE` used in the per-format setup paths.
+const STREAM_HOP_SIZE: usize = 512;
+
+/// Number of STFT columns for `total_frames` at the given FFT size
+/// (Hann window, hop = [`STREAM_HOP_SIZE`]). Used by the post-decode
+/// reconciliation so its width math matches the setup paths exactly.
+fn streaming_total_cols(total_frames: u64, fft_size: usize) -> usize {
+    let total_len = total_frames as usize;
+    if total_len >= fft_size {
+        (total_len - fft_size) / STREAM_HOP_SIZE + 1
+    } else {
+        0
+    }
+}
+
+/// After a streaming MP3/OGG background decode finishes, `real_total` is the
+/// exact decoded per-channel frame count. Until then the file's duration and
+/// spectrogram width were driven by a bitrate *estimate* (see loader.rs), so the
+/// timeline length, scrubbing map, and spectrogram width could be wrong (audit
+/// lows #8/#12). Reconcile the cached values to the truth and repaint. No-op
+/// when the estimate already matched.
+fn reconcile_streaming_length(state: &AppState, expected_id: u64, real_total: u64, sample_rate: u32) {
+    let Some(file_index) = state.file_idx_for_id(expected_id) else { return };
+    // FFT size the spectrogram was built with (recover from the store so the
+    // width formula matches the setup path's).
+    let Some(fft_size) = crate::canvas::spectral_store::fft_size(file_index) else { return };
+    let real_cols = streaming_total_cols(real_total, fft_size);
+    let real_duration = real_total as f64 / sample_rate.max(1) as f64;
+
+    let changed = state.library.files().with_untracked(|files| {
+        files.get(file_index).is_some_and(|f| {
+            f.spectrogram.total_columns != real_cols
+                || (f.audio.duration_secs - real_duration).abs() > 1e-3
+        })
+    });
+    if !changed { return; }
+
+    // Grow the spectral store if the true length exceeds the estimate (grows
+    // only; an over-estimate just leaves unused trailing column slots).
+    crate::canvas::spectral_store::ensure_capacity(file_index, real_cols);
+    state.library.files().update(|files| {
+        if let Some(f) = files.get_mut(file_index) {
+            f.spectrogram.total_columns = real_cols;
+            f.audio.duration_secs = real_duration;
+        }
+    });
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
+    log::info!(
+        "Reconciled streaming length (file {}): {} cols, {:.3}s (was bitrate-estimated)",
+        file_index, real_cols, real_duration,
+    );
+}
+
 pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize {
     let NewStreamingFile {
         name, audio, spectrogram, preview, cached_peak_db, wav_markers, file,
@@ -919,6 +973,11 @@ async fn background_mp3_decode(
     }
 
     log::info!("Background MP3 decode complete for {}", expected_name);
+
+    // Length was a bitrate estimate until decode reached EOF — reconcile the
+    // cached duration + spectrogram width to the true frame count (lows #8/#12).
+    use crate::audio::source::AudioSource;
+    reconcile_streaming_length(&state, expected_id, source.total_samples(), source.sample_rate());
 }
 
 /// Attempt to open a large OGG file using the streaming path.
@@ -1209,6 +1268,11 @@ async fn background_ogg_decode(
     }
 
     log::info!("Background OGG decode complete for {}", expected_name);
+
+    // Length was a bitrate estimate until decode reached EOF — reconcile the
+    // cached duration + spectrogram width to the true frame count (lows #8/#12).
+    use crate::audio::source::AudioSource;
+    reconcile_streaming_length(&state, expected_id, source.total_samples(), source.sample_rate());
 }
 
 /// Build a high-res overview spectrogram image for a streaming file in the background.

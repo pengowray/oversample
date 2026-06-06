@@ -142,6 +142,19 @@ pub enum FileHandle {
     WebFile(web_sys::File),
     /// Tauri desktop/mobile: uses native `read_file_range` IPC command.
     TauriPath(String),
+    /// In-memory bytes — holds the whole file; range reads just slice it. Used
+    /// by host tests of the streaming sources (the WebFile / Tauri handles can't
+    /// run off-WASM). Not constructed in production.
+    Bytes(std::sync::Arc<Vec<u8>>),
+}
+
+/// Clamp-and-slice a byte range `[start, end)` from an in-memory buffer, used by
+/// [`FileHandle::Bytes`] to mimic a successful range read.
+pub(crate) fn slice_bytes(bytes: &[u8], start: u64, end: u64) -> Result<Vec<u8>, String> {
+    let len = bytes.len() as u64;
+    let s = start.min(len) as usize;
+    let e = end.min(len) as usize;
+    Ok(bytes[s..e].to_vec())
 }
 
 impl std::fmt::Debug for FileHandle {
@@ -149,6 +162,7 @@ impl std::fmt::Debug for FileHandle {
         match self {
             FileHandle::WebFile(file) => write!(f, "WebFile(\"{}\")", file.name()),
             FileHandle::TauriPath(path) => write!(f, "TauriPath(\"{}\")", path),
+            FileHandle::Bytes(b) => write!(f, "Bytes({} B)", b.len()),
         }
     }
 }
@@ -273,6 +287,7 @@ impl StreamingWavSource {
                 FileHandle::TauriPath(path) => {
                     crate::tauri_bridge::read_file_range(path, byte_start, byte_len).await
                 }
+                FileHandle::Bytes(b) => slice_bytes(b, byte_start, byte_start + byte_len),
             };
             let bytes = match bytes {
                 Ok(b) => b,
@@ -706,6 +721,7 @@ impl StreamingFlacSource {
             FileHandle::TauriPath(path) => {
                 crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
             }
+            FileHandle::Bytes(b) => slice_bytes(b, read_start, read_end),
         };
         let bytes = match bytes {
             Ok(b) if b.is_empty() => return Err("EOF: no bytes read".into()),

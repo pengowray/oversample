@@ -33,6 +33,11 @@ pub struct StreamingOggSource {
     decode_byte_cursor: RefCell<u64>,
     /// Per-channel frames decoded so far (beyond the head).
     decode_frame_cursor: RefCell<u64>,
+    /// Set once decode has reached the real end of the file. Decoupled from
+    /// `total_frames` (an estimate until then) so `is_fully_decoded()` reflects
+    /// true completion, not the cursor catching an under-estimate (audit
+    /// lows #8/#12). See StreamingMp3Source for the detailed rationale.
+    reached_eof: std::cell::Cell<bool>,
 }
 
 // SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
@@ -78,13 +83,20 @@ impl StreamingOggSource {
             cache: RefCell::new(ChunkCache::new()),
             decode_byte_cursor: RefCell::new(initial_byte_cursor),
             decode_frame_cursor: RefCell::new(initial_frame_cursor),
+            reached_eof: std::cell::Cell::new(false),
         }
     }
 
     /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     pub async fn prefetch_region(&self, start_frame: u64, len: usize) {
-        let total = *self.total_frames.borrow();
-        let end_frame = (start_frame + len as u64).min(total);
+        // Cap at `total_frames` only once the length is exact (reached_eof);
+        // while it's an estimate, don't cap, or an under-estimate would stop
+        // decode short of real EOF. See StreamingMp3Source::prefetch_region.
+        let end_frame = if self.reached_eof.get() {
+            (start_frame + len as u64).min(*self.total_frames.borrow())
+        } else {
+            start_frame + len as u64
+        };
         if end_frame <= self.head_frames as u64 {
             return;
         }
@@ -130,10 +142,9 @@ impl StreamingOggSource {
         let frame_cursor = *self.decode_frame_cursor.borrow();
 
         if byte_cursor >= self.file_size {
-            let mut tf = self.total_frames.borrow_mut();
-            if frame_cursor < *tf {
-                *tf = frame_cursor;
-            }
+            // Real EOF: `total_frames` is now exactly the decoded count.
+            *self.total_frames.borrow_mut() = frame_cursor;
+            self.reached_eof.set(true);
             return Err("Already at EOF".into());
         }
 
@@ -147,9 +158,13 @@ impl StreamingOggSource {
             FileHandle::TauriPath(path) => {
                 crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
             }
+            FileHandle::Bytes(b) => super::streaming_source::slice_bytes(b, read_start, read_end),
         };
         let bytes = match bytes {
-            Ok(b) if b.is_empty() => return Err("EOF: no bytes read".into()),
+            Ok(b) if b.is_empty() => {
+                self.reached_eof.set(true);
+                return Err("EOF: no bytes read".into());
+            }
             Ok(b) => b,
             Err(e) => return Err(format!("OGG window read failed: {}", e)),
         };
@@ -263,11 +278,13 @@ impl StreamingOggSource {
         *self.decode_byte_cursor.borrow_mut() = new_byte_cursor;
         *self.decode_frame_cursor.borrow_mut() = new_frame_cursor;
 
-        // Update total_frames if we've reached EOF and decoded more than estimated
+        // Real EOF reached in this window: total_frames is now exact.
         if new_byte_cursor >= self.file_size {
-            let mut tf = self.total_frames.borrow_mut();
-            *tf = new_frame_cursor;
+            *self.total_frames.borrow_mut() = new_frame_cursor;
+            self.reached_eof.set(true);
         } else if new_frame_cursor > *self.total_frames.borrow() {
+            // Decoded past the (under-)estimate — grow total_frames to track
+            // progress. NOT final: reached_eof stays false until real EOF.
             *self.total_frames.borrow_mut() = new_frame_cursor;
         }
 
@@ -286,8 +303,9 @@ impl StreamingOggSource {
         }
 
         if total_new_frames == 0 {
-            let mut tf = self.total_frames.borrow_mut();
-            *tf = frame_cursor;
+            // No new frames decoded — treat as EOF.
+            *self.total_frames.borrow_mut() = frame_cursor;
+            self.reached_eof.set(true);
             Err("No new frames decoded".into())
         } else {
             Ok(total_new_frames)
@@ -400,7 +418,7 @@ impl StreamingOggSource {
     }
 
     pub fn is_fully_decoded(&self) -> bool {
-        *self.decode_frame_cursor.borrow() >= *self.total_frames.borrow()
+        self.reached_eof.get()
     }
 
     pub fn decode_frame_cursor_value(&self) -> u64 {
@@ -423,6 +441,10 @@ impl AudioSource for StreamingOggSource {
 
     fn is_fully_loaded(&self) -> bool {
         false
+    }
+
+    fn length_is_estimated(&self) -> bool {
+        !self.reached_eof.get()
     }
 
     fn read_samples(&self, channel: ChannelView, start: u64, buf: &mut [f32]) -> usize {

@@ -41,6 +41,12 @@ pub struct StreamingMp3Source {
     first_packet_size: Cell<u32>,
     /// True once we've seen packets of different sizes (variable bitrate).
     pub(crate) is_vbr: Cell<bool>,
+    /// Set once decode has reached the real end of the file (byte EOF / empty
+    /// read). Decoupled from `total_frames` (which only *estimates* the length
+    /// until this is set), so `is_fully_decoded()` reflects true completion
+    /// instead of the cursor merely catching up to an under-estimate — the bug
+    /// that truncated long header-less MP3s (audit lows #8/#12).
+    reached_eof: Cell<bool>,
 }
 
 // SAFETY: required by AudioSource: Send + Sync, but this holds RefCell
@@ -90,6 +96,7 @@ impl StreamingMp3Source {
             did_seek_skip: Cell::new(false),
             first_packet_size: Cell::new(0),
             is_vbr: Cell::new(false),
+            reached_eof: Cell::new(false),
         }
     }
 
@@ -107,8 +114,16 @@ impl StreamingMp3Source {
 
     /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     pub async fn prefetch_region(&self, start_frame: u64, len: usize) {
-        let total = *self.total_frames.borrow();
-        let end_frame = (start_frame + len as u64).min(total);
+        // Cap the decode target at `total_frames` ONLY once the length is exact
+        // (reached_eof). While it's still an estimate, do NOT cap: an
+        // under-estimate would otherwise stop decoding short of the real end
+        // (the cursor reaches the small estimate and the loop exits). Decoding
+        // still halts at real EOF via `decode_one_window` returning Err.
+        let end_frame = if self.reached_eof.get() {
+            (start_frame + len as u64).min(*self.total_frames.borrow())
+        } else {
+            start_frame + len as u64
+        };
         if end_frame <= self.head_frames as u64 {
             return;
         }
@@ -171,11 +186,9 @@ impl StreamingMp3Source {
         let frame_cursor = *self.decode_frame_cursor.borrow();
 
         if byte_cursor >= self.file_size {
-            // At EOF — update total_frames to actual decoded count
-            let mut tf = self.total_frames.borrow_mut();
-            if frame_cursor < *tf {
-                *tf = frame_cursor;
-            }
+            // Real EOF: `total_frames` is now exactly the decoded count.
+            *self.total_frames.borrow_mut() = frame_cursor;
+            self.reached_eof.set(true);
             return Err("Already at EOF".into());
         }
 
@@ -189,9 +202,13 @@ impl StreamingMp3Source {
             FileHandle::TauriPath(path) => {
                 crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
             }
+            FileHandle::Bytes(b) => super::streaming_source::slice_bytes(b, read_start, read_end),
         };
         let bytes = match bytes {
-            Ok(b) if b.is_empty() => return Err("EOF: no bytes read".into()),
+            Ok(b) if b.is_empty() => {
+                self.reached_eof.set(true);
+                return Err("EOF: no bytes read".into());
+            }
             Ok(b) => b,
             Err(e) => return Err(format!("MP3 window read failed: {}", e)),
         };
@@ -325,11 +342,14 @@ impl StreamingMp3Source {
         *self.decode_byte_cursor.borrow_mut() = new_byte_cursor;
         *self.decode_frame_cursor.borrow_mut() = new_frame_cursor;
 
-        // Update total_frames if we've reached EOF and decoded more than estimated
+        // Real EOF reached in this window: total_frames is now exact.
         if new_byte_cursor >= self.file_size {
-            let mut tf = self.total_frames.borrow_mut();
-            *tf = new_frame_cursor;
+            *self.total_frames.borrow_mut() = new_frame_cursor;
+            self.reached_eof.set(true);
         } else if new_frame_cursor > *self.total_frames.borrow() {
+            // Decoded past the (under-)estimate — grow total_frames to track
+            // progress. NOT final: reached_eof stays false until real EOF, so
+            // the background decode keeps going instead of stopping here.
             *self.total_frames.borrow_mut() = new_frame_cursor;
         }
 
@@ -348,9 +368,9 @@ impl StreamingMp3Source {
         }
 
         if total_new_frames == 0 {
-            // No new frames — treat as EOF
-            let mut tf = self.total_frames.borrow_mut();
-            *tf = frame_cursor;
+            // No new frames decoded — treat as EOF.
+            *self.total_frames.borrow_mut() = frame_cursor;
+            self.reached_eof.set(true);
             Err("No new frames decoded".into())
         } else {
             Ok(total_new_frames)
@@ -463,7 +483,7 @@ impl StreamingMp3Source {
     }
 
     pub fn is_fully_decoded(&self) -> bool {
-        *self.decode_frame_cursor.borrow() >= *self.total_frames.borrow()
+        self.reached_eof.get()
     }
 
     pub fn decode_frame_cursor_value(&self) -> u64 {
@@ -486,6 +506,10 @@ impl AudioSource for StreamingMp3Source {
 
     fn is_fully_loaded(&self) -> bool {
         false
+    }
+
+    fn length_is_estimated(&self) -> bool {
+        !self.reached_eof.get()
     }
 
     fn read_samples(&self, channel: ChannelView, start: u64, buf: &mut [f32]) -> usize {
@@ -550,6 +574,97 @@ impl AudioSource for StreamingMp3Source {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::loader::{load_audio, parse_mp3_header};
+    use crate::audio::source::AudioSource;
+    use std::sync::Arc;
+
+    /// Minimal executor for the source's async methods. On host the awaited
+    /// futures (Bytes range "reads" + the no-op `yield_to_browser`) never park,
+    /// so a busy-poll with a no-op waker drives them straight to completion.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        const VTABLE: RawWakerVTable =
+            RawWakerVTable::new(|_| RawWaker::new(std::ptr::null(), &VTABLE), |_| {}, |_| {}, |_| {});
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut fut = std::pin::pin!(fut);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    /// Regression guard for the truncation bug behind audit lows #8/#12: a
+    /// header-less MP3 large enough to need several decode windows must decode
+    /// all the way to real EOF, NOT stop at the bitrate length *estimate*.
+    ///
+    /// Before the fix, `is_fully_decoded()` was `cursor >= total_frames` and
+    /// `total_frames` was bumped up to the cursor mid-stream, so once the cursor
+    /// passed the (small, 64 KB-derived) under-estimate the background decode
+    /// declared itself done after ~one 4 MB window — silently cutting off long
+    /// MP3s. Now `is_fully_decoded()` tracks a real `reached_eof` flag and
+    /// prefetch isn't capped at the estimate, so decode runs to the true end.
+    /// (The loader-level premise is pinned in oversample-core/tests/mp3_estimate.rs.)
+    #[test]
+    fn streaming_mp3_decodes_past_underestimate_to_real_eof() {
+        // Repeat the committed 241 KB header-less fixture into a >4 MB buffer so
+        // multiple windows are needed (one window = MP3_WINDOW_BYTES = 4 MB).
+        let single: &[u8] =
+            include_bytes!("../../oversample-core/tests/mp3_estimate/tone_48k_mono_noxing.mp3");
+        let mut big = Vec::with_capacity(single.len() * 42);
+        for _ in 0..42 {
+            big.extend_from_slice(single);
+        }
+        let file_size = big.len() as u64;
+        assert!(file_size > MP3_WINDOW_BYTES * 2, "fixture must span >2 windows");
+
+        // Ground truth: a full in-memory decode of the same bytes.
+        let real = load_audio(&big).expect("decode").samples.len() as u64;
+
+        // Build the source as the loader does: length parsed from only the first
+        // 64 KB → a severe under-estimate; samples then decoded on demand.
+        let header = parse_mp3_header(&big[..65536], file_size).expect("header");
+        assert!(
+            header.estimated_total_frames < real * 7 / 10,
+            "test precondition: header should under-estimate; est={}, real={}",
+            header.estimated_total_frames, real,
+        );
+
+        let src = StreamingMp3Source::new(
+            FileHandle::Bytes(Arc::new(big)),
+            &header,
+            Vec::new(), // no in-memory head — force every read through decode
+            None,
+            file_size,
+            header.data_offset, // initial byte cursor
+            0,                  // initial frame cursor
+        );
+        assert!(src.length_is_estimated(), "length starts as an estimate");
+
+        // Drive the background-decode loop to completion.
+        let mut guard = 0;
+        while !src.is_fully_decoded() {
+            let cursor = src.decode_frame_cursor_value();
+            block_on(src.prefetch_region(cursor, 262_144));
+            guard += 1;
+            assert!(guard < 100_000, "decode did not terminate (possible regression)");
+        }
+
+        let total = src.total_samples();
+        assert!(
+            total as f64 >= 0.9 * real as f64,
+            "streaming decode truncated: reached {total} of {real} frames ({:.0}%) — \
+             the estimate-stop bug is back",
+            100.0 * total as f64 / real as f64,
+        );
+        assert!(!src.length_is_estimated(), "length is exact after full decode");
     }
 }
 

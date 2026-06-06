@@ -59,6 +59,37 @@ thread_local! {
     static SCHEDULER_DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Upper sample bound for the scheduler this iteration.
+///
+/// For a play-to-EOF stream (estimated-length MP3/OGG, no bounded selection) we
+/// follow the decode frontier: `total_samples()` grows as on-demand prefetch
+/// advances and is finalized to the true count at real EOF, so playback covers
+/// the whole file even before the background decode has reconciled the length
+/// (audit lows #8/#12). For an exact length or a bounded selection, clamp to
+/// `end_sample`, re-reading `total_samples()` so an over-estimated tail trims to
+/// real EOF instead of scheduling trailing zeros.
+fn playback_end_bound(source: &Arc<dyn AudioSource>, end_sample: usize, play_to_eof: bool) -> usize {
+    if play_to_eof {
+        source.total_samples() as usize
+    } else {
+        end_sample.min(source.total_samples() as usize)
+    }
+}
+
+/// True once the scheduler has finished (reached the real end of the stream) AND
+/// all scheduled audio has played out. The play-to-EOF playhead uses this to stop
+/// when the audio actually ends, since the true duration of an estimated-length
+/// streaming file isn't known up front.
+pub fn playback_drained() -> bool {
+    if !SCHEDULER_DONE.with(|d| d.get()) {
+        return false;
+    }
+    STREAM_CTX.with(|ctx| match ctx.borrow().as_ref() {
+        Some(audio_ctx) => audio_ctx.current_time() >= SCHEDULED_END.with(|s| s.get()),
+        None => true,
+    })
+}
+
 /// How many seconds of audio are scheduled beyond the audio context's
 /// current_time. Returns None if no stream is active. Negative means the
 /// scheduler has fallen behind and audio is running out (buffer underrun).
@@ -185,6 +216,7 @@ pub(crate) fn start_stream(
     start_sample: usize,
     end_sample: usize,
     params: PlaybackParams,
+    play_to_eof: bool,
 ) -> Option<u32> {
     stop_stream();
 
@@ -250,6 +282,7 @@ pub(crate) fn start_stream(
         start_sample,
         end_sample,
         params,
+        play_to_eof,
     ));
 
     Some(final_rate)
@@ -268,6 +301,7 @@ async fn chunk_loop(
     start_sample: usize,
     end_sample: usize,
     params: PlaybackParams,
+    play_to_eof: bool,
 ) {
     let mut pos = start_sample;
     let pv_hq_mode = params.pv_hq && matches!(params.mode, PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift);
@@ -312,14 +346,15 @@ async fn chunk_loop(
     let mut prebuf: Vec<PreBuf> = Vec::with_capacity(PREBUFFER_CHUNKS);
 
     for _ in 0..PREBUFFER_CHUNKS {
-        if pos >= end_sample { break; }
+        let effective_end = playback_end_bound(&source, end_sample, play_to_eof);
+        if pos >= effective_end { break; }
         let current_gen = STREAM_GEN.with(|g| *g.borrow());
         if current_gen != generation { return; }
 
         let (final_samples, left, right, new_pos) = process_one_chunk(
             &source, channel_view, stereo_out, source_rate, &params,
             global_gain, agc.as_ref(),
-            pos, start_sample, end_sample,
+            pos, start_sample, effective_end,
         ).await;
         pos = new_pos;
 
@@ -373,14 +408,19 @@ async fn chunk_loop(
 
     // ── Streaming phase ──────────────────────────────────────────────────────
     // Continue processing remaining chunks with lookahead throttling.
-    while pos < end_sample {
+    loop {
+        // Recompute the bound each iteration: follow the decode frontier for a
+        // play-to-EOF stream, or clamp to end_sample otherwise (see
+        // `playback_end_bound`). No-op for exact-length sources.
+        let effective_end = playback_end_bound(&source, end_sample, play_to_eof);
+        if pos >= effective_end { break; }
         let current_gen = STREAM_GEN.with(|g| *g.borrow());
         if current_gen != generation { break; }
 
         let (final_samples, left, right, new_pos) = process_one_chunk(
             &source, channel_view, stereo_out, source_rate, &params,
             global_gain, agc.as_ref(),
-            pos, start_sample, end_sample,
+            pos, start_sample, effective_end,
         ).await;
         pos = new_pos;
 

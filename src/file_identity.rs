@@ -237,6 +237,25 @@ pub fn reader_from_handle(handle: &crate::audio::streaming_source::FileHandle) -
         crate::audio::streaming_source::FileHandle::TauriPath(path) => {
             Box::new(TauriRangeReader { path: path.clone() })
         }
+        crate::audio::streaming_source::FileHandle::Bytes(b) => {
+            Box::new(BytesRangeReader { bytes: b.clone() })
+        }
+    }
+}
+
+/// In-memory range reader (host tests; mirrors `FileHandle::Bytes`).
+pub struct BytesRangeReader {
+    pub bytes: std::sync::Arc<Vec<u8>>,
+}
+
+impl AsyncRangeReader for BytesRangeReader {
+    fn read(&self, offset: u64, length: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + '_>> {
+        Box::pin(async move {
+            let len = self.bytes.len() as u64;
+            let s = offset.min(len) as usize;
+            let e = (offset + length).min(len) as usize;
+            Ok(self.bytes[s..e].to_vec())
+        })
     }
 }
 

@@ -2073,16 +2073,22 @@ fn run_preload_batch(state: AppState, generation: u32) {
 
 /// Yield once to the browser event loop via a zero-duration setTimeout.
 pub async fn yield_to_browser() {
-    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-        let win = web_sys::window().unwrap();
-        let cb = Closure::once_into_js(move || {
-            let _ = resolve.call0(&JsValue::NULL);
+    // On wasm, yield a macrotask so the browser can paint / handle input.
+    // Off-wasm (host tests of the streaming sources) there is nothing to yield
+    // to, so this is a no-op.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+            let win = web_sys::window().unwrap();
+            let cb = Closure::once_into_js(move || {
+                let _ = resolve.call0(&JsValue::NULL);
+            });
+            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.unchecked_ref(), 0,
+            );
         });
-        let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-            cb.unchecked_ref(), 0,
-        );
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+        let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+    }
 }
 
 /// Apply the current playback DSP mode transform to samples for display.

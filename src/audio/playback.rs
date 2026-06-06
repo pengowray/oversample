@@ -222,6 +222,9 @@ pub fn replay_live(state: &AppState) {
     let remaining_duration = (end_sample - start_sample) as f64 / sr as f64;
     let channel_view = state.viewmode.channel_view().get_untracked();
 
+    // Play to real EOF when there's no bounded selection and the length is still
+    // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
+    let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -229,6 +232,7 @@ pub fn replay_live(state: &AppState) {
         start_sample,
         end_sample,
         params,
+        play_to_eof,
     ) else {
         state.playback.is_playing().set(false);
         return;
@@ -244,7 +248,7 @@ pub fn replay_live(state: &AppState) {
         _ => 1.0,
     };
 
-    start_playhead(*state, current_time, remaining_duration, playback_speed);
+    start_playhead(*state, current_time, remaining_duration, playback_speed, play_to_eof);
 }
 
 /// Debounced version of `replay_live()`. Coalesces rapid signal changes
@@ -348,6 +352,9 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     let params = snapshot_params(state, selection, sr);
     let channel_view = state.viewmode.channel_view().get_untracked();
 
+    // Play to real EOF when there's no bounded selection and the length is still
+    // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
+    let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -355,6 +362,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
         start_sample,
         end_sample,
         params,
+        play_to_eof,
     ) else {
         web_sys::console::warn_1(&"Playback failed: could not start audio stream".into());
         return;
@@ -373,7 +381,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     state.playback.active_selection().set(selection);
     state.playback.is_playing().set(true);
     state.playback.playhead_time().set(start_secs);
-    start_playhead(*state, start_secs, play_duration, playback_speed);
+    start_playhead(*state, start_secs, play_duration, playback_speed, play_to_eof);
 }
 
 pub fn play(state: &AppState) {
@@ -404,6 +412,9 @@ pub fn play(state: &AppState) {
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let channel_view = state.viewmode.channel_view().get_untracked();
 
+    // Play to real EOF when there's no bounded selection and the length is still
+    // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
+    let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -411,6 +422,7 @@ pub fn play(state: &AppState) {
         start_sample,
         end_sample,
         params,
+        play_to_eof,
     ) else { return };
 
     let te_factor = state.transform.te_factor().get_untracked();
@@ -428,7 +440,7 @@ pub fn play(state: &AppState) {
     state.playback.active_selection().set(selection);
     state.playback.is_playing().set(true);
     state.playback.playhead_time().set(play_start_time);
-    start_playhead(*state, play_start_time, play_duration, playback_speed);
+    start_playhead(*state, play_start_time, play_duration, playback_speed, play_to_eof);
 }
 
 /// Returns (start_sample, end_sample) for the current selection or full file.
@@ -550,7 +562,7 @@ pub(crate) fn apply_gain(samples: &mut [f32], gain_db: f64) {
 }
 
 /// Animate the playhead using requestAnimationFrame
-fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
+fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64, play_to_eof: bool) {
     let window = web_sys::window().unwrap();
     let perf = window.performance().unwrap();
     let anim_start = perf.now();
@@ -619,8 +631,16 @@ fn start_playhead(state: AppState, start_time: f64, duration: f64, speed: f64) {
         let elapsed_real = elapsed_ms.max(0.0) / 1000.0;
         let current = start_time + elapsed_real * speed;
 
-        if current >= end_time {
-            state.playback.playhead_time().set(end_time);
+        let reached_end = if play_to_eof {
+            // Estimated-length stream: the true duration isn't known up front, so
+            // stop when the scheduler has reached EOF and the audio has drained
+            // (lows #8/#12), not at the estimate-based end_time.
+            crate::audio::streaming_playback::playback_drained()
+        } else {
+            current >= end_time
+        };
+        if reached_end {
+            state.playback.playhead_time().set(if play_to_eof { current } else { end_time });
             state.playback.is_buffering().set(false);
             if !(state.view.user_panned_during_playback().get_untracked()
                 && !is_playhead_visible(&state))

@@ -192,6 +192,14 @@ pub trait AudioSource: Send + Sync {
     /// Whether all samples are available in memory (small file / legacy mode).
     fn is_fully_loaded(&self) -> bool;
 
+    /// Whether `total_samples()` is still an estimate (`true`) rather than the
+    /// exact decoded length (`false`). Streaming MP3/OGG return `true` until
+    /// decode reaches real EOF (their length starts as a bitrate guess);
+    /// in-memory / fully-decoded sources are always exact.
+    fn length_is_estimated(&self) -> bool {
+        false
+    }
+
     /// For backward compatibility: get a direct reference to in-memory mono samples.
     /// Returns `None` for streaming sources.
     fn as_contiguous(&self) -> Option<&[f32]>;
