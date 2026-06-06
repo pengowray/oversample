@@ -5,6 +5,7 @@ use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
 use crate::canvas::coord::pointer_to_xtf;
 use crate::canvas::hit_test::{hit_test_spec_handles, is_in_band_ff_drag_zone, hit_test_annotation_handles, hit_test_annotation_body, hit_test_band_ff_body};
 use crate::canvas::spectrogram_renderer;
+use crate::annotations::AnnotationId;
 use crate::state::{ActiveFocus, AppState, CanvasTool, SpectrogramHandle, Selection, UndoEntry};
 use crate::viewport;
 
@@ -97,6 +98,15 @@ pub fn follow_playhead(state: &AppState, canvas_ref: NodeRef<leptos::html::Canva
     }
 }
 
+/// A deferred annotation-body click (Hand tool): resolved on mouseup so a pan
+/// gesture takes priority over selecting the annotation under the cursor.
+#[derive(Clone)]
+pub struct PendingAnnotationHit {
+    pub id: AnnotationId,
+    /// Whether Ctrl/Cmd was held (toggle add/remove from the selection).
+    pub ctrl: bool,
+}
+
 /// Local interaction state for the spectrogram component.
 /// These signals are only used by event handlers, not by rendering.
 #[derive(Copy, Clone)]
@@ -120,7 +130,7 @@ pub struct SpectInteraction {
     /// Generation counter for cancelling inertia animations
     pub inertia_generation: StoredValue<u32>,
     /// Pending annotation hit for Hand tool — deferred to mouseup so panning takes priority
-    pub pending_annotation_hit: RwSignal<Option<(String, bool)>>, // (annotation_id, ctrl_held)
+    pub pending_annotation_hit: RwSignal<Option<PendingAnnotationHit>>,
     /// Pending BandFF body click — deferred to mouseup so panning takes priority
     pub pending_band_ff_hit: RwSignal<bool>,
     /// Pending transient selection body click — deferred to mouseup so panning takes priority
@@ -494,7 +504,7 @@ pub fn on_pointerdown(
                         set, px_x, px_y, min_freq, max_freq, scroll, time_res, zoom, cw, ch,
                     ) {
                         let ctrl = ev.ctrl_key() || ev.meta_key();
-                        ix.pending_annotation_hit.set(Some((hit_id, ctrl)));
+                        ix.pending_annotation_hit.set(Some(PendingAnnotationHit { id: hit_id, ctrl }));
                         hit_annotation = true;
                     }
                 }
@@ -736,7 +746,7 @@ pub fn on_pointerup(
 
         if was_click {
             // Handle deferred annotation selection on click
-            if let Some((hit_id, ctrl)) = ix.pending_annotation_hit.get_untracked() {
+            if let Some(PendingAnnotationHit { id: hit_id, ctrl }) = ix.pending_annotation_hit.get_untracked() {
                 if ctrl {
                     state.annotations.selected_ids().update(|ids| {
                         if let Some(pos) = ids.iter().position(|id| *id == hit_id) {

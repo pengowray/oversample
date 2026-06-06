@@ -663,6 +663,17 @@ pub enum ResizeHandlePosition {
     BottomLeft, Bottom, BottomRight,
 }
 
+/// Where a dragged annotation will be dropped relative to the target tree row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DropPosition {
+    /// Insert as the previous sibling of the target.
+    Before,
+    /// Insert as the next sibling of the target.
+    After,
+    /// Insert as a child of the target (only valid when the target is a group).
+    Inside,
+}
+
 /// What the overview strip shows.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum OverviewView {
@@ -1798,7 +1809,7 @@ pub struct AnnotationsState {
     /// Id of annotation currently being dragged in the sidebar tree.
     pub dragging_id: Option<AnnotationId>,
     /// Drop target: (target_id, position "before"/"after"/"inside").
-    pub drop_target: Option<(AnnotationId, String)>,
+    pub drop_target: Option<(AnnotationId, DropPosition)>,
     /// Undo/redo stack for annotation operations.
     pub undo_stack: UndoStack,
     /// Active annotation resize drag: (annotation_id, handle position).

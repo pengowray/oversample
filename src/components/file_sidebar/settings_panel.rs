@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use crate::state::store_fields::*;
+use crate::state::DropPosition;
 use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, FlowColorScheme, MainView, ResonatorFftMode, ResonatorLayout, SpectrogramDisplay,
@@ -946,11 +947,11 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                     let y = ev.client_y() as f64 - rect.top();
                     let h = rect.height();
                     let position = if is_group && y > h * 0.25 && y < h * 0.75 {
-                        "inside".to_string()
+                        DropPosition::Inside
                     } else if y < h * 0.5 {
-                        "before".to_string()
+                        DropPosition::Before
                     } else {
-                        "after".to_string()
+                        DropPosition::After
                     };
                     state.annotations.drop_target().set(Some((id_dragover2.clone(), position)));
                 }
@@ -1454,8 +1455,8 @@ fn perform_drop(state: AppState) {
                 None => return,
             };
 
-            match position.as_str() {
-                "inside" if target_is_group => {
+            match position {
+                DropPosition::Inside if target_is_group => {
                     // Drop inside a group
                     if let Some(a) = set.annotations.iter_mut().find(|a| a.id == dragged_id) {
                         a.parent_id = Some(target_id.clone());
@@ -1463,7 +1464,7 @@ fn perform_drop(state: AppState) {
                     }
                     renumber_children(&mut set.annotations, Some(target_id.as_str()));
                 }
-                "before" => {
+                DropPosition::Before => {
                     if let Some(a) = set.annotations.iter_mut().find(|a| a.id == dragged_id) {
                         a.parent_id = target_parent.clone();
                         a.sort_order = Some(target_order - 0.5);
