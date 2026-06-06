@@ -1,55 +1,19 @@
+// The inlined plugin command registry lives in `src/plugin_commands.rs` so it is
+// a single source of truth shared with the lib's cross-check tests (which verify
+// it against capabilities/default.json and the Kotlin @Command names). `include!`
+// pulls in the `PLUGIN_COMMANDS` const; its `#[cfg(test)]` test module is stripped
+// here (build scripts compile with cfg(test) = false).
+include!("src/plugin_commands.rs");
+
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         println!("cargo:rustc-link-lib=c++_shared");
     }
-    tauri_build::try_build(
-        tauri_build::Attributes::new()
-            .plugin(
-                "usb-audio",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "listUsbDevices",
-                    "requestUsbPermission",
-                    "getUsbDeviceInfo",
-                    "openUsbDevice",
-                    "closeUsbDevice",
-                ]),
-            )
-            .plugin(
-                "media-store",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "saveToSharedStorage",
-                    "saveWavBytes",
-                    "saveExportBytes",
-                    "createRecordingEntry",
-                    "finalizeRecordingEntry",
-                    "cancelRecordingEntry",
-                    "exportFile",
-                ]),
-            )
-            .plugin(
-                "geolocation",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "getCurrentLocation",
-                    "getWifiSsid",
-                    "getDeviceModel",
-                ]),
-            )
-            .plugin(
-                "zoom",
-                tauri_build::InlinedPlugin::new().commands(&["reset"]),
-            )
-            .plugin(
-                "audio-service",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "startForegroundAudio",
-                    "updateForegroundAudio",
-                    "stopForegroundAudio",
-                    "isIgnoringBatteryOptimizations",
-                    "requestDisableBatteryOptimization",
-                    "isNotificationPermissionGranted",
-                    "requestNotificationPermission",
-                ]),
-            ),
-    )
-    .expect("failed to run tauri-build");
+
+    let mut attributes = tauri_build::Attributes::new();
+    for &(name, commands) in PLUGIN_COMMANDS {
+        attributes = attributes.plugin(name, tauri_build::InlinedPlugin::new().commands(commands));
+    }
+
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }

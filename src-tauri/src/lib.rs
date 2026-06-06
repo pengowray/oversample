@@ -9,6 +9,10 @@ mod recording;
 mod recovery;
 mod usb_audio;
 mod xc;
+// Compiled only under `cargo test`: cross-checks the plugin command registry
+// (shared with build.rs via include!) against default.json + Kotlin @Command names.
+#[cfg(test)]
+mod plugin_commands;
 
 use native_playback::PlaybackState;
 use recording::MicState;
