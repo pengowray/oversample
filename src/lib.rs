@@ -15,6 +15,7 @@ pub mod project;
 pub mod project_store;
 pub mod scope;
 pub mod settings;
+pub mod test_hook;
 pub mod timeline;
 pub mod viewport;
 pub mod web_util;

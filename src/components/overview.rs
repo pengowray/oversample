@@ -411,6 +411,81 @@ fn draw_live_status(
     }
 }
 
+/// The single time window the live overview displays, in absolute session
+/// seconds: `(axis_start, span)` where the right edge is always `axis_start +
+/// span == now`. Both overviews (waveform + spectrogram), the time markers, the
+/// viewport rect, and click/drag mapping all derive from this one window so
+/// they share one scale.
+///
+/// The window is the raw-sample ring we still hold (`now - audio_dur`), clamped
+/// so we never claim more history than the waterfall retains. In the common
+/// listen/stream case `audio_dur == preroll_buffer_secs + 2` (~12 s), so the
+/// whole live overview shows the last ~12 s at one consistent scale. Returns
+/// `None` when not live or there's no data yet.
+fn live_overview_window(is_tauri: bool) -> Option<(f64, f64)> {
+    use crate::canvas::live_waterfall as wf;
+    if !wf::is_active() {
+        return None;
+    }
+    let now = wf::total_time();
+    if now <= 0.0 {
+        return None;
+    }
+    let sr = wf::sample_rate() as f64;
+    if sr <= 0.0 {
+        return None;
+    }
+    let ring_len = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.len());
+    let audio_dur = ring_len as f64 / sr;
+    let axis_start = (now - audio_dur).max(wf::oldest_time()).max(0.0);
+    let span = (now - axis_start).max(0.001);
+    Some((axis_start, span))
+}
+
+/// Draw a min/max waveform envelope for the live overview, recomputed fresh on
+/// every call (no persistent cache) so it tracks the live ring at the capture
+/// cadence rather than the ~1 Hz snapshot. Visual style matches the static
+/// overview waveform.
+fn draw_live_waveform(
+    ctx: &CanvasRenderingContext2d,
+    w: u32,
+    h: u32,
+    samples: &[f32],
+    gain_db: f64,
+) {
+    if samples.is_empty() || w == 0 || h == 0 {
+        return;
+    }
+    let gain_linear = 10.0f64.powf(gain_db / 20.0);
+    let env = compute_envelope(samples, w, gain_linear);
+    let cw = w as f64;
+    let ch = h as f64;
+    let mid_y = ch / 2.0;
+    let scale = mid_y * 0.9;
+
+    ctx.set_fill_style_str("#0a0a0a");
+    ctx.fill_rect(0.0, 0.0, cw, ch);
+
+    ctx.set_stroke_style_str("#333");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(0.0, mid_y);
+    ctx.line_to(cw, mid_y);
+    ctx.stroke();
+
+    ctx.set_stroke_style_str("#4a4");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    for px in 0..w as usize {
+        let lo = env[px * 2] as f64;
+        let hi = env[px * 2 + 1] as f64;
+        let x = px as f64;
+        ctx.move_to(x, mid_y - hi * scale);
+        ctx.line_to(x, mid_y - lo * scale);
+    }
+    ctx.stroke();
+}
+
 // ── Overview toggle button ────────────────────────────────────────────────────
 
 #[component]
@@ -579,15 +654,24 @@ pub fn OverviewPanel() -> impl IntoView {
             let file = file_opt.unwrap();
 
             // During live listening/recording, the overview shows ONLY the
-            // retained waterfall window (what we still have — the last ~N s),
-            // not the full elapsed session. Render a real spectrogram from the
-            // waterfall columns; the toggle shows the retained sample waveform.
+            // shared raw-sample-ring window (the last ~audio_dur s we still hold,
+            // ~12 s by default), not the full elapsed session — and the
+            // spectrogram, waveform, and time markers all use that same window so
+            // toggling never changes the horizontal scale.
             let is_live = (file.is_recording || file.is_live_listen)
                 && crate::canvas::live_waterfall::is_active();
             if is_live {
+                // Both views span the SAME window — the raw-sample ring we still
+                // hold ([now - audio_dur, now], ~12 s by default) — so toggling
+                // between them never changes the horizontal scale.
+                let window = live_overview_window(state.is_tauri);
                 match overview_view {
                     OverviewView::Spectrogram => {
-                        if let Some(img) = crate::canvas::live_waterfall::render_overview(w, h) {
+                        // Crop the waterfall to the same span the waveform shows.
+                        let recent_cols = window.map(|(_, span)| {
+                            (span / crate::canvas::live_waterfall::time_resolution()).ceil() as usize
+                        });
+                        if let Some(img) = crate::canvas::live_waterfall::render_overview(w, h, recent_cols) {
                             draw_overview_spectrogram(
                                 &ctx, canvas, &img,
                                 0.0, 1.0, file.spectrogram.time_resolution,
@@ -598,13 +682,22 @@ pub fn OverviewPanel() -> impl IntoView {
                         }
                     }
                     OverviewView::Waveform => {
-                        if !file.audio.samples.is_empty() {
-                            draw_overview_waveform(
-                                &ctx, canvas, &file.audio.samples,
-                                file.audio.sample_rate, file.spectrogram.time_resolution,
-                                0.0, 1.0, 0.0, &[], gain_db, true,
-                            );
-                        } else {
+                        // Read the live ring directly (fresh each tick) and draw
+                        // exactly the window's worth of its newest samples.
+                        let drew = match window {
+                            Some((_, span)) => crate::audio::mic_backend::with_live_samples(
+                                state.is_tauri,
+                                |ring| {
+                                    if ring.is_empty() { return false; }
+                                    let n = ((span * file.audio.sample_rate as f64) as usize)
+                                        .clamp(1, ring.len());
+                                    draw_live_waveform(&ctx, w, h, &ring[ring.len() - n..], gain_db);
+                                    true
+                                },
+                            ),
+                            None => false,
+                        };
+                        if !drew {
                             draw_live_status(&ctx, w, h, file, &state);
                         }
                     }
@@ -739,6 +832,10 @@ pub fn OverviewPanel() -> impl IntoView {
         // Redraw when file changes (duration, freq info)
         state.library.files().track();
         let _idx = state.library.current_index().get();
+        // During live capture the displayed window advances every tick; track
+        // live_data_cols so the markers/viewport advance with the data (not only
+        // when the follow-scroll animation happens to nudge scroll_offset).
+        let _live_cols = state.mic.live_data_cols().get();
 
         let Some(canvas_el) = overlay_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
@@ -831,15 +928,15 @@ pub fn OverviewPanel() -> impl IntoView {
             } else {
                 file.audio.sample_rate as f64 / 2.0
             };
-            // During live, the overview spans only the retained waterfall window
-            // [oldest_time, now]; otherwise the whole file. axis_start offsets the
-            // viewport rect / markers so they line up with the background.
+            // During live, the overview spans the shared raw-sample-ring window
+            // [now - audio_dur, now] (same as the waveform/spectrogram drawn
+            // beneath); otherwise the whole file. axis_start offsets the viewport
+            // rect / markers so they line up with the background.
             let is_live = (file.is_recording || file.is_live_listen)
                 && crate::canvas::live_waterfall::is_active();
             let (axis_start, total_duration) = if is_live {
-                let oldest = crate::canvas::live_waterfall::oldest_time();
-                let total = crate::canvas::live_waterfall::total_time();
-                (oldest, (total - oldest).max(0.001))
+                live_overview_window(state.is_tauri)
+                    .unwrap_or((0.0, file.audio.duration_secs))
             } else {
                 (0.0, file.audio.duration_secs)
             };
@@ -950,20 +1047,36 @@ pub fn OverviewPanel() -> impl IntoView {
     };
 
     // Convert a click x-coordinate to a time offset (seconds). During live the
-    // overview spans only the retained window [oldest_time, now], so map within
-    // that window rather than [0, now].
+    // overview spans only the shared ring window [axis_start, now], so map
+    // within that window rather than [0, now].
     let x_to_time = move |canvas_x: f64, canvas_w: f64| -> Option<f64> {
+        if canvas_w <= 0.0 { return None; }
+        let is_live = (state.mic.recording().get_untracked()
+            || state.mic.listening().get_untracked())
+            && state.timeline.active().get_untracked().is_none();
+        if is_live {
+            if let Some((axis_start, span)) = live_overview_window(state.is_tauri) {
+                return Some(axis_start + (canvas_x / canvas_w) * span);
+            }
+        }
         let dur = file_duration();
-        if dur <= 0.0 || canvas_w <= 0.0 { return None; }
-        let start = {
-            let is_live = (state.mic.recording().get_untracked()
-                || state.mic.listening().get_untracked())
-                && crate::canvas::live_waterfall::is_active()
-                && state.timeline.active().get_untracked().is_none();
-            if is_live { crate::canvas::live_waterfall::oldest_time() } else { 0.0 }
-        };
-        let span = (dur - start).max(0.001);
-        Some(start + (canvas_x / canvas_w) * span)
+        if dur <= 0.0 { return None; }
+        Some((canvas_x / canvas_w) * dur)
+    };
+
+    // The time span the overview currently displays across its full width:
+    // the shared ring window during live, else the whole file/timeline.
+    let overview_span = move || -> f64 {
+        if state.timeline.active().get_untracked().is_none() {
+            let is_live = state.mic.recording().get_untracked()
+                || state.mic.listening().get_untracked();
+            if is_live {
+                if let Some((_, span)) = live_overview_window(state.is_tauri) {
+                    return span;
+                }
+            }
+        }
+        file_duration()
     };
 
     // Compute half the visible time window for centering clicks
@@ -1010,10 +1123,11 @@ pub fn OverviewPanel() -> impl IntoView {
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
         let rect = canvas.get_bounding_client_rect();
         let cw = rect.width();
-        let total_duration = file_duration();
-        if total_duration <= 0.0 || cw <= 0.0 { return; }
+        let full_duration = file_duration();
+        if full_duration <= 0.0 || cw <= 0.0 { return; }
         let dx = ev.client_x() as f64 - drag_start_x.get_untracked();
-        let dt = (dx / cw) * total_duration;
+        // Map per-pixel motion against the span the overview actually displays.
+        let dt = (dx / cw) * overview_span();
         let visible_time = {
             let files = state.library.files().get_untracked();
             let idx = state.library.current_index().get_untracked();
@@ -1023,7 +1137,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
-        let max_scroll = (total_duration - visible_time).max(0.0);
+        let max_scroll = (full_duration - visible_time).max(0.0);
         let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
         state.view.scroll_offset().set(new_scroll);
@@ -1068,10 +1182,11 @@ pub fn OverviewPanel() -> impl IntoView {
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
         let rect = canvas.get_bounding_client_rect();
         let cw = rect.width();
-        let total_duration = file_duration();
-        if total_duration <= 0.0 || cw <= 0.0 { return; }
+        let full_duration = file_duration();
+        if full_duration <= 0.0 || cw <= 0.0 { return; }
         let dx = touch.client_x() as f64 - drag_start_x.get_untracked();
-        let dt = (dx / cw) * total_duration;
+        // Map per-pixel motion against the span the overview actually displays.
+        let dt = (dx / cw) * overview_span();
         let visible_time = {
             let files = state.library.files().get_untracked();
             let idx = state.library.current_index().get_untracked();
@@ -1081,7 +1196,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
-        let max_scroll = (total_duration - visible_time).max(0.0);
+        let max_scroll = (full_duration - visible_time).max(0.0);
         let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
         state.view.scroll_offset().set(new_scroll);

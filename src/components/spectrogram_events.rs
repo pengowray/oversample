@@ -117,6 +117,9 @@ pub struct SpectInteraction {
     pub hand_drag_start: RwSignal<(f64, f64)>,
     /// Pinch-to-zoom state (two-finger touch)
     pub pinch_state: RwSignal<Option<crate::components::pinch::PinchState>>,
+    /// Locked pinch axis (time vs frequency) — set once per gesture from the
+    /// dominant spread direction so zoom snaps to one axis at a time.
+    pub pinch_axis: RwSignal<Option<crate::components::pinch::PinchAxis>>,
     /// Label hover animation target (0.0 or 1.0)
     pub label_hover_target: RwSignal<f64>,
     /// Double-tap detection: timestamp of last tap
@@ -149,6 +152,7 @@ impl SpectInteraction {
             drag_start: RwSignal::new((0.0f64, 0.0f64)),
             hand_drag_start: RwSignal::new((0.0f64, 0.0f64)),
             pinch_state: RwSignal::new(None),
+            pinch_axis: RwSignal::new(None),
             label_hover_target: RwSignal::new(0.0f64),
             last_tap_time: RwSignal::new(0.0f64),
             last_tap_x: RwSignal::new(0.0f64),
@@ -292,9 +296,6 @@ pub fn apply_hand_pan(
     let visible_time = viewport::visible_time(cw, zoom, time_res);
     let dt = -(dx / cw) * visible_time;
     state.suspend_follow();
-    // During live listen/record, push the waterfall snap-back 2s into the
-    // future so a release between gestures doesn't yank the view to "now".
-    state.suspend_waterfall_follow(2000.0);
 
     let new_scroll = if waterfall_active {
         // Bound panning to what the circular buffer actually holds: can't go
@@ -302,7 +303,17 @@ pub fn apply_hand_pan(
         let total_time = crate::canvas::live_waterfall::total_time();
         let oldest = crate::canvas::live_waterfall::oldest_time();
         let max_scroll = (total_time - visible_time).max(oldest);
-        (start_scroll + dt).clamp(oldest, max_scroll)
+        let s = (start_scroll + dt).clamp(oldest, max_scroll);
+        // Panning to (or near) the live edge re-engages auto-follow immediately
+        // so the view keeps scrolling with incoming audio. Panning back into
+        // history pushes the snap-back 2s out so a release between gestures
+        // doesn't yank the view to "now".
+        if s >= max_scroll - visible_time * 0.05 {
+            state.resume_waterfall_follow();
+        } else {
+            state.suspend_waterfall_follow(2000.0);
+        }
+        s
     } else {
         let duration = if let Some(ref tl) = timeline {
             tl.total_duration_secs
@@ -940,22 +951,42 @@ pub fn on_touchstart(
     // Two-finger: initialize pinch-to-zoom
     if n == 2 {
         ev.prevent_default();
-        use crate::components::pinch::{two_finger_geometry, PinchState};
-        if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+        use crate::components::pinch::{two_finger_axes, PinchState};
+        if let Some((mid_x, mid_y, dist_x, dist_y)) = two_finger_axes(&touches) {
             let files = state.library.files().get_untracked();
             let idx = state.library.current_index().get_untracked();
             let file = idx.and_then(|i| files.get(i));
-            let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
-            let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
+            let wf_active = (state.mic.recording().get_untracked()
+                || state.mic.listening().get_untracked())
+                && crate::canvas::live_waterfall::is_active();
+            let (time_res, duration) = if wf_active {
+                let tr = crate::canvas::live_waterfall::time_resolution();
+                (tr, crate::canvas::live_waterfall::total_columns() as f64 * tr)
+            } else {
+                (
+                    file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0),
+                    file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX),
+                )
+            };
+            let nyquist = file_nyquist(state);
+            let initial_min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let initial_max_freq = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
             ix.pinch_state.set(Some(PinchState {
-                initial_dist: dist,
+                initial_dist_x: dist_x.max(1.0),
+                initial_dist_y: dist_y.max(1.0),
                 initial_zoom: state.view.zoom_level().get_untracked(),
                 initial_scroll: state.view.scroll_offset().get_untracked(),
                 initial_mid_client_x: mid_x,
+                initial_mid_client_y: mid_y,
+                initial_min_freq,
+                initial_max_freq,
+                nyquist,
                 time_res,
                 duration,
-                from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
+                from_here_mode: state.playback.start_mode().get_untracked().uses_from_here(),
             }));
+            // New gesture — axis is decided on first significant move.
+            ix.pinch_axis.set(None);
         }
         // End any in-progress single-touch gesture
         state.interaction.is_dragging().set(false);
@@ -969,6 +1000,7 @@ pub fn on_touchstart(
     // Transitioning from 2 to 1 finger — re-anchor pan position
     if ix.pinch_state.get_untracked().is_some() {
         ix.pinch_state.set(None);
+        ix.pinch_axis.set(None);
         if let Some(touch) = touches.get(0) {
             ix.hand_drag_start.set((touch.client_x() as f64, state.view.scroll_offset().get_untracked()));
             if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
@@ -1100,20 +1132,81 @@ pub fn on_touchmove(
     let touches = ev.touches();
     let n = touches.length();
 
-    // Two-finger pinch/pan
+    // Two-finger pinch — zoom time OR frequency, snapped to the dominant axis.
     if n == 2 {
         if let Some(ps) = ix.pinch_state.get_untracked() {
             ev.prevent_default();
-            use crate::components::pinch::{two_finger_geometry, apply_pinch};
-            if let Some((mid_x, dist)) = two_finger_geometry(&touches) {
+            use crate::components::pinch::{two_finger_axes, apply_pinch, apply_freq_pinch, FreqPinchState, PinchAxis};
+            if let Some((mid_x, mid_y, dist_x, dist_y)) = two_finger_axes(&touches) {
                 let Some(canvas_el) = canvas_ref.get() else { return };
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                 let rect = canvas.get_bounding_client_rect();
                 let cw = canvas.width() as f64;
-                let (new_zoom, new_scroll) = apply_pinch(&ps, dist, mid_x, rect.left(), cw);
-                state.suspend_follow();
-                state.view.zoom_level().set(new_zoom);
-                state.view.scroll_offset().set(new_scroll);
+                let ch = canvas.height() as f64;
+
+                // Decide & lock the zoom axis on the first significant spread —
+                // whichever direction the fingers moved apart more wins, then
+                // stays locked for the rest of the gesture.
+                let axis = match ix.pinch_axis.get_untracked() {
+                    Some(a) => Some(a),
+                    None => {
+                        const LOCK_PX: f64 = 10.0;
+                        let decided = crate::components::pinch::decide_pinch_axis(
+                            ps.initial_dist_x, ps.initial_dist_y, dist_x, dist_y, LOCK_PX,
+                        );
+                        if let Some(a) = decided {
+                            ix.pinch_axis.set(Some(a));
+                        }
+                        decided
+                    }
+                };
+
+                let waterfall_active = (state.mic.recording().get_untracked()
+                    || state.mic.listening().get_untracked())
+                    && crate::canvas::live_waterfall::is_active();
+
+                match axis {
+                    Some(PinchAxis::Horizontal) => {
+                        let (new_zoom, new_scroll) = apply_pinch(&ps, dist_x, mid_x, rect.left(), cw);
+                        if waterfall_active {
+                            // Live: a pinch changes zoom but must NOT stop the
+                            // waterfall scroll. Ignore the pinch's midpoint-
+                            // anchored scroll (which would pull off the live
+                            // edge); keep following — retarget the smooth-scroll
+                            // to the live edge for the new zoom and re-engage.
+                            state.view.zoom_level().set(new_zoom);
+                            let recording_time = crate::canvas::live_waterfall::total_time();
+                            let visible_time = viewport::visible_time(cw, new_zoom, ps.time_res);
+                            let target = (recording_time - visible_time).max(0.0);
+                            state.mic.recording_target_scroll().set(target);
+                            state.resume_waterfall_follow();
+                        } else {
+                            state.suspend_follow();
+                            state.view.zoom_level().set(new_zoom);
+                            state.view.scroll_offset().set(new_scroll);
+                        }
+                    }
+                    Some(PinchAxis::Vertical) => {
+                        // Vertical pinch → frequency zoom (same anchor-zoom +
+                        // two-finger pan as the band gutter). Doesn't touch
+                        // scroll, so live follow keeps running.
+                        let fps = FreqPinchState {
+                            initial_dist_y: ps.initial_dist_y,
+                            initial_min_freq: ps.initial_min_freq,
+                            initial_max_freq: ps.initial_max_freq,
+                            initial_mid_canvas_y: ps.initial_mid_client_y - rect.top(),
+                            nyquist: ps.nyquist,
+                        };
+                        let current_mid_canvas_y = mid_y - rect.top();
+                        let (new_min, new_max) = apply_freq_pinch(&fps, dist_y, current_mid_canvas_y, ch);
+                        state.view.min_display_freq().set(Some(new_min));
+                        state.view.max_display_freq().set(Some(new_max));
+                        if waterfall_active {
+                            state.resume_waterfall_follow();
+                        }
+                    }
+                    None => {}
+                }
             }
         }
         return;
@@ -1165,6 +1258,7 @@ pub fn on_touchend(
 
     if remaining < 2 {
         ix.pinch_state.set(None);
+        ix.pinch_axis.set(None);
     }
 
     // One finger remains after pinch — re-anchor pan to avoid jump

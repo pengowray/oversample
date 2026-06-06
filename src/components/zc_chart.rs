@@ -688,15 +688,15 @@ pub fn ZcDotChart() -> impl IntoView {
                 let file = idx.and_then(|i| files.get(i));
                 let time_res = file.as_ref().map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                 let duration = file.as_ref().map(|f| f.audio.duration_secs).unwrap_or(f64::MAX);
-                pinch_state.set(Some(PinchState {
-                    initial_dist: dist,
-                    initial_zoom: state.view.zoom_level().get_untracked(),
-                    initial_scroll: state.view.scroll_offset().get_untracked(),
-                    initial_mid_client_x: mid_x,
+                pinch_state.set(Some(PinchState::horizontal(
+                    dist,
+                    state.view.zoom_level().get_untracked(),
+                    state.view.scroll_offset().get_untracked(),
+                    mid_x,
                     time_res,
                     duration,
-                    from_here_mode: state.playback.start_mode().get_untracked() .uses_from_here(),
-                }));
+                    state.playback.start_mode().get_untracked().uses_from_here(),
+                )));
             }
             state.interaction.is_dragging().set(false);
             return;

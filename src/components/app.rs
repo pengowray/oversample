@@ -39,6 +39,9 @@ pub fn App() -> impl IntoView {
     let state = AppState::new();
     provide_context(state);
 
+    // Expose a read-only state snapshot on window for e2e (Playwright) specs.
+    crate::test_hook::install(state);
+
     // Detect browser's default audio output sample rate
     {
         use web_sys::AudioContext;

@@ -2980,6 +2980,13 @@ impl AppState {
         }
     }
 
+    /// Immediately re-engage the waterfall smooth-scroll animation, cancelling
+    /// any pan grace window. Called when the user pans/flicks to the live edge
+    /// so the view keeps scrolling with incoming audio instead of freezing.
+    pub fn resume_waterfall_follow(&self) {
+        self.mic.scroll_user_pan_until().set(0.0);
+    }
+
     pub fn compute_auto_gain(&self) -> f64 {
         let files = self.library.files().get();
         let idx = self.library.current_index().get();

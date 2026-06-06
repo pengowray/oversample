@@ -40,3 +40,6 @@ CLAUDE.md
 
 # Local dev scripts (machine-specific paths)
 /scripts/copyup.bat
+
+# Generated e2e fake-audio fixture (created by e2e/global-setup.ts)
+e2e/fixtures/

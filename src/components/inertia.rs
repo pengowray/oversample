@@ -173,7 +173,13 @@ pub fn start_inertia(
 
         state.view.scroll_offset().set(clamped);
         state.suspend_follow();
-        state.suspend_waterfall_follow(2000.0);
+        // A flick that carries to the live edge re-engages auto-follow so the
+        // view keeps scrolling; a flick back into history holds it still.
+        if waterfall_active && clamped >= max_scroll - visible_time * 0.05 {
+            state.resume_waterfall_follow();
+        } else {
+            state.suspend_waterfall_follow(2000.0);
+        }
 
         // Stop conditions: velocity too low, or hit bounds
         let hit_bound = (clamped <= min_scroll && current_v < 0.0)

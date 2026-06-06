@@ -117,12 +117,13 @@ pub fn oldest_time() -> f64 {
     })
 }
 
-/// Render the *retained* window (the columns we still hold, `[oldest .. now]`)
-/// as a downsampled greyscale overview image — matching the file-overview look.
-/// This deliberately spans only what we actually have (e.g. the last ~20–160 s),
-/// NOT the full elapsed session, so the live overview isn't "a 10-minute file
-/// with a sliver at the end". Returns `None` until there's data.
-pub fn render_overview(out_w: u32, out_h: u32) -> Option<crate::types::PreviewImage> {
+/// Render a downsampled greyscale overview image — matching the file-overview
+/// look. `recent_cols` caps the window to the most-recent N columns (so the
+/// overview can match the raw-sample ring the waveform shows); `None` renders
+/// the full retained window `[oldest .. now]`. Either way it spans only what we
+/// actually hold, so the live overview isn't "a 10-minute file with a sliver at
+/// the end". Returns `None` until there's data.
+pub fn render_overview(out_w: u32, out_h: u32, recent_cols: Option<usize>) -> Option<crate::types::PreviewImage> {
     use crate::canvas::colors::magnitude_to_greyscale;
     if out_w == 0 || out_h == 0 {
         return None;
@@ -133,7 +134,13 @@ pub fn render_overview(out_w: u32, out_h: u32) -> Option<crate::types::PreviewIm
         if wf.total_written == 0 || wf.max_magnitude <= 0.0 {
             return None;
         }
-        let oldest = wf.total_written.saturating_sub(wf.capacity);
+        let oldest_retained = wf.total_written.saturating_sub(wf.capacity);
+        // Start at the more recent of (a) the oldest column still buffered and
+        // (b) `now - recent_cols`, so we never claim more history than we hold.
+        let oldest = match recent_cols {
+            Some(n) => wf.total_written.saturating_sub(n).max(oldest_retained),
+            None => oldest_retained,
+        };
         let retained = wf.total_written - oldest;
         if retained == 0 {
             return None;
@@ -179,6 +186,13 @@ pub fn max_freq() -> f64 {
         w.borrow().as_ref()
             .map(|wf| wf.sample_rate as f64 / 2.0)
             .unwrap_or(96000.0)
+    })
+}
+
+/// Capture sample rate (Hz), or 0 when no waterfall is active.
+pub fn sample_rate() -> u32 {
+    WATERFALL.with(|w| {
+        w.borrow().as_ref().map(|wf| wf.sample_rate).unwrap_or(0)
     })
 }
 
