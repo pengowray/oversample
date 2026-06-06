@@ -203,6 +203,9 @@ impl StreamingMp3Source {
                 crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
             }
             FileHandle::Bytes(b) => super::streaming_source::slice_bytes(b, read_start, read_end),
+            FileHandle::MediaStoreUri(uri) => {
+                super::streaming_source::read_media_store_range(uri, read_start, read_end - read_start).await
+            }
         };
         let bytes = match bytes {
             Ok(b) if b.is_empty() => {

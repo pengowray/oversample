@@ -37,6 +37,9 @@ data class SaveWavBytesArgs(val filename: String = "", val data: ByteArray = Byt
 data class CreateRecordingEntryArgs(val filename: String = "")
 
 @InvokeArg
+data class ReadRangeArgs(val uri: String = "", val offset: Double = 0.0, val length: Double = 0.0)
+
+@InvokeArg
 data class ExportFileArgs(val internalPath: String = "", val suggestedName: String = "")
 
 @InvokeArg
@@ -389,6 +392,51 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
             // Still clear the reference — best effort
             pendingRecordingUri = null
             invoke.reject("Failed to cancel: ${e.message}")
+        }
+    }
+
+    /**
+     * Read a byte range from a recording's content:// URI and return it
+     * base64-encoded. Lets the frontend display a recording that lives only in
+     * public shared storage by streaming ranges back on demand (head window +
+     * spectrogram tiles), with no internal duplicate copy.
+     */
+    @Command
+    fun readRecordingRange(invoke: Invoke) {
+        val args = invoke.parseArgs(ReadRangeArgs::class.java)
+        try {
+            val uri = Uri.parse(args.uri)
+            val offset = args.offset.toLong()
+            val length = args.length.toInt()
+            if (length <= 0) {
+                val result = JSObject()
+                result.put("data", "")
+                invoke.resolve(result)
+                return
+            }
+            val resolver = activity.contentResolver
+            val pfd = resolver.openFileDescriptor(uri, "r")
+                ?: throw Exception("openFileDescriptor returned null for ${args.uri}")
+            pfd.use { descriptor ->
+                java.io.FileInputStream(descriptor.fileDescriptor).channel.use { ch ->
+                    ch.position(offset)
+                    val buf = java.nio.ByteBuffer.allocate(length)
+                    while (buf.hasRemaining()) {
+                        val n = ch.read(buf)
+                        if (n < 0) break
+                    }
+                    val out = ByteArray(buf.position())
+                    buf.flip()
+                    buf.get(out)
+                    val b64 = android.util.Base64.encodeToString(out, android.util.Base64.NO_WRAP)
+                    val result = JSObject()
+                    result.put("data", b64)
+                    invoke.resolve(result)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "readRecordingRange failed", e)
+            invoke.reject("readRecordingRange failed: ${e.message}")
         }
     }
 

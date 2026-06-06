@@ -652,11 +652,15 @@ async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
         &oversample_ipc::plugins::CreateRecordingEntryArgs { filename: filename.clone() },
     ).await {
         Ok(result) => {
-            log::info!("Got shared storage fd={} for {}", result.fd, filename);
+            log::info!("Got shared storage fd={} uri={} for {}", result.fd, result.uri, filename);
+            // Keep the content:// URI so the finalizer can read the saved file
+            // back for display (the recording lives only in public storage).
+            state.mic.pending_shared_uri().set(Some(result.uri));
             Some(result.fd)
         }
         Err(e) => {
             log::warn!("createRecordingEntry failed (will fall back to internal storage): {}", e);
+            state.mic.pending_shared_uri().set(None);
             None
         }
     }

@@ -142,10 +142,82 @@ pub enum FileHandle {
     WebFile(web_sys::File),
     /// Tauri desktop/mobile: uses native `read_file_range` IPC command.
     TauriPath(String),
+    /// Android MediaStore `content://` URI: ranges are read back via the
+    /// `plugin:media-store|readRecordingRange` Kotlin command (base64). Used to
+    /// display a recording that lives only in public shared storage.
+    MediaStoreUri(String),
     /// In-memory bytes — holds the whole file; range reads just slice it. Used
     /// by host tests of the streaming sources (the WebFile / Tauri handles can't
     /// run off-WASM). Not constructed in production.
     Bytes(std::sync::Arc<Vec<u8>>),
+}
+
+/// Read a byte range from an Android MediaStore `content://` URI via the
+/// media-store plugin (which returns base64, since Kotlin plugin commands can't
+/// return raw buffers). Used by [`FileHandle::MediaStoreUri`].
+pub async fn read_media_store_range(
+    uri: &str,
+    byte_start: u64,
+    byte_len: u64,
+) -> Result<Vec<u8>, String> {
+    let args = oversample_ipc::plugins::ReadRecordingRangeArgs {
+        uri: uri.to_string(),
+        offset: byte_start as f64,
+        length: byte_len as f64,
+    };
+    let res: oversample_ipc::plugins::ReadRecordingRangeResult =
+        crate::tauri_bridge::tauri_invoke_typed_args("plugin:media-store|readRecordingRange", &args)
+            .await
+            .map_err(|e| format!("readRecordingRange failed: {:?}", e))?;
+    base64_decode(&res.data)
+}
+
+/// Minimal standard-alphabet base64 decoder (no external dep). Ignores
+/// whitespace; accepts with or without `=` padding.
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for &c in s.as_bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let v = val(c).ok_or_else(|| format!("invalid base64 char: {}", c as char))?;
+        buf = (buf << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+impl FileHandle {
+    /// Read a byte range `[byte_start, byte_start + byte_len)` via whichever
+    /// backend this handle uses. The single dispatch point for all sources.
+    pub async fn read_range(&self, byte_start: u64, byte_len: u64) -> Result<Vec<u8>, String> {
+        match self {
+            FileHandle::WebFile(file) => {
+                read_blob_range(file, byte_start as f64, (byte_start + byte_len) as f64).await
+            }
+            FileHandle::TauriPath(path) => {
+                crate::tauri_bridge::read_file_range(path, byte_start, byte_len).await
+            }
+            FileHandle::MediaStoreUri(uri) => read_media_store_range(uri, byte_start, byte_len).await,
+            FileHandle::Bytes(b) => slice_bytes(b, byte_start, byte_start + byte_len),
+        }
+    }
 }
 
 /// Clamp-and-slice a byte range `[start, end)` from an in-memory buffer, used by
@@ -162,6 +234,7 @@ impl std::fmt::Debug for FileHandle {
         match self {
             FileHandle::WebFile(file) => write!(f, "WebFile(\"{}\")", file.name()),
             FileHandle::TauriPath(path) => write!(f, "TauriPath(\"{}\")", path),
+            FileHandle::MediaStoreUri(uri) => write!(f, "MediaStoreUri(\"{}\")", uri),
             FileHandle::Bytes(b) => write!(f, "Bytes({} B)", b.len()),
         }
     }
@@ -279,16 +352,8 @@ impl StreamingWavSource {
                 + chunk_start_frame * self.info.bytes_per_frame as u64;
             let byte_len = frames_in_chunk as u64 * self.info.bytes_per_frame as u64;
 
-            // Read raw bytes from file via the appropriate method
-            let bytes = match &self.handle {
-                FileHandle::WebFile(file) => {
-                    read_blob_range(file, byte_start as f64, (byte_start + byte_len) as f64).await
-                }
-                FileHandle::TauriPath(path) => {
-                    crate::tauri_bridge::read_file_range(path, byte_start, byte_len).await
-                }
-                FileHandle::Bytes(b) => slice_bytes(b, byte_start, byte_start + byte_len),
-            };
+            // Read raw bytes from file via the appropriate backend.
+            let bytes = self.handle.read_range(byte_start, byte_len).await;
             let bytes = match bytes {
                 Ok(b) => b,
                 Err(e) => {
@@ -714,15 +779,7 @@ impl StreamingFlacSource {
         let read_start = byte_cursor.saturating_sub(overlap);
         let read_end = read_start + FLAC_WINDOW_BYTES + overlap;
 
-        let bytes = match &self.handle {
-            FileHandle::WebFile(file) => {
-                read_blob_range(file, read_start as f64, read_end as f64).await
-            }
-            FileHandle::TauriPath(path) => {
-                crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
-            }
-            FileHandle::Bytes(b) => slice_bytes(b, read_start, read_end),
-        };
+        let bytes = self.handle.read_range(read_start, read_end - read_start).await;
         let bytes = match bytes {
             Ok(b) if b.is_empty() => return Err("EOF: no bytes read".into()),
             Ok(b) => b,

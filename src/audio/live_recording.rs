@@ -1230,11 +1230,13 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         state.mic.live_file_idx().set(None);
         live_waterfall::clear();
         let path = saved_path.clone();
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+        let handle = crate::audio::streaming_source::FileHandle::TauriPath(path);
         let live_idx_for_async = live_idx;
         let fsize = file_size.unwrap_or(0) as u64;
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = finalize_streaming_tauri_recording(
-                path, fsize, sample_rate, bits_per_sample, is_float, state, live_idx_for_async,
+                handle, name, fsize, sample_rate, bits_per_sample, is_float, state, live_idx_for_async,
             ).await {
                 log::error!("Streaming finalize failed: {}", e);
                 if let Some(idx) = live_idx_for_async {
@@ -1247,19 +1249,51 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         });
         return;
     }
-    // Shared storage (Android MediaStore): file was streamed directly into
-    // the content-resolver fd and lives under a content:// URI we can't
-    // read from here. Just drop the live placeholder; the user finds the
-    // file through the system file manager.
+    // Shared storage (Android MediaStore): the file lives only under a content://
+    // URI in public storage. Read it back via the media-store plugin and display
+    // the full recording (streamed on demand) — no on-device duplication. A
+    // pre-Q "shared" path is a real filesystem path, so it uses TauriPath.
     if samples.is_empty() && saved_path.starts_with("shared://") {
         state.mic.live_file_idx().set(None);
         live_waterfall::clear();
-        if let Some(idx) = live_idx {
-            state.library.files().update(|files| {
-                if idx < files.len() { files.remove(idx); }
-            });
+        let uri = state.mic.pending_shared_uri().get_untracked();
+        state.mic.pending_shared_uri().set(None);
+        let fsize = file_size.unwrap_or(0) as u64;
+        let live_idx_for_async = live_idx;
+        match uri {
+            Some(uri) if fsize > 44 => {
+                let handle = if uri.starts_with("content://") {
+                    crate::audio::streaming_source::FileHandle::MediaStoreUri(uri)
+                } else {
+                    crate::audio::streaming_source::FileHandle::TauriPath(uri)
+                };
+                let name = live_idx
+                    .and_then(|i| state.library.files().with_untracked(|f| f.get(i).map(|f| f.name.clone())))
+                    .unwrap_or_else(generate_recording_name);
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Err(e) = finalize_streaming_tauri_recording(
+                        handle, name, fsize, sample_rate, bits_per_sample, is_float, state, live_idx_for_async,
+                    ).await {
+                        log::error!("Shared-storage finalize failed: {}", e);
+                        if let Some(idx) = live_idx_for_async {
+                            state.library.files().update(|files| {
+                                if idx < files.len() { files.remove(idx); }
+                            });
+                        }
+                        state.show_error_toast(format!("Recording saved but load failed: {}", e));
+                    }
+                });
+            }
+            _ => {
+                // No URI to read back (unexpected) — drop the placeholder.
+                if let Some(idx) = live_idx {
+                    state.library.files().update(|files| {
+                        if idx < files.len() { files.remove(idx); }
+                    });
+                }
+                state.show_info_toast("Recording saved to device storage");
+            }
         }
-        state.show_info_toast("Recording saved to device storage");
         return;
     }
 
@@ -1421,7 +1455,8 @@ async fn finalize_in_memory_recording(
 /// via `read_file_range`. Peak memory = head window (~30 s of f32), not the
 /// full recording.
 async fn finalize_streaming_tauri_recording(
-    path: String,
+    handle: crate::audio::streaming_source::FileHandle,
+    name: String,
     file_size: u64,
     expected_sample_rate: u32,
     expected_bits_per_sample: u16,
@@ -1430,15 +1465,17 @@ async fn finalize_streaming_tauri_recording(
     live_idx: Option<usize>,
 ) -> Result<(), String> {
     use crate::audio::loader::parse_wav_header_with_file_size;
-    use crate::audio::streaming_source::{FileHandle, StreamingWavSource};
+    use crate::audio::streaming_source::StreamingWavSource;
     use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
     use crate::components::file_sidebar::streaming_load::{decode_head_pcm, scan_tail_for_guano};
     use crate::canvas::{spectral_store, tile_cache};
 
     // Read first 64 KB for header parsing (covers fmt, optional fact, and
-    // usually the data chunk start).
+    // usually the data chunk start). Reads go through the handle, which is a
+    // filesystem path (desktop / internal) or an Android MediaStore content://
+    // URI (shared storage) read back via the media-store plugin.
     let header_size = 65536u64.min(file_size);
-    let header_bytes = crate::tauri_bridge::read_file_range(&path, 0, header_size).await?;
+    let header_bytes = handle.read_range(0, header_size).await?;
     let header = parse_wav_header_with_file_size(&header_bytes, Some(file_size))?;
     if header.sample_rate != expected_sample_rate {
         log::warn!(
@@ -1452,9 +1489,7 @@ async fn finalize_streaming_tauri_recording(
         .min(header.total_frames);
     let bytes_per_frame = header.channels as u64 * (header.bits_per_sample as u64 / 8);
     let head_byte_len = head_frames * bytes_per_frame;
-    let head_pcm_bytes = crate::tauri_bridge::read_file_range(
-        &path, header.data_offset, head_byte_len,
-    ).await?;
+    let head_pcm_bytes = handle.read_range(header.data_offset, head_byte_len).await?;
     let head_interleaved = decode_head_pcm(
         &head_pcm_bytes,
         header.bits_per_sample,
@@ -1479,14 +1514,14 @@ async fn finalize_streaming_tauri_recording(
         let data_end = header.data_offset + header.data_size;
         if data_end < file_size {
             let tail_len = (file_size - data_end).min(65536);
-            if let Ok(tail_bytes) = crate::tauri_bridge::read_file_range(&path, data_end, tail_len).await {
+            if let Ok(tail_bytes) = handle.read_range(data_end, tail_len).await {
                 guano = scan_tail_for_guano(&tail_bytes);
             }
         }
     }
 
     let source = Arc::new(StreamingWavSource::new(
-        FileHandle::TauriPath(path.clone()),
+        handle.clone(),
         &header,
         head_mono.clone(),
         head_raw,
@@ -1513,9 +1548,6 @@ async fn finalize_streaming_tauri_recording(
     };
     let preview = crate::dsp::fft::compute_preview(&audio, 256, 128);
 
-    // Build the recording name from the saved filename.
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
-
     let (file_index, name_check) = update_or_create_file(
         state, live_idx, audio, preview, Vec::new(), header.sample_rate,
     );
@@ -1541,7 +1573,7 @@ async fn finalize_streaming_tauri_recording(
     state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.name = name.clone();
-            f.file_handle = Some(FileHandle::TauriPath(path.clone()));
+            f.file_handle = Some(handle.clone());
             f.is_recording = false;
             f.audio.metadata.bits_per_sample = expected_bits_per_sample;
             f.spectrogram = SpectrogramData {

@@ -42,6 +42,7 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "finalizeRecordingEntry",
             "cancelRecordingEntry",
             "exportFile",
+            "readRecordingRange",
         ],
     ),
     (

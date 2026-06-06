@@ -228,6 +228,20 @@ impl AsyncRangeReader for TauriRangeReader {
     }
 }
 
+/// Android MediaStore `content://` range reader (reads back via the media-store
+/// plugin). Used to hash a recording that lives only in public shared storage.
+pub struct MediaStoreRangeReader {
+    pub uri: String,
+}
+
+impl AsyncRangeReader for MediaStoreRangeReader {
+    fn read(&self, offset: u64, length: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + '_>> {
+        Box::pin(async move {
+            crate::audio::streaming_source::read_media_store_range(&self.uri, offset, length).await
+        })
+    }
+}
+
 /// Construct an AsyncRangeReader from a FileHandle.
 pub fn reader_from_handle(handle: &crate::audio::streaming_source::FileHandle) -> Box<dyn AsyncRangeReader + '_> {
     match handle {
@@ -236,6 +250,9 @@ pub fn reader_from_handle(handle: &crate::audio::streaming_source::FileHandle) -
         }
         crate::audio::streaming_source::FileHandle::TauriPath(path) => {
             Box::new(TauriRangeReader { path: path.clone() })
+        }
+        crate::audio::streaming_source::FileHandle::MediaStoreUri(uri) => {
+            Box::new(MediaStoreRangeReader { uri: uri.clone() })
         }
         crate::audio::streaming_source::FileHandle::Bytes(b) => {
             Box::new(BytesRangeReader { bytes: b.clone() })
