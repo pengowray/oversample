@@ -777,6 +777,21 @@ pub fn BottomToolbar() -> impl IntoView {
                                 </svg>
                                 <span class=move || led_class.get() aria-hidden="true"></span>
                                 <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || mic_value.get()}</span>
+                                // "New USB mic detected" badge — a glowing dot so a
+                                // hot-plug is noticeable; tap the button to switch.
+                                <span
+                                    class="mic-new-badge"
+                                    title="New USB mic detected — tap to switch"
+                                    aria-hidden="true"
+                                    style=move || if state.mic.new_device_available().get() {
+                                        "position:absolute; top:1px; right:1px; width:8px; height:8px; \
+                                         border-radius:50%; background:#ff9f1c; \
+                                         box-shadow:0 0 5px #ff9f1c, 0 0 0 1px rgba(0,0,0,0.55); \
+                                         pointer-events:none; z-index:2;"
+                                    } else {
+                                        "display:none;"
+                                    }
+                                ></span>
                             </button>
                             <button
                                 class=move || mic_right_class.get()

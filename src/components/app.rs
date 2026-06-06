@@ -4,8 +4,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, ChromaColormap, ChromaRange, ChromaSource, DisplayFilterMode, FftMode, FileSettings,
-    FlowColorScheme, GainMode, LayerPanel, MainView, MicBackend, MicStrategy,
-    MicAcquisitionState, PlayStartMode, PlaybackMode, ResonatorFftMode, ResonatorLayout,
+    FlowColorScheme, GainMode, LayerPanel, MainView, MicStrategy,
+    PlayStartMode, PlaybackMode, ResonatorFftMode, ResonatorLayout,
     SpectrogramDisplay, WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider,
     resonator_slider_to_bw,
 };
@@ -147,55 +147,50 @@ pub fn App() -> impl IntoView {
         });
     }
 
-    // Poll for USB device changes every 3 seconds (Tauri only)
+    // USB hotplug (Tauri/Android): the plugin PUSHES attach/detach into the
+    // `window.__oversampleUsbHotplug` global registered below — no polling (see
+    // lows #35; the old 3s checkUsbStatus poll was unregistered/permission-
+    // rejected and silently did nothing, and coalesced events besides).
     if state.is_tauri {
+        // Seed usb_connected once at startup (the plugin only pushes on *changes*).
         wasm_bindgen_futures::spawn_local(async move {
-            use crate::tauri_bridge::tauri_invoke_typed_no_args;
-            let mut was_connected = false;
-            loop {
-                // Sleep 3 seconds
-                sleep_ms(3000).await;
+            microphone::query_mic_info(&state).await;
+        });
 
-                // Skip polling when mic is active (recording/listening)
-                if state.mic.listening().get_untracked() || state.mic.recording().get_untracked() {
-                    continue;
-                }
-
-                // Poll USB status via Kotlin plugin
-                let status = match tauri_invoke_typed_no_args::<oversample_ipc::plugins::UsbStatusResult>(
-                    "plugin:usb-audio|checkUsbStatus",
-                ).await {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                let is_connected = status.audio_device_attached;
-                let last_event = status.last_event;
-
-                // Update USB connected state
-                state.mic.usb_connected().set(is_connected);
-
-                // Handle hotplug events
-                if let Some(event) = last_event {
-                    if event == "attached" && !was_connected {
-                        // Wait 500ms for USB device to fully enumerate
-                        sleep_ms(500).await;
-                        microphone::check_usb_status(&state).await;
-                        microphone::query_mic_info(&state).await;
-                    } else if event == "detached" && was_connected {
-                        // If we were using USB, clear backend so user is re-prompted
-                        if state.mic.backend().get_untracked() == Some(MicBackend::RawUsb) {
-                            state.mic.backend().set(None);
-                            state.mic.acquisition_state().set(MicAcquisitionState::Idle);
-                        }
-                        state.show_info_toast("USB mic disconnected");
-                        microphone::query_mic_info(&state).await;
-                    }
-                }
-
-                was_connected = is_connected;
+        // Clear the mic-button "new device" badge once the user opens the chooser.
+        Effect::new(move |_| {
+            if state.mic.show_chooser().get() {
+                state.mic.new_device_available().set(false);
             }
         });
+
+        // Global the Android USB plugin calls (via webView.evaluateJavascript) on
+        // hot-plug, with a `{event, product, deviceName}` object.
+        let state_usb = state;
+        let usb_cb = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+            move |detail: wasm_bindgen::JsValue| {
+                let field = |k: &str| {
+                    js_sys::Reflect::get(&detail, &wasm_bindgen::JsValue::from_str(k))
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .unwrap_or_default()
+                };
+                let event = field("event");
+                let product = field("product");
+                let device_name = field("deviceName");
+                wasm_bindgen_futures::spawn_local(async move {
+                    microphone::handle_usb_hotplug(&state_usb, &event, &product, &device_name).await;
+                });
+            },
+        );
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__oversampleUsbHotplug"),
+                usb_cb.as_ref().unchecked_ref(),
+            );
+        }
+        usb_cb.forget();
     }
 
     // Live playback parameter switching: when any playback-relevant signal

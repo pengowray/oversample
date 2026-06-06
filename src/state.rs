@@ -1722,6 +1722,10 @@ pub struct MicState {
     pub show_chooser: bool,
     /// User dismissed the "Mic detected" chip for this session.
     pub chip_dismissed: bool,
+    /// A USB device was just hot-plugged and the user hasn't opened the chooser
+    /// yet — drives a "new device" badge on the mic button. Cleared when the
+    /// chooser opens or the device detaches.
+    pub new_device_available: bool,
     /// Peak audio level from mic (0.0..1.0).
     pub peak_level: f32,
     /// Mic acquisition strategy (Ask, Selected, Browser, None).
@@ -2279,6 +2283,7 @@ impl AppState {
                 selected_device: None,
                 show_chooser: false,
                 chip_dismissed: false,
+                new_device_available: false,
                 peak_level: 0.0,
                 strategy: if detect_tauri() { MicStrategy::Ask } else { MicStrategy::Browser },
                 backend: None,

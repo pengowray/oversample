@@ -208,6 +208,50 @@ pub async fn check_usb_status(state: &AppState) {
     state.mic.usb_connected().set(false);
 }
 
+/// Handle a USB hot-plug event pushed from the Android plugin via the
+/// `window.__oversampleUsbHotplug` global (see app.rs). `event` is "attached" or
+/// "detached". Replaces the old 3-second `checkUsbStatus` poll, so events are no
+/// longer coalesced/dropped and arrive even while recording.
+pub async fn handle_usb_hotplug(state: &AppState, event: &str, product: &str, device_name: &str) {
+    state.log_debug("info", format!("USB hotplug: {event} — {product} ({device_name})"));
+    match event {
+        "attached" => {
+            // Name the device so the usb_connected effect's toast is accurate,
+            // badge the mic button, and mark connected (the effect re-shows the
+            // "Mic detected" chip + toasts).
+            if !product.is_empty() {
+                state.mic.device_name().set(Some(product.to_string()));
+            }
+            state.mic.new_device_available().set(true);
+            state.mic.usb_connected().set(true);
+            // Let the device finish enumerating, then refine device info.
+            crate::web_util::sleep_ms(500).await;
+            query_mic_info(state).await;
+        }
+        "detached" => {
+            // A mid-recording unplug can't continue — stop (and finalize) it.
+            if state.mic.recording().get_untracked() {
+                toggle_record(state).await;
+                state.show_info_toast("USB mic disconnected — recording stopped");
+            } else {
+                state.show_info_toast("USB mic disconnected");
+            }
+            // If we were capturing from this USB device, drop the backend so the
+            // user is re-prompted to pick one.
+            if state.mic.backend().get_untracked() == Some(MicBackend::RawUsb) {
+                state.mic.backend().set(None);
+                state.mic.acquisition_state().set(MicAcquisitionState::Idle);
+            }
+            state.mic.new_device_available().set(false);
+            state.mic.usb_connected().set(false);
+            query_mic_info(state).await;
+        }
+        other => {
+            state.log_debug("warn", format!("USB hotplug: unknown event '{other}'"));
+        }
+    }
+}
+
 // ── Android foreground audio service ─────────────────────────────────────
 
 /// Start (or update the notification of) the Android foreground audio service so

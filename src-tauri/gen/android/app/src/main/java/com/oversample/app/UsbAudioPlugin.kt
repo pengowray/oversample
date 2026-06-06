@@ -84,10 +84,6 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     private var activeConnection: UsbDeviceConnection? = null
     private var activeDevice: UsbDevice? = null
     private var webViewRef: android.webkit.WebView? = null
-    // USB hotplug state: set by BroadcastReceiver, read by checkUsbStatus command
-    @Volatile private var lastUsbEvent: String? = null  // "attached" or "detached"
-    @Volatile private var lastUsbProductName: String? = null
-    @Volatile private var lastUsbDeviceName: String? = null
 
     companion object {
         const val REQUEST_AUDIO_PERMISSION = 1001
@@ -159,10 +155,25 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             val productName = device?.productName ?: "USB Audio"
             Log.i(TAG, "USB audio device $action: $productName")
 
-            // Store event for polling via checkUsbStatus command
-            lastUsbEvent = action
-            lastUsbProductName = productName
-            lastUsbDeviceName = device?.deviceName ?: ""
+            // Push the event straight to the frontend (window.__oversampleUsbHotplug),
+            // reusing the AudioServicePlugin webView.evaluateJavascript pattern. No
+            // latch/poll: each event is delivered on its own with a self-contained
+            // payload, so fast detach+attach (or two-device) events aren't coalesced
+            // and the event/name can't be spliced mid-read. (lows #35)
+            val payload = JSObject().apply {
+                put("event", action)
+                put("product", productName)
+                put("deviceName", device?.deviceName ?: "")
+            }.toString()
+            val wv = webViewRef
+            if (wv != null) {
+                wv.post {
+                    wv.evaluateJavascript(
+                        "window.__oversampleUsbHotplug && window.__oversampleUsbHotplug($payload)",
+                        null,
+                    )
+                }
+            }
         }
     }
 
@@ -235,37 +246,6 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         Log.i(TAG, "handlePermissionResult: granted=$granted")
         val result = JSObject()
         result.put("granted", granted)
-        invoke.resolve(result)
-    }
-
-    /**
-     * Check USB device status: returns whether an audio device is attached,
-     * and any pending hotplug event since the last poll.
-     * Frontend polls this every few seconds to detect USB connect/disconnect.
-     */
-    @Command
-    fun checkUsbStatus(invoke: Invoke) {
-        val usbManager = activity.getSystemService(Context.USB_SERVICE) as UsbManager
-        val hasAudioDevice = usbManager.deviceList.values.any { device ->
-            (0 until device.interfaceCount).any {
-                device.getInterface(it).interfaceClass == USB_CLASS_AUDIO
-            }
-        }
-
-        val result = JSObject()
-        result.put("audioDeviceAttached", hasAudioDevice)
-
-        // Report and consume the last hotplug event
-        val event = lastUsbEvent
-        if (event != null) {
-            result.put("lastEvent", event)
-            result.put("productName", lastUsbProductName ?: "USB Audio")
-            result.put("deviceName", lastUsbDeviceName ?: "")
-            lastUsbEvent = null
-            lastUsbProductName = null
-            lastUsbDeviceName = null
-        }
-
         invoke.resolve(result)
     }
 

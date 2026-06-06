@@ -155,19 +155,10 @@ pub struct PermissionGranted {
     pub granted: bool,
 }
 
-/// `plugin:usb-audio|checkUsbStatus`. The hotplug fields appear only when an
-/// event is pending (the Kotlin clears them after one poll).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsbStatusResult {
-    pub audio_device_attached: bool,
-    #[serde(default)]
-    pub last_event: Option<String>,
-    #[serde(default)]
-    pub product_name: Option<String>,
-    #[serde(default)]
-    pub device_name: Option<String>,
-}
+// USB hotplug is delivered by a native push to `window.__oversampleUsbHotplug`
+// (UsbAudioPlugin → evaluateJavascript), not an IPC command, so there is no
+// status-result type here. (Was `UsbStatusResult` for the removed checkUsbStatus
+// poll — see lows #35.)
 
 // ── media-store plugin ──────────────────────────────────────────────────
 //
