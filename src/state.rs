@@ -2718,6 +2718,114 @@ impl AppState {
         });
     }
 
+    /// Frequency bounds to restore when converting a segment back to a region:
+    /// the active BandFF/focus range if any, else the current display range
+    /// (falling back to the file's max frequency). Shared by `toggle_q_freq_bounds`.
+    fn region_freq_bounds(&self, file_idx: usize) -> (f64, f64) {
+        let ff = self.viewmode.focus_stack().get_untracked().effective_range_ignoring_hfr();
+        if ff.is_active() {
+            (ff.lo, ff.hi)
+        } else {
+            let files = self.library.files().get_untracked();
+            let file_max = files.get(file_idx).map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+            (self.view.min_display_freq().get_untracked().unwrap_or(0.0),
+             self.view.max_display_freq().get_untracked().unwrap_or(file_max))
+        }
+    }
+
+    /// Q-key: toggle frequency bounds (region ↔ segment) on the transient
+    /// selection if one exists, otherwise on the selected annotations. Returns
+    /// true if it acted (so the caller can `prevent_default`). Lives here, next
+    /// to `snapshot_annotations`, to keep annotation-store mutation out of the
+    /// global keydown handler.
+    pub fn toggle_q_freq_bounds(&self) -> bool {
+        if let Some(sel) = self.interaction.selection().get_untracked() {
+            // Transient selection exists — toggle it.
+            if sel.freq_low.is_some() && sel.freq_high.is_some() {
+                // Strip freq bounds: region → segment.
+                self.interaction.selection().set(Some(Selection {
+                    freq_low: None,
+                    freq_high: None,
+                    ..sel
+                }));
+                self.show_info_toast("Region → Segment (Q)");
+            } else {
+                // Restore freq bounds from BandFF range: segment → region.
+                let idx = self.library.current_index().get_untracked().unwrap_or(0);
+                let (lo, hi) = self.region_freq_bounds(idx);
+                self.interaction.selection().set(Some(Selection {
+                    freq_low: Some(lo),
+                    freq_high: Some(hi),
+                    ..sel
+                }));
+                self.show_info_toast("Segment → Region (Q)");
+            }
+            return true;
+        }
+
+        // No transient selection — toggle the selected annotations.
+        let sel_ids = self.annotations.selected_ids().get_untracked();
+        let Some(idx) = self.library.current_index().get_untracked() else {
+            return false;
+        };
+        if sel_ids.is_empty() {
+            return false;
+        }
+        let file_id = self.current_file_id();
+        // Check if all selected annotations are regions (have freq bounds).
+        let store = self.annotations.store().get_untracked();
+        let all_have_freq = if let Some(set) = file_id.and_then(|id| store.get(id)) {
+            sel_ids.iter().all(|id| {
+                set.annotations.iter().find(|a| &a.id == id).is_some_and(|a| {
+                    matches!(&a.kind, AnnotationKind::Region(r) if r.freq_low.is_some() && r.freq_high.is_some())
+                })
+            })
+        } else {
+            false
+        };
+        drop(store);
+        self.snapshot_annotations();
+        if all_have_freq {
+            // Region → Segment: strip freq bounds, don't reset BandFF.
+            self.annotations.store().update(|store| {
+                if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
+                    for ann in set.annotations.iter_mut() {
+                        if sel_ids.contains(&ann.id) {
+                            if let AnnotationKind::Region(ref mut r) = ann.kind {
+                                r.freq_low = None;
+                                r.freq_high = None;
+                                ann.modified_at = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                            }
+                        }
+                    }
+                }
+            });
+            self.annotations.dirty().set(true);
+            self.show_info_toast("Region → Segment (Q)");
+        } else {
+            // Segment → Region: use BandFF height.
+            let (lo, hi) = self.region_freq_bounds(idx);
+            self.annotations.store().update(|store| {
+                if let Some(set) = file_id.and_then(|id| store.get_mut(id)) {
+                    for ann in set.annotations.iter_mut() {
+                        if sel_ids.contains(&ann.id) {
+                            if let AnnotationKind::Region(ref mut r) = ann.kind {
+                                if r.freq_low.is_none() || r.freq_high.is_none() {
+                                    r.freq_low = Some(lo);
+                                    r.freq_high = Some(hi);
+                                    ann.modified_at = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            self.annotations.dirty().set(true);
+            self.show_info_toast("Segment → Region (Q)");
+        }
+        true
+    }
+
     /// Undo the last annotation operation.
     pub fn undo_annotations(&self) {
         let entry = {
