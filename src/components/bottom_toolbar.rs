@@ -788,16 +788,17 @@ pub fn BottomToolbar() -> impl IntoView {
                             >
                                 <span class="combo-btn-arrow">{"\u{25E2}"}</span>
                             </button>
-                            // "New USB mic detected" badge — a glowing dot that overhangs
-                            // the top border so a hot-plug is noticeable. Sits at the row
-                            // level (not inside .combo-btn-left, which clips on mobile);
-                            // pointer-events:none so a tap still hits the button to switch.
+                            // "New USB mic detected" badge — a glowing dot overhanging the
+                            // top-LEFT border, over the mic-select (left) button the user
+                            // taps to switch. Sits at the row level (not inside
+                            // .combo-btn-left, which clips on mobile); pointer-events:none
+                            // so a tap still falls through to the button.
                             <span
                                 class="mic-new-badge"
                                 title="New USB mic detected — tap to switch"
                                 aria-hidden="true"
                                 style=move || if state.mic.new_device_available().get() {
-                                    "position:absolute; top:-5px; right:2px; width:9px; height:9px; \
+                                    "position:absolute; top:-5px; left:2px; width:9px; height:9px; \
                                      border-radius:50%; background:#ff9f1c; \
                                      box-shadow:0 0 6px #ff9f1c, 0 0 0 1px rgba(0,0,0,0.6); \
                                      pointer-events:none; z-index:30;"
