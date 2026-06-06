@@ -409,7 +409,7 @@ pub fn blit_preview_as_background(
 
 // ── Tile-based rendering ─────────────────────────────────────────────────────
 
-use crate::canvas::tile_cache::{self, TILE_COLS};
+use crate::canvas::tile_cache::{self, TileKey, TILE_COLS};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -424,7 +424,7 @@ struct TileCanvasEntry {
 /// arbitrary HashMap-order entries, preventing visible tiles from being
 /// evicted while panning on large files.
 struct TileCanvasLru {
-    entries: HashMap<(usize, u8, usize), TileCanvasEntry>,
+    entries: HashMap<TileKey, TileCanvasEntry>,
     next_stamp: u64,
 }
 
@@ -433,7 +433,7 @@ impl TileCanvasLru {
         Self { entries: HashMap::new(), next_stamp: 0 }
     }
 
-    fn get(&mut self, key: &(usize, u8, usize), fingerprint: u64) -> Option<HtmlCanvasElement> {
+    fn get(&mut self, key: &TileKey, fingerprint: u64) -> Option<HtmlCanvasElement> {
         let entry = self.entries.get_mut(key)?;
         if entry.fingerprint != fingerprint {
             return None;
@@ -443,13 +443,13 @@ impl TileCanvasLru {
         Some(entry.canvas.clone())
     }
 
-    fn insert(&mut self, key: (usize, u8, usize), canvas: HtmlCanvasElement, fingerprint: u64) {
+    fn insert(&mut self, key: TileKey, canvas: HtmlCanvasElement, fingerprint: u64) {
         self.next_stamp += 1;
         let stamp = self.next_stamp;
         self.entries.insert(key, TileCanvasEntry { canvas, fingerprint, stamp });
         if self.entries.len() > 256 {
             // Evict oldest entries by LRU stamp
-            let mut stamps: Vec<((usize, u8, usize), u64)> = self.entries.iter()
+            let mut stamps: Vec<(TileKey, u64)> = self.entries.iter()
                 .map(|(&k, e)| (k, e.stamp))
                 .collect();
             stamps.sort_unstable_by_key(|&(_, s)| s);
@@ -464,7 +464,7 @@ impl TileCanvasLru {
         self.entries.clear();
     }
 
-    fn retain(&mut self, f: impl Fn(&(usize, u8, usize)) -> bool) {
+    fn retain(&mut self, f: impl Fn(&TileKey) -> bool) {
         self.entries.retain(|k, _| f(k));
     }
 }
@@ -553,7 +553,7 @@ pub fn clear_tile_canvas_cache() {
 /// Evict tile canvas cache entries for a specific file.
 pub fn evict_tile_canvas_cache_for_file(file_idx: usize) {
     TILE_CANVAS_CACHE.with(|c| {
-        c.borrow_mut().retain(|&(fi, _, _)| fi != file_idx);
+        c.borrow_mut().retain(|k| k.file_idx != file_idx);
     });
 }
 
@@ -805,7 +805,7 @@ pub fn blit_tiles_viewport(
             tile_lod, tile_idx, clip_start, clip_end,
         ) else { return };
 
-        let cache_key = (tile.file_idx, tile_lod, tile_idx);
+        let cache_key = TileKey { file_idx: tile.file_idx, lod: tile_lod, tile_idx };
 
         // Check if we have a cached canvas for this tile with matching settings.
         let cached = TILE_CANVAS_CACHE.with(|c| {

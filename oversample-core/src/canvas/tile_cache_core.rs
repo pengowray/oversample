@@ -15,10 +15,40 @@ use crate::types::PreRendered;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 
-/// Multi-LOD tile key: `(file_idx, lod, tile_idx)`.
-pub type CacheKey = (usize, u8, usize);
-/// Baseline-LOD chroma tile key: `(file_idx, tile_idx)`.
-pub type ChromaKey = (usize, usize);
+/// Multi-LOD tile key: identifies a tile by file, level-of-detail, and tile index.
+///
+/// A distinct struct (rather than a bare `(usize, u8, usize)` tuple) so the
+/// compiler prevents transposing `file_idx`/`tile_idx` (both `usize`) and
+/// prevents mixing it with the structurally-similar [`ChromaKey`]. Shared by the
+/// magnitude / flow / reassign / resonator caches, their in-flight maps, and the
+/// renderer's tile-canvas LRU.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TileKey {
+    pub file_idx: usize,
+    pub lod: u8,
+    pub tile_idx: usize,
+}
+
+impl TileKey {
+    pub fn new(file_idx: usize, lod: u8, tile_idx: usize) -> Self {
+        Self { file_idx, lod, tile_idx }
+    }
+}
+
+/// Baseline-LOD chroma tile key: identifies a chroma tile by file and tile index.
+/// Chroma is computed at the baseline LOD only, so it carries no `lod` — a
+/// distinct type from [`TileKey`] so the two can never be confused.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ChromaKey {
+    pub file_idx: usize,
+    pub tile_idx: usize,
+}
+
+impl ChromaKey {
+    pub fn new(file_idx: usize, tile_idx: usize) -> Self {
+        Self { file_idx, tile_idx }
+    }
+}
 
 /// A rendered spectrogram tile plus its cache bookkeeping.
 pub struct Tile {
@@ -32,11 +62,11 @@ pub struct Tile {
 
 /// LRU + byte-capped tile container, generic over key shape.
 ///
-/// Magnitude / flow / reassign / resonator tiles key by [`CacheKey`]; chroma
+/// Magnitude / flow / reassign / resonator tiles key by [`TileKey`]; chroma
 /// tiles key by [`ChromaKey`]. They share the same stamp-based lazy LRU and
 /// byte budget — only the key arity and the LRU-compaction floor differ.
 /// Key-shaped `insert`/`get` helpers live in the per-key `impl` blocks.
-pub struct TileCache<K: Eq + Hash + Copy = CacheKey> {
+pub struct TileCache<K: Eq + Hash + Copy = TileKey> {
     tiles: HashMap<K, Tile>,
     /// LRU order with lazy stale-entry skipping.
     lru: VecDeque<(K, u64)>,
@@ -181,22 +211,22 @@ impl<K: Eq + Hash + Copy> TileCache<K> {
 }
 
 // Convenience wrappers for the (file_idx, lod, tile_idx) multi-LOD caches.
-impl TileCache<CacheKey> {
+impl TileCache<TileKey> {
     pub fn insert(&mut self, file_idx: usize, lod: u8, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, lod, tile_idx);
+        let key = TileKey { file_idx, lod, tile_idx };
         self.insert_keyed(key, Tile { tile_idx, file_idx, lod, rendered, lru_stamp: 0 });
     }
 
     pub fn get(&self, file_idx: usize, lod: u8, tile_idx: usize) -> Option<&Tile> {
-        self.get_keyed(&(file_idx, lod, tile_idx))
+        self.get_keyed(&TileKey { file_idx, lod, tile_idx })
     }
 
     pub fn evict_far_from(&mut self, file_idx: usize, lod: u8, center_tile: usize, keep_radius: usize) {
-        let keys_to_evict: Vec<CacheKey> = self
+        let keys_to_evict: Vec<TileKey> = self
             .tiles
             .keys()
             .copied()
-            .filter(|&(fi, l, ti)| fi == file_idx && l == lod && ti.abs_diff(center_tile) > keep_radius)
+            .filter(|k| k.file_idx == file_idx && k.lod == lod && k.tile_idx.abs_diff(center_tile) > keep_radius)
             .collect();
         for key in keys_to_evict {
             if let Some(evicted) = self.tiles.remove(&key) {
@@ -206,19 +236,19 @@ impl TileCache<CacheKey> {
     }
 
     pub fn clear_for_file(&mut self, file_idx: usize) {
-        self.clear_keys(|k| k.0 == file_idx);
+        self.clear_keys(|k| k.file_idx == file_idx);
     }
 }
 
 // Convenience wrappers for the (file_idx, tile_idx) chroma cache.
 impl TileCache<ChromaKey> {
     pub fn insert(&mut self, file_idx: usize, tile_idx: usize, rendered: PreRendered) {
-        let key = (file_idx, tile_idx);
+        let key = ChromaKey { file_idx, tile_idx };
         self.insert_keyed(key, Tile { tile_idx, file_idx, lod: 1, rendered, lru_stamp: 0 });
     }
 
     pub fn get(&self, file_idx: usize, tile_idx: usize) -> Option<&Tile> {
-        self.get_keyed(&(file_idx, tile_idx))
+        self.get_keyed(&ChromaKey { file_idx, tile_idx })
     }
 }
 
@@ -270,7 +300,7 @@ mod tests {
 
     #[test]
     fn insert_and_get_roundtrips() {
-        let mut c: TileCache<CacheKey> = TileCache::new(1_000);
+        let mut c: TileCache<TileKey> = TileCache::new(1_000);
         c.insert(0, 0, 0, tile_of(100));
         assert_eq!(c.len(), 1);
         assert_eq!(c.total_bytes(), 100);
@@ -282,7 +312,7 @@ mod tests {
 
     #[test]
     fn reinsert_same_key_replaces_bytes_not_doubles() {
-        let mut c: TileCache<CacheKey> = TileCache::new(1_000);
+        let mut c: TileCache<TileKey> = TileCache::new(1_000);
         c.insert(0, 0, 0, tile_of(100));
         c.insert(0, 0, 0, tile_of(250));
         assert_eq!(c.len(), 1);
@@ -291,7 +321,7 @@ mod tests {
 
     #[test]
     fn evicts_oldest_to_stay_under_cap() {
-        let mut c: TileCache<CacheKey> = TileCache::new(300);
+        let mut c: TileCache<TileKey> = TileCache::new(300);
         c.insert(0, 0, 0, tile_of(100)); // stamp 1
         c.insert(0, 0, 1, tile_of(100)); // stamp 2
         c.insert(0, 0, 2, tile_of(100)); // stamp 3, total = 300 (== cap, fits)
@@ -307,12 +337,12 @@ mod tests {
 
     #[test]
     fn touch_protects_from_eviction() {
-        let mut c: TileCache<CacheKey> = TileCache::new(300);
+        let mut c: TileCache<TileKey> = TileCache::new(300);
         c.insert(0, 0, 0, tile_of(100)); // oldest
         c.insert(0, 0, 1, tile_of(100));
         c.insert(0, 0, 2, tile_of(100));
         // Touch tile 0 so it's now most-recently-used; tile 1 becomes oldest.
-        c.touch((0, 0, 0));
+        c.touch(TileKey::new(0, 0, 0));
         c.insert(0, 0, 3, tile_of(100)); // evicts the new oldest (tile 1)
         assert!(c.get(0, 0, 0).is_some(), "touched tile should survive");
         assert!(c.get(0, 0, 1).is_none(), "untouched oldest should be evicted");
@@ -320,7 +350,7 @@ mod tests {
 
     #[test]
     fn clear_for_file_only_removes_that_file() {
-        let mut c: TileCache<CacheKey> = TileCache::new(10_000);
+        let mut c: TileCache<TileKey> = TileCache::new(10_000);
         c.insert(0, 0, 0, tile_of(100));
         c.insert(0, 0, 1, tile_of(100));
         c.insert(1, 0, 0, tile_of(100));
@@ -332,7 +362,7 @@ mod tests {
 
     #[test]
     fn evict_far_keeps_window_around_center() {
-        let mut c: TileCache<CacheKey> = TileCache::new(100_000);
+        let mut c: TileCache<TileKey> = TileCache::new(100_000);
         for ti in 0..10 {
             c.insert(0, 0, ti, tile_of(100));
         }
@@ -346,7 +376,7 @@ mod tests {
 
     #[test]
     fn clear_all_resets_everything() {
-        let mut c: TileCache<CacheKey> = TileCache::new(10_000);
+        let mut c: TileCache<TileKey> = TileCache::new(10_000);
         c.insert(0, 0, 0, tile_of(100));
         c.insert(0, 0, 1, tile_of(100));
         c.clear_all();
@@ -356,24 +386,24 @@ mod tests {
     }
 
     #[test]
-    fn chroma_cache_uses_two_tuple_key() {
+    fn chroma_cache_uses_two_field_key() {
         let mut c: TileCache<ChromaKey> = TileCache::with_floor(10_000, 512);
         c.insert(0, 7, tile_of(100));
         let t = c.get(0, 7).unwrap();
         assert_eq!(t.lod, 1, "chroma tiles are baseline LOD");
         assert_eq!(t.tile_idx, 7);
-        c.clear_keys(|k| k.0 == 0);
+        c.clear_keys(|k| k.file_idx == 0);
         assert!(c.get(0, 7).is_none());
     }
 
     #[test]
     fn lru_compaction_bounds_the_deque_without_losing_tiles() {
         // floor 4 so compaction triggers quickly: threshold = max(len*8, 4).
-        let mut c: TileCache<CacheKey> = TileCache::with_floor(10_000, 4);
+        let mut c: TileCache<TileKey> = TileCache::with_floor(10_000, 4);
         c.insert(0, 0, 0, tile_of(100));
         // Repeatedly touch the same key: each push grows lru without growing tiles.
         for _ in 0..50 {
-            c.touch((0, 0, 0));
+            c.touch(TileKey::new(0, 0, 0));
         }
         // Compaction must have rebuilt lru down to the live set; tile survives.
         assert_eq!(c.len(), 1);
@@ -382,8 +412,8 @@ mod tests {
 
     #[test]
     fn in_flight_active_within_timeout_then_pruned() {
-        let mut map: HashMap<CacheKey, f64> = HashMap::new();
-        let key = (0, 0, 0);
+        let mut map: HashMap<TileKey, f64> = HashMap::new();
+        let key = TileKey::new(0, 0, 0);
         map.insert(key, 1_000.0);
         // now=5000, timeout=10000 -> 4000 <= 10000 -> active, not pruned.
         assert!(in_flight_is_active(&mut map, &key, 5_000.0, 10_000.0));
@@ -395,17 +425,17 @@ mod tests {
 
     #[test]
     fn in_flight_absent_key_is_inactive() {
-        let mut map: HashMap<CacheKey, f64> = HashMap::new();
-        assert!(!in_flight_is_active(&mut map, &(9, 9, 9), 0.0, 10_000.0));
+        let mut map: HashMap<TileKey, f64> = HashMap::new();
+        assert!(!in_flight_is_active(&mut map, &TileKey::new(9, 9, 9), 0.0, 10_000.0));
     }
 
     #[test]
     fn in_flight_active_count_ignores_timed_out() {
-        let mut map: HashMap<CacheKey, f64> = HashMap::new();
-        map.insert((0, 0, 0), 1_000.0); // age 4000 -> active
-        map.insert((0, 0, 1), 1_000.0); // active
-        map.insert((0, 0, 2), 0.0); //     age 5000 -> active (== timeout boundary not crossed)
-        map.insert((0, 0, 3), -20_000.0); // very old -> timed out
+        let mut map: HashMap<TileKey, f64> = HashMap::new();
+        map.insert(TileKey::new(0, 0, 0), 1_000.0); // age 4000 -> active
+        map.insert(TileKey::new(0, 0, 1), 1_000.0); // active
+        map.insert(TileKey::new(0, 0, 2), 0.0); //     age 5000 -> active (== timeout boundary not crossed)
+        map.insert(TileKey::new(0, 0, 3), -20_000.0); // very old -> timed out
         let n = in_flight_active_count(&map, 5_000.0, 10_000.0);
         assert_eq!(n, 3);
     }

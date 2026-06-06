@@ -287,31 +287,31 @@ fn aggregate_columns_max(
 // external callers keep using `tile_cache::Tile`; the wasm-coupled machinery
 // (thread-locals, scheduling, generations, `js_sys::Date` time) stays here.
 use oversample_core::canvas::tile_cache_core::{
-    in_flight_active_count, in_flight_is_active, CacheKey, ChromaKey, TileCache,
+    in_flight_active_count, in_flight_is_active, ChromaKey, TileCache,
 };
-pub use oversample_core::canvas::tile_cache_core::Tile;
+pub use oversample_core::canvas::tile_cache_core::{Tile, TileKey};
 
 thread_local! {
     /// Unified magnitude tile cache — all LOD levels in one cache.
     static CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(MAGNITUDE_MAX_BYTES));
     /// Map of (file_idx, lod, tile_idx) → timestamp (ms) for tiles currently being generated.
     /// Entries older than IN_FLIGHT_TIMEOUT_MS are considered stuck and can be re-scheduled.
-    static IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
+    static IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
         RefCell::new(HashMap::new());
     /// Generation counter — incremented on every clear_all_tiles(). In-flight
     /// async tasks capture the generation at spawn time and discard their result
     /// if a clear happened while they were computing (prevents stale tiles).
     static CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
-    /// Flow-mode tile cache — multi-LOD, same CacheKey as magnitude tiles.
+    /// Flow-mode tile cache — multi-LOD, same TileKey as magnitude tiles.
     static FLOW_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(FLOW_MAX_BYTES));
-    static FLOW_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
+    static FLOW_IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
         RefCell::new(HashMap::new());
     static FLOW_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
-    /// Reassignment spectrogram tile cache — multi-LOD, same CacheKey as magnitude tiles.
+    /// Reassignment spectrogram tile cache — multi-LOD, same TileKey as magnitude tiles.
     static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(REASSIGN_MAX_BYTES));
-    static REASSIGN_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
+    static REASSIGN_IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
         RefCell::new(HashMap::new());
     static REASSIGN_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
@@ -326,10 +326,10 @@ thread_local! {
     static CHROMA_GLOBAL_MAX: RefCell<HashMap<usize, (f32, f32)>> =
         RefCell::new(HashMap::new());
 
-    /// Resonator tile cache — multi-LOD, same CacheKey as magnitude tiles.
+    /// Resonator tile cache — multi-LOD, same TileKey as magnitude tiles.
     /// Stores absolute dB values per pixel (identical layout to magnitude tiles).
     static RESONATOR_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(RESONATOR_MAX_BYTES));
-    static RESONATOR_IN_FLIGHT: RefCell<HashMap<CacheKey, f64>> =
+    static RESONATOR_IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
         RefCell::new(HashMap::new());
     static RESONATOR_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 }
@@ -366,7 +366,7 @@ fn has_active_in_flight<K: Eq + std::hash::Hash>(map: &mut HashMap<K, f64>, key:
 // bespoke global-max bookkeeping, so it keeps its own wrappers.
 struct CacheCtx {
     cache: &'static std::thread::LocalKey<RefCell<TileCache>>,
-    in_flight: &'static std::thread::LocalKey<RefCell<HashMap<CacheKey, f64>>>,
+    in_flight: &'static std::thread::LocalKey<RefCell<HashMap<TileKey, f64>>>,
     generation: &'static std::thread::LocalKey<RefCell<u64>>,
 }
 
@@ -387,7 +387,7 @@ impl CacheCtx {
     ) -> Option<R> {
         self.cache.with(|c| {
             let mut cache = c.borrow_mut();
-            let key = (file_idx, lod, tile_idx);
+            let key = TileKey { file_idx, lod, tile_idx };
             if cache.contains_key(&key) {
                 cache.touch(key);
                 drop(cache);
@@ -398,12 +398,12 @@ impl CacheCtx {
         })
     }
 
-    fn request_still_active(&self, key: &CacheKey) -> bool {
+    fn request_still_active(&self, key: &TileKey) -> bool {
         self.in_flight.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
     }
 
     fn tile_active(&self, file_idx: usize, lod: u8, tile_idx: usize) -> bool {
-        self.request_still_active(&(file_idx, lod, tile_idx))
+        self.request_still_active(&TileKey { file_idx, lod, tile_idx })
     }
 
     fn bump_generation(&self) {
@@ -420,7 +420,7 @@ impl CacheCtx {
 
     fn clear_file(&self, file_idx: usize) {
         self.cache.with(|c| c.borrow_mut().clear_for_file(file_idx));
-        self.in_flight.with(|s| s.borrow_mut().retain(|k, _| k.0 != file_idx));
+        self.in_flight.with(|s| s.borrow_mut().retain(|k, _| k.file_idx != file_idx));
         self.bump_generation();
     }
 
@@ -432,7 +432,7 @@ impl CacheCtx {
                 let mut stats = collect_debug_stats(
                     cache.len(),
                     &mut inflight,
-                    (first_tile..=last_tile).map(|tile_idx| (file_idx, lod, tile_idx)),
+                    (first_tile..=last_tile).map(|tile_idx| TileKey { file_idx, lod, tile_idx }),
                     |key| cache.contains_key(key),
                 );
                 stats.used_bytes = cache.total_bytes();
@@ -495,9 +495,9 @@ pub fn evict_far(file_idx: usize, lod: u8, center_tile: usize, keep_radius: usiz
 /// outside every (center, radius) zone — tiles near any center are kept.
 pub fn evict_far_multi(file_idx: usize, lod: u8, centers: &[(usize, usize)]) {
     CACHE.with(|c| {
-        c.borrow_mut().clear_keys(|&(fi, l, ti)| {
-            fi == file_idx && l == lod
-                && centers.iter().all(|&(center, radius)| ti.abs_diff(center) > radius)
+        c.borrow_mut().clear_keys(|k| {
+            k.file_idx == file_idx && k.lod == lod
+                && centers.iter().all(|&(center, radius)| k.tile_idx.abs_diff(center) > radius)
         });
     });
 }
@@ -509,8 +509,8 @@ pub fn cancel_far_in_flight(file_idx: usize, lod: u8, center_tile: usize, keep_r
     IN_FLIGHT.with(|s| {
         let mut map = s.borrow_mut();
         if map.is_empty() { return; }
-        map.retain(|&(fi, l, ti), _| {
-            fi != file_idx || l != lod || ti.abs_diff(center_tile) <= keep_radius
+        map.retain(|k, _| {
+            k.file_idx != file_idx || k.lod != lod || k.tile_idx.abs_diff(center_tile) <= keep_radius
         });
     });
 }
@@ -520,9 +520,9 @@ pub fn cancel_far_in_flight_multi(file_idx: usize, lod: u8, centers: &[(usize, u
     IN_FLIGHT.with(|s| {
         let mut map = s.borrow_mut();
         if map.is_empty() { return; }
-        map.retain(|&(fi, l, ti), _| {
-            fi != file_idx || l != lod
-                || centers.iter().any(|&(center, radius)| ti.abs_diff(center) <= radius)
+        map.retain(|k, _| {
+            k.file_idx != file_idx || k.lod != lod
+                || centers.iter().any(|&(center, radius)| k.tile_idx.abs_diff(center) <= radius)
         });
     });
 }
@@ -535,7 +535,7 @@ pub fn count_missing_visible(file_idx: usize, lod: u8, first_tile: usize, last_t
         IN_FLIGHT.with(|s| {
             let mut inflight = s.borrow_mut();
             (first_tile..=last_tile).filter(|&t| {
-                let key = (file_idx, lod, t);
+                let key = TileKey { file_idx, lod, tile_idx: t };
                 !cache.contains_key(&key) && !has_active_in_flight(&mut inflight, &key)
             }).count()
         })
@@ -617,19 +617,19 @@ pub fn flow_tile_active(file_idx: usize, lod: u8, tile_idx: usize) -> bool {
     flow_ctx().tile_active(file_idx, lod, tile_idx)
 }
 
-fn magnitude_request_still_active(key: &CacheKey) -> bool {
+fn magnitude_request_still_active(key: &TileKey) -> bool {
     magnitude_ctx().request_still_active(key)
 }
 
-fn flow_request_still_active(key: &CacheKey) -> bool {
+fn flow_request_still_active(key: &TileKey) -> bool {
     flow_ctx().request_still_active(key)
 }
 
-fn reassign_request_still_active(key: &CacheKey) -> bool {
+fn reassign_request_still_active(key: &TileKey) -> bool {
     reassign_ctx().request_still_active(key)
 }
 
-fn resonator_request_still_active(key: &CacheKey) -> bool {
+fn resonator_request_still_active(key: &TileKey) -> bool {
     resonator_ctx().request_still_active(key)
 }
 
@@ -651,7 +651,7 @@ fn spectrogram_fft_size(data: &crate::types::SpectrogramData) -> Option<usize> {
 pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
     CACHE.with(|c| {
         let cache = c.borrow();
-        (0..n_tiles).filter(|&i| cache.contains_key(&(file_idx, LOD_BASELINE, i))).count()
+        (0..n_tiles).filter(|&i| cache.contains_key(&TileKey { file_idx, lod: LOD_BASELINE, tile_idx: i })).count()
     })
 }
 
@@ -664,7 +664,7 @@ pub fn tiles_ready(file_idx: usize, n_tiles: usize) -> usize {
 pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
     use crate::dsp::fft::compute_stft_columns;
 
-    let key: CacheKey = (file_idx, lod, tile_idx);
+    let key = TileKey { file_idx, lod, tile_idx };
     if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -827,7 +827,7 @@ pub fn schedule_tile(state: AppState, file: LoadedFile, file_idx: usize, tile_id
         return;
     }
 
-    let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
+    let key = TileKey { file_idx, lod: LOD_BASELINE, tile_idx };
     if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
@@ -906,7 +906,7 @@ pub fn schedule_all_tiles(state: AppState, file: LoadedFile, file_idx: usize) {
 pub fn render_tile_from_store_sync(file_idx: usize, tile_idx: usize, expected_fft: usize) -> bool {
     use crate::canvas::spectral_store;
 
-    let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
+    let key = TileKey { file_idx, lod: LOD_BASELINE, tile_idx };
     if CACHE.with(|c| c.borrow().contains_key(&key)) { return true; }
     if !spectral_store::fft_matches(file_idx, expected_fft) { return false; }
 
@@ -1007,7 +1007,7 @@ pub fn schedule_tile_from_store(state: AppState, file_idx: usize, tile_idx: usiz
         return;
     }
 
-    let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
+    let key = TileKey { file_idx, lod: LOD_BASELINE, tile_idx };
     if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -1179,7 +1179,7 @@ pub fn schedule_tile_on_demand(
     use crate::canvas::spectral_store;
     use crate::dsp::fft::compute_stft_columns;
 
-    let key: CacheKey = (file_idx, LOD_BASELINE, tile_idx);
+    let key = TileKey { file_idx, lod: LOD_BASELINE, tile_idx };
     if CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -1307,7 +1307,7 @@ pub fn schedule_flow_tile(
 ) {
     use crate::dsp::fft::compute_stft_columns;
 
-    let key: CacheKey = (file_idx, lod, tile_idx);
+    let key = TileKey { file_idx, lod, tile_idx };
     if FLOW_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if FLOW_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -1489,7 +1489,7 @@ pub fn schedule_reassign_tile(
 ) {
     use crate::dsp::fft::compute_reassigned_tile;
 
-    let key: CacheKey = (file_idx, lod, tile_idx);
+    let key = TileKey { file_idx, lod, tile_idx };
     if REASSIGN_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -1598,7 +1598,7 @@ pub fn get_chroma_tile(file_idx: usize, tile_idx: usize) -> Option<()> {
 pub fn borrow_chroma_tile<R>(file_idx: usize, tile_idx: usize, f: impl FnOnce(&Tile) -> R) -> Option<R> {
     CHROMA_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
-        let key = (file_idx, tile_idx);
+        let key = ChromaKey { file_idx, tile_idx };
         if cache.contains_key(&key) {
             cache.touch(key);
             drop(cache);
@@ -1624,7 +1624,7 @@ pub fn clear_chroma_cache() {
 /// In-flight requests are left alone — they'll overwrite when they finish
 /// and any still-stale tiles will be caught by the next growth event.
 fn clear_chroma_tiles_for_file_keep_max(file_idx: usize) {
-    CHROMA_CACHE.with(|c| c.borrow_mut().clear_keys(|k| k.0 == file_idx));
+    CHROMA_CACHE.with(|c| c.borrow_mut().clear_keys(|k| k.file_idx == file_idx));
 }
 
 /// Schedule a chromagram tile for background generation (baseline LOD).
@@ -1642,7 +1642,7 @@ pub fn schedule_chroma_tile(
 ) {
     use crate::state::ChromaSource;
 
-    let key = (file_idx, tile_idx);
+    let key = ChromaKey { file_idx, tile_idx };
     if CHROMA_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if CHROMA_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
@@ -1661,7 +1661,7 @@ fn schedule_chroma_tile_fft(
     state: AppState,
     file_idx: usize,
     tile_idx: usize,
-    key: (usize, usize),
+    key: ChromaKey,
 ) {
     use crate::canvas::spectral_store;
     use crate::dsp::chromagram;
@@ -1788,7 +1788,7 @@ fn schedule_chroma_tile_resonator(
     state: AppState,
     file_idx: usize,
     tile_idx: usize,
-    key: (usize, usize),
+    key: ChromaKey,
 ) {
     use crate::dsp::chromagram::{
         self, compute_chroma_columns_resonators, compute_chroma_max_from_columns,
@@ -2043,11 +2043,11 @@ fn run_preload_batch(state: AppState, generation: u32) {
             };
 
             for t in candidates {
-                let key = (s.file_idx, s.lod, t);
+                let key = TileKey { file_idx: s.file_idx, lod: s.lod, tile_idx: t };
                 if CACHE.with(|c| c.borrow().contains_key(&key)) {
                     continue; // already cached
                 }
-                tiles_to_schedule.push((s.file_idx, s.lod, t));
+                tiles_to_schedule.push(key);
             }
         }
 
@@ -2060,8 +2060,8 @@ fn run_preload_batch(state: AppState, generation: u32) {
             schedule_preload_batch(state, generation);
             return;
         }
-        for &(fi, lod, ti) in &tiles {
-            schedule_tile_lod(state, fi, lod, ti);
+        for &k in &tiles {
+            schedule_tile_lod(state, k.file_idx, k.lod, k.tile_idx);
         }
         // Schedule next batch
         schedule_preload_batch(state, generation);
@@ -2169,7 +2169,7 @@ pub fn resonator_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_t
 pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
     use crate::dsp::resonators::{compute_resonator_columns, warmup_samples};
 
-    let key: CacheKey = (file_idx, lod, tile_idx);
+    let key = TileKey { file_idx, lod, tile_idx };
     if RESONATOR_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
     if RESONATOR_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) { return; }
     if at_spawn_limit() { return; }
