@@ -777,21 +777,6 @@ pub fn BottomToolbar() -> impl IntoView {
                                 </svg>
                                 <span class=move || led_class.get() aria-hidden="true"></span>
                                 <span class="layer-btn-value fit-text" data-fit-max="13" data-fit-min="9">{move || mic_value.get()}</span>
-                                // "New USB mic detected" badge — a glowing dot so a
-                                // hot-plug is noticeable; tap the button to switch.
-                                <span
-                                    class="mic-new-badge"
-                                    title="New USB mic detected — tap to switch"
-                                    aria-hidden="true"
-                                    style=move || if state.mic.new_device_available().get() {
-                                        "position:absolute; top:1px; right:1px; width:8px; height:8px; \
-                                         border-radius:50%; background:#ff9f1c; \
-                                         box-shadow:0 0 5px #ff9f1c, 0 0 0 1px rgba(0,0,0,0.55); \
-                                         pointer-events:none; z-index:2;"
-                                    } else {
-                                        "display:none;"
-                                    }
-                                ></span>
                             </button>
                             <button
                                 class=move || mic_right_class.get()
@@ -803,6 +788,23 @@ pub fn BottomToolbar() -> impl IntoView {
                             >
                                 <span class="combo-btn-arrow">{"\u{25E2}"}</span>
                             </button>
+                            // "New USB mic detected" badge — a glowing dot that overhangs
+                            // the top border so a hot-plug is noticeable. Sits at the row
+                            // level (not inside .combo-btn-left, which clips on mobile);
+                            // pointer-events:none so a tap still hits the button to switch.
+                            <span
+                                class="mic-new-badge"
+                                title="New USB mic detected — tap to switch"
+                                aria-hidden="true"
+                                style=move || if state.mic.new_device_available().get() {
+                                    "position:absolute; top:-5px; right:2px; width:9px; height:9px; \
+                                     border-radius:50%; background:#ff9f1c; \
+                                     box-shadow:0 0 6px #ff9f1c, 0 0 0 1px rgba(0,0,0,0.6); \
+                                     pointer-events:none; z-index:30;"
+                                } else {
+                                    "display:none;"
+                                }
+                            ></span>
                             <Show when=move || mic_is_open.get()>
                                 <div class="layer-panel" style="bottom: calc(100% + 4px); left: 0; min-width: 260px;">
                                     // ── Microphone strategy ──
