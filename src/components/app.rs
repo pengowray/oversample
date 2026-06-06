@@ -328,6 +328,24 @@ pub fn App() -> impl IntoView {
         });
     }
 
+    // Guarantee the Android foreground-audio notification can't outlive capture:
+    // stop it whenever neither listening nor recording is active, no matter which
+    // path cleared the state (normal stop, a mic-stream error, a USB disconnect…).
+    // Starting it stays tied to the user gesture in microphone::do_start_* (Android
+    // 14+ forbids starting a mic foreground service from the background), so this
+    // effect only ever STOPS. The start paths set the new flag before clearing the
+    // old, so a listen<->record transition never momentarily reads "both off".
+    if state.is_tauri {
+        Effect::new(move |_| {
+            let active = state.mic.listening().get() || state.mic.recording().get();
+            if !active {
+                wasm_bindgen_futures::spawn_local(async move {
+                    crate::audio::microphone::stop_foreground_service(&state).await;
+                });
+            }
+        });
+    }
+
     // Keep scroll valid for the active file/timeline when the viewport, zoom,
     // or target duration changes. Without this, switching to a shorter file or
     // resizing while a non-spectrogram view is active can leave scroll outside

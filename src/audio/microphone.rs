@@ -288,7 +288,7 @@ async fn start_foreground_service(state: &AppState, mode: &str) {
 }
 
 /// Stop the Android foreground audio service. No-op off mobile Tauri.
-async fn stop_foreground_service(state: &AppState) {
+pub(crate) async fn stop_foreground_service(state: &AppState) {
     if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
