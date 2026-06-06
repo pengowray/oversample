@@ -17,7 +17,7 @@ use crate::dsp::agc::{AgcConfig, AgcProcessor};
 use crate::dsp::heterodyne::{heterodyne_comb_mix, heterodyne_mix};
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
-use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
+use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, BandMode};
 use crate::audio::playback::{apply_bandpass, apply_gain};
 
 // Chunk size (~0.5s at 192kHz, ~2s at 44.1kHz) + filter warmup (lets the
@@ -139,7 +139,7 @@ pub(crate) struct PlaybackParams {
     pub filter_db_selected: f64,
     pub filter_db_harmonics: f64,
     pub filter_db_above: f64,
-    pub filter_band_mode: u8,
+    pub filter_band_mode: BandMode,
     pub filter_quality: FilterQuality,
     pub sel_freq_low: f64,
     pub sel_freq_high: f64,

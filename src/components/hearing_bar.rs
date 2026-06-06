@@ -30,6 +30,7 @@ use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::RangeButton;
 use crate::components::mode_button::ModeRadioGroup;
 use crate::components::noise_combos::{NotchCombo, NrCombo};
+use crate::dsp::filters::BandMode;
 use crate::state::{
     AppState, Bar, BandpassMode, BandpassRange, FilterQuality, GainMode, LayerPanel,
     PeakSource, PlaybackMode,
@@ -390,7 +391,7 @@ fn BandpassCombo() -> impl IntoView {
             state.filter.quality().set(q);
         }
     };
-    let on_band_click = move |b: u8| {
+    let on_band_click = move |b: BandMode| {
         move |_: web_sys::MouseEvent| {
             if state.filter.bandpass_mode().get_untracked() == BandpassMode::Auto {
                 state.filter.bandpass_mode().set(BandpassMode::On);
@@ -470,11 +471,11 @@ fn BandpassCombo() -> impl IntoView {
                         title="FFT spectral EQ \u{2014} sharp edges, higher latency"
                     >"HQ"</button>
                     <span style="width: 8px;"></span>
-                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == 3)
-                        on:click=on_band_click(3)
+                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == BandMode::ThreeBand)
+                        on:click=on_band_click(BandMode::ThreeBand)
                     >"3"</button>
-                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == 4)
-                        on:click=on_band_click(4)
+                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == BandMode::FourBand)
+                        on:click=on_band_click(BandMode::FourBand)
                     >"4"</button>
                 </div>
                 <div class="layer-panel-slider-row"
@@ -488,7 +489,7 @@ fn BandpassCombo() -> impl IntoView {
                     />
                     <span>{move || format!("{:.0}", state.filter.db_above().get())}</span>
                 </div>
-                <Show when=move || { state.filter.band_mode().get() >= 4 }>
+                <Show when=move || { state.filter.band_mode().get().has_harmonics() }>
                     <div class="layer-panel-slider-row"
                         on:mouseenter=move |_| state.filter.hovering_band().set(Some(2))
                         on:mouseleave=move |_| state.filter.hovering_band().set(None)

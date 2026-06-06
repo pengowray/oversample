@@ -1,7 +1,36 @@
 use crate::dsp::fft::{hann_window, plan_fft_forward, plan_fft_inverse};
 
-pub fn harmonics_band_bounds(freq_low: f64, freq_high: f64, band_mode: u8) -> Option<(f64, f64)> {
-    if band_mode < 4 || freq_high <= 0.0 || freq_low >= freq_high {
+/// How the multi-band EQ splits the spectrum, relative to the selected
+/// `[freq_low, freq_high]` range. The boolean accessors replace the magic
+/// `band_mode {<=2, >=3, >=4}` comparisons that were previously duplicated
+/// across the filter functions and `harmonics_band_bounds`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum BandMode {
+    /// Below + selected only — everything at/above `freq_low` uses the selected gain.
+    TwoBand,
+    /// Below + selected + above.
+    #[default]
+    ThreeBand,
+    /// Below + selected + harmonics + above.
+    FourBand,
+}
+
+impl BandMode {
+    /// Whether the spectrum above `freq_high` gets its own "above" gain band
+    /// rather than being folded into the selected band. (Was `band_mode >= 3`.)
+    pub fn has_above_band(self) -> bool {
+        !matches!(self, BandMode::TwoBand)
+    }
+
+    /// Whether a distinct harmonics band exists between the selected range and
+    /// twice `freq_high`. (Was `band_mode >= 4`.)
+    pub fn has_harmonics(self) -> bool {
+        matches!(self, BandMode::FourBand)
+    }
+}
+
+pub fn harmonics_band_bounds(freq_low: f64, freq_high: f64, band_mode: BandMode) -> Option<(f64, f64)> {
+    if !band_mode.has_harmonics() || freq_high <= 0.0 || freq_low >= freq_high {
         return None;
     }
 
@@ -19,10 +48,10 @@ pub fn harmonics_band_bounds(freq_low: f64, freq_high: f64, band_mode: u8) -> Op
 /// Bands are defined relative to the "selected" frequency range [freq_low, freq_high]:
 /// - Below: 0 to freq_low
 /// - Selected: freq_low to freq_high
-/// - Harmonics: max(freq_high, freq_low*2) to freq_high*2 (only band_mode >= 4)
-/// - Above: everything above (band_mode >= 3)
+/// - Harmonics: max(freq_high, freq_low*2) to freq_high*2 (only `BandMode::FourBand`)
+/// - Above: everything above (`BandMode::ThreeBand` and up)
 ///
-/// In 2-band mode, everything at or above freq_low uses db_selected.
+/// In 2-band mode (`BandMode::TwoBand`), everything at or above freq_low uses db_selected.
 pub fn apply_eq_filter(
     samples: &[f32],
     sample_rate: u32,
@@ -32,7 +61,7 @@ pub fn apply_eq_filter(
     db_selected: f64,
     db_harmonics: f64,
     db_above: f64,
-    band_mode: u8,
+    band_mode: BandMode,
 ) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
@@ -56,7 +85,7 @@ pub fn apply_eq_filter(
                 db_below
             } else if freq <= freq_high {
                 db_selected
-            } else if band_mode <= 2 {
+            } else if !band_mode.has_above_band() {
                 // 2-band: everything above uses selected
                 db_selected
             } else if let Some((harmonics_lower, harmonics_upper)) = harmonics_bounds {
@@ -142,7 +171,7 @@ pub fn apply_eq_filter_fast(
     db_selected: f64,
     db_harmonics: f64,
     db_above: f64,
-    band_mode: u8,
+    band_mode: BandMode,
 ) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
@@ -152,7 +181,7 @@ pub fn apply_eq_filter_fast(
     let gain_selected = 10.0_f64.powf(db_selected / 20.0) as f32;
     let harmonics_bounds = harmonics_band_bounds(freq_low, freq_high, band_mode);
     let gain_harmonics = if harmonics_bounds.is_some() { 10.0_f64.powf(db_harmonics / 20.0) as f32 } else { 0.0 };
-    let gain_above = if band_mode >= 3 { 10.0_f64.powf(db_above / 20.0) as f32 } else { gain_selected };
+    let gain_above = if band_mode.has_above_band() { 10.0_f64.powf(db_above / 20.0) as f32 } else { gain_selected };
 
     // Split at freq_low: below vs rest
     let lp_low = cascaded_lowpass(samples, freq_low, sample_rate, 4);
@@ -382,18 +411,18 @@ mod tests {
 
     #[test]
     fn harmonics_band_uses_doubled_low_when_it_exceeds_focus_high() {
-        assert_eq!(harmonics_band_bounds(20_000.0, 30_000.0, 4), Some((40_000.0, 60_000.0)));
+        assert_eq!(harmonics_band_bounds(20_000.0, 30_000.0, BandMode::FourBand), Some((40_000.0, 60_000.0)));
     }
 
     #[test]
     fn harmonics_band_uses_focus_high_as_lower_floor() {
-        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, 4), Some((50_000.0, 100_000.0)));
+        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, BandMode::FourBand), Some((50_000.0, 100_000.0)));
     }
 
     #[test]
     fn harmonics_band_is_disabled_for_invalid_ranges() {
-        assert_eq!(harmonics_band_bounds(50_000.0, 50_000.0, 4), None);
-        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, 3), None);
+        assert_eq!(harmonics_band_bounds(50_000.0, 50_000.0, BandMode::FourBand), None);
+        assert_eq!(harmonics_band_bounds(20_000.0, 50_000.0, BandMode::ThreeBand), None);
     }
 
     #[test]

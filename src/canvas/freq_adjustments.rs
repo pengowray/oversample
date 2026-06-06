@@ -101,7 +101,7 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
             let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
             let eq_db = if freq < freq_low {
                 db_below
-            } else if freq <= freq_high || band_mode <= 2 {
+            } else if freq <= freq_high || !band_mode.has_above_band() {
                 db_selected
             } else if let Some((harmonics_lower, harmonics_upper)) = harmonics_bounds {
                 if freq >= harmonics_lower && freq <= harmonics_upper {

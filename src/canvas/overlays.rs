@@ -1,7 +1,7 @@
 use crate::canvas::colors::{freq_marker_color, freq_marker_label, freq_resistor_bands, freq_shield_color};
 use crate::state::ShieldStyle;
 use crate::canvas::spectrogram_renderer::freq_to_y;
-use crate::dsp::filters::harmonics_band_bounds;
+use crate::dsp::filters::{harmonics_band_bounds, BandMode};
 use crate::state::{FftMode, SpectrogramHandle, Selection, ResizeHandlePosition};
 use web_sys::CanvasRenderingContext2d;
 
@@ -1034,7 +1034,7 @@ pub fn draw_filter_overlay(
     hovered_band: u8,
     freq_low: f64,
     freq_high: f64,
-    band_mode: u8,
+    band_mode: BandMode,
     min_freq: f64,
     max_freq: f64,
     canvas_width: f64,

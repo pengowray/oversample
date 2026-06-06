@@ -7,6 +7,7 @@ use crate::canvas::flow::FlowAlgo;
 use crate::annotations::AnnotationKind;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
 use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
+use crate::dsp::filters::BandMode;
 
 /// Hash data extracted from an XC sidecar JSON file.
 ///
@@ -37,7 +38,7 @@ pub enum VerifyOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilterSettings {
     pub enabled: bool,
-    pub band_mode: u8,
+    pub band_mode: BandMode,
     pub freq_low: f64,
     pub freq_high: f64,
     pub db_below: f64,
@@ -59,7 +60,7 @@ impl Default for FilterSettings {
         // not the global Auto.
         Self {
             enabled: false,
-            band_mode: 3,
+            band_mode: BandMode::ThreeBand,
             freq_low: 20_000.0,
             freq_high: 60_000.0,
             db_below: -60.0,
@@ -1572,7 +1573,7 @@ pub struct ViewState {
 #[derive(Clone, Debug, Store)]
 pub struct FilterState {
     pub enabled: bool,
-    pub band_mode: u8,
+    pub band_mode: BandMode,
     pub freq_low: f64,
     pub freq_high: f64,
     pub db_below: f64,
@@ -2160,7 +2161,7 @@ impl AppState {
             }),
             filter: Store::new(FilterState {
                 enabled: false,
-                band_mode: 3,
+                band_mode: BandMode::ThreeBand,
                 freq_low: 20_000.0,
                 freq_high: 60_000.0,
                 db_below: -60.0,
