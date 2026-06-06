@@ -237,7 +237,21 @@ pub fn MicChooserModal() -> impl IntoView {
                                                 supported_bit_depths: vec![16],
                                                 max_channels: 1,
                                             }));
-                                            run_pending_action(state);
+                                            // Front-load USB access on selection so a later recording
+                                            // starts without a permission prompt (the chooser's purpose).
+                                            // A deferred record/listen requests permission itself, so
+                                            // only prompt here when nothing is pending.
+                                            match take_pending_action(&state) {
+                                                Some(action) => spawn_local(async move {
+                                                    dispatch_pending_action(&state, action).await;
+                                                }),
+                                                None => {
+                                                    let name = dev_name.clone();
+                                                    spawn_local(async move {
+                                                        crate::audio::microphone::ensure_usb_permission(&state, &name).await;
+                                                    });
+                                                }
+                                            }
                                         }
                                     >
                                         <div class="mic-chooser-device-name">

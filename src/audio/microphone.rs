@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 use crate::state::{AppState, GpsLocation, MicStrategy, MicBackend, MicAcquisitionState, MicPendingAction};
 use crate::audio::mic_backend::StopResult;
 use crate::audio::live_recording::FinalizeParams;
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args};
+use crate::tauri_bridge::{tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_no_args, tauri_invoke_typed_args};
 
 // ── GPS location acquisition ────────────────────────────────────────────
 
@@ -86,6 +86,26 @@ pub async fn request_audio_permission_tauri(state: &AppState) -> bool {
             state.log_debug("warn", format!("requestAudioPermission failed (may not be Android): {}", e));
             true // Non-fatal on desktop Tauri
         }
+    }
+}
+
+/// Proactively request access to a USB audio device when it's picked in the mic
+/// chooser, so a later recording starts without a permission prompt (the
+/// chooser's original purpose). Idempotent — Android returns granted with no
+/// dialog if access was already given. No-op off Tauri.
+pub async fn ensure_usb_permission(state: &AppState, device_name: &str) {
+    if !state.is_tauri {
+        return;
+    }
+    match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbPermissionResult>(
+        "plugin:usb-audio|requestUsbPermission",
+        &oversample_ipc::plugins::UsbDeviceNameArgs { device_name: device_name.to_string() },
+    ).await {
+        Ok(r) => state.log_debug(
+            "info",
+            format!("USB permission for {device_name}: {}", if r.granted { "granted" } else { "denied" }),
+        ),
+        Err(e) => state.log_debug("warn", format!("requestUsbPermission failed: {e}")),
     }
 }
 
