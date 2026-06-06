@@ -1726,6 +1726,9 @@ pub struct MicState {
     /// yet — drives a "new device" badge on the mic button. Cleared when the
     /// chooser opens or the device detaches.
     pub new_device_available: bool,
+    /// Bumped on every USB hot-plug (attach or detach) so an already-open mic
+    /// chooser can re-enumerate its device lists.
+    pub hotplug_seq: u32,
     /// Peak audio level from mic (0.0..1.0).
     pub peak_level: f32,
     /// Mic acquisition strategy (Ask, Selected, Browser, None).
@@ -2284,6 +2287,7 @@ impl AppState {
                 show_chooser: false,
                 chip_dismissed: false,
                 new_device_available: false,
+                hotplug_seq: 0,
                 peak_level: 0.0,
                 strategy: if detect_tauri() { MicStrategy::Ask } else { MicStrategy::Browser },
                 backend: None,

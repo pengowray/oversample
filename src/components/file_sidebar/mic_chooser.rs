@@ -96,7 +96,10 @@ pub fn MicChooserModal() -> impl IntoView {
         });
     }
 
-    // Fetch devices on mount
+    // Fetch cpal + USB device lists. Wrapped in a closure so it runs on mount AND
+    // re-runs on a USB hot-plug while the chooser is open (Effect below), so a
+    // freshly-attached mic shows up without reopening the dialog.
+    let refresh_devices = move || {
     spawn_local(async move {
         // Fetch cpal devices via the typed IPC boundary (oversample_ipc::mic).
         match tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>("mic_list_devices").await {
@@ -165,6 +168,17 @@ pub fn MicChooserModal() -> impl IntoView {
         }
 
         loading.set(false);
+    });
+    };
+    refresh_devices();
+
+    // Re-enumerate device lists when a USB device is hot-plugged while the chooser
+    // is open, so the just-attached mic appears in the list immediately.
+    Effect::new(move |_| {
+        let _ = state.mic.hotplug_seq().get();
+        if state.mic.show_chooser().get_untracked() {
+            refresh_devices();
+        }
     });
 
     let on_close = move |_: web_sys::MouseEvent| {

@@ -214,6 +214,8 @@ pub async fn check_usb_status(state: &AppState) {
 /// longer coalesced/dropped and arrive even while recording.
 pub async fn handle_usb_hotplug(state: &AppState, event: &str, product: &str, device_name: &str) {
     state.log_debug("info", format!("USB hotplug: {event} — {product} ({device_name})"));
+    // Let an already-open mic chooser re-enumerate its device lists.
+    state.mic.hotplug_seq().update(|n| *n = n.wrapping_add(1));
     match event {
         "attached" => {
             // Name the device so the usb_connected effect's toast is accurate,
