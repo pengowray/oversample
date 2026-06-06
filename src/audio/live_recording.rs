@@ -1078,6 +1078,24 @@ fn update_or_create_file(
 ) -> (usize, String) {
     use crate::canvas::{spectral_store, tile_cache};
 
+    // Baseline FFT/hop the progressive spectrogram + tile cache will use, so
+    // the placeholder metadata set here agrees with the tiles that render into
+    // it. (A stale live 1024/256 placeholder under baseline-hop tiles is part
+    // of the mixed-resolution look at finalize.)
+    let baseline_fft = state.spect.fft_mode().get_untracked()
+        .fft_for_lod(tile_cache::LOD_BASELINE);
+    let placeholder_total_cols = if audio.samples.len() >= baseline_fft {
+        (audio.samples.len() - baseline_fft) / 512 + 1
+    } else { 0 };
+    let placeholder_spec = SpectrogramData {
+        columns: Vec::new().into(),
+        total_columns: placeholder_total_cols,
+        freq_resolution: sample_rate as f64 / baseline_fft as f64,
+        time_resolution: 512.0 / sample_rate as f64,
+        max_freq: sample_rate as f64 / 2.0,
+        sample_rate,
+    };
+
     let (file_index, name) = if let Some(idx) = live_idx {
         let name = state.library.files().with_untracked(|files| {
             files.get(idx).map(|f| f.name.clone()).unwrap_or_default()
@@ -1090,23 +1108,16 @@ fn update_or_create_file(
             if let Some(f) = files.get_mut(idx) {
                 f.audio = audio;
                 f.preview = Some(preview);
+                // Replace the live (1024/256) placeholder with one at the final
+                // baseline resolution so progressive tiles render under matching
+                // metadata instead of the stale live-waterfall resolution.
+                f.spectrogram = placeholder_spec;
             }
         });
 
         (idx, name)
     } else {
         let name = generate_recording_name();
-        let total_cols = if audio.samples.len() >= 2048 {
-            (audio.samples.len() - 2048) / 512 + 1
-        } else { 0 };
-        let placeholder_spec = SpectrogramData {
-            columns: Vec::new().into(),
-            total_columns: total_cols,
-            freq_resolution: sample_rate as f64 / 2048.0,
-            time_resolution: 512.0 / sample_rate as f64,
-            max_freq: sample_rate as f64 / 2.0,
-            sample_rate,
-        };
 
         let mut idx = 0;
         let name_clone = name.clone();
@@ -1568,12 +1579,21 @@ pub(crate) fn spawn_spectrogram_computation(
         });
         JsFuture::from(yield_promise).await.ok();
 
-        const FFT_SIZE: usize = 2048;
+        // Match the active baseline FFT used by the regular file-load path and
+        // the tile scheduler. A hard-coded 2048 here diverged from the default
+        // AdaptiveM baseline (1024): the provisional store tiles rendered at
+        // 1025 bins, then `schedule_all_tiles` re-rendered them on-demand at
+        // 513 bins (because spectrogram_fft != baseline), so mid-finalize the
+        // view showed tiles at two different resolutions (+ a brightness step).
+        // Using the baseline keeps the store tiles, f.spectrogram metadata, and
+        // any later baseline render all consistent — no re-render churn.
+        let fft_size = state.spect.fft_mode().get_untracked()
+            .fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
         const HOP_SIZE: usize = 512;
         const CHUNK_COLS: usize = 32;
 
-        let total_cols = if audio.samples.len() >= FFT_SIZE {
-            (audio.samples.len() - FFT_SIZE) / HOP_SIZE + 1
+        let total_cols = if audio.samples.len() >= fft_size {
+            (audio.samples.len() - fft_size) / HOP_SIZE + 1
         } else {
             0
         };
@@ -1582,7 +1602,7 @@ pub(crate) fn spawn_spectrogram_computation(
         use crate::canvas::tile_cache::{self, TILE_COLS};
 
         // Initialise spectral store for progressive tile generation
-        spectral_store::init(file_index, total_cols, FFT_SIZE);
+        spectral_store::init(file_index, total_cols, fft_size);
 
         let n_tiles = total_cols.div_ceil(TILE_COLS);
         let mut tile_scheduled = vec![false; n_tiles];
@@ -1600,7 +1620,7 @@ pub(crate) fn spawn_spectrogram_computation(
 
             let chunk = compute_spectrogram_partial(
                 &audio,
-                FFT_SIZE,
+                fft_size,
                 HOP_SIZE,
                 chunk_start,
                 CHUNK_COLS,
@@ -1620,7 +1640,7 @@ pub(crate) fn spawn_spectrogram_computation(
                 let tile_start = tile_idx * TILE_COLS;
                 let tile_end = (tile_start + TILE_COLS).min(total_cols);
                 if spectral_store::tile_complete(file_index, tile_start, tile_end) {
-                    if tile_cache::render_tile_from_store_sync(file_index, tile_idx, FFT_SIZE) {
+                    if tile_cache::render_tile_from_store_sync(file_index, tile_idx, fft_size) {
                         any_tile_rendered = true;
                     }
                     *scheduled = true;
@@ -1644,7 +1664,7 @@ pub(crate) fn spawn_spectrogram_computation(
         let final_columns = spectral_store::drain_columns(file_index)
             .unwrap_or_default();
 
-        let freq_resolution = audio.sample_rate as f64 / FFT_SIZE as f64;
+        let freq_resolution = audio.sample_rate as f64 / fft_size as f64;
         let time_resolution = HOP_SIZE as f64 / audio.sample_rate as f64;
         let max_freq = audio.sample_rate as f64 / 2.0;
 
