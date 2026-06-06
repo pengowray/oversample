@@ -1178,18 +1178,21 @@ fn persist_and_identify(
     state: AppState,
     file_index: usize,
     filename: String,
-    wav_bytes: Vec<u8>,
+    wav_bytes: Option<Vec<u8>>,
+    exact_file_size: u64,
     audio_data_size: u64,
     needs_save: bool,
     is_mobile: bool,
 ) {
-    let exact_file_size = wav_bytes.len() as u64;
-
     // If we also need to save, clone the bytes before identity computation consumes them.
-    let wav_bytes_for_save = if needs_save { Some(wav_bytes.clone()) } else { None };
+    let wav_bytes_for_save = if needs_save { wav_bytes.clone() } else { None };
 
+    // `wav_bytes = None` → hash the file from disk via its file_handle (the
+    // native side already wrote it, so there's no need to re-encode the whole
+    // WAV again on the WASM side). `Some` → hash the in-RAM bytes (browser path,
+    // where there is no on-disk file).
     crate::file_identity::start_identity_computation(
-        state, file_index, filename.clone(), exact_file_size, Some(wav_bytes),
+        state, file_index, filename.clone(), exact_file_size, wav_bytes,
         Some(44), Some(audio_data_size), None,
     );
 
@@ -1355,7 +1358,17 @@ async fn finalize_in_memory_recording(
         .unwrap_or_else(generate_recording_name);
     let meta = build_recording_meta(&state, sample_rate, duration_secs, &recording_name);
 
-    // ── Phase 2: Encode WAV bytes (single pass for size, hash, and save) ─
+    // Whether the native side already wrote the file to disk (to-memory writes
+    // the WAV at stop; shared storage streamed it into the content:// fd). When
+    // it did, we hash that file from disk in Phase 4 instead of re-encoding the
+    // whole WAV again here.
+    let shared_saved = saved_path.starts_with("shared://");
+    let native_saved = !saved_path.is_empty();
+    let has_disk_file = native_saved || shared_saved;
+
+    // ── Phase 2: Encode WAV bytes — only when there is no on-disk file to hash
+    // (the browser path). For to-memory the native side already saved the WAV,
+    // so skip this second O(N) encode and hash from disk instead. ─
     let samples: Arc<Vec<f32>> = samples.into();
     let source = Arc::new(InMemorySource {
         samples: samples.clone(),
@@ -1363,12 +1376,18 @@ async fn finalize_in_memory_recording(
         sample_rate,
         channels: 1,
     });
-    // Yield so the "Saving…" toast paints before the heavy encode runs.
-    crate::web_util::yield_now().await;
-    let wav_bytes = crate::audio::wav_encoder::encode_wav_complete(
-        &samples, sample_rate, Some(&meta.guano), &meta.wav_markers,
-    );
-    let exact_file_size = file_size.unwrap_or(wav_bytes.len());
+    let wav_bytes: Option<Vec<u8>> = if has_disk_file {
+        None
+    } else {
+        // Yield so the "Saving…" toast paints before the heavy encode runs.
+        crate::web_util::yield_now().await;
+        Some(crate::audio::wav_encoder::encode_wav_complete(
+            &samples, sample_rate, Some(&meta.guano), &meta.wav_markers,
+        ))
+    };
+    let exact_file_size = file_size
+        .or_else(|| wav_bytes.as_ref().map(|b| b.len()))
+        .unwrap_or(0);
     let num_samples = samples.len() as u64;
     let audio_data_size = num_samples * (bits_per_sample as u64 / 8);
 
@@ -1400,24 +1419,37 @@ async fn finalize_in_memory_recording(
 
     live_waterfall::clear();
 
-    // Set file handle if native backend saved to internal storage
-    let shared_saved = saved_path.starts_with("shared://");
-    let native_saved = !saved_path.is_empty();
+    // Wire up the file handle to the on-disk file so identity hashing (and any
+    // later re-open) read from disk. A real path → TauriPath; an Android shared
+    // recording lives only at its content:// URI → MediaStoreUri.
     if native_saved && !shared_saved {
         state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.file_handle = Some(crate::audio::streaming_source::FileHandle::TauriPath(saved_path));
             }
         });
+    } else if shared_saved {
+        if let Some(uri) = state.mic.pending_shared_uri().get_untracked() {
+            let handle = if uri.starts_with("content://") {
+                crate::audio::streaming_source::FileHandle::MediaStoreUri(uri)
+            } else {
+                crate::audio::streaming_source::FileHandle::TauriPath(uri)
+            };
+            state.library.files().update(|files| {
+                if let Some(f) = files.get_mut(file_index) {
+                    f.file_handle = Some(handle);
+                }
+            });
+        }
+        state.mic.pending_shared_uri().set(None);
     }
 
     // Mark saved if native backend already persisted the file
-    let record_mode = state.playback.record_mode().get_untracked();
     let is_tauri = state.is_tauri;
     let is_mobile = state.status.is_mobile().get_untracked();
-    let to_memory = record_mode == crate::state::RecordMode::ToMemory;
+    let to_memory = state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
 
-    if (native_saved || shared_saved) && !to_memory {
+    if has_disk_file && !to_memory {
         state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {
                 f.is_recording = false;
@@ -1426,13 +1458,16 @@ async fn finalize_in_memory_recording(
     }
 
     // ── Phase 4: Hash computation + optional WAV save ───────────────────
-    let needs_save = !to_memory && !shared_saved
+    // `needs_save` only when there's no on-disk file the native side already
+    // wrote (browser path); otherwise we hash that file from disk (wav_bytes
+    // is None) and skip both the re-encode and a redundant save.
+    let needs_save = !to_memory && !has_disk_file
         && if is_mobile { true } else { is_tauri && !native_saved };
 
     crate::web_util::yield_now().await;
     persist_and_identify(
         state, file_index, name_check.clone(), wav_bytes,
-        audio_data_size, needs_save, is_mobile,
+        exact_file_size as u64, audio_data_size, needs_save, is_mobile,
     );
 
     // ── Phase 5: Reset preroll + zoom + spectrogram ─────────────────────
