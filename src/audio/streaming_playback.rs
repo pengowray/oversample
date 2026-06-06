@@ -15,7 +15,7 @@ use crate::audio::streaming_source;
 use crate::state::{PlaybackMode, FilterQuality, GainMode};
 use crate::dsp::agc::{AgcConfig, AgcProcessor};
 use crate::dsp::heterodyne::{heterodyne_comb_mix, heterodyne_mix};
-use crate::dsp::pitch_shift::pitch_shift_realtime;
+use crate::dsp::pitch_shift::{pitch_shift_realtime, PitchFactor};
 use crate::dsp::zc_divide::zc_divide;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast, BandMode};
 use crate::audio::playback::{apply_bandpass, apply_gain};
@@ -117,8 +117,8 @@ pub(crate) struct PlaybackParams {
     /// Spacing (Hz) between comb carriers.
     pub het_comb_spacing: f64,
     pub te_factor: f64,
-    pub ps_factor: f64,
-    pub pv_factor: f64,
+    pub ps_factor: PitchFactor,
+    pub pv_factor: PitchFactor,
     pub pv_hq: bool,
     /// Output-side heterodyne shift (Hz) applied AFTER pitch shifting
     /// in PS / PV modes. Compound mapping: `out = |in/factor − shift|`.
@@ -204,6 +204,17 @@ pub(crate) fn is_streaming() -> bool {
     STREAM_CTX.with(|c| c.borrow().is_some())
 }
 
+/// Playback-speed multiplier for a sign-encoded time-expansion factor.
+///
+/// Positive factors slow playback down (expand time); negative speed it up;
+/// `|factor| <= 1` is full speed. `te_factor` stays a raw `f64` (it crosses the
+/// IPC boundary as a plain number); this just centralizes the decode that
+/// `playback.rs` and `start_stream` previously re-derived by hand.
+pub(crate) fn te_speed_ratio(te_factor: f64) -> f64 {
+    let abs_f = te_factor.abs().max(1.0);
+    if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
+}
+
 /// Start streaming playback of a sample range.
 ///
 /// `source` provides sample data; `channel_view` selects which channel(s) to play.
@@ -222,12 +233,7 @@ pub(crate) fn start_stream(
 
     let final_rate = match params.mode {
         PlaybackMode::TimeExpansion => {
-            let abs_f = params.te_factor.abs().max(1.0);
-            let rate = if params.te_factor > 0.0 {
-                sample_rate as f64 / abs_f
-            } else {
-                sample_rate as f64 * abs_f
-            };
+            let rate = sample_rate as f64 * te_speed_ratio(params.te_factor);
             (rate as u32).clamp(8000, 384_000)
         }
         _ => sample_rate,
@@ -689,7 +695,7 @@ fn ps_post_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> 
         PlaybackMode::PitchShift => params.ps_factor,
         PlaybackMode::PhaseVocoder => params.pv_factor,
         _ => return samples.to_vec(),
-    }.abs().max(1.0);
+    }.magnitude();
     // Cutoff just above the final output band (= bandpass upper edge / factor)
     // with safety margin. The post-pitch signal already has its spectrum
     // compressed by `factor`, so 20 kHz is usually plenty.

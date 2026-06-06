@@ -21,6 +21,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, BandpassMode, BandpassRange, FilterQuality, LayerPanel, PlaybackMode, SpectrogramHandle};
+use crate::dsp::pitch_shift::PitchFactor;
 
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.panels.layer_panel_open().update(|p| {
@@ -252,11 +253,11 @@ pub fn ModeRadioGroup() -> impl IntoView {
         }
         if state.transform.ps_factor_auto().get_untracked() {
             let ps = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state.transform.ps_factor().set(ps);
+            state.transform.ps_factor().set(PitchFactor::from_signed(ps));
         }
         if state.transform.pv_factor_auto().get_untracked() {
             let pv = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state.transform.pv_factor().set(pv);
+            state.transform.pv_factor().set(PitchFactor::from_signed(pv));
         }
     });
 
@@ -566,7 +567,7 @@ fn ModeSettingsBody() -> impl IntoView {
         if let Ok(val) = input.value().parse::<f64>() {
             state.transform.ps_factor_auto().set(false);
             state.playback.mode().set(PlaybackMode::PitchShift);
-            state.transform.ps_factor().set(val);
+            state.transform.ps_factor().set(PitchFactor::from_signed(val));
         }
     };
 
@@ -576,7 +577,7 @@ fn ModeSettingsBody() -> impl IntoView {
         if let Ok(val) = input.value().parse::<f64>() {
             state.transform.pv_factor_auto().set(false);
             state.playback.mode().set(PlaybackMode::PhaseVocoder);
-            state.transform.pv_factor().set(val);
+            state.transform.pv_factor().set(PitchFactor::from_signed(val));
         }
     };
 
@@ -603,7 +604,7 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
             state.transform.ps_factor_auto().set(false);
-            state.transform.ps_factor().set(val);
+            state.transform.ps_factor().set(PitchFactor::from_signed(val));
         }
     };
 
@@ -612,22 +613,23 @@ fn ModeSettingsBody() -> impl IntoView {
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
             state.transform.pv_factor_auto().set(false);
-            state.transform.pv_factor().set(val);
+            state.transform.pv_factor().set(PitchFactor::from_signed(val));
         }
     };
 
     // Generic over the signal handle so it accepts both `RwSignal` and store
     // subfields (`state.transform.te_factor()` etc.), which are distinct types.
-    fn make_preset_click<F, A>(
+    fn make_preset_click<F, A, V>(
         state: AppState,
         factor_signal: F,
         auto_signal: A,
         mode: PlaybackMode,
-        value: f64,
+        value: V,
     ) -> impl Fn(web_sys::MouseEvent) + Copy + 'static
     where
-        F: leptos::prelude::Set<Value = f64> + Copy + 'static,
+        F: leptos::prelude::Set<Value = V> + Copy + 'static,
         A: leptos::prelude::Set<Value = bool> + Copy + 'static,
+        V: Copy + 'static,
     {
         move |_: web_sys::MouseEvent| {
             auto_signal.set(false);
@@ -645,15 +647,16 @@ fn ModeSettingsBody() -> impl IntoView {
         (16.0, "16x"),
     ];
 
-    fn set_output_highlight<F>(
+    fn set_output_highlight<F, V>(
         state: AppState,
         factor_signal: F,
     ) -> impl Fn(web_sys::MouseEvent) + Copy + 'static
     where
-        F: leptos::prelude::GetUntracked<Value = f64> + Copy + 'static,
+        F: leptos::prelude::GetUntracked<Value = V> + Copy + 'static,
+        V: Into<f64>,
     {
         move |_: web_sys::MouseEvent| {
-            let f = factor_signal.get_untracked();
+            let f: f64 = factor_signal.get_untracked().into();
             let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
             let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
             if band_ff_hi > band_ff_lo {
@@ -823,11 +826,11 @@ fn ModeSettingsBody() -> impl IntoView {
                                     <div class="layer-panel-slider-row">
                                         <label>"Factor"</label>
                                         <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.transform.pv_factor().get() as i32).to_string()
+                                            prop:value=move || (state.transform.pv_factor().get().signed() as i32).to_string()
                                             on:input=on_pv_change
                                         />
                                         <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.transform.pv_factor().get())
+                                            prop:value=move || format_factor_value(state.transform.pv_factor().get().signed())
                                             on:change=on_pv_text
                                             on:focus=move |ev: web_sys::FocusEvent| {
                                                 use wasm_bindgen::JsCast;
@@ -844,8 +847,8 @@ fn ModeSettingsBody() -> impl IntoView {
                                     </div>
                                     <div class="factor-presets">
                                         {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state, state.transform.pv_factor(), state.transform.pv_factor_auto(), PlaybackMode::PhaseVocoder, val);
-                                            let is_sel = move || (state.transform.pv_factor().get() - val).abs() < 0.01 && !state.transform.pv_factor_auto().get();
+                                            let on_click = make_preset_click(state, state.transform.pv_factor(), state.transform.pv_factor_auto(), PlaybackMode::PhaseVocoder, PitchFactor::from_signed(val));
+                                            let is_sel = move || (state.transform.pv_factor().get().signed() - val).abs() < 0.01 && !state.transform.pv_factor_auto().get();
                                             view! {
                                                 <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
                                                     on:click=on_click
@@ -859,11 +862,11 @@ fn ModeSettingsBody() -> impl IntoView {
                                     <div class="layer-panel-slider-row">
                                         <label>"Factor"</label>
                                         <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.transform.ps_factor().get() as i32).to_string()
+                                            prop:value=move || (state.transform.ps_factor().get().signed() as i32).to_string()
                                             on:input=on_ps_change
                                         />
                                         <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.transform.ps_factor().get())
+                                            prop:value=move || format_factor_value(state.transform.ps_factor().get().signed())
                                             on:change=on_ps_text
                                             on:focus=move |ev: web_sys::FocusEvent| {
                                                 use wasm_bindgen::JsCast;
@@ -880,8 +883,8 @@ fn ModeSettingsBody() -> impl IntoView {
                                     </div>
                                     <div class="factor-presets">
                                         {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, val);
-                                            let is_sel = move || (state.transform.ps_factor().get() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
+                                            let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, PitchFactor::from_signed(val));
+                                            let is_sel = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
                                             view! {
                                                 <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
                                                     on:click=on_click
@@ -907,7 +910,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                         on:mouseleave=clear_output_highlight
                                     >"Output: "{move || {
                                         let mode = state.playback.mode().get();
-                                        let f = if mode == PlaybackMode::PhaseVocoder { state.transform.pv_factor().get() } else { state.transform.ps_factor().get() };
+                                        let f = if mode == PlaybackMode::PhaseVocoder { state.transform.pv_factor().get().signed() } else { state.transform.ps_factor().get().signed() };
                                         let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
                                         let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
                                         let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };

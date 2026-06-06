@@ -790,10 +790,10 @@ pub fn Spectrogram() -> impl IntoView {
                 match playback_mode {
                     PlaybackMode::TimeExpansion if te_factor > 1.0 => FreqShiftMode::Divide(te_factor),
                     PlaybackMode::TimeExpansion if te_factor < -1.0 => FreqShiftMode::Multiply(te_factor.abs()),
-                    PlaybackMode::PitchShift if ps_factor > 1.0 => FreqShiftMode::Divide(ps_factor),
-                    PlaybackMode::PitchShift if ps_factor < -1.0 => FreqShiftMode::Multiply(ps_factor.abs()),
-                    PlaybackMode::PhaseVocoder if pv_factor > 1.0 => FreqShiftMode::Divide(pv_factor),
-                    PlaybackMode::PhaseVocoder if pv_factor < -1.0 => FreqShiftMode::Multiply(pv_factor.abs()),
+                    PlaybackMode::PitchShift if !ps_factor.is_bypass() && !ps_factor.is_up() => FreqShiftMode::Divide(ps_factor.magnitude()),
+                    PlaybackMode::PitchShift if !ps_factor.is_bypass() && ps_factor.is_up() => FreqShiftMode::Multiply(ps_factor.magnitude()),
+                    PlaybackMode::PhaseVocoder if !pv_factor.is_bypass() && !pv_factor.is_up() => FreqShiftMode::Divide(pv_factor.magnitude()),
+                    PlaybackMode::PhaseVocoder if !pv_factor.is_bypass() && pv_factor.is_up() => FreqShiftMode::Multiply(pv_factor.magnitude()),
                     PlaybackMode::ZeroCrossing => FreqShiftMode::Divide(state.transform.zc_factor().get()),
                     _ => FreqShiftMode::None,
                 }

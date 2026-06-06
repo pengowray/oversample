@@ -1,19 +1,71 @@
-/// Pitch-shift audio by `factor` while preserving original duration.
+use serde::{Deserialize, Serialize};
+
+/// A sign-encoded pitch-shift factor (shared by PitchShift and PhaseVocoder).
 ///
-/// - `factor > 1.0`: shift DOWN (divide frequencies). E.g. factor=10 shifts 50 kHz → 5 kHz.
-/// - `factor < -1.0`: shift UP (multiply frequencies). E.g. factor=-10 shifts 5 Hz → 50 Hz.
-/// - `|factor| <= 1.0`: bypass (returns input unchanged).
-pub fn pitch_shift_realtime(samples: &[f32], factor: f64) -> Vec<f32> {
+/// The historical convention packs three things into one number, and is kept on
+/// the wire/UI (stored values and slider positions are unchanged):
+///
+/// - magnitude > 1, positive sign → shift DOWN (divide frequencies; 10 ⇒ 50 kHz → 5 kHz)
+/// - magnitude > 1, negative sign → shift UP   (multiply frequencies; -10 ⇒ 5 kHz → 50 kHz)
+/// - `|value| <= 1` → bypass (returns input unchanged)
+///
+/// Call sites use the named accessors below instead of re-deriving
+/// `abs()`/`< 0.0`/`<= 1.0`, so the direction can no longer be inverted by
+/// accident. `#[serde(transparent)]` keeps the serialized form a bare number.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PitchFactor(f64);
+
+impl PitchFactor {
+    /// Wrap a raw sign-encoded factor (the historical convention).
+    pub fn from_signed(value: f64) -> Self {
+        Self(value)
+    }
+    /// Shift DOWN by `magnitude`× (e.g. 50 kHz → 5 kHz at 10×).
+    pub fn down(magnitude: f64) -> Self {
+        Self(magnitude.abs())
+    }
+    /// Shift UP by `magnitude`× (e.g. 5 kHz → 50 kHz at 10×).
+    pub fn up(magnitude: f64) -> Self {
+        Self(-magnitude.abs())
+    }
+    /// The raw sign-encoded value (for storage, display, and UI sliders).
+    pub fn signed(self) -> f64 {
+        self.0
+    }
+    /// Effective magnitude, clamped to ≥ 1 (matches the old `abs().max(1.0)`).
+    pub fn magnitude(self) -> f64 {
+        self.0.abs().max(1.0)
+    }
+    /// True when `|value| <= 1`, i.e. the shift is a no-op.
+    pub fn is_bypass(self) -> bool {
+        self.0.abs() <= 1.0
+    }
+    /// True when the factor shifts frequencies UP (negative sign).
+    pub fn is_up(self) -> bool {
+        self.0 < 0.0
+    }
+}
+
+impl From<PitchFactor> for f64 {
+    fn from(f: PitchFactor) -> f64 {
+        f.0
+    }
+}
+
+/// Pitch-shift audio by `factor` while preserving original duration.
+/// See [`PitchFactor`] for the sign/bypass convention.
+pub fn pitch_shift_realtime(samples: &[f32], factor: PitchFactor) -> Vec<f32> {
     if samples.is_empty() {
         return samples.to_vec();
     }
 
-    let abs_factor = factor.abs();
-    if abs_factor <= 1.0 {
+    if factor.is_bypass() {
         return samples.to_vec();
     }
 
-    let shift_up = factor < 0.0;
+    let abs_factor = factor.magnitude();
+    let shift_up = factor.is_up();
 
     // Step 1: resample to change frequencies
     let resampled = if shift_up {
@@ -124,28 +176,28 @@ mod tests {
     #[test]
     fn test_pitch_shift_down_preserves_length() {
         let input: Vec<f32> = (0..4096).map(|i| (i as f32 / 100.0).sin()).collect();
-        let output = pitch_shift_realtime(&input, 10.0);
+        let output = pitch_shift_realtime(&input, PitchFactor::from_signed(10.0));
         assert_eq!(output.len(), input.len());
     }
 
     #[test]
     fn test_pitch_shift_up_preserves_length() {
         let input: Vec<f32> = (0..4096).map(|i| (i as f32 / 100.0).sin()).collect();
-        let output = pitch_shift_realtime(&input, -10.0);
+        let output = pitch_shift_realtime(&input, PitchFactor::from_signed(-10.0));
         assert_eq!(output.len(), input.len());
     }
 
     #[test]
     fn test_pitch_shift_bypass() {
         let input: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
-        assert_eq!(pitch_shift_realtime(&input, 0.0), input);
-        assert_eq!(pitch_shift_realtime(&input, 1.0), input);
-        assert_eq!(pitch_shift_realtime(&input, -1.0), input);
+        assert_eq!(pitch_shift_realtime(&input, PitchFactor::from_signed(0.0)), input);
+        assert_eq!(pitch_shift_realtime(&input, PitchFactor::from_signed(1.0)), input);
+        assert_eq!(pitch_shift_realtime(&input, PitchFactor::from_signed(-1.0)), input);
     }
 
     #[test]
     fn test_pitch_shift_empty() {
-        assert!(pitch_shift_realtime(&[], 10.0).is_empty());
-        assert!(pitch_shift_realtime(&[], -10.0).is_empty());
+        assert!(pitch_shift_realtime(&[], PitchFactor::from_signed(10.0)).is_empty());
+        assert!(pitch_shift_realtime(&[], PitchFactor::from_signed(-10.0)).is_empty());
     }
 }

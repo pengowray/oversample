@@ -241,10 +241,7 @@ pub fn replay_live(state: &AppState) {
     // Compute correct playback speed for the current mode
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => {
-            let abs_f = te_factor.abs().max(1.0);
-            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
-        }
+        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
         _ => 1.0,
     };
 
@@ -371,10 +368,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => {
-            let abs_f = te_factor.abs().max(1.0);
-            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
-        }
+        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
         _ => 1.0,
     };
 
@@ -427,10 +421,7 @@ pub fn play(state: &AppState) {
 
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => {
-            let abs_f = te_factor.abs().max(1.0);
-            if te_factor > 0.0 { 1.0 / abs_f } else { abs_f }
-        }
+        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
         _ => 1.0,
     };
 
@@ -476,8 +467,8 @@ pub(crate) fn snapshot_params(state: &AppState, selection: Option<Selection>, sa
             let stored = state.transform.ps_shift_hz().get_untracked();
             let band_lo = state.filter.band_ff_freq_lo().get_untracked();
             let f = match state.playback.mode().get_untracked() {
-                crate::state::PlaybackMode::PitchShift => state.transform.ps_factor().get_untracked(),
-                crate::state::PlaybackMode::PhaseVocoder => state.transform.pv_factor().get_untracked(),
+                crate::state::PlaybackMode::PitchShift => state.transform.ps_factor().get_untracked().signed(),
+                crate::state::PlaybackMode::PhaseVocoder => state.transform.pv_factor().get_untracked().signed(),
                 _ => 1.0,
             };
             crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)

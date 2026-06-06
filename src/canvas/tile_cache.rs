@@ -2100,11 +2100,13 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             samples.to_vec()
         }
         PlaybackMode::TimeExpansion => {
-            let factor = state.transform.te_factor().get_untracked();
-            if factor.abs() > 1.0 {
-                crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
-            } else {
+            let factor = crate::dsp::pitch_shift::PitchFactor::from_signed(
+                state.transform.te_factor().get_untracked(),
+            );
+            if factor.is_bypass() {
                 samples.to_vec()
+            } else {
+                crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
             }
         }
         PlaybackMode::Heterodyne => {

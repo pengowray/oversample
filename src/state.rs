@@ -8,6 +8,7 @@ use crate::annotations::AnnotationKind;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
 use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 use crate::dsp::filters::BandMode;
+use crate::dsp::pitch_shift::PitchFactor;
 
 /// Hash data extracted from an XC sidecar JSON file.
 ///
@@ -1545,11 +1546,11 @@ pub struct TransformState {
     pub het_cutoff_auto: bool,
     pub te_factor: f64,
     pub te_factor_auto: bool,
-    pub ps_factor: f64,
+    pub ps_factor: PitchFactor,
     pub ps_factor_auto: bool,
     /// Output-side shift (Hz) applied AFTER pitch shifting in PS/PV modes.
     pub ps_shift_hz: f64,
-    pub pv_factor: f64,
+    pub pv_factor: PitchFactor,
     pub pv_factor_auto: bool,
     pub pv_hq: bool,
     pub zc_factor: f64,
@@ -2140,10 +2141,10 @@ impl AppState {
                 het_cutoff_auto: true,
                 te_factor: 10.0,
                 te_factor_auto: true,
-                ps_factor: 10.0,
+                ps_factor: PitchFactor::down(10.0),
                 ps_factor_auto: true,
                 ps_shift_hz: 0.0,
-                pv_factor: 10.0,
+                pv_factor: PitchFactor::down(10.0),
                 pv_factor_auto: true,
                 pv_hq: true,
                 zc_factor: 8.0,

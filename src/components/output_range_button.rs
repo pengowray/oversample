@@ -26,6 +26,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::components::mode_button::{format_factor_value, format_freq_khz, output_freq};
+use crate::dsp::pitch_shift::PitchFactor;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::{AppState, LayerPanel, OutputSnap, PlaybackMode};
 
@@ -93,8 +94,8 @@ fn has_factor(mode: PlaybackMode) -> bool {
 fn factor_value(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
         PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get()),
-        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get()),
-        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get()),
+        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get().signed()),
+        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get().signed()),
         PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get()),
         _ => None,
     }
@@ -104,8 +105,8 @@ fn factor_value(state: &AppState, mode: PlaybackMode) -> Option<f64> {
 fn factor_value_untracked(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
         PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get_untracked()),
-        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get_untracked()),
-        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get_untracked()),
+        PlaybackMode::PitchShift => Some(state.transform.ps_factor().get_untracked().signed()),
+        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get_untracked().signed()),
         PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get_untracked()),
         _ => None,
     }
@@ -115,8 +116,8 @@ fn factor_value_untracked(state: &AppState, mode: PlaybackMode) -> Option<f64> {
 fn set_factor(state: &AppState, mode: PlaybackMode, v: f64) {
     match mode {
         PlaybackMode::TimeExpansion => state.transform.te_factor().set(v),
-        PlaybackMode::PitchShift => state.transform.ps_factor().set(v),
-        PlaybackMode::PhaseVocoder => state.transform.pv_factor().set(v),
+        PlaybackMode::PitchShift => state.transform.ps_factor().set(PitchFactor::from_signed(v)),
+        PlaybackMode::PhaseVocoder => state.transform.pv_factor().set(PitchFactor::from_signed(v)),
         PlaybackMode::ZeroCrossing => state.transform.zc_factor().set(v),
         _ => {}
     }

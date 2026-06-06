@@ -1,4 +1,5 @@
 use crate::dsp::fft::{plan_fft_forward, plan_fft_inverse};
+use crate::dsp::pitch_shift::PitchFactor;
 use std::f32::consts::PI;
 
 const FFT_SIZE: usize = 4096;
@@ -20,23 +21,23 @@ const HOP: usize = 1024; // 75% overlap
 /// phase coherence within each sinusoid (less warble) while remaining stateless
 /// (no buzz). See the synthesis loop for detail.
 ///
-/// - `factor > 1.0`: shift DOWN (divide frequencies). E.g. factor=10 shifts 50 kHz → 5 kHz.
-/// - `factor < -1.0`: shift UP (multiply frequencies). E.g. factor=-10 shifts 5 Hz → 50 Hz.
-/// - `|factor| <= 1.0`: bypass (returns input unchanged).
-pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: f64) -> Vec<f32> {
+/// See [`PitchFactor`] for the sign/bypass convention (positive = down,
+/// negative = up, `|value| <= 1` = bypass).
+pub fn phase_vocoder_pitch_shift(samples: &[f32], factor: PitchFactor) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
     }
 
-    let abs_factor = factor.abs() as f32;
-    if abs_factor <= 1.0 {
+    if factor.is_bypass() {
         return samples.to_vec();
     }
+
+    let abs_factor = factor.magnitude() as f32;
 
     // pitch_factor: multiply frequencies by this amount
     // shift_down factor=10 → pitch_factor = 0.1 (divide freq by 10)
     // shift_up factor=-10 → pitch_factor = 10 (multiply freq by 10)
-    let pitch_factor = if factor < 0.0 { abs_factor } else { 1.0 / abs_factor };
+    let pitch_factor = if factor.is_up() { abs_factor } else { 1.0 / abs_factor };
 
     if samples.len() < FFT_SIZE {
         return samples.to_vec();
@@ -240,27 +241,27 @@ mod tests {
     #[test]
     fn test_bypass_small_factor() {
         let input: Vec<f32> = (0..1000).map(|i| (i as f32 * 0.1).sin()).collect();
-        assert_eq!(phase_vocoder_pitch_shift(&input, 1.0), input);
-        assert_eq!(phase_vocoder_pitch_shift(&input, -1.0), input);
-        assert_eq!(phase_vocoder_pitch_shift(&input, 0.5), input);
+        assert_eq!(phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(1.0)), input);
+        assert_eq!(phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(-1.0)), input);
+        assert_eq!(phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(0.5)), input);
     }
 
     #[test]
     fn test_empty_input() {
-        assert!(phase_vocoder_pitch_shift(&[], 10.0).is_empty());
+        assert!(phase_vocoder_pitch_shift(&[], PitchFactor::from_signed(10.0)).is_empty());
     }
 
     #[test]
     fn test_preserves_length_down() {
         let input: Vec<f32> = (0..8192).map(|i| (i as f32 * 0.01).sin()).collect();
-        let output = phase_vocoder_pitch_shift(&input, 10.0);
+        let output = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(10.0));
         assert_eq!(output.len(), input.len());
     }
 
     #[test]
     fn test_preserves_length_up() {
         let input: Vec<f32> = (0..8192).map(|i| (i as f32 * 0.01).sin()).collect();
-        let output = phase_vocoder_pitch_shift(&input, -10.0);
+        let output = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(-10.0));
         assert_eq!(output.len(), input.len());
     }
 
@@ -273,7 +274,7 @@ mod tests {
         let input: Vec<f32> = (0..n)
             .map(|i| (2.0 * PI * freq * i as f32 / sr).sin())
             .collect();
-        let output = phase_vocoder_pitch_shift(&input, 10.0);
+        let output = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(10.0));
         let peak = output.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!(peak > 0.01, "Output should not be silent, peak={}", peak);
     }
@@ -281,7 +282,7 @@ mod tests {
     #[test]
     fn test_nonzero_output_up() {
         let input: Vec<f32> = (0..16384).map(|i| (i as f32 * 0.01).sin()).collect();
-        let output = phase_vocoder_pitch_shift(&input, -5.0);
+        let output = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(-5.0));
         let peak = output.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!(peak > 0.01, "Output should not be silent, peak={}", peak);
     }
@@ -319,7 +320,7 @@ mod tests {
         let input: Vec<f32> = (0..16384)
             .map(|i| (2.0 * PI * 24000.0 * i as f32 / sr).sin())
             .collect();
-        let out = phase_vocoder_pitch_shift(&input, 8.0);
+        let out = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(8.0));
         let measured = dominant_freq(&out, sr);
         // Generous tolerance: the stateless nearest-bin synthesis scales phase by
         // pitch_factor, which is only approximately frequency-accurate (the
@@ -338,7 +339,7 @@ mod tests {
         let input: Vec<f32> = (0..16384)
             .map(|i| (2.0 * PI * 3000.0 * i as f32 / sr).sin())
             .collect();
-        let out = phase_vocoder_pitch_shift(&input, -8.0);
+        let out = phase_vocoder_pitch_shift(&input, PitchFactor::from_signed(-8.0));
         let measured = dominant_freq(&out, sr);
         // Wider tolerance for up-shift: scaling phase by a large factor (8) is
         // the least frequency-accurate case of the nearest-bin synthesis.
