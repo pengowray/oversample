@@ -1317,7 +1317,10 @@ pub(crate) async fn build_streaming_overview(
 
     let hop = (total_samples / TARGET_COLS).max(FFT_SIZE);
     let n_cols = if total_samples >= FFT_SIZE { (total_samples - FFT_SIZE) / hop + 1 } else { 0 };
-    if n_cols == 0 { return; }
+    if n_cols == 0 {
+        state.log_debug("rec", format!("overview skipped: n_cols=0 (total_samples={})", total_samples));
+        return;
+    }
 
     let out_w = (n_cols as u32).min(TARGET_COLS as u32);
     let freq_bins = FFT_SIZE / 2 + 1;
@@ -1376,7 +1379,13 @@ pub(crate) async fn build_streaming_overview(
         sleep_ms(20).await;
     }
 
-    if all_mags.is_empty() || global_max <= 0.0 { return; }
+    if all_mags.is_empty() || global_max <= 0.0 {
+        state.log_debug("rec", format!(
+            "overview aborted: cols={}, global_max={:.4} (streaming source reads empty?)",
+            all_mags.len(), global_max,
+        ));
+        return;
+    }
 
     // Build the overview image
     let src_w = all_mags.len();
@@ -1414,6 +1423,7 @@ pub(crate) async fn build_streaming_overview(
 
     // Signal redraw so the overview panel picks up the new image
     state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
+    state.log_debug("rec", format!("overview built: {} cols for {}", src_w, expected_name));
     log::info!("Background overview complete for {} ({} columns)", expected_name, src_w);
 }
 

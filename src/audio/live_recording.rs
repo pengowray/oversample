@@ -1583,6 +1583,11 @@ async fn finalize_streaming_tauri_recording(
     };
     let preview = crate::dsp::fft::compute_preview(&audio, 256, 128);
 
+    state.log_debug("rec", format!(
+        "finalize_streaming: head={} samples, preview {}x{}, dur={:.1}s, file_size={}, handle={:?}",
+        audio.samples.len(), preview.width, preview.height, duration_secs, file_size, handle,
+    ));
+
     let (file_index, name_check) = update_or_create_file(
         state, live_idx, audio, preview, Vec::new(), header.sample_rate,
     );

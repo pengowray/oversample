@@ -605,7 +605,8 @@ pub fn OverviewPanel() -> impl IntoView {
                             ctx.set_fill_style_str(vu_color);
                             ctx.fill_rect(0.0, h as f64 - 2.0, bar_w, 2.0);
                         }
-                    } else {
+                    } else if file.loading_id.is_some() {
+                        // A real file still being decoded — show a loading hint.
                         ctx.set_fill_style_str("#333");
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
                         ctx.set_fill_style_str("#666");
@@ -614,6 +615,9 @@ pub fn OverviewPanel() -> impl IntoView {
                         ctx.set_text_baseline("middle");
                         let _ = ctx.fill_text("Loading\u{2026}", w as f64 / 2.0, h as f64 / 2.0);
                     }
+                    // else: an empty / armed live placeholder (no samples, no
+                    // preview, not loading) — leave the strip blank rather than
+                    // showing a misleading "Loading…".
                 }
                 OverviewView::Waveform => {
                     let ov_buf;

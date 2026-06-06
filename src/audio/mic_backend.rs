@@ -1383,7 +1383,14 @@ async fn open_usb(state: &AppState) -> bool {
     };
 
     let sample_rate = info.sample_rate as u32;
-    let product_name = info.product_name.clone();
+    // Friendly product name, falling back to the device path only if the device
+    // reported no product string. Used for both the app display and the native
+    // GUANO mic name so they match (the raw "/dev/bus/usb/…" path is not useful).
+    let product_name = if info.product_name.is_empty() {
+        device_name.clone()
+    } else {
+        info.product_name.clone()
+    };
     if info.fd < 0 || info.endpoint_address == 0 || info.max_packet_size == 0 {
         state.status.message().set(Some("USB device: invalid fd or endpoint".into()));
         return false;
@@ -1396,7 +1403,9 @@ async fn open_usb(state: &AppState) -> bool {
         max_packet_size: info.max_packet_size as u32,
         sample_rate,
         num_channels: info.num_channels as u32,
-        device_name: device_name.clone(),
+        // Friendly name (not the /dev/bus/usb/… path) so the native GUANO mic
+        // name matches what the app displays.
+        device_name: product_name.clone(),
         interface_number: info.interface_number as u32,
         alternate_setting: info.alternate_setting as u32,
         uac_version: info.uac_version as u32,
