@@ -600,38 +600,20 @@ async fn do_start_recording(state: &AppState, backend: MicBackend) {
     state.mic.starting_recording().set(false);
 }
 
-/// Convert a Tauri recording result into FinalizeParams.  When pre-roll is
-/// active, the Tauri backend's buffer only has samples from `is_recording=true`,
-/// but the WASM-side `NATIVE_REC_BUFFER` has the full picture (pre-roll +
-/// recording).  In that case we use the WASM buffer and force a WASM-side
-/// re-save so the written WAV includes the pre-roll + cue marker.
-fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult, state: &AppState) -> FinalizeParams {
-    let preroll = state.mic.preroll_samples().get_untracked();
-    if preroll > 0 {
-        // Use the full WASM buffer (which includes pre-roll) instead of the
-        // Tauri-only samples. Clear saved_path to force a WASM-side re-encode.
-        let full_samples = crate::audio::mic_backend::take_native_buffer();
-        log::info!(
-            "Pre-roll active: using WASM buffer ({} samples, {} pre-roll) instead of Tauri buffer ({} samples)",
-            full_samples.len(), preroll, rec.samples.len(),
-        );
-        FinalizeParams {
-            samples: full_samples,
-            sample_rate: rec.sample_rate,
-            bits_per_sample: rec.bits_per_sample,
-            is_float: rec.is_float,
-            saved_path: String::new(),
-            file_size: None,
-        }
-    } else {
-        FinalizeParams {
-            samples: rec.samples,
-            sample_rate: rec.sample_rate,
-            bits_per_sample: rec.bits_per_sample,
-            is_float: rec.is_float,
-            saved_path: rec.saved_path,
-            file_size: rec.file_size_bytes,
-        }
+/// Convert a Tauri recording result into FinalizeParams. Pre-roll is now seeded
+/// into the on-disk recording on the native side (from the listening ring), so
+/// every Tauri recording — pre-roll or not — comes back as either a saved path
+/// (streaming-to-disk / shared storage) or to-memory samples, and finalizes
+/// through the same path. The pre-roll cue marker is placed in
+/// `finalize_streaming_tauri_recording` from `mic_preroll_samples`.
+fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult) -> FinalizeParams {
+    FinalizeParams {
+        samples: rec.samples,
+        sample_rate: rec.sample_rate,
+        bits_per_sample: rec.bits_per_sample,
+        is_float: rec.is_float,
+        saved_path: rec.saved_path,
+        file_size: rec.file_size_bytes,
     }
 }
 
@@ -647,7 +629,7 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
             }, *state);
         }
         StopResult::TauriResult(rec) => {
-            finalize_recording(tauri_result_to_params(rec, state), *state);
+            finalize_recording(tauri_result_to_params(rec), *state);
         }
         StopResult::Empty => {
             log::warn!("No samples recorded");

@@ -68,6 +68,9 @@ impl RecoveryMeta {
             mic_make: self.mic_make.clone(),
             app_version: self.app_version.clone(),
             is_mobile: self.is_mobile,
+            // Crash recovery can't reconstruct the pre-roll boundary from the
+            // raw .part (the cue isn't stored separately), so leave it unset.
+            preroll_secs: None,
         };
         let start = chrono::DateTime::parse_from_rfc3339(&self.start_time_iso)
             .ok()

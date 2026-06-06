@@ -1,9 +1,15 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 pub use oversample_ipc::mic::{DeviceInfo, MicInfo, MicStatus, RecordingResult, SampleRateRange};
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// How many seconds of audio the listening pre-roll ring retains. A long-press
+/// record seeds up to this much preceding audio into the recording. Capped to
+/// bound memory while listening (e.g. ~30 MB at 384 kHz i32 mono).
+const PREROLL_RING_SECS: usize = 15;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[allow(dead_code)]
@@ -56,6 +62,17 @@ pub struct RecordingBuffer {
     /// the recording is written at this effective depth instead of the
     /// auto-detected one. `None` = Auto (use detection).
     pub force_bits: Option<u16>,
+    /// Rolling pre-roll ring (native format), filled only while listening
+    /// (`is_streaming && !is_recording`) and capped to [`PREROLL_RING_SECS`].
+    /// Seeded into the recording buffer at record start so a long-press capture
+    /// includes the preceding audio, written linearly to disk like the rest.
+    /// Only the ring matching `format` is used.
+    pub preroll_i16: VecDeque<i16>,
+    pub preroll_i32: VecDeque<i32>,
+    pub preroll_f32: VecDeque<f32>,
+    /// Number of pre-roll samples seeded at the last record start (for GUANO /
+    /// cue marker). Reset on `clear()`.
+    pub preroll_seeded: usize,
 }
 
 impl RecordingBuffer {
@@ -72,7 +89,84 @@ impl RecordingBuffer {
             detect_or: 0,
             detect_samples: 0,
             force_bits: None,
+            preroll_i16: VecDeque::new(),
+            preroll_i32: VecDeque::new(),
+            preroll_f32: VecDeque::new(),
+            preroll_seeded: 0,
         }
+    }
+
+    /// Max pre-roll ring length (mono samples) for the current sample rate.
+    fn preroll_cap(&self) -> usize {
+        (self.sample_rate as usize).saturating_mul(PREROLL_RING_SECS).max(1)
+    }
+
+    /// Append mono native samples to the pre-roll ring, trimming the oldest to
+    /// stay within [`preroll_cap`]. Called only while listening.
+    pub fn push_preroll_i16(&mut self, data: &[i16]) {
+        self.preroll_i16.extend(data.iter().copied());
+        let cap = self.preroll_cap();
+        while self.preroll_i16.len() > cap { self.preroll_i16.pop_front(); }
+    }
+    pub fn push_preroll_i32(&mut self, data: &[i32]) {
+        self.preroll_i32.extend(data.iter().copied());
+        let cap = self.preroll_cap();
+        while self.preroll_i32.len() > cap { self.preroll_i32.pop_front(); }
+    }
+    pub fn push_preroll_f32(&mut self, data: &[f32]) {
+        self.preroll_f32.extend(data.iter().copied());
+        let cap = self.preroll_cap();
+        while self.preroll_f32.len() > cap { self.preroll_f32.pop_front(); }
+    }
+
+    /// Drop all pre-roll rings (e.g. when a fresh listen session starts).
+    pub fn clear_preroll_rings(&mut self) {
+        self.preroll_i16.clear();
+        self.preroll_i32.clear();
+        self.preroll_f32.clear();
+    }
+
+    /// Seed the recording buffer with the last `p` pre-roll samples (clamped to
+    /// what the ring holds), prepending them to the just-cleared `samples_*`.
+    /// Bumps `total_samples`, records `preroll_seeded`, and clears the rings.
+    /// MUST be called right after `clear()` at record start so the pre-roll ends
+    /// up at the front of the recording. Returns the number of samples seeded.
+    pub fn seed_preroll(&mut self, p: usize) -> usize {
+        let seeded = if p == 0 {
+            0
+        } else {
+            // `make_contiguous` + `extend_from_slice` so the copy is a memcpy of
+            // the tail rather than an element-wise iterator — this runs under the
+            // buffer lock that the audio callback also takes, so keep it short to
+            // avoid a capture xrun at the pre-roll seam.
+            match self.format {
+                NativeSampleFormat::I16 => {
+                    let slice = self.preroll_i16.make_contiguous();
+                    let take = p.min(slice.len());
+                    let start = slice.len() - take;
+                    self.samples_i16.extend_from_slice(&slice[start..]);
+                    take
+                }
+                NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
+                    let slice = self.preroll_i32.make_contiguous();
+                    let take = p.min(slice.len());
+                    let start = slice.len() - take;
+                    self.samples_i32.extend_from_slice(&slice[start..]);
+                    take
+                }
+                NativeSampleFormat::F32 => {
+                    let slice = self.preroll_f32.make_contiguous();
+                    let take = p.min(slice.len());
+                    let start = slice.len() - take;
+                    self.samples_f32.extend_from_slice(&slice[start..]);
+                    take
+                }
+            }
+        };
+        self.total_samples += seeded;
+        self.preroll_seeded = seeded;
+        self.clear_preroll_rings();
+        seeded
     }
 
     /// Effective bit depth detected from the i32 sample stream so far, or `None`
@@ -97,8 +191,11 @@ impl RecordingBuffer {
         self.total_samples = 0;
         self.detect_or = 0;
         self.detect_samples = 0;
+        self.preroll_seeded = 0;
         // Note: shared_fd is NOT cleared here — it persists across clear()
         // because it's set before recording starts and consumed on stop.
+        // Note: the pre-roll rings are NOT cleared here — clear() runs at record
+        // start, immediately before `seed_preroll` reads them; seed clears them.
     }
 
     /// Drain pending f32 samples for streaming to frontend.
@@ -475,6 +572,16 @@ pub fn open_mic(
                             buf.total_samples += data.len();
                             buf.samples_i16.extend_from_slice(data);
                         }
+                    } else if strm.load(Ordering::Relaxed) {
+                        // Listening: keep the rolling pre-roll ring (native fmt).
+                        if channels > 1 {
+                            let mono: Vec<i16> = data.chunks(channels)
+                                .map(|frame| (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32) as i16)
+                                .collect();
+                            buf.push_preroll_i16(&mono);
+                        } else {
+                            buf.push_preroll_i16(data);
+                        }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
                         if channels > 1 {
@@ -520,6 +627,16 @@ pub fn open_mic(
                             buf.total_samples += data.len();
                             buf.samples_i32.extend_from_slice(data);
                         }
+                    } else if strm.load(Ordering::Relaxed) {
+                        // Listening: keep the rolling pre-roll ring (native fmt).
+                        if channels > 1 {
+                            let mono: Vec<i32> = data.chunks(channels)
+                                .map(|frame| (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32)
+                                .collect();
+                            buf.push_preroll_i32(&mono);
+                        } else {
+                            buf.push_preroll_i32(data);
+                        }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
                         if channels > 1 {
@@ -553,6 +670,16 @@ pub fn open_mic(
                         } else {
                             buf.total_samples += data.len();
                             buf.samples_f32.extend_from_slice(data);
+                        }
+                    } else if strm.load(Ordering::Relaxed) {
+                        // Listening: keep the rolling pre-roll ring (native fmt).
+                        if channels > 1 {
+                            let mono: Vec<f32> = data.chunks(channels)
+                                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+                                .collect();
+                            buf.push_preroll_f32(&mono);
+                        } else {
+                            buf.push_preroll_f32(data);
                         }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
@@ -697,6 +824,9 @@ pub struct TauriGuanoParams {
     pub mic_make: Option<String>,
     pub app_version: String,
     pub is_mobile: bool,
+    /// Pre-roll duration (seconds) seeded at record start, for the GUANO
+    /// `OVRS|Preroll` field. `None` when no pre-roll was used.
+    pub preroll_secs: Option<f64>,
 }
 
 /// Build GUANO metadata for a Tauri-side recording using the shared builder.
@@ -736,7 +866,7 @@ pub fn build_tauri_guano(
         loc_accuracy: params.location.as_ref().and_then(|l| l.accuracy),
         device_make: if params.is_mobile { params.device_make.clone() } else { None },
         device_model: if params.is_mobile { params.device_model.clone() } else { None },
-        preroll_secs: None, // Pre-roll handled on the WASM side
+        preroll_secs: params.preroll_secs,
     };
 
     guano::build_recording_guano(

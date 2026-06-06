@@ -149,6 +149,7 @@ pub fn mic_start_recording(
     loc_accuracy: Option<f64>,
     enable_recovery: Option<bool>,
     force_bits: Option<u16>,
+    preroll_samples: Option<u32>,
 ) -> Result<(), String> {
     let mic = state.lock().map_err(|e| e.to_string())?;
     let m = mic.as_ref().ok_or("Microphone not open")?;
@@ -157,6 +158,17 @@ pub fn mic_start_recording(
         buf.clear();
         buf.shared_fd = shared_fd;
         buf.force_bits = force_bits;
+        // Seed the just-cleared buffer with the listening pre-roll ring, then
+        // flip is_recording while still holding the buffer lock so the next
+        // audio callback appends live frames immediately after the pre-roll —
+        // no gap, no duplication. The recovery writer is installed just below;
+        // the emitter only flushes once it exists, so nothing reaches disk
+        // before the placeholder header.
+        let seeded = buf.seed_preroll(preroll_samples.unwrap_or(0) as usize);
+        m.is_recording.store(true, Ordering::Relaxed);
+        if seeded > 0 {
+            eprintln!("mic_start_recording: seeded {} pre-roll samples to disk", seeded);
+        }
     }
 
     let args = recovery::StartArgs {
@@ -179,7 +191,7 @@ pub fn mic_start_recording(
         }
     }
 
-    m.is_recording.store(true, Ordering::Relaxed);
+    // is_recording was set under the buffer lock above (with the pre-roll seed).
     Ok(())
 }
 
@@ -202,9 +214,9 @@ pub fn mic_stop_recording(
 
     // Snapshot totals before we drain the tail — we want the sample count as
     // captured, not the remainder-in-memory count.
-    let (num_samples, sample_rate, shared_fd) = {
+    let (num_samples, sample_rate, shared_fd, preroll_seeded) = {
         let mut buf = m.buffer.lock().unwrap();
-        (buf.total_samples, buf.sample_rate, buf.shared_fd.take())
+        (buf.total_samples, buf.sample_rate, buf.shared_fd.take(), buf.preroll_seeded)
     };
     // RAII-own the shared-storage fd so every early return below (no-samples,
     // skip-save, finalize error) closes it instead of leaking it.
@@ -268,6 +280,8 @@ pub fn mic_stop_recording(
         mic_make: None,
         app_version: app_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         is_mobile,
+        preroll_secs: (preroll_seeded > 0 && sample_rate > 0)
+            .then(|| preroll_seeded as f64 / sample_rate as f64),
     };
     let guano = recording::build_tauri_guano(
         sample_rate, num_samples, &filename_ts, &now, &guano_params,
@@ -385,6 +399,13 @@ pub fn mic_set_listening(state: tauri::State<MicMutex>, listening: bool) -> Resu
     let mic = state.lock().map_err(|e| e.to_string())?;
     let m = mic.as_ref().ok_or("Microphone not open")?;
     m.is_streaming.store(listening, Ordering::Relaxed);
+    // Start the pre-roll ring fresh each time listening begins so a long-press
+    // record can't pick up stale audio from a previous listen session.
+    if listening {
+        if let Ok(mut buf) = m.buffer.lock() {
+            buf.clear_preroll_rings();
+        }
+    }
     Ok(())
 }
 

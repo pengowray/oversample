@@ -131,6 +131,11 @@ pub struct StartRecordingArgs {
     pub loc_elevation: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loc_accuracy: Option<f64>,
+    /// Pre-roll length (samples) to seed from the native listening ring into the
+    /// start of the recording, so a long-press capture includes the preceding
+    /// audio written linearly to disk. `None`/0 = no pre-roll.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preroll_samples: Option<u32>,
 }
 
 /// Args for `mic_stop_recording` / `usb_stop_recording`.

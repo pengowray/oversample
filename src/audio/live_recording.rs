@@ -839,8 +839,12 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             //     until stop.
             //   - To-memory mode: user explicitly opted out of disk writes.
             let to_memory = state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
-            let preroll_active = state.mic.preroll_samples().get_untracked() > 0;
-            let wasm_is_authoritative = to_memory || preroll_active || !is_tauri;
+            // Pre-roll now streams to disk natively (seeded from the native
+            // listening ring), so on Tauri the WASM buffer is just the live
+            // display for pre-roll captures and can be trimmed like a normal
+            // streaming recording. Web has no native side, so it stays
+            // authoritative there (the WASM buffer IS the recording).
+            let wasm_is_authoritative = to_memory || !is_tauri;
             let should_trim = any_update
                 && (is_listening || (is_recording && !wasm_is_authoritative));
             if should_trim {
@@ -1555,8 +1559,25 @@ async fn finalize_streaming_tauri_recording(
     let final_time_res = HOP_SIZE as f64 / header.sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.view.scroll_offset().set(0.0);
-    if state.mic.preroll_samples().get_untracked() > 0 {
+
+    // Place the "Recording start" cue marker at the pre-roll boundary. The native
+    // side seeded the pre-roll from its listening ring (and recorded the duration
+    // in GUANO on disk); this is the visual marker on the displayed file. Clamp
+    // to the file length so a short listen can't push it past the end.
+    let preroll = state.mic.preroll_samples().get_untracked();
+    if preroll > 0 {
         state.mic.preroll_samples().set(0);
+        let pos = (preroll as u64).min(header.total_frames);
+        state.library.files().update(|files| {
+            if let Some(f) = files.get_mut(file_index) {
+                f.wav_markers = vec![crate::types::WavMarker {
+                    id: 1,
+                    position: pos,
+                    label: Some("Recording start".to_string()),
+                    note: None,
+                }];
+            }
+        });
     }
 
     // Clear the provisional live tiles + store, init the store for the full

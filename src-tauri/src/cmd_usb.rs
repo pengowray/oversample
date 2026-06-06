@@ -82,16 +82,25 @@ pub fn usb_start_recording(
     loc_elevation: Option<f64>,
     loc_accuracy: Option<f64>,
     enable_recovery: Option<bool>,
+    preroll_samples: Option<u32>,
 ) -> Result<(), String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     let s = usb.as_ref().ok_or("USB stream not open")?;
     if !s.is_streaming.load(Ordering::Relaxed) {
         return Err("USB stream is not actively streaming — cannot start recording".into());
     }
-    usb_audio::clear_usb_buffer(s);
     {
         let mut buf = s.buffer.lock().unwrap();
+        buf.clear();
         buf.shared_fd = shared_fd;
+        // Seed the pre-roll ring into the recording, then flip is_recording while
+        // still holding the buffer lock so the isochronous thread appends live
+        // frames right after the pre-roll (gapless seam).
+        let seeded = buf.seed_preroll(preroll_samples.unwrap_or(0) as usize);
+        s.is_recording.store(true, Ordering::Relaxed);
+        if seeded > 0 {
+            eprintln!("usb_start_recording: seeded {} pre-roll samples to disk", seeded);
+        }
     }
 
     let args = recovery::StartArgs {
@@ -117,7 +126,7 @@ pub fn usb_start_recording(
         }
     }
 
-    s.is_recording.store(true, Ordering::Relaxed);
+    // is_recording was set under the buffer lock above (with the pre-roll seed).
     Ok(())
 }
 
@@ -139,9 +148,9 @@ pub fn usb_stop_recording(
     s.is_recording.store(false, Ordering::Relaxed);
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
 
-    let (num_samples, sample_rate, shared_fd) = {
+    let (num_samples, sample_rate, shared_fd, preroll_seeded) = {
         let mut buf = s.buffer.lock().unwrap();
-        (buf.total_samples, buf.sample_rate, buf.shared_fd.take())
+        (buf.total_samples, buf.sample_rate, buf.shared_fd.take(), buf.preroll_seeded)
     };
     // RAII-own the shared-storage fd so every early return below closes it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
@@ -214,6 +223,8 @@ pub fn usb_stop_recording(
         mic_make: None,
         app_version: app_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         is_mobile,
+        preroll_secs: (preroll_seeded > 0 && sample_rate > 0)
+            .then(|| preroll_seeded as f64 / sample_rate as f64),
     };
     let guano = recording::build_tauri_guano(
         sample_rate, num_samples, &filename, &now, &guano_params,

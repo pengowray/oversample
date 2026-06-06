@@ -33,19 +33,18 @@ use std::cell::RefCell;
 /// GUANO chunk is appended and the header is patched) and moved to the
 /// final destination with no large in-memory copy.
 ///
-/// We disable this in two cases:
-/// - `record_mode == ToMemory`: user explicitly asked to keep it all in RAM
-///   (no disk write at all).
-/// - `mic_preroll_samples > 0`: pre-roll recording re-encodes the WAV on the
-///   WASM side to splice in the pre-roll buffer + cue marker; any partial
-///   written in that case would be thrown away.
+/// We disable this only for `record_mode == ToMemory` (user asked to keep it all
+/// in RAM, no disk write). Pre-roll now streams to disk too: the native side
+/// seeds the recording with its listening pre-roll ring (`preroll_samples`), so
+/// the `.wav.part` starts with the pre-roll and the whole capture is crash-safe
+/// and bounded — no WASM re-encode.
 fn build_start_recording_args(
     state: &AppState,
     shared_fd: Option<i32>,
 ) -> oversample_ipc::mic::StartRecordingArgs {
     let to_memory = state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
     let preroll = state.mic.preroll_samples().get_untracked();
-    let stream_to_disk = state.is_tauri && !to_memory && preroll == 0;
+    let stream_to_disk = state.is_tauri && !to_memory;
 
     // Filename mirrors the one the WASM side uses for the live file so the
     // sidecar + partial match up with the final WAV name on recovery.
@@ -86,6 +85,9 @@ fn build_start_recording_args(
         loc_longitude,
         loc_elevation,
         loc_accuracy,
+        // Seed the native listening pre-roll ring into the start of the
+        // recording so a long-press capture is written linearly to disk.
+        preroll_samples: (preroll > 0).then_some(preroll as u32),
     }
 }
 
@@ -110,9 +112,9 @@ fn build_stop_recording_args(state: &AppState) -> oversample_ipc::mic::StopRecor
         device_make,
         device_model,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
-        // Pre-roll: skip native WAV encoding/saving — the WASM side re-encodes
-        // with the full buffer + cue markers.
-        skip_native_save: (state.mic.preroll_samples().get_untracked() > 0).then_some(true),
+        // Pre-roll now streams to disk natively (seeded from the listening ring),
+        // so the native partial is authoritative — never skip the native save.
+        skip_native_save: None,
     }
 }
 

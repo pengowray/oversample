@@ -14,8 +14,14 @@
 //! Architecture modeled after batgizmo's nativeusb.cpp.
 
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Seconds of audio the listening pre-roll ring retains (USB is 16-bit mono, so
+/// ~11.5 MB at 384 kHz). A long-press record seeds up to this much preceding
+/// audio into the recording.
+const PREROLL_RING_SECS: usize = 15;
 
 // ── Shared types (all platforms) ────────────────────────────────────────
 
@@ -41,6 +47,12 @@ pub struct UsbRecordingBuffer {
     pub sample_rate: u32,
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
     pub shared_fd: Option<i32>,
+    /// Rolling pre-roll ring (16-bit), filled only while listening (not
+    /// recording) and capped to [`PREROLL_RING_SECS`]. Seeded into the recording
+    /// at record start so a long-press capture includes the preceding audio.
+    preroll_i16: VecDeque<i16>,
+    /// Pre-roll samples seeded at the last record start (for GUANO). Reset on `clear()`.
+    pub preroll_seeded: usize,
 }
 
 #[allow(dead_code)]
@@ -52,6 +64,8 @@ impl UsbRecordingBuffer {
             total_samples: 0,
             sample_rate,
             shared_fd: None,
+            preroll_i16: VecDeque::new(),
+            preroll_seeded: 0,
         }
     }
 
@@ -59,16 +73,48 @@ impl UsbRecordingBuffer {
         self.samples_i16.clear();
         self.pending_f32.clear();
         self.total_samples = 0;
+        self.preroll_seeded = 0;
+        // The pre-roll ring is NOT cleared here — clear() runs at record start,
+        // immediately before `seed_preroll` reads it; seed clears it.
     }
 
     fn push_samples(&mut self, data: &[i16], recording: bool) {
         if recording {
             self.total_samples += data.len();
             self.samples_i16.extend_from_slice(data);
+        } else {
+            // Listening: keep a rolling pre-roll ring, capped to bound memory.
+            self.preroll_i16.extend(data.iter().copied());
+            let cap = (self.sample_rate as usize).saturating_mul(PREROLL_RING_SECS).max(1);
+            while self.preroll_i16.len() > cap { self.preroll_i16.pop_front(); }
         }
         // Always push to pending for streaming/live display
         let f32_data: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
         self.pending_f32.extend_from_slice(&f32_data);
+    }
+
+    /// Seed the just-cleared recording buffer with the last `p` pre-roll samples
+    /// (clamped to the ring), bump `total_samples`, record `preroll_seeded`, and
+    /// clear the ring. Call right after `clear()` at record start.
+    pub fn seed_preroll(&mut self, p: usize) -> usize {
+        let seeded = if p == 0 {
+            0
+        } else {
+            // memcpy the tail (runs under the buffer lock the iso thread takes).
+            let slice = self.preroll_i16.make_contiguous();
+            let take = p.min(slice.len());
+            let start = slice.len() - take;
+            self.samples_i16.extend_from_slice(&slice[start..]);
+            take
+        };
+        self.total_samples += seeded;
+        self.preroll_seeded = seeded;
+        self.preroll_i16.clear();
+        seeded
+    }
+
+    pub fn clear_preroll_ring(&mut self) {
+        self.preroll_i16.clear();
     }
 
     pub fn drain_pending(&mut self) -> Vec<f32> {
@@ -192,11 +238,6 @@ pub fn encode_usb_wav(state: &UsbStreamState) -> Result<Vec<u8>, String> {
         .finalize()
         .map_err(|e| format!("WAV finalize error: {}", e))?;
     Ok(cursor.into_inner())
-}
-
-pub fn clear_usb_buffer(state: &UsbStreamState) {
-    let mut buf = state.buffer.lock().unwrap();
-    buf.clear();
 }
 
 // ── Android isochronous streaming ───────────────────────────────────────
