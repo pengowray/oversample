@@ -1429,7 +1429,7 @@ async fn finalize_streaming_tauri_recording(
     use crate::audio::streaming_source::{FileHandle, StreamingWavSource};
     use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
     use crate::components::file_sidebar::streaming_load::{decode_head_pcm, scan_tail_for_guano};
-    use crate::canvas::tile_cache;
+    use crate::canvas::{spectral_store, tile_cache};
 
     // Read first 64 KB for header parsing (covers fmt, optional fact, and
     // usually the data chunk start).
@@ -1507,8 +1507,6 @@ async fn finalize_streaming_tauri_recording(
             zc_data: None,
         },
     };
-    let audio_for_stft = audio.clone();
-
     let preview = crate::dsp::fft::compute_preview(&audio, 256, 128);
 
     // Build the recording name from the saved filename.
@@ -1518,28 +1516,72 @@ async fn finalize_streaming_tauri_recording(
         state, live_idx, audio, preview, Vec::new(), header.sample_rate,
     );
 
-    // Rename the live entry to match the on-disk filename + wire up the handle.
+    // Display the FULL recording straight from the on-disk .wav — no 30 s cap.
+    // Size the spectrogram + spectral store for the whole file and let the tile
+    // scheduler compute baseline tiles on demand from the StreamingWavSource
+    // (reading via read_file_range), exactly like a regular large streaming-WAV
+    // load. The live capture's ~30 s circular window during recording/listening
+    // is a separate buffer and is unaffected — this only governs the post-Stop
+    // displayed file.
+    const HOP_SIZE: usize = 512;
+    let fft_size = state.spect.fft_mode().get_untracked()
+        .fft_for_lod(tile_cache::LOD_BASELINE);
+    let total_len = header.total_frames as usize;
+    let total_cols = if total_len >= fft_size {
+        (total_len - fft_size) / HOP_SIZE + 1
+    } else { 0 };
+
+    // Rename the live entry to match the on-disk filename, wire up the file
+    // handle, and install the full-length (empty) spectrogram metadata so the
+    // renderer maps the whole recording.
     state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.name = name.clone();
             f.file_handle = Some(FileHandle::TauriPath(path.clone()));
             f.is_recording = false;
             f.audio.metadata.bits_per_sample = expected_bits_per_sample;
+            f.spectrogram = SpectrogramData {
+                columns: Arc::new(Vec::new()),
+                total_columns: total_cols,
+                freq_resolution: header.sample_rate as f64 / fft_size as f64,
+                time_resolution: HOP_SIZE as f64 / header.sample_rate as f64,
+                max_freq: header.sample_rate as f64 / 2.0,
+                sample_rate: header.sample_rate,
+            };
         }
     });
 
     let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-    let final_time_res = 512.0 / header.sample_rate as f64;
+    let final_time_res = HOP_SIZE as f64 / header.sample_rate as f64;
     state.view.zoom_level().set(crate::viewport::fit_zoom(canvas_w, final_time_res, duration_secs));
     state.view.scroll_offset().set(0.0);
     if state.mic.preroll_samples().get_untracked() > 0 {
         state.mic.preroll_samples().set(0);
     }
 
-    // Clear the provisional live-tile cache and kick off progressive tile
-    // computation — the same path used by regular file loads.
+    // Clear the provisional live tiles + store, init the store for the full
+    // length, prefetch the initial viewport from disk, then schedule the
+    // visible tiles. Remaining tiles stream in on demand as the user scrolls —
+    // the same machinery as try_streaming_wav.
     tile_cache::clear_file(file_index);
-    spawn_spectrogram_computation(audio_for_stft, name_check, file_index, state);
+    spectral_store::clear_file(file_index);
+    spectral_store::init(file_index, total_cols, fft_size);
+
+    let (start_sample, count) = crate::components::file_sidebar::streaming_load::prefetch_window(
+        state, header.sample_rate, fft_size,
+    );
+    if let Some(f) = state.library.files().get_untracked().get(file_index).cloned() {
+        if let Some(streaming) = f.audio.source.as_any().downcast_ref::<StreamingWavSource>() {
+            streaming.prefetch_region(start_sample, count).await;
+        }
+    }
+    tile_cache::schedule_visible_tiles_from_store(state, file_index, total_cols);
+    state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
+    wasm_bindgen_futures::spawn_local(
+        crate::components::file_sidebar::streaming_load::build_streaming_overview(
+            state, file_index, name_check,
+        ),
+    );
 
     // Compute identity hash from the file on disk so the Name field in GUANO
     // and future sidecar resolution stay consistent.

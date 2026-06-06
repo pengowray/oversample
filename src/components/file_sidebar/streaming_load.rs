@@ -169,7 +169,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
 }
 
 /// The (start_sample, sample_count) window to prefetch for the initial viewport.
-pub(super) fn prefetch_window(state: AppState, sample_rate: u32, fft_size: usize) -> (u64, usize) {
+pub(crate) fn prefetch_window(state: AppState, sample_rate: u32, fft_size: usize) -> (u64, usize) {
     const HOP_SIZE: usize = 512; // baseline LOD hop (matches each decoder's local)
     let scroll = state.view.scroll_offset().get_untracked();
     let zoom = state.view.zoom_level().get_untracked();
@@ -1280,7 +1280,7 @@ async fn background_ogg_decode(
 /// Reads samples progressively from the streaming source with a large hop to produce
 /// ~1024 FFT columns. Yields frequently and defers when the system is busy (playing
 /// audio or computing main-view tiles).
-pub(super) async fn build_streaming_overview(
+pub(crate) async fn build_streaming_overview(
     state: AppState,
     file_index: usize,
     expected_name: String,
