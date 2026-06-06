@@ -1001,7 +1001,7 @@ pub fn Spectrogram() -> impl IntoView {
                 if let Some(file_idx_val) = idx {
                     if let Some(set) = state.file_id_at(file_idx_val).and_then(|id| annotation_store.get(id)) {
                         let hover_ref = annotation_hover_handle.as_ref()
-                            .map(|(id, pos)| (id.as_str(), *pos));
+                            .map(|(id, pos)| (id, *pos));
                         spectrogram_renderer::draw_annotations(
                             &ctx,
                             set,

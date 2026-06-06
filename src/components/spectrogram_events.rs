@@ -318,7 +318,7 @@ pub fn apply_hand_pan(
 /// Apply annotation resize based on which handle is being dragged.
 pub fn apply_annotation_resize(
     state: AppState,
-    ann_id: String,
+    ann_id: AnnotationId,
     handle: crate::state::ResizeHandlePosition,
     time: f64,
     freq: f64,

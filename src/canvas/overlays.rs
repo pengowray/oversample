@@ -2,6 +2,7 @@ use crate::canvas::colors::{freq_marker_color, freq_marker_label, freq_resistor_
 use crate::state::ShieldStyle;
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::dsp::filters::{harmonics_band_bounds, BandMode};
+use crate::annotations::AnnotationId;
 use crate::state::{FftMode, SpectrogramHandle, Selection, ResizeHandlePosition};
 use web_sys::CanvasRenderingContext2d;
 
@@ -1442,8 +1443,8 @@ pub fn draw_tile_debug_overlay(
 pub fn draw_annotations(
     ctx: &web_sys::CanvasRenderingContext2d,
     annotation_set: &crate::annotations::AnnotationSet,
-    selected_ids: &[String],
-    hover_handle: Option<(&str, ResizeHandlePosition)>,
+    selected_ids: &[AnnotationId],
+    hover_handle: Option<(&AnnotationId, ResizeHandlePosition)>,
     min_freq: f64,
     max_freq: f64,
     scroll_offset: f64,
@@ -1541,7 +1542,7 @@ pub fn draw_annotations(
             for (pos, hx, hy) in &handles {
                 let is_hovered = hover_handle
                     .as_ref()
-                    .is_some_and(|(hid, hp)| *hid == annotation.id && *hp == *pos);
+                    .is_some_and(|(hid, hp)| **hid == annotation.id && *hp == *pos);
 
                 let size = if is_hovered {
                     if is_mobile { 8.0 } else { 4.0 }

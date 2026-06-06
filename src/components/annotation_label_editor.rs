@@ -2,7 +2,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use crate::state::AppState;
-use crate::annotations::AnnotationKind;
+use crate::annotations::{AnnotationKind, AnnotationId};
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::file_sidebar::settings_panel::{
     delete_annotation, update_annotation_label,
@@ -81,7 +81,7 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
                     let _ = el.select();
                 }
             });
-            let save_from = move |el: &web_sys::HtmlInputElement, aid: &str| {
+            let save_from = move |el: &web_sys::HtmlInputElement, aid: &AnnotationId| {
                 let val = el.value();
                 let label = if val.trim().is_empty() { None } else { Some(val.trim().to_string()) };
                 update_annotation_label(state, aid, label);

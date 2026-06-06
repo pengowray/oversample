@@ -116,8 +116,60 @@ impl FileIdentity {
     }
 }
 
-/// Unique annotation identifier (UUID v4 as string).
-pub type AnnotationId = String;
+/// A unique annotation identifier (a UUID v4).
+///
+/// A newtype rather than a bare `String`, so an annotation id can't be silently
+/// swapped with an arbitrary string or with some other id-shaped field.
+/// `#[serde(transparent)]` keeps the on-disk/JSON form a plain string, so
+/// existing `.batm` sidecars load unchanged.
+///
+/// Keep ids flowing as `AnnotationId` (not `String`) — the pattern to follow:
+/// - make a fresh one with [`AnnotationId::new`];
+/// - wrap a string crossing a boundary (a DOM dataset value, an FFI string)
+///   with `AnnotationId::from(s)`;
+/// - compare two ids with `==` (they are `Eq`);
+/// - reach the underlying text only at the edges (DOM attributes, logging) via
+///   [`AnnotationId::as_str`] or `Display`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AnnotationId(String);
+
+impl AnnotationId {
+    /// Generate a fresh random id (UUID v4).
+    pub fn new() -> Self {
+        Self(generate_uuid())
+    }
+
+    /// The underlying string. Use only at edges (DOM attributes, logging);
+    /// pass `AnnotationId` itself everywhere else.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for AnnotationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for AnnotationId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for AnnotationId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for AnnotationId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
 
 /// A time+frequency region annotation.
 /// Frequency bounds are optional — present = "region" (2D box), absent = "segment" (time-only span).
@@ -524,10 +576,10 @@ pub fn flatten_tree(nodes: &[AnnotationNode]) -> Vec<(AnnotationId, usize)> {
 }
 
 /// Collect all descendant ids of an annotation (for recursive deletion / grouping).
-pub fn collect_descendants(annotations: &[Annotation], parent_id: &str) -> Vec<AnnotationId> {
+pub fn collect_descendants(annotations: &[Annotation], parent_id: &AnnotationId) -> Vec<AnnotationId> {
     let mut result = Vec::new();
     for a in annotations {
-        if a.parent_id.as_deref() == Some(parent_id) {
+        if a.parent_id.as_ref() == Some(parent_id) {
             result.push(a.id.clone());
             result.extend(collect_descendants(annotations, &a.id));
         }
@@ -536,9 +588,9 @@ pub fn collect_descendants(annotations: &[Annotation], parent_id: &str) -> Vec<A
 }
 
 /// Assign consecutive sort_order values to annotations at a given parent level.
-pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&str>) {
+pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&AnnotationId>) {
     let mut indices: Vec<usize> = annotations.iter().enumerate()
-        .filter(|(_, a)| a.parent_id.as_deref() == parent_id)
+        .filter(|(_, a)| a.parent_id.as_ref() == parent_id)
         .map(|(i, _)| i)
         .collect();
     // Sort by existing sort_order then created_at
@@ -552,5 +604,38 @@ pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&str>
     });
     for (rank, &idx) in indices.iter().enumerate() {
         annotations[idx].sort_order = Some(rank as f64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `AnnotationId` must serialize as a BARE string (serde `transparent`), so
+    /// `.batm` sidecars written before the newtype existed still load unchanged.
+    #[test]
+    fn annotation_id_is_serde_transparent() {
+        let id = AnnotationId::from("11111111-2222-4333-8444-555555555555");
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"11111111-2222-4333-8444-555555555555\"");
+
+        // A pre-newtype bare string deserializes straight into the newtype.
+        let back: AnnotationId = serde_json::from_str("\"abc-123\"").unwrap();
+        assert_eq!(back, AnnotationId::from("abc-123"));
+        assert_eq!(back.as_str(), "abc-123");
+    }
+
+    /// The forms ids actually persist in (`Option` for parent_id, `Vec` for
+    /// selection) also stay bare strings / arrays of bare strings.
+    #[test]
+    fn optional_and_listed_ids_stay_bare() {
+        let parent: Option<AnnotationId> = Some(AnnotationId::from("p1"));
+        assert_eq!(serde_json::to_string(&parent).unwrap(), "\"p1\"");
+        assert_eq!(serde_json::to_string(&Option::<AnnotationId>::None).unwrap(), "null");
+
+        let ids = vec![AnnotationId::from("a"), AnnotationId::from("b")];
+        assert_eq!(serde_json::to_string(&ids).unwrap(), "[\"a\",\"b\"]");
+        let back: Vec<AnnotationId> = serde_json::from_str("[\"a\",\"b\"]").unwrap();
+        assert_eq!(back, ids);
     }
 }

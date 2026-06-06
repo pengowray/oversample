@@ -1,7 +1,7 @@
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use crate::state::{ActiveFocus, AppState, Selection};
-use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Marker, Region, generate_default_label, generate_uuid, now_iso8601};
+use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Marker, Region, generate_default_label, AnnotationId, now_iso8601};
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::file_sidebar::settings_panel::{
     toggle_annotation_lock, delete_annotation,
@@ -30,7 +30,7 @@ pub fn annotate_selection(state: &AppState) {
         });
         let Some(new_set) = new_set else { return; };
         state.snapshot_annotations();
-        let ann_id = generate_uuid();
+        let ann_id = AnnotationId::new();
         state.annotations.store().update(|store| {
             let set = store.entry_or_insert_with(file_id, || new_set);
             {
@@ -93,7 +93,7 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
     });
     let Some(new_set) = new_set else { return; };
     state.snapshot_annotations();
-    let ann_id = generate_uuid();
+    let ann_id = AnnotationId::new();
     state.annotations.store().update(|store| {
         let set = store.entry_or_insert_with(file_id, || new_set);
         {

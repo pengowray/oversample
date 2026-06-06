@@ -10,7 +10,7 @@ use crate::state::{AppState, RightSidebarTab};
 use crate::dsp::psd::{self, PsdResult};
 use crate::annotations::{
     Annotation, AnnotationKind, AnnotationSet, Group, Region,
-    generate_uuid, now_iso8601,
+    now_iso8601, AnnotationId,
 };
 use std::sync::Arc;
 
@@ -136,7 +136,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
             state.snapshot_annotations();
 
-            let group_id = generate_uuid();
+            let group_id = AnnotationId::new();
             let mut annotations = vec![Annotation {
                 id: group_id.clone(),
                 kind: AnnotationKind::Group(Group {
@@ -160,7 +160,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
             if let Some(sel) = selection {
                 if let (Some(flo), Some(fhi)) = (sel.freq_low, sel.freq_high) {
                     annotations.push(Annotation {
-                        id: generate_uuid(),
+                        id: AnnotationId::new(),
                         kind: AnnotationKind::Region(Region {
                             time_start,
                             time_end,
@@ -188,7 +188,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
                 // Peak frequency region
                 let peak_half_bw = psd.freq_resolution;
                 annotations.push(Annotation {
-                    id: generate_uuid(),
+                    id: AnnotationId::new(),
                     kind: AnnotationKind::Region(Region {
                         time_start,
                         time_end,
@@ -209,7 +209,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
                 if let Some((lo, hi)) = peak.bw_6db {
                     annotations.push(Annotation {
-                        id: generate_uuid(),
+                        id: AnnotationId::new(),
                         kind: AnnotationKind::Region(Region {
                             time_start,
                             time_end,
@@ -231,7 +231,7 @@ pub(crate) fn PsdPanel() -> impl IntoView {
 
                 if let Some((lo, hi)) = peak.bw_10db {
                     annotations.push(Annotation {
-                        id: generate_uuid(),
+                        id: AnnotationId::new(),
                         kind: AnnotationKind::Region(Region {
                             time_start,
                             time_end,
