@@ -117,6 +117,53 @@ pub fn oldest_time() -> f64 {
     })
 }
 
+/// Render the *retained* window (the columns we still hold, `[oldest .. now]`)
+/// as a downsampled greyscale overview image — matching the file-overview look.
+/// This deliberately spans only what we actually have (e.g. the last ~20–160 s),
+/// NOT the full elapsed session, so the live overview isn't "a 10-minute file
+/// with a sliver at the end". Returns `None` until there's data.
+pub fn render_overview(out_w: u32, out_h: u32) -> Option<crate::types::PreviewImage> {
+    use crate::canvas::colors::magnitude_to_greyscale;
+    if out_w == 0 || out_h == 0 {
+        return None;
+    }
+    WATERFALL.with(|w| {
+        let wf = w.borrow();
+        let wf = wf.as_ref()?;
+        if wf.total_written == 0 || wf.max_magnitude <= 0.0 {
+            return None;
+        }
+        let oldest = wf.total_written.saturating_sub(wf.capacity);
+        let retained = wf.total_written - oldest;
+        if retained == 0 {
+            return None;
+        }
+        let freq_bins = wf.freq_bins;
+        let ow = out_w as usize;
+        let oh = out_h as usize;
+        let mut pixels = vec![0u8; ow * oh * 4];
+        for x in 0..ow {
+            let col = (oldest + (x * retained) / ow).min(wf.total_written - 1);
+            let base = (col % wf.capacity) * freq_bins;
+            for y in 0..oh {
+                // y=0 = top = high freq; y=h-1 = bottom = low freq.
+                let bin = freq_bins - 1 - ((y * freq_bins) / oh).min(freq_bins - 1);
+                let grey = magnitude_to_greyscale(wf.magnitudes[base + bin], wf.max_magnitude);
+                let idx = (y * ow + x) * 4;
+                pixels[idx] = grey;
+                pixels[idx + 1] = grey;
+                pixels[idx + 2] = grey;
+                pixels[idx + 3] = 255;
+            }
+        }
+        Some(crate::types::PreviewImage {
+            width: out_w,
+            height: out_h,
+            pixels: std::sync::Arc::new(pixels),
+        })
+    })
+}
+
 /// Time resolution (seconds per column).
 pub fn time_resolution() -> f64 {
     WATERFALL.with(|w| {

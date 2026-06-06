@@ -377,6 +377,40 @@ fn draw_overview_waveform(
     }
 }
 
+/// Draw the "● Recording/Listening …" status text + VU bar. Used in the live
+/// overview when there's no waterfall data to render yet.
+fn draw_live_status(
+    ctx: &CanvasRenderingContext2d,
+    w: u32,
+    h: u32,
+    file: &crate::state::LoadedFile,
+    state: &AppState,
+) {
+    ctx.set_fill_style_str("#1a1a1a");
+    ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
+    let is_listen = file.is_live_listen;
+    let label = if is_listen { "Listening" } else { "Recording" };
+    let elapsed = crate::canvas::live_waterfall::total_time().max(file.audio.duration_secs);
+    let text = if elapsed >= 1.0 {
+        format!("\u{25CF} {} {}:{:02}", label, elapsed as u32 / 60, elapsed as u32 % 60)
+    } else {
+        format!("\u{25CF} {}\u{2026}", label)
+    };
+    let color = if is_listen { "#6af" } else { "#f66" };
+    ctx.set_fill_style_str(color);
+    ctx.set_font("11px system-ui");
+    ctx.set_text_align("center");
+    ctx.set_text_baseline("middle");
+    let _ = ctx.fill_text(&text, w as f64 / 2.0, h as f64 / 2.0);
+    let peak = state.mic.peak_level().get_untracked();
+    if peak > 0.01 {
+        let bar_w = (peak as f64 * w as f64).min(w as f64);
+        let vu_color = if is_listen { "#48f" } else { "#f44" };
+        ctx.set_fill_style_str(vu_color);
+        ctx.fill_rect(0.0, h as f64 - 2.0, bar_w, 2.0);
+    }
+}
+
 // ── Overview toggle button ────────────────────────────────────────────────────
 
 #[component]
@@ -453,6 +487,10 @@ pub fn OverviewPanel() -> impl IntoView {
         let cv = state.viewmode.channel_view().get();
         let _mic_recording = state.mic.recording().get();
         let _mic_listening = state.mic.listening().get();
+        // Re-render the live overview on each capture tick. `live_data_cols` is
+        // bumped by the processing loop while recording/listening and stays 0
+        // otherwise, so static files don't pay for this.
+        let _live_cols = state.mic.live_data_cols().get();
         let auto_gain = state.gain.auto().get();
         let gain_db = if auto_gain { state.compute_auto_gain_untracked() } else { state.gain.db().get() };
         // Re-read canvas dimensions when sidebar layout changes
@@ -540,6 +578,38 @@ pub fn OverviewPanel() -> impl IntoView {
             }
             let file = file_opt.unwrap();
 
+            // During live listening/recording, the overview shows ONLY the
+            // retained waterfall window (what we still have — the last ~N s),
+            // not the full elapsed session. Render a real spectrogram from the
+            // waterfall columns; the toggle shows the retained sample waveform.
+            let is_live = (file.is_recording || file.is_live_listen)
+                && crate::canvas::live_waterfall::is_active();
+            if is_live {
+                match overview_view {
+                    OverviewView::Spectrogram => {
+                        if let Some(img) = crate::canvas::live_waterfall::render_overview(w, h) {
+                            draw_overview_spectrogram(
+                                &ctx, canvas, &img,
+                                0.0, 1.0, file.spectrogram.time_resolution,
+                                0.0, 0.0, 0.0, 1.0, &[], 1.0, None, true,
+                            );
+                        } else {
+                            draw_live_status(&ctx, w, h, file, &state);
+                        }
+                    }
+                    OverviewView::Waveform => {
+                        if !file.audio.samples.is_empty() {
+                            draw_overview_waveform(
+                                &ctx, canvas, &file.audio.samples,
+                                file.audio.sample_rate, file.spectrogram.time_resolution,
+                                0.0, 1.0, 0.0, &[], gain_db, true,
+                            );
+                        } else {
+                            draw_live_status(&ctx, w, h, file, &state);
+                        }
+                    }
+                }
+            } else {
             match overview_view {
                 OverviewView::Spectrogram => {
                     let overview_src = file.overview_image.as_ref().or(file.preview.as_ref());
@@ -642,6 +712,7 @@ pub fn OverviewPanel() -> impl IntoView {
                     );
                 }
             }
+            } // end else (not live)
             // Time markers are drawn by the overlay Effect.
         }
     });
@@ -760,15 +831,26 @@ pub fn OverviewPanel() -> impl IntoView {
             } else {
                 file.audio.sample_rate as f64 / 2.0
             };
-            let total_duration = file.audio.duration_secs;
+            // During live, the overview spans only the retained waterfall window
+            // [oldest_time, now]; otherwise the whole file. axis_start offsets the
+            // viewport rect / markers so they line up with the background.
+            let is_live = (file.is_recording || file.is_live_listen)
+                && crate::canvas::live_waterfall::is_active();
+            let (axis_start, total_duration) = if is_live {
+                let oldest = crate::canvas::live_waterfall::oldest_time();
+                let total = crate::canvas::live_waterfall::total_time();
+                (oldest, (total - oldest).max(0.001))
+            } else {
+                (0.0, file.audio.duration_secs)
+            };
             if total_duration <= 0.0 { return; }
             let spec_time_res = file.spectrogram.time_resolution;
             let px_per_sec = cw / total_duration;
 
-            // Viewport rectangle
+            // Viewport rectangle (offset by axis_start for the live window)
             let visible_cols = main_canvas_w / zoom.max(0.001);
             let visible_time = visible_cols * spec_time_res;
-            let vp_x = (scroll * px_per_sec).max(0.0);
+            let vp_x = ((scroll - axis_start) * px_per_sec).max(0.0);
             let vp_w = (visible_time * px_per_sec).max(2.0);
 
             match overview_view {
@@ -817,10 +899,10 @@ pub fn OverviewPanel() -> impl IntoView {
                 }
             }
 
-            // Bookmark dots
+            // Bookmark dots (offset by axis_start for the live window)
             ctx.set_fill_style_str("rgba(255, 200, 50, 0.9)");
             for bm in bookmarks.iter() {
-                let x = bm.time * px_per_sec;
+                let x = (bm.time - axis_start) * px_per_sec;
                 if x >= 0.0 && x <= cw {
                     ctx.begin_path();
                     let _ = ctx.arc(x, 5.0, 3.0, 0.0, std::f64::consts::TAU);
@@ -828,25 +910,20 @@ pub fn OverviewPanel() -> impl IntoView {
                 }
             }
 
-            // Time markers
-            let is_live_wf = (file.is_live_listen || file.is_recording)
-                && crate::canvas::live_waterfall::is_active();
-            let ov_duration = if is_live_wf {
-                crate::canvas::live_waterfall::total_time()
-            } else {
-                file.audio.duration_secs
-            };
+            // Time markers — span the live retained window [axis_start, now] or
+            // the whole file. (scroll_offset arg = left-edge time, visible_time =
+            // span shown, duration = end time.)
             let clock_cfg = file.recording_start_epoch_ms()
                 .map(|ms| crate::canvas::time_markers::ClockTimeConfig {
                     recording_start_epoch_ms: ms,
                 });
             crate::canvas::time_markers::draw_time_markers(
                 &ctx,
-                0.0,
-                ov_duration,
+                axis_start,
+                total_duration,
                 cw,
                 ch,
-                ov_duration,
+                axis_start + total_duration,
                 clock_cfg,
                 state.timeline.show_clock_time().get(),
                 1.0,
@@ -872,11 +949,21 @@ pub fn OverviewPanel() -> impl IntoView {
             .unwrap_or(0.0)
     };
 
-    // Convert a click x-coordinate to a time offset (seconds)
+    // Convert a click x-coordinate to a time offset (seconds). During live the
+    // overview spans only the retained window [oldest_time, now], so map within
+    // that window rather than [0, now].
     let x_to_time = move |canvas_x: f64, canvas_w: f64| -> Option<f64> {
         let dur = file_duration();
         if dur <= 0.0 || canvas_w <= 0.0 { return None; }
-        Some((canvas_x / canvas_w) * dur)
+        let start = {
+            let is_live = (state.mic.recording().get_untracked()
+                || state.mic.listening().get_untracked())
+                && crate::canvas::live_waterfall::is_active()
+                && state.timeline.active().get_untracked().is_none();
+            if is_live { crate::canvas::live_waterfall::oldest_time() } else { 0.0 }
+        };
+        let span = (dur - start).max(0.001);
+        Some(start + (canvas_x / canvas_w) * span)
     };
 
     // Compute half the visible time window for centering clicks
