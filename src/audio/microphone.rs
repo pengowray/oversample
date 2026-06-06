@@ -229,17 +229,32 @@ pub async fn handle_usb_hotplug(state: &AppState, event: &str, product: &str, de
             query_mic_info(state).await;
         }
         "detached" => {
-            // A mid-recording unplug can't continue — stop (and finalize) it.
+            // Was the mic we're showing/using this USB device? (Direct-USB backend,
+            // or a device_info marked USB.) If so, reset it below so the UI updates.
+            let was_active_usb = state.mic.backend().get_untracked() == Some(MicBackend::RawUsb)
+                || state.mic.device_info().get_untracked()
+                    .map(|i| i.connection_type == "USB")
+                    .unwrap_or(false);
+
             if state.mic.recording().get_untracked() {
+                // A mid-recording unplug can't continue — stop (and finalize) it.
                 toggle_record(state).await;
                 state.show_info_toast("USB mic disconnected — recording stopped");
             } else {
+                // Tear down a live-listen stream that's reading from the gone device.
+                if was_active_usb && state.mic.listening().get_untracked() {
+                    stop_all(state);
+                }
                 state.show_info_toast("USB mic disconnected");
             }
-            // If we were capturing from this USB device, drop the backend so the
-            // user is re-prompted to pick one.
-            if state.mic.backend().get_untracked() == Some(MicBackend::RawUsb) {
+
+            // Clear the shown/selected mic so the button (mic_value reads
+            // device_info) stops displaying the gone device and the user is
+            // re-prompted to pick one.
+            if was_active_usb {
                 state.mic.backend().set(None);
+                state.mic.selected_device().set(None);
+                state.mic.device_info().set(None);
                 state.mic.acquisition_state().set(MicAcquisitionState::Idle);
             }
             state.mic.new_device_available().set(false);
