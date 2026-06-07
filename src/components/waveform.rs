@@ -69,10 +69,18 @@ pub fn Waveform() -> impl IntoView {
     // user is actively dragging, we return the last computed split
     // unchanged; a fresh split fires once when the drag ends.
     let band_split_cache: StoredValue<Option<(Vec<f32>, Vec<f32>, Vec<f32>)>> = StoredValue::new(None);
+    // Identity of the last computed split's inputs. During live capture the
+    // processing loop bumps file metadata via `files().update()` every ~50 ms,
+    // which invalidates this Memo every tick — but the actual samples only change
+    // on the adaptive snapshot (~1 Hz). Without this guard the O(N·log N) FFT
+    // re-ran ~20×/s over identical data (and unbounded for a growing recording).
+    let band_split_key: StoredValue<Option<(usize, usize, u64, u64, ChannelView)>> =
+        StoredValue::new(None);
     let band_split = Memo::new(move |_| {
         let wv = state.viewmode.waveform_view().get();
         if wv == WaveformView::Simple {
             band_split_cache.set_value(None);
+            band_split_key.set_value(None);
             return None;
         }
         // Early-return while dragging. This must happen BEFORE reading
@@ -92,13 +100,34 @@ pub fn Waveform() -> impl IntoView {
         let freq_low = ff.lo;
         let freq_high = ff.hi;
 
+        // Skip the FFT when nothing that affects it changed (samples buffer
+        // identity + length + band range + channel). `samples` is swapped to a
+        // fresh Arc on each snapshot, so its data pointer tracks real changes.
+        let key = idx.and_then(|i| files.get(i)).map(|f| {
+            (
+                f.audio.samples.as_ptr() as usize,
+                f.audio.samples.len(),
+                freq_low.to_bits(),
+                freq_high.to_bits(),
+                cv,
+            )
+        });
+        if key.is_some() && band_split_key.get_value() == key {
+            if let Some(cached) = band_split_cache.get_value() {
+                return Some(cached);
+            }
+        }
+
         let result = idx.and_then(|i| files.get(i).cloned()).map(|file| {
             let sr = file.audio.sample_rate;
             // See zc_bins memo above — cap the read to the in-memory head
             // length so streaming sources don't try to allocate gigabytes.
             let read_len = file.audio.samples.len();
             let ch_samples = match cv {
-                ChannelView::MonoMix => std::borrow::Cow::Borrowed(file.audio.samples.as_slice()),
+                // Stereo (default) + MonoMix both resolve to the mono buffer.
+                ChannelView::MonoMix | ChannelView::Stereo => {
+                    std::borrow::Cow::Borrowed(file.audio.samples.as_slice())
+                }
                 _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, 0, read_len)),
             };
 
@@ -107,6 +136,7 @@ pub fn Waveform() -> impl IntoView {
             // band leaked heavily into the 'above' lane.
             split_three_bands_fft(&ch_samples, sr, freq_low, freq_high)
         });
+        band_split_key.set_value(key);
         band_split_cache.set_value(result.clone());
         result
     });
@@ -248,7 +278,15 @@ pub fn Waveform() -> impl IntoView {
                 let region_start = ((vis_start_time * sr as f64) as usize).saturating_sub(margin_samples);
                 let region_end = ((vis_end_time * sr as f64) as usize) + margin_samples;
                 let region_len = region_end.saturating_sub(region_start);
-                let waveform_buf = seg_file.audio.source.read_region(cv, region_start as u64, region_len);
+                // Borrow the visible window zero-copy for Stereo/MonoMix (mirrors the
+                // single-file path) instead of read_region's per-frame Vec alloc.
+                let waveform_buf: std::borrow::Cow<[f32]> = match (cv, seg_file.audio.source.as_contiguous()) {
+                    (ChannelView::MonoMix | ChannelView::Stereo, Some(all)) => {
+                        let end = (region_start + region_len).min(all.len());
+                        std::borrow::Cow::Borrowed(if region_start < end { &all[region_start..end] } else { &[] })
+                    }
+                    _ => std::borrow::Cow::Owned(seg_file.audio.source.read_region(cv, region_start as u64, region_len)),
+                };
 
                 ctx.save();
                 ctx.begin_path();

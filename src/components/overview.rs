@@ -1098,7 +1098,14 @@ pub fn OverviewPanel() -> impl IntoView {
                     // multi-hour files.
                     let read_len = file.audio.samples.len();
                     let ov_samples: &[f32] = match cv {
-                        crate::audio::source::ChannelView::MonoMix => &file.audio.samples,
+                        // Stereo (the default view) and MonoMix both resolve to the
+                        // mono buffer (read_samples → read_mono), so borrow it
+                        // zero-copy instead of read_region's full-length alloc+copy
+                        // — which, on a gain-drag redraw, would re-copy the entire
+                        // (potentially hundreds-of-MB) buffer to reproduce identical
+                        // data. Per-channel / Difference views still go through it.
+                        crate::audio::source::ChannelView::MonoMix
+                        | crate::audio::source::ChannelView::Stereo => &file.audio.samples,
                         _ => {
                             ov_buf = file.audio.source.read_region(cv, 0, read_len);
                             &ov_buf
