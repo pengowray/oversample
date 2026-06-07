@@ -57,9 +57,11 @@ test.describe("synthetic live waterfall", () => {
     test.setTimeout(60_000);
     await gotoSynth(page, "#synthtest-pulses-256");
 
+    // The main waterfall canvas lives in .chart-stage; .spectrogram-container
+    // also holds the static frequency/time gutter canvases, which precede it.
     const grab = () =>
       page.evaluate(() => {
-        const c = document.querySelector(".spectrogram-container canvas") as HTMLCanvasElement | null;
+        const c = document.querySelector(".chart-stage canvas") as HTMLCanvasElement | null;
         return c ? c.toDataURL() : "";
       });
 
