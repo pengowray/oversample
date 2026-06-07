@@ -14,6 +14,7 @@ pub fn DebugPanel() -> impl IntoView {
     // collapses the right sidebar so the panel doesn't cover the view or skew
     // the render budget being measured.
     let synth_rate = RwSignal::new(256_000u32);
+    let synth_opts_open = RwSignal::new(false);
     let close_panel = move || state.panels.right_collapsed().set(true);
     let start_synth = move |sig: SynthSignal| {
         close_panel();
@@ -128,35 +129,13 @@ pub fn DebugPanel() -> impl IntoView {
                 >"Bench Resonators (SIMD vs scalar)"</button>
             </div>
             <hr style="border-color: #444; margin: 4px 0;" />
-            // ── Synthetic live-waterfall test signal ──
+            // ── Live-waterfall benchmark + manual test signals (collapsed) ──
             <div class="debug-synth" style="padding: 4px 8px;">
-                <div class="debug-section-title">"Live Waterfall Test Signal"</div>
-                <div style="display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;">
-                    {[48_000u32, 192_000, 256_000, 384_000].into_iter().map(|r| {
-                        let label = format!("{}k", r / 1000);
-                        view! {
-                            <button
-                                class=move || if synth_rate.get() == r { "setting-btn sel" } else { "setting-btn" }
-                                style="flex:1;min-width:42px;"
-                                on:click=move |_| synth_rate.set(r)
-                            >{label}</button>
-                        }
-                    }).collect_view()}
-                </div>
-                <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                    {[SynthSignal::Noise, SynthSignal::Tone, SynthSignal::Chirp,
-                      SynthSignal::MultiTone, SynthSignal::Pulses].into_iter().map(|sig| {
-                        view! {
-                            <button class="setting-btn" style="flex:1;min-width:60px;"
-                                on:click=move |_| start_synth(sig)
-                            >{sig.label()}</button>
-                        }
-                    }).collect_view()}
-                </div>
+                <div class="debug-section-title">"Live Waterfall Benchmark"</div>
                 <button
                     class="setting-btn"
-                    style="width:100%;margin-top:4px;"
-                    title="Run the full rate/view/signal benchmark unattended; downloads + copies a report tagged with the app version."
+                    style="width:100%;"
+                    title="Run the full rate/view/signal benchmark unattended; downloads + copies a report tagged with the app version + device."
                     on:click=run_bench
                 >"Run Benchmark"</button>
                 <button
@@ -164,6 +143,41 @@ pub fn DebugPanel() -> impl IntoView {
                     style="width:100%;margin-top:4px;"
                     on:click=stop_synth
                 >"Stop"</button>
+                <button
+                    class="setting-btn"
+                    style="width:100%;margin-top:4px;font-size:9px;text-align:left;"
+                    on:click=move |_| synth_opts_open.update(|v| *v = !*v)
+                >
+                    {move || if synth_opts_open.get() {
+                        "\u{25BE} Manual test signals"
+                    } else {
+                        "\u{25B8} Manual test signals"
+                    }}
+                </button>
+                <Show when=move || synth_opts_open.get()>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;">
+                        {[48_000u32, 192_000, 256_000, 384_000].into_iter().map(|r| {
+                            let label = format!("{}k", r / 1000);
+                            view! {
+                                <button
+                                    class=move || if synth_rate.get() == r { "setting-btn sel" } else { "setting-btn" }
+                                    style="flex:1;min-width:42px;"
+                                    on:click=move |_| synth_rate.set(r)
+                                >{label}</button>
+                            }
+                        }).collect_view()}
+                    </div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                        {[SynthSignal::Noise, SynthSignal::Tone, SynthSignal::Chirp,
+                          SynthSignal::MultiTone, SynthSignal::Pulses].into_iter().map(|sig| {
+                            view! {
+                                <button class="setting-btn" style="flex:1;min-width:60px;"
+                                    on:click=move |_| start_synth(sig)
+                                >{sig.label()}</button>
+                            }
+                        }).collect_view()}
+                    </div>
+                </Show>
             </div>
             <hr style="border-color: #444; margin: 4px 0;" />
             <div class="debug-panel-toolbar">

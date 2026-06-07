@@ -51,15 +51,73 @@ pub fn cancel() {
     BENCH_ACTIVE.with(|a| a.set(false));
 }
 
+#[derive(Clone, Copy)]
+struct Combo {
+    rate: u32,
+    view_label: &'static str,
+    view: MainView,
+    signal: SynthSignal,
+    /// Multiplier on the default live (auto-fit) zoom. 1.0 = whole window fits
+    /// and follow-scroll is gentle; >1 zooms in so the waterfall scrolls fast,
+    /// exercising the per-frame scroll/redraw path.
+    zoom_mult: f64,
+}
+
+fn build_combos() -> Vec<Combo> {
+    let mut combos = Vec::new();
+    // Base matrix: rate × view × signal at the default (auto-fit) zoom.
+    for &rate in RATES.iter() {
+        for &(view_label, view) in VIEWS.iter() {
+            for &signal in SIGNALS.iter() {
+                combos.push(Combo { rate, view_label, view, signal, zoom_mult: 1.0 });
+            }
+        }
+    }
+    // Scroll stress: zoomed-in variants so the fast horizontal-scroll render
+    // path (much more redraw per second) is measured too. Heaviest views only.
+    for &(view_label, view) in &[
+        ("Spectrogram", MainView::Spectrogram),
+        ("Resonators", MainView::Resonators),
+    ] {
+        combos.push(Combo {
+            rate: 384_000,
+            view_label,
+            view,
+            signal: SynthSignal::Pulses,
+            zoom_mult: 8.0,
+        });
+    }
+    combos
+}
+
 struct ComboResult {
     rate: u32,
     view: &'static str,
     signal: &'static str,
+    zoom_mult: f64,
     avg_fps: f64,
     min_fps: f64,
     p95_ms: f64,
     frames: usize,
     cols_per_s: f64,
+}
+
+/// Fetch native OS/arch from the Tauri backend for the report (desktop UA is
+/// uninformative; Android model + OS version already ride in the UA).
+async fn fetch_device_info(state: &AppState) -> Option<String> {
+    if !state.is_tauri {
+        return None;
+    }
+    #[derive(serde::Deserialize)]
+    struct DeviceInfo {
+        os: String,
+        arch: String,
+        family: String,
+    }
+    match crate::tauri_bridge::tauri_invoke_typed_no_args::<DeviceInfo>("device_info").await {
+        Ok(d) => Some(format!("{} {} ({})", d.os, d.arch, d.family)),
+        Err(_) => None,
+    }
 }
 
 /// Run the full benchmark matrix. Restores the original view + stops the synth
@@ -76,7 +134,9 @@ pub fn run(state: AppState) {
     BENCH_ACTIVE.with(|a| a.set(true));
 
     let orig_view = state.viewmode.main_view().get_untracked();
-    let total = RATES.len() * VIEWS.len() * SIGNALS.len();
+    let orig_zoom = state.view.zoom_level().get_untracked();
+    let combos = build_combos();
+    let total = combos.len();
     state.show_info_toast(format!(
         "Benchmark started: {} combos (~{}s)",
         total,
@@ -84,66 +144,73 @@ pub fn run(state: AppState) {
     ));
 
     wasm_bindgen_futures::spawn_local(async move {
+        let device = fetch_device_info(&state).await;
         let mut results: Vec<ComboResult> = Vec::new();
-        let mut idx = 0usize;
-        'outer: for &rate in RATES.iter() {
-            for &(view_label, view) in VIEWS.iter() {
-                for &signal in SIGNALS.iter() {
-                    if BENCH_GEN.with(|g| g.get()) != gen {
-                        break 'outer; // cancelled
-                    }
-                    idx += 1;
-                    state.log_debug(
-                        "info",
-                        format!("Bench {}/{}: {} / {} @ {} kHz",
-                            idx, total, view_label, signal.label(), rate / 1000),
-                    );
-
-                    // Set the view, then (re)start the synth for this combo.
-                    state.viewmode.main_view().set(view);
-                    synthetic_mic::start(state, signal, rate);
-
-                    sleep_ms(SETTLE_MS as i32).await;
-                    if BENCH_GEN.with(|g| g.get()) != gen {
-                        break 'outer;
-                    }
-
-                    let cols0 = crate::canvas::live_waterfall::total_columns();
-                    let frame_ts = measure_frames(MEASURE_MS, gen).await;
-                    let cols1 = crate::canvas::live_waterfall::total_columns();
-                    // Stop now if cancelled during the measurement window — don't
-                    // record a partial combo or start the next one.
-                    if BENCH_GEN.with(|g| g.get()) != gen {
-                        break 'outer;
-                    }
-
-                    let (avg_fps, min_fps, p95_ms, frames) = frame_stats(&frame_ts);
-                    let cols_per_s = (cols1.saturating_sub(cols0)) as f64 / (MEASURE_MS / 1000.0);
-
-                    results.push(ComboResult {
-                        rate,
-                        view: view_label,
-                        signal: signal.label(),
-                        avg_fps,
-                        min_fps,
-                        p95_ms,
-                        frames,
-                        cols_per_s,
-                    });
-                }
+        'outer: for (i, combo) in combos.iter().enumerate() {
+            if BENCH_GEN.with(|g| g.get()) != gen {
+                break 'outer; // cancelled
             }
+            let zoom_note = if combo.zoom_mult != 1.0 {
+                format!(" (zoom ×{:.0})", combo.zoom_mult)
+            } else {
+                String::new()
+            };
+            state.log_debug(
+                "info",
+                format!("Bench {}/{}: {} / {} @ {} kHz{}",
+                    i + 1, total, combo.view_label, combo.signal.label(), combo.rate / 1000, zoom_note),
+            );
+
+            // Set the view, then (re)start the synth for this combo.
+            state.viewmode.main_view().set(combo.view);
+            synthetic_mic::start(state, combo.signal, combo.rate);
+            // Zoom in for scroll-stress combos (start resets to auto-fit zoom).
+            if combo.zoom_mult != 1.0 {
+                let z = state.view.zoom_level().get_untracked() * combo.zoom_mult;
+                state.view.zoom_level().set(z);
+            }
+
+            sleep_ms(SETTLE_MS as i32).await;
+            if BENCH_GEN.with(|g| g.get()) != gen {
+                break 'outer;
+            }
+
+            let cols0 = crate::canvas::live_waterfall::total_columns();
+            let frame_ts = measure_frames(MEASURE_MS, gen).await;
+            let cols1 = crate::canvas::live_waterfall::total_columns();
+            // Stop now if cancelled during the measurement window — don't
+            // record a partial combo or start the next one.
+            if BENCH_GEN.with(|g| g.get()) != gen {
+                break 'outer;
+            }
+
+            let (avg_fps, min_fps, p95_ms, frames) = frame_stats(&frame_ts);
+            let cols_per_s = (cols1.saturating_sub(cols0)) as f64 / (MEASURE_MS / 1000.0);
+
+            results.push(ComboResult {
+                rate: combo.rate,
+                view: combo.view_label,
+                signal: combo.signal.label(),
+                zoom_mult: combo.zoom_mult,
+                avg_fps,
+                min_fps,
+                p95_ms,
+                frames,
+                cols_per_s,
+            });
         }
 
         let cancelled = BENCH_GEN.with(|g| g.get()) != gen;
         synthetic_mic::stop(&state);
         state.viewmode.main_view().set(orig_view);
+        state.view.zoom_level().set(orig_zoom);
         BENCH_ACTIVE.with(|a| a.set(false));
 
         if results.is_empty() {
             state.show_info_toast("Benchmark cancelled");
             return;
         }
-        let report = build_report(&results, cancelled);
+        let report = build_report(&results, cancelled, device.as_deref());
         emit_report(&state, report, cancelled);
     });
 }
@@ -239,12 +306,15 @@ fn frame_stats(times: &[f64]) -> (f64, f64, f64, usize) {
     (avg_fps, min_fps, p95_ms, n)
 }
 
-fn build_report(results: &[ComboResult], cancelled: bool) -> String {
+fn build_report(results: &[ComboResult], cancelled: bool, device: Option<&str>) -> String {
     let mut s = String::new();
     s.push_str("# Oversample live-render benchmark\n\n");
     s.push_str(&format!("- Version: {}\n", env!("CARGO_PKG_VERSION")));
     let date = js_sys::Date::new_0().to_iso_string();
     s.push_str(&format!("- Date: {}\n", String::from(date)));
+    if let Some(dev) = device {
+        s.push_str(&format!("- Device (Tauri): {}\n", dev));
+    }
     if let Some(nav) = web_sys::window().map(|w| w.navigator()) {
         if let Ok(ua) = nav.user_agent() {
             s.push_str(&format!("- User agent: {}\n", ua));
@@ -262,12 +332,13 @@ fn build_report(results: &[ComboResult], cancelled: bool) -> String {
     }
     s.push('\n');
 
-    s.push_str("| Rate | View | Signal | avg fps | min fps | p95 ms | cols/s | frames |\n");
-    s.push_str("|------|------|--------|--------:|--------:|-------:|-------:|-------:|\n");
+    s.push_str("| Rate | View | Signal | Zoom | avg fps | min fps | p95 ms | cols/s | frames |\n");
+    s.push_str("|------|------|--------|-----:|--------:|--------:|-------:|-------:|-------:|\n");
     for r in results {
+        let zoom = if r.zoom_mult != 1.0 { format!("×{:.0}", r.zoom_mult) } else { "fit".to_string() };
         s.push_str(&format!(
-            "| {}k | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} |\n",
-            r.rate / 1000, r.view, r.signal, r.avg_fps, r.min_fps, r.p95_ms, r.cols_per_s, r.frames,
+            "| {}k | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} |\n",
+            r.rate / 1000, r.view, r.signal, zoom, r.avg_fps, r.min_fps, r.p95_ms, r.cols_per_s, r.frames,
         ));
     }
 

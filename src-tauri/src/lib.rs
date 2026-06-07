@@ -93,7 +93,28 @@ pub fn run() {
             cmd_annotations::export_annotations_file,
             cmd_annotations::save_export_file,
             cmd_annotations::open_file_dialog,
+            device_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Native device / OS info for the benchmark report (cross-platform, std-only —
+/// the build-target OS/arch is more reliable than parsing the webview UA, and on
+/// desktop the UA carries no useful detail). On Android the model + OS version
+/// already come through the webview user-agent, so we don't reach for JNI here.
+#[derive(serde::Serialize)]
+struct DeviceInfo {
+    os: String,
+    arch: String,
+    family: String,
+}
+
+#[tauri::command]
+fn device_info() -> DeviceInfo {
+    DeviceInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        family: std::env::consts::FAMILY.to_string(),
+    }
 }
