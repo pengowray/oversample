@@ -171,6 +171,16 @@ pub fn render_overview(out_w: u32, out_h: u32, recent_cols: Option<usize>) -> Op
     })
 }
 
+/// Maximum time the circular buffer can hold (capacity × time-resolution),
+/// i.e. the oldest history the waterfall could ever show. 0 when inactive.
+pub fn capacity_time() -> f64 {
+    WATERFALL.with(|w| {
+        w.borrow().as_ref()
+            .map(|wf| wf.capacity as f64 * wf.hop_size as f64 / wf.sample_rate as f64)
+            .unwrap_or(0.0)
+    })
+}
+
 /// Time resolution (seconds per column).
 pub fn time_resolution() -> f64 {
     WATERFALL.with(|w| {
