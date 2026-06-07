@@ -233,12 +233,14 @@ pub fn run(state: AppState) {
             // is the mip path taken, how long is the draw, how often does it
             // rebuild? (render_ms above is the WATERFALL, which is idle here.)
             if combo.view == MainView::Waveform {
-                let (wc, wms, wread, wmip, wrb, wspp) = crate::canvas::waveform_renderer::take_wf_diag();
-                if wc > 0 {
+                let (wc, wms, wread, weff, weffn, wmip, wrb, wspp) =
+                    crate::canvas::waveform_renderer::take_wf_diag();
+                if weffn > 0 {
+                    let n = weffn.max(1) as f64;
                     state.log_debug("wf-diag", format!(
-                        "{} @ {}k z×{:.0}: {} effects; draw avg {:.2}ms, read avg {:.2}ms; mip {}/{}; {} rebuilds; spp~{:.0}",
+                        "{} @ {}k z×{:.0}: {} effect runs avg {:.2}ms (draw {:.2}, read {:.2}); {} draws, mip {}/{}, {} rebuilds; spp~{:.0}",
                         combo.view_label, combo.rate / 1000, combo.zoom_mult,
-                        wc, wms / wc as f64, wread / wc as f64, wmip, wc, wrb, wspp,
+                        weffn, weff / n, wms / n, wread / n, wc, wmip, wc, wrb, wspp,
                     ));
                 }
             }

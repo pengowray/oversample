@@ -188,6 +188,11 @@ pub fn Waveform() -> impl IntoView {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
 
+        // Diagnostic: time the whole Effect body (recorded at the end) so the
+        // benchmark can tell whether the per-frame cost is here or external.
+        let _eperf = web_sys::window().and_then(|w| w.performance());
+        let _et0 = _eperf.as_ref().map(|p| p.now());
+
         let timeline = state.timeline.active().get_untracked();
 
         if let Some(ref tl) = timeline {
@@ -518,6 +523,10 @@ pub fn Waveform() -> impl IntoView {
         } else {
             ctx.set_fill_style_str("#0a0a0a");
             ctx.fill_rect(0.0, 0.0, display_w as f64, display_h as f64);
+        }
+
+        if let (Some(p), Some(t0)) = (_eperf.as_ref(), _et0) {
+            waveform_renderer::wf_diag_record_effect(p.now() - t0);
         }
 
         // Time gutter + selection highlight now live in a sibling
