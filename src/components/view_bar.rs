@@ -10,6 +10,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::app::MainViewButton;
+use crate::components::xform_button::XformButton;
 use crate::state::{ActiveFocus, AppState, Bar, CanvasTool, LayerPanel};
 
 fn layer_opt_class(active: bool) -> &'static str {
@@ -169,6 +170,8 @@ pub fn ViewBar() -> impl IntoView {
                 on:wheel=move |ev| pan.on_wheel(ev)
             >
                 <MainViewButton />
+                <div class="bar-sep"></div>
+                <XformButton />
                 <div class="bar-sep"></div>
                 <OverlayToggles />
                 <div class="bar-spacer"></div>

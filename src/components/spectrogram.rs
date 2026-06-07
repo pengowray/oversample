@@ -223,11 +223,10 @@ pub fn Spectrogram() -> impl IntoView {
         let pulse_overlay = state.pulse.overlay_enabled().get();
         let selected_pulse = state.pulse.selected_index().get();
         let main_view = state.viewmode.main_view().get();
-        let (spect_floor, spect_range, spect_gamma, spect_gain) = if main_view == MainView::XformedSpec {
-            (state.display.xform_floor_db().get(), state.display.xform_range_db().get(), state.display.xform_gamma().get(), state.display.xform_gain_db().get())
-        } else {
-            (state.spect.floor_db().get(), state.spect.range_db().get(), state.spect.gamma().get(), state.spect.gain_db().get())
-        };
+        // Intensity is always a spectrogram setting (shared by the XForm view) —
+        // the XForm toggle reuses the Spectrogram menu's intensity sliders.
+        let (spect_floor, spect_range, spect_gamma, spect_gain) =
+            (state.spect.floor_db().get(), state.spect.range_db().get(), state.spect.gamma().get(), state.spect.gain_db().get());
         let debug_tiles = state.spect.debug_tiles().get();
         let reassign_on = state.spect.reassign_enabled().get();
         // Display-affecting checkbox subscriptions
@@ -245,7 +244,7 @@ pub fn Spectrogram() -> impl IntoView {
         let _nr_strength = state.noise_reduce.strength().get();
         let _nr_floor_v = state.noise_reduce.floor().get();
         // Display DSP filter subscriptions
-        let _dsp_enabled = state.display.filter_enabled().get();
+        let _dsp_enabled = state.display.xform_enabled().get();
         let _dsp_nr = state.display.filter_nr().get();
         let _dsp_eq = state.display.filter_eq().get();
         let _dsp_notch = state.display.filter_notch().get();
@@ -380,7 +379,7 @@ pub fn Spectrogram() -> impl IntoView {
 
         // Build colormap
         let xform_or_decim = state.display.transform().get_untracked()
-            || main_view == MainView::XformedSpec
+            || state.display.xform_enabled().get_untracked()
             || decim_effective > 0;
         let colormap = if flow_on {
             ColormapMode::Uniform(Colormap::Greyscale)
@@ -823,7 +822,7 @@ pub fn Spectrogram() -> impl IntoView {
             };
 
             let xform_on = state.display.transform().get_untracked()
-                || main_view == MainView::XformedSpec;
+                || state.display.xform_enabled().get_untracked();
             // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
             let marker_state = if xform_on || decim_effective > 0 {
                 FreqMarkerState {

@@ -36,7 +36,7 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         (b.strength_db as i32).hash(&mut h);
     }
     state.notch.harmonic_suppression().get_untracked().to_bits().hash(&mut h);
-    state.display.filter_enabled().get_untracked().hash(&mut h);
+    state.display.xform_enabled().get_untracked().hash(&mut h);
     (state.display.filter_nr().get_untracked() as u8).hash(&mut h);
     (state.display.filter_notch().get_untracked() as u8).hash(&mut h);
     state.noise_reduce.enabled().get_untracked().hash(&mut h);
@@ -120,7 +120,7 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
     if show_noise {
         // Notch bands: check DSP filter state to determine if notch should show
         let show_notch = {
-            let dsp_on = state.display.filter_enabled().get_untracked();
+            let dsp_on = state.display.xform_enabled().get_untracked();
             if dsp_on {
                 // DSP panel controls notch display
                 match state.display.filter_notch().get_untracked() {
@@ -162,7 +162,7 @@ fn compute_freq_adjustments_inner(state: &AppState, file_max_freq: f64, tile_hei
         // Spectral subtraction: use display auto noise floor when DSP NR is Auto,
         // custom strength when Custom, or playback noise floor when Same/fallback.
         {
-            let dsp_enabled = state.display.filter_enabled().get_untracked();
+            let dsp_enabled = state.display.xform_enabled().get_untracked();
             let nr_mode = state.display.filter_nr().get_untracked();
 
             let (nf_opt, strength) = if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {

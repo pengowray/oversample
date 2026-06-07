@@ -18,6 +18,7 @@ pub mod hearing_bar;
 pub mod listen_button;
 pub mod noise_combos;
 pub mod view_bar;
+pub mod xform_button;
 pub mod tool_button;
 pub mod bar_pan;
 pub mod bottom_toolbar;

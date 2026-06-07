@@ -28,7 +28,6 @@ use crate::components::chromagram_view::ChromagramView;
 use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
 use crate::components::bat_book_strip::BatBookStrip;
 use crate::components::bat_book_ref_panel::BatBookRefPanel;
-use crate::components::display_filter_button::DspFilterRow;
 use crate::components::annotation_label_editor::AnnotationLabelEditor;
 use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::viewport;
@@ -486,7 +485,7 @@ pub fn App() -> impl IntoView {
     // When the DSP panel is enabled, the per-stage modes drive the existing
     // display_auto_gain / display_eq / display_noise_filter signals.
     Effect::new(move |_| {
-        let enabled = state.display.filter_enabled().get();
+        let enabled = state.display.xform_enabled().get();
         if !enabled {
             // Reset all display processing signals when DSP is off
             state.display.transform().set(false);
@@ -591,7 +590,7 @@ pub fn App() -> impl IntoView {
         let learning: RwSignal<bool> = RwSignal::new(false);
         Effect::new(move |_| {
             let nr_mode = state.display.filter_nr().get();
-            let enabled = state.display.filter_enabled().get();
+            let enabled = state.display.xform_enabled().get();
             let file_idx = state.library.current_index().get();
             // Only auto-learn when DSP is enabled and NR is Auto or Custom
             if !enabled || !matches!(nr_mode, DisplayFilterMode::Auto | DisplayFilterMode::Custom) {
@@ -1368,7 +1367,7 @@ fn MainArea() -> impl IntoView {
                         <div class="main-view">
                             // Show the selected main view
                             {move || match state.viewmode.main_view().get() {
-                                MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators => view! { <Spectrogram /> }.into_any(),
+                                MainView::Spectrogram | MainView::Flow | MainView::Resonators => view! { <Spectrogram /> }.into_any(),
                                 MainView::Waveform => view! {
                                     <div class="main-waveform-full">
                                         <Waveform />
@@ -1684,6 +1683,40 @@ fn layer_opt_class(active: bool) -> &'static str {
     if active { "layer-panel-opt sel" } else { "layer-panel-opt" }
 }
 
+/// Turn the XForm display-processing panel on: enable it with all per-stage
+/// filters defaulting to "Same" (mirror current playback), and eagerly resolve
+/// the display_* signals so the spectrogram render Effect sees them immediately
+/// (rather than waiting a tick for the resolve Effect).
+pub fn enable_xform(state: &AppState) {
+    state.display.xform_enabled().set(true);
+    state.display.filter_eq().set(DisplayFilterMode::Same);
+    state.display.filter_notch().set(DisplayFilterMode::Same);
+    state.display.filter_nr().set(DisplayFilterMode::Same);
+    state.display.filter_transform().set(DisplayFilterMode::Same);
+    state.display.filter_gain().set(DisplayFilterMode::Same);
+    state.display.filter_decimate().set(DisplayFilterMode::Same);
+    // Eagerly resolve "Same" → mirror current playback state.
+    state.display.eq().set(state.filter.enabled().get_untracked());
+    state.display.noise_filter().set(
+        state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked(),
+    );
+    state.display.transform().set(
+        state.playback.mode().get_untracked() != PlaybackMode::Normal,
+    );
+}
+
+/// Turn the XForm panel off and reset all derived display_* signals so the
+/// spectrogram render Effect sees a consistent "no display processing" state.
+pub fn disable_xform(state: &AppState) {
+    state.display.xform_enabled().set(false);
+    state.display.transform().set(false);
+    state.display.eq().set(false);
+    state.display.noise_filter().set(false);
+    state.display.auto_gain().set(false);
+    state.display.gain_boost().set(0.0);
+    state.display.decimate_effective().set(0);
+}
+
 /// Split-button: click cycles Spec/Wave, down-arrow opens a dropdown with all
 /// view modes + DSP settings. Rendered in the bottom toolbar.
 #[component]
@@ -1698,44 +1731,10 @@ pub fn MainViewButton() -> impl IntoView {
     let switch_view = move |new_view: MainView| {
         let old_view = state.viewmode.main_view().get_untracked();
         if new_view == old_view { return; }
-
-        let entering_xform = new_view == MainView::XformedSpec && old_view != MainView::XformedSpec;
-        let leaving_xform = new_view != MainView::XformedSpec && old_view == MainView::XformedSpec;
-
-        if entering_xform {
-            // Enable display processing with all filters defaulting to "Same".
-            // Also directly resolve the display_* signals so the render Effect
-            // sees correct state immediately (don't wait for the resolve Effect).
-            state.display.filter_enabled().set(true);
-            state.display.filter_eq().set(DisplayFilterMode::Same);
-            state.display.filter_notch().set(DisplayFilterMode::Same);
-            state.display.filter_nr().set(DisplayFilterMode::Same);
-            state.display.filter_transform().set(DisplayFilterMode::Same);
-            state.display.filter_gain().set(DisplayFilterMode::Same);
-            state.display.filter_decimate().set(DisplayFilterMode::Same);
-            // Eagerly resolve "Same" → mirror current playback state
-            state.display.eq().set(state.filter.enabled().get_untracked());
-            state.display.noise_filter().set(
-                state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked()
-            );
-            state.display.transform().set(
-                state.playback.mode().get_untracked() != PlaybackMode::Normal
-            );
-        } else if leaving_xform {
-            // Disable display processing and directly reset all display signals.
-            // Setting these directly (rather than relying on the resolve Effect)
-            // ensures the spectrogram render Effect sees consistent state.
-            state.display.filter_enabled().set(false);
-            state.display.transform().set(false);
-            state.display.eq().set(false);
-            state.display.noise_filter().set(false);
-            state.display.auto_gain().set(false);
-            state.display.gain_boost().set(0.0);
-            state.display.decimate_effective().set(0);
-        }
-
-        // Set the view last so all display state is consistent when
-        // the main_view change triggers the spectrogram render Effect.
+        // XForm is an independent toggle now (see XformButton) — the view
+        // switch only changes which renderer is shown. The xform_enabled
+        // state persists across view changes; it's gated to spectro-like
+        // views by the XForm button being inert elsewhere.
         state.viewmode.main_view().set(new_view);
     };
 
@@ -1752,57 +1751,6 @@ pub fn MainViewButton() -> impl IntoView {
         switch_view(new_view);
         state.panels.layer_panel_open().set(None);
     };
-
-    // Playback active indicators (for DSP rows)
-    let eq_active = Signal::derive(move || state.filter.enabled().get());
-    let notch_active = Signal::derive(move || state.notch.enabled().get());
-    let nr_active = Signal::derive(move || state.noise_reduce.enabled().get());
-    let transform_active = Signal::derive(move || state.playback.mode().get() != PlaybackMode::Normal);
-    let gain_active = Signal::derive(move || state.gain.mode().get() != GainMode::Off);
-    let decim_active = Signal::derive(move || false);
-
-    let browser_is_resampling = Signal::derive(move || {
-        let bsr = state.display.browser_sample_rate().get();
-        if bsr == 0 { return false; }
-        let files = state.library.files().get();
-        let idx = state.library.current_index().get();
-        let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
-        if file_rate == 0 { return false; }
-        let decim = state.display.decimate_effective().get();
-        let effective = if decim > 0 && decim < file_rate {
-            crate::dsp::filters::decimated_rate(file_rate, decim)
-        } else {
-            file_rate
-        };
-        effective != bsr
-    });
-
-    let resam_tooltip = Signal::derive(move || {
-        let bsr = state.display.browser_sample_rate().get();
-        if bsr == 0 { return String::new(); }
-        let files = state.library.files().get();
-        let idx = state.library.current_index().get();
-        let file_rate = idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate).unwrap_or(0);
-        if file_rate == 0 { return String::new(); }
-        let decim = state.display.decimate_effective().get();
-        let effective = if decim > 0 && decim < file_rate {
-            crate::dsp::filters::decimated_rate(file_rate, decim)
-        } else {
-            file_rate
-        };
-        if effective != bsr {
-            format!("Browser resampling {}Hz to {}Hz output", effective, bsr)
-        } else {
-            format!("Output matches browser rate ({}Hz)", bsr)
-        }
-    });
-
-    let show_nr_custom = Signal::derive(move || {
-        state.viewmode.main_view().get() == MainView::XformedSpec && state.display.filter_nr().get() == DisplayFilterMode::Custom
-    });
-    let show_decim_custom = Signal::derive(move || {
-        state.viewmode.main_view().get() == MainView::XformedSpec && state.display.filter_decimate().get() == DisplayFilterMode::Custom
-    });
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
 
@@ -1878,8 +1826,8 @@ pub fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // Reassignment checkbox (spectrogram views)
-            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec).then(|| {
+            // Reassignment checkbox (spectrogram view)
+            {move || (state.viewmode.main_view().get() == MainView::Spectrogram).then(|| {
                 view! {
                     <hr />
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
@@ -2026,87 +1974,8 @@ pub fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // DSP filter rows (only when XformedSpec is active)
-            {move || (state.viewmode.main_view().get() == MainView::XformedSpec).then(|| {
-                view! {
-                    <hr />
-                    <div class="layer-panel-title">"Display Processing"</div>
-                    <div class="dsp-filter-row dsp-filter-header">
-                        <span class="dsp-filter-label"></span>
-                        <div class="dsp-filter-seg">
-                            <span>"off"</span>
-                            <span>"aut"</span>
-                            <span>"sam"</span>
-                            <span>"cst"</span>
-                        </div>
-                        <div class="dsp-filter-indicator-header" title="Playback active">
-                            {"\u{1F50A}"}
-                        </div>
-                    </div>
-                    <DspFilterRow label="EQ" signal=state.display.filter_eq() playback_active=eq_active custom_available=false />
-                    <DspFilterRow label="Notch" signal=state.display.filter_notch() playback_active=notch_active custom_available=false auto_available=false />
-                    <DspFilterRow label="NR" signal=state.display.filter_nr() playback_active=nr_active custom_available=false />
-                    <DspFilterRow label="Xform" signal=state.display.filter_transform() playback_active=transform_active custom_available=false auto_available=false />
-                    <DspFilterRow label="Gain" signal=state.display.filter_gain() playback_active=gain_active custom_available=true />
-                    <DspFilterRow label="Resam" signal=state.display.filter_decimate() playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
-                }
-            })}
-
-            // Custom NR section
-            {move || show_nr_custom.get().then(|| {
-                let strength = state.display.nr_strength();
-                view! {
-                    <div class="dsp-custom-section">
-                        <div class="dsp-custom-title">"NR Strength"</div>
-                        <div class="dsp-custom-slider-row">
-                            <input
-                                type="range"
-                                class="setting-range"
-                                min="0" max="2" step="0.05"
-                                prop:value=move || strength.get().to_string()
-                                on:input=move |ev: web_sys::Event| {
-                                    let target = ev.target().unwrap();
-                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                    if let Ok(v) = input.value().parse::<f64>() {
-                                        strength.set(v);
-                                    }
-                                }
-                                on:dblclick=move |_| strength.set(0.8)
-                            />
-                            <span class="dsp-custom-value">{move || format!("{:.2}", strength.get())}</span>
-                        </div>
-                    </div>
-                }
-            })}
-
-            // Custom Decimate rate section
-            {move || show_decim_custom.get().then(|| {
-                let rate = state.display.decimate_rate();
-                let rates: [(u32, &str); 4] = [
-                    (44100, "44.1k"),
-                    (48000, "48k"),
-                    (96000, "96k"),
-                    (192000, "192k"),
-                ];
-                view! {
-                    <div class="dsp-custom-section">
-                        <div class="dsp-custom-title">"Decimate Rate"</div>
-                        <div class="dsp-filter-seg" style="justify-content: center; gap: 2px; padding: 2px 4px;">
-                            {rates.into_iter().map(|(r, label)| {
-                                view! {
-                                    <button
-                                        class=move || if rate.get() == r { "sel" } else { "" }
-                                        on:click=move |_| rate.set(r)
-                                    >{label}</button>
-                                }
-                            }).collect_view()}
-                        </div>
-                    </div>
-                }
-            })}
-
             // FFT size selector (when any spectrogram/flow view is active)
-            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow).then(|| {
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::Flow).then(|| {
                 view! {
                     <hr />
                     <div class="layer-panel-title">"FFT Size"</div>
@@ -2169,7 +2038,7 @@ pub fn MainViewButton() -> impl IntoView {
             })}
 
             // Frequency range selector (for spectrogram/flow/resonator views)
-            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::Flow | MainView::Resonators).then(|| {
                 let file_max = move || {
                     let files = state.library.files().get();
                     let idx = state.library.current_index().get();
@@ -2245,19 +2114,17 @@ pub fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // Intensity sliders (for Spectrogram, XformedSpec, Flow, or Resonators)
-            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::XformedSpec | MainView::Flow | MainView::Resonators).then(|| {
-                let is_xform = state.viewmode.main_view().get_untracked() == MainView::XformedSpec;
-                // The xform branch is a flat `RwSignal<f32>` while the main branch is
-                // a `Store<SpectState>` subfield — incompatible types for an `if/else`
-                // handle — so use Copy get/set closures (capture only `state`+`is_xform`).
-                let gain_get = move || if is_xform { state.display.xform_gain_db().get() } else { state.spect.gain_db().get() };
-                let gain_set = move |v: f32| if is_xform { state.display.xform_gain_db().set(v) } else { state.spect.gain_db().set(v) };
-                let range_get = move || if is_xform { state.display.xform_range_db().get() } else { state.spect.range_db().get() };
-                let range_set = move |v: f32| if is_xform { state.display.xform_range_db().set(v) } else { state.spect.range_db().set(v) };
-                let floor_set = move |v: f32| if is_xform { state.display.xform_floor_db().set(v) } else { state.spect.floor_db().set(v) };
-                let gamma_get = move || if is_xform { state.display.xform_gamma().get() } else { state.spect.gamma().get() };
-                let gamma_set = move |v: f32| if is_xform { state.display.xform_gamma().set(v) } else { state.spect.gamma().set(v) };
+            // Intensity sliders (for Spectrogram, Flow, or Resonators). These
+            // are spectrogram settings — they also drive the XForm view, which
+            // shares the Spectrogram menu rather than duplicating these.
+            {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::Flow | MainView::Resonators).then(|| {
+                let gain_get = move || state.spect.gain_db().get();
+                let gain_set = move |v: f32| state.spect.gain_db().set(v);
+                let range_get = move || state.spect.range_db().get();
+                let range_set = move |v: f32| state.spect.range_db().set(v);
+                let floor_set = move |v: f32| state.spect.floor_db().set(v);
+                let gamma_get = move || state.spect.gamma().get();
+                let gamma_set = move |v: f32| state.spect.gamma().set(v);
                 view! {
                     <hr />
                     <div class="dsp-custom-section">
@@ -2274,33 +2141,12 @@ pub fn MainViewButton() -> impl IntoView {
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
                                     if let Ok(v) = input.value().parse::<f32>() {
                                         gain_set(v);
-                                        if is_xform {
-                                            state.display.filter_gain().set(DisplayFilterMode::Custom);
-                                        }
                                         state.display.auto_gain().set(false);
                                     }
                                 }
                                 on:dblclick=move |_| gain_set(0.0)
                             />
-                            <span class="dsp-custom-value">{move || {
-                                if is_xform {
-                                    let gain_mode = state.display.filter_gain().get();
-                                    let boost = state.display.gain_boost().get();
-                                    if gain_mode == DisplayFilterMode::Off {
-                                        "off".to_string()
-                                    } else if gain_mode == DisplayFilterMode::Auto {
-                                        if boost.abs() < 0.5 { "auto".to_string() }
-                                        else { format!("a{:+.0}", boost) }
-                                    } else if gain_mode == DisplayFilterMode::Same {
-                                        if boost.abs() < 0.5 { "same".to_string() }
-                                        else { format!("={:+.0}", boost) }
-                                    } else {
-                                        format!("{:+.0} dB", gain_get())
-                                    }
-                                } else {
-                                    format!("{:+.0} dB", gain_get())
-                                }
-                            }}</span>
+                            <span class="dsp-custom-value">{move || format!("{:+.0} dB", gain_get())}</span>
                         </div>
                         <div class="dsp-custom-slider-row">
                             <span class="dsp-slider-label">"Range"</span>
@@ -2355,16 +2201,6 @@ pub fn MainViewButton() -> impl IntoView {
                                     range_set(120.0);
                                     gamma_set(1.0);
                                     state.display.auto_gain().set(false);
-                                    if is_xform {
-                                        state.display.filter_eq().set(DisplayFilterMode::Same);
-                                        state.display.filter_notch().set(DisplayFilterMode::Same);
-                                        state.display.filter_nr().set(DisplayFilterMode::Same);
-                                        state.display.filter_transform().set(DisplayFilterMode::Same);
-                                        state.display.filter_gain().set(DisplayFilterMode::Same);
-                                        state.display.filter_decimate().set(DisplayFilterMode::Same);
-                                        state.display.decimate_rate().set(48000);
-                                        state.display.nr_strength().set(0.8);
-                                    }
                                 }
                             >"Reset"</button>
                         </div>

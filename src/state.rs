@@ -687,7 +687,6 @@ pub enum OverviewView {
 pub enum MainView {
     #[default]
     Spectrogram,
-    XformedSpec,
     Waveform,
     ZcChart,
     Flow,
@@ -699,7 +698,6 @@ impl MainView {
     pub fn label(self) -> &'static str {
         match self {
             Self::Spectrogram => "Spectrogram",
-            Self::XformedSpec => "Transformed Spec",
             Self::Waveform => "Waveform",
             Self::ZcChart => "ZC Chart",
             Self::Flow => "Flow",
@@ -711,7 +709,6 @@ impl MainView {
     pub fn short_label(self) -> &'static str {
         match self {
             Self::Spectrogram => "Spec",
-            Self::XformedSpec => "Xform S",
             Self::Waveform => "Wave",
             Self::ZcChart => "ZC",
             Self::Flow => "Flow",
@@ -722,7 +719,7 @@ impl MainView {
 
     /// Whether this view mode uses the spectrogram renderer.
     pub fn is_spectrogram(self) -> bool {
-        matches!(self, Self::Spectrogram | Self::XformedSpec | Self::Flow | Self::Chromagram | Self::Resonators)
+        matches!(self, Self::Spectrogram | Self::Flow | Self::Chromagram | Self::Resonators)
     }
 
     /// Views that make sense for an Anabat .zc file. The recording has no
@@ -736,7 +733,6 @@ impl MainView {
 
     pub const ALL: &'static [MainView] = &[
         Self::Spectrogram,
-        Self::XformedSpec,
         Self::Waveform,
         Self::ZcChart,
         Self::Flow,
@@ -1019,6 +1015,8 @@ pub enum LayerPanel {
     Tool,
     FreqRange,
     MainView,
+    /// XForm display-processing combo in the View bar.
+    Xform,
     PlayMode,
     RecordMode,
     Channel,
@@ -1056,7 +1054,7 @@ impl LayerPanel {
             | LayerPanel::Gain
             | LayerPanel::ListenMode
             | LayerPanel::OutputRange => Bar::Hearing,
-            LayerPanel::MainView | LayerPanel::Tool => Bar::View,
+            LayerPanel::MainView | LayerPanel::Tool | LayerPanel::Xform => Bar::View,
             LayerPanel::PlayMode | LayerPanel::RecordMode | LayerPanel::Channel | LayerPanel::Mic => Bar::Transport,
             // FreqRange floats over the canvas — not anchored to a bar.
             LayerPanel::FreqRange => Bar::Floating,
@@ -1884,8 +1882,8 @@ pub struct AnnotationsState {
     pub visible: bool,
 }
 
-/// Display-DSP / spectrogram-processing settings: the per-stage display filter
-/// panel, Xformed-Spec view intensity, decimation, and saved ZC/normal states.
+/// Display-DSP / spectrogram-processing settings: the XForm toggle + its
+/// per-stage display-processing panel, decimation, and saved ZC/normal states.
 #[derive(Clone, Debug, Store)]
 pub struct DisplayState {
     // Display-affecting checkboxes (spectrogram intensity).
@@ -1901,13 +1899,10 @@ pub struct DisplayState {
     pub normal_saved_auto_gain: bool,
     pub normal_saved_eq: bool,
     pub normal_saved_noise_filter: bool,
-    // Independent gain/intensity for the Xformed-Spec view.
-    pub xform_gain_db: f32,
-    pub xform_floor_db: f32,
-    pub xform_range_db: f32,
-    pub xform_gamma: f32,
-    // Per-stage display DSP filter panel.
-    pub filter_enabled: bool,
+    /// Master toggle for the XForm display-processing panel. When on, the
+    /// spectro-like view is computed from DSP-transformed audio and the
+    /// per-stage filter modes below drive the effective display_* signals.
+    pub xform_enabled: bool,
     pub filter_eq: DisplayFilterMode,
     pub filter_notch: DisplayFilterMode,
     pub filter_nr: DisplayFilterMode,
@@ -2475,11 +2470,7 @@ impl AppState {
                 normal_saved_auto_gain: false,
                 normal_saved_eq: false,
                 normal_saved_noise_filter: false,
-                xform_gain_db: 0.0,
-                xform_floor_db: -120.0,
-                xform_range_db: 120.0,
-                xform_gamma: 1.0,
-                filter_enabled: false,
+                xform_enabled: false,
                 filter_eq: DisplayFilterMode::Off,
                 filter_notch: DisplayFilterMode::Off,
                 filter_nr: DisplayFilterMode::Auto,

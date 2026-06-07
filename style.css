@@ -6594,6 +6594,17 @@ button.toolbar-overflow-btn {
     letter-spacing: 0.5px;
 }
 
+/* XForm popup help blurb: a short dynamic description of what the
+   transformed spectrogram is currently showing. */
+.xform-blurb {
+    font-size: 11px;
+    line-height: 1.35;
+    color: #9aa;
+    padding: 2px 8px 6px;
+    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 4px;
+}
+
 .dsp-custom-slider-row {
     display: flex;
     align-items: center;
