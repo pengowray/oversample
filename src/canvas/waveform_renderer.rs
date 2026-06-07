@@ -218,9 +218,10 @@ pub const MIP_D: usize = 256;
 
 thread_local! {
     static WAVE_MIP: RefCell<Option<WaveMip>> = const { RefCell::new(None) };
-    /// Diagnostic counters for the Waveform draw, read by the benchmark:
-    /// (draw_calls, total_draw_ms, mip_calls, mip_rebuilds, last_spp).
-    static WF_DIAG: RefCell<(u32, f64, u32, u32, f64)> = const { RefCell::new((0, 0.0, 0, 0, 0.0)) };
+    /// Diagnostic counters for the Waveform path, read by the benchmark:
+    /// (draw_calls, total_draw_ms, total_read_ms, mip_calls, mip_rebuilds, last_spp).
+    /// `read_ms` is the visible-window fetch (zero-copy borrow vs read_region alloc).
+    static WF_DIAG: RefCell<(u32, f64, f64, u32, u32, f64)> = const { RefCell::new((0, 0.0, 0.0, 0, 0, 0.0)) };
 }
 
 /// Record one Waveform draw for diagnostics (cheap; two `performance.now()`).
@@ -229,18 +230,23 @@ pub fn wf_diag_record(ms: f64, used_mip: bool, spp: f64) {
         let mut d = c.borrow_mut();
         d.0 += 1;
         d.1 += ms;
-        if used_mip { d.2 += 1; }
-        d.4 = spp;
+        if used_mip { d.3 += 1; }
+        d.5 = spp;
     });
 }
 
+/// Record the per-frame visible-window fetch time (Cow build: borrow or alloc).
+pub fn wf_diag_record_read(ms: f64) {
+    WF_DIAG.with(|c| c.borrow_mut().2 += ms);
+}
+
 /// Take + reset the Waveform diagnostic counters:
-/// (draw_calls, total_draw_ms, mip_calls, mip_rebuilds, last_spp).
-pub fn take_wf_diag() -> (u32, f64, u32, u32, f64) {
+/// (draw_calls, total_draw_ms, total_read_ms, mip_calls, mip_rebuilds, last_spp).
+pub fn take_wf_diag() -> (u32, f64, f64, u32, u32, f64) {
     WF_DIAG.with(|c| {
         let mut d = c.borrow_mut();
         let r = *d;
-        *d = (0, 0.0, 0, 0, 0.0);
+        *d = (0, 0.0, 0.0, 0, 0, 0.0);
         r
     })
 }
@@ -380,7 +386,7 @@ pub fn draw_waveform_mipped(
         };
         if rebuild {
             *slot = Some(WaveMip::new(key, needed_cap));
-            WF_DIAG.with(|c| c.borrow_mut().3 += 1);
+            WF_DIAG.with(|c| c.borrow_mut().4 += 1);
         }
         let mip = slot.as_mut().unwrap();
         mip.fold(abs_latest, buf);

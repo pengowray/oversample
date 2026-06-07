@@ -288,17 +288,26 @@ pub fn Waveform() -> impl IntoView {
             let region_start = ((vis_start_time * sr as f64) as usize).saturating_sub(margin_samples);
             let region_end = ((vis_end_time * sr as f64) as usize) + margin_samples;
             let region_len = region_end.saturating_sub(region_start);
-            // For in-memory MonoMix (the common case) borrow the visible window
-            // straight from the sample buffer instead of allocating + copying it
-            // every scroll frame — `read_region` always allocates a fresh Vec.
-            // Streaming sources and non-mono channel views still go through it.
+            // Borrow the visible window straight from the contiguous sample
+            // buffer instead of allocating + copying it every scroll frame —
+            // `read_region` always allocates a fresh Vec. `as_contiguous()` is
+            // the mono-mix buffer, which is exactly what `read_samples` returns
+            // for both Stereo and MonoMix (see InMemorySource::read_samples →
+            // read_mono). The DEFAULT view is Stereo, so matching only MonoMix
+            // here missed the common case entirely. Per-channel / Difference
+            // views and streaming sources still go through read_region.
+            let _rp = web_sys::window().and_then(|w| w.performance());
+            let _rt0 = _rp.as_ref().map(|p| p.now());
             let waveform_buf: std::borrow::Cow<[f32]> = match (cv, file.audio.source.as_contiguous()) {
-                (ChannelView::MonoMix, Some(all)) => {
+                (ChannelView::MonoMix | ChannelView::Stereo, Some(all)) => {
                     let end = (region_start + region_len).min(all.len());
                     std::borrow::Cow::Borrowed(if region_start < end { &all[region_start..end] } else { &[] })
                 }
                 _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, region_start as u64, region_len)),
             };
+            if let (Some(p), Some(t0)) = (_rp.as_ref(), _rt0) {
+                waveform_renderer::wf_diag_record_read(p.now() - t0);
+            }
 
             if mode == PlaybackMode::ZeroCrossing {
                 if let Some(bins) = zc_bins.get().as_ref() {
@@ -342,7 +351,7 @@ pub fn Waveform() -> impl IntoView {
                 // the raw windowed path (zoomed-in needs sub-cell resolution, and
                 // streaming / non-mono sources have no contiguous buffer to mip).
                 let spp = if display_w > 0 { visible_time * sr as f64 / display_w as f64 } else { 0.0 };
-                let mip_buf = if cv == ChannelView::MonoMix {
+                let mip_buf = if matches!(cv, ChannelView::MonoMix | ChannelView::Stereo) {
                     file.audio.source.as_contiguous()
                 } else {
                     None
