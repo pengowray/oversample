@@ -36,6 +36,64 @@ pub struct LiveWaterfall {
 
 thread_local! {
     static WATERFALL: RefCell<Option<LiveWaterfall>> = const { RefCell::new(None) };
+    /// Reusable RGBA pixel buffer for `render_viewport` (avoids a ~1 MB alloc +
+    /// full alpha-fill every frame — WASM has no cheap GC for this churn).
+    static RENDER_PIXELS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Cached row→bin map: (map, key) where key = (img_h, total_bins, crop_lo,
+    /// crop_hi). Recomputed only when the viewport height / crop changes.
+    static RENDER_BIN_MAP: RefCell<(Vec<usize>, (u32, usize, u64, u64))> =
+        const { RefCell::new((Vec::new(), (0, 0, 0, 0))) };
+    /// Magnitude→grey LUT, indexed by the top 16 bits of the magnitude's f32 bit
+    /// pattern (monotonic in value for mag ≥ 0). Replaces a per-pixel software
+    /// `log10` + normalize + `powf` with one array lookup. Rebuilt only when the
+    /// display settings (floor/range/gamma/gain) change.
+    static GREY_LUT: RefCell<(Vec<u8>, u64)> = const { RefCell::new((Vec::new(), u64::MAX)) };
+}
+
+/// Combine the four display-intensity settings into one cache key.
+fn grey_lut_key(s: &SpectDisplaySettings) -> u64 {
+    let a = s.floor_db.to_bits() as u64;
+    let b = s.range_db.to_bits() as u64;
+    let c = s.gamma.to_bits() as u64;
+    let d = s.gain_db.to_bits() as u64;
+    // Mix so distinct tuples don't collide (xor-shift fold).
+    (a.wrapping_mul(0x9E3779B1) ^ b.rotate_left(16))
+        .wrapping_mul(0x85EBCA77)
+        ^ c.rotate_left(32)
+        ^ d.rotate_left(48)
+}
+
+/// Build the 65536-entry magnitude→grey LUT for `settings`. Index = top 16 bits
+/// of `mag.to_bits()`; the representative magnitude uses the mid-cell mantissa so
+/// the result matches `db_to_greyscale(magnitude_to_db(mag), …)` to within a
+/// grey level across the cell (cell ≈ 0.07 dB ≪ one of 256 output levels).
+fn build_grey_lut(settings: &SpectDisplaySettings, out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(1 << 16);
+    for i in 0..(1u32 << 16) {
+        let bits = (i << 16) | 0x8000; // mid-cell representative
+        let mag = f32::from_bits(bits);
+        let db = magnitude_to_db(mag);
+        out.push(db_to_greyscale(
+            db,
+            settings.floor_db,
+            settings.range_db,
+            settings.gamma,
+            settings.gain_db,
+        ));
+    }
+}
+
+/// Map a (non-negative) magnitude to grey via the prebuilt LUT.
+#[inline]
+fn grey_from_lut(lut: &[u8], mag: f32) -> u8 {
+    // Negative / NaN magnitudes shouldn't occur (FFT/resonator magnitudes are
+    // ≥ 0); guard so a stray value can't index past the table.
+    if mag > 0.0 {
+        lut[(mag.to_bits() >> 16) as usize]
+    } else {
+        lut[0]
+    }
 }
 
 /// Create a new waterfall for live display.
@@ -240,77 +298,113 @@ pub fn render_viewport(
 
         let total_bins = wf.freq_bins;
         let oldest_available = wf.total_written.saturating_sub(wf.capacity);
+        let iw = img_w as usize;
+        let ih = img_h as usize;
+        let pixel_count = iw * ih;
 
-        // Precompute bin mapping for each canvas row.
-        // Row 0 = top = high freq, row (h-1) = bottom = low freq.
-        let bin_map: Vec<usize> = (0..img_h as usize).map(|py| {
-            let frac = py as f64 / viewport_h; // 0 at top, 1 at bottom
-            // freq_crop_hi = top, freq_crop_lo = bottom
-            let freq_frac = freq_crop_hi - frac * (freq_crop_hi - freq_crop_lo);
-            (freq_frac * total_bins as f64).floor().clamp(0.0, (total_bins - 1) as f64) as usize
-        }).collect();
+        // Refresh the cached row→bin map only when height / crop changes.
+        let bin_key = (img_h, total_bins, freq_crop_lo.to_bits(), freq_crop_hi.to_bits());
+        RENDER_BIN_MAP.with(|cell| {
+            let mut bm = cell.borrow_mut();
+            if bm.1 != bin_key {
+                bm.0.clear();
+                bm.0.extend((0..ih).map(|py| {
+                    let frac = py as f64 / viewport_h; // 0 at top, 1 at bottom
+                    // freq_crop_hi = top, freq_crop_lo = bottom
+                    let freq_frac = freq_crop_hi - frac * (freq_crop_hi - freq_crop_lo);
+                    (freq_frac * total_bins as f64).floor().clamp(0.0, (total_bins - 1) as f64) as usize
+                }));
+                bm.1 = bin_key;
+            }
+        });
 
-        // Allocate RGBA pixel buffer (opaque black default).
-        let pixel_count = (img_w * img_h) as usize;
-        let mut pixels = vec![0u8; pixel_count * 4];
-        // Set alpha to 255 for all pixels.
-        for chunk in pixels.chunks_exact_mut(4) {
-            chunk[3] = 255;
-        }
+        // Refresh the magnitude→grey LUT only when the display settings change.
+        let lut_key = grey_lut_key(settings);
+        GREY_LUT.with(|cell| {
+            let mut lut = cell.borrow_mut();
+            if lut.1 != lut_key {
+                build_grey_lut(settings, &mut lut.0);
+                lut.1 = lut_key;
+            }
+        });
 
         // Clamp rendering to live_data_cols so we don't draw past actual data.
         let data_end = live_data_cols.min(wf.total_written);
-
         // Columns per pixel — when zoomed out (cols_per_px > 1) we average
         // multiple waterfall columns into each canvas pixel to avoid aliasing
         // shimmer caused by point-sampling with fractional scroll offsets.
         let cols_per_px = 1.0 / zoom;
 
-        // For each canvas column, find the corresponding waterfall column(s).
-        for px in 0..img_w {
-            let col_start_f = scroll_col + px as f64 * cols_per_px;
-            let col_end_f = col_start_f + cols_per_px;
-            let col_lo = col_start_f.floor().max(oldest_available as f64) as usize;
-            let col_hi = col_end_f.ceil().min(data_end as f64) as usize;
-            if col_lo >= col_hi { continue; }
-
-            let n_cols = col_hi - col_lo;
-            // For each canvas row, average the magnitude across contributing columns.
-            for (py, &bin) in bin_map.iter().enumerate() {
-                let mag = if n_cols == 1 {
-                    let buf_idx = col_lo % wf.capacity;
-                    wf.magnitudes[buf_idx * wf.freq_bins + bin]
-                } else {
-                    let mut sum = 0.0f32;
-                    for c in col_lo..col_hi {
-                        let buf_idx = c % wf.capacity;
-                        sum += wf.magnitudes[buf_idx * wf.freq_bins + bin];
-                    }
-                    sum / n_cols as f32
-                };
-                let db = magnitude_to_db(mag);
-                let grey = db_to_greyscale(
-                    db,
-                    settings.floor_db,
-                    settings.range_db,
-                    settings.gamma,
-                    settings.gain_db,
-                );
-                let [r, g, b] = apply_colormap_mode(colormap, grey, py, img_h as usize, total_bins);
-                let idx = (py as u32 * img_w + px) as usize * 4;
-                pixels[idx] = r;
-                pixels[idx + 1] = g;
-                pixels[idx + 2] = b;
+        RENDER_PIXELS.with(|px_cell| {
+            let mut pixels = px_cell.borrow_mut();
+            let need = pixel_count * 4;
+            // Resize only on change; set alpha to 255 once (the loop only writes
+            // RGB, so reuse keeps alpha intact across frames).
+            if pixels.len() != need {
+                pixels.resize(need, 0);
+                for i in (3..need).step_by(4) {
+                    pixels[i] = 255;
+                }
             }
-        }
 
-        // Put pixels on canvas.
-        let clamped = wasm_bindgen::Clamped(&pixels[..]);
-        if let Ok(img_data) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
-            clamped, img_w, img_h,
-        ) {
-            let _ = ctx.put_image_data(&img_data, 0.0, 0.0);
-        }
+            RENDER_BIN_MAP.with(|bm_cell| {
+                let bm = bm_cell.borrow();
+                let bin_map = &bm.0;
+                GREY_LUT.with(|lut_cell| {
+                    let lc = lut_cell.borrow();
+                    let lut = &lc.0;
+
+                    // For each canvas column, find the corresponding waterfall column(s).
+                    for px in 0..iw {
+                        let col_start_f = scroll_col + px as f64 * cols_per_px;
+                        let col_end_f = col_start_f + cols_per_px;
+                        let col_lo = col_start_f.floor().max(oldest_available as f64) as usize;
+                        let col_hi = col_end_f.ceil().min(data_end as f64) as usize;
+                        if col_lo >= col_hi {
+                            // No data for this column — paint it black (the reused
+                            // buffer would otherwise keep the previous frame here).
+                            for py in 0..ih {
+                                let idx = (py * iw + px) * 4;
+                                pixels[idx] = 0;
+                                pixels[idx + 1] = 0;
+                                pixels[idx + 2] = 0;
+                            }
+                            continue;
+                        }
+
+                        let n_cols = col_hi - col_lo;
+                        for (py, &bin) in bin_map.iter().enumerate() {
+                            let mag = if n_cols == 1 {
+                                let buf_idx = col_lo % wf.capacity;
+                                wf.magnitudes[buf_idx * wf.freq_bins + bin]
+                            } else {
+                                let mut sum = 0.0f32;
+                                for c in col_lo..col_hi {
+                                    let buf_idx = c % wf.capacity;
+                                    sum += wf.magnitudes[buf_idx * wf.freq_bins + bin];
+                                }
+                                sum / n_cols as f32
+                            };
+                            // LUT replaces a per-pixel software log10 + powf.
+                            let grey = grey_from_lut(lut, mag);
+                            let [r, g, b] = apply_colormap_mode(colormap, grey, py, ih, total_bins);
+                            let idx = (py * iw + px) * 4;
+                            pixels[idx] = r;
+                            pixels[idx + 1] = g;
+                            pixels[idx + 2] = b;
+                        }
+                    }
+
+                    // Put pixels on canvas.
+                    let clamped = wasm_bindgen::Clamped(&pixels[..need]);
+                    if let Ok(img_data) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+                        clamped, img_w, img_h,
+                    ) {
+                        let _ = ctx.put_image_data(&img_data, 0.0, 0.0);
+                    }
+                });
+            });
+        });
 
         true
     })
@@ -338,5 +432,52 @@ fn apply_colormap_mode(
                 [grey, grey, grey]
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The mag→grey LUT must match the direct log+map path to within a single
+    /// grey level across many orders of magnitude and several settings.
+    fn check_lut(settings: &SpectDisplaySettings) {
+        let mut lut = Vec::new();
+        build_grey_lut(settings, &mut lut);
+        assert_eq!(lut.len(), 1 << 16);
+        let mut max_diff = 0i32;
+        for e in -9..2 {
+            for m in 1..10 {
+                let mag = (m as f32) * 10f32.powi(e);
+                let direct = db_to_greyscale(
+                    magnitude_to_db(mag),
+                    settings.floor_db,
+                    settings.range_db,
+                    settings.gamma,
+                    settings.gain_db,
+                );
+                let via = grey_from_lut(&lut, mag);
+                max_diff = max_diff.max((direct as i32 - via as i32).abs());
+            }
+        }
+        assert!(
+            max_diff <= 1,
+            "LUT off by {max_diff} grey levels (floor {}, range {}, gamma {}, gain {})",
+            settings.floor_db, settings.range_db, settings.gamma, settings.gain_db
+        );
+        // Zero / negative magnitudes clamp to the darkest level.
+        assert_eq!(grey_from_lut(&lut, 0.0), 0);
+        assert_eq!(grey_from_lut(&lut, -1.0), 0);
+    }
+
+    #[test]
+    fn grey_lut_matches_direct_linear() {
+        check_lut(&SpectDisplaySettings { floor_db: -90.0, range_db: 90.0, gamma: 1.0, gain_db: 6.0 });
+    }
+
+    #[test]
+    fn grey_lut_matches_direct_gamma() {
+        check_lut(&SpectDisplaySettings { floor_db: -120.0, range_db: 120.0, gamma: 2.2, gain_db: 0.0 });
+        check_lut(&SpectDisplaySettings { floor_db: -60.0, range_db: 60.0, gamma: 0.5, gain_db: -10.0 });
     }
 }
