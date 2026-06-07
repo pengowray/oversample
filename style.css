@@ -3184,9 +3184,16 @@ body.sidebar-resizing {
     display: flex;
     align-items: stretch;
     position: relative;
-    flex-shrink: 0;
+    flex: 0 0 auto;
     flex-wrap: nowrap;
     margin-right: 10px;
+    /* Pin the *used* width (not just a min-width floor) to the intrinsic
+       content size. Firefox doesn't reliably propagate a nested flex
+       container's max-content up to this row's border box, so with only
+       `min-width: max-content` the border-top (the amber HFR overline)
+       stopped partway across the PASS combo. `width: max-content` makes the
+       row's border box equal its content in both engines. */
+    width: max-content;
     min-width: max-content;
     /* Overline is a real border on the row — extends exactly the box's
        width (including all flex children) without depending on
@@ -3226,9 +3233,12 @@ body.sidebar-resizing {
     gap: 4px;
     flex-wrap: nowrap;
     padding: 0 0 0 6px;
-    /* Override .bar-controls' min-width: 0 — we want intrinsic width
-       so the parent row knows how wide it needs to be (and the
-       overline above can span all the way to PASS). */
+    /* Override .bar-controls' min-width: 0 — we want intrinsic width so the
+       parent row knows how wide it needs to be (and the overline above can
+       span all the way to PASS). `width: max-content` (not just min-width)
+       makes Firefox include this nested flex row's full size in the parent's
+       border box. */
+    width: max-content;
     min-width: max-content;
 }
 /* Children of band-affected-controls must never flex-shrink — otherwise
