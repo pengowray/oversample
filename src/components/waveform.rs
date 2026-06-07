@@ -131,6 +131,10 @@ pub fn Waveform() -> impl IntoView {
         let canvas_tool = state.interaction.canvas_tool().get();
         let cv = state.viewmode.channel_view().get();
         let _tile_ready = state.viewmode.tile_ready_signal().get();
+        // During live capture, refresh every capture tick (not just on scroll)
+        // so the waveform tracks the live ring smoothly instead of the ~1 Hz
+        // source-snapshot cadence.
+        let _live_cols = state.mic.live_data_cols().get();
         let wave_auto = state.gain.wave_view_auto().get();
         let gain_db = if wave_auto {
             state.compute_auto_gain_untracked()
@@ -367,34 +371,63 @@ pub fn Waveform() -> impl IntoView {
                 } else {
                     None
                 };
+                let mip_d = waveform_renderer::MIP_D as f64;
                 let draw_full_wave = |color: &str| {
                   let _perf = web_sys::window().and_then(|w| w.performance());
                   let _t0 = _perf.as_ref().map(|p| p.now());
-                  let _used_mip = matches!(mip_buf, Some(_)) && spp >= waveform_renderer::MIP_D as f64;
-                  match mip_buf {
-                    Some(all) if spp >= waveform_renderer::MIP_D as f64 => {
-                        // `all` is the whole channel buffer the renderer already
-                        // maps `buf_scroll` into — a static file, or the live
-                        // file's periodic snapshot (a frozen Arc between updates).
-                        // Either way it's a plain [0, len) buffer → abs_offset = 0;
-                        // the cache key (buffer ptr) rebuilds when a new snapshot
-                        // (or file/channel) swaps the Arc.
-                        waveform_renderer::draw_waveform_mipped(
-                            &ctx, all, 0, 0, sr, buf_scroll, zoom,
-                            file.spectrogram.time_resolution, display_w as f64, wave_h,
-                            sel_time, gain_db, buf_duration, color,
-                        );
-                    }
-                    _ => {
-                        waveform_renderer::draw_waveform(
-                            &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
-                            file.spectrogram.time_resolution, display_w as f64, wave_h,
-                            sel_time, gain_db, buf_duration, region_start, color,
-                        );
-                    }
+                  let mut used_mip = false;
+                  // ── Live: read the raw capture ring DIRECTLY (the file source is
+                  // only a ~1 Hz snapshot, so reading it makes the wave look frozen
+                  // between updates). The ring slides every tick; the mip folds the
+                  // new samples incrementally (abs-anchored) so it stays cheap and
+                  // refreshes at frame rate.
+                  let live_drew = if is_live && spp >= mip_d {
+                      let now_secs = crate::canvas::live_waterfall::total_time();
+                      let cap_cells = ((crate::canvas::live_waterfall::capacity_time()
+                          * sr as f64) as usize / waveform_renderer::MIP_D) + 8;
+                      crate::audio::mic_backend::with_live_samples(state.is_tauri, |ring| {
+                          if ring.is_empty() { return false; }
+                          let ring_dur = ring.len() as f64 / sr as f64;
+                          let ring_offset = (now_secs - ring_dur).max(0.0); // abs time of ring[0]
+                          let ring_scroll = (scroll - ring_offset).clamp(0.0, ring_dur);
+                          let abs_offset = ((now_secs * sr as f64) as u64)
+                              .saturating_sub(ring.len() as u64);
+                          waveform_renderer::draw_waveform_mipped_live(
+                              &ctx, ring, abs_offset, cap_cells, sr, ring_scroll, zoom,
+                              file.spectrogram.time_resolution, display_w as f64, wave_h,
+                              sel_time, gain_db, ring_dur, color,
+                          );
+                          true
+                      })
+                  } else {
+                      false
+                  };
+                  if live_drew {
+                      used_mip = true;
+                  } else {
+                      match mip_buf {
+                          // Static file (or live with a too-small window): the whole
+                          // contiguous buffer is a plain [0, len) buffer (abs_offset 0).
+                          Some(all) if spp >= mip_d => {
+                              waveform_renderer::draw_waveform_mipped(
+                                  &ctx, all, 0, 0, sr, buf_scroll, zoom,
+                                  file.spectrogram.time_resolution, display_w as f64, wave_h,
+                                  sel_time, gain_db, buf_duration, color,
+                              );
+                              used_mip = true;
+                          }
+                          // Zoomed-in (sub-cell detail) or non-contiguous → raw window.
+                          _ => {
+                              waveform_renderer::draw_waveform(
+                                  &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
+                                  file.spectrogram.time_resolution, display_w as f64, wave_h,
+                                  sel_time, gain_db, buf_duration, region_start, color,
+                              );
+                          }
+                      }
                   }
                   if let (Some(p), Some(t0)) = (_perf.as_ref(), _t0) {
-                      waveform_renderer::wf_diag_record(p.now() - t0, _used_mip, spp);
+                      waveform_renderer::wf_diag_record(p.now() - t0, used_mip, spp);
                   }
                 };
 

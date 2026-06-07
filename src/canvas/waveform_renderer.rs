@@ -350,17 +350,17 @@ impl WaveMip {
     }
 }
 
-/// Draw the Simple waveform from a cached decimated min/max mip over the WHOLE
-/// channel buffer (`buf`), instead of re-scanning the visible window each frame.
-/// `abs_offset` is the absolute sample index of `buf[0]` (0 for a static file;
-/// `captured − buf.len()` for the live sliding ring); `channel_id` distinguishes
-/// channel views in the cache key. The caller guarantees `spp >= MIP_D`.
+/// Shared core: fold `buf` into the cached mip under `key`/`cap_cells` and render
+/// the visible window from cells. `abs_offset` is the absolute sample index of
+/// `buf[0]`. The caller controls the cache identity so a sliding live ring (whose
+/// length fluctuates) doesn't force a rebuild — see the two wrappers below.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_waveform_mipped(
+fn draw_mip_core(
     ctx: &CanvasRenderingContext2d,
     buf: &[f32],
     abs_offset: u64,
-    channel_id: u8,
+    key: (usize, usize, u8),
+    cap_cells: usize,
     sample_rate: u32,
     scroll_offset: f64,
     zoom: f64,
@@ -387,17 +387,15 @@ pub fn draw_waveform_mipped(
 
     WAVE_MIP.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let key = (buf.as_ptr() as usize, buf.len(), channel_id);
-        let needed_cap = buf.len() / MIP_D + 2;
         let abs_latest = abs_offset + buf.len() as u64;
         let rebuild = match slot.as_ref() {
-            // New buffer/channel, a bigger buffer than the ring holds, or the
+            // New buffer/channel, a buffer bigger than the ring cap holds, or the
             // absolute clock went backwards (new live session) → start clean.
-            Some(m) => m.key != key || needed_cap > m.cap || abs_latest < m.consumed,
+            Some(m) => m.key != key || cap_cells > m.cap || abs_latest < m.consumed,
             None => true,
         };
         if rebuild {
-            *slot = Some(WaveMip::new(key, needed_cap));
+            *slot = Some(WaveMip::new(key, cap_cells));
             WF_DIAG.with(|c| c.borrow_mut().6 += 1);
         }
         let mip = slot.as_mut().unwrap();
@@ -434,6 +432,64 @@ pub fn draw_waveform_mipped(
         }
         ctx.stroke();
     });
+}
+
+/// Draw the Simple waveform from a decimated min/max mip over a STATIC whole
+/// channel buffer (`buf`, `abs_offset = 0`). Cache key includes `buf.len()` so a
+/// reused heap address can't serve stale cells. The caller guarantees spp >= MIP_D.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_waveform_mipped(
+    ctx: &CanvasRenderingContext2d,
+    buf: &[f32],
+    abs_offset: u64,
+    channel_id: u8,
+    sample_rate: u32,
+    scroll_offset: f64,
+    zoom: f64,
+    time_resolution: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    selection: Option<(f64, f64)>,
+    gain_db: f64,
+    total_duration: f64,
+    stroke_color: &str,
+) {
+    let key = (buf.as_ptr() as usize, buf.len(), channel_id);
+    let cap_cells = buf.len() / MIP_D + 2;
+    draw_mip_core(ctx, buf, abs_offset, key, cap_cells, sample_rate, scroll_offset, zoom,
+        time_resolution, canvas_width, canvas_height, selection, gain_db, total_duration, stroke_color);
+}
+
+/// Draw the live waveform from the SLIDING raw-sample ring, folded incrementally.
+/// `abs_offset` is the absolute index of `ring[0]` (= captured − ring.len()).
+/// The cache key omits the ring length (which fluctuates every tick as the ring
+/// grows/trims) so the mip is NOT rebuilt each frame — only the new samples are
+/// folded. `cap_cells` is sized to the ring's max retained length so old cells
+/// wrap rather than reallocating. Updates at render-frame rate, not the ~1 Hz
+/// source-snapshot cadence.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_waveform_mipped_live(
+    ctx: &CanvasRenderingContext2d,
+    ring: &[f32],
+    abs_offset: u64,
+    cap_cells: usize,
+    sample_rate: u32,
+    scroll_offset: f64,
+    zoom: f64,
+    time_resolution: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    selection: Option<(f64, f64)>,
+    gain_db: f64,
+    total_duration: f64,
+    stroke_color: &str,
+) {
+    // channel_id = 1 marks the live ring's cache so it never aliases a static
+    // file's mip; length is omitted from the key (it fluctuates each tick).
+    let key = (ring.as_ptr() as usize, 0usize, 1u8);
+    let cap_cells = cap_cells.max(ring.len() / MIP_D + 2);
+    draw_mip_core(ctx, ring, abs_offset, key, cap_cells, sample_rate, scroll_offset, zoom,
+        time_resolution, canvas_width, canvas_height, selection, gain_db, total_duration, stroke_color);
 }
 
 /// Draw a waveform layer into a vertical sub-region of the canvas.
