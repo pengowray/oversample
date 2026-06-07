@@ -40,6 +40,8 @@ pub fn App() -> impl IntoView {
 
     // Expose a read-only state snapshot on window for e2e (Playwright) specs.
     crate::test_hook::install(state);
+    // Expose synth-test start/stop on window for e2e (dev/test feature).
+    crate::audio::synthetic_mic::install_test_hooks(state);
 
     // Detect browser's default audio output sample rate
     {
@@ -62,16 +64,10 @@ pub fn App() -> impl IntoView {
             // No mic needed — drives the real listen pipeline for visual/perf
             // testing (see audio::synthetic_mic).
             if trimmed.len() >= 9 && trimmed[..9].eq_ignore_ascii_case("synthtest") {
-                use crate::audio::synthetic_mic::{self, SynthSignal};
+                use crate::audio::synthetic_mic::{self, signal_from_str};
                 let rest = trimmed[9..].trim_start_matches('-').to_ascii_lowercase();
                 let mut parts = rest.split('-').filter(|s| !s.is_empty());
-                let signal = match parts.next().unwrap_or("chirp") {
-                    "noise" => SynthSignal::Noise,
-                    "tone" => SynthSignal::Tone,
-                    "multi" | "multitone" => SynthSignal::MultiTone,
-                    "pulses" | "pulse" => SynthSignal::Pulses,
-                    _ => SynthSignal::Chirp,
-                };
+                let signal = signal_from_str(parts.next().unwrap_or("chirp"));
                 let rate = parts.next()
                     .and_then(|s| s.parse::<u32>().ok())
                     .map(|khz| khz.clamp(8, 1000) * 1000)

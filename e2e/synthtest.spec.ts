@@ -53,6 +53,29 @@ test.describe("synthetic live waterfall", () => {
     expect(cols1 - cols0, `liveDataCols should grow fast (${cols0} -> ${cols1})`).toBeGreaterThan(20);
   });
 
+  test("restarting (start while active) keeps producing columns", async ({ page }) => {
+    test.setTimeout(60_000);
+    // Start fresh via the hash, then restart in-page via the window seam — the
+    // restart path is where a stale processing loop used to clear the new
+    // waterfall, freezing column output at 0 while the feeder kept running.
+    await gotoSynth(page, "#synthtest-chirp-256");
+    await page.waitForTimeout(600);
+
+    // Restart with a different signal (mirrors clicking another Debug button).
+    await page.evaluate(() => (window as unknown as { __synthStart: (s: string, r: number) => void }).__synthStart("pulses", 256000));
+
+    // After the restart the waterfall must keep advancing (not stick at 0).
+    await page.waitForFunction(
+      () => (window as unknown as { __oversample_test: () => { liveActive: boolean } }).__oversample_test().liveActive,
+      undefined,
+      { timeout: 10_000 },
+    );
+    const cols0 = (await snapshot(page)).liveDataCols;
+    await page.waitForTimeout(1000);
+    const cols1 = (await snapshot(page)).liveDataCols;
+    expect(cols1 - cols0, `restart should keep advancing (${cols0} -> ${cols1})`).toBeGreaterThan(20);
+  });
+
   test("the spectrogram canvas actually repaints (waterfall scrolls)", async ({ page }) => {
     test.setTimeout(60_000);
     await gotoSynth(page, "#synthtest-pulses-256");

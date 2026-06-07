@@ -10,16 +10,22 @@ pub fn DebugPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
     let container_ref = NodeRef::<leptos::html::Div>::new();
 
-    // Synthetic live-waterfall test signal (no mic needed).
+    // Synthetic live-waterfall test signal (no mic needed). Starting any test
+    // collapses the right sidebar so the panel doesn't cover the view or skew
+    // the render budget being measured.
     let synth_rate = RwSignal::new(256_000u32);
-    let synth_active = RwSignal::new(false);
+    let close_panel = move || state.panels.right_collapsed().set(true);
     let start_synth = move |sig: SynthSignal| {
+        close_panel();
         synthetic_mic::start(state, sig, synth_rate.get_untracked());
-        synth_active.set(true);
     };
     let stop_synth = move |_| {
+        crate::audio::synth_bench::cancel();
         synthetic_mic::stop(&state);
-        synth_active.set(false);
+    };
+    let run_bench = move |_| {
+        close_panel();
+        crate::audio::synth_bench::run(state);
     };
 
     // Auto-scroll to bottom when entries change
@@ -148,11 +154,16 @@ pub fn DebugPanel() -> impl IntoView {
                     }).collect_view()}
                 </div>
                 <button
-                    class=move || if synth_active.get() { "setting-btn sel" } else { "setting-btn" }
+                    class="setting-btn"
                     style="width:100%;margin-top:4px;"
-                    prop:disabled=move || !synth_active.get()
+                    title="Run the full rate/view/signal benchmark unattended; downloads + copies a report tagged with the app version."
+                    on:click=run_bench
+                >"Run Benchmark"</button>
+                <button
+                    class="setting-btn"
+                    style="width:100%;margin-top:4px;"
                     on:click=stop_synth
-                >"Stop Test Signal"</button>
+                >"Stop"</button>
             </div>
             <hr style="border-color: #444; margin: 4px 0;" />
             <div class="debug-panel-toolbar">

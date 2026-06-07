@@ -114,6 +114,47 @@ pub fn stop(state: &AppState) {
     state.log_debug("info", "Synth test: stopped");
 }
 
+pub fn signal_from_str(s: &str) -> SynthSignal {
+    match s {
+        "noise" => SynthSignal::Noise,
+        "tone" => SynthSignal::Tone,
+        "multi" | "multitone" => SynthSignal::MultiTone,
+        "pulses" | "pulse" => SynthSignal::Pulses,
+        _ => SynthSignal::Chirp,
+    }
+}
+
+/// Install `window.__synthStart(signal, rateHz?)` / `window.__synthStop()` so
+/// the e2e harness can drive the synth (incl. the restart race) deterministically
+/// without navigating the Debug-panel UI. The synth is a dev/test feature; these
+/// hooks just call the same `start`/`stop` the buttons do.
+pub fn install_test_hooks(state: AppState) {
+    use wasm_bindgen::prelude::*;
+    let Some(window) = web_sys::window() else { return };
+
+    let start_cb = Closure::wrap(Box::new(move |sig: JsValue, rate: JsValue| {
+        let s = sig.as_string().unwrap_or_else(|| "chirp".to_string());
+        let r = rate.as_f64().map(|v| v as u32).filter(|&v| v >= 8_000).unwrap_or(256_000);
+        start(state, signal_from_str(&s), r);
+    }) as Box<dyn Fn(JsValue, JsValue)>);
+    let _ = js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__synthStart"),
+        start_cb.as_ref().unchecked_ref(),
+    );
+    start_cb.forget();
+
+    let stop_cb = Closure::wrap(Box::new(move || {
+        stop(&state);
+    }) as Box<dyn Fn()>);
+    let _ = js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__synthStop"),
+        stop_cb.as_ref().unchecked_ref(),
+    );
+    stop_cb.forget();
+}
+
 /// Per-signal generator state carried across feeder ticks for phase continuity.
 struct GenState {
     phase: f64,
