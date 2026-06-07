@@ -335,32 +335,47 @@ pub fn Waveform() -> impl IntoView {
                 // active filter split.
                 let hfr_on = state.viewmode.focus_stack().get().hfr_enabled();
 
-                match waveform_view {
-                    WaveformView::Simple => {
-                        waveform_renderer::draw_waveform(
-                            &ctx,
-                            &waveform_buf[..],
-                            sr,
-                            buf_scroll,
-                            zoom,
-                            file.spectrogram.time_resolution,
-                            display_w as f64,
-                            wave_h,
-                            sel_time,
-                            gain_db,
-                            buf_duration,
-                            region_start,
-                            waveform_renderer::WAVEFORM_GREEN,
+                // Full-band single-wave draw. When zoomed out enough (spp >= MIP_D)
+                // on an in-memory MonoMix buffer, render from the decimated min/max
+                // mip — folded incrementally, indexes ~spp/MIP_D cells per pixel —
+                // instead of re-scanning the whole visible window every frame. Else
+                // the raw windowed path (zoomed-in needs sub-cell resolution, and
+                // streaming / non-mono sources have no contiguous buffer to mip).
+                let spp = if display_w > 0 { visible_time * sr as f64 / display_w as f64 } else { 0.0 };
+                let mip_buf = if cv == ChannelView::MonoMix {
+                    file.audio.source.as_contiguous()
+                } else {
+                    None
+                };
+                let draw_full_wave = |color: &str| match mip_buf {
+                    Some(all) if spp >= waveform_renderer::MIP_D as f64 => {
+                        // `all` is the whole channel buffer the renderer already
+                        // maps `buf_scroll` into — a static file, or the live
+                        // file's periodic snapshot (a frozen Arc between updates).
+                        // Either way it's a plain [0, len) buffer → abs_offset = 0;
+                        // the cache key (buffer ptr) rebuilds when a new snapshot
+                        // (or file/channel) swaps the Arc.
+                        waveform_renderer::draw_waveform_mipped(
+                            &ctx, all, 0, 0, sr, buf_scroll, zoom,
+                            file.spectrogram.time_resolution, display_w as f64, wave_h,
+                            sel_time, gain_db, buf_duration, color,
                         );
                     }
-                    WaveformView::Frequency if !hfr_on => {
+                    _ => {
                         waveform_renderer::draw_waveform(
                             &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
-                            file.spectrogram.time_resolution,
-                            display_w as f64, wave_h,
-                            sel_time, gain_db, buf_duration, region_start,
-                            waveform_renderer::WAVEFORM_BLUE,
+                            file.spectrogram.time_resolution, display_w as f64, wave_h,
+                            sel_time, gain_db, buf_duration, region_start, color,
                         );
+                    }
+                };
+
+                match waveform_view {
+                    WaveformView::Simple => {
+                        draw_full_wave(waveform_renderer::WAVEFORM_GREEN);
+                    }
+                    WaveformView::Frequency if !hfr_on => {
+                        draw_full_wave(waveform_renderer::WAVEFORM_BLUE);
                     }
                     WaveformView::Frequency => {
                         if let Some((ref _below, ref selected, ref _above)) = band_data.as_ref() {
@@ -383,13 +398,7 @@ pub fn Waveform() -> impl IntoView {
                                 band_freq_high,
                             );
                         } else {
-                            waveform_renderer::draw_waveform(
-                                &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
-                                file.spectrogram.time_resolution,
-                                display_w as f64, wave_h,
-                                sel_time, gain_db, buf_duration, region_start,
-                                waveform_renderer::WAVEFORM_GREEN,
-                            );
+                            draw_full_wave(waveform_renderer::WAVEFORM_GREEN);
                         }
                     }
                     WaveformView::Triple => {
@@ -416,13 +425,7 @@ pub fn Waveform() -> impl IntoView {
                                 band_freq_high,
                             );
                         } else {
-                            waveform_renderer::draw_waveform(
-                                &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
-                                file.spectrogram.time_resolution,
-                                display_w as f64, wave_h,
-                                sel_time, gain_db, buf_duration, region_start,
-                                waveform_renderer::WAVEFORM_GREEN,
-                            );
+                            draw_full_wave(waveform_renderer::WAVEFORM_GREEN);
                         }
                     }
                 }

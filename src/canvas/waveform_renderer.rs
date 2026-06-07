@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use web_sys::CanvasRenderingContext2d;
 
 use crate::viewport;
@@ -194,6 +196,200 @@ pub fn draw_waveform(
     draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
     draw_center_line(ctx, vp.mid_y, canvas_width);
     draw_waveform_layer(ctx, samples, sample_rate, &vp, canvas_width, stroke_color, gain_linear);
+}
+
+// ── Min/max mip for the Waveform view (zoomed-out scan elimination) ───────────
+//
+// The Waveform Effect re-runs every scroll frame and `draw_waveform_layer`
+// re-scans the visible window for per-pixel min/max — O(visible samples), i.e.
+// millions/frame at fit zoom (benchmark: Waveform fit @384k = 32 fps vs the
+// tile-cached spectrogram's 90). This caches a decimated (min,max) envelope
+// anchored to ABSOLUTE sample positions and folds in only the NEW samples each
+// frame — exactly like the live overview's `LiveWaveEnvelope`, just decimated —
+// so a stationary buffer is free and rendering scans ~spp/MIP_D cells per pixel
+// instead of spp raw samples. Lossless for min/max (max-of-cell-maxes = true
+// max over the covered span). Works for BOTH a static file (fold once,
+// abs_offset = 0) and the live sliding ring (fold incrementally, abs_offset =
+// captured − ring_len). Used only when spp >= MIP_D; zoomed-in (spp < MIP_D)
+// keeps the raw path, which needs sub-cell resolution anyway.
+
+/// Samples per mip cell. At spp >= this, the mip render beats a raw scan.
+pub const MIP_D: usize = 256;
+
+thread_local! {
+    static WAVE_MIP: RefCell<Option<WaveMip>> = const { RefCell::new(None) };
+}
+
+struct WaveMip {
+    /// Ring of `(min, max)` cells; the cell for absolute cell-index `c` lives at
+    /// `c % cap`. Each cell spans `MIP_D` absolute samples.
+    cells: Vec<(f32, f32)>,
+    cap: usize,
+    /// Highest absolute cell index folded; `-1` when empty.
+    head: i64,
+    /// Lowest absolute cell index still valid (written and within the ring);
+    /// `-1` when empty. Fences un-refilled gaps after a stall-rebuild.
+    tail: i64,
+    /// Absolute samples folded so far. Monotonic within a session.
+    consumed: u64,
+    /// Identity: `(buffer ptr, buffer len, channel id)`. A change forces a
+    /// rebuild. `len` is included so a freed buffer whose heap address is reused
+    /// by a different file can't be mistaken for the same buffer (ABA).
+    key: (usize, usize, u8),
+}
+
+impl WaveMip {
+    fn new(key: (usize, usize, u8), cap: usize) -> Self {
+        let cap = cap.max(4);
+        WaveMip { cells: vec![(0.0, 0.0); cap], cap, head: -1, tail: -1, consumed: 0, key }
+    }
+
+    /// Fold the buffer's newest samples into the envelope. `abs_latest` is the
+    /// absolute index just past the newest sample (static: buffer.len(); live:
+    /// total captured). The buffer's last `len` samples are absolute
+    /// `[abs_latest - len, abs_latest)`.
+    fn fold(&mut self, abs_latest: u64, buf: &[f32]) {
+        if abs_latest <= self.consumed {
+            return; // nothing new (static after first fold, or an idle live tick)
+        }
+        let buf_len = buf.len() as u64;
+        let mut start = self.consumed;
+        let mut new = abs_latest - self.consumed;
+        if new > buf_len {
+            // Lost data (fresh mip, or a long live stall): restart from what the
+            // buffer still holds; `tail` fences the un-refilled gap.
+            self.head = -1;
+            self.tail = -1;
+            start = abs_latest - buf_len;
+            new = buf_len;
+        }
+        let base = buf.len() - new as usize;
+        let cap = self.cap;
+        for k in 0..new as usize {
+            let abs_idx = start + k as u64;
+            let s = buf[base + k];
+            let c = (abs_idx / MIP_D as u64) as i64;
+            if c > self.head {
+                if self.head < 0 {
+                    self.tail = c;
+                }
+                self.cells[(c as usize) % cap] = (s, s);
+                self.head = c;
+                let min_valid = self.head - cap as i64 + 1;
+                if self.tail < min_valid {
+                    self.tail = min_valid;
+                }
+            } else {
+                let cell = &mut self.cells[(c as usize) % cap];
+                if s < cell.0 { cell.0 = s; }
+                if s > cell.1 { cell.1 = s; }
+            }
+        }
+        self.consumed = start + new;
+    }
+
+    /// `(min, max)` over absolute cell range `[c0, c1]` (inclusive), clamped to
+    /// the valid window; `None` if the range holds no valid cell.
+    fn range(&self, c0: i64, c1: i64) -> Option<(f32, f32)> {
+        let lo = c0.max(self.tail);
+        let hi = c1.min(self.head);
+        if lo > hi || self.head < 0 {
+            return None;
+        }
+        let mut mn = f32::MAX;
+        let mut mx = f32::MIN;
+        for c in lo..=hi {
+            let (cmn, cmx) = self.cells[(c as usize) % self.cap];
+            if cmn < mn { mn = cmn; }
+            if cmx > mx { mx = cmx; }
+        }
+        Some((mn, mx))
+    }
+}
+
+/// Draw the Simple waveform from a cached decimated min/max mip over the WHOLE
+/// channel buffer (`buf`), instead of re-scanning the visible window each frame.
+/// `abs_offset` is the absolute sample index of `buf[0]` (0 for a static file;
+/// `captured − buf.len()` for the live sliding ring); `channel_id` distinguishes
+/// channel views in the cache key. The caller guarantees `spp >= MIP_D`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_waveform_mipped(
+    ctx: &CanvasRenderingContext2d,
+    buf: &[f32],
+    abs_offset: u64,
+    channel_id: u8,
+    sample_rate: u32,
+    scroll_offset: f64,
+    zoom: f64,
+    time_resolution: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    selection: Option<(f64, f64)>,
+    gain_db: f64,
+    total_duration: f64,
+    stroke_color: &str,
+) {
+    ctx.set_fill_style_str("#0a0a0a");
+    ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+    if buf.is_empty() {
+        return;
+    }
+
+    let gain_linear = 10.0_f64.powf(gain_db / 20.0);
+    // region_start_sample = 0: the renderer works in whole-buffer (then absolute)
+    // sample space, so the visible window is derived from scroll/zoom directly.
+    let vp = compute_viewport(total_duration, sample_rate, scroll_offset, zoom, time_resolution, canvas_width, canvas_height, 0);
+    draw_selection(ctx, selection, &vp, canvas_width, canvas_height);
+    draw_center_line(ctx, vp.mid_y, canvas_width);
+
+    WAVE_MIP.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let key = (buf.as_ptr() as usize, buf.len(), channel_id);
+        let needed_cap = buf.len() / MIP_D + 2;
+        let abs_latest = abs_offset + buf.len() as u64;
+        let rebuild = match slot.as_ref() {
+            // New buffer/channel, a bigger buffer than the ring holds, or the
+            // absolute clock went backwards (new live session) → start clean.
+            Some(m) => m.key != key || needed_cap > m.cap || abs_latest < m.consumed,
+            None => true,
+        };
+        if rebuild {
+            *slot = Some(WaveMip::new(key, needed_cap));
+        }
+        let mip = slot.as_mut().unwrap();
+        mip.fold(abs_latest, buf);
+
+        if vp.data_width <= 0.0 || vp.px_per_sec <= 0.0 {
+            return;
+        }
+        let sr = sample_rate as f64;
+        let px_start = vp.data_x.floor().max(0.0) as usize;
+        let px_end = (vp.data_x + vp.data_width).ceil().min(canvas_width).max(vp.data_x) as usize;
+        ctx.set_stroke_style_str(stroke_color);
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        for px in px_start..px_end {
+            let x = px as f64;
+            let t0 = vp.start_time + ((x - vp.data_x) / vp.px_per_sec);
+            let t1 = vp.start_time + ((x + 1.0 - vp.data_x) / vp.px_per_sec);
+            let li1 = (t1 * sr) as i64; // buffer-local sample (end)
+            if li1 <= 0 {
+                continue;
+            }
+            let li0 = ((t0 * sr) as i64).max(0); // buffer-local sample (start)
+            // Map buffer-local → absolute → cell range covering [li0, li1).
+            let a0 = abs_offset as i64 + li0;
+            let a1 = abs_offset as i64 + li1;
+            let c0 = a0 / MIP_D as i64;
+            let c1 = (a1 - 1) / MIP_D as i64;
+            let Some((mn, mx)) = mip.range(c0, c1) else { continue };
+            let y_min = vp.mid_y - (mx as f64 * gain_linear * vp.mid_y * 0.9);
+            let y_max = vp.mid_y - (mn as f64 * gain_linear * vp.mid_y * 0.9);
+            ctx.move_to(x, y_min);
+            ctx.line_to(x, y_max);
+        }
+        ctx.stroke();
+    });
 }
 
 /// Draw a waveform layer into a vertical sub-region of the canvas.
@@ -484,5 +680,128 @@ pub fn draw_zc_rate(
             ctx.set_fill_style_str("rgba(60, 130, 60, 0.35)");
         }
         ctx.fill_rect(x, y, bar_w, bar_h);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WaveMip, MIP_D};
+
+    /// Deterministic pseudo-signal with sample-to-sample variation.
+    fn sample(i: u64) -> f32 {
+        let x = i as f64;
+        let s = (x * 0.017).sin() * 0.6 + (x * 0.29).sin() * 0.3;
+        let h = ((i.wrapping_mul(2654435761) >> 16) & 0xff) as f64 / 255.0 - 0.5;
+        (s + h * 0.2).clamp(-1.0, 1.0) as f32
+    }
+
+    fn window_bits(m: &WaveMip) -> Vec<(u32, u32)> {
+        (m.tail..=m.head)
+            .map(|c| {
+                let (mn, mx) = m.cells[(c as usize) % m.cap];
+                (mn.to_bits(), mx.to_bits())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mip_incremental_matches_oneshot() {
+        // Folding the whole buffer at once must equal folding it in growing
+        // chunks (the static one-shot vs the live grows-each-tick path).
+        let n = 20_000u64;
+        let full: Vec<f32> = (0..n).map(sample).collect();
+        let cap = n as usize / MIP_D + 2;
+
+        let mut one = WaveMip::new((1, 0, 0), cap);
+        one.fold(n, &full);
+
+        let mut inc = WaveMip::new((1, 0, 0), cap);
+        let mut abs = 0u64;
+        while abs < n {
+            abs = (abs + 777).min(n); // odd step → folds cross cell boundaries
+            inc.fold(abs, &full[..abs as usize]);
+        }
+
+        assert_eq!(one.head, inc.head);
+        assert_eq!(one.tail, inc.tail);
+        assert_eq!(window_bits(&one), window_bits(&inc));
+    }
+
+    #[test]
+    fn mip_cells_are_exact_minmax() {
+        // Each cell must be the exact min/max of its MIP_D raw samples (lossless).
+        let n = 5_000u64;
+        let full: Vec<f32> = (0..n).map(sample).collect();
+        let mut m = WaveMip::new((2, 0, 0), n as usize / MIP_D + 2);
+        m.fold(n, &full);
+        for c in 0..=m.head {
+            let lo = c as usize * MIP_D;
+            let hi = (lo + MIP_D).min(full.len());
+            if lo >= hi {
+                continue;
+            }
+            let (mut mn, mut mx) = (f32::MAX, f32::MIN);
+            for &s in &full[lo..hi] {
+                if s < mn { mn = s; }
+                if s > mx { mx = s; }
+            }
+            let (cmn, cmx) = m.cells[(c as usize) % m.cap];
+            assert_eq!(cmn.to_bits(), mn.to_bits(), "cell {c} min");
+            assert_eq!(cmx.to_bits(), mx.to_bits(), "cell {c} max");
+        }
+    }
+
+    #[test]
+    fn mip_range_matches_raw_window() {
+        // `range(c0,c1)` == direct min/max over the covered raw span.
+        let n = 8_000u64;
+        let full: Vec<f32> = (0..n).map(sample).collect();
+        let mut m = WaveMip::new((3, 0, 0), n as usize / MIP_D + 2);
+        m.fold(n, &full);
+        let (c0, c1) = (3i64, 9i64);
+        let (mn, mx) = m.range(c0, c1).unwrap();
+        let lo = c0 as usize * MIP_D;
+        let hi = ((c1 as usize + 1) * MIP_D).min(full.len());
+        let (mut rmn, mut rmx) = (f32::MAX, f32::MIN);
+        for &s in &full[lo..hi] {
+            if s < rmn { rmn = s; }
+            if s > rmx { rmx = s; }
+        }
+        assert_eq!(mn.to_bits(), rmn.to_bits());
+        assert_eq!(mx.to_bits(), rmx.to_bits());
+    }
+
+    #[test]
+    fn mip_live_ring_wraps_and_fences() {
+        // Simulate a small sliding ring: fold absolute samples past `cap` cells so
+        // the ring wraps and `tail` advances. Cells in [tail,head] stay exact.
+        let cap = 16usize; // 16 cells = 16*MIP_D samples retained
+        let mut m = WaveMip::new((4, 0, 0), cap);
+        let ring_len = (cap - 1) * MIP_D; // a bit under capacity
+        // Feed up to absolute N in ticks; the "ring" is the last ring_len samples.
+        let n = (cap as u64 + 40) * MIP_D as u64; // many cells past cap → wraps
+        let full: Vec<f32> = (0..n).map(sample).collect();
+        let mut abs = 0u64;
+        while abs < n {
+            abs = (abs + MIP_D as u64 * 3).min(n);
+            let lo = abs.saturating_sub(ring_len as u64) as usize;
+            m.fold(abs, &full[lo..abs as usize]);
+        }
+        assert_eq!(m.head, (n - 1) as i64 / MIP_D as i64);
+        // tail fences to the last `cap` cells.
+        assert_eq!(m.tail, m.head - cap as i64 + 1);
+        // Every valid cell equals the exact raw min/max (no stale wrap data).
+        for c in m.tail..=m.head {
+            let lo = c as usize * MIP_D;
+            let hi = (lo + MIP_D).min(full.len());
+            let (mut mn, mut mx) = (f32::MAX, f32::MIN);
+            for &s in &full[lo..hi] {
+                if s < mn { mn = s; }
+                if s > mx { mx = s; }
+            }
+            let (cmn, cmx) = m.cells[(c as usize) % m.cap];
+            assert_eq!(cmn.to_bits(), mn.to_bits(), "wrapped cell {c} min");
+            assert_eq!(cmx.to_bits(), mx.to_bits(), "wrapped cell {c} max");
+        }
     }
 }
