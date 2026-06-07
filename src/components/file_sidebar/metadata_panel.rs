@@ -488,6 +488,162 @@ fn date_block(value: &str) -> impl IntoView {
     }.into_any()
 }
 
+/// Parse an 8- or 14-digit `YYYYMMDD[HHMMSS]` run into an ISO string, with
+/// sanity bounds on each field. Returns None if it's not a plausible date.
+fn parse_ymd_run(run: &str) -> Option<String> {
+    if run.len() != 8 && run.len() != 14 {
+        return None;
+    }
+    let y: i32 = run[0..4].parse().ok()?;
+    let m: u32 = run[4..6].parse().ok()?;
+    let d: u32 = run[6..8].parse().ok()?;
+    if !(1990..=2100).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    if run.len() == 8 {
+        return Some(format!("{y:04}-{m:02}-{d:02}"));
+    }
+    let hh: u32 = run[8..10].parse().ok()?;
+    let mm: u32 = run[10..12].parse().ok()?;
+    let ss: u32 = run[12..14].parse().ok()?;
+    if hh > 23 || mm > 59 || ss > 59 {
+        return None;
+    }
+    Some(format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}"))
+}
+
+/// Extract an ISO-ish datestamp embedded in a filename. Recognizes the common
+/// recorder patterns `YYYYMMDD`, `YYYYMMDDHHMMSS`, and `YYYYMMDD[_-T ]HHMMSS`
+/// (e.g. "PREFIX_20210630_223015.wav", "20240115.WAV"). Field bounds reject
+/// most non-date digit runs. Returns the first plausible match.
+fn date_from_filename(name: &str) -> Option<String> {
+    let chars: Vec<char> = name.chars().collect();
+    let n = chars.len();
+    let is_d = |c: char| c.is_ascii_digit();
+    let mut i = 0;
+    while i < n {
+        if !is_d(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && is_d(chars[i]) {
+            i += 1;
+        }
+        let run_len = i - start;
+        if run_len == 8 || run_len == 14 {
+            let run: String = chars[start..i].iter().collect();
+            if let Some(iso) = parse_ymd_run(&run) {
+                // A bare YYYYMMDD may be followed by a separator + HHMMSS.
+                if run_len == 8 && i < n && matches!(chars[i], '_' | '-' | 'T' | ' ') {
+                    let t_start = i + 1;
+                    let mut t_end = t_start;
+                    while t_end < n && is_d(chars[t_end]) {
+                        t_end += 1;
+                    }
+                    if t_end - t_start == 6 {
+                        let t: String = chars[t_start..t_end].iter().collect();
+                        let hh: u32 = t[0..2].parse().ok()?;
+                        let mm: u32 = t[2..4].parse().ok()?;
+                        let ss: u32 = t[4..6].parse().ok()?;
+                        if hh <= 23 && mm <= 59 && ss <= 59 {
+                            return Some(format!("{iso}T{hh:02}:{mm:02}:{ss:02}"));
+                        }
+                    }
+                }
+                return Some(iso);
+            }
+        }
+    }
+    None
+}
+
+/// A spacious row whose value is always rendered as a date (so the source label
+/// can be descriptive, e.g. "GUANO timestamp", without relying on `classify`).
+fn date_row(label: String, value: String, view_mode: MetadataView) -> impl IntoView {
+    let value_for_copy = value.clone();
+    let on_copy = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        super::copy_to_clipboard(&value_for_copy);
+    };
+    let body = if view_mode == MetadataView::Original {
+        view! { <div class="metadata-value-block" title=value.clone()>{value.clone()}</div> }.into_any()
+    } else {
+        date_block(&value).into_any()
+    };
+    view! {
+        <div class="metadata-row metadata-row-spacious">
+            <div class="metadata-key-line">
+                <span class="metadata-key">{label}</span>
+                <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+            </div>
+            {body}
+        </div>
+    }
+}
+
+/// "Date" section: every date we can pull from the file's metadata, in rough
+/// order of trust. Filesystem (created/modified) timestamps and the XC download
+/// date need platform plumbing and are a follow-up.
+fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl IntoView {
+    let mut rows: Vec<(String, String)> = Vec::new();
+
+    // 1. Datestamp embedded in the filename.
+    if let Some(d) = date_from_filename(&f.name) {
+        rows.push(("Filename".to_string(), d));
+    }
+
+    // 2. GUANO timestamp + any other date/time fields.
+    if let Some(guano) = &f.audio.metadata.guano {
+        for (k, v) in &guano.fields {
+            if v.trim().is_empty() {
+                continue;
+            }
+            let kl = k.to_ascii_lowercase();
+            if kl == "timestamp" {
+                rows.push(("GUANO timestamp".to_string(), v.clone()));
+            } else if kl.contains("date") {
+                rows.push((format!("GUANO {k}"), v.clone()));
+            }
+        }
+    }
+
+    // 3. Xeno-canto recording date (+ time) and upload date.
+    if let Some(xc) = &f.xc_metadata {
+        let get = |key: &str| {
+            xc.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                .map(|(_, v)| v.clone())
+                .filter(|v| !v.trim().is_empty())
+        };
+        match (get("Date"), get("Time")) {
+            (Some(d), Some(t)) => rows.push(("Xeno-canto date".to_string(), format!("{d}T{t}"))),
+            (Some(d), None) => rows.push(("Xeno-canto date".to_string(), d)),
+            _ => {}
+        }
+        if let Some(u) = get("Uploaded").or_else(|| get("Upload date")) {
+            rows.push(("Uploaded".to_string(), u));
+        }
+    }
+
+    let any = !rows.is_empty();
+    let items: Vec<_> = rows
+        .into_iter()
+        .map(|(label, value)| date_row(label, value, view_mode).into_any())
+        .collect();
+    if any {
+        view! {
+            <div class="setting-group">
+                <div class="setting-group-title setting-group-title-major">"Date"</div>
+                {items}
+            </div>
+        }
+        .into_any()
+    } else {
+        view! { <span></span> }.into_any()
+    }
+}
+
 /// World-map block with a pin and out-links. Coordinates are in WGS84
 /// decimal degrees. The map asset lives at `world-map.png` (declared
 /// as a Trunk `copy-file` in index.html, relative path so it works
@@ -802,6 +958,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
                                 {inline_row(size_label, size_str, None)}
                             </div>
+                            {date_section(f, view_mode)}
                             {zc_header_section(f, view_mode)}
                             {if has_xc {
                                 let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
@@ -880,7 +1037,34 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tz_offset_minutes, format_tz_offset};
+    use super::{date_from_filename, extract_tz_offset_minutes, format_tz_offset};
+
+    #[test]
+    fn filename_date_patterns() {
+        assert_eq!(date_from_filename("20240115.WAV").as_deref(), Some("2024-01-15"));
+        assert_eq!(
+            date_from_filename("PREFIX_20210630_223015.wav").as_deref(),
+            Some("2021-06-30T22:30:15"),
+        );
+        assert_eq!(
+            date_from_filename("20210630223015.wav").as_deref(),
+            Some("2021-06-30T22:30:15"),
+        );
+        assert_eq!(
+            date_from_filename("AUDIOMOTH-20231101T080000.wav").as_deref(),
+            Some("2023-11-01T08:00:00"),
+        );
+    }
+
+    #[test]
+    fn filename_date_rejects_non_dates() {
+        // Too-large month/day, out-of-range year, random digit runs.
+        assert_eq!(date_from_filename("track123456789.wav"), None);
+        assert_eq!(date_from_filename("99999999.wav"), None);
+        assert_eq!(date_from_filename("18000101.wav"), None); // year < 1990
+        assert_eq!(date_from_filename("XC1008337.wav"), None); // XC id, not a date
+        assert_eq!(date_from_filename("recording.wav"), None);
+    }
 
     #[test]
     fn tz_offset_bare_date_is_none() {
