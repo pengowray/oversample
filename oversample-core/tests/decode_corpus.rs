@@ -15,14 +15,50 @@
 //! The golden snapshot is regenerable: delete
 //! `tests/golden/decode_corpus.snapshot` or run with `UPDATE_GOLDEN=1`.
 //!
-//! Fixtures come from the `bat-demo-sounds` git submodule. If it is not checked
-//! out, the tests SKIP (printing a notice) rather than fail.
+//! Fixtures come from the `bat-demo-sounds` repo, expected as a sibling of the
+//! batchi checkout at `../batchi-extras/bat-demo-sounds`. If it is not present,
+//! the tests SKIP (printing a notice) rather than fail.
 
 use oversample_core::audio::loader::load_audio;
 use std::path::{Path, PathBuf};
 
+/// Workspace root (one level above this crate).
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// An override for the bat-demo-sounds *repo root*, so its location isn't
+/// hardcoded. Resolution order:
+///   1. the `BAT_DEMO_SOUNDS_DIR` environment variable, then
+///   2. the same key in a `.env` file at the workspace root.
+/// Relative paths are resolved against the workspace root.
+fn corpus_root_override() -> Option<PathBuf> {
+    fn clean(v: &str) -> Option<String> {
+        let v = v.trim().trim_matches('"').trim_matches('\'').trim();
+        (!v.is_empty()).then(|| v.to_string())
+    }
+    let raw = std::env::var("BAT_DEMO_SOUNDS_DIR").ok().and_then(|v| clean(&v)).or_else(|| {
+        let env_file = workspace_root().join(".env");
+        let contents = std::fs::read_to_string(env_file).ok()?;
+        contents.lines().find_map(|line| {
+            let line = line.trim();
+            if line.starts_with('#') {
+                return None;
+            }
+            let rest = line.strip_prefix("BAT_DEMO_SOUNDS_DIR")?.trim_start().strip_prefix('=')?;
+            clean(rest)
+        })
+    })?;
+    let p = PathBuf::from(&raw);
+    Some(if p.is_absolute() { p } else { workspace_root().join(p) })
+}
+
+/// The bat-demo-sounds `sounds/` directory. Uses the override above when set,
+/// otherwise the default sibling checkout `../batchi-extras/bat-demo-sounds`.
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../bat-demo-sounds/sounds")
+    corpus_root_override()
+        .unwrap_or_else(|| workspace_root().join("../batchi-extras/bat-demo-sounds"))
+        .join("sounds")
 }
 
 /// Small synthetic fixtures (ffmpeg-generated) covering formats the demo corpus
@@ -80,7 +116,7 @@ fn corpus_decodes_with_invariants() {
     if files.is_empty() {
         eprintln!(
             "SKIP corpus_decodes_with_invariants: no fixtures at {:?} \
-             (bat-demo-sounds submodule not initialized?)",
+             (bat-demo-sounds repo not present at ../batchi-extras?)",
             corpus_dir()
         );
         return;
@@ -143,7 +179,7 @@ fn corpus_decodes_with_invariants() {
 fn golden_snapshot_stable() {
     let files = audio_files();
     if files.is_empty() {
-        eprintln!("SKIP golden_snapshot_stable: no fixtures (submodule not initialized?)");
+        eprintln!("SKIP golden_snapshot_stable: no fixtures (bat-demo-sounds repo not present at ../batchi-extras?)");
         return;
     }
 
