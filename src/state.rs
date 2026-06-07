@@ -831,13 +831,51 @@ pub fn resonator_slider_to_bw(pos: f32) -> f32 {
 /// pattern (which gives coarse LODs *larger* FFTs for more frequency detail),
 /// Adaptive here goes the other way: coarse LODs get fewer bins, fine LODs
 /// get the full count.
+/// Resonator-bank density relative to the display's pixel rows, for Adaptive
+/// mode. Scales the per-LOD bin count: Full ≈ one resonator per pixel row, Half
+/// one per two rows, Quarter one per four. Sparser banks are cheaper and
+/// smoother; denser banks resolve finer frequency structure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResonatorDensity {
+    Full,
+    Half,
+    Quarter,
+}
+
+impl ResonatorDensity {
+    /// Bin-count scale vs the 100% adaptive table.
+    fn scale(self) -> f64 {
+        match self {
+            Self::Full => 1.0,
+            Self::Half => 0.5,
+            Self::Quarter => 0.25,
+        }
+    }
+    /// The `<select>` value string (plain "adaptive" == 100%, for back-compat).
+    pub fn as_value(self) -> &'static str {
+        match self {
+            Self::Full => "adaptive",
+            Self::Half => "adaptive-50",
+            Self::Quarter => "adaptive-25",
+        }
+    }
+    /// Short percent label for UI ("100%", "50%", "25%").
+    pub fn percent(self) -> &'static str {
+        match self {
+            Self::Full => "100%",
+            Self::Half => "50%",
+            Self::Quarter => "25%",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ResonatorFftMode {
     /// Fixed equivalent-FFT size at all LOD levels (num_bins = size/2 + 1).
     Single(usize),
     /// Adaptive: fewer bins at coarse LODs for cheaper tiles, full bins when
-    /// detail matters.
-    Adaptive,
+    /// detail matters. The density scales the bank relative to pixel rows.
+    Adaptive(ResonatorDensity),
 }
 
 impl ResonatorFftMode {
@@ -855,7 +893,7 @@ impl ResonatorFftMode {
         let idx = (lod as usize).min(7);
         match self {
             Self::Single(sz) => *sz,
-            Self::Adaptive => Self::ADAPTIVE_FFT[idx],
+            Self::Adaptive(d) => Self::scale_fft(Self::ADAPTIVE_FFT[idx], d.scale()),
         }
     }
 
@@ -863,8 +901,16 @@ impl ResonatorFftMode {
     pub fn max_fft_size(&self) -> usize {
         match self {
             Self::Single(sz) => *sz,
-            Self::Adaptive => *Self::ADAPTIVE_FFT.iter().max().unwrap(),
+            Self::Adaptive(d) => {
+                Self::scale_fft(*Self::ADAPTIVE_FFT.iter().max().unwrap(), d.scale())
+            }
         }
+    }
+
+    /// Scale an eq-FFT size by a density factor, keeping it even and >= 16 so
+    /// `num_bins = size/2 + 1` stays well-formed.
+    fn scale_fft(base: usize, scale: f64) -> usize {
+        (((base as f64 * scale).round() as usize).max(16) / 2) * 2
     }
 }
 

@@ -3,7 +3,7 @@ use crate::state::store_fields::*;
 use crate::state::DropPosition;
 use wasm_bindgen::JsCast;
 use crate::state::{
-    AppState, FlowColorScheme, MainView, ResonatorFftMode, ResonatorLayout, SpectrogramDisplay,
+    AppState, FlowColorScheme, MainView, ResonatorDensity, ResonatorFftMode, ResonatorLayout, SpectrogramDisplay,
     RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider, resonator_slider_to_bw,
 };
 use crate::annotations::{Annotation, AnnotationKind, AnnotationSet, Group, AnnotationId, now_iso8601, build_annotation_tree, AnnotationNode, collect_descendants, renumber_children};
@@ -380,8 +380,9 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                             f,
                                             format_hz(spacing),
                                         ),
-                                        ResonatorFftMode::Adaptive => format!(
-                                            "Bins: Adaptive \u{2192} {} now (eq. {}, {} spacing)",
+                                        ResonatorFftMode::Adaptive(d) => format!(
+                                            "Bins: Adaptive {} \u{2192} {} now (eq. {}, {} spacing)",
+                                            d.percent(),
                                             f / 2 + 1,
                                             f,
                                             format_hz(spacing),
@@ -394,21 +395,25 @@ pub(crate) fn SpectrogramSettingsPanel() -> impl IntoView {
                                         let target = ev.target().unwrap();
                                         let select: web_sys::HtmlSelectElement = target.unchecked_into();
                                         let v = select.value();
-                                        let new_mode = if v == "adaptive" {
-                                            ResonatorFftMode::Adaptive
-                                        } else if let Ok(sz) = v.parse::<usize>() {
-                                            ResonatorFftMode::Single(sz.max(16))
-                                        } else {
-                                            return;
+                                        let new_mode = match v.as_str() {
+                                            "adaptive" => ResonatorFftMode::Adaptive(ResonatorDensity::Full),
+                                            "adaptive-50" => ResonatorFftMode::Adaptive(ResonatorDensity::Half),
+                                            "adaptive-25" => ResonatorFftMode::Adaptive(ResonatorDensity::Quarter),
+                                            _ => match v.parse::<usize>() {
+                                                Ok(sz) => ResonatorFftMode::Single(sz.max(16)),
+                                                Err(_) => return,
+                                            },
                                         };
                                         state.resonator.fft_mode().set(new_mode);
                                     }
                                     prop:value=move || match state.resonator.fft_mode().get() {
-                                        ResonatorFftMode::Adaptive => "adaptive".to_string(),
+                                        ResonatorFftMode::Adaptive(d) => d.as_value().to_string(),
                                         ResonatorFftMode::Single(sz) => sz.to_string(),
                                     }
                                 >
-                                    <option value="adaptive">"Adaptive (per zoom)"</option>
+                                    <option value="adaptive">"Adaptive 100% (per zoom)"</option>
+                                    <option value="adaptive-50">"Adaptive 50% (1 / 2 rows)"</option>
+                                    <option value="adaptive-25">"Adaptive 25% (1 / 4 rows)"</option>
                                     <option value="64">"33 bins (eq. 64)"</option>
                                     <option value="128">"65 bins (eq. 128)"</option>
                                     <option value="256">"129 bins (eq. 256)"</option>
