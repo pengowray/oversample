@@ -591,6 +591,8 @@ fn pass_is_locked(state: AppState) -> bool {
 #[component]
 pub fn HearingBar() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let bar_ref = NodeRef::<leptos::html::Div>::new();
+    let pan = crate::components::bar_pan::BarPan::new(bar_ref);
     let overline_class = Signal::derive(move || {
         let on = state.viewmode.hfr_enabled().get();
         let mut s = String::from("band-affected-row");
@@ -603,9 +605,15 @@ pub fn HearingBar() -> impl IntoView {
         // having their panel-open clicks eaten by .main's catch-all.
         // ComboButton children already handle this themselves.
         <div class="hearing-bar"
+            node_ref=bar_ref
             class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Hearing))
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
+            on:pointerdown=move |ev| pan.on_pointerdown(ev)
+            on:pointermove=move |ev| pan.on_pointermove(ev)
+            on:pointerup=move |ev| pan.on_pointerup(ev)
+            on:pointercancel=move |ev| pan.on_pointerup(ev)
+            on:wheel=move |ev| pan.on_wheel(ev)
         >
             // Band-affected group — overline border-top spans these four.
             <div class=move || overline_class.get()>

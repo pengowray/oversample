@@ -144,6 +144,8 @@ fn ToolCombo() -> impl IntoView {
 pub fn ViewBar() -> impl IntoView {
     let state = expect_context::<AppState>();
     let has_file = move || state.library.current_index().get().is_some() || state.timeline.active().get().is_some();
+    let controls_ref = NodeRef::<leptos::html::Div>::new();
+    let pan = crate::components::bar_pan::BarPan::new(controls_ref);
 
     view! {
         // Stop clicks/taps inside the bar from bubbling to .main's
@@ -158,7 +160,14 @@ pub fn ViewBar() -> impl IntoView {
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
             <span class="bar-label">"VIEW"</span>
-            <div class="bar-controls">
+            <div class="bar-controls"
+                node_ref=controls_ref
+                on:pointerdown=move |ev| pan.on_pointerdown(ev)
+                on:pointermove=move |ev| pan.on_pointermove(ev)
+                on:pointerup=move |ev| pan.on_pointerup(ev)
+                on:pointercancel=move |ev| pan.on_pointerup(ev)
+                on:wheel=move |ev| pan.on_wheel(ev)
+            >
                 <MainViewButton />
                 <div class="bar-sep"></div>
                 <OverlayToggles />

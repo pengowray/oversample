@@ -19,6 +19,7 @@ pub mod listen_button;
 pub mod noise_combos;
 pub mod view_bar;
 pub mod tool_button;
+pub mod bar_pan;
 pub mod bottom_toolbar;
 pub mod freq_range_button;
 pub mod axis_drag;
