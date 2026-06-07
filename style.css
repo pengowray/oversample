@@ -3539,6 +3539,17 @@ body.sidebar-resizing {
     text-transform: none;
 }
 
+/* Compact icon-only tool selector (Hand / Selection). The icon replaces the
+   word so the button stays small; the dropdown keeps the full labels. */
+.tool-combo-btn {
+    min-width: 0;
+    padding-left: 9px;
+    padding-right: 9px;
+}
+.tool-combo-icon {
+    font-size: 15px;
+}
+
 /* Stacked overlay checkboxes (Annotations / Bat book) in the View Bar. */
 .overlay-toggles {
     display: flex;

@@ -1122,6 +1122,13 @@ pub fn on_touchstart(
         }
         CanvasTool::Selection => {
             ev.prevent_default();
+            // Begin a marquee selection with a single finger (mirrors the
+            // pointer path so touch devices can select regions too).
+            if let Some((_, _, t, f)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+                state.interaction.is_dragging().set(true);
+                ix.drag_start.set((t, f));
+                state.interaction.selection().set(None);
+            }
         }
     }
 }
@@ -1260,7 +1267,18 @@ pub fn on_touchmove(
             let now = web_sys::window().unwrap().performance().unwrap().now();
             ix.velocity_tracker.update_value(|t| t.push(now, touch.client_x() as f64));
         }
-        CanvasTool::Selection => {}
+        CanvasTool::Selection => {
+            // Grow the marquee from the touch-start anchor (mirrors pointer).
+            if let Some((_, _, t, f)) = pointer_to_xtf(touch.client_x() as f64, touch.client_y() as f64, canvas_ref, &state) {
+                let (t0, f0) = ix.drag_start.get_untracked();
+                state.interaction.selection().set(Some(Selection {
+                    time_start: t0.min(t),
+                    time_end: t0.max(t),
+                    freq_low: Some(f0.min(f)),
+                    freq_high: Some(f0.max(f)),
+                }));
+            }
+        }
     }
 }
 
@@ -1352,13 +1370,22 @@ pub fn on_touchend(
             }
         }
 
-        // Update frequency focus from selection (if auto-focus enabled)
-        if state.interaction.canvas_tool().get_untracked() == CanvasTool::Selection && state.annotations.selection_auto_focus().get_untracked() {
+        // Finalize a marquee selection: keep it only if it has real width,
+        // focus it (so the "..." menu appears), and optionally drive the
+        // BandFF range from it. Mirrors on_pointerup.
+        if state.interaction.canvas_tool().get_untracked() == CanvasTool::Selection {
             if let Some(sel) = state.interaction.selection().get_untracked() {
-                if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
-                    if hi - lo > 100.0 {
-                        state.set_band_ff_range(lo, hi);
+                if sel.time_end - sel.time_start > 0.0001 {
+                    state.interaction.active_focus().set(Some(ActiveFocus::TransientSelection));
+                    if state.annotations.selection_auto_focus().get_untracked() {
+                        if let (Some(lo), Some(hi)) = (sel.freq_low, sel.freq_high) {
+                            if hi - lo > 100.0 {
+                                state.set_band_ff_range(lo, hi);
+                            }
+                        }
                     }
+                } else {
+                    state.interaction.selection().set(None);
                 }
             }
         }

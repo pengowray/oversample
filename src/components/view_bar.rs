@@ -101,17 +101,20 @@ fn ToolCombo() -> impl IntoView {
         <div style="position: relative;">
             <button
                 class=move || {
-                    if no_file() { "layer-btn disabled" }
-                    else if is_open() { "layer-btn open" }
-                    else { "layer-btn" }
+                    if no_file() { "layer-btn tool-combo-btn disabled" }
+                    else if is_open() { "layer-btn tool-combo-btn open" }
+                    else { "layer-btn tool-combo-btn" }
                 }
                 on:click=move |_| { if !no_file() { toggle_panel(&state, LayerPanel::Tool); } }
-                title="Tool"
+                title=move || match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => "Tool: Hand (pan)",
+                    CanvasTool::Selection => "Tool: Selection",
+                }
             >
-                <span class="layer-btn-category">"Tool"</span>
-                <span class="layer-btn-value">{move || match state.interaction.canvas_tool().get() {
-                    CanvasTool::Hand => "Hand",
-                    CanvasTool::Selection => "Select",
+                <span class="layer-btn-category">"\u{00A0}"</span>
+                <span class="layer-btn-value tool-combo-icon">{move || match state.interaction.canvas_tool().get() {
+                    CanvasTool::Hand => "\u{270B}",      // ✋ open hand = pan
+                    CanvasTool::Selection => "\u{2B1A}", // ⬚ dashed box = marquee select
                 }}</span>
             </button>
             <Show when=move || is_open()>
@@ -123,14 +126,14 @@ fn ToolCombo() -> impl IntoView {
                             state.interaction.canvas_tool().set(CanvasTool::Hand);
                             state.panels.layer_panel_open().set(None);
                         }
-                    >"Hand (pan)"</button>
+                    >"\u{270B}\u{00A0}\u{00A0}Hand (pan)"</button>
                     <button
                         class=move || layer_opt_class(state.interaction.canvas_tool().get() == CanvasTool::Selection)
                         on:click=move |_| {
                             state.interaction.canvas_tool().set(CanvasTool::Selection);
                             state.panels.layer_panel_open().set(None);
                         }
-                    >"Selection"</button>
+                    >"\u{2B1A}\u{00A0}\u{00A0}Selection"</button>
                 </div>
             </Show>
         </div>
@@ -160,7 +163,10 @@ pub fn ViewBar() -> impl IntoView {
                 <div class="bar-sep"></div>
                 <OverlayToggles />
                 <div class="bar-spacer"></div>
-                {move || (!state.status.is_mobile().get() && has_file()).then(|| view! { <ToolCombo /> })}
+                // Always shown (no longer hidden on mobile or when the window
+                // is narrow) so the user can never get stranded without a way
+                // back to the Hand tool. Icon-only to keep it compact.
+                {move || has_file().then(|| view! { <ToolCombo /> })}
             </div>
         </div>
     }
