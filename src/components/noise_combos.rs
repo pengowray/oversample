@@ -77,16 +77,12 @@ pub fn NotchCombo() -> impl IntoView {
     });
     let right_value = Signal::derive(move || if enabled.get() { "ON".to_string() } else { "OFF".to_string() });
 
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        state.notch.enabled().update(|v| *v = !*v);
-    });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::Notch);
     });
 
     // ── Detect noise bands ──
-    let on_detect = move |_: web_sys::MouseEvent| {
+    let run_detect = move || {
         // While live, detect from the circular buffer so the bands reflect
         // current ambient noise rather than stale file content.
         let is_live = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
@@ -161,6 +157,21 @@ pub fn NotchCombo() -> impl IntoView {
             state.notch.detecting().set(false);
         });
     };
+
+    // Pressing Notch ON with nothing defined yet auto-runs detection (live or
+    // file, whichever applies) so the toggle "just works" without a second tap.
+    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+        if no_file() { return; }
+        let turning_on = !state.notch.enabled().get_untracked();
+        state.notch.enabled().set(turning_on);
+        if turning_on
+            && state.notch.bands().get_untracked().is_empty()
+            && !state.notch.detecting().get_untracked()
+        {
+            run_detect();
+        }
+    });
+    let on_detect = move |_: web_sys::MouseEvent| { run_detect(); };
 
     let on_sensitivity_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -387,15 +398,11 @@ pub fn NrCombo() -> impl IntoView {
     });
     let right_value = Signal::derive(move || if enabled.get() { "ON".to_string() } else { "OFF".to_string() });
 
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() { return; }
-        state.noise_reduce.enabled().update(|v| *v = !*v);
-    });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::NoiseReduce);
     });
 
-    let on_learn_floor = move |_: web_sys::MouseEvent| {
+    let run_learn = move || {
         // While live, source samples from the circular capture buffer rather
         // than the file (which lags the buffer by the periodic snapshot
         // interval, and is short on history right after Listen starts).
@@ -459,6 +466,21 @@ pub fn NrCombo() -> impl IntoView {
             state.noise_reduce.learning().set(false);
         });
     };
+
+    // Pressing NR ON with no floor learned yet auto-learns the noise floor
+    // (live or file) so a single tap both learns and enables.
+    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+        if no_file() { return; }
+        let turning_on = !state.noise_reduce.enabled().get_untracked();
+        state.noise_reduce.enabled().set(turning_on);
+        if turning_on
+            && state.noise_reduce.floor().get_untracked().is_none()
+            && !state.noise_reduce.learning().get_untracked()
+        {
+            run_learn();
+        }
+    });
+    let on_learn_floor = move |_: web_sys::MouseEvent| { run_learn(); };
 
     let on_strength_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
