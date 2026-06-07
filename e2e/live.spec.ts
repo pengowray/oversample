@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import path from "path";
-import { pinch, drag, changed } from "./touch";
+import { pinch, drag, zoomIn, changed } from "./touch";
 
 /**
  * Live-listening behaviour, driven by Chromium's fake-audio capture (a chirp
@@ -38,6 +38,8 @@ type Snap = {
   following: boolean;
   recordingTargetScroll: number;
   scrollUserPanUntil: number;
+  overviewAxisStart?: number;
+  overviewSpan?: number;
 };
 
 function snapshot(page: Page): Promise<Snap> {
@@ -137,5 +139,70 @@ test.describe("live listening", () => {
     // Pan hard toward the live edge (finger moves far left) → follow re-engages.
     await drag(page, -2000);
     await expect.poll(async () => (await snapshot(page)).following, { timeout: 4_000 }).toBe(true);
+  });
+
+  test("a pinch while parked in history stays put (no jump to the start)", async ({ page }) => {
+    test.setTimeout(60_000);
+    await startListening(page);
+    await expect.poll(async () => (await snapshot(page)).following, { timeout: 5_000 }).toBe(true);
+    // Zoom in so the main view shows far less than the buffer — i.e. there is
+    // real room to pan back into history (at the default live zoom the whole
+    // ring fits on screen, so nothing is "history").
+    await zoomIn(page, 14);
+    await expect
+      .poll(async () => (await snapshot(page)).recordingTargetScroll, { timeout: 30_000, intervals: [250] })
+      .toBeGreaterThan(1.0);
+
+    // Park the view back in history.
+    await drag(page, 200);
+    await expect.poll(async () => (await snapshot(page)).following, { timeout: 4_000 }).toBe(false);
+    const before = await snapshot(page);
+    expect(before.scrollOffset, "should be genuinely parked in history").toBeGreaterThan(0.1);
+
+    // A pinch must anchor-zoom in place — not re-follow, not jump to 0.
+    await pinch(page, "x", 120, 280);
+    const after = await snapshot(page);
+    expect(after.following, "a pinch in history must not re-engage follow").toBe(false);
+    expect(
+      after.scrollOffset,
+      `pinch must not jump to the start (${before.scrollOffset} -> ${after.scrollOffset})`,
+    ).toBeGreaterThan(before.scrollOffset * 0.5);
+  });
+
+  test("scrubbing the overview far-left lines up and doesn't snap back", async ({ page }) => {
+    test.setTimeout(60_000);
+    await startListening(page);
+    // Zoom in so the main view is narrower than the overview window — otherwise
+    // the whole ring is already on screen and any scrub trivially stays "live".
+    await zoomIn(page, 14);
+    // Wait until the ring has trimmed so the overview window's left edge
+    // (axisStart) is well past 0 — only then can centering-vs-aligning differ.
+    await expect
+      .poll(async () => (await snapshot(page)).overviewAxisStart ?? 0, { timeout: 40_000, intervals: [300] })
+      .toBeGreaterThan(0.5);
+
+    const axisStart = (await snapshot(page)).overviewAxisStart!;
+
+    // Click the far-left of the overview overlay canvas (the 2nd canvas).
+    await page.evaluate(() => {
+      const c = document.querySelector(".overview-strip canvas:nth-of-type(2)") as HTMLElement;
+      const r = c.getBoundingClientRect();
+      const x = r.left + 3;
+      const y = r.top + r.height / 2;
+      const opts = { clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 1 };
+      c.dispatchEvent(new PointerEvent("pointerdown", opts));
+      c.dispatchEvent(new PointerEvent("pointerup", opts));
+    });
+
+    const after = await snapshot(page);
+    // Far-left click should land at the window's left edge, not centered to its right.
+    expect(
+      Math.abs(after.scrollOffset - axisStart),
+      `far-left scrub should align to axisStart (scroll ${after.scrollOffset} vs ${axisStart})`,
+    ).toBeLessThan(0.6);
+    // Scrubbing suspends follow (no immediate snap-back to the live edge).
+    expect(after.following, "scrubbing must suspend the waterfall follow").toBe(false);
+    await page.waitForTimeout(800);
+    expect((await snapshot(page)).following, "must stay parked within the grace window").toBe(false);
   });
 });

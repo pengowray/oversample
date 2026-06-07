@@ -422,7 +422,7 @@ fn draw_live_status(
 /// listen/stream case `audio_dur == preroll_buffer_secs + 2` (~12 s), so the
 /// whole live overview shows the last ~12 s at one consistent scale. Returns
 /// `None` when not live or there's no data yet.
-fn live_overview_window(is_tauri: bool) -> Option<(f64, f64)> {
+pub(crate) fn live_overview_window(is_tauri: bool) -> Option<(f64, f64)> {
     use crate::canvas::live_waterfall as wf;
     if !wf::is_active() {
         return None;
@@ -440,6 +440,34 @@ fn live_overview_window(is_tauri: bool) -> Option<(f64, f64)> {
     let axis_start = (now - audio_dur).max(wf::oldest_time()).max(0.0);
     let span = (now - axis_start).max(0.001);
     Some((axis_start, span))
+}
+
+/// Apply a scrub (overview click/drag) to the main-view scroll. The desired
+/// scroll is clamped to the range the overview actually displays — during live
+/// that's the shared ring window `[axis_start, now - visible]`, so clicking the
+/// far-left lands on the far-left rather than centering past it — and the live
+/// waterfall follow is suspended while scrubbing (no snap-back) but re-engaged
+/// when scrubbed to the live edge. `visible` is the main view's visible span.
+fn scrub_apply_scroll(state: &AppState, desired_scroll: f64, visible: f64, full_duration: f64) {
+    let is_live = (state.mic.recording().get_untracked() || state.mic.listening().get_untracked())
+        && state.timeline.active().get_untracked().is_none()
+        && crate::canvas::live_waterfall::is_active();
+    if is_live {
+        if let Some((axis_start, span)) = live_overview_window(state.is_tauri) {
+            let now = axis_start + span;
+            let hi = (now - visible).max(axis_start);
+            let s = desired_scroll.clamp(axis_start, hi);
+            state.view.scroll_offset().set(s);
+            if s >= hi - visible * 0.02 {
+                state.resume_waterfall_follow();
+            } else {
+                state.suspend_waterfall_follow(2000.0);
+            }
+            return;
+        }
+    }
+    let max_scroll = (full_duration - visible).max(0.0);
+    state.view.scroll_offset().set(desired_scroll.clamp(0.0, max_scroll));
 }
 
 /// Draw a min/max waveform envelope for the live overview, recomputed fresh on
@@ -548,6 +576,13 @@ pub fn OverviewPanel() -> impl IntoView {
     let drag_active = RwSignal::new(false);
     let drag_start_x = RwSignal::new(0.0f64);
     let drag_start_scroll = RwSignal::new(0.0f64);
+
+    // Smoothed live "now" (right edge of the overview window), eased toward the
+    // real latest-data time on each overlay redraw so the time markers slide
+    // smoothly instead of stepping at the ~20 Hz capture tick — matching the
+    // smooth main-view time axis. Non-reactive: it's interpolation state, not a
+    // signal anything subscribes to.
+    let smooth_now = StoredValue::new(0.0f64);
 
     // ── Background Effect ── draws waveform/spectrogram content.
     // Does NOT subscribe to scroll_offset or zoom_level, so panning/zooming
@@ -935,9 +970,27 @@ pub fn OverviewPanel() -> impl IntoView {
             let is_live = (file.is_recording || file.is_live_listen)
                 && crate::canvas::live_waterfall::is_active();
             let (axis_start, total_duration) = if is_live {
-                live_overview_window(state.is_tauri)
-                    .unwrap_or((0.0, file.audio.duration_secs))
+                match live_overview_window(state.is_tauri) {
+                    Some((axis_real, span)) => {
+                        // Ease the displayed right edge toward the real latest-
+                        // data time so markers don't step at the capture tick.
+                        // Snap on first use / large gaps (new session, long
+                        // pause), interpolate otherwise. The window keeps the
+                        // real ring width and slides as a whole.
+                        let now_real = axis_real + span;
+                        let prev = smooth_now.get_value();
+                        let now_smooth = if prev <= 0.0 || (now_real - prev).abs() > span {
+                            now_real
+                        } else {
+                            prev + (now_real - prev) * 0.35
+                        };
+                        smooth_now.set_value(now_smooth);
+                        ((now_smooth - span).max(0.0), span)
+                    }
+                    None => (0.0, file.audio.duration_secs),
+                }
             } else {
+                smooth_now.set_value(0.0); // reset between live sessions
                 (0.0, file.audio.duration_secs)
             };
             if total_duration <= 0.0 { return; }
@@ -1101,10 +1154,8 @@ pub fn OverviewPanel() -> impl IntoView {
         if let Some(t) = x_to_time(canvas_x, cw) {
             push_nav(&state);
             let visible = half_visible_time() * 2.0;
-            let max_scroll = (file_duration() - visible).max(0.0);
-            let centered = (t - half_visible_time()).clamp(0.0, max_scroll);
             state.suspend_follow();
-            state.view.scroll_offset().set(centered);
+            scrub_apply_scroll(&state, t - half_visible_time(), visible, file_duration());
         }
         drag_active.set(true);
         drag_start_x.set(ev.client_x() as f64);
@@ -1137,10 +1188,8 @@ pub fn OverviewPanel() -> impl IntoView {
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
-        let max_scroll = (full_duration - visible_time).max(0.0);
-        let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
-        state.view.scroll_offset().set(new_scroll);
+        scrub_apply_scroll(&state, drag_start_scroll.get_untracked() + dt, visible_time, full_duration);
     };
 
     let on_pointerup = move |_: web_sys::PointerEvent| {
@@ -1162,10 +1211,8 @@ pub fn OverviewPanel() -> impl IntoView {
         if let Some(t) = x_to_time(canvas_x, cw) {
             push_nav(&state);
             let visible = half_visible_time() * 2.0;
-            let max_scroll = (file_duration() - visible).max(0.0);
-            let centered = (t - half_visible_time()).clamp(0.0, max_scroll);
             state.suspend_follow();
-            state.view.scroll_offset().set(centered);
+            scrub_apply_scroll(&state, t - half_visible_time(), visible, file_duration());
         }
         drag_active.set(true);
         drag_start_x.set(touch.client_x() as f64);
@@ -1196,10 +1243,8 @@ pub fn OverviewPanel() -> impl IntoView {
                 (canvas_w / zoom) * f.spectrogram.time_resolution
             }).unwrap_or(0.0)
         };
-        let max_scroll = (full_duration - visible_time).max(0.0);
-        let new_scroll = (drag_start_scroll.get_untracked() + dt).clamp(0.0, max_scroll);
         state.suspend_follow();
-        state.view.scroll_offset().set(new_scroll);
+        scrub_apply_scroll(&state, drag_start_scroll.get_untracked() + dt, visible_time, full_duration);
     };
 
     let on_touchend = move |_ev: web_sys::TouchEvent| {
@@ -1221,8 +1266,8 @@ pub fn OverviewPanel() -> impl IntoView {
         };
         let delta = raw_delta.signum() * visible_time * 0.1 * (raw_delta.abs() / 100.0).min(3.0);
         state.suspend_follow();
-        let max_scroll = (total_duration - visible_time).max(0.0);
-        state.view.scroll_offset().update(|s| *s = (*s + delta).clamp(0.0, max_scroll));
+        let cur = state.view.scroll_offset().get_untracked();
+        scrub_apply_scroll(&state, cur + delta, visible_time, total_duration);
     };
 
     view! {

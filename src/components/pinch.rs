@@ -115,6 +115,10 @@ pub struct PinchState {
     pub duration: f64,
     /// Whether FromHere viewport bounds should be used.
     pub from_here_mode: bool,
+    /// During live capture: was the view following the live edge when the pinch
+    /// began? If so, keep it butted against the edge while zooming; otherwise
+    /// anchor-zoom in place. Always false for non-live pinches.
+    pub was_following: bool,
 }
 
 impl PinchState {
@@ -144,6 +148,7 @@ impl PinchState {
             time_res,
             duration,
             from_here_mode,
+            was_following: false,
         }
     }
 }

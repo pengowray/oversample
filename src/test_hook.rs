@@ -52,6 +52,13 @@ pub fn install(state: AppState) {
         let now = js_sys::Date::now();
         let following = (listening || recording) && live_active && now >= pan_until;
         set(&o, "following", JsValue::from_bool(following));
+        // The overview's displayed window [axisStart, axisStart+span] (live only).
+        if let Some((axis_start, span)) =
+            crate::components::overview::live_overview_window(state.is_tauri)
+        {
+            set(&o, "overviewAxisStart", JsValue::from_f64(axis_start));
+            set(&o, "overviewSpan", JsValue::from_f64(span));
+        }
         o.into()
     }) as Box<dyn Fn() -> JsValue>);
 

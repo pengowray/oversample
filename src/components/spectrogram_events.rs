@@ -971,6 +971,11 @@ pub fn on_touchstart(
             let nyquist = file_nyquist(state);
             let initial_min_freq = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
             let initial_max_freq = state.view.max_display_freq().get_untracked().unwrap_or(nyquist);
+            // Was the view following the live edge when the pinch began? (No pan
+            // grace window active.) Drives whether we keep butted to the edge or
+            // anchor-zoom in place.
+            let was_following = wf_active
+                && state.mic.scroll_user_pan_until().get_untracked() <= js_sys::Date::now();
             ix.pinch_state.set(Some(PinchState {
                 initial_dist_x: dist_x.max(1.0),
                 initial_dist_y: dist_y.max(1.0),
@@ -984,6 +989,7 @@ pub fn on_touchstart(
                 time_res,
                 duration,
                 from_here_mode: state.playback.start_mode().get_untracked().uses_from_here(),
+                was_following,
             }));
             // New gesture — axis is decided on first significant move.
             ix.pinch_axis.set(None);
@@ -1169,17 +1175,25 @@ pub fn on_touchmove(
                     Some(PinchAxis::Horizontal) => {
                         let (new_zoom, new_scroll) = apply_pinch(&ps, dist_x, mid_x, rect.left(), cw);
                         if waterfall_active {
-                            // Live: a pinch changes zoom but must NOT stop the
-                            // waterfall scroll. Ignore the pinch's midpoint-
-                            // anchored scroll (which would pull off the live
-                            // edge); keep following — retarget the smooth-scroll
-                            // to the live edge for the new zoom and re-engage.
+                            // Live: zoom, but never jump to the start or slip into
+                            // empty space. If we were following the live edge,
+                            // stay butted against it and keep scrolling; if we
+                            // were parked in history, anchor-zoom in place — and
+                            // in both cases clamp inside the retained buffer.
                             state.view.zoom_level().set(new_zoom);
-                            let recording_time = crate::canvas::live_waterfall::total_time();
+                            let now = crate::canvas::live_waterfall::total_time();
+                            let oldest = crate::canvas::live_waterfall::oldest_time();
                             let visible_time = viewport::visible_time(cw, new_zoom, ps.time_res);
-                            let target = (recording_time - visible_time).max(0.0);
-                            state.mic.recording_target_scroll().set(target);
-                            state.resume_waterfall_follow();
+                            let edge = (now - visible_time).max(oldest).max(0.0);
+                            if ps.was_following {
+                                state.mic.recording_target_scroll().set(edge);
+                                state.view.scroll_offset().set(edge);
+                                state.resume_waterfall_follow();
+                            } else {
+                                let lo = oldest.min(edge);
+                                state.view.scroll_offset().set(new_scroll.clamp(lo, edge));
+                                state.suspend_waterfall_follow(2000.0);
+                            }
                         } else {
                             state.suspend_follow();
                             state.view.zoom_level().set(new_zoom);
@@ -1189,7 +1203,9 @@ pub fn on_touchmove(
                     Some(PinchAxis::Vertical) => {
                         // Vertical pinch → frequency zoom (same anchor-zoom +
                         // two-finger pan as the band gutter). Doesn't touch
-                        // scroll, so live follow keeps running.
+                        // scroll, so live follow just needs to be kept in the
+                        // state it was already in (don't yank a parked view back
+                        // to the edge).
                         let fps = FreqPinchState {
                             initial_dist_y: ps.initial_dist_y,
                             initial_min_freq: ps.initial_min_freq,
@@ -1201,8 +1217,8 @@ pub fn on_touchmove(
                         let (new_min, new_max) = apply_freq_pinch(&fps, dist_y, current_mid_canvas_y, ch);
                         state.view.min_display_freq().set(Some(new_min));
                         state.view.max_display_freq().set(Some(new_max));
-                        if waterfall_active {
-                            state.resume_waterfall_follow();
+                        if waterfall_active && !ps.was_following {
+                            state.suspend_waterfall_follow(2000.0);
                         }
                     }
                     None => {}
@@ -1402,9 +1418,23 @@ pub fn on_wheel(
         state.view.max_display_freq().set(Some(new_max));
     } else if ev.ctrl_key() {
         let delta = if ev.delta_y() > 0.0 { 0.9 } else { 1.1 };
-        state.view.zoom_level().update(|z| {
-            *z = (*z * delta).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
-        });
+        let new_zoom = (state.view.zoom_level().get_untracked() * delta)
+            .clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
+        state.view.zoom_level().set(new_zoom);
+        // Live: if we were already following the live edge, stay butted against
+        // it as we zoom (clamped inside the retained buffer) instead of drifting
+        // off the right or showing empty space.
+        let following = state.mic.scroll_user_pan_until().get_untracked() <= js_sys::Date::now();
+        if wf_active && following {
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
+            let time_res = crate::canvas::live_waterfall::time_resolution();
+            let now = crate::canvas::live_waterfall::total_time();
+            let oldest = crate::canvas::live_waterfall::oldest_time();
+            let visible_time = viewport::visible_time(canvas_w, new_zoom, time_res);
+            let edge = (now - visible_time).max(oldest).max(0.0);
+            state.mic.recording_target_scroll().set(edge);
+            state.view.scroll_offset().set(edge);
+        }
     } else {
         let raw_delta = ev.delta_y() + ev.delta_x();
         let files = state.library.files().get_untracked();

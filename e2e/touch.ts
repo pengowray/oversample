@@ -58,6 +58,21 @@ export async function drag(page: Page, dxPx: number) {
   }, dxPx);
 }
 
+/** Zoom the spectrogram in via ctrl+wheel `steps` times (each ~1.1x). */
+export async function zoomIn(page: Page, steps: number) {
+  await page.evaluate((steps) => {
+    const canvas = document.querySelector(".chart-stage canvas") as HTMLElement;
+    const r = canvas.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    for (let i = 0; i < steps; i++) {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -120, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }),
+      );
+    }
+  }, steps);
+}
+
 /** True if a numeric value meaningfully changed (treats null = "auto"). */
 export function changed(a: number | null, b: number | null): boolean {
   if (a === null && b === null) return false;
