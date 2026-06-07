@@ -132,6 +132,71 @@ fn focused_range(state: AppState) -> Option<(f64, f64)> {
     }
 }
 
+/// Where the file's auto-matched species name came from, for the preset
+/// sub-line. Mirrors `auto_resolve::get_scientific_name`'s priority order.
+fn file_species_source(state: AppState) -> Option<String> {
+    let files = state.library.files().get_untracked();
+    let idx = state.library.current_index().get_untracked()?;
+    let file = files.get(idx)?;
+    if let Some(meta) = &file.xc_metadata {
+        if meta.iter().any(|(k, v)| k == "Scientific name" && !v.is_empty()) {
+            return Some("Xeno-Canto: species".to_string());
+        }
+    }
+    if let Some(guano) = &file.audio.metadata.guano {
+        if guano.fields.iter().any(|(k, v)| k == "Species|Manual" && !v.is_empty()) {
+            return Some("GUANO: Species (Manual)".to_string());
+        }
+        if guano.fields.iter().any(|(k, v)| k == "Species|Auto" && !v.is_empty()) {
+            return Some("GUANO: Species (Auto)".to_string());
+        }
+    }
+    None
+}
+
+/// The bat-book "current page" selection as (label, lo, hi): the species name
+/// when a single species is selected, otherwise an "N species" summary over the
+/// union of their ranges.
+fn selected_species_info(state: AppState) -> Option<(String, f64, f64)> {
+    let ids = state.bat_book.selected_ids().get_untracked();
+    if ids.is_empty() {
+        return None;
+    }
+    let mut lo = f64::MAX;
+    let mut hi = f64::MIN;
+    let mut first_name = String::new();
+    let mut count = 0usize;
+    for id in &ids {
+        if let Some(entry) = crate::bat_book::auto_resolve::find_entry_any_book(id) {
+            if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
+                lo = lo.min(entry.freq_lo_hz);
+                hi = hi.max(entry.freq_hi_hz);
+                if count == 0 {
+                    first_name = entry.name.to_string();
+                }
+                count += 1;
+            }
+        }
+    }
+    if count == 0 || hi <= lo {
+        return None;
+    }
+    let label = if count == 1 { first_name } else { format!("{count} species") };
+    Some((label, lo, hi))
+}
+
+/// True when HFR is on and the current BandFF range matches `(lo, hi)` — used
+/// to tick the preset the active band came from. 50 Hz tolerance absorbs
+/// rounding in display/storage.
+fn band_selected(state: AppState, lo: f64, hi: f64) -> bool {
+    if !state.viewmode.hfr_enabled().get() {
+        return false;
+    }
+    let clo = state.filter.band_ff_freq_lo().get();
+    let chi = state.filter.band_ff_freq_hi().get();
+    (clo - lo).abs() < 50.0 && (chi - hi).abs() < 50.0
+}
+
 #[component]
 pub fn RangeButton() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -191,58 +256,72 @@ pub fn RangeButton() -> impl IntoView {
 
                 // ── All ──
                 <button
-                    class="layer-panel-opt"
+                    class=move || layer_opt_class(band_selected(state, 0.0, nyquist_for_current(state)), false)
                     on:click=move |_| {
                         let nyq = nyquist_for_current(state);
                         apply_band(state, 0.0, nyq);
                     }
                 >"All"</button>
 
-                // ── Bat book: file species ──
+                // ── File species (auto-matched from metadata) ──
                 {move || {
                     let r = file_species_range(state);
-                    let label = match &r {
-                        Some((name, lo, hi)) => format!(
-                            "Bat book: {} ({:.0}\u{2013}{:.0} kHz)",
-                            name, lo / 1000.0, hi / 1000.0,
-                        ),
-                        None => "Bat book: file species".to_string(),
-                    };
                     let disabled = r.is_none();
+                    let (main, sub) = match &r {
+                        Some((name, lo, hi)) => (
+                            format!("{} ({}\u{2013}{} kHz)", name, fmt_khz(*lo), fmt_khz(*hi)),
+                            file_species_source(state),
+                        ),
+                        None => ("Bat book: file species".to_string(), None),
+                    };
+                    let sel_range = r.as_ref().map(|(_, lo, hi)| (*lo, *hi));
                     view! {
                         <button
-                            class=move || layer_opt_class(false, disabled)
+                            class=move || layer_opt_class(
+                                sel_range.is_some_and(|(lo, hi)| band_selected(state, lo, hi)),
+                                disabled,
+                            )
                             disabled=disabled
                             on:click=move |_| {
                                 if let Some((_, lo, hi)) = file_species_range(state) {
                                     apply_band(state, lo, hi);
                                 }
                             }
-                        >{label}</button>
+                        >
+                            <span class="preset-main">{main}</span>
+                            {sub.map(|s| view! { <span class="preset-sub">{s}</span> })}
+                        </button>
                     }
                 }}
 
-                // ── Bat book: selected species ──
+                // ── Bat book selection (current page) ──
                 {move || {
-                    let r = selected_species_range(state);
-                    let label = match r {
-                        Some((lo, hi)) => format!(
-                            "Bat book: selected ({:.0}\u{2013}{:.0} kHz)",
-                            lo / 1000.0, hi / 1000.0,
+                    let info = selected_species_info(state);
+                    let disabled = info.is_none();
+                    let (main, sub) = match &info {
+                        Some((name, lo, hi)) => (
+                            format!("{} ({}\u{2013}{} kHz)", name, fmt_khz(*lo), fmt_khz(*hi)),
+                            Some("Bat book: current page".to_string()),
                         ),
-                        None => "Bat book: selected species".to_string(),
+                        None => ("Bat book: selected species".to_string(), None),
                     };
-                    let disabled = r.is_none();
+                    let sel_range = info.as_ref().map(|(_, lo, hi)| (*lo, *hi));
                     view! {
                         <button
-                            class=move || layer_opt_class(false, disabled)
+                            class=move || layer_opt_class(
+                                sel_range.is_some_and(|(lo, hi)| band_selected(state, lo, hi)),
+                                disabled,
+                            )
                             disabled=disabled
                             on:click=move |_| {
                                 if let Some((lo, hi)) = selected_species_range(state) {
                                     apply_band(state, lo, hi);
                                 }
                             }
-                        >{label}</button>
+                        >
+                            <span class="preset-main">{main}</span>
+                            {sub.map(|s| view! { <span class="preset-sub">{s}</span> })}
+                        </button>
                     }
                 }}
 
@@ -265,9 +344,13 @@ pub fn RangeButton() -> impl IntoView {
                         _ => ("Selection / annotation".to_string(), String::new()),
                     };
                     let disabled = r.is_none();
+                    let sel_range = r;
                     view! {
                         <button
-                            class=move || layer_opt_class(false, disabled)
+                            class=move || layer_opt_class(
+                                sel_range.is_some_and(|(lo, hi)| band_selected(state, lo, hi)),
+                                disabled,
+                            )
                             disabled=disabled
                             on:click=move |_| {
                                 if let Some((lo, hi)) = focused_range(state) {
@@ -280,7 +363,7 @@ pub fn RangeButton() -> impl IntoView {
 
                 // ── Ultrasound ──
                 <button
-                    class="layer-panel-opt"
+                    class=move || layer_opt_class(band_selected(state, 20_000.0, nyquist_for_current(state)), false)
                     on:click=move |_| {
                         let nyq = nyquist_for_current(state);
                         if nyq > 20_000.0 {
@@ -291,7 +374,7 @@ pub fn RangeButton() -> impl IntoView {
 
                 // ── Audible ──
                 <button
-                    class="layer-panel-opt"
+                    class=move || layer_opt_class(band_selected(state, 0.0, 24_000.0), false)
                     on:click=move |_| { apply_band(state, 0.0, 24_000.0); }
                 >"Audible (\u{2264}24 kHz)"</button>
 
@@ -299,7 +382,7 @@ pub fn RangeButton() -> impl IntoView {
 
                 // ── None ──
                 <button
-                    class="layer-panel-opt"
+                    class=move || layer_opt_class(!state.viewmode.hfr_enabled().get(), false)
                     on:click=move |_| { clear_band(state); }
                 >"None"</button>
             </PopupPanel>

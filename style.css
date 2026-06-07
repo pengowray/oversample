@@ -4663,6 +4663,25 @@ body.sidebar-resizing {
     pointer-events: none;
 }
 
+/* Two-line band-preset entries: species/range on top, the metadata source
+   ("Xeno-Canto: species", "GUANO: …", "Bat book: current page") indented and
+   dimmed beneath. The sub-line stays dim/regular weight even when the entry is
+   selected (.sel). */
+.layer-panel-opt .preset-main {
+    display: block;
+}
+.layer-panel-opt .preset-sub {
+    display: block;
+    font-size: 10px;
+    font-weight: 400;
+    color: #7a7a7a;
+    margin-top: 1px;
+    padding-left: 10px;
+}
+.layer-panel-opt.sel .preset-sub {
+    color: #8a8a8a;
+}
+
 .layer-panel-slider-row {
     display: flex;
     align-items: center;
