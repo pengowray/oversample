@@ -112,6 +112,10 @@ pub fn Waveform() -> impl IntoView {
     });
 
     Effect::new(move || {
+        // Diagnostic: time the WHOLE Effect body, incl. the top signal reads and
+        // band_split (which is above the canvas draw), recorded at the end.
+        let _eperf = web_sys::window().and_then(|w| w.performance());
+        let _et0 = _eperf.as_ref().map(|p| p.now());
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
         let selection = state.interaction.selection().get();
@@ -139,12 +143,20 @@ pub fn Waveform() -> impl IntoView {
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
         let clean_view = state.viewmode.clean_view().get();
-        // Read band_split unconditionally so the Effect always subscribes to it.
-        // If read only inside the match arms, the Effect may miss updates when
-        // switching from Simple (which never reads it) to Frequency/Triple.
-        let band_data = band_split.get();
+        let focus = state.viewmode.focus_stack().get();
+        let hfr_on = focus.hfr_enabled();
+        // Only the band-split views actually consume the FFT split: Triple always,
+        // and Frequency only when HFR routes audio through the band. Simple and
+        // Frequency-without-HFR draw a single full-band wave, so reading band_split
+        // there just burns a full-file split_three_bands_fft (O(N·log N)) every
+        // recompute — a waveform-only cost the spectrogram never pays. Gate it.
+        // Switching INTO a band view re-runs this Effect (it reads waveform_view +
+        // hfr), which then subscribes to band_split, so reactivity is preserved.
+        let needs_band = matches!(waveform_view, WaveformView::Triple)
+            || (waveform_view == WaveformView::Frequency && hfr_on);
+        let band_data = if needs_band { band_split.get() } else { None };
         // Band boundaries for lane labels (Band wave + Triple).
-        let ff = state.viewmode.focus_stack().get().effective_range_ignoring_hfr();
+        let ff = focus.effective_range_ignoring_hfr();
         let band_freq_low = ff.lo;
         let band_freq_high = ff.hi;
 
@@ -187,11 +199,6 @@ pub fn Waveform() -> impl IntoView {
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
-
-        // Diagnostic: time the whole Effect body (recorded at the end) so the
-        // benchmark can tell whether the per-frame cost is here or external.
-        let _eperf = web_sys::window().and_then(|w| w.performance());
-        let _et0 = _eperf.as_ref().map(|p| p.now());
 
         let timeline = state.timeline.active().get_untracked();
 
@@ -346,8 +353,7 @@ pub fn Waveform() -> impl IntoView {
                 // audio through that band. When HFR is off, collapse to a
                 // single blue wave (same shape as Simple, just tinted blue)
                 // so the view still reads as "band mode" without implying an
-                // active filter split.
-                let hfr_on = state.viewmode.focus_stack().get().hfr_enabled();
+                // active filter split. (`hfr_on` computed at the top of the Effect.)
 
                 // Full-band single-wave draw. When zoomed out enough (spp >= MIP_D)
                 // on an in-memory MonoMix buffer, render from the decimated min/max
