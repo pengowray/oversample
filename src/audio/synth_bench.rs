@@ -19,16 +19,11 @@ use wasm_bindgen::JsCast;
 
 use crate::state::store_fields::*;
 use crate::audio::synthetic_mic::{self, SynthSignal};
-use crate::state::{AppState, MainView};
+use crate::state::{AppState, MainView, ResonatorDensity, ResonatorFftMode};
 use crate::web_util::sleep_ms;
 
 // ── Benchmark matrix (tunable) ───────────────────────────────────────────────
 const RATES: [u32; 2] = [192_000, 384_000];
-const VIEWS: [(&str, MainView); 3] = [
-    ("Spectrogram", MainView::Spectrogram),
-    ("Flow", MainView::Flow),
-    ("Resonators", MainView::Resonators),
-];
 const SIGNALS: [SynthSignal; 3] = [SynthSignal::Noise, SynthSignal::Chirp, SynthSignal::Pulses];
 /// Settle time before measuring (lets the waterfall start scrolling).
 const SETTLE_MS: f64 = 600.0;
@@ -61,32 +56,52 @@ struct Combo {
     /// and follow-scroll is gentle; >1 zooms in so the waterfall scrolls fast,
     /// exercising the per-frame scroll/redraw path.
     zoom_mult: f64,
+    /// Resonator density to force for this combo (Resonators view only). `None`
+    /// leaves the user's current setting untouched.
+    density: Option<ResonatorDensity>,
+}
+
+fn density_label(d: Option<ResonatorDensity>) -> &'static str {
+    match d {
+        None => "—",
+        Some(d) => d.percent(),
+    }
 }
 
 fn build_combos() -> Vec<Combo> {
     let mut combos = Vec::new();
-    // Base matrix: rate × view × signal at the default (auto-fit) zoom.
+    // Spectrogram + Flow: rate × signal at fit zoom (density N/A).
     for &rate in RATES.iter() {
-        for &(view_label, view) in VIEWS.iter() {
+        for &(view_label, view) in &[("Spectrogram", MainView::Spectrogram), ("Flow", MainView::Flow)] {
             for &signal in SIGNALS.iter() {
-                combos.push(Combo { rate, view_label, view, signal, zoom_mult: 1.0 });
+                combos.push(Combo { rate, view_label, view, signal, zoom_mult: 1.0, density: None });
             }
         }
     }
-    // Scroll stress: zoomed-in variants so the fast horizontal-scroll render
-    // path (much more redraw per second) is measured too. Heaviest views only.
-    for &(view_label, view) in &[
-        ("Spectrogram", MainView::Spectrogram),
-        ("Resonators", MainView::Resonators),
-    ] {
-        combos.push(Combo {
-            rate: 384_000,
-            view_label,
-            view,
-            signal: SynthSignal::Pulses,
-            zoom_mult: 8.0,
-        });
+    // Resonators: sweep the density axis (100/50/25%) so the bank-cost lever is
+    // visible directly. Signal content doesn't change resonator cost, so fix it.
+    for &rate in RATES.iter() {
+        for &density in &[ResonatorDensity::Full, ResonatorDensity::Half, ResonatorDensity::Quarter] {
+            combos.push(Combo {
+                rate,
+                view_label: "Resonators",
+                view: MainView::Resonators,
+                signal: SynthSignal::Pulses,
+                zoom_mult: 1.0,
+                density: Some(density),
+            });
+        }
     }
+    // Scroll stress (zoom ×8): heaviest cases. Resonators at Quarter (the usable
+    // density) so the scrolled-resonator case reflects real use.
+    combos.push(Combo {
+        rate: 384_000, view_label: "Spectrogram", view: MainView::Spectrogram,
+        signal: SynthSignal::Pulses, zoom_mult: 8.0, density: None,
+    });
+    combos.push(Combo {
+        rate: 384_000, view_label: "Resonators", view: MainView::Resonators,
+        signal: SynthSignal::Pulses, zoom_mult: 8.0, density: Some(ResonatorDensity::Quarter),
+    });
     combos
 }
 
@@ -94,6 +109,7 @@ struct ComboResult {
     rate: u32,
     view: &'static str,
     signal: &'static str,
+    density: &'static str,
     zoom_mult: f64,
     avg_fps: f64,
     min_fps: f64,
@@ -139,6 +155,7 @@ pub fn run(state: AppState) {
 
     let orig_view = state.viewmode.main_view().get_untracked();
     let orig_zoom = state.view.zoom_level().get_untracked();
+    let orig_fft_mode = state.resonator.fft_mode().get_untracked();
     let combos = build_combos();
     let total = combos.len();
     state.show_info_toast(format!(
@@ -154,17 +171,23 @@ pub fn run(state: AppState) {
             if BENCH_GEN.with(|g| g.get()) != gen {
                 break 'outer; // cancelled
             }
-            let zoom_note = if combo.zoom_mult != 1.0 {
-                format!(" (zoom ×{:.0})", combo.zoom_mult)
-            } else {
-                String::new()
-            };
+            let mut note = String::new();
+            if let Some(d) = combo.density {
+                note.push_str(&format!(" [{}]", d.percent()));
+            }
+            if combo.zoom_mult != 1.0 {
+                note.push_str(&format!(" (zoom ×{:.0})", combo.zoom_mult));
+            }
             state.log_debug(
                 "info",
                 format!("Bench {}/{}: {} / {} @ {} kHz{}",
-                    i + 1, total, combo.view_label, combo.signal.label(), combo.rate / 1000, zoom_note),
+                    i + 1, total, combo.view_label, combo.signal.label(), combo.rate / 1000, note),
             );
 
+            // Force the resonator density for this combo (Resonators only).
+            if let Some(d) = combo.density {
+                state.resonator.fft_mode().set(ResonatorFftMode::Adaptive(d));
+            }
             // Set the view, then (re)start the synth for this combo.
             state.viewmode.main_view().set(combo.view);
             synthetic_mic::start(state, combo.signal, combo.rate);
@@ -202,6 +225,7 @@ pub fn run(state: AppState) {
                 rate: combo.rate,
                 view: combo.view_label,
                 signal: combo.signal.label(),
+                density: density_label(combo.density),
                 zoom_mult: combo.zoom_mult,
                 avg_fps,
                 min_fps,
@@ -217,6 +241,7 @@ pub fn run(state: AppState) {
         synthetic_mic::stop(&state);
         state.viewmode.main_view().set(orig_view);
         state.view.zoom_level().set(orig_zoom);
+        state.resonator.fft_mode().set(orig_fft_mode);
         BENCH_ACTIVE.with(|a| a.set(false));
 
         if results.is_empty() {
@@ -345,13 +370,13 @@ fn build_report(results: &[ComboResult], cancelled: bool, device: Option<&str>) 
     }
     s.push('\n');
 
-    s.push_str("| Rate | View | Signal | Zoom | avg fps | min fps | p95 ms | cols/s | frames | render ms | upload ms |\n");
-    s.push_str("|------|------|--------|-----:|--------:|--------:|-------:|-------:|-------:|----------:|----------:|\n");
+    s.push_str("| Rate | View | Signal | Dens | Zoom | avg fps | min fps | p95 ms | cols/s | frames | render ms | upload ms |\n");
+    s.push_str("|------|------|--------|------|-----:|--------:|--------:|-------:|-------:|-------:|----------:|----------:|\n");
     for r in results {
         let zoom = if r.zoom_mult != 1.0 { format!("×{:.0}", r.zoom_mult) } else { "fit".to_string() };
         s.push_str(&format!(
-            "| {}k | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} | {:.2} | {:.2} |\n",
-            r.rate / 1000, r.view, r.signal, zoom, r.avg_fps, r.min_fps, r.p95_ms,
+            "| {}k | {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} | {:.2} | {:.2} |\n",
+            r.rate / 1000, r.view, r.signal, r.density, zoom, r.avg_fps, r.min_fps, r.p95_ms,
             r.cols_per_s, r.frames, r.render_ms, r.upload_ms,
         ));
     }
