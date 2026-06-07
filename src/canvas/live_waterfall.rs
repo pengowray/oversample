@@ -48,6 +48,26 @@ thread_local! {
     /// `log10` + normalize + `powf` with one array lookup. Rebuilt only when the
     /// display settings (floor/range/gamma/gain) change.
     static GREY_LUT: RefCell<(Vec<u8>, u64)> = const { RefCell::new((Vec::new(), u64::MAX)) };
+    /// Render-cost accumulator for the benchmark: (calls, total_ms, upload_ms).
+    /// `upload_ms` is the `put_image_data` portion; total−upload is the pixel
+    /// compute. Read+reset via `take_render_timing`.
+    static RENDER_TIMING: RefCell<(u32, f64, f64)> = const { RefCell::new((0, 0.0, 0.0)) };
+}
+
+fn perf_now() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
+}
+
+/// Take and reset the accumulated render timing: (calls, total_ms, upload_ms).
+pub fn take_render_timing() -> (u32, f64, f64) {
+    RENDER_TIMING.with(|c| {
+        let v = *c.borrow();
+        *c.borrow_mut() = (0, 0.0, 0.0);
+        v
+    })
 }
 
 /// Combine the four display-intensity settings into one cache key.
@@ -335,6 +355,7 @@ pub fn render_viewport(
         // shimmer caused by point-sampling with fractional scroll offsets.
         let cols_per_px = 1.0 / zoom;
 
+        let t_start = perf_now();
         RENDER_PIXELS.with(|px_cell| {
             let mut pixels = px_cell.borrow_mut();
             let need = pixel_count * 4;
@@ -396,12 +417,20 @@ pub fn render_viewport(
                     }
 
                     // Put pixels on canvas.
+                    let t_upload = perf_now();
                     let clamped = wasm_bindgen::Clamped(&pixels[..need]);
                     if let Ok(img_data) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
                         clamped, img_w, img_h,
                     ) {
                         let _ = ctx.put_image_data(&img_data, 0.0, 0.0);
                     }
+                    let t_end = perf_now();
+                    RENDER_TIMING.with(|c| {
+                        let mut t = c.borrow_mut();
+                        t.0 += 1;
+                        t.1 += t_end - t_start;   // total render
+                        t.2 += t_end - t_upload;  // put_image_data only
+                    });
                 });
             });
         });

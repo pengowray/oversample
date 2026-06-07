@@ -100,6 +100,10 @@ struct ComboResult {
     p95_ms: f64,
     frames: usize,
     cols_per_s: f64,
+    /// Mean `render_viewport` time per call (ms) and the `put_image_data`
+    /// (upload) portion of it — to locate the live-render bottleneck.
+    render_ms: f64,
+    upload_ms: f64,
 }
 
 /// Fetch native OS/arch from the Tauri backend for the report (desktop UA is
@@ -176,8 +180,10 @@ pub fn run(state: AppState) {
             }
 
             let cols0 = crate::canvas::live_waterfall::total_columns();
+            crate::canvas::live_waterfall::take_render_timing(); // reset (discard settle)
             let frame_ts = measure_frames(MEASURE_MS, gen).await;
             let cols1 = crate::canvas::live_waterfall::total_columns();
+            let (rcalls, rtotal_ms, rupload_ms) = crate::canvas::live_waterfall::take_render_timing();
             // Stop now if cancelled during the measurement window — don't
             // record a partial combo or start the next one.
             if BENCH_GEN.with(|g| g.get()) != gen {
@@ -186,6 +192,11 @@ pub fn run(state: AppState) {
 
             let (avg_fps, min_fps, p95_ms, frames) = frame_stats(&frame_ts);
             let cols_per_s = (cols1.saturating_sub(cols0)) as f64 / (MEASURE_MS / 1000.0);
+            let (render_ms, upload_ms) = if rcalls > 0 {
+                (rtotal_ms / rcalls as f64, rupload_ms / rcalls as f64)
+            } else {
+                (0.0, 0.0)
+            };
 
             results.push(ComboResult {
                 rate: combo.rate,
@@ -197,6 +208,8 @@ pub fn run(state: AppState) {
                 p95_ms,
                 frames,
                 cols_per_s,
+                render_ms,
+                upload_ms,
             });
         }
 
@@ -332,13 +345,14 @@ fn build_report(results: &[ComboResult], cancelled: bool, device: Option<&str>) 
     }
     s.push('\n');
 
-    s.push_str("| Rate | View | Signal | Zoom | avg fps | min fps | p95 ms | cols/s | frames |\n");
-    s.push_str("|------|------|--------|-----:|--------:|--------:|-------:|-------:|-------:|\n");
+    s.push_str("| Rate | View | Signal | Zoom | avg fps | min fps | p95 ms | cols/s | frames | render ms | upload ms |\n");
+    s.push_str("|------|------|--------|-----:|--------:|--------:|-------:|-------:|-------:|----------:|----------:|\n");
     for r in results {
         let zoom = if r.zoom_mult != 1.0 { format!("×{:.0}", r.zoom_mult) } else { "fit".to_string() };
         s.push_str(&format!(
-            "| {}k | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} |\n",
-            r.rate / 1000, r.view, r.signal, zoom, r.avg_fps, r.min_fps, r.p95_ms, r.cols_per_s, r.frames,
+            "| {}k | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.0} | {} | {:.2} | {:.2} |\n",
+            r.rate / 1000, r.view, r.signal, zoom, r.avg_fps, r.min_fps, r.p95_ms,
+            r.cols_per_s, r.frames, r.render_ms, r.upload_ms,
         ));
     }
 
