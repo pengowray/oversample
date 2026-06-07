@@ -194,12 +194,43 @@ pub fn Spectrogram() -> impl IntoView {
     });
 
     // Effect 3: redraw when pre-rendered data, scroll, zoom, selection, playhead, overlays, hover, or new tile change
+    //
+    // rAF-coalesced: the full render is ~4–5 ms and its triggers — chiefly
+    // scroll_offset from the follow animation — change several times per painted
+    // frame when zoomed in, so without coalescing it re-rendered 3–4× per frame
+    // (benchmark ×8 @384k: 198 effect runs for 49 painted frames, ~51% of wall
+    // time wasted on never-seen redraws). The Effect still SUBSCRIBES to every
+    // signal (the reads up top are cheap), but defers the expensive DRAW to one
+    // rAF per frame: a real trigger schedules a single rAF that flips
+    // `should_draw` + bumps `redraw_gate`, and only that gate-driven run paints.
+    let should_draw = StoredValue::new(false);
+    let raf_pending = StoredValue::new(false);
+    let redraw_gate = RwSignal::new(0u32);
+    // ONE persistent rAF callback, created here rather than a fresh
+    // Closure::once per deferred frame (which would leak ~60 closures/sec under
+    // sustained scroll/live). `disposed` makes it a no-op after unmount; this is
+    // a single per-mount cost, not per-frame. Reused via the stored Function.
+    let raf_fn = StoredValue::new_local(None::<js_sys::Function>);
+    {
+        let d = disposed.clone();
+        let cb = Closure::wrap(Box::new(move || {
+            if d.load(Ordering::Relaxed) {
+                return;
+            }
+            raf_pending.set_value(false);
+            should_draw.set_value(true);
+            redraw_gate.update(|n| *n = n.wrapping_add(1));
+        }) as Box<dyn FnMut()>);
+        raf_fn.set_value(Some(cb.as_ref().unchecked_ref::<js_sys::Function>().clone()));
+        cb.forget();
+    }
     Effect::new({
         let disposed = disposed.clone();
         move || {
         // Diagnostic: time the whole render Effect body (recorded at the end).
         let _sperf = web_sys::window().and_then(|w| w.performance());
         let _st0 = _sperf.as_ref().map(|p| p.now());
+        let _gate = redraw_gate.get(); // re-run when the coalesced rAF fires
         let _tile_ready = state.viewmode.tile_ready_signal().get(); // trigger redraw when tiles arrive
         let _size_tick = canvas_size_tick.get(); // trigger redraw when canvas resizes
         let scroll = state.view.scroll_offset().get();
@@ -295,6 +326,24 @@ pub fn Spectrogram() -> impl IntoView {
         let _rsidebar = state.panels.right_collapsed().get();
         let _rsidebar_width = state.panels.right_width().get();
         let clean_view = state.viewmode.clean_view().get();
+
+        // Coalesce to one paint per animation frame. Every run above subscribed
+        // to its signals (cheap); only a gate-driven run falls through to draw.
+        // A real trigger schedules a single rAF (deduped by `raf_pending`) that
+        // sets `should_draw` and bumps `redraw_gate`, re-running this Effect to
+        // paint with the latest values. Multiple triggers between frames collapse
+        // into that one draw.
+        if should_draw.get_value() {
+            should_draw.set_value(false);
+        } else {
+            if !raf_pending.get_value() {
+                raf_pending.set_value(true);
+                if let (Some(f), Some(w)) = (raf_fn.get_value(), web_sys::window()) {
+                    let _ = w.request_animation_frame(&f);
+                }
+            }
+            return;
+        }
 
         let Some(canvas_el) = canvas_ref.get() else { return };
         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
