@@ -53,11 +53,19 @@ thread_local! {
     /// exits when a new session begins or the user stops.
     static SYNTH_GEN: Cell<u64> = const { Cell::new(0) };
     static SYNTH_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    /// The signal of the currently-running synthetic session (for status UI).
+    static SYNTH_SIGNAL: Cell<Option<SynthSignal>> = const { Cell::new(None) };
 }
 
 /// Whether a synthetic test session is currently running.
 pub fn is_active() -> bool {
     SYNTH_ACTIVE.with(|a| a.get())
+}
+
+/// Label of the currently-running synthetic signal, or `None` when no synth
+/// session is active. Used to title the live status as a test signal.
+pub fn active_label() -> Option<&'static str> {
+    SYNTH_SIGNAL.with(|s| s.get()).map(SynthSignal::label)
 }
 
 /// Start a synthetic live session with `signal` at `sample_rate` Hz.
@@ -83,6 +91,7 @@ pub fn start(state: AppState, signal: SynthSignal, sample_rate: u32) {
         next
     });
     SYNTH_ACTIVE.with(|a| a.set(true));
+    SYNTH_SIGNAL.with(|s| s.set(Some(signal)));
 
     state.mic.sample_rate().set(sample_rate);
     with_live_samples_mut(state.is_tauri, |b| b.clear());
@@ -105,6 +114,7 @@ pub fn stop(state: &AppState) {
         return;
     }
     SYNTH_ACTIVE.with(|a| a.set(false));
+    SYNTH_SIGNAL.with(|s| s.set(None));
     SYNTH_GEN.with(|g| g.set(g.get().wrapping_add(1)));
 
     state.mic.listening().set(false);

@@ -40,6 +40,9 @@ thread_local! {
     /// Cached rendered waveform bitmap (off-screen canvas).
     static OVERVIEW_WAVEFORM_CANVAS: RefCell<Option<WaveformCanvasCache>> =
         const { RefCell::new(None) };
+    /// Streaming per-pixel min/max envelope for the LIVE overview waveform.
+    static LIVE_WAVE_ENV: RefCell<Option<LiveWaveEnvelope>> =
+        const { RefCell::new(None) };
 }
 
 fn get_overview_tmp_canvas(w: u32, h: u32) -> Option<(HtmlCanvasElement, CanvasRenderingContext2d)> {
@@ -219,6 +222,193 @@ fn compute_envelope(samples: &[f32], pixel_width: u32, gain_linear: f64) -> Vec<
     envelope
 }
 
+/// Absolute pixel index a sample at absolute index `abs_idx` falls into, given
+/// `spp` samples per pixel. Must be computed identically in `fold` and tests
+/// (same `as f64 / spp as i64` truncation) so pixel binning is exact.
+#[inline]
+fn pixel_of(abs_idx: u64, spp: f64) -> i64 {
+    (abs_idx as f64 / spp) as i64
+}
+
+/// Streaming per-pixel min/max envelope for the LIVE overview waveform.
+///
+/// The live overview shows a fixed-span window whose horizontal scale is
+/// constant — `spp = span * sample_rate / width` samples per pixel — so each
+/// screen column maps to a fixed *absolute* sample range that never rescales.
+/// We exploit that: instead of recomputing the whole ~`span`-second envelope
+/// every capture tick (which both wastes CPU and *shimmers*, because the pixel
+/// boundaries jitter against the ever-growing sample count), we keep a circular
+/// buffer of `w` per-pixel `(min,max)` cells anchored to absolute pixel indices.
+/// New samples only ever fold into the rightmost (newest) cell(s); finished
+/// cells are frozen until they scroll off the left. O(new samples) per tick, and
+/// a stationary pixel never changes value → no flicker. This mirrors the live
+/// spectrogram waterfall, which is likewise absolute-column anchored.
+///
+/// Min/max are stored RAW (un-gained); gain is a positive linear scalar applied
+/// at draw time, so gain changes (including frequent auto-gain) don't invalidate
+/// the cache.
+struct LiveWaveEnvelope {
+    /// Circular buffer of `w` cells: the cell for absolute pixel `p` lives at
+    /// `p % w`, holding `(min, max)` in raw sample units.
+    cells: Vec<(f32, f32)>,
+    /// Display width in pixels (== `cells.len()`). Part of the identity key.
+    w: u32,
+    /// Samples per pixel (the fixed scale). Part of the identity key.
+    spp: f64,
+    /// Sample rate the cache was built for. Part of the identity key.
+    sample_rate: u32,
+    /// Absolute pixel index of the newest (in-progress) cell; `-1` when empty.
+    head: i64,
+    /// Oldest absolute pixel that is currently valid (written and within the
+    /// live window); `-1` when empty. Normally tracks `head - w + 1`, but after a
+    /// stall-rebuild from a partial ring it sits ahead of the window's left edge
+    /// so the render can blank the un-refilled gap instead of reading stale cells.
+    tail: i64,
+    /// Count of absolute samples folded so far (== absolute index of the next
+    /// unseen sample). Monotonic within a session; a drop signals a new session.
+    consumed: u64,
+}
+
+impl LiveWaveEnvelope {
+    fn new(w: u32, spp: f64, sample_rate: u32) -> Self {
+        LiveWaveEnvelope {
+            cells: vec![(0.0, 0.0); w.max(1) as usize],
+            w: w.max(1),
+            spp,
+            sample_rate,
+            head: -1,
+            tail: -1,
+            consumed: 0,
+        }
+    }
+
+    /// Whether this cache's geometry matches the requested one. `spp` is derived
+    /// deterministically from `(span, sample_rate, w)`, so bit-equality holds
+    /// tick-to-tick within a session; a change forces a rebuild.
+    fn matches(&self, w: u32, spp: f64, sample_rate: u32) -> bool {
+        self.w == w.max(1)
+            && self.sample_rate == sample_rate
+            && self.spp.to_bits() == spp.to_bits()
+    }
+
+    /// Fold the newly captured samples into the per-pixel envelope. `abs_latest`
+    /// is the absolute index of the sample just past the newest one (i.e. the
+    /// total samples captured this session); `ring` is the live raw-sample ring,
+    /// whose last `ring.len()` samples are absolute `[abs_latest - len, abs_latest)`.
+    fn fold(&mut self, abs_latest: u64, ring: &[f32]) {
+        if abs_latest <= self.consumed {
+            return; // nothing new (also the common no-op tie → no work, no flicker)
+        }
+        let ring_len = ring.len() as u64;
+        let mut start = self.consumed;
+        let mut new = abs_latest - self.consumed;
+        if new > ring_len {
+            // Fell behind by more than the ring holds (>1 window of wall-clock
+            // with no redraw, e.g. a long background stall): the lost samples are
+            // gone and the existing cells are now discontinuous. Restart from
+            // what the ring still contains; `tail` will fence off the un-refilled
+            // left gap so the render can't read a stale cell.
+            let (w, spp, sr) = (self.w, self.spp, self.sample_rate);
+            *self = LiveWaveEnvelope::new(w, spp, sr);
+            start = abs_latest - ring_len;
+            new = ring_len;
+        }
+        let base = ring.len() - new as usize; // ring index of absolute sample `start`
+        let w = self.w as usize;
+        for k in 0..new as usize {
+            let abs_idx = start + k as u64;
+            let s = ring[base + k];
+            let pixel = pixel_of(abs_idx, self.spp);
+            if pixel > self.head {
+                // A newly started pixel. With spp >= 1 (guaranteed by the caller)
+                // consecutive samples advance the pixel by at most 1, so no cell
+                // is ever skipped; the new pixel starts fresh at this sample.
+                if self.head < 0 {
+                    self.tail = pixel; // first write since (re)build
+                }
+                self.cells[(pixel as usize) % w] = (s, s);
+                self.head = pixel;
+                // Drop pixels that have scrolled out of the w-wide window.
+                let min_valid = self.head - self.w as i64 + 1;
+                if self.tail < min_valid {
+                    self.tail = min_valid;
+                }
+            } else {
+                // Continuing the current (head) pixel.
+                let cell = &mut self.cells[(pixel as usize) % w];
+                if s < cell.0 { cell.0 = s; }
+                if s > cell.1 { cell.1 = s; }
+            }
+        }
+        self.consumed = start + new;
+    }
+
+    /// `(min, max)` raw envelope at absolute pixel `p` (caller guarantees `p` is
+    /// within the live window `[head - w + 1, head]`, all of which are populated).
+    #[inline]
+    fn cell(&self, p: i64) -> (f32, f32) {
+        self.cells[(p as usize) % self.w as usize]
+    }
+}
+
+/// Paint the live waveform background + center line; returns the vertical mid.
+fn draw_live_wave_chrome(ctx: &CanvasRenderingContext2d, cw: f64, ch: f64) -> f64 {
+    let mid_y = ch / 2.0;
+    ctx.set_fill_style_str("#0a0a0a");
+    ctx.fill_rect(0.0, 0.0, cw, ch);
+    ctx.set_stroke_style_str("#333");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(0.0, mid_y);
+    ctx.line_to(cw, mid_y);
+    ctx.stroke();
+    mid_y
+}
+
+/// Render the live waveform from the streaming `LiveWaveEnvelope`. The data
+/// left-anchors at `t=0` while the window fills (absolute pixels `[0, head]`),
+/// then scrolls (the last `w` absolute pixels `[head - w + 1, head]`) — matching
+/// the live waterfall beside it. Gain is applied here (cells are stored raw).
+fn draw_live_waveform_cached(
+    env: &LiveWaveEnvelope,
+    ctx: &CanvasRenderingContext2d,
+    w: u32,
+    h: u32,
+    gain_db: f64,
+) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let cw = w as f64;
+    let ch = h as f64;
+    let mid_y = draw_live_wave_chrome(ctx, cw, ch);
+    if env.head < 0 {
+        return;
+    }
+    let scale = mid_y * 0.9;
+    let g = 10.0f64.powf(gain_db / 20.0) as f32;
+    let wi = env.w as i64;
+    // The window's left edge in absolute pixels:
+    //   Fill phase  → 0      (data left-anchored, screen x == absolute pixel)
+    //   Scroll phase → head-w+1 (the last w absolute pixels fill the strip)
+    let lo_pix = if env.head + 1 <= wi { 0 } else { env.head - wi + 1 };
+    // Only draw pixels that have actually been written (>= tail); any left gap
+    // (post-stall partial refill) stays blank. `x = p - lo_pix` keeps the data
+    // positioned correctly within the strip.
+    let draw_from = lo_pix.max(env.tail);
+
+    ctx.set_stroke_style_str("#4a4");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    for p in draw_from..=env.head {
+        let (mn, mx) = env.cell(p);
+        let x = (p - lo_pix) as f64;
+        ctx.move_to(x, mid_y - (mx * g) as f64 * scale);
+        ctx.line_to(x, mid_y - (mn * g) as f64 * scale);
+    }
+    ctx.stroke();
+}
+
 fn draw_overview_waveform(
     ctx: &CanvasRenderingContext2d,
     canvas: &HtmlCanvasElement,
@@ -377,6 +567,22 @@ fn draw_overview_waveform(
     }
 }
 
+/// Status label + accent color for the live overview / status text. The
+/// benchmark and synthetic-signal test modes both drive the *real* listen
+/// pipeline, so without this they'd just read "Listening" — title them as what
+/// they actually are. `is_listen` distinguishes a plain listen from a recording.
+fn live_status_label(is_listen: bool) -> (String, &'static str) {
+    if crate::audio::synth_bench::is_running() {
+        ("Benchmarking".to_string(), "#dca")
+    } else if let Some(sig) = crate::audio::synthetic_mic::active_label() {
+        (format!("Test signal: {sig}"), "#9c9")
+    } else if is_listen {
+        ("Listening".to_string(), "#6af")
+    } else {
+        ("Recording".to_string(), "#f66")
+    }
+}
+
 /// Draw the "● Recording/Listening …" status text + VU bar. Used in the live
 /// overview when there's no waterfall data to render yet.
 fn draw_live_status(
@@ -388,15 +594,13 @@ fn draw_live_status(
 ) {
     ctx.set_fill_style_str("#1a1a1a");
     ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
-    let is_listen = file.is_live_listen;
-    let label = if is_listen { "Listening" } else { "Recording" };
+    let (label, color) = live_status_label(file.is_live_listen);
     let elapsed = crate::canvas::live_waterfall::total_time().max(file.audio.duration_secs);
     let text = if elapsed >= 1.0 {
         format!("\u{25CF} {} {}:{:02}", label, elapsed as u32 / 60, elapsed as u32 % 60)
     } else {
         format!("\u{25CF} {}\u{2026}", label)
     };
-    let color = if is_listen { "#6af" } else { "#f66" };
     ctx.set_fill_style_str(color);
     ctx.set_font("11px system-ui");
     ctx.set_text_align("center");
@@ -405,8 +609,7 @@ fn draw_live_status(
     let peak = state.mic.peak_level().get_untracked();
     if peak > 0.01 {
         let bar_w = (peak as f64 * w as f64).min(w as f64);
-        let vu_color = if is_listen { "#48f" } else { "#f44" };
-        ctx.set_fill_style_str(vu_color);
+        ctx.set_fill_style_str(color);
         ctx.fill_rect(0.0, h as f64 - 2.0, bar_w, 2.0);
     }
 }
@@ -507,18 +710,8 @@ fn draw_live_waveform(
     }
     let cw = w as f64;
     let ch = h as f64;
-    let mid_y = ch / 2.0;
+    let mid_y = draw_live_wave_chrome(ctx, cw, ch);
     let scale = mid_y * 0.9;
-
-    ctx.set_fill_style_str("#0a0a0a");
-    ctx.fill_rect(0.0, 0.0, cw, ch);
-
-    ctx.set_stroke_style_str("#333");
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(0.0, mid_y);
-    ctx.line_to(cw, mid_y);
-    ctx.stroke();
 
     let dw = data_w.min(w) as usize;
     if samples.is_empty() || dw == 0 {
@@ -715,8 +908,7 @@ pub fn OverviewPanel() -> impl IntoView {
                 if is_rec || is_lis {
                     ctx.set_fill_style_str("#1a1a1a");
                     ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
-                    let label = if is_rec { "Recording" } else { "Listening" };
-                    let color = if is_rec { "#f66" } else { "#6cf" };
+                    let (label, color) = live_status_label(!is_rec);
                     ctx.set_fill_style_str(color);
                     ctx.set_font("11px system-ui");
                     ctx.set_text_align("center");
@@ -777,15 +969,42 @@ pub fn OverviewPanel() -> impl IntoView {
                         }
                     }
                     OverviewView::Waveform => {
-                        // Read the live ring directly (fresh each tick) and draw the
-                        // window's worth of its newest samples into the filled width.
+                        // Fold the live ring into the streaming per-pixel envelope
+                        // (O(new samples)/tick, absolute-pixel anchored) instead of
+                        // recomputing the whole ~span-second min/max every tick —
+                        // which both wasted CPU and shimmered. See LiveWaveEnvelope.
+                        let sr = file.audio.sample_rate;
                         let drew = crate::audio::mic_backend::with_live_samples(
                             state.is_tauri,
                             |ring| {
-                                if ring.is_empty() || data_w == 0 { return false; }
-                                let n = ((span * file.audio.sample_rate as f64) as usize)
-                                    .clamp(1, ring.len());
-                                draw_live_waveform(&ctx, w, data_w, h, &ring[ring.len() - n..], gain_db);
+                                if ring.is_empty() { return false; }
+                                let spp = span * sr as f64 / w as f64;
+                                if spp < 1.0 {
+                                    // Degenerate (tiny window): fall back to a full
+                                    // recompute — streaming needs >=1 sample/pixel.
+                                    if data_w == 0 { return false; }
+                                    let n = ((span * sr as f64) as usize).clamp(1, ring.len());
+                                    draw_live_waveform(&ctx, w, data_w, h, &ring[ring.len() - n..], gain_db);
+                                    return true;
+                                }
+                                let abs_latest = (crate::canvas::live_waterfall::total_time()
+                                    * sr as f64)
+                                    .floor() as u64;
+                                LIVE_WAVE_ENV.with(|cell| {
+                                    let mut slot = cell.borrow_mut();
+                                    let rebuild = match slot.as_ref() {
+                                        // New geometry, or `total_time` went backwards
+                                        // (a fresh live session) → start clean.
+                                        Some(e) => !e.matches(w, spp, sr) || abs_latest < e.consumed,
+                                        None => true,
+                                    };
+                                    if rebuild {
+                                        *slot = Some(LiveWaveEnvelope::new(w, spp, sr));
+                                    }
+                                    let env = slot.as_mut().unwrap();
+                                    env.fold(abs_latest, ring);
+                                    draw_live_waveform_cached(env, &ctx, w, h, gain_db);
+                                });
                                 true
                             },
                         );
@@ -834,7 +1053,7 @@ pub fn OverviewPanel() -> impl IntoView {
                         ctx.set_fill_style_str("#1a1a1a");
                         ctx.fill_rect(0.0, 0.0, w as f64, h as f64);
                         let is_listen = file.is_live_listen;
-                        let label = if is_listen { "Listening" } else { "Recording" };
+                        let (label, color) = live_status_label(is_listen);
                         let elapsed = if is_listen && crate::canvas::live_waterfall::is_active() {
                             crate::canvas::live_waterfall::total_time()
                         } else {
@@ -847,7 +1066,6 @@ pub fn OverviewPanel() -> impl IntoView {
                         } else {
                             format!("\u{25CF} {}\u{2026}", label)
                         };
-                        let color = if is_listen { "#6af" } else { "#f66" };
                         ctx.set_fill_style_str(color);
                         ctx.set_font("11px system-ui");
                         ctx.set_text_align("center");
@@ -856,8 +1074,7 @@ pub fn OverviewPanel() -> impl IntoView {
                         let peak = state.mic.peak_level().get_untracked();
                         if peak > 0.01 {
                             let bar_w = (peak as f64 * w as f64).min(w as f64);
-                            let vu_color = if is_listen { "#48f" } else { "#f44" };
-                            ctx.set_fill_style_str(vu_color);
+                            ctx.set_fill_style_str(color);
                             ctx.fill_rect(0.0, h as f64 - 2.0, bar_w, 2.0);
                         }
                     } else if file.loading_id.is_some() {
@@ -1381,5 +1598,148 @@ pub fn OverviewPanel() -> impl IntoView {
             />
 
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pixel_of, LiveWaveEnvelope};
+    use std::collections::HashMap;
+
+    /// Deterministic pseudo-signal in roughly [-1, 1] with sample-to-sample
+    /// variation (so per-pixel min/max is non-trivial).
+    fn sample(i: u64) -> f32 {
+        let x = i as f64;
+        let s = (x * 0.013).sin() * 0.6 + (x * 0.31).sin() * 0.3;
+        let h = ((i.wrapping_mul(2654435761) >> 16) & 0xff) as f64 / 255.0 - 0.5;
+        (s + h * 0.2).clamp(-1.0, 1.0) as f32
+    }
+
+    /// Reference: per-absolute-pixel min/max over the whole signal, then read the
+    /// displayed window exactly as `draw_live_waveform_cached` does.
+    fn ref_window(full: &[f32], spp: f64, w: usize) -> Vec<(f32, f32)> {
+        let n = full.len() as u64;
+        if n == 0 {
+            return vec![];
+        }
+        let head = pixel_of(n - 1, spp);
+        let mut cells: HashMap<i64, (f32, f32)> = HashMap::new();
+        for idx in 0..n {
+            let p = pixel_of(idx, spp);
+            let s = full[idx as usize];
+            let e = cells.entry(p).or_insert((s, s));
+            if s < e.0 { e.0 = s; }
+            if s > e.1 { e.1 = s; }
+        }
+        let (lo_pix, n_render) = if head + 1 <= w as i64 {
+            (0i64, (head + 1) as usize)
+        } else {
+            (head - w as i64 + 1, w)
+        };
+        (0..n_render).map(|i| cells[&(lo_pix + i as i64)]).collect()
+    }
+
+    fn env_window(env: &LiveWaveEnvelope) -> Vec<(f32, f32)> {
+        if env.head < 0 {
+            return vec![];
+        }
+        let wi = env.w as i64;
+        let (lo_pix, n_render) = if env.head + 1 <= wi {
+            (0i64, (env.head + 1) as usize)
+        } else {
+            (env.head - wi + 1, env.w as usize)
+        };
+        (0..n_render).map(|i| env.cell(lo_pix + i as i64)).collect()
+    }
+
+    /// Simulate live capture: the absolute sample count grows by `step` per tick;
+    /// the ring holds the last `ring_cap` samples. Fold each tick, then assert the
+    /// displayed window is bit-identical to a from-scratch recompute.
+    fn run_sim(total: u64, spp: f64, w: u32, step: u64, ring_cap: usize) {
+        let full: Vec<f32> = (0..total).map(sample).collect();
+        let mut env = LiveWaveEnvelope::new(w, spp, 384_000);
+        let mut abs = 0u64;
+        while abs < total {
+            abs = (abs + step).min(total);
+            let lo = abs.saturating_sub(ring_cap as u64) as usize;
+            env.fold(abs, &full[lo..abs as usize]);
+        }
+        let got = env_window(&env);
+        let want = ref_window(&full, spp, w as usize);
+        assert_eq!(got.len(), want.len(), "window length");
+        for (i, (g, e)) in got.iter().zip(want.iter()).enumerate() {
+            assert_eq!(g.0.to_bits(), e.0.to_bits(), "min mismatch at screen px {i}");
+            assert_eq!(g.1.to_bits(), e.1.to_bits(), "max mismatch at screen px {i}");
+        }
+    }
+
+    #[test]
+    fn streaming_matches_reference_scroll_phase() {
+        // ~200 absolute pixels of data into a 64px window → scroll phase.
+        let (spp, w, total) = (100.0, 64u32, 20_000u64);
+        run_sim(total, spp, w, 2000, 8000); // chunky ticks
+        run_sim(total, spp, w, 137, 8000); // small odd ticks (tick != pixel boundary)
+        run_sim(total, spp, w, total, 25_000); // single bulk fold
+    }
+
+    #[test]
+    fn streaming_matches_reference_fill_phase() {
+        // Stop before the window fills (30 pixels < 64px) → fill phase.
+        run_sim(3_000, 100.0, 64, 250, 4_000);
+    }
+
+    #[test]
+    fn fold_ties_and_stale_are_noops() {
+        // A re-fold with no advance (or an older `abs_latest`) must change nothing
+        // — that's what keeps a stationary live waveform from flickering.
+        let mut env = LiveWaveEnvelope::new(32, 50.0, 384_000);
+        let full: Vec<f32> = (0..5_000).map(sample).collect();
+        env.fold(5_000, &full);
+        let head0 = env.head;
+        let win0 = env_window(&env);
+        env.fold(5_000, &full); // tie → no-op
+        env.fold(4_000, &full[..4_000]); // stale → no-op
+        assert_eq!(env.head, head0);
+        assert_eq!(env_window(&env), win0);
+    }
+
+    #[test]
+    fn stall_rebuilds_and_fences_stale_cells() {
+        // A long stall (abs_latest jumps past one full window) with only a PARTIAL
+        // ring available must rebuild from the ring and fence the un-refilled left
+        // gap via `tail` — never reading a stale cell from the prior session.
+        let (spp, w) = (100.0, 64u32);
+        let mut env = LiveWaveEnvelope::new(w, spp, 384_000);
+        // Session A: fill a full window so all cells hold (stale) data.
+        let a: Vec<f32> = (0..12_000).map(sample).collect();
+        let mut abs = 0u64;
+        while abs < 12_000 {
+            abs = (abs + 500).min(12_000);
+            let lo = abs.saturating_sub(8_000) as usize;
+            env.fold(abs, &a[lo..abs as usize]);
+        }
+        // Stall: jump to 51_500 (new = 39_500 >> ring_len 1_500) with a 1_500-sample
+        // (15-pixel) ring covering absolute [50_000, 51_500).
+        let ring: Vec<f32> = (50_000..51_500).map(sample).collect();
+        env.fold(51_500, &ring);
+        assert_eq!(env.head, pixel_of(51_499, spp)); // 514
+        assert_eq!(env.tail, pixel_of(50_000, spp)); // 500 — fences the gap
+
+        // Every valid cell [tail, head] must equal a fresh recompute of the ring;
+        // the displayed window's left gap [head-w+1, tail) is simply not drawn.
+        let mut want: HashMap<i64, (f32, f32)> = HashMap::new();
+        for (j, &s) in ring.iter().enumerate() {
+            let p = pixel_of(50_000 + j as u64, spp);
+            let e = want.entry(p).or_insert((s, s));
+            if s < e.0 { e.0 = s; }
+            if s > e.1 { e.1 = s; }
+        }
+        for p in env.tail..=env.head {
+            assert_eq!(env.cell(p).0.to_bits(), want[&p].0.to_bits(), "min at pixel {p}");
+            assert_eq!(env.cell(p).1.to_bits(), want[&p].1.to_bits(), "max at pixel {p}");
+        }
+        // The window's left edge sits below tail, so the gap exists and is fenced.
+        let lo_pix = env.head - w as i64 + 1;
+        assert!(lo_pix < env.tail, "expected an un-refilled left gap to fence");
     }
 }

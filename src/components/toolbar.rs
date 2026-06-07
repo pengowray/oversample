@@ -205,7 +205,15 @@ pub fn Toolbar() -> impl IntoView {
                 format!("Recording ({}) \u{2014} {}", dur, name)
             }
         } else if listening {
-            "Listening...".to_string()
+            // The benchmark + synthetic-signal test modes drive the real listen
+            // pipeline; title them as what they are rather than "Listening...".
+            if crate::audio::synth_bench::is_running() {
+                "Benchmarking...".to_string()
+            } else if let Some(sig) = crate::audio::synthetic_mic::active_label() {
+                format!("Test signal: {sig}")
+            } else {
+                "Listening...".to_string()
+            }
         } else {
             file_name.get().unwrap_or_default()
         }
@@ -227,8 +235,15 @@ pub fn Toolbar() -> impl IntoView {
             let pfx = prefix.as_deref().unwrap_or("");
             format!("{} Recording ({}) - Oversample", pfx, dur)
         } else {
+            let listen_label = if crate::audio::synth_bench::is_running() {
+                "Benchmarking...".to_string()
+            } else if let Some(sig) = crate::audio::synthetic_mic::active_label() {
+                format!("Test signal: {sig}")
+            } else {
+                "Listening...".to_string()
+            };
             match (prefix.as_deref(), listening, name.as_deref()) {
-                (Some(pfx), true, _) => format!("{} Listening... - Oversample", pfx),
+                (Some(pfx), true, _) => format!("{} {} - Oversample", pfx, listen_label),
                 (Some(pfx), false, Some(name)) => format!("{} {} - Oversample", pfx, name),
                 (Some(pfx), false, None) => format!("{} Oversample", pfx),
                 (None, _, Some(name)) => format!("{} - Oversample", name),

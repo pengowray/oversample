@@ -1,7 +1,9 @@
-# Enable WASM SIMD128 for wasm32 builds. `wide::f32x4` (used by the
-# `resonators` dep) picks its WASM SIMD128 backend only when this feature
-# is set; without it, it falls back to scalar arrays. Required for the
-# Resonators view to hit v128.* intrinsics in-browser.
+# Enable WASM SIMD128 for wasm32 builds. The `resonators` dep (0.1.x, deps:
+# num-complex only) has no explicit SIMD backend — its hot loop is plain
+# scalar Rust that LLVM autovectorizes to `v128.*` ONLY when this target
+# feature is set; without it, the loop stays scalar. Required for the
+# Resonators view to hit v128.* intrinsics in-browser. (Native aarch64 gets
+# NEON unconditionally; x86_64 gets SSE2 baseline.)
 #
 # Safari 16.4+, Chrome 91+, Firefox 89+ all support WASM SIMD128 — which is
 # already the compatibility floor we target elsewhere.
