@@ -242,7 +242,7 @@ pub fn Waveform() -> impl IntoView {
 
                 waveform_renderer::draw_waveform(
                     &ctx,
-                    &waveform_buf,
+                    &waveform_buf[..],
                     sr,
                     file_scroll,
                     zoom,
@@ -288,7 +288,17 @@ pub fn Waveform() -> impl IntoView {
             let region_start = ((vis_start_time * sr as f64) as usize).saturating_sub(margin_samples);
             let region_end = ((vis_end_time * sr as f64) as usize) + margin_samples;
             let region_len = region_end.saturating_sub(region_start);
-            let waveform_buf = file.audio.source.read_region(cv, region_start as u64, region_len);
+            // For in-memory MonoMix (the common case) borrow the visible window
+            // straight from the sample buffer instead of allocating + copying it
+            // every scroll frame — `read_region` always allocates a fresh Vec.
+            // Streaming sources and non-mono channel views still go through it.
+            let waveform_buf: std::borrow::Cow<[f32]> = match (cv, file.audio.source.as_contiguous()) {
+                (ChannelView::MonoMix, Some(all)) => {
+                    let end = (region_start + region_len).min(all.len());
+                    std::borrow::Cow::Borrowed(if region_start < end { &all[region_start..end] } else { &[] })
+                }
+                _ => std::borrow::Cow::Owned(file.audio.source.read_region(cv, region_start as u64, region_len)),
+            };
 
             if mode == PlaybackMode::ZeroCrossing {
                 if let Some(bins) = zc_bins.get().as_ref() {
@@ -329,7 +339,7 @@ pub fn Waveform() -> impl IntoView {
                     WaveformView::Simple => {
                         waveform_renderer::draw_waveform(
                             &ctx,
-                            &waveform_buf,
+                            &waveform_buf[..],
                             sr,
                             buf_scroll,
                             zoom,
@@ -345,7 +355,7 @@ pub fn Waveform() -> impl IntoView {
                     }
                     WaveformView::Frequency if !hfr_on => {
                         waveform_renderer::draw_waveform(
-                            &ctx, &waveform_buf, sr, buf_scroll, zoom,
+                            &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
                             file.spectrogram.time_resolution,
                             display_w as f64, wave_h,
                             sel_time, gain_db, buf_duration, region_start,
@@ -357,7 +367,7 @@ pub fn Waveform() -> impl IntoView {
                             let selected_region = window_band(selected);
                             waveform_renderer::draw_waveform_freq(
                                 &ctx,
-                                &waveform_buf,
+                                &waveform_buf[..],
                                 &selected_region,
                                 sr,
                                 buf_scroll,
@@ -374,7 +384,7 @@ pub fn Waveform() -> impl IntoView {
                             );
                         } else {
                             waveform_renderer::draw_waveform(
-                                &ctx, &waveform_buf, sr, buf_scroll, zoom,
+                                &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
                                 file.spectrogram.time_resolution,
                                 display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,
@@ -407,7 +417,7 @@ pub fn Waveform() -> impl IntoView {
                             );
                         } else {
                             waveform_renderer::draw_waveform(
-                                &ctx, &waveform_buf, sr, buf_scroll, zoom,
+                                &ctx, &waveform_buf[..], sr, buf_scroll, zoom,
                                 file.spectrogram.time_resolution,
                                 display_w as f64, wave_h,
                                 sel_time, gain_db, buf_duration, region_start,

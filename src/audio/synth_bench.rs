@@ -248,7 +248,14 @@ pub fn run(state: AppState) {
             state.show_info_toast("Benchmark cancelled");
             return;
         }
-        let report = build_report(&results, cancelled, device.as_deref());
+        // Isolated resonator-SIMD micro-bench (skipped on cancel — don't keep
+        // working after the user pressed Stop).
+        let reso = if cancelled {
+            (cfg!(target_feature = "simd128"), Vec::new())
+        } else {
+            run_resonator_microbench().await
+        };
+        let report = build_report(&results, cancelled, device.as_deref(), &reso);
         emit_report(&state, report, cancelled);
     });
 }
@@ -344,7 +351,67 @@ fn frame_stats(times: &[f64]) -> (f64, f64, f64, usize) {
     (avg_fps, min_fps, p95_ms, n)
 }
 
-fn build_report(results: &[ComboResult], cancelled: bool, device: Option<&str>) -> String {
+/// One bank size's result from the isolated resonator hot-loop micro-bench.
+struct ResoBenchRow {
+    num_bins: usize,
+    total_ms: f64,
+    /// Million resonator-sample updates per second (num_bins × samples / time) —
+    /// the SIMD-utilisation figure of merit; higher is better, comparable across
+    /// devices and code versions.
+    mupdates_per_s: f64,
+}
+
+/// Time the resonators crate hot loop (`process_samples`) in isolation — no
+/// render, no STFT — across a few bank sizes, yielding to the browser between
+/// iterations so the main thread isn't blocked. This is the SIMD sanity check:
+/// `simd128` is reported, and the throughput tells you whether autovectorisation
+/// is actually paying off on this device/build. Mirrors `run_resonator_bench`
+/// (the Debug-panel button) but returns data for the report instead of logging.
+async fn run_resonator_microbench() -> (bool, Vec<ResoBenchRow>) {
+    let simd128 = cfg!(target_feature = "simd128");
+    let Some(perf) = web_sys::window().and_then(|w| w.performance()) else {
+        return (simd128, Vec::new());
+    };
+    let now_ms = {
+        let perf = perf.clone();
+        move || perf.now()
+    };
+
+    let sample_rate = 48_000u32;
+    let samples_per_iter = sample_rate as usize; // ~1 s of audio per iteration
+    let iterations = 8usize;
+    let bandwidth_hz = 20.0f32;
+
+    let mut rows = Vec::new();
+    for &num_bins in &[129usize, 257, 513] {
+        crate::canvas::tile_cache::yield_to_browser().await;
+        // Sum per-iteration timings (each builds a fresh bank — negligible cost),
+        // yielding between so individual main-thread blocks stay short.
+        let mut total_ms = 0.0;
+        for _ in 0..iterations {
+            crate::canvas::tile_cache::yield_to_browser().await;
+            let r = crate::dsp::resonators::bench_resonator_bank(
+                num_bins, samples_per_iter, 1, bandwidth_hz, sample_rate, now_ms.clone(),
+            );
+            total_ms += r.elapsed_ms;
+        }
+        let total_samples = (samples_per_iter * iterations) as f64;
+        let mupdates_per_s = if total_ms > 0.0 {
+            (num_bins as f64 * total_samples) / (total_ms / 1000.0) / 1.0e6
+        } else {
+            0.0
+        };
+        rows.push(ResoBenchRow { num_bins, total_ms, mupdates_per_s });
+    }
+    (simd128, rows)
+}
+
+fn build_report(
+    results: &[ComboResult],
+    cancelled: bool,
+    device: Option<&str>,
+    reso: &(bool, Vec<ResoBenchRow>),
+) -> String {
     let mut s = String::new();
     s.push_str("# Oversample live-render benchmark\n\n");
     s.push_str(&format!("- Version: {}\n", env!("CARGO_PKG_VERSION")));
@@ -393,6 +460,26 @@ fn build_report(results: &[ComboResult], cancelled: bool, device: Option<&str>) 
             s.push_str(&format!(
                 "Worst combo: {} / {} @ {}k — {:.1} avg fps ({:.1} min)\n",
                 w.view, w.signal, w.rate / 1000, w.avg_fps, w.min_fps,
+            ));
+        }
+    }
+
+    // ── Resonator hot-loop micro-bench (isolated SIMD sanity check) ──
+    let (simd128, rows) = reso;
+    if !rows.is_empty() {
+        s.push('\n');
+        s.push_str(&format!(
+            "## Resonator hot loop — isolated (target-feature simd128={})\n\n",
+            if *simd128 { "on" } else { "off" },
+        ));
+        s.push_str("Pure `resonators::process_samples`, no render/STFT — gauges SIMD\n");
+        s.push_str("utilisation. Higher Mupd/s (num_bins × samples / s) is better.\n\n");
+        s.push_str("| bins | total ms | Mupd/s |\n");
+        s.push_str("|-----:|---------:|-------:|\n");
+        for r in rows {
+            s.push_str(&format!(
+                "| {} | {:.2} | {:.0} |\n",
+                r.num_bins, r.total_ms, r.mupdates_per_s,
             ));
         }
     }
