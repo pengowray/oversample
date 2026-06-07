@@ -92,6 +92,21 @@ fn build_combos() -> Vec<Combo> {
             });
         }
     }
+    // Waveform main view: unlike the tile-cached spectrogram, it re-reads + does
+    // a per-pixel min/max scan of the visible window every scroll frame, so cost
+    // scales with samples-per-pixel. Fit zoom (max spp = whole window) is the
+    // scan-stress case; ×8 is fast scroll at low spp. Signal content is irrelevant
+    // to waveform cost, so fix it.
+    for &rate in RATES.iter() {
+        combos.push(Combo {
+            rate, view_label: "Waveform", view: MainView::Waveform,
+            signal: SynthSignal::Pulses, zoom_mult: 1.0, density: None,
+        });
+    }
+    combos.push(Combo {
+        rate: 384_000, view_label: "Waveform", view: MainView::Waveform,
+        signal: SynthSignal::Pulses, zoom_mult: 8.0, density: None,
+    });
     // Scroll stress (zoom ×8): heaviest cases. Resonators at Quarter (the usable
     // density) so the scrolled-resonator case reflects real use.
     combos.push(Combo {
@@ -191,6 +206,12 @@ pub fn run(state: AppState) {
             // Set the view, then (re)start the synth for this combo.
             state.viewmode.main_view().set(combo.view);
             synthetic_mic::start(state, combo.signal, combo.rate);
+            // `start()` force-resets non-spectrogram views (e.g. Waveform) to
+            // Spectrogram so its waterfall renders — re-assert the combo's view
+            // afterward so Waveform combos actually measure the Waveform path.
+            if state.viewmode.main_view().get_untracked() != combo.view {
+                state.viewmode.main_view().set(combo.view);
+            }
             // Zoom in for scroll-stress combos (start resets to auto-fit zoom).
             if combo.zoom_mult != 1.0 {
                 let z = state.view.zoom_level().get_untracked() * combo.zoom_mult;
