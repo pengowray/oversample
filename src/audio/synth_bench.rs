@@ -226,9 +226,25 @@ pub fn run(state: AppState) {
             let cols0 = crate::canvas::live_waterfall::total_columns();
             crate::canvas::live_waterfall::take_render_timing(); // reset (discard settle)
             crate::canvas::waveform_renderer::take_wf_diag(); // reset waveform diag
+            crate::components::spectrogram::take_spec_diag(); // reset spectrogram diag
             let frame_ts = measure_frames(MEASURE_MS, gen).await;
             let cols1 = crate::canvas::live_waterfall::total_columns();
             let (rcalls, rtotal_ms, rupload_ms) = crate::canvas::live_waterfall::take_render_timing();
+            // Spectrogram-family combos: split per-frame cost into the whole render
+            // Effect body vs the waterfall render_viewport (rtotal_ms) — so we can
+            // see if the ×8 scroll cost is the Effect (overlays/markers/signal
+            // reads) or external (scroll cascade / compositing).
+            if combo.view != MainView::Waveform {
+                let (seffn, seff_ms) = crate::components::spectrogram::take_spec_diag();
+                if seffn > 0 {
+                    let render_avg = if rcalls > 0 { rtotal_ms / rcalls as f64 } else { 0.0 };
+                    state.log_debug("spec-diag", format!(
+                        "{} @ {}k z×{:.0}: {} effect runs avg {:.2}ms (of which render_viewport ~{:.2}ms, {} renders)",
+                        combo.view_label, combo.rate / 1000, combo.zoom_mult,
+                        seffn, seff_ms / seffn as f64, render_avg, rcalls,
+                    ));
+                }
+            }
             // Waveform combos: surface where the per-frame cost actually is —
             // is the mip path taken, how long is the draw, how often does it
             // rebuild? (render_ms above is the WATERFALL, which is idle here.)

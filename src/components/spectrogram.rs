@@ -17,6 +17,32 @@ use crate::components::playhead::Playhead;
 use crate::state::{AppState, CanvasTool, SpectrogramHandle, MainView, PlaybackMode};
 use crate::viewport;
 
+thread_local! {
+    /// Diagnostic: (effect_runs, total_effect_ms) for the main spectrogram render
+    /// Effect body. Compared against `live_waterfall::take_render_timing()` in the
+    /// benchmark to split per-frame cost into render vs the rest (overlays,
+    /// markers, signal reads, axis).
+    static SPEC_DIAG: std::cell::RefCell<(u32, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
+}
+
+fn spec_diag_record(ms: f64) {
+    SPEC_DIAG.with(|c| {
+        let mut d = c.borrow_mut();
+        d.0 += 1;
+        d.1 += ms;
+    });
+}
+
+/// Take + reset the spectrogram Effect-body diagnostic: (effect_runs, total_ms).
+pub fn take_spec_diag() -> (u32, f64) {
+    SPEC_DIAG.with(|c| {
+        let mut d = c.borrow_mut();
+        let r = *d;
+        *d = (0, 0.0);
+        r
+    })
+}
+
 /// Pick the right `DebugTileKind` so the debug-tiles overlay reads from the
 /// cache that's actually being rendered — magnitude/flow for STFT-based views,
 /// resonator for the Resonators view (which uses its own FFT-mode enum).
@@ -171,6 +197,9 @@ pub fn Spectrogram() -> impl IntoView {
     Effect::new({
         let disposed = disposed.clone();
         move || {
+        // Diagnostic: time the whole render Effect body (recorded at the end).
+        let _sperf = web_sys::window().and_then(|w| w.performance());
+        let _st0 = _sperf.as_ref().map(|p| p.now());
         let _tile_ready = state.viewmode.tile_ready_signal().get(); // trigger redraw when tiles arrive
         let _size_tick = canvas_size_tick.get(); // trigger redraw when canvas resizes
         let scroll = state.view.scroll_offset().get();
@@ -1145,6 +1174,9 @@ pub fn Spectrogram() -> impl IntoView {
                     ctx.fill();
                 }
             }
+        }
+        if let (Some(p), Some(t0)) = (_sperf.as_ref(), _st0) {
+            spec_diag_record(p.now() - t0);
         }
     }});
 
