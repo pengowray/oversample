@@ -347,7 +347,11 @@ pub fn Waveform() -> impl IntoView {
                 } else {
                     None
                 };
-                let draw_full_wave = |color: &str| match mip_buf {
+                let draw_full_wave = |color: &str| {
+                  let _perf = web_sys::window().and_then(|w| w.performance());
+                  let _t0 = _perf.as_ref().map(|p| p.now());
+                  let _used_mip = matches!(mip_buf, Some(_)) && spp >= waveform_renderer::MIP_D as f64;
+                  match mip_buf {
                     Some(all) if spp >= waveform_renderer::MIP_D as f64 => {
                         // `all` is the whole channel buffer the renderer already
                         // maps `buf_scroll` into — a static file, or the live
@@ -368,6 +372,10 @@ pub fn Waveform() -> impl IntoView {
                             sel_time, gain_db, buf_duration, region_start, color,
                         );
                     }
+                  }
+                  if let (Some(p), Some(t0)) = (_perf.as_ref(), _t0) {
+                      waveform_renderer::wf_diag_record(p.now() - t0, _used_mip, spp);
+                  }
                 };
 
                 match waveform_view {

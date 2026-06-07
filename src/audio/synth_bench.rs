@@ -225,9 +225,23 @@ pub fn run(state: AppState) {
 
             let cols0 = crate::canvas::live_waterfall::total_columns();
             crate::canvas::live_waterfall::take_render_timing(); // reset (discard settle)
+            crate::canvas::waveform_renderer::take_wf_diag(); // reset waveform diag
             let frame_ts = measure_frames(MEASURE_MS, gen).await;
             let cols1 = crate::canvas::live_waterfall::total_columns();
             let (rcalls, rtotal_ms, rupload_ms) = crate::canvas::live_waterfall::take_render_timing();
+            // Waveform combos: surface where the per-frame cost actually is —
+            // is the mip path taken, how long is the draw, how often does it
+            // rebuild? (render_ms above is the WATERFALL, which is idle here.)
+            if combo.view == MainView::Waveform {
+                let (wc, wms, wmip, wrb, wspp) = crate::canvas::waveform_renderer::take_wf_diag();
+                if wc > 0 {
+                    state.log_debug("wf-diag", format!(
+                        "{} @ {}k z×{:.0}: draw avg {:.2}ms over {} calls; mip {}/{} calls; {} rebuilds; spp~{:.0}",
+                        combo.view_label, combo.rate / 1000, combo.zoom_mult,
+                        wms / wc as f64, wc, wmip, wc, wrb, wspp,
+                    ));
+                }
+            }
             // Stop now if cancelled during the measurement window — don't
             // record a partial combo or start the next one.
             if BENCH_GEN.with(|g| g.get()) != gen {
