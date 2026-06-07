@@ -22,58 +22,70 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
     });
 }
 
-/// Annotations visibility toggle.
+/// Stacked overlay toggles — "Annotations" over "Bat book" — rendered as two
+/// compact checkboxes so they read as simple "show this overlay" switches
+/// rather than intimidating mode buttons. Annotations require a loaded file;
+/// the bat book is a reference and is always available.
 #[component]
-fn AnnoToggle() -> impl IntoView {
+fn OverlayToggles() -> impl IntoView {
     let state = expect_context::<AppState>();
-    view! {
-        <button
-            class=move || if state.annotations.visible().get() { "layer-btn active" } else { "layer-btn" }
-            on:click=move |_| {
-                let new_visible = !state.annotations.visible().get_untracked();
-                state.annotations.visible().set(new_visible);
-                if !new_visible {
-                    // Drop annotation focus/selection and clear interaction state.
-                    if state.interaction.active_focus().get_untracked() == Some(ActiveFocus::Annotations) {
-                        state.interaction.active_focus().set(None);
-                    }
-                    if !state.annotations.selected_ids().get_untracked().is_empty() {
-                        state.annotations.selected_ids().set(Vec::new());
-                    }
-                    state.annotations.hover_handle().set(None);
-                    state.annotations.drag_handle().set(None);
-                    state.annotations.editing().set(false);
-                    state.annotations.is_new_edit().set(false);
-                }
-            }
-            title=move || if state.annotations.visible().get() { "Hide annotations" } else { "Show annotations" }
-        >
-            <span class="layer-btn-category">"\u{00A0}"</span>
-            <span class="layer-btn-value">"Anno"</span>
-        </button>
-    }
-}
+    let has_file = Signal::derive(move || {
+        state.library.current_index().get().is_some() || state.timeline.active().get().is_some()
+    });
 
-/// Bat book toggle — shows/hides both the strip below the main view
-/// and the floating reference panel together. "On" means either is open;
-/// clicking when on closes both, clicking when off opens both.
-#[component]
-fn BookToggle() -> impl IntoView {
-    let state = expect_context::<AppState>();
-    let is_on = move || state.bat_book.open().get() || state.bat_book.ref_open().get();
-    view! {
-        <button
-            class=move || if is_on() { "layer-btn active" } else { "layer-btn" }
-            on:click=move |_| {
-                let on = is_on();
-                state.bat_book.open().set(!on);
-                state.bat_book.ref_open().set(!on);
+    let anno_on = move || state.annotations.visible().get();
+    let toggle_anno = move |_: web_sys::Event| {
+        let new_visible = !state.annotations.visible().get_untracked();
+        state.annotations.visible().set(new_visible);
+        if !new_visible {
+            // Drop annotation focus/selection and clear interaction state.
+            if state.interaction.active_focus().get_untracked() == Some(ActiveFocus::Annotations) {
+                state.interaction.active_focus().set(None);
             }
-            title=move || if is_on() { "Hide bat book" } else { "Show bat book" }
-        >
-            <span class="layer-btn-category">"Bat"</span>
-            <span class="layer-btn-value">"Book"</span>
-        </button>
+            if !state.annotations.selected_ids().get_untracked().is_empty() {
+                state.annotations.selected_ids().set(Vec::new());
+            }
+            state.annotations.hover_handle().set(None);
+            state.annotations.drag_handle().set(None);
+            state.annotations.editing().set(false);
+            state.annotations.is_new_edit().set(false);
+        }
+    };
+
+    let book_on = move || state.bat_book.open().get() || state.bat_book.ref_open().get();
+    let toggle_book = move |_: web_sys::Event| {
+        let on = book_on();
+        state.bat_book.open().set(!on);
+        state.bat_book.ref_open().set(!on);
+    };
+
+    view! {
+        <div class="overlay-toggles">
+            <label
+                class="overlay-check"
+                class:disabled=move || !has_file.get()
+                title=move || if anno_on() { "Hide annotations" } else { "Show annotations" }
+            >
+                <input
+                    type="checkbox"
+                    prop:checked=move || anno_on()
+                    prop:disabled=move || !has_file.get()
+                    on:change=toggle_anno
+                />
+                <span>"Annotations"</span>
+            </label>
+            <label
+                class="overlay-check"
+                title=move || if book_on() { "Hide bat book" } else { "Show bat book" }
+            >
+                <input
+                    type="checkbox"
+                    prop:checked=move || book_on()
+                    on:change=toggle_book
+                />
+                <span>"Bat book"</span>
+            </label>
+        </div>
     }
 }
 
@@ -146,8 +158,7 @@ pub fn ViewBar() -> impl IntoView {
             <div class="bar-controls">
                 <MainViewButton />
                 <div class="bar-sep"></div>
-                {move || has_file().then(|| view! { <AnnoToggle /> })}
-                <BookToggle />
+                <OverlayToggles />
                 <div class="bar-spacer"></div>
                 {move || (!state.status.is_mobile().get() && has_file()).then(|| view! { <ToolCombo /> })}
             </div>

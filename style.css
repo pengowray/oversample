@@ -3539,6 +3539,40 @@ body.sidebar-resizing {
     text-transform: none;
 }
 
+/* Stacked overlay checkboxes (Annotations / Bat book) in the View Bar. */
+.overlay-toggles {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 0 6px;
+}
+.overlay-check {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    line-height: 1.1;
+    color: #c8c8c8;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+.overlay-check input {
+    accent-color: #4a8;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    cursor: pointer;
+}
+.overlay-check.disabled {
+    color: #666;
+    cursor: default;
+}
+.overlay-check.disabled input {
+    cursor: default;
+}
+
 /* ── Combo button (split toggle + dropdown) ──────────────────────────── */
 
 .combo-btn-row {
