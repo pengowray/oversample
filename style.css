@@ -1392,6 +1392,13 @@ body.sidebar-resizing {
     font-style: italic;
     padding-top: 1px;
 }
+/* A date value that can be clicked to toggle its "Local: ..." line. Subtle
+   dotted underline hints at the affordance without shouting. */
+.metadata-date-toggle {
+    cursor: pointer;
+    text-decoration: underline dotted rgba(255, 255, 255, 0.25);
+    text-underline-offset: 2px;
+}
 /* "Local: ..." line beneath a date when the original tz differs from
    the user's local zone. Italic, slightly dimmer than the main value. */
 .metadata-value-local {

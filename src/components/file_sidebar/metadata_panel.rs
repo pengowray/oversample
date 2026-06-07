@@ -125,10 +125,18 @@ fn parse_date_ms(value: &str) -> Option<f64> {
 /// `-HH:MM`, `+HHMM`, `-HHMM`. Returns None if no offset is present.
 fn extract_tz_offset_minutes(value: &str) -> Option<i32> {
     let v = value.trim();
+    if v.is_empty() { return None; }
     if v.ends_with('Z') || v.ends_with('z') { return Some(0); }
-    // Only look at the time portion (after `T` or space), since negative
-    // dates like "2024-03-15" would otherwise confuse the sign scan.
-    let time_start = v.find('T').or_else(|| v.find(' ')).map(|i| i + 1).unwrap_or(0);
+    // A timezone offset can only appear in the *time* portion. If there is no
+    // time portion at all (a bare date like "2025-05-30"), there is no offset —
+    // and scanning the whole string would mis-read the date's own "-" separators
+    // (this is exactly how "2025-05-30" turned into the nonsensical "UTC-30:00":
+    // the "30" after the last "-" was parsed as 30 hours). So bail out unless a
+    // `T` or space separator marks where the time begins.
+    let time_start = match v.find('T').or_else(|| v.find(' ')) {
+        Some(i) => i + 1,
+        None => return None,
+    };
     let tail = &v[time_start..];
     let sign_idx = tail.rfind(|c: char| c == '+' || c == '-')?;
     let sign_char = tail.as_bytes()[sign_idx] as char;
@@ -142,6 +150,12 @@ fn extract_tz_offset_minutes(value: &str) -> Option<i32> {
     } else {
         return None;
     };
+    // Reject implausible offsets. Real UTC offsets span −12:00..+14:00 with
+    // minutes in 0..59 (e.g. +05:45 Nepal, +12:45 Chatham), so anything outside
+    // that is a parse artefact rather than a real zone.
+    if !(0..=14).contains(&h) || !(0..60).contains(&m) {
+        return None;
+    }
     let total = h * 60 + m;
     Some(if sign_char == '-' { -total } else { total })
 }
@@ -424,11 +438,15 @@ fn date_block(value: &str) -> impl IntoView {
 
     let primary_str = match orig_tz {
         Some(off) => format!("{} {}", format_date_long(ms, had_time, Some(off)), format_tz_offset(off)),
+        // A bare date with no explicit zone (e.g. "2025-05-30") is parsed as UTC
+        // midnight; render it in UTC too so it doesn't slip to the previous day
+        // for viewers west of Greenwich.
+        None if !had_time => format_date_long(ms, had_time, Some(0)),
         None => format_date_long(ms, had_time, None),
     };
 
-    // Show "Local: ..." only when the original timestamp pinned a
-    // specific tz AND that tz differs from the user's local tz.
+    // A distinct "Local:" interpretation exists only when the original timestamp
+    // pinned a specific tz AND that tz differs from the viewer's local tz.
     let local_line = orig_tz.and_then(|off| {
         let local_offset = -(js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms))
             .get_timezone_offset() as i32);
@@ -440,9 +458,32 @@ fn date_block(value: &str) -> impl IntoView {
         ))
     });
 
+    let Some(local_str) = local_line else {
+        return view! {
+            <div class="metadata-value-block">{primary_str}</div>
+            <div class="metadata-value-relative">{rel}</div>
+        }.into_any();
+    };
+
+    // The local line is shown by default only for recent recordings (within the
+    // last week); older ones start hidden. Either way the primary date is a
+    // toggle — click it to show/hide the local interpretation.
+    let within_week = {
+        let age = js_sys::Date::now() - ms; // ms; positive = in the past
+        age.abs() <= 7.0 * 86_400_000.0
+    };
+    let show_local = RwSignal::new(within_week);
+
     view! {
-        <div class="metadata-value-block">{primary_str}</div>
-        {local_line.map(|s| view! { <div class="metadata-value-local">{s}</div> })}
+        <div
+            class="metadata-value-block metadata-date-toggle"
+            title="Click to toggle local time"
+            on:click=move |_| show_local.update(|v| *v = !*v)
+        >{primary_str}</div>
+        {move || show_local.get().then({
+            let local_str = local_str.clone();
+            move || view! { <div class="metadata-value-local">{local_str}</div> }
+        })}
         <div class="metadata-value-relative">{rel}</div>
     }.into_any()
 }
@@ -834,5 +875,72 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                 }
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_tz_offset_minutes, format_tz_offset};
+
+    #[test]
+    fn tz_offset_bare_date_is_none() {
+        // The XC1008337 regression: a bare date must NOT yield a timezone
+        // offset (the "-30" in "2025-05-30" was being read as UTC-30:00).
+        assert_eq!(extract_tz_offset_minutes("2025-05-30"), None);
+        assert_eq!(extract_tz_offset_minutes("1999-12-31"), None);
+        assert_eq!(extract_tz_offset_minutes("2025-01-05"), None);
+    }
+
+    #[test]
+    fn tz_offset_zulu() {
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45Z"), Some(0));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45z"), Some(0));
+    }
+
+    #[test]
+    fn tz_offset_colon_forms() {
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+05:00"), Some(300));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45-05:00"), Some(-300));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+05:30"), Some(330));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45-09:30"), Some(-570));
+        // Space separator instead of 'T'.
+        assert_eq!(extract_tz_offset_minutes("2025-05-30 10:30:45-05:00"), Some(-300));
+        // Odd-but-real three-quarter-hour zone (Chatham Islands, +12:45).
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+12:45"), Some(765));
+    }
+
+    #[test]
+    fn tz_offset_compact_forms() {
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+0530"), Some(330));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45-0530"), Some(-330));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+05"), Some(300));
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45-08"), Some(-480));
+    }
+
+    #[test]
+    fn tz_offset_no_offset_present() {
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45"), None);
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30"), None);
+    }
+
+    #[test]
+    fn tz_offset_invalid_or_empty() {
+        assert_eq!(extract_tz_offset_minutes(""), None);
+        assert_eq!(extract_tz_offset_minutes("   "), None);
+        assert_eq!(extract_tz_offset_minutes("not a date"), None);
+        // Implausible offsets are rejected rather than displayed.
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+30:00"), None);
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45-99:99"), None);
+        assert_eq!(extract_tz_offset_minutes("2025-05-30T10:30:45+05:99"), None);
+    }
+
+    #[test]
+    fn format_offset_roundtrips() {
+        assert_eq!(format_tz_offset(0), "UTC");
+        assert_eq!(format_tz_offset(300), "UTC+05:00");
+        assert_eq!(format_tz_offset(-300), "UTC-05:00");
+        assert_eq!(format_tz_offset(330), "UTC+05:30");
+        assert_eq!(format_tz_offset(-570), "UTC-09:30");
+        assert_eq!(format_tz_offset(765), "UTC+12:45");
     }
 }
