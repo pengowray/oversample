@@ -908,6 +908,17 @@ impl ResonatorFftMode {
     fn scale_fft(base: usize, scale: f64) -> usize {
         (((base as f64 * scale).round() as usize).max(16) / 2) * 2
     }
+
+    /// Resonator-bank density (0..1) for the LIVE path, where the output row
+    /// count is fixed at the waterfall's bin count and only the number of
+    /// resonators *computed* can shrink. Adaptive honors the 100/50/25% choice;
+    /// Single keeps full density (its detail is the fixed eq-FFT bin count).
+    pub fn bank_density(&self) -> f32 {
+        match self {
+            Self::Single(_) => 1.0,
+            Self::Adaptive(d) => d.scale() as f32,
+        }
+    }
 }
 
 /// Display filter mode: controls how each processing stage affects the spectrogram.

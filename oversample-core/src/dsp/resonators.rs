@@ -98,7 +98,9 @@ pub fn compute_resonator_columns(
         return vec![];
     }
 
-    let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range);
+    // Tile path runs full-density: density is already baked into `fft_size`
+    // (the adaptive FFT shrinks output_bins for loaded files).
+    let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range, 1.0);
     let mut bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
 
     let col_end = col_start + col_count;
@@ -153,16 +155,31 @@ impl ResoSetup {
     }
 }
 
+/// `density` (0..1) scales the number of *resonators actually computed* without
+/// changing `output_bins` (the display row count). At density 1.0 the bank has
+/// one resonator per output row (Linear ⇒ identity, no gather). Below 1.0 the
+/// bank is built with proportionally fewer resonators and a `row_to_bank` gather
+/// stretches them across the fixed output rows — the live-capture lever: the
+/// live waterfall's bin count is fixed (513), so we can't shrink the column, but
+/// we can compute far fewer resonators (Quarter ⇒ ~4× cheaper).
 fn build_reso_setup(
     sample_rate: u32,
     fft_size: usize,
     bandwidth_hz: f32,
     layout: ResonatorLayout,
     freq_range: Option<(f32, f32)>,
+    density: f32,
 ) -> ResoSetup {
     let sr_f = sample_rate as f32;
     let nyq = sr_f * 0.5;
     let output_bins = fft_size / 2 + 1;
+    // Number of resonators actually run. Fewer at low density; never more than
+    // one per output row, never fewer than a small floor.
+    let bank_bins = if density < 0.999 {
+        ((output_bins as f32 * density).round() as usize).clamp(8, output_bins)
+    } else {
+        output_bins
+    };
 
     // Clamp bandwidth and convert to the library's alpha convention via tau.
     // `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the library's
@@ -183,30 +200,28 @@ fn build_reso_setup(
             ResonatorLayout::Log => (LOG_MIN_FREQ_HZ.max(0.01), nyq.max(LOG_MIN_FREQ_HZ * 2.0)),
         });
 
-    // Build the resonator frequency list per chosen layout inside [band_lo,
-    // band_hi]. Bin count equals output_bins so log and linear have
-    // comparable compute cost and detail — layout just distributes the bins.
+    // Build the `bank_bins` resonator frequencies spread across [band_lo,
+    // band_hi] per layout.
     let bank_freqs: Vec<f32> = match layout {
         ResonatorLayout::Linear => {
-            let denom = (output_bins - 1).max(1) as f32;
-            (0..output_bins)
+            let denom = (bank_bins - 1).max(1) as f32;
+            (0..bank_bins)
                 .map(|k| (band_lo + k as f32 * (band_hi - band_lo) / denom).max(0.01))
                 .collect()
         }
         ResonatorLayout::Log => {
             let min = band_lo.max(0.01);
             let max = band_hi.max(min * 2.0);
-            if output_bins == 1 {
+            if bank_bins == 1 {
                 vec![min]
             } else {
-                let ratio = (max / min).powf(1.0 / (output_bins - 1) as f32);
-                (0..output_bins)
+                let ratio = (max / min).powf(1.0 / (bank_bins - 1) as f32);
+                (0..bank_bins)
                     .map(|k| min * ratio.powi(k as i32))
                     .collect()
             }
         }
     };
-    let bank_bins = bank_freqs.len();
 
     // beta=1.0 disables the library's second-stage output EWMA so we get a
     // single-EWMA response matching the prior hand-rolled implementation,
@@ -216,11 +231,21 @@ fn build_reso_setup(
         .map(|&f| ResonatorConfig::new(f, alpha, 1.0))
         .collect();
 
-    // For Log layout, pre-compute a bank-bin index for each linear output
-    // row so the per-frame loop is a cheap gather. For Linear the mapping
-    // is the identity (bank_bins == output_bins).
+    // Map each linear output row to a bank bin (a cheap gather in `read_mags`).
+    // Identity for full-density Linear (no map); a linear gather for reduced
+    // Linear; the log nearest-map for Log. The output row axis is linear over
+    // [band_lo, band_hi] either way, matching the tile blit / freq markers.
     let row_to_bank: Option<Vec<usize>> = match layout {
-        ResonatorLayout::Linear => None,
+        ResonatorLayout::Linear if bank_bins == output_bins => None,
+        ResonatorLayout::Linear => {
+            let denom_out = (output_bins - 1).max(1) as f32;
+            let last = bank_bins - 1;
+            Some(
+                (0..output_bins)
+                    .map(|r| ((r as f32 / denom_out) * last as f32).round() as usize)
+                    .collect(),
+            )
+        }
         ResonatorLayout::Log => Some(build_log_row_map(output_bins, &bank_freqs, band_lo, band_hi)),
     };
 
@@ -245,6 +270,9 @@ pub struct StreamingResonators {
 }
 
 impl StreamingResonators {
+    /// `density` (0..1) computes proportionally fewer resonators while still
+    /// emitting `fft_size/2+1` rows (the live waterfall's fixed bin count) — the
+    /// live-capture perf lever. 1.0 = one resonator per row.
     pub fn new(
         sample_rate: u32,
         fft_size: usize,
@@ -252,8 +280,9 @@ impl StreamingResonators {
         bandwidth_hz: f32,
         layout: ResonatorLayout,
         freq_range: Option<(f32, f32)>,
+        density: f32,
     ) -> Self {
-        let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range);
+        let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range, density);
         let bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
         Self { bank, setup, hop_size, sample_rate }
     }
@@ -473,7 +502,7 @@ mod tests {
         for layout in [ResonatorLayout::Linear, ResonatorLayout::Log] {
             let samples = test_signal(sr, hop * ncols);
             let oneshot = compute_resonator_columns(&samples, sr, fft, hop, 0, ncols, 20.0, layout, None);
-            let mut s = StreamingResonators::new(sr, fft, hop, 20.0, layout, None);
+            let mut s = StreamingResonators::new(sr, fft, hop, 20.0, layout, None, 1.0);
             let streamed = s.push_hops(&samples[..ncols * hop], 0);
             assert_cols_eq(&oneshot, &streamed);
         }
@@ -487,15 +516,52 @@ mod tests {
         let (fft, hop, ncols) = (1024usize, 256usize, 80usize);
         let samples = test_signal(sr, hop * ncols);
 
-        let mut bulk = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None);
+        let mut bulk = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None, 1.0);
         let all = bulk.push_hops(&samples[..ncols * hop], 0);
 
-        let mut inc = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None);
+        let mut inc = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None, 1.0);
         let mut chunked = Vec::new();
         // Uneven chunks to mimic variable per-tick column counts.
         for (start, len) in [(0usize, 17usize), (17, 31), (48, 32)] {
             chunked.extend(inc.push_hops(&samples[start * hop..(start + len) * hop], start));
         }
         assert_cols_eq(&all, &chunked);
+    }
+
+    /// Reduced density must keep the full output row count (the live waterfall's
+    /// fixed bin count) while still localizing a tone to the right row.
+    #[test]
+    fn density_keeps_output_rows_and_peak() {
+        let sr = 192_000u32;
+        let (fft, hop, ncols) = (1024usize, 256usize, 80usize);
+        let output_bins = fft / 2 + 1; // 513
+        let f = 40_000.0f32;
+        let samples: Vec<f32> = (0..hop * ncols)
+            .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
+            .collect();
+        let nyq = sr as f32 / 2.0;
+        let expected = (f / (nyq / (output_bins - 1) as f32)).round() as isize;
+        for density in [0.5f32, 0.25] {
+            let mut s = StreamingResonators::new(sr, fft, hop, 50.0, ResonatorLayout::Linear, None, density);
+            let cols = s.push_hops(&samples, 0);
+            let last = cols.last().expect("columns");
+            assert_eq!(
+                last.magnitudes.len(),
+                output_bins,
+                "density {density} must still emit {output_bins} rows"
+            );
+            let (peak_row, _) = last
+                .magnitudes
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .unwrap();
+            // Fewer bank bins ⇒ coarser localization; allow a few output rows.
+            let tol = (1.0 / density) as isize + 3;
+            assert!(
+                (peak_row as isize - expected).abs() <= tol,
+                "density {density}: peak row {peak_row}, expected ~{expected} (tol {tol})"
+            );
+        }
     }
 }
