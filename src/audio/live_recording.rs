@@ -911,20 +911,27 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             }
         }
 
-        // Processing loop exited — clean up
+        // Processing loop exited — clean up. But if a NEWER loop has already
+        // taken over (gen bumped — e.g. a rapid stop→start / listen→record, or
+        // a synth-test restart), it now owns the waterfall + live signals it
+        // just created. This (stale) loop must NOT clear them, or the new loop
+        // would push columns into a destroyed waterfall and render nothing.
+        let superseded = state.mic.processing_gen().get_untracked() != gen;
         state.mic.peak_level().set(0.0);
-        if !state.mic.recording().get_untracked() {
-            // Only clear waterfall when fully done (not when switching from listen to record)
-            live_waterfall::clear();
+        if !superseded {
+            if !state.mic.recording().get_untracked() {
+                // Only clear waterfall when fully done (not when switching from listen to record)
+                live_waterfall::clear();
+            }
+            // Note: do NOT clear mic_live_file_idx here — finalize_recording() is
+            // responsible for that. Clearing it here causes a race: this loop exits
+            // as soon as mic_recording is false, but the async stop command hasn't
+            // returned yet, so finalize_recording sees mic_live_file_idx=None and
+            // creates a duplicate file.
+            state.mic.live_data_cols().set(0);
+            state.mic.recording_target_scroll().set(0.0);
+            state.mic.scroll_user_pan_until().set(0.0);
         }
-        // Note: do NOT clear mic_live_file_idx here — finalize_recording() is
-        // responsible for that. Clearing it here causes a race: this loop exits
-        // as soon as mic_recording is false, but the async stop command hasn't
-        // returned yet, so finalize_recording sees mic_live_file_idx=None and
-        // creates a duplicate file.
-        state.mic.live_data_cols().set(0);
-        state.mic.recording_target_scroll().set(0.0);
-        state.mic.scroll_user_pan_until().set(0.0);
     });
 }
 
