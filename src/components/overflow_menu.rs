@@ -149,34 +149,12 @@ fn fmt_freq_range(lo: f64, hi: f64) -> String {
     format!("{:.0}\u{2013}{:.0} kHz", lo / 1000.0, hi / 1000.0)
 }
 
-/// Compute the pixel position of the top-right corner of the transient selection
-/// relative to the spectrogram canvas area.
-fn selection_top_right(
-    sel: &Selection,
-    scroll_offset: f64,
-    time_resolution: f64,
-    zoom: f64,
-    canvas_width: f64,
-    canvas_height: f64,
-    min_freq: f64,
-    max_freq: f64,
-) -> (f64, f64) {
-    let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset;
-    let px_per_sec = canvas_width / visible_time;
-
-    let x1 = ((sel.time_end - start_time) * px_per_sec).min(canvas_width);
-
-    let y0 = match sel.freq_high {
-        Some(fh) => freq_to_y(fh, min_freq, max_freq, canvas_height).max(0.0),
-        None => 0.0,
-    };
-
-    (x1, y0)
-}
-
-/// Compute the pixel position of the top-right corner of an annotation.
-fn annotation_top_right(
+/// Shared: pixel position of the TOP-LEFT corner of a
+/// `[time_start, time_end] × freq_high` box, relative to the spectrogram canvas.
+/// Returns `None` when the box is entirely off-screen (so a valid box sitting in
+/// the top-left corner — x≈0, y≈0 — is not mistaken for "no selection").
+fn corner_top_left(
+    time_start: f64,
     time_end: f64,
     freq_high: Option<f64>,
     scroll_offset: f64,
@@ -186,19 +164,60 @@ fn annotation_top_right(
     canvas_height: f64,
     min_freq: f64,
     max_freq: f64,
-) -> (f64, f64) {
+) -> Option<(f64, f64)> {
     let visible_time = (canvas_width / zoom) * time_resolution;
-    let start_time = scroll_offset;
+    if visible_time <= 0.0 {
+        return None;
+    }
     let px_per_sec = canvas_width / visible_time;
-
-    let x1 = ((time_end - start_time) * px_per_sec).min(canvas_width);
-
-    let y0 = match freq_high {
+    let x0 = (time_start - scroll_offset) * px_per_sec;
+    let x1 = (time_end - scroll_offset) * px_per_sec;
+    // Entirely off-screen: right edge left of the view, or left edge past the right.
+    if x1 <= 0.0 || x0 >= canvas_width {
+        return None;
+    }
+    let x = x0.clamp(0.0, canvas_width);
+    let y = match freq_high {
         Some(fh) => freq_to_y(fh, min_freq, max_freq, canvas_height).max(0.0),
         None => 0.0,
     };
+    Some((x, y))
+}
 
-    (x1, y0)
+/// Top-left corner of the transient selection.
+fn selection_top_left(
+    sel: &Selection,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    min_freq: f64,
+    max_freq: f64,
+) -> Option<(f64, f64)> {
+    corner_top_left(
+        sel.time_start, sel.time_end, sel.freq_high,
+        scroll_offset, time_resolution, zoom, canvas_width, canvas_height, min_freq, max_freq,
+    )
+}
+
+/// Top-left corner of an annotation region.
+fn annotation_top_left(
+    time_start: f64,
+    time_end: f64,
+    freq_high: Option<f64>,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    min_freq: f64,
+    max_freq: f64,
+) -> Option<(f64, f64)> {
+    corner_top_left(
+        time_start, time_end, freq_high,
+        scroll_offset, time_resolution, zoom, canvas_width, canvas_height, min_freq, max_freq,
+    )
 }
 
 /// Renders the "..." overflow menus for the transient selection and annotations.
@@ -324,10 +343,9 @@ fn SelectionOverflowMenu() -> impl IntoView {
             .map(|el| el.get_bounding_client_rect().height())
             .unwrap_or(400.0);
 
-        let (x, y) = selection_top_right(
+        selection_top_left(
             &sel, scroll, time_res, zoom, canvas_w, canvas_h, min_freq, max_freq,
-        );
-        Some((x, y))
+        )
     });
 
     let sel_details = Signal::derive(move || {
@@ -396,10 +414,12 @@ fn SelectionOverflowMenu() -> impl IntoView {
 
     view! {
         {move || {
-            let (x, y) = pos.get().unwrap_or((0.0, 0.0));
-            if x <= 0.0 && y <= 0.0 { return None; }
+            let (x, y) = match pos.get() { Some(p) => p, None => return None };
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
-            let btn_left = (x - BTN_SIZE - BTN_MARGIN).max(0.0);
+            // Anchor the "..." at the TOP-LEFT corner of the selection (matching
+            // annotated regions), clamped so it never spills off either edge.
+            let btn_left = (x + BTN_MARGIN).min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0)).max(0.0);
             let btn_top = (y + BTN_MARGIN).max(0.0);
 
             Some(view! {
@@ -505,11 +525,10 @@ fn AnnotationOverflowMenu() -> impl IntoView {
             .map(|el| el.get_bounding_client_rect().height())
             .unwrap_or(400.0);
 
-        let (x, y) = annotation_top_right(
-            region.time_end, region.freq_high,
+        annotation_top_left(
+            region.time_start, region.time_end, region.freq_high,
             scroll, time_res, zoom, canvas_w, canvas_h, min_freq, max_freq,
-        );
-        Some((x, y))
+        )
     });
 
     // Get annotation info for display
@@ -622,10 +641,12 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     view! {
         {move || {
-            let (x, y) = pos.get().unwrap_or((0.0, 0.0));
-            if x <= 0.0 && y <= 0.0 { return None; }
+            let (x, y) = match pos.get() { Some(p) => p, None => return None };
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
-            let btn_left = (x - BTN_SIZE - BTN_MARGIN).max(0.0);
+            // Anchor the "..." at the TOP-LEFT corner of the annotation region,
+            // clamped so it never spills off either edge.
+            let btn_left = (x + BTN_MARGIN).min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0)).max(0.0);
             let btn_top = (y + BTN_MARGIN).max(0.0);
 
             Some(view! {

@@ -692,6 +692,22 @@ pub fn draw_het_overlay(
         drag_handle == Some(handle) || hover_handle == Some(handle)
     };
 
+    // Small, right-aligned cyan frequency label drawn for EVERY carrier (anchor
+    // and comb teeth alike) so single- and multi-carrier HET read identically.
+    // For a comb it also shows the ± half-spacing (spacing/2) each carrier owns.
+    let draw_label = |freq: f64, y: f64| {
+        let label = if n > 1 && spacing > 0.0 {
+            format!("{:.0} ±{:.0} kHz", freq / 1000.0, spacing / 2000.0)
+        } else {
+            format!("{:.1} kHz", freq / 1000.0)
+        };
+        ctx.set_fill_style_str(&format!("rgba(0, 230, 255, {:.2})", 0.85 * op));
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align("right");
+        let _ = ctx.fill_text(&label, canvas_width - 6.0, y - 3.0);
+        ctx.set_text_align("start");
+    };
+
     // Draw one carrier exactly like every other: faint LP-cutoff edges + a
     // dashed cyan centre line + a small kHz label. Used for the comb teeth so
     // the whole comb reads as one uniform structure. The anchor below reuses
@@ -727,11 +743,8 @@ pub fn draw_het_overlay(
         ctx.stroke();
         let _ = ctx.set_line_dash(&js_sys::Array::new());
 
-        // Small kHz label at the right edge
-        ctx.set_fill_style_str(&format!("rgba(0, 230, 255, {:.2})", 0.7 * op));
-        ctx.set_font("10px sans-serif");
-        let label = format!("{:.0}", freq / 1000.0);
-        let _ = ctx.fill_text(&label, canvas_width - 32.0, y - 3.0);
+        // Small kHz label at the right edge (uniform for anchor + teeth)
+        draw_label(freq, y);
     };
 
     // ── Comb teeth ──
@@ -813,16 +826,9 @@ pub fn draw_het_overlay(
         ctx.fill();
     }
 
-    // Text label on the anchor line. For a comb, show the span it covers.
-    ctx.set_fill_style_str(&format!("rgba(0, 230, 255, {:.1})", 0.9 * op));
-    ctx.set_font("bold 12px sans-serif");
-    let label = if n > 1 && spacing > 0.0 {
-        let top = het_freq + (n - 1) as f64 * spacing;
-        format!("HET {:.0}-{:.0} kHz", het_freq / 1000.0, top / 1000.0)
-    } else {
-        format!("HET {:.1} kHz", het_freq / 1000.0)
-    };
-    let _ = ctx.fill_text(&label, 55.0, y_center - 5.0);
+    // Anchor frequency label — same small, right-aligned style as the teeth,
+    // so single- and multi-carrier HET read identically (no large left label).
+    draw_label(het_freq, y_center);
 
     // LP cutoff label near band edges (show when any HET handle is active)
     if interactive && (hover_handle.is_some() || drag_handle.is_some()) {
