@@ -74,11 +74,12 @@ test.describe("live listening", () => {
     test.setTimeout(60_000);
     await startListening(page);
 
-    // Toggle the overview to the waveform view (button shows the CURRENT view,
-    // so it reads "Spectrum" while the spectrogram is shown).
-    const ovBtn = page.locator(".overview-strip button.layer-btn").first();
+    // Toggle the overview to the waveform view. The toggle now lives in the
+    // overview toolbar and previews the OTHER view, so it reads "Waveform"
+    // while the spectrogram is shown — click it then to switch.
+    const ovBtn = page.locator(".overview-toolbar button").first();
     await expect(ovBtn).toBeVisible({ timeout: 5_000 });
-    if (((await ovBtn.textContent()) ?? "").includes("Spectrum")) {
+    if (((await ovBtn.textContent()) ?? "").includes("Waveform")) {
       await ovBtn.click();
     }
 

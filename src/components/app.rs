@@ -17,7 +17,7 @@ use crate::components::spectrogram::Spectrogram;
 use crate::components::waveform::Waveform;
 use crate::components::toolbar::Toolbar;
 use crate::components::analysis_panel::AnalysisPanel;
-use crate::components::overview::OverviewPanel;
+use crate::components::overview::{OverviewPanel, OverviewToolbar};
 use crate::components::hearing_bar::HearingBar;
 use crate::components::view_bar::ViewBar;
 use crate::components::play_controls::{ToastDisplay, BookmarkPopup};
@@ -1353,6 +1353,9 @@ fn MainArea() -> impl IntoView {
                     view! {
                         // Overview strip (top)
                         <OverviewPanel />
+                        // Thin toolbar tied to the overview — owns the
+                        // spectrogram/waveform toggle.
+                        <OverviewToolbar />
 
                         // View Bar — visualization-layer controls (which view,
                         // which overlays, canvas tool)

@@ -514,15 +514,28 @@ fn draw_live_waveform(
     ctx.stroke();
 }
 
-// ── Overview toggle button ────────────────────────────────────────────────────
+// ── Overview toolbar (below the overview strip) ────────────────────────────────
 
+/// Thin strip mounted directly beneath the overview that owns the
+/// spectrogram/waveform toggle, so the control reads as belonging to the
+/// overview rather than floating on top of it. The button previews the OTHER
+/// view (a small glyph + its name) — clicking switches to it.
 #[component]
-fn OverviewToggleButton() -> impl IntoView {
+pub fn OverviewToolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    let label = move || match state.viewmode.overview_view().get() {
-        OverviewView::Spectrogram => "Spectrum",
+    // The view the toggle switches TO — shown as a preview on the button.
+    let target = move || match state.viewmode.overview_view().get() {
+        OverviewView::Spectrogram => OverviewView::Waveform,
+        OverviewView::Waveform => OverviewView::Spectrogram,
+    };
+    let target_label = move || match target() {
+        OverviewView::Spectrogram => "Spectrogram",
         OverviewView::Waveform => "Waveform",
+    };
+    let target_icon = move || match target() {
+        OverviewView::Spectrogram => "\u{25A6}", // ▦ grid — spectrogram
+        OverviewView::Waveform => "\u{223F}",    // ∿ sine — waveform
     };
 
     let toggle = move |_: MouseEvent| {
@@ -534,20 +547,26 @@ fn OverviewToggleButton() -> impl IntoView {
     };
 
     view! {
-        <div
-            style="position: absolute; bottom: 4px; left: 64px; pointer-events: none;"
-            on:click=|ev: MouseEvent| ev.stop_propagation()
-            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
-        >
-            <div style="position: relative; pointer-events: auto;">
+        <Show when=move || !state.viewmode.clean_view().get()>
+            <div
+                class="overview-toolbar"
+                on:click=|ev: MouseEvent| ev.stop_propagation()
+                on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
+            >
+                <span class="overview-toolbar-label">"OVERVIEW"</span>
                 <button
-                    class="layer-btn"
-                    style="font-size: 10px; padding: 3px 7px;"
+                    class="overview-layer-btn"
                     on:click=toggle
-                    title="Toggle overview display"
-                >{label}</button>
+                    title=move || match target() {
+                        OverviewView::Spectrogram => "Show spectrogram overview",
+                        OverviewView::Waveform => "Show waveform overview",
+                    }
+                >
+                    <span class="ov-preview">{target_icon}</span>
+                    <span>{target_label}</span>
+                </button>
             </div>
-        </div>
+        </Show>
     }
 }
 
@@ -1323,10 +1342,6 @@ pub fn OverviewPanel() -> impl IntoView {
                 style:display=move || if state.playback.is_playing().get() && !state.viewmode.clean_view().get() { "block" } else { "none" }
             />
 
-            // Layers button (bottom-left, after nav buttons)
-            <Show when=move || !state.viewmode.clean_view().get()>
-                <OverviewToggleButton />
-            </Show>
         </div>
     }
 }

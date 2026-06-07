@@ -2986,6 +2986,49 @@ body.sidebar-resizing {
     image-rendering: pixelated;
 }
 
+/* ── Overview toolbar — owns the spectrogram/waveform toggle, sits flush
+   beneath the overview (shared black) so it reads as part of it. ────────── */
+.overview-toolbar {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    flex-shrink: 0;
+    padding: 0 8px;
+    background: #000;
+    border-bottom: 1px solid #161616;
+    gap: 8px;
+}
+.overview-toolbar-label {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: #4a4a4a;
+    margin-right: auto; /* push the toggle to the right end */
+    user-select: none;
+}
+.overview-layer-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    padding: 2px 9px;
+    color: #b0b0b0;
+    background: #161616;
+    border: 1px solid #2c2c2c;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.overview-layer-btn:hover {
+    color: #e6e6e6;
+    background: #232323;
+    border-color: #3a3a3a;
+}
+.overview-layer-btn .ov-preview {
+    font-size: 13px;
+    line-height: 1;
+    color: #7fd0c0; /* subtle teal so the preview glyph reads as an icon */
+}
+
 /* ── HFR Bar (between Overview and main view) ──────────────────────────── */
 
 /* ── Bar primitives — shared between .hearing-bar and .view-bar ──────────
