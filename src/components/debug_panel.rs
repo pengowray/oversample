@@ -2,12 +2,25 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use crate::audio::synthetic_mic::{self, SynthSignal};
 use crate::state::AppState;
 
 #[component]
 pub fn DebugPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
     let container_ref = NodeRef::<leptos::html::Div>::new();
+
+    // Synthetic live-waterfall test signal (no mic needed).
+    let synth_rate = RwSignal::new(256_000u32);
+    let synth_active = RwSignal::new(false);
+    let start_synth = move |sig: SynthSignal| {
+        synthetic_mic::start(state, sig, synth_rate.get_untracked());
+        synth_active.set(true);
+    };
+    let stop_synth = move |_| {
+        synthetic_mic::stop(&state);
+        synth_active.set(false);
+    };
 
     // Auto-scroll to bottom when entries change
     Effect::new(move |_| {
@@ -107,6 +120,39 @@ pub fn DebugPanel() -> impl IntoView {
                     title="Run a SIMD-vs-scalar A/B benchmark on the resonator hot loop. Results are logged below."
                     on:click=move |_| crate::components::file_sidebar::run_resonator_bench(state)
                 >"Bench Resonators (SIMD vs scalar)"</button>
+            </div>
+            <hr style="border-color: #444; margin: 4px 0;" />
+            // ── Synthetic live-waterfall test signal ──
+            <div class="debug-synth" style="padding: 4px 8px;">
+                <div class="debug-section-title">"Live Waterfall Test Signal"</div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;">
+                    {[48_000u32, 192_000, 256_000, 384_000].into_iter().map(|r| {
+                        let label = format!("{}k", r / 1000);
+                        view! {
+                            <button
+                                class=move || if synth_rate.get() == r { "setting-btn sel" } else { "setting-btn" }
+                                style="flex:1;min-width:42px;"
+                                on:click=move |_| synth_rate.set(r)
+                            >{label}</button>
+                        }
+                    }).collect_view()}
+                </div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    {[SynthSignal::Noise, SynthSignal::Tone, SynthSignal::Chirp,
+                      SynthSignal::MultiTone, SynthSignal::Pulses].into_iter().map(|sig| {
+                        view! {
+                            <button class="setting-btn" style="flex:1;min-width:60px;"
+                                on:click=move |_| start_synth(sig)
+                            >{sig.label()}</button>
+                        }
+                    }).collect_view()}
+                </div>
+                <button
+                    class=move || if synth_active.get() { "setting-btn sel" } else { "setting-btn" }
+                    style="width:100%;margin-top:4px;"
+                    prop:disabled=move || !synth_active.get()
+                    on:click=stop_synth
+                >"Stop Test Signal"</button>
             </div>
             <hr style="border-color: #444; margin: 4px 0;" />
             <div class="debug-panel-toolbar">

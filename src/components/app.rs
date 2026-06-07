@@ -57,7 +57,31 @@ pub fn App() -> impl IntoView {
     if let Some(window) = web_sys::window() {
         if let Ok(hash) = window.location().hash() {
             let trimmed = hash.trim_start_matches('#');
-            if trimmed.len() >= 3 && trimmed[..2].eq_ignore_ascii_case("XC") && trimmed[2..].chars().all(|c| c.is_ascii_digit()) {
+            // Synthetic live-waterfall test signal, e.g. `#synthtest`,
+            // `#synthtest-chirp`, `#synthtest-pulses-384` (signal[-rateKHz]).
+            // No mic needed — drives the real listen pipeline for visual/perf
+            // testing (see audio::synthetic_mic).
+            if trimmed.len() >= 9 && trimmed[..9].eq_ignore_ascii_case("synthtest") {
+                use crate::audio::synthetic_mic::{self, SynthSignal};
+                let rest = trimmed[9..].trim_start_matches('-').to_ascii_lowercase();
+                let mut parts = rest.split('-').filter(|s| !s.is_empty());
+                let signal = match parts.next().unwrap_or("chirp") {
+                    "noise" => SynthSignal::Noise,
+                    "tone" => SynthSignal::Tone,
+                    "multi" | "multitone" => SynthSignal::MultiTone,
+                    "pulses" | "pulse" => SynthSignal::Pulses,
+                    _ => SynthSignal::Chirp,
+                };
+                let rate = parts.next()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .map(|khz| khz.clamp(8, 1000) * 1000)
+                    .unwrap_or(256_000);
+                wasm_bindgen_futures::spawn_local(async move {
+                    // Let layout settle so the canvas width (→ zoom) is known.
+                    sleep_ms(400).await;
+                    synthetic_mic::start(state, signal, rate);
+                });
+            } else if trimmed.len() >= 3 && trimmed[..2].eq_ignore_ascii_case("XC") && trimmed[2..].chars().all(|c| c.is_ascii_digit()) {
                 let xc_id = trimmed.to_uppercase();
                 let load_id = state.loading_start(&xc_id);
                 wasm_bindgen_futures::spawn_local(async move {

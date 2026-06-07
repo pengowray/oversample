@@ -14,6 +14,7 @@ pub mod streaming_m4a;
 pub mod streaming_mp3;
 pub mod streaming_ogg;
 pub mod streaming_source;
+pub mod synthetic_mic;
 pub mod video_export;
 pub mod wav_encoder;
 pub mod webcodecs_bindings;
