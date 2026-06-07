@@ -98,8 +98,71 @@ pub fn compute_resonator_columns(
         return vec![];
     }
 
+    let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range);
+    let mut bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
+
+    let col_end = col_start + col_count;
+    let total_samples = samples.len();
+    let mut out: Vec<SpectrogramColumn> = Vec::with_capacity(col_count);
+
+    // Stream hop-by-hop instead of calling `bank.resonate()` — that method
+    // allocates a `Vec<Complex32>` the size of (n_frames * n_bins) up front
+    // (~1 MB per baseline tile) which we'd then discard. Processing one hop
+    // at a time and reading magnitudes directly from bank state avoids the
+    // intermediate buffer entirely.
+    let mut pos = 0usize;
+    for frame in 0..col_end {
+        let next = pos + hop_size;
+        if next > total_samples {
+            break;
+        }
+        bank.process_samples(&samples[pos..next]);
+        pos = next;
+
+        if frame < col_start {
+            continue;
+        }
+
+        // Library state reflects end of this hop.
+        let time_offset = ((frame + 1) * hop_size) as f64 / sample_rate as f64;
+        out.push(SpectrogramColumn { magnitudes: setup.read_mags(&bank), time_offset });
+    }
+
+    out
+}
+
+/// Shared resonator-bank setup (frequency layout, per-bin configs, log row-map,
+/// magnitude scale) — built once and reused by both the one-shot
+/// [`compute_resonator_columns`] and the persistent [`StreamingResonators`].
+struct ResoSetup {
+    configs: Vec<ResonatorConfig>,
+    bank_bins: usize,
+    row_to_bank: Option<Vec<usize>>,
+    mag_scale: f32,
+}
+
+impl ResoSetup {
+    /// Read the bank's current per-row magnitudes (scaled to STFT brightness),
+    /// gathering through the log row-map when present.
+    fn read_mags(&self, bank: &ResonatorBank) -> Vec<f32> {
+        if let Some(map) = &self.row_to_bank {
+            map.iter().map(|&k| bank.magnitude(k) * self.mag_scale).collect()
+        } else {
+            (0..self.bank_bins).map(|k| bank.magnitude(k) * self.mag_scale).collect()
+        }
+    }
+}
+
+fn build_reso_setup(
+    sample_rate: u32,
+    fft_size: usize,
+    bandwidth_hz: f32,
+    layout: ResonatorLayout,
+    freq_range: Option<(f32, f32)>,
+) -> ResoSetup {
     let sr_f = sample_rate as f32;
     let nyq = sr_f * 0.5;
+    let output_bins = fft_size / 2 + 1;
 
     // Clamp bandwidth and convert to the library's alpha convention via tau.
     // `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the library's
@@ -152,59 +215,77 @@ pub fn compute_resonator_columns(
         .iter()
         .map(|&f| ResonatorConfig::new(f, alpha, 1.0))
         .collect();
-    let mut bank = ResonatorBank::new(&configs, sr_f);
 
     // For Log layout, pre-compute a bank-bin index for each linear output
     // row so the per-frame loop is a cheap gather. For Linear the mapping
     // is the identity (bank_bins == output_bins).
-    //
-    // The output row axis is linear over the tile's own range [band_lo,
-    // band_hi]; the blit code maps tile rows to canvas y using that same
-    // range, so everything lines up.
     let row_to_bank: Option<Vec<usize>> = match layout {
         ResonatorLayout::Linear => None,
         ResonatorLayout::Log => Some(build_log_row_map(output_bins, &bank_freqs, band_lo, band_hi)),
     };
 
-    let mag_scale = (fft_size as f32) * 0.5;
-    let col_end = col_start + col_count;
-    let total_samples = samples.len();
-    let mut out: Vec<SpectrogramColumn> = Vec::with_capacity(col_count);
+    ResoSetup {
+        configs,
+        bank_bins,
+        row_to_bank,
+        mag_scale: (fft_size as f32) * 0.5,
+    }
+}
 
-    // Stream hop-by-hop instead of calling `bank.resonate()` — that method
-    // allocates a `Vec<Complex32>` the size of (n_frames * n_bins) up front
-    // (~1 MB per baseline tile) which we'd then discard. Processing one hop
-    // at a time and reading magnitudes directly from bank state avoids the
-    // intermediate buffer entirely.
-    let mut pos = 0usize;
-    for frame in 0..col_end {
-        let next = pos + hop_size;
-        if next > total_samples {
-            break;
-        }
-        bank.process_samples(&samples[pos..next]);
-        pos = next;
+/// A persistent streaming resonator bank for live capture. Built once per
+/// session/config, it processes each incoming sample exactly once and emits a
+/// column per hop — avoiding the dominant cost of the live Resonators view,
+/// where [`compute_resonator_columns`] otherwise re-creates and re-warms the
+/// whole bank (≈5τ of samples) on every capture tick.
+pub struct StreamingResonators {
+    bank: ResonatorBank,
+    setup: ResoSetup,
+    hop_size: usize,
+    sample_rate: u32,
+}
 
-        if frame < col_start {
-            continue;
-        }
-
-        let mags: Vec<f32> = if let Some(map) = &row_to_bank {
-            map.iter()
-                .map(|&k| bank.magnitude(k) * mag_scale)
-                .collect()
-        } else {
-            (0..bank_bins)
-                .map(|k| bank.magnitude(k) * mag_scale)
-                .collect()
-        };
-
-        // Library state reflects end of this hop.
-        let time_offset = ((frame + 1) * hop_size) as f64 / sample_rate as f64;
-        out.push(SpectrogramColumn { magnitudes: mags, time_offset });
+impl StreamingResonators {
+    pub fn new(
+        sample_rate: u32,
+        fft_size: usize,
+        hop_size: usize,
+        bandwidth_hz: f32,
+        layout: ResonatorLayout,
+        freq_range: Option<(f32, f32)>,
+    ) -> Self {
+        let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range);
+        let bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
+        Self { bank, setup, hop_size, sample_rate }
     }
 
-    out
+    /// Run `samples` through the bank without emitting columns — used once after
+    /// a (re)build to converge the EMA state from recent buffer history so the
+    /// first emitted columns are already settled.
+    pub fn warm(&mut self, samples: &[f32]) {
+        if !samples.is_empty() {
+            self.bank.process_samples(samples);
+        }
+    }
+
+    /// Feed a hop-aligned `samples` slice and emit one column per whole hop.
+    /// `first_col` is the absolute column index of the first emitted column
+    /// (only used to compute `time_offset`). Any trailing partial hop is
+    /// ignored — callers pass whole-hop chunks.
+    pub fn push_hops(&mut self, samples: &[f32], first_col: usize) -> Vec<SpectrogramColumn> {
+        let n = samples.len() / self.hop_size;
+        let mut out = Vec::with_capacity(n);
+        for h in 0..n {
+            let s = h * self.hop_size;
+            self.bank.process_samples(&samples[s..s + self.hop_size]);
+            let col = first_col + h;
+            let time_offset = ((col + 1) * self.hop_size) as f64 / self.sample_rate as f64;
+            out.push(SpectrogramColumn {
+                magnitudes: self.setup.read_mags(&self.bank),
+                time_offset,
+            });
+        }
+        out
+    }
 }
 
 /// For each linear output row (covering [band_lo, band_hi] uniformly), pick
@@ -357,5 +438,64 @@ mod tests {
             (peak_bin as isize - expected as isize).abs() <= 1,
             "peak at bin {peak_bin}, expected {expected}"
         );
+    }
+
+    fn test_signal(sr: u32, n: usize) -> Vec<f32> {
+        // Mix of two tones so multiple bins are exercised.
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / sr as f32;
+                0.6 * (std::f32::consts::TAU * 12_000.0 * t).sin()
+                    + 0.4 * (std::f32::consts::TAU * 30_000.0 * t).sin()
+            })
+            .collect()
+    }
+
+    fn assert_cols_eq(a: &[SpectrogramColumn], b: &[SpectrogramColumn]) {
+        assert_eq!(a.len(), b.len(), "column count");
+        for (i, (ca, cb)) in a.iter().zip(b.iter()).enumerate() {
+            assert_eq!(ca.magnitudes.len(), cb.magnitudes.len(), "bin count col {i}");
+            assert!(
+                (ca.time_offset - cb.time_offset).abs() < 1e-9,
+                "time_offset col {i}: {} vs {}", ca.time_offset, cb.time_offset
+            );
+            for (k, (x, y)) in ca.magnitudes.iter().zip(cb.magnitudes.iter()).enumerate() {
+                assert!((x - y).abs() <= 1e-4, "mag col {i} bin {k}: {x} vs {y}");
+            }
+        }
+    }
+
+    /// Streaming a buffer from a fresh bank must match the one-shot path exactly.
+    #[test]
+    fn streaming_matches_oneshot() {
+        let sr = 192_000u32;
+        let (fft, hop, ncols) = (1024usize, 256usize, 60usize);
+        for layout in [ResonatorLayout::Linear, ResonatorLayout::Log] {
+            let samples = test_signal(sr, hop * ncols);
+            let oneshot = compute_resonator_columns(&samples, sr, fft, hop, 0, ncols, 20.0, layout, None);
+            let mut s = StreamingResonators::new(sr, fft, hop, 20.0, layout, None);
+            let streamed = s.push_hops(&samples[..ncols * hop], 0);
+            assert_cols_eq(&oneshot, &streamed);
+        }
+    }
+
+    /// Feeding in chunks (as the live loop does per tick) must match one feed —
+    /// i.e. the bank state persists correctly across push_hops calls.
+    #[test]
+    fn streaming_incremental_matches_bulk() {
+        let sr = 384_000u32;
+        let (fft, hop, ncols) = (1024usize, 256usize, 80usize);
+        let samples = test_signal(sr, hop * ncols);
+
+        let mut bulk = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None);
+        let all = bulk.push_hops(&samples[..ncols * hop], 0);
+
+        let mut inc = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None);
+        let mut chunked = Vec::new();
+        // Uneven chunks to mimic variable per-tick column counts.
+        for (start, len) in [(0usize, 17usize), (17, 31), (48, 32)] {
+            chunked.extend(inc.push_hops(&samples[start * hop..(start + len) * hop], start));
+        }
+        assert_cols_eq(&all, &chunked);
     }
 }

@@ -9,7 +9,7 @@ use crate::audio::mic_backend::{with_live_samples, with_live_samples_mut};
 use crate::audio::wav_encoder::try_tauri_save;
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
-use crate::dsp::resonators::{compute_resonator_columns, warmup_samples};
+use crate::dsp::resonators::{StreamingResonators, warmup_samples};
 use crate::state::MainView;
 use std::sync::Arc;
 
@@ -17,6 +17,10 @@ use std::sync::Arc;
 /// FFT=1024 gives 513 frequency bins for good resolution; hop=256 for smooth scrolling.
 const LIVE_FFT: usize = 1024;
 const LIVE_HOP: usize = 256;
+
+/// Config key for the persistent live resonator bank: (sample_rate, fft, hop,
+/// bandwidth bits, layout, viewport-range bits). A change rebuilds the bank.
+type ResoKey = (u32, usize, usize, u32, u8, Option<(u32, u32)>);
 
 /// Clean up the live recording file when finalization fails (empty samples,
 /// command error, etc.).  If the file has no audio data and no preview,
@@ -663,6 +667,15 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         let mut last_processed_col: usize = 0;
         let mut last_snapshot_len: usize = 0;
         let is_tauri = state.is_tauri;
+        // Persistent streaming resonator bank for the Resonators view, kept
+        // across ticks so each sample is processed once. Rebuilt when the key
+        // (rate/fft/hop/bandwidth/layout/viewport) changes. Lives for this
+        // session only — a new spawn starts fresh (None).
+        let mut reso: Option<(ResoKey, StreamingResonators)> = None;
+        // Absolute column index of buffer column 0 (sum of all trimmed columns).
+        // `last_processed_col` is buffer-relative; adding this gives the absolute
+        // column so emitted `time_offset`s stay monotonic across buffer trims.
+        let mut col_base: usize = 0;
 
         loop {
             let p = js_sys::Promise::new(&mut |resolve, _| {
@@ -714,10 +727,13 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 let new_col_count = total_possible_cols - last_processed_col;
 
                 // Compute new spectral columns using the currently selected view.
-                // Resonators are stateful: each tick we slice the buffer tail
-                // and run a short warmup prefix so the EMA converges before we
-                // emit the genuinely-new columns. This keeps per-tick cost
-                // bounded regardless of total recording length.
+                // Resonators are stateful: a PERSISTENT streaming bank processes
+                // each incoming sample exactly once (no per-tick re-create or
+                // re-warm — the dominant cost at high sample rates). It's rebuilt
+                // only when the config (bandwidth / layout / viewport / rate)
+                // changes, warming once from recent buffer history so the first
+                // columns are converged. The hop-aligned buffer trim below keeps
+                // the column↔sample mapping exact across trims.
                 let new_cols = if state.viewmode.main_view().get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
                     let layout = state.resonator.layout().get_untracked();
@@ -725,26 +741,31 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         .resonator.viewport_range()
                         .get_untracked()
                         .map(|(lo, hi)| (lo as f32, hi as f32));
-                    let warmup = warmup_samples(sample_rate, bandwidth_hz);
-                    let warmup_cols = warmup.div_ceil(hop_size);
-                    let skip_cols = warmup_cols.min(last_processed_col);
-                    let slice_start_col = last_processed_col - skip_cols;
-                    let slice_start_sample = slice_start_col * hop_size;
-                    if slice_start_sample >= samples.len() {
-                        Vec::new()
+                    let key: ResoKey = (
+                        sample_rate, fft_size, hop_size, bandwidth_hz.to_bits(), layout as u8,
+                        freq_range.map(|(a, b)| (a.to_bits(), b.to_bits())),
+                    );
+                    let need_rebuild = reso.as_ref().map_or(true, |(k, _)| *k != key);
+                    if need_rebuild {
+                        let mut s = StreamingResonators::new(
+                            sample_rate, fft_size, hop_size, bandwidth_hz, layout, freq_range,
+                        );
+                        // Warm from the most-recent ~5τ of already-consumed audio
+                        // so the rebuilt bank's first emitted columns are settled.
+                        let warm_end = (last_processed_col * hop_size).min(samples.len());
+                        let warm_start = warm_end.saturating_sub(warmup_samples(sample_rate, bandwidth_hz));
+                        s.warm(&samples[warm_start..warm_end]);
+                        reso = Some((key, s));
+                    }
+                    let s = &mut reso.as_mut().unwrap().1;
+                    let feed_start = last_processed_col * hop_size;
+                    let feed_end = total_possible_cols * hop_size;
+                    if feed_end > feed_start && feed_end <= samples.len() {
+                        // first_col is ABSOLUTE (buffer-relative + col_base) so the
+                        // emitted time_offsets are monotonic across trims.
+                        s.push_hops(&samples[feed_start..feed_end], last_processed_col + col_base)
                     } else {
-                        let tail = &samples[slice_start_sample..];
-                        compute_resonator_columns(
-                            tail,
-                            sample_rate,
-                            fft_size,
-                            hop_size,
-                            skip_cols,
-                            new_col_count,
-                            bandwidth_hz,
-                            layout,
-                            freq_range,
-                        )
+                        Vec::new()
                     }
                 } else {
                     compute_stft_columns(
@@ -866,11 +887,19 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         .saturating_add(GESTURE_HEADROOM_SECS) as usize;
                     let max_samples = (sample_rate as usize) * buf_secs;
                     if samples.len() > max_samples {
-                        let trim = samples.len() - max_samples;
-                        samples.drain(..trim);
-                        let trimmed_cols = trim / hop_size;
-                        last_processed_col = last_processed_col.saturating_sub(trimmed_cols);
-                        last_snapshot_len = last_snapshot_len.saturating_sub(trim);
+                        // Hop-align the trim so the column index ↔ sample index
+                        // mapping stays exact across trims — required by the
+                        // persistent streaming resonator bank, which feeds new
+                        // samples addressed by column. (A non-aligned trim would
+                        // skip up to hop-1 unconsumed samples each tick.)
+                        let trim = ((samples.len() - max_samples) / hop_size) * hop_size;
+                        if trim > 0 {
+                            samples.drain(..trim);
+                            let trimmed_cols = trim / hop_size;
+                            last_processed_col = last_processed_col.saturating_sub(trimmed_cols);
+                            col_base += trimmed_cols; // keep absolute column index intact
+                            last_snapshot_len = last_snapshot_len.saturating_sub(trim);
+                        }
                     }
                 });
             }
