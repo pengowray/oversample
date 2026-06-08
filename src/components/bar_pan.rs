@@ -115,8 +115,11 @@ impl BarPan {
             let Some(el) = node.get() else { return };
             let el: web_sys::HtmlElement = el.unchecked_into();
             let cb = Closure::wrap(Box::new(move |ev: web_sys::Event| {
-                if moved.get_value() {
-                    moved.set_value(false);
+                // `try_*`: the closure can outlive its owner if an event is
+                // already in flight while the bar is being torn down, leaving
+                // `moved` disposed. Reading it with `get_value()` would panic.
+                if moved.try_get_value() == Some(true) {
+                    let _ = moved.try_set_value(false);
                     // Capture phase: stopping propagation here keeps the click
                     // from ever reaching the button the drag ended on.
                     ev.stop_propagation();
@@ -128,8 +131,11 @@ impl BarPan {
                 cb.as_ref().unchecked_ref(),
                 true, // capture
             );
-            // The bar lives for the whole session; leak the closure rather than
-            // track it for a teardown that never comes.
+            // The closure is `!Send`, so it can't be torn down via `on_cleanup`;
+            // leak it as before. The bar can be recreated (a parent re-render on
+            // layout/filter changes disposes this owner's `StoredValue`s), so the
+            // leaked guard may outlive `moved` — which is why the read above is
+            // disposal-safe and simply no-ops instead of panicking.
             cb.forget();
         });
     }
