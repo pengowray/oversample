@@ -52,6 +52,33 @@ impl ResonatorLayout {
     pub const ALL: &'static [ResonatorLayout] = &[Self::Linear, Self::Log];
 }
 
+/// How each resonator's bandwidth (and thus its time/frequency tradeoff) is
+/// chosen across the bank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ResonatorAlphaMode {
+    /// One global bandwidth (Hz) for every bin — uniform tradeoff at all
+    /// frequencies. Q = f/bw rises with frequency, so high bins are needlessly
+    /// slow. This is the original behavior the bandwidth slider is tuned for.
+    #[default]
+    ConstBandwidth,
+    /// Constant Q: `bw_k = f_k / q`, so low bins are narrow (sharp in frequency)
+    /// and high bins are wide (fast in time). Matches FM bat calls — sharp
+    /// tonal/low structure, crisp tracking of fast high-frequency sweeps. The Q
+    /// value is supplied separately (see `compute_resonator_columns`).
+    ConstQ,
+}
+
+impl ResonatorAlphaMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ConstBandwidth => "Const bandwidth",
+            Self::ConstQ => "Const Q",
+        }
+    }
+
+    pub const ALL: &'static [ResonatorAlphaMode] = &[Self::ConstBandwidth, Self::ConstQ];
+}
+
 /// Lowest frequency for log-spaced layouts. Below this the display shows the
 /// lowest log bin's magnitude (no subsonic resonators).
 pub const LOG_MIN_FREQ_HZ: f32 = 20.0;
@@ -76,8 +103,9 @@ pub fn warmup_samples(sample_rate: u32, bandwidth_hz: f32) -> usize {
 ///   the caller should pre-pad with warm-up samples and pass `col_start` =
 ///   the warm-up column count.
 ///
-/// `bandwidth_hz` sets per-bin EMA bandwidth (uniform across all bins).
-/// Smaller ⇒ sharper bins, slower tracking.
+/// `bandwidth_hz` sets the per-bin EMA bandwidth in `ConstBandwidth` mode
+/// (uniform across all bins); smaller ⇒ sharper bins, slower tracking. In
+/// `ConstQ` mode `bandwidth_hz` is ignored and each bin uses `bw_k = f_k / q`.
 ///
 /// Output magnitudes are scaled by `fft_size * 0.5` to match the one-sided
 /// STFT magnitude with Hann coherent gain, so existing brightness controls
@@ -90,6 +118,8 @@ pub fn compute_resonator_columns(
     col_start: usize,
     col_count: usize,
     bandwidth_hz: f32,
+    alpha_mode: ResonatorAlphaMode,
+    q: f32,
     layout: ResonatorLayout,
     freq_range: Option<(f32, f32)>,
 ) -> Vec<SpectrogramColumn> {
@@ -100,7 +130,7 @@ pub fn compute_resonator_columns(
 
     // Tile path runs full-density: density is already baked into `fft_size`
     // (the adaptive FFT shrinks output_bins for loaded files).
-    let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range, 1.0);
+    let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, alpha_mode, q, layout, freq_range, 1.0);
     let mut bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
 
     let col_end = col_start + col_count;
@@ -166,6 +196,8 @@ fn build_reso_setup(
     sample_rate: u32,
     fft_size: usize,
     bandwidth_hz: f32,
+    alpha_mode: ResonatorAlphaMode,
+    q: f32,
     layout: ResonatorLayout,
     freq_range: Option<(f32, f32)>,
     density: f32,
@@ -180,14 +212,6 @@ fn build_reso_setup(
     } else {
         output_bins
     };
-
-    // Clamp bandwidth and convert to the library's alpha convention via tau.
-    // `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` — the library's
-    // "alpha large = fast response" is the mirror of our prior scalar
-    // impl's "alpha large = slow"; this conversion hides that from callers.
-    let bw = bandwidth_hz.clamp(0.1, nyq * 0.99);
-    let tau = 1.0 / (std::f32::consts::TAU * bw);
-    let alpha = alpha_from_tau(tau, sr_f);
 
     // Default frequency range per layout. If the caller passes an explicit
     // range (e.g. viewport-zoom mode), use that instead — this is the key
@@ -223,12 +247,25 @@ fn build_reso_setup(
         }
     };
 
-    // beta=1.0 disables the library's second-stage output EWMA so we get a
-    // single-EWMA response matching the prior hand-rolled implementation,
-    // which is what the bandwidth slider has been tuned against.
+    // Per-bin alpha. `alpha_from_tau(tau, sr) = 1 - exp(-dt/tau)` (the library's
+    // "alpha large = fast response", the mirror of the prior scalar impl).
+    // ConstBandwidth gives every bin the same bandwidth — the original behavior
+    // the bandwidth slider is tuned against. ConstQ sets bw_k = f_k / q, so low
+    // bins are sharp in frequency and high bins are fast in time (the per-bin
+    // tradeoff suited to FM bat calls). The ConstQ 2 Hz floor keeps the lowest
+    // bins' EMA warm-up bounded (those sub-bat bins are rarely the focus).
+    // beta=1.0 disables the library's second-stage output EWMA (single-EWMA).
+    let q = q.max(0.1);
     let configs: Vec<ResonatorConfig> = bank_freqs
         .iter()
-        .map(|&f| ResonatorConfig::new(f, alpha, 1.0))
+        .map(|&f| {
+            let bw = match alpha_mode {
+                ResonatorAlphaMode::ConstBandwidth => bandwidth_hz.clamp(0.1, nyq * 0.99),
+                ResonatorAlphaMode::ConstQ => (f / q).clamp(2.0, nyq * 0.99),
+            };
+            let tau = 1.0 / (std::f32::consts::TAU * bw);
+            ResonatorConfig::new(f, alpha_from_tau(tau, sr_f), 1.0)
+        })
         .collect();
 
     // Map each linear output row to a bank bin (a cheap gather in `read_mags`).
@@ -278,11 +315,13 @@ impl StreamingResonators {
         fft_size: usize,
         hop_size: usize,
         bandwidth_hz: f32,
+        alpha_mode: ResonatorAlphaMode,
+        q: f32,
         layout: ResonatorLayout,
         freq_range: Option<(f32, f32)>,
         density: f32,
     ) -> Self {
-        let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, layout, freq_range, density);
+        let setup = build_reso_setup(sample_rate, fft_size, bandwidth_hz, alpha_mode, q, layout, freq_range, density);
         let bank = ResonatorBank::new(&setup.configs, sample_rate as f32);
         Self { bank, setup, hop_size, sample_rate }
     }
@@ -448,7 +487,8 @@ mod tests {
             .collect();
 
         let cols = compute_resonator_columns(
-            &samples, sr, fft_size, hop, 0, 100, 200.0, ResonatorLayout::Linear, None,
+            &samples, sr, fft_size, hop, 0, 100, 200.0,
+            ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None,
         );
         assert!(!cols.is_empty());
 
@@ -501,8 +541,13 @@ mod tests {
         let (fft, hop, ncols) = (1024usize, 256usize, 60usize);
         for layout in [ResonatorLayout::Linear, ResonatorLayout::Log] {
             let samples = test_signal(sr, hop * ncols);
-            let oneshot = compute_resonator_columns(&samples, sr, fft, hop, 0, ncols, 20.0, layout, None);
-            let mut s = StreamingResonators::new(sr, fft, hop, 20.0, layout, None, 1.0);
+            let oneshot = compute_resonator_columns(
+                &samples, sr, fft, hop, 0, ncols, 20.0,
+                ResonatorAlphaMode::ConstBandwidth, 50.0, layout, None,
+            );
+            let mut s = StreamingResonators::new(
+                sr, fft, hop, 20.0, ResonatorAlphaMode::ConstBandwidth, 50.0, layout, None, 1.0,
+            );
             let streamed = s.push_hops(&samples[..ncols * hop], 0);
             assert_cols_eq(&oneshot, &streamed);
         }
@@ -516,16 +561,50 @@ mod tests {
         let (fft, hop, ncols) = (1024usize, 256usize, 80usize);
         let samples = test_signal(sr, hop * ncols);
 
-        let mut bulk = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None, 1.0);
+        let mut bulk = StreamingResonators::new(
+            sr, fft, hop, 20.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None, 1.0,
+        );
         let all = bulk.push_hops(&samples[..ncols * hop], 0);
 
-        let mut inc = StreamingResonators::new(sr, fft, hop, 20.0, ResonatorLayout::Linear, None, 1.0);
+        let mut inc = StreamingResonators::new(
+            sr, fft, hop, 20.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None, 1.0,
+        );
         let mut chunked = Vec::new();
         // Uneven chunks to mimic variable per-tick column counts.
         for (start, len) in [(0usize, 17usize), (17, 31), (48, 32)] {
             chunked.extend(inc.push_hops(&samples[start * hop..(start + len) * hop], start));
         }
         assert_cols_eq(&all, &chunked);
+    }
+
+    /// ConstQ mode (the shipped per-bin-alpha path) must still localize a tone
+    /// to the correct row — i.e. the per-bin bandwidth schedule doesn't disturb
+    /// where energy lands, only how sharp/fast each bin is.
+    #[test]
+    fn const_q_localizes_tone() {
+        let sr = 192_000u32;
+        let (fft, hop, ncols) = (2048usize, 256usize, 200usize);
+        let f = 30_000.0f32;
+        let samples: Vec<f32> = (0..hop * ncols)
+            .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
+            .collect();
+        let cols = compute_resonator_columns(
+            &samples, sr, fft, hop, 0, ncols, 20.0,
+            ResonatorAlphaMode::ConstQ, 200.0, ResonatorLayout::Linear, None,
+        );
+        let last = cols.last().expect("columns");
+        assert_eq!(last.magnitudes.len(), fft / 2 + 1);
+        let expected = (f * fft as f32 / sr as f32).round() as isize; // bin = f·fft/sr
+        let (peak, _) = last
+            .magnitudes
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap();
+        assert!(
+            (peak as isize - expected).abs() <= 1,
+            "ConstQ peak bin {peak} != expected {expected}"
+        );
     }
 
     /// Reduced density must keep the full output row count (the live waterfall's
@@ -542,7 +621,9 @@ mod tests {
         let nyq = sr as f32 / 2.0;
         let expected = (f / (nyq / (output_bins - 1) as f32)).round() as isize;
         for density in [0.5f32, 0.25] {
-            let mut s = StreamingResonators::new(sr, fft, hop, 50.0, ResonatorLayout::Linear, None, density);
+            let mut s = StreamingResonators::new(
+                sr, fft, hop, 50.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None, density,
+            );
             let cols = s.push_hops(&samples, 0);
             let last = cols.last().expect("columns");
             assert_eq!(

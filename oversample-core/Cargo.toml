@@ -19,3 +19,7 @@ resonators = "0.1"
 
 [dev-dependencies]
 serde_json = "1"
+# Used by tests/tf_eval.rs to build resonator banks with custom per-bin alpha
+# schedules (the step-1 per-bin-alpha experiment), independent of the global
+# bandwidth the shipped build_reso_setup uses.
+resonators = "0.1"

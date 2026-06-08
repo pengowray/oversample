@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, ChromaColormap, ChromaRange, ChromaSource, DisplayFilterMode, FftMode, FileSettings,
     FlowColorScheme, GainMode, LayerPanel, MainView, MicStrategy,
-    PlayStartMode, PlaybackMode, ResonatorDensity, ResonatorFftMode, ResonatorLayout,
+    PlayStartMode, PlaybackMode, ResonatorAlphaMode, ResonatorDensity, ResonatorFftMode, ResonatorLayout,
     SpectrogramDisplay, WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider,
     resonator_slider_to_bw,
 };
@@ -1977,6 +1977,56 @@ pub fn MainViewButton() -> impl IntoView {
                             <option value="linear">"Linear"</option>
                             <option value="log">"Log"</option>
                         </select>
+                    </div>
+                    <div class="setting-row" style="padding: 4px 8px;">
+                        <span class="setting-label"
+                            title="Const bandwidth: one bandwidth for every bin (uniform; uses the Bandwidth slider above). Const Q: bw = f / Q — sharp at low freq, fast at high freq (suits FM bat calls; uses the Q slider).">
+                            "Alpha"
+                        </span>
+                        <select
+                            class="setting-select"
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                                let new_mode = match select.value().as_str() {
+                                    "constq" => ResonatorAlphaMode::ConstQ,
+                                    _ => ResonatorAlphaMode::ConstBandwidth,
+                                };
+                                state.resonator.alpha_mode().set(new_mode);
+                            }
+                            prop:value=move || match state.resonator.alpha_mode().get() {
+                                ResonatorAlphaMode::ConstBandwidth => "constbw",
+                                ResonatorAlphaMode::ConstQ => "constq",
+                            }
+                        >
+                            <option value="constbw">"Const bandwidth"</option>
+                            <option value="constq">"Const Q"</option>
+                        </select>
+                    </div>
+                    <div class="dsp-custom-section">
+                        <div class="dsp-custom-title">{move || {
+                            let q = state.resonator.q().get().max(0.1);
+                            format!("Q: {:.0} (bw \u{2248} {:.0} Hz @ 40 kHz)", q, 40_000.0 / q)
+                        }}</div>
+                        <div class="dsp-custom-slider-row">
+                            // Linear Q slider; only affects the Const Q schedule.
+                            <input
+                                type="range"
+                                class="setting-range"
+                                min="10"
+                                max="1000"
+                                step="5"
+                                prop:value=move || state.resonator.q().get().round().to_string()
+                                on:input=move |ev: web_sys::Event| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                    if let Ok(v) = input.value().parse::<f32>() {
+                                        state.resonator.q().set(v.max(1.0));
+                                    }
+                                }
+                                on:dblclick=move |_| state.resonator.q().set(200.0)
+                            />
+                        </div>
                     </div>
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
                         title="Concentrate all bins on the visible freq range for finer vertical zoom. Rebuilds ~0.5s after you stop zooming vertically.">

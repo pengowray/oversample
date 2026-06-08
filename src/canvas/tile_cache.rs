@@ -2189,6 +2189,8 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let reson_fft = state.resonator.fft_mode().get_untracked().fft_for_lod(lod).max(16);
     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
+    let alpha_mode = state.resonator.alpha_mode().get_untracked();
+    let q = state.resonator.q().get_untracked();
     let layout = state.resonator.layout().get_untracked();
     // Viewport-zoom mode: concentrate bins on the committed viewport range
     // (the debouncer in tile_scheduler updates this signal). `None` keeps
@@ -2264,6 +2266,8 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             pre_pad_cols,
             TILE_COLS,
             bandwidth_hz,
+            alpha_mode,
+            q,
             layout,
             freq_range,
         );

@@ -472,6 +472,10 @@ pub use oversample_core::types::FlowColorScheme;
 // by compute_resonator_columns. Re-exported so UI code can reference it via
 // `crate::state::ResonatorLayout`.
 pub use oversample_core::dsp::resonators::ResonatorLayout;
+// Per-bin alpha schedule (ConstBandwidth vs ConstQ) — same crate type used by
+// compute_resonator_columns; re-exported so UI code can reference it via
+// `crate::state::ResonatorAlphaMode`.
+pub use oversample_core::dsp::resonators::ResonatorAlphaMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum RightSidebarTab {
@@ -1474,8 +1478,14 @@ pub struct ChromaState {
 /// Resonator (per-bin EMA) view settings.
 #[derive(Clone, Debug, Store)]
 pub struct ResonatorState {
-    /// Per-bin EMA bandwidth in Hz (controls time-frequency tradeoff).
+    /// Per-bin EMA bandwidth in Hz (controls time-frequency tradeoff in the
+    /// `ConstBandwidth` alpha mode; ignored in `ConstQ`).
     pub bandwidth_hz: f32,
+    /// How each bin's bandwidth is chosen: one global bandwidth (`ConstBandwidth`)
+    /// or constant Q = f/bw (`ConstQ`, sharp lows + fast highs, suits FM calls).
+    pub alpha_mode: ResonatorAlphaMode,
+    /// Q for `ConstQ` mode (`bw_k = f_k / q`). Higher Q ⇒ sharper, slower bins.
+    pub q: f32,
     /// Bin-count mode (fixed or adaptive-per-LOD).
     pub fft_mode: ResonatorFftMode,
     /// Frequency-bin spacing (linear or log).
@@ -2407,6 +2417,8 @@ impl AppState {
             }),
             resonator: Store::new(ResonatorState {
                 bandwidth_hz: 20.0,
+                alpha_mode: ResonatorAlphaMode::ConstBandwidth,
+                q: 200.0,
                 fft_mode: ResonatorFftMode::Single(512),
                 layout: ResonatorLayout::Linear,
                 viewport_bins: true,

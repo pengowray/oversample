@@ -19,9 +19,9 @@ const LIVE_FFT: usize = 1024;
 const LIVE_HOP: usize = 256;
 
 /// Config key for the persistent live resonator bank: (sample_rate, fft, hop,
-/// bandwidth bits, layout, viewport-range bits, density bits). A change rebuilds
-/// the bank.
-type ResoKey = (u32, usize, usize, u32, u8, Option<(u32, u32)>, u32);
+/// bandwidth bits, alpha-mode, Q bits, layout, viewport-range bits, density
+/// bits). A change rebuilds the bank.
+type ResoKey = (u32, usize, usize, u32, u8, u32, u8, Option<(u32, u32)>, u32);
 
 /// Clean up the live recording file when finalization fails (empty samples,
 /// command error, etc.).  If the file has no audio data and no preview,
@@ -737,6 +737,8 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 // the column↔sample mapping exact across trims.
                 let new_cols = if state.viewmode.main_view().get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
+                    let alpha_mode = state.resonator.alpha_mode().get_untracked();
+                    let q = state.resonator.q().get_untracked();
                     let layout = state.resonator.layout().get_untracked();
                     let freq_range = state
                         .resonator.viewport_range()
@@ -747,13 +749,14 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     // the lever that makes Resonators usable at high sample rates.
                     let density = state.resonator.fft_mode().get_untracked().bank_density();
                     let key: ResoKey = (
-                        sample_rate, fft_size, hop_size, bandwidth_hz.to_bits(), layout as u8,
+                        sample_rate, fft_size, hop_size, bandwidth_hz.to_bits(),
+                        alpha_mode as u8, q.to_bits(), layout as u8,
                         freq_range.map(|(a, b)| (a.to_bits(), b.to_bits())), density.to_bits(),
                     );
                     let need_rebuild = reso.as_ref().map_or(true, |(k, _)| *k != key);
                     if need_rebuild {
                         let mut s = StreamingResonators::new(
-                            sample_rate, fft_size, hop_size, bandwidth_hz, layout, freq_range, density,
+                            sample_rate, fft_size, hop_size, bandwidth_hz, alpha_mode, q, layout, freq_range, density,
                         );
                         // Warm from the most-recent ~5τ of already-consumed audio
                         // so the rebuilt bank's first emitted columns are settled.
