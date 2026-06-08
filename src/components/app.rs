@@ -2030,7 +2030,7 @@ pub fn MainViewButton() -> impl IntoView {
                     </div>
                     <div class="setting-row" style="padding: 4px 8px;">
                         <span class="setting-label"
-                            title="FFT-steered hybrid (loaded files). Clean: gate the resonator with an FFT to remove its leakage skirts (crisp line, clean background). Adaptive: blend a sharp + fast bank by FFT tonalness — sharp on sustained tones, crisp on transients. Off: plain resonator.">
+                            title="FFT-steered hybrid (files & live). Clean: gate the resonator with an FFT to remove its leakage skirts (crisp line, clean background). Adaptive: blend a sharp + fast bank by FFT tonalness — sharp on sustained tones, crisp on transients (≈2× cost live). Off: plain resonator.">
                             "Hybrid"
                         </span>
                         <select

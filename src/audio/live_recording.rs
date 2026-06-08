@@ -9,7 +9,10 @@ use crate::audio::mic_backend::{with_live_samples, with_live_samples_mut};
 use crate::audio::wav_encoder::try_tauri_save;
 use crate::types::{AudioData, FileMetadata, SpectrogramData};
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
-use crate::dsp::resonators::{StreamingResonators, warmup_samples};
+use crate::dsp::resonators::{
+    adaptive_fast_bw, adaptive_tonal_fft, apply_adaptive_blend, apply_clean_gate, warmup_samples,
+    ResonatorAlphaMode, ResonatorHybridMode, StreamingResonators,
+};
 use crate::state::MainView;
 use std::sync::Arc;
 
@@ -691,6 +694,11 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         let mut comp_ema = 0.0f64;
         let mut gov_density = 1.0f32;
         let mut gov_cooldown = 0i32;
+        // Second persistent bank for the live Adaptive hybrid (fast bank).
+        // `fast_fed_last` tracks whether it was fed on the previous tick so a
+        // gap (mode toggled off then on) forces a rebuild+warm.
+        let mut reso_fast: Option<(ResoKey, StreamingResonators)> = None;
+        let mut fast_fed_last = false;
 
         loop {
             let p = js_sys::Promise::new(&mut |resolve, _| {
@@ -752,6 +760,14 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                 let new_cols = if state.viewmode.main_view().get_untracked() == MainView::Resonators {
                     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
                     let alpha_mode = state.resonator.alpha_mode().get_untracked();
+                    let hybrid_mode = state.resonator.hybrid_mode().get_untracked();
+                    // Adaptive defines its own tradeoff via the sharp+fast banks,
+                    // so the sharp bank uses ConstBandwidth regardless of alpha_mode.
+                    let sharp_alpha = if hybrid_mode == ResonatorHybridMode::Adaptive {
+                        ResonatorAlphaMode::ConstBandwidth
+                    } else {
+                        alpha_mode
+                    };
                     let q = state.resonator.q().get_untracked();
                     let layout = state.resonator.layout().get_untracked();
                     let freq_range = state
@@ -767,13 +783,13 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     let density = if auto { gov_density.min(ceiling) } else { ceiling };
                     let key: ResoKey = (
                         sample_rate, fft_size, hop_size, bandwidth_hz.to_bits(),
-                        alpha_mode as u8, q.to_bits(), layout as u8,
+                        sharp_alpha as u8, q.to_bits(), layout as u8,
                         freq_range.map(|(a, b)| (a.to_bits(), b.to_bits())), density.to_bits(),
                     );
                     let need_rebuild = reso.as_ref().map_or(true, |(k, _)| *k != key);
                     if need_rebuild {
                         let mut s = StreamingResonators::new(
-                            sample_rate, fft_size, hop_size, bandwidth_hz, alpha_mode, q, layout, freq_range, density,
+                            sample_rate, fft_size, hop_size, bandwidth_hz, sharp_alpha, q, layout, freq_range, density,
                         );
                         // Warm from the most-recent ~5τ of already-consumed audio
                         // so the rebuilt bank's first emitted columns are settled.
@@ -785,7 +801,7 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     let s = &mut reso.as_mut().unwrap().1;
                     let feed_start = last_processed_col * hop_size;
                     let feed_end = total_possible_cols * hop_size;
-                    let cols = if feed_end > feed_start && feed_end <= samples.len() {
+                    let mut cols = if feed_end > feed_start && feed_end <= samples.len() {
                         // first_col is ABSOLUTE (buffer-relative + col_base) so the
                         // emitted time_offsets are monotonic across trims. Time the
                         // compute to feed the fps governor.
@@ -814,6 +830,53 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                             gov_density = if gov_density < 0.5 { 0.5 } else { 1.0 };
                             gov_cooldown = GOV_COOLDOWN_TICKS;
                         }
+                    }
+                    // FFT-steered hybrid (live): same per-pixel math as the tile
+                    // path, applied to the persistent bank's new columns.
+                    let n_new = total_possible_cols.saturating_sub(last_processed_col);
+                    let valid = n_new > 0 && feed_end > feed_start && feed_end <= samples.len();
+                    match hybrid_mode {
+                        ResonatorHybridMode::Off => fast_fed_last = false,
+                        ResonatorHybridMode::Clean => {
+                            fast_fed_last = false;
+                            if valid {
+                                let fft = compute_stft_columns(
+                                    samples, sample_rate, fft_size, hop_size, last_processed_col, n_new,
+                                );
+                                apply_clean_gate(&mut cols, &fft, fft_size, hop_size);
+                            }
+                        }
+                        ResonatorHybridMode::Adaptive if valid => {
+                            let fast_bw = adaptive_fast_bw(bandwidth_hz);
+                            let fast_key: ResoKey = (
+                                sample_rate, fft_size, hop_size, fast_bw.to_bits(),
+                                ResonatorAlphaMode::ConstBandwidth as u8, q.to_bits(), layout as u8,
+                                freq_range.map(|(a, b)| (a.to_bits(), b.to_bits())), density.to_bits(),
+                            );
+                            // Rebuild on key change OR after a gap (mode toggled).
+                            if !fast_fed_last || reso_fast.as_ref().map_or(true, |(k, _)| *k != fast_key) {
+                                let mut s = StreamingResonators::new(
+                                    sample_rate, fft_size, hop_size, fast_bw,
+                                    ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range, density,
+                                );
+                                let warm_end = (last_processed_col * hop_size).min(samples.len());
+                                let warm_start = warm_end.saturating_sub(warmup_samples(sample_rate, fast_bw.max(1.0)));
+                                s.warm(&samples[warm_start..warm_end]);
+                                reso_fast = Some((fast_key, s));
+                            }
+                            let fast_cols = reso_fast
+                                .as_mut()
+                                .unwrap()
+                                .1
+                                .push_hops(&samples[feed_start..feed_end], last_processed_col + col_base);
+                            let tonal_fft = adaptive_tonal_fft(fft_size);
+                            let tonal = compute_stft_columns(
+                                samples, sample_rate, tonal_fft, hop_size, last_processed_col, n_new,
+                            );
+                            apply_adaptive_blend(&mut cols, &fast_cols, &tonal, fft_size, tonal_fft, hop_size, sample_rate);
+                            fast_fed_last = true;
+                        }
+                        ResonatorHybridMode::Adaptive => fast_fed_last = false,
                     }
                     cols
                 } else {

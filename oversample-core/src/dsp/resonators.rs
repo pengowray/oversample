@@ -202,33 +202,89 @@ pub fn compute_resonator_columns(
     out
 }
 
-/// For each column in `a`, the index of the nearest column in `b` by *center
-/// time*. `a_shift`/`b_shift` (seconds) convert each stream's `time_offset` to a
-/// common center reference: an STFT `time_offset` is the window start, so pass
-/// +half-window; the resonator `time_offset` is end-of-hop, so pass 0. Both
-/// streams are time-ordered, so a single forward sweep suffices.
-fn align_idx(a: &[SpectrogramColumn], a_shift: f64, b: &[SpectrogramColumn], b_shift: f64) -> Vec<usize> {
-    if b.is_empty() {
-        return vec![0; a.len()];
+/// Column shift to align a resonator column (effective time = end-of-hop) with
+/// an STFT column (window start, energy centered `fft_size/2` samples later):
+/// `reso[j] ↔ fft[j + shift]`. Assumes both streams share the hop and cover the
+/// same column range — true for the tile path and the live persistent-bank path.
+fn center_shift(fft_size: usize, hop_size: usize) -> isize {
+    (1.0 - fft_size as f64 / (2.0 * hop_size.max(1) as f64)).round() as isize
+}
+
+/// The fast-bank bandwidth `Adaptive` derives from the sharp (user) bandwidth.
+/// Exposed so the live path can build a matching second persistent bank.
+pub fn adaptive_fast_bw(bandwidth_hz: f32) -> f32 {
+    (bandwidth_hz * HYBRID_FAST_MULT).clamp(200.0, 4000.0)
+}
+
+/// The short FFT size `Adaptive` uses for transient detection (good time res).
+pub fn adaptive_tonal_fft(fft_size: usize) -> usize {
+    256.min(fft_size).max(16)
+}
+
+/// Apply the `Clean` (FFT-gated) hybrid to resonator columns IN PLACE, using
+/// pre-computed FFT columns over the same column range (same hop). Each bin is
+/// scaled by a soft gate (≈1 where the FFT has energy, ≈0 where it's dark),
+/// suppressing single-pole leakage while keeping the sharp line. Shared by the
+/// tile path and the live persistent-bank path.
+pub fn apply_clean_gate(reso: &mut [SpectrogramColumn], fft: &[SpectrogramColumn], fft_size: usize, hop_size: usize) {
+    if fft.is_empty() {
+        return;
     }
-    let mut out = Vec::with_capacity(a.len());
-    let mut j = 0usize;
-    for c in a {
-        let t = c.time_offset + a_shift;
-        while j + 1 < b.len() && b[j + 1].time_offset + b_shift <= t {
-            j += 1;
+    let fmax = fft.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
+    let thresh = (HYBRID_GATE_FRAC * fmax).max(1e-9);
+    let shift = center_shift(fft_size, hop_size);
+    let flen = fft.len() as isize;
+    for (j, col) in reso.iter_mut().enumerate() {
+        let fc = &fft[(j as isize + shift).clamp(0, flen - 1) as usize].magnitudes;
+        let n = col.magnitudes.len().min(fc.len());
+        for b in 0..n {
+            col.magnitudes[b] *= (fc[b] / thresh).clamp(0.0, 1.0);
         }
-        let nearer_next = j + 1 < b.len()
-            && ((b[j + 1].time_offset + b_shift) - t).abs() < ((b[j].time_offset + b_shift) - t).abs();
-        out.push(if nearer_next { j + 1 } else { j });
     }
-    out
+}
+
+/// Apply the `Adaptive` hybrid IN PLACE into `sharp`: blend the sharp bank with
+/// a `fast` bank (same grid, index-aligned) by a per-pixel tonalness weight from
+/// a short `tonal` FFT. Shared by the tile path and the live path.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_adaptive_blend(
+    sharp: &mut [SpectrogramColumn],
+    fast: &[SpectrogramColumn],
+    tonal: &[SpectrogramColumn],
+    fft_size: usize,
+    tonal_fft: usize,
+    hop_size: usize,
+    sample_rate: u32,
+) {
+    if fast.is_empty() || tonal.is_empty() {
+        return;
+    }
+    let tmax = tonal.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
+    let tonal_nb = tonal[0].magnitudes.len();
+    let tonal_shift = center_shift(tonal_fft, hop_size);
+    let (flen, tlen) = (fast.len() as isize, tonal.len() as isize);
+    for (j, col) in sharp.iter_mut().enumerate() {
+        let fastc = &fast[(j as isize).clamp(0, flen - 1) as usize].magnitudes;
+        let ti = (j as isize + tonal_shift).clamp(0, tlen - 1) as usize;
+        let tnow = &tonal[ti].magnitudes;
+        let tpre = &tonal[ti.saturating_sub(1)].magnitudes;
+        let n = col.magnitudes.len().min(fastc.len());
+        for b in 0..n {
+            let freq = b as f64 * sample_rate as f64 / fft_size as f64;
+            let tb = ((freq * tonal_fft as f64 / sample_rate as f64).round() as usize).min(tonal_nb - 1);
+            let d = (tnow[tb] - tpre[tb]).abs() / tmax;
+            let w = 1.0 / (1.0 + HYBRID_TONAL_K * d);
+            col.magnitudes[b] = w * col.magnitudes[b] + (1.0 - w) * fastc[b];
+        }
+    }
 }
 
 /// Resonator columns with optional FFT-steered hybrid post-processing
 /// ([`ResonatorHybridMode`]). `Off` is exactly [`compute_resonator_columns`];
 /// `Clean` gates the resonator output by a same-grid FFT to suppress leakage;
-/// `Adaptive` blends a sharp and a fast bank by an FFT tonalness weight.
+/// `Adaptive` blends a sharp and a fast bank by an FFT tonalness weight. The
+/// live path reuses [`apply_clean_gate`] / [`apply_adaptive_blend`] on its
+/// persistent-bank columns instead.
 ///
 /// Extra cost over plain resonators: `Clean` adds one FFT pass; `Adaptive` adds
 /// a second resonator bank plus a short FFT.
@@ -258,62 +314,25 @@ pub fn compute_resonator_hybrid_columns(
                 bandwidth_hz, alpha_mode, q, layout, freq_range,
             );
             let fft = compute_stft_columns(samples, sample_rate, fft_size, hop_size, col_start, col_count);
-            if fft.is_empty() {
-                return cols;
-            }
-            let fmax = fft.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
-            let thresh = (HYBRID_GATE_FRAC * fmax).max(1e-9);
-            let half_win = fft_size as f64 / 2.0 / sample_rate as f64;
-            let map = align_idx(&cols, 0.0, &fft, half_win);
-            for (j, col) in cols.iter_mut().enumerate() {
-                let fc = &fft[map[j]].magnitudes;
-                let n = col.magnitudes.len().min(fc.len());
-                for b in 0..n {
-                    col.magnitudes[b] *= (fc[b] / thresh).clamp(0.0, 1.0);
-                }
-            }
+            apply_clean_gate(&mut cols, &fft, fft_size, hop_size);
             cols
         }
         ResonatorHybridMode::Adaptive => {
             // Sharp bank = the user's bandwidth (sharp/slow); fast bank = wider
             // (fast/blurry). Adaptive defines its own tradeoff, so both banks use
             // ConstBandwidth regardless of `alpha_mode`.
-            let sharp = compute_resonator_columns(
+            let mut sharp = compute_resonator_columns(
                 samples, sample_rate, fft_size, hop_size, col_start, col_count,
                 bandwidth_hz, ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range,
             );
-            let fast_bw = (bandwidth_hz * HYBRID_FAST_MULT).clamp(200.0, 4000.0);
             let fast = compute_resonator_columns(
                 samples, sample_rate, fft_size, hop_size, col_start, col_count,
-                fast_bw, ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range,
+                adaptive_fast_bw(bandwidth_hz), ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range,
             );
-            // Short FFT for tight transient detection (good time resolution).
-            let tonal_fft = 256.min(fft_size).max(16);
+            let tonal_fft = adaptive_tonal_fft(fft_size);
             let tonal = compute_stft_columns(samples, sample_rate, tonal_fft, hop_size, col_start, col_count);
-            if fast.is_empty() || tonal.is_empty() {
-                return sharp;
-            }
-            let tmax = tonal.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
-            let tonal_nb = tonal[0].magnitudes.len();
-            let half_win = tonal_fft as f64 / 2.0 / sample_rate as f64;
-            let tmap = align_idx(&sharp, 0.0, &tonal, half_win);
-            let fmap = align_idx(&sharp, 0.0, &fast, 0.0);
-            let mut cols = sharp;
-            for (j, col) in cols.iter_mut().enumerate() {
-                let fastc = &fast[fmap[j]].magnitudes;
-                let ti = tmap[j];
-                let tnow = &tonal[ti].magnitudes;
-                let tpre = &tonal[ti.saturating_sub(1)].magnitudes;
-                let n = col.magnitudes.len().min(fastc.len());
-                for b in 0..n {
-                    let freq = b as f64 * sample_rate as f64 / fft_size as f64;
-                    let tb = ((freq * tonal_fft as f64 / sample_rate as f64).round() as usize).min(tonal_nb - 1);
-                    let d = (tnow[tb] - tpre[tb]).abs() / tmax;
-                    let w = 1.0 / (1.0 + HYBRID_TONAL_K * d);
-                    col.magnitudes[b] = w * col.magnitudes[b] + (1.0 - w) * fastc[b];
-                }
-            }
-            cols
+            apply_adaptive_blend(&mut sharp, &fast, &tonal, fft_size, tonal_fft, hop_size, sample_rate);
+            sharp
         }
     }
 }
