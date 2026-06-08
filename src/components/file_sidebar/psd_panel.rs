@@ -916,7 +916,11 @@ fn start_psd_compute(
     // Instead, keep the old result visible until the new one arrives.
     is_computing.set(true);
     compute_gen.update(|g| *g += 1);
-    let generation = compute_gen.get_untracked();
+    // `try_get_untracked`: start_psd_compute runs from a spawn_local after a
+    // yield, so the panel can be disposed (right-sidebar tab switch) before we
+    // get here; reading a disposed signal would panic. The rest of this fn is
+    // synchronous, so this single guard protects the later local reads too.
+    let Some(generation) = compute_gen.try_get_untracked() else { return; };
 
     let sample_rate = file.audio.sample_rate;
     let total = file.audio.source.total_samples() as usize;
@@ -1031,9 +1035,12 @@ fn start_psd_compute(
         let result = psd::compute_psd_async(
             &samples, sample_rate, nfft, peak_freq_range,
             crate::canvas::tile_cache::yield_to_browser,
-            &move || compute_gen.get_untracked() != generation,
+            // `try_get_untracked`: this is polled mid-await across many frames; if
+            // the panel is disposed (tab switch) treat it as cancelled rather
+            // than panicking on the disposed signal.
+            &move || compute_gen.try_get_untracked() != Some(generation),
         ).await;
-        if compute_gen.get_untracked() != generation {
+        if compute_gen.try_get_untracked() != Some(generation) {
             return;
         }
         if let Some(r) = result {

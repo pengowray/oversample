@@ -90,8 +90,11 @@ pub fn ComboButton(
         let cb = Closure::wrap(Box::new(move || {
             hold_fired.set(true);
             if let Some(lp) = long_press {
-                // Store gesture start time so the callback can compensate for hold duration
-                let start = hold_start_ms.get_untracked();
+                // Store gesture start time so the callback can compensate for hold
+                // duration. `try_get_untracked`: this leaked 400ms timer can fire
+                // after the ComboButton is disposed mid-hold, disposing this
+                // signal; bail rather than panic on the disposed read.
+                let Some(start) = hold_start_ms.try_get_untracked() else { return };
                 state.mic.gesture_start_ms().set(Some(start));
                 let me = web_sys::MouseEvent::new("longpress").unwrap();
                 lp.run(me);

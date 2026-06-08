@@ -146,8 +146,12 @@ pub fn PopupPanel(
     // Measurement: runs once the panel is mounted (on rAF after is_open flips),
     // and again on every window resize while open.
     let measure = move || {
-        let Some(anchor_el) = anchor.get_untracked() else { return };
-        let Some(panel_el) = panel_ref.get_untracked() else { return };
+        // `try_get_untracked`: `measure` is deferred via a leaked `raf_once` (and
+        // re-run from the resize listener), so it can fire after PopupPanel is
+        // disposed, which disposes these NodeRefs. The outer `Some` guards
+        // disposal; the inner guards the element not being mounted yet.
+        let Some(Some(anchor_el)) = anchor.try_get_untracked() else { return };
+        let Some(Some(panel_el)) = panel_ref.try_get_untracked() else { return };
         let Some(win) = web_sys::window() else { return };
 
         let a = anchor_el.get_bounding_client_rect();

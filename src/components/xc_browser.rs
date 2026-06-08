@@ -375,7 +375,7 @@ pub fn XcBrowser() -> impl IntoView {
                     recordings_page.set(parse_current_page(&val));
                     recordings_total_pages.set(parse_num_pages(&val));
                     recordings_total.set(parse_num_recordings(&val));
-                    let ids: Vec<u64> = recordings.get_untracked().iter().map(|r| r.id).collect();
+                    let ids: Vec<u64> = recordings.try_get_untracked().unwrap_or_default().iter().map(|r| r.id).collect();
                     check_cached(ids);
                 }
                 Err(e) => error_msg.set(Some(e)),
@@ -404,7 +404,7 @@ pub fn XcBrowser() -> impl IntoView {
                     recordings_page.set(parse_current_page(&val));
                     recordings_total_pages.set(parse_num_pages(&val));
                     recordings_total.set(parse_num_recordings(&val));
-                    let ids: Vec<u64> = recordings.get_untracked().iter().map(|r| r.id).collect();
+                    let ids: Vec<u64> = recordings.try_get_untracked().unwrap_or_default().iter().map(|r| r.id).collect();
                     check_cached(ids);
                 }
                 Err(e) => error_msg.set(Some(e)),
@@ -500,7 +500,7 @@ pub fn XcBrowser() -> impl IntoView {
                     recordings_page.set(parse_current_page(&val));
                     recordings_total_pages.set(parse_num_pages(&val));
                     recordings_total.set(parse_num_recordings(&val));
-                    let ids: Vec<u64> = recordings.get_untracked().iter().map(|r| r.id).collect();
+                    let ids: Vec<u64> = recordings.try_get_untracked().unwrap_or_default().iter().map(|r| r.id).collect();
                     check_cached(ids);
                 }
                 Err(e) => error_msg.set(Some(e)),

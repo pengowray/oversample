@@ -70,7 +70,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
         spawn_local(async move {
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let params = PulseDetectionParams {
                 min_pulse_duration_ms: min_dur,
@@ -83,7 +83,7 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
             let pulses = pulse_detect::detect_pulses(&audio, &spectrogram, &params);
 
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             state.pulse.detected().set(pulses);
             state.pulse.detecting().set(false);
         });

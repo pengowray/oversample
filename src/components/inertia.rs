@@ -154,8 +154,13 @@ pub fn start_inertia(
     let cb_clone = cb.clone();
 
     *cb.borrow_mut() = Some(Closure::new(move || {
-        // Generation check — exit if cancelled
-        if generation.get_value() != my_gen {
+        // Generation check — exit if cancelled. `try_get_value`: the rAF loop is
+        // queued on `window` and keeps firing after the owning component
+        // (Waveform/Spectrogram) is disposed mid-flick (e.g. a MainView switch),
+        // which disposes this StoredValue. A panicking `get_value()` would then
+        // crash; bail instead.
+        let Some(g) = generation.try_get_value() else { return };
+        if g != my_gen {
             return;
         }
 

@@ -87,46 +87,46 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
         spawn_local(async move {
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let bits_result = bit_analysis::analyze_bits(
                 &samples, bits_per_sample, is_float, duration_secs,
             );
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             analysis.set(Some(bits_result));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let wsnr_res = wsnr::analyze_wsnr(&samples, sample_rate);
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             wsnr_result.set(Some(wsnr_res));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let lsb_res = lsb_autocorr::analyze_lsb_autocorr(
                 &samples, bits_per_sample, is_float,
             );
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             lsb_result.set(Some(lsb_res));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let pipi_res = pipistrelle::detect(&samples, sample_rate, bits_per_sample, is_float);
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             pipistrelle_result.set(Some(pipi_res));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let nyq_res = effective_nyquist::detect(&samples, sample_rate);
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             nyquist_result.set(Some(nyq_res));
 
             yield_to_browser().await;
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
 
             let lsb_is_zero_padded = matches!(
                 lsb_result.get_untracked().as_ref().map(|l| &l.verdict),
@@ -135,7 +135,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             let am_res = audiomoth::detect(
                 &samples, sample_rate, bits_per_sample, is_float, lsb_is_zero_padded,
             );
-            if compute_gen.get_untracked() != generation { return; }
+            if compute_gen.try_get_untracked() != Some(generation) { return; }
             audiomoth_result.set(Some(am_res));
 
             is_computing.set(false);
