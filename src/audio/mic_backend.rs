@@ -603,6 +603,25 @@ impl MicBackend {
 
 // ── Public helpers ──────────────────────────────────────────────────────
 
+thread_local! {
+    /// Absolute sample index of the live capture ring's first sample — i.e. the
+    /// total samples trimmed off the front so far. The live processing loop keeps
+    /// this in sync with its hop-aligned trims, letting the waveform map ring
+    /// samples to absolute positions WITHOUT the (lagging, fluctuating) waterfall
+    /// processed clock — which otherwise made the live waveform jump.
+    static LIVE_RING_BASE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Set the live ring's absolute base sample index (see [`live_ring_base`]).
+pub fn set_live_ring_base(base: u64) {
+    LIVE_RING_BASE.with(|c| c.set(base));
+}
+
+/// Absolute sample index of the live capture ring's first sample.
+pub fn live_ring_base() -> u64 {
+    LIVE_RING_BASE.with(|c| c.get())
+}
+
 /// Borrow the live recording buffer and call `f` with a reference to the samples.
 /// Works for both web (MIC_BUFFER) and Tauri (NATIVE_REC_BUFFER) modes.
 pub fn with_live_samples<R>(is_tauri: bool, f: impl FnOnce(&[f32]) -> R) -> R {

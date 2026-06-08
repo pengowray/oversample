@@ -686,6 +686,8 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         // `last_processed_col` is buffer-relative; adding this gives the absolute
         // column so emitted `time_offset`s stay monotonic across buffer trims.
         let mut col_base: usize = 0;
+        // Fresh session: reset the published ring base (see set_live_ring_base).
+        crate::audio::mic_backend::set_live_ring_base(0);
         // fps-governor state (live Resonators auto-quality), kept across ticks:
         // `comp_ema` = smoothed per-tick resonator compute ms; `gov_density` =
         // the governor's current density; `gov_cooldown` = ticks until the next
@@ -1015,6 +1017,11 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     }
                 });
             }
+            // Publish the ring's absolute base (= total trimmed samples) so the
+            // live waveform maps ring samples to absolute positions WITHOUT the
+            // lagging waterfall clock. col_base advances only on a hop-aligned
+            // trim, so this is exact across trims.
+            crate::audio::mic_backend::set_live_ring_base(col_base as u64 * hop_size as u64);
 
             if any_update {
                 state.mic.peak_level().set(peak_normalized);

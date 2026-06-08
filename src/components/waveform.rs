@@ -420,16 +420,18 @@ pub fn Waveform() -> impl IntoView {
                   // new samples incrementally (abs-anchored) so it stays cheap and
                   // refreshes at frame rate.
                   let live_drew = if is_live && spp >= mip_d {
-                      let now_secs = crate::canvas::live_waterfall::total_time();
                       let cap_cells = ((crate::canvas::live_waterfall::capacity_time()
                           * sr as f64) as usize / waveform_renderer::MIP_D) + 8;
+                      // True absolute base of the ring (total samples trimmed off
+                      // the front), published by the live loop. Deriving this from
+                      // the waterfall's processed clock lagged the capture ring by a
+                      // fluctuating amount and made the wave jump — this is exact.
+                      let abs_offset = crate::audio::mic_backend::live_ring_base();
                       crate::audio::mic_backend::with_live_samples(state.is_tauri, |ring| {
                           if ring.is_empty() { return false; }
                           let ring_dur = ring.len() as f64 / sr as f64;
-                          let ring_offset = (now_secs - ring_dur).max(0.0); // abs time of ring[0]
+                          let ring_offset = abs_offset as f64 / sr as f64; // abs time of ring[0]
                           let ring_scroll = (scroll - ring_offset).clamp(0.0, ring_dur);
-                          let abs_offset = ((now_secs * sr as f64) as u64)
-                              .saturating_sub(ring.len() as u64);
                           waveform_renderer::draw_waveform_mipped_live(
                               &ctx, ring, abs_offset, cap_cells, sr, ring_scroll, zoom,
                               file.spectrogram.time_resolution, display_w as f64, wave_h,
