@@ -2069,6 +2069,19 @@ pub fn MainViewButton() -> impl IntoView {
                         />
                         "Viewport zoom"
                     </label>
+                    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
+                        title="Live recording/listening only: automatically lower the resonator density when the device can't keep up (and raise it back when it can), capped at the density chosen above. Keeps the live waterfall smooth at high sample rates.">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.resonator.auto_quality().get()
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.unchecked_into();
+                                state.resonator.auto_quality().set(input.checked());
+                            }
+                        />
+                        "Auto quality (fps, live)"
+                    </label>
                 }
             })}
 

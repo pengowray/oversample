@@ -650,6 +650,12 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
 
     let (fft_size, hop_size) = (LIVE_FFT, LIVE_HOP);
     const PROCESS_INTERVAL_MS: i32 = 50;
+    // fps governor (auto-quality) thresholds, on the smoothed per-tick resonator
+    // compute time. Step density down above DOWN, back up below UP (the gap is
+    // the hysteresis band); COOLDOWN ticks between changes (12 × 50 ms ≈ 600 ms).
+    const GOV_DOWN_MS: f64 = 22.0;
+    const GOV_UP_MS: f64 = 8.0;
+    const GOV_COOLDOWN_TICKS: i32 = 12;
 
     // Bump the generation counter so any previous processing loop will exit.
     let gen = state.mic.processing_gen().get_untracked().wrapping_add(1);
@@ -677,6 +683,14 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
         // `last_processed_col` is buffer-relative; adding this gives the absolute
         // column so emitted `time_offset`s stay monotonic across buffer trims.
         let mut col_base: usize = 0;
+        // fps-governor state (live Resonators auto-quality), kept across ticks:
+        // `comp_ema` = smoothed per-tick resonator compute ms; `gov_density` =
+        // the governor's current density; `gov_cooldown` = ticks until the next
+        // allowed change. `perf` gives wall time for the measurement.
+        let perf = web_sys::window().and_then(|w| w.performance());
+        let mut comp_ema = 0.0f64;
+        let mut gov_density = 1.0f32;
+        let mut gov_cooldown = 0i32;
 
         loop {
             let p = js_sys::Promise::new(&mut |resolve, _| {
@@ -744,10 +758,13 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                         .resonator.viewport_range()
                         .get_untracked()
                         .map(|(lo, hi)| (lo as f32, hi as f32));
-                    // Honor the Adaptive density (100/50/25%) live: fewer
-                    // resonators computed while still emitting 513 rows. This is
-                    // the lever that makes Resonators usable at high sample rates.
-                    let density = state.resonator.fft_mode().get_untracked().bank_density();
+                    // Density lever (100/50/25%): fewer resonators, still 513
+                    // rows — what makes Resonators usable at high sample rates.
+                    // The fps governor (auto-quality) may dial density BELOW the
+                    // user's chosen density (treated as a ceiling) under load.
+                    let ceiling = state.resonator.fft_mode().get_untracked().bank_density();
+                    let auto = state.resonator.auto_quality().get_untracked();
+                    let density = if auto { gov_density.min(ceiling) } else { ceiling };
                     let key: ResoKey = (
                         sample_rate, fft_size, hop_size, bandwidth_hz.to_bits(),
                         alpha_mode as u8, q.to_bits(), layout as u8,
@@ -768,13 +785,37 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
                     let s = &mut reso.as_mut().unwrap().1;
                     let feed_start = last_processed_col * hop_size;
                     let feed_end = total_possible_cols * hop_size;
-                    if feed_end > feed_start && feed_end <= samples.len() {
+                    let cols = if feed_end > feed_start && feed_end <= samples.len() {
                         // first_col is ABSOLUTE (buffer-relative + col_base) so the
-                        // emitted time_offsets are monotonic across trims.
-                        s.push_hops(&samples[feed_start..feed_end], last_processed_col + col_base)
+                        // emitted time_offsets are monotonic across trims. Time the
+                        // compute to feed the fps governor.
+                        let t0 = perf.as_ref().map(|p| p.now());
+                        let c = s.push_hops(&samples[feed_start..feed_end], last_processed_col + col_base);
+                        if let (Some(p), Some(t0)) = (perf.as_ref(), t0) {
+                            let dt = p.now() - t0;
+                            comp_ema = if comp_ema <= 0.0 { dt } else { comp_ema * 0.8 + dt * 0.2 };
+                        }
+                        c
                     } else {
                         Vec::new()
+                    };
+                    // fps governor (auto mode): hysteresis + cooldown. Step density
+                    // down when the smoothed per-tick compute is heavy, back up
+                    // toward the ceiling when there's headroom. Density is part of
+                    // ResoKey, so a change rebuilds the bank next tick (cheap warm,
+                    // no flash).
+                    if auto {
+                        if gov_cooldown > 0 {
+                            gov_cooldown -= 1;
+                        } else if comp_ema > GOV_DOWN_MS && gov_density > 0.25 {
+                            gov_density = if gov_density > 0.5 { 0.5 } else { 0.25 };
+                            gov_cooldown = GOV_COOLDOWN_TICKS;
+                        } else if comp_ema < GOV_UP_MS && gov_density < ceiling {
+                            gov_density = if gov_density < 0.5 { 0.5 } else { 1.0 };
+                            gov_cooldown = GOV_COOLDOWN_TICKS;
+                        }
                     }
+                    cols
                 } else {
                     compute_stft_columns(
                         samples,

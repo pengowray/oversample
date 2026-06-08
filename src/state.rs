@@ -1493,6 +1493,11 @@ pub struct ResonatorState {
     pub hybrid_mode: ResonatorHybridMode,
     /// Bin-count mode (fixed or adaptive-per-LOD).
     pub fft_mode: ResonatorFftMode,
+    /// Auto-quality fps governor for the LIVE Resonators view: when on, the live
+    /// loop dials the bank density BELOW `fft_mode`'s density (treated as a
+    /// ceiling) to keep per-tick resonator compute in budget, and back up when
+    /// there's headroom. No effect on loaded files.
+    pub auto_quality: bool,
     /// Frequency-bin spacing (linear or log).
     pub layout: ResonatorLayout,
     /// Concentrate the bank's range on the visible viewport instead of 0..Nyquist.
@@ -2426,6 +2431,7 @@ impl AppState {
                 q: 200.0,
                 hybrid_mode: ResonatorHybridMode::Off,
                 fft_mode: ResonatorFftMode::Single(512),
+                auto_quality: false,
                 layout: ResonatorLayout::Linear,
                 viewport_bins: true,
                 viewport_range: None,
