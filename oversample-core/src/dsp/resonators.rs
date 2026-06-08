@@ -20,6 +20,7 @@
 //! - C++ reference: <https://github.com/alexandrefrancois/noFFT>
 //! - Rust reference (this crate): <https://github.com/jhartquist/resonators>
 
+use crate::dsp::fft::compute_stft_columns;
 use crate::types::SpectrogramColumn;
 use resonators::{ResonatorBank, ResonatorConfig, alpha_from_tau};
 
@@ -78,6 +79,44 @@ impl ResonatorAlphaMode {
 
     pub const ALL: &'static [ResonatorAlphaMode] = &[Self::ConstBandwidth, Self::ConstQ];
 }
+
+/// FFT-steered hybrid post-processing for the resonator view. Both modes are
+/// per-pixel combinations of spectrograms on the shared linear bin grid — no
+/// time-varying filter coefficients, no renderer changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ResonatorHybridMode {
+    /// Plain resonator output.
+    #[default]
+    Off,
+    /// Leakage cleanup: gate the resonator output by a clean FFT (≈1 where the
+    /// FFT has energy, ≈0 where it's dark) to suppress single-pole leakage
+    /// skirts while keeping the sharp line.
+    Clean,
+    /// Adaptive blend: an FFT "tonalness" weight blends a SHARP bank (good
+    /// frequency precision) with a FAST bank (good time precision) per pixel —
+    /// sharp lines on sustained tones, crisp edges on transients.
+    Adaptive,
+}
+
+impl ResonatorHybridMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Clean => "Clean (FFT-gated)",
+            Self::Adaptive => "Adaptive (sharp/fast)",
+        }
+    }
+
+    pub const ALL: &'static [ResonatorHybridMode] = &[Self::Off, Self::Clean, Self::Adaptive];
+}
+
+/// Soft FFT gate threshold as a fraction of the FFT's peak magnitude (≈ −30 dB).
+const HYBRID_GATE_FRAC: f32 = 0.03;
+/// Fast-bank bandwidth as a multiple of the sharp bank's, for `Adaptive`.
+const HYBRID_FAST_MULT: f32 = 20.0;
+/// Tonalness sensitivity for `Adaptive` (higher ⇒ switches to the fast bank on
+/// smaller temporal changes).
+const HYBRID_TONAL_K: f32 = 80.0;
 
 /// Lowest frequency for log-spaced layouts. Below this the display shows the
 /// lowest log bin's magnitude (no subsonic resonators).
@@ -161,6 +200,122 @@ pub fn compute_resonator_columns(
     }
 
     out
+}
+
+/// For each column in `a`, the index of the nearest column in `b` by *center
+/// time*. `a_shift`/`b_shift` (seconds) convert each stream's `time_offset` to a
+/// common center reference: an STFT `time_offset` is the window start, so pass
+/// +half-window; the resonator `time_offset` is end-of-hop, so pass 0. Both
+/// streams are time-ordered, so a single forward sweep suffices.
+fn align_idx(a: &[SpectrogramColumn], a_shift: f64, b: &[SpectrogramColumn], b_shift: f64) -> Vec<usize> {
+    if b.is_empty() {
+        return vec![0; a.len()];
+    }
+    let mut out = Vec::with_capacity(a.len());
+    let mut j = 0usize;
+    for c in a {
+        let t = c.time_offset + a_shift;
+        while j + 1 < b.len() && b[j + 1].time_offset + b_shift <= t {
+            j += 1;
+        }
+        let nearer_next = j + 1 < b.len()
+            && ((b[j + 1].time_offset + b_shift) - t).abs() < ((b[j].time_offset + b_shift) - t).abs();
+        out.push(if nearer_next { j + 1 } else { j });
+    }
+    out
+}
+
+/// Resonator columns with optional FFT-steered hybrid post-processing
+/// ([`ResonatorHybridMode`]). `Off` is exactly [`compute_resonator_columns`];
+/// `Clean` gates the resonator output by a same-grid FFT to suppress leakage;
+/// `Adaptive` blends a sharp and a fast bank by an FFT tonalness weight.
+///
+/// Extra cost over plain resonators: `Clean` adds one FFT pass; `Adaptive` adds
+/// a second resonator bank plus a short FFT.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_resonator_hybrid_columns(
+    samples: &[f32],
+    sample_rate: u32,
+    fft_size: usize,
+    hop_size: usize,
+    col_start: usize,
+    col_count: usize,
+    bandwidth_hz: f32,
+    alpha_mode: ResonatorAlphaMode,
+    q: f32,
+    layout: ResonatorLayout,
+    freq_range: Option<(f32, f32)>,
+    hybrid: ResonatorHybridMode,
+) -> Vec<SpectrogramColumn> {
+    match hybrid {
+        ResonatorHybridMode::Off => compute_resonator_columns(
+            samples, sample_rate, fft_size, hop_size, col_start, col_count,
+            bandwidth_hz, alpha_mode, q, layout, freq_range,
+        ),
+        ResonatorHybridMode::Clean => {
+            let mut cols = compute_resonator_columns(
+                samples, sample_rate, fft_size, hop_size, col_start, col_count,
+                bandwidth_hz, alpha_mode, q, layout, freq_range,
+            );
+            let fft = compute_stft_columns(samples, sample_rate, fft_size, hop_size, col_start, col_count);
+            if fft.is_empty() {
+                return cols;
+            }
+            let fmax = fft.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
+            let thresh = (HYBRID_GATE_FRAC * fmax).max(1e-9);
+            let half_win = fft_size as f64 / 2.0 / sample_rate as f64;
+            let map = align_idx(&cols, 0.0, &fft, half_win);
+            for (j, col) in cols.iter_mut().enumerate() {
+                let fc = &fft[map[j]].magnitudes;
+                let n = col.magnitudes.len().min(fc.len());
+                for b in 0..n {
+                    col.magnitudes[b] *= (fc[b] / thresh).clamp(0.0, 1.0);
+                }
+            }
+            cols
+        }
+        ResonatorHybridMode::Adaptive => {
+            // Sharp bank = the user's bandwidth (sharp/slow); fast bank = wider
+            // (fast/blurry). Adaptive defines its own tradeoff, so both banks use
+            // ConstBandwidth regardless of `alpha_mode`.
+            let sharp = compute_resonator_columns(
+                samples, sample_rate, fft_size, hop_size, col_start, col_count,
+                bandwidth_hz, ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range,
+            );
+            let fast_bw = (bandwidth_hz * HYBRID_FAST_MULT).clamp(200.0, 4000.0);
+            let fast = compute_resonator_columns(
+                samples, sample_rate, fft_size, hop_size, col_start, col_count,
+                fast_bw, ResonatorAlphaMode::ConstBandwidth, q, layout, freq_range,
+            );
+            // Short FFT for tight transient detection (good time resolution).
+            let tonal_fft = 256.min(fft_size).max(16);
+            let tonal = compute_stft_columns(samples, sample_rate, tonal_fft, hop_size, col_start, col_count);
+            if fast.is_empty() || tonal.is_empty() {
+                return sharp;
+            }
+            let tmax = tonal.iter().flat_map(|c| c.magnitudes.iter().copied()).fold(0.0f32, f32::max).max(1e-9);
+            let tonal_nb = tonal[0].magnitudes.len();
+            let half_win = tonal_fft as f64 / 2.0 / sample_rate as f64;
+            let tmap = align_idx(&sharp, 0.0, &tonal, half_win);
+            let fmap = align_idx(&sharp, 0.0, &fast, 0.0);
+            let mut cols = sharp;
+            for (j, col) in cols.iter_mut().enumerate() {
+                let fastc = &fast[fmap[j]].magnitudes;
+                let ti = tmap[j];
+                let tnow = &tonal[ti].magnitudes;
+                let tpre = &tonal[ti.saturating_sub(1)].magnitudes;
+                let n = col.magnitudes.len().min(fastc.len());
+                for b in 0..n {
+                    let freq = b as f64 * sample_rate as f64 / fft_size as f64;
+                    let tb = ((freq * tonal_fft as f64 / sample_rate as f64).round() as usize).min(tonal_nb - 1);
+                    let d = (tnow[tb] - tpre[tb]).abs() / tmax;
+                    let w = 1.0 / (1.0 + HYBRID_TONAL_K * d);
+                    col.magnitudes[b] = w * col.magnitudes[b] + (1.0 - w) * fastc[b];
+                }
+            }
+            cols
+        }
+    }
 }
 
 /// Shared resonator-bank setup (frequency layout, per-bin configs, log row-map,
@@ -605,6 +760,67 @@ mod tests {
             (peak as isize - expected).abs() <= 1,
             "ConstQ peak bin {peak} != expected {expected}"
         );
+    }
+
+    /// Clean (FFT-gated) hybrid must keep the ridge bin but cut off-ridge
+    /// leakage — the ported app path reproduces the harness leakage-cleanup win.
+    #[test]
+    fn hybrid_clean_cuts_leakage_keeps_peak() {
+        let sr = 192_000u32;
+        let (fft, hop) = (2048usize, 256usize);
+        let n = sr as usize / 5; // 0.2 s
+        let f = 40_000.0f32;
+        let s: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
+            .collect();
+        let total = n / hop;
+        let plain = compute_resonator_columns(
+            &s, sr, fft, hop, 0, total, 60.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None,
+        );
+        let clean = compute_resonator_hybrid_columns(
+            &s, sr, fft, hop, 0, total, 60.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None,
+            ResonatorHybridMode::Clean,
+        );
+        assert_eq!(plain.len(), clean.len());
+        let peak = |c: &[f32]| c.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i).unwrap();
+        let leak = |c: &[f32], pk: usize| {
+            let tot: f64 = c.iter().map(|&m| (m as f64).powi(2)).sum();
+            let near: f64 = c.iter().enumerate()
+                .filter(|(i, _)| (*i as isize - pk as isize).abs() <= 3)
+                .map(|(_, &m)| (m as f64).powi(2))
+                .sum();
+            if tot <= 0.0 { 1.0 } else { (tot - near) / tot }
+        };
+        let cp = &plain.last().unwrap().magnitudes;
+        let cc = &clean.last().unwrap().magnitudes;
+        let pk = peak(cp);
+        assert_eq!(pk, peak(cc), "Clean moved the ridge");
+        let (lp, lc) = (leak(cp, pk), leak(cc, pk));
+        assert!(lc < lp * 0.8, "Clean did not cut leakage: plain={lp:.3} clean={lc:.3}");
+    }
+
+    /// Adaptive blend must run and still localize a sustained tone (tonal ⇒
+    /// sharp bank dominates) to the right row.
+    #[test]
+    fn hybrid_adaptive_runs_and_localizes() {
+        let sr = 192_000u32;
+        let (fft, hop) = (2048usize, 256usize);
+        let n = sr as usize / 5;
+        let f = 40_000.0f32;
+        let s: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * f * i as f32 / sr as f32).sin())
+            .collect();
+        let total = n / hop;
+        let out = compute_resonator_hybrid_columns(
+            &s, sr, fft, hop, 0, total, 20.0, ResonatorAlphaMode::ConstBandwidth, 50.0, ResonatorLayout::Linear, None,
+            ResonatorHybridMode::Adaptive,
+        );
+        assert!(!out.is_empty());
+        let last = &out.last().unwrap().magnitudes;
+        assert_eq!(last.len(), fft / 2 + 1);
+        let pk = last.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i).unwrap();
+        let expected = (f * fft as f32 / sr as f32).round() as isize;
+        assert!((pk as isize - expected).abs() <= 2, "Adaptive peak {pk} != expected {expected}");
     }
 
     /// Reduced density must keep the full output row count (the live waterfall's

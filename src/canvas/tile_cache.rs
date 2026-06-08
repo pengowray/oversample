@@ -2169,7 +2169,7 @@ pub fn resonator_debug_stats(file_idx: usize, lod: u8, first_tile: usize, last_t
 /// The algorithm is stateful, so this reads extra pre-padding samples to let
 /// the resonator EMA converge before the tile's first column.
 pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::resonators::{compute_resonator_columns, warmup_samples};
+    use crate::dsp::resonators::{compute_resonator_hybrid_columns, warmup_samples};
 
     let key = TileKey { file_idx, lod, tile_idx };
     if RESONATOR_CACHE.with(|c| c.borrow().contains_key(&key)) { return; }
@@ -2191,6 +2191,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
     let bandwidth_hz = state.resonator.bandwidth_hz().get_untracked().max(1.0);
     let alpha_mode = state.resonator.alpha_mode().get_untracked();
     let q = state.resonator.q().get_untracked();
+    let hybrid_mode = state.resonator.hybrid_mode().get_untracked();
     let layout = state.resonator.layout().get_untracked();
     // Viewport-zoom mode: concentrate bins on the committed viewport range
     // (the debouncer in tile_scheduler updates this signal). `None` keeps
@@ -2258,7 +2259,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
         yield_to_browser().await;
         if !resonator_request_still_active(&key) { return; }
 
-        let cols = compute_resonator_columns(
+        let cols = compute_resonator_hybrid_columns(
             &samples,
             audio.sample_rate,
             reson_fft,
@@ -2270,6 +2271,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             q,
             layout,
             freq_range,
+            hybrid_mode,
         );
 
         RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));

@@ -476,6 +476,8 @@ pub use oversample_core::dsp::resonators::ResonatorLayout;
 // compute_resonator_columns; re-exported so UI code can reference it via
 // `crate::state::ResonatorAlphaMode`.
 pub use oversample_core::dsp::resonators::ResonatorAlphaMode;
+// FFT-steered hybrid post-processing (Off / Clean / Adaptive).
+pub use oversample_core::dsp::resonators::ResonatorHybridMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum RightSidebarTab {
@@ -1486,6 +1488,9 @@ pub struct ResonatorState {
     pub alpha_mode: ResonatorAlphaMode,
     /// Q for `ConstQ` mode (`bw_k = f_k / q`). Higher Q ⇒ sharper, slower bins.
     pub q: f32,
+    /// FFT-steered hybrid post-processing: Off, Clean (gate leakage), or
+    /// Adaptive (blend a sharp + fast bank by FFT tonalness). Tile path only.
+    pub hybrid_mode: ResonatorHybridMode,
     /// Bin-count mode (fixed or adaptive-per-LOD).
     pub fft_mode: ResonatorFftMode,
     /// Frequency-bin spacing (linear or log).
@@ -2419,6 +2424,7 @@ impl AppState {
                 bandwidth_hz: 20.0,
                 alpha_mode: ResonatorAlphaMode::ConstBandwidth,
                 q: 200.0,
+                hybrid_mode: ResonatorHybridMode::Off,
                 fft_mode: ResonatorFftMode::Single(512),
                 layout: ResonatorLayout::Linear,
                 viewport_bins: true,

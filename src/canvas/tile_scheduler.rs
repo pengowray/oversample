@@ -297,6 +297,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let _bw = state.resonator.bandwidth_hz().get();
         let _alpha = state.resonator.alpha_mode().get();
         let _q = state.resonator.q().get();
+        let _hybrid = state.resonator.hybrid_mode().get();
         let _mode = state.resonator.fft_mode().get();
         let _layout = state.resonator.layout().get();
         crate::canvas::tile_cache::clear_resonator_cache();

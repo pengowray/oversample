@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use crate::state::{
     AppState, ChromaColormap, ChromaRange, ChromaSource, DisplayFilterMode, FftMode, FileSettings,
     FlowColorScheme, GainMode, LayerPanel, MainView, MicStrategy,
-    PlayStartMode, PlaybackMode, ResonatorAlphaMode, ResonatorDensity, ResonatorFftMode, ResonatorLayout,
+    PlayStartMode, PlaybackMode, ResonatorAlphaMode, ResonatorDensity, ResonatorFftMode, ResonatorHybridMode, ResonatorLayout,
     SpectrogramDisplay, WaveformView, RESONATOR_BW_SLIDER_MAX, resonator_bw_to_slider,
     resonator_slider_to_bw,
 };
@@ -2027,6 +2027,34 @@ pub fn MainViewButton() -> impl IntoView {
                                 on:dblclick=move |_| state.resonator.q().set(200.0)
                             />
                         </div>
+                    </div>
+                    <div class="setting-row" style="padding: 4px 8px;">
+                        <span class="setting-label"
+                            title="FFT-steered hybrid (loaded files). Clean: gate the resonator with an FFT to remove its leakage skirts (crisp line, clean background). Adaptive: blend a sharp + fast bank by FFT tonalness — sharp on sustained tones, crisp on transients. Off: plain resonator.">
+                            "Hybrid"
+                        </span>
+                        <select
+                            class="setting-select"
+                            on:change=move |ev: web_sys::Event| {
+                                let target = ev.target().unwrap();
+                                let select: web_sys::HtmlSelectElement = target.unchecked_into();
+                                let m = match select.value().as_str() {
+                                    "clean" => ResonatorHybridMode::Clean,
+                                    "adaptive" => ResonatorHybridMode::Adaptive,
+                                    _ => ResonatorHybridMode::Off,
+                                };
+                                state.resonator.hybrid_mode().set(m);
+                            }
+                            prop:value=move || match state.resonator.hybrid_mode().get() {
+                                ResonatorHybridMode::Off => "off",
+                                ResonatorHybridMode::Clean => "clean",
+                                ResonatorHybridMode::Adaptive => "adaptive",
+                            }
+                        >
+                            <option value="off">"Off"</option>
+                            <option value="clean">"Clean (de-leak)"</option>
+                            <option value="adaptive">"Adaptive (sharp+fast)"</option>
+                        </select>
                     </div>
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
                         title="Concentrate all bins on the visible freq range for finer vertical zoom. Rebuilds ~0.5s after you stop zooming vertically.">

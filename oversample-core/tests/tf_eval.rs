@@ -475,6 +475,142 @@ fn render_reso_sched(sig: &Signal, fft_size: usize, hop: usize, sched: AlphaSche
 }
 
 // ---------------------------------------------------------------------------
+// Step-4 hybrid: FFT-steered combinations of spectrograms. All of these are
+// per-pixel math on a shared linear grid — NO time-varying filter coefficients
+// (so no Resonate "memory effect" risk) and NO renderer changes. The FFT is the
+// cheap "where/what is the energy" map that steers the resonator detail.
+// ---------------------------------------------------------------------------
+
+/// Sum two signals (truncated to the shorter) — e.g. a sustained tone + a click.
+fn mix(a: &Signal, b: &Signal) -> Signal {
+    let n = a.samples.len().min(b.samples.len());
+    let samples = (0..n).map(|i| a.samples[i] + b.samples[i]).collect();
+    Signal { samples, sr: a.sr, dur_s: a.dur_s }
+}
+
+/// For each target time, the index of the nearest column in `s` (both col_time
+/// arrays are monotonically increasing, so a single forward sweep suffices).
+fn nearest_cols(s: &Spectro, t_targets: &[f64]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(t_targets.len());
+    let mut j = 0usize;
+    for &t in t_targets {
+        while j + 1 < s.col_time.len() && s.col_time[j + 1] <= t {
+            j += 1;
+        }
+        let nearer_next = j + 1 < s.col_time.len()
+            && (s.col_time[j + 1] - t).abs() < (s.col_time[j] - t).abs();
+        out.push(if nearer_next { j + 1 } else { j });
+    }
+    out
+}
+
+/// Sample spectro `b` on `a`'s (time, frequency) grid — nearest column by time,
+/// nearest bin by frequency. Lets us combine spectrograms computed at different
+/// fft_size (e.g. a coarse-time gate FFT against a fine resonator bank).
+fn resample_to(a: &Spectro, b: &Spectro) -> Vec<Vec<f32>> {
+    let cmap = nearest_cols(b, &a.col_time);
+    (0..a.cols.len())
+        .map(|i| {
+            let bc = &b.cols[cmap[i]];
+            (0..a.n_bins)
+                .map(|bin| {
+                    let bb = (a.bin_hz(bin) * b.fft_size as f64 / b.sr as f64).round() as usize;
+                    bc[bb.min(b.n_bins - 1)]
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Element-wise fuse `b` into `a`'s grid via `op(a_val, b_val)`.
+fn fuse(a: &Spectro, b: &Spectro, op: impl Fn(f32, f32) -> f32) -> Spectro {
+    let bres = resample_to(a, b);
+    let cols: Vec<Vec<f32>> = a
+        .cols
+        .iter()
+        .zip(&bres)
+        .map(|(ac, bc)| ac.iter().zip(bc).map(|(&x, &y)| op(x, y)).collect())
+        .collect();
+    Spectro { cols, col_time: a.col_time.clone(), n_bins: a.n_bins, fft_size: a.fft_size, sr: a.sr }
+}
+
+/// Geometric mean — high only where BOTH agree, so it keeps the resonator's
+/// sharp ridge (FFT also has energy there) while pulling down its leakage skirts
+/// (FFT is dark there). Parameter-free.
+fn geomean(x: f32, y: f32) -> f32 {
+    (x.max(0.0) * y.max(0.0)).sqrt()
+}
+
+/// Per-pixel "tonalness" in [0,1] from an FFT spectro: a bin steady over time is
+/// tonal (→1, favour the sharp/slow bank); a bin that jumps is transient (→0,
+/// favour the fast bank). `k` scales sensitivity to change.
+fn tonalness(f: &Spectro, k: f64) -> Vec<Vec<f32>> {
+    let fmax = f.cols.iter().flatten().copied().fold(0.0f32, f32::max).max(1e-9) as f64;
+    (0..f.cols.len())
+        .map(|ci| {
+            let prev = ci.saturating_sub(1);
+            (0..f.n_bins)
+                .map(|b| {
+                    let d = (f.cols[ci][b] - f.cols[prev][b]).abs() as f64 / fmax;
+                    (1.0 / (1.0 + k * d)) as f32
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Adaptive hybrid: a short-FFT tonalness weight blends a SHARP bank (good
+/// frequency precision) with a FAST bank (good time precision) per pixel — one
+/// image with sharp lines on sustained tones AND crisp edges on transients,
+/// which neither single bank can do alone. The gate FFT is short (good time
+/// resolution) so it localizes transients tightly; its weights are upsampled to
+/// the bank's fine bin grid.
+fn adaptive_blend(sig: &Signal, fft_bank: usize, hop: usize, sharp: AlphaSched, fast: AlphaSched, k: f64) -> Spectro {
+    let s = render_reso_sched(sig, fft_bank, hop, sharp);
+    let fa = render_reso_sched(sig, fft_bank, hop, fast);
+    let fft_img = render_stft(sig, 256, hop); // short window ⇒ tight transient detection
+    let wgrid = Spectro {
+        cols: tonalness(&fft_img, k),
+        col_time: fft_img.col_time.clone(),
+        n_bins: fft_img.n_bins,
+        fft_size: fft_img.fft_size,
+        sr: fft_img.sr,
+    };
+    let w = resample_to(&s, &wgrid);
+    let faw = resample_to(&s, &fa);
+    let cols: Vec<Vec<f32>> = (0..s.cols.len())
+        .map(|i| (0..s.n_bins).map(|b| w[i][b] * s.cols[i][b] + (1.0 - w[i][b]) * faw[i][b]).collect())
+        .collect();
+    Spectro { cols, col_time: s.col_time.clone(), n_bins: s.n_bins, fft_size: s.fft_size, sr: s.sr }
+}
+
+/// Like `time_spread_ms` but isolates TRANSIENTS: subtract each bin's temporal
+/// minimum (the steady baseline, e.g. a sustained tone's tail) before measuring
+/// spread, so a click's time localization isn't diluted by a co-present tone.
+fn time_spread_transient_ms(s: &Spectro, band_lo_hz: f64, band_hi_hz: f64) -> f64 {
+    let blo = s.freq_to_bin(band_lo_hz).floor().max(0.0) as usize;
+    let bhi = (s.freq_to_bin(band_hi_hz).ceil() as usize).min(s.n_bins);
+    let mut base = vec![f32::INFINITY; s.n_bins];
+    for col in &s.cols {
+        for b in blo..bhi {
+            base[b] = base[b].min(col[b]);
+        }
+    }
+    let e: Vec<f64> = s
+        .cols
+        .iter()
+        .map(|col| (blo..bhi).map(|b| ((col[b] - base[b]).max(0.0) as f64).powi(2)).sum())
+        .collect();
+    let tot: f64 = e.iter().sum();
+    if tot <= 0.0 {
+        return f64::NAN;
+    }
+    let centroid: f64 = e.iter().zip(&s.col_time).map(|(&ee, &t)| ee * t).sum::<f64>() / tot;
+    let var: f64 = e.iter().zip(&s.col_time).map(|(&ee, &t)| ee * (t - centroid).powi(2)).sum::<f64>() / tot;
+    var.sqrt() * 1000.0
+}
+
+// ---------------------------------------------------------------------------
 // Image export (faithful grayscale via the app's dB colormap; 24-bit BMP so it
 // opens natively with no extra crate). Renders are for eyeballing the structure
 // the metrics summarize — top = high freq.
@@ -682,6 +818,55 @@ fn report() {
         println!("    {:<18} {:>9.2}", sched.label(), ts);
     }
 
+    // 6. HYBRID leakage cleanup — geometric-mean / FFT-gated fuse of the sharp
+    //    (narrow-bw) resonator with a clean short FFT: keep the resonator's
+    //    crisp swept line but suppress its heavy single-pole tails where the FFT
+    //    is dark. On the 20→90 kHz chirp (reso tracks crisply but leaks; a short
+    //    FFT is clean but blurry).
+    let fcg = 4096;
+    let chirp6 = linear_chirp(SR, 20_000.0, 90_000.0, dur, 0.5);
+    let r6 = render_reso_sched(&chirp6, fcg, HOP, AlphaSched::ConstBw(60.0));
+    let f6 = render_stft(&chirp6, 512, HOP);
+    let fmax6 = f6.cols.iter().flatten().copied().fold(0.0f32, f32::max).max(1e-9);
+    let gate_thresh = 0.03 * fmax6;
+    let fused_gm = fuse(&r6, &f6, geomean);
+    let fused_gate = fuse(&r6, &f6, move |r, fv| r * (fv / gate_thresh).clamp(0.0, 1.0));
+    println!("\n[6] Hybrid leakage cleanup (20→90 kHz chirp, bank grid {fcg})");
+    println!("    {:<24} {:>11} {:>11}", "method", "bw_3db_hz", "rms_bw_hz");
+    for (name, s) in [
+        ("FFT-512 (clean/blurry)", &f6),
+        ("Reso bw60 (crisp/leaky)", &r6),
+        ("Fused geomean", &fused_gm),
+        ("Fused FFT-gated", &fused_gate),
+    ] {
+        println!("    {:<24} {:>11.0} {:>11.0}", name, freq_bw3db_hz(s, t_lo, t_hi), freq_spread_hz(s, t_lo, t_hi));
+    }
+
+    // 7. HYBRID adaptive blend — mixed signal: a sustained 40 kHz tone PLUS a
+    //    50 kHz click at mid-time. The sharp bank nails the tone but smears the
+    //    click; the fast bank nails the click but blurs the tone; the FFT-
+    //    tonalness blend should get BOTH at once.
+    let tone7 = tone(SR, 40_000.0, dur, 0.5);
+    let click7 = gauss_burst(SR, 50_000.0, dur / 2.0, 0.0005, dur, 0.9);
+    let mixed7 = mix(&tone7, &click7);
+    let sharp7 = AlphaSched::ConstBw(40.0);
+    let fast7 = AlphaSched::ConstBw(1000.0);
+    let r_sharp7 = render_reso_sched(&mixed7, fcg, HOP, sharp7);
+    let r_fast7 = render_reso_sched(&mixed7, fcg, HOP, fast7);
+    let r_blend7 = adaptive_blend(&mixed7, fcg, HOP, sharp7, fast7, 80.0);
+    let tone_hi = (dur / 2.0 - 0.01).max(t_lo + 0.01); // tone-only window (before the click)
+    println!("\n[7] Hybrid adaptive blend (40 kHz tone + 50 kHz click, bank grid {fcg})");
+    println!("    {:<20} {:>15} {:>18}", "method", "tone bw_3db_hz", "click t_spread_ms");
+    for (name, s) in [
+        ("Sharp bank bw40", &r_sharp7),
+        ("Fast bank bw1000", &r_fast7),
+        ("Adaptive blend", &r_blend7),
+    ] {
+        let tone_bw = freq_bw3db_hz(s, t_lo, tone_hi);
+        let click_ts = time_spread_transient_ms(s, 47_000.0, 53_000.0);
+        println!("    {:<20} {:>15.0} {:>18.2}", name, tone_bw, click_ts);
+    }
+
     // Optional image export for eyeballing — set TF_EVAL_OUT=<dir>.
     if let Ok(dir) = std::env::var("TF_EVAL_OUT") {
         let rdir = format!("{dir}/renders");
@@ -704,6 +889,17 @@ fn report() {
         for sched in scheds {
             let rgb = spectro_to_canvas(&render_reso_sched(&mt, fine, HOP, sched), cw, ch, fmax);
             let _ = write_bmp(Path::new(&format!("{rdir}/multitone__{}.bmp", slug(&sched.label()))), cw, ch, &rgb);
+        }
+        // Step-4 hybrid visuals: chirp leakage cleanup + mixed-signal blend.
+        for (name, s) in [
+            ("hybrid_chirp__reso_bw60", &r6),
+            ("hybrid_chirp__fused_gate", &fused_gate),
+            ("hybrid_mixed__sharp", &r_sharp7),
+            ("hybrid_mixed__fast", &r_fast7),
+            ("hybrid_mixed__blend", &r_blend7),
+        ] {
+            let rgb = spectro_to_canvas(s, cw, ch, fmax);
+            let _ = write_bmp(Path::new(&format!("{rdir}/{name}.bmp")), cw, ch, &rgb);
         }
         println!("\nWrote renders to {rdir}");
     }
@@ -779,4 +975,28 @@ fn metrics_are_finite() {
         assert!(freq_spread_hz(&m.render(&t, HOP), lo, hi).is_finite());
         assert!(time_spread_ms(&m.render(&b, HOP), 30_000.0, 50_000.0).is_finite());
     }
+}
+
+#[test]
+fn hybrid_functions_run() {
+    // Guards the step-4 hybrid wiring (cross-grid fuse + adaptive blend) and
+    // metric finiteness — quality is judged in the report, not asserted here.
+    let dur = 0.12;
+    let fcg = 2048;
+    let tone = tone(SR, 40_000.0, dur, 0.5);
+    let click = gauss_burst(SR, 50_000.0, dur / 2.0, 0.0005, dur, 0.9);
+    let mixed = mix(&tone, &click);
+
+    let r = render_reso_sched(&mixed, fcg, HOP, AlphaSched::ConstBw(60.0));
+    let f = render_stft(&mixed, 512, HOP); // different grid ⇒ exercises resample
+    let fused = fuse(&r, &f, geomean);
+    assert_eq!(fused.n_bins, r.n_bins);
+    assert_eq!(fused.cols.len(), r.cols.len());
+
+    let blend = adaptive_blend(&mixed, fcg, HOP, AlphaSched::ConstBw(40.0), AlphaSched::ConstBw(1000.0), 80.0);
+    assert_eq!(blend.n_bins, r.n_bins);
+    let (lo, _) = eval_window(dur);
+    let tone_hi = (dur / 2.0 - 0.01).max(lo + 0.01);
+    assert!(freq_bw3db_hz(&blend, lo, tone_hi).is_finite());
+    assert!(time_spread_transient_ms(&blend, 47_000.0, 53_000.0).is_finite());
 }
