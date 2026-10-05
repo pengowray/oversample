@@ -13,7 +13,9 @@
 //!    against a committed snapshot (catches subtle numeric drift).
 //!
 //! The golden snapshot is regenerable: delete
-//! `tests/golden/decode_corpus.snapshot` or run with `UPDATE_GOLDEN=1`.
+//! `tests/golden/decode_corpus.<os>.snapshot` or run with `UPDATE_GOLDEN=1`.
+//! There is one snapshot per OS: lossy decodes differ in the last bit
+//! between platforms (see `golden_snapshot_stable`).
 //!
 //! Fixtures come from the `bat-demo-sounds` repo, expected as a sibling of the
 //! batchi checkout at `../batchi-extras/bat-demo-sounds`. If it is not present,
@@ -223,7 +225,14 @@ fn golden_snapshot_stable() {
     lines.sort();
     let actual = lines.join("\n") + "\n";
 
-    let snap = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/decode_corpus.snapshot");
+    // One snapshot per OS. The MP3 and AAC decoders build their tables with
+    // sin/cos/tan/powf, which come from the platform's math library (glibc,
+    // the Windows CRT, ...) and can differ in the last bit, so lossy decodes
+    // are not bit-identical across platforms. A missing snapshot is written.
+    let snap = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "tests/golden/decode_corpus.{}.snapshot",
+        std::env::consts::OS
+    ));
     let regen = std::env::var_os("UPDATE_GOLDEN").is_some();
     if regen || !snap.exists() {
         std::fs::create_dir_all(snap.parent().unwrap()).unwrap();
