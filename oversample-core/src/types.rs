@@ -27,6 +27,8 @@ pub struct WavDetails {
     pub extensible: bool,
     /// The container is RF64 (64-bit sizes in a `ds64` chunk).
     pub rf64: bool,
+    /// The audio is in a `wavl` list (data and silence chunks), 1991 spec.
+    pub wave_list: bool,
     /// Speaker positions from an extensible header, when non-zero.
     pub channel_mask: Option<u32>,
     pub recorder_block: Option<RecorderBlock>,

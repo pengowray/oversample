@@ -12,7 +12,7 @@
 
 use oversample_core::audio::loader::{load_audio, parse_wav_header_with_file_size};
 use oversample_core::audio::wav::{
-    data_pad_len, decode_pcm, header_bytes, parse_wav_header, SampleEncoding, WavWriteFormat,
+    data_pad_len, decode_segments, header_bytes, parse_wav_header, SampleEncoding, WavWriteFormat,
     WRITE_HEADER_LEN,
 };
 use std::path::{Path, PathBuf};
@@ -68,7 +68,7 @@ const READABLE: &[(&str, Expect)] = &[
         "ieee-float64-mono-44100.wav",
         ok(44100, 1, 11025, F64, None),
     ),
-    ("multiple-data-chunks-pcm16.wav", ok(8000, 1, 4, I16, None)),
+    ("multiple-data-chunks-pcm16.wav", ok(8000, 1, 8, I16, None)),
     ("odd-final-data-no-pad-pcm-u8.wav", ok(8000, 1, 3, U8, None)),
     ("pcm-12bit-container16.wav", ok(11025, 1, 16, I16, Some(12))),
     ("pcm-s16le-stereo-44100.wav", ok(44100, 2, 11025, I16, None)),
@@ -127,8 +127,7 @@ fn check_both_paths(name: &str, bytes: &[u8], e: &Expect) -> Vec<f32> {
     assert_eq!(Some(h.data_offset), audio.metadata.data_offset, "{name}");
     assert_eq!(Some(h.data_size), audio.metadata.data_size, "{name}");
 
-    let start = h.data_offset as usize;
-    let streamed = decode_pcm(&bytes[start..start + h.data_size as usize], h.encoding);
+    let streamed = decode_segments(bytes, &h);
     let in_memory: Vec<f32> = match &audio
         .source
         .as_any()
@@ -459,4 +458,70 @@ fn recording_headers_are_located_before_sizes_are_filled_in() {
     assert_eq!(old.len(), 44);
     old.extend_from_slice(&[1, 2, 3]);
     assert_eq!(locate_samples(&old), Some((fmt, 44)));
+}
+
+/// A wave list (1991 spec): `LIST('wavl')` holding `data` and `slnt` chunks.
+fn wave_list_file(parts: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
+    fn chunk(id: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut c = id.to_vec();
+        c.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        c.extend_from_slice(body);
+        if body.len() % 2 == 1 {
+            c.push(0);
+        }
+        c
+    }
+    let mut fmt = vec![1, 0, 1, 0];
+    fmt.extend_from_slice(&8000u32.to_le_bytes());
+    fmt.extend_from_slice(&16000u32.to_le_bytes());
+    fmt.extend_from_slice(&[2, 0, 16, 0]);
+    let mut list = b"wavl".to_vec();
+    for (id, body) in parts {
+        list.extend(chunk(*id, body));
+    }
+    let mut body = b"WAVE".to_vec();
+    body.extend(chunk(b"fmt ", &fmt));
+    body.extend(chunk(b"LIST", &list));
+    let mut f = b"RIFF".to_vec();
+    f.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    f.extend(body);
+    f
+}
+
+fn i16s(v: &[i16]) -> Vec<u8> {
+    v.iter().flat_map(|s| s.to_le_bytes()).collect()
+}
+
+#[test]
+fn wave_list_plays_data_and_silence_in_order() {
+    let f = wave_list_file(&[
+        (b"data", i16s(&[1, 2, 3, 4])),
+        (b"slnt", 3u32.to_le_bytes().to_vec()),
+        (b"data", i16s(&[5, 6, 7, 8])),
+    ]);
+    let samples = check_both_paths("wavl", &f, &ok(8000, 1, 11, I16, None));
+    let as_i16: Vec<i16> = samples.iter().map(|s| (s * 32768.0) as i16).collect();
+    assert_eq!(as_i16, [1, 2, 3, 4, 0, 0, 0, 5, 6, 7, 8]);
+    let h = parse_wav_header(&f).unwrap();
+    assert!(h.details.wave_list);
+    assert_eq!(h.segments.len(), 3);
+    assert_eq!(h.details.notes.len(), 1, "{:?}", h.details.notes);
+    assert!(!h.details.notes[0].warning);
+}
+
+#[test]
+fn single_chunk_wave_list_reads_like_a_plain_file() {
+    let f = wave_list_file(&[(b"data", i16s(&[9, 8, 7]))]);
+    check_both_paths("wavl one chunk", &f, &ok(8000, 1, 3, I16, None));
+}
+
+#[test]
+fn several_data_chunks_play_in_file_order() {
+    let bytes = fixture("multiple-data-chunks-pcm16.wav");
+    let h = parse_wav_header(&bytes).unwrap();
+    assert_eq!(h.segments.len(), 2);
+    assert_eq!(h.data_size, 8, "data_size covers the first data chunk only");
+    let samples = decode_segments(&bytes, &h);
+    let as_i16: Vec<i16> = samples.iter().map(|s| (s * 32768.0) as i16).collect();
+    assert_eq!(as_i16, [0, 1, 2, 3, 4, 5, 6, 7]);
 }

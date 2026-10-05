@@ -565,9 +565,7 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
 
 fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
     let header = parse_wav_header(bytes)?;
-    let start = header.data_offset as usize;
-    let end = start + header.data_size as usize;
-    let all_samples = super::wav::decode_pcm(&bytes[start..end], header.encoding);
+    let all_samples = super::wav::decode_segments(bytes, &header);
     let guano = header.guano.clone().or_else(|| parse_guano(bytes));
     let channels = header.channels as u32;
     let sample_rate = header.sample_rate;

@@ -263,6 +263,11 @@ pub(super) async fn try_streaming_wav(
     }
 
     let header = parse_wav_header_with_file_size(&header_bytes, Some(file.size() as u64))?;
+    // Streaming reads one contiguous run of samples. Files with several data
+    // chunks or a wave list are rare and small: load them in memory.
+    if header.segments.len() > 1 || header.details.wave_list {
+        return Err("audio is split across chunks; loading in memory".into());
+    }
 
     // Check if decoded size warrants streaming
     let decoded_bytes = header.total_frames * header.channels as u64 * 4; // f32 per sample

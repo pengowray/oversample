@@ -42,6 +42,15 @@ impl SampleEncoding {
     }
 }
 
+/// One stretch of the audio, in play order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Segment {
+    /// Samples at a byte range of the file (a whole number of frames).
+    Bytes { offset: u64, size: u64 },
+    /// Frames of silence: a `slnt` chunk in a `wavl` list.
+    Silence { frames: u64 },
+}
+
 /// Parsed WAV header: enough to stream from disk without loading all samples.
 #[derive(Clone, Debug)]
 pub struct WavHeader {
@@ -56,8 +65,14 @@ pub struct WavHeader {
     pub block_align: u16,
     /// Byte offset of the first audio sample within the file.
     pub data_offset: u64,
-    /// Byte length of the audio samples, a whole number of frames.
+    /// Byte length of the samples in the first data chunk, a whole number of
+    /// frames. File identity hashes this region.
     pub data_size: u64,
+    /// All the audio in play order. One `Bytes` segment (`data_offset`,
+    /// `data_size`) for nearly every file; more when the file has several
+    /// `data` chunks or a `wavl` list.
+    pub segments: Vec<Segment>,
+    /// Frames in all segments.
     pub total_frames: u64,
     pub guano: Option<GuanoMetadata>,
     /// Cue-point markers from `cue ` + `LIST`/`adtl` chunks, if present.
@@ -101,7 +116,14 @@ pub fn parse_wav_header_with_file_size(
     let mut notes = Vec::new();
     let mut fmt: Option<Fmt> = None;
     let mut data: Option<DataChunk> = None;
-    let mut extra_data_chunks = 0u32;
+    // All audio in play order. The first `data` chunk's entry is filled in
+    // from `data` after the size checks below.
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut first_segment = 0usize;
+    let mut data_chunks = 0u32;
+    let mut silence_chunks = 0u32;
+    let mut silence_frames = 0u64;
+    let mut wave_list = false;
     let mut ds64_data_size: Option<u64> = None;
     let mut guano: Option<GuanoMetadata> = None;
     let mut cue_points: Vec<(u32, u64)> = Vec::new();
@@ -157,13 +179,59 @@ pub fn parse_wav_header_with_file_size(
                     chunk.recorder_block = Some(block);
                 }
                 data = Some(chunk);
+                data_chunks += 1;
+                first_segment = segments.len();
+                segments.push(Segment::Bytes { offset: 0, size: 0 });
                 if body_start + size > len {
                     // The samples run past the bytes we were given: a header
                     // read, or a file cut short. Nothing more to walk.
                     break;
                 }
             }
-            b"data" => extra_data_chunks += 1,
+            b"data" => {
+                data_chunks += 1;
+                segments.push(Segment::Bytes {
+                    offset: body_start,
+                    size,
+                });
+            }
+            // A wave list (1991 RIFF spec): `data` chunks with `slnt` chunks
+            // of silence between them.
+            b"LIST" if body.len() >= 4 && &body[0..4] == b"wavl" => {
+                wave_list = true;
+                for c in riff_chunks(body, 4) {
+                    let offset = body_start + c.body_offset;
+                    match c.id {
+                        b"data" => {
+                            data_chunks += 1;
+                            if data.is_none() {
+                                data = Some(DataChunk {
+                                    audio_offset: offset,
+                                    audio_size: c.size,
+                                    size_field: c.size as u32,
+                                    recorder_block: None,
+                                });
+                                first_segment = segments.len();
+                            }
+                            segments.push(Segment::Bytes {
+                                offset,
+                                size: c.size,
+                            });
+                        }
+                        b"slnt" if c.body.len() >= 4 => {
+                            // Up to 2^32 frames is allowed; more than a minute
+                            // of silence at once is a corrupt chunk, and would
+                            // be decoded into memory as zeros.
+                            let max = fmt.as_ref().map_or(0, |f| f.sample_rate as u64 * 60);
+                            let frames = (u32_at(c.body, 0) as u64).min(max);
+                            silence_chunks += 1;
+                            silence_frames += frames;
+                            segments.push(Segment::Silence { frames });
+                        }
+                        _ => {}
+                    }
+                }
+            }
             b"guan" if fits => guano = guano::parse_guano_chunk(body),
             b"cue " if fits && body.len() >= 4 => parse_cue(body, &mut cue_points),
             b"LIST" if fits && body.len() >= 4 && &body[0..4] == b"adtl" => {
@@ -185,12 +253,19 @@ pub fn parse_wav_header_with_file_size(
     let encoding = fmt.encoding;
     let block_align = fmt.block_align as u64;
 
-    if extra_data_chunks > 0 {
-        notes.push(msg::extra_data_chunks(extra_data_chunks));
+    if wave_list {
+        notes.push(msg::wave_list(
+            data_chunks,
+            silence_chunks,
+            silence_frames as f64 / fmt.sample_rate.max(1) as f64,
+        ));
+    } else if data_chunks > 1 {
+        notes.push(msg::data_chunks(data_chunks));
     }
 
+    let single = segments.len() == 1;
     let mut cut_short = false;
-    if file_size.is_some() {
+    if file_size.is_some() && single {
         let available = file_len.saturating_sub(data.audio_offset);
         let audio_end = data.audio_offset + data.audio_size;
         // A size slot of 0xFFFFFFFF in plain RIFF, or a size much smaller
@@ -211,7 +286,28 @@ pub fn parse_wav_header_with_file_size(
             data.audio_size = available;
             cut_short = true;
         }
-
+    }
+    segments[first_segment] = Segment::Bytes {
+        offset: data.audio_offset,
+        size: data.audio_size,
+    };
+    if file_size.is_some() && !single {
+        // Several segments: no guessing at wrapped sizes, but clip any that
+        // run past the end of the file.
+        for seg in &mut segments {
+            if let Segment::Bytes { offset, size } = seg {
+                let available = file_len.saturating_sub(*offset);
+                if *size > available {
+                    if !cut_short {
+                        notes.push(msg::data_cut_short(*size, available));
+                    }
+                    *size = available;
+                    cut_short = true;
+                }
+            }
+        }
+    }
+    if file_size.is_some() {
         // A file cut short has a RIFF size past its end too; one note covers it.
         if !rf64
             && !cut_short
@@ -223,8 +319,22 @@ pub fn parse_wav_header_with_file_size(
         }
     }
 
-    let data_size = data.audio_size / block_align * block_align;
-    let total_frames = data_size / block_align;
+    let mut total_frames = 0u64;
+    for seg in &mut segments {
+        match seg {
+            Segment::Bytes { size, .. } => {
+                *size = *size / block_align * block_align;
+                total_frames += *size / block_align;
+            }
+            Segment::Silence { frames } => total_frames += *frames,
+        }
+    }
+    let Segment::Bytes {
+        size: data_size, ..
+    } = segments[first_segment]
+    else {
+        unreachable!("the first data segment is Bytes")
+    };
 
     let wav_markers: Vec<WavMarker> = cue_points
         .iter()
@@ -251,6 +361,7 @@ pub fn parse_wav_header_with_file_size(
         block_align: fmt.block_align,
         data_offset: data.audio_offset,
         data_size,
+        segments,
         total_frames,
         guano,
         wav_markers,
@@ -258,6 +369,7 @@ pub fn parse_wav_header_with_file_size(
             valid_bits: fmt.valid_bits,
             extensible: fmt.extensible,
             rf64,
+            wave_list,
             channel_mask: fmt.channel_mask,
             recorder_block: data.recorder_block,
             notes,
@@ -568,6 +680,28 @@ pub fn decode_pcm(bytes: &[u8], encoding: SampleEncoding) -> Vec<f32> {
     }
 }
 
+/// Decode every segment of a whole file in play order, as interleaved f32,
+/// with zeros for silence.
+pub fn decode_segments(bytes: &[u8], header: &WavHeader) -> Vec<f32> {
+    let channels = header.channels as usize;
+    let mut out = Vec::with_capacity(header.total_frames as usize * channels);
+    for seg in &header.segments {
+        match *seg {
+            Segment::Bytes { offset, size } => {
+                let start = offset as usize;
+                out.extend(decode_pcm(
+                    &bytes[start..start + size as usize],
+                    header.encoding,
+                ));
+            }
+            Segment::Silence { frames } => {
+                out.resize(out.len() + frames as usize * channels, 0.0);
+            }
+        }
+    }
+    out
+}
+
 // ─── Writing ────────────────────────────────────────────────────────────────
 
 /// Sample format of a WAV to write. Written as a plain 16-byte `fmt ` chunk
@@ -793,14 +927,50 @@ pub mod msg {
         }
     }
 
-    pub fn extra_data_chunks(n: u32) -> WavNote {
-        warning(if n == 1 {
-            "This file has 1 extra data chunk. A WAV file normally has one data chunk, the section that contains the audio. Oversample reads only the first data chunk, so any audio in the extra chunk is left out.".to_string()
+    pub fn data_chunks(n: u32) -> WavNote {
+        WavNote {
+            text: format!(
+                "This file has {n} data chunks, the sections that contain the audio. Oversample plays all {n} data chunks in file order, as one continuous recording."
+            ),
+            warning: false,
+            detail: Some(
+                "Other programs, including ffmpeg and programs built on it, may play only the first data chunk. In those programs, the recording is shorter.".into(),
+            ),
+        }
+    }
+
+    pub fn wave_list(data: u32, silence: u32, silence_secs: f64) -> WavNote {
+        let data_text = if data == 1 {
+            "1 data chunk".to_string()
         } else {
-            format!(
-                "This file has {n} extra data chunks. A WAV file normally has one data chunk, the section that contains the audio. Oversample reads only the first data chunk, so any audio in the extra chunks is left out."
-            )
-        })
+            format!("{data} data chunks")
+        };
+        let secs = if silence_secs > 0.0 && silence_secs < 0.005 {
+            "under 0.01".to_string()
+        } else {
+            format!("{silence_secs:.2}")
+        };
+        let silence_text = if silence == 1 {
+            format!("1 silence chunk ({secs} seconds of silence)")
+        } else {
+            format!("{silence} silence chunks ({secs} seconds of silence)")
+        };
+        let text = match (data, silence) {
+            (1, 0) => "This file's audio is stored in a wave list, a rarely used part of the WAV format.".to_string(),
+            (_, 0) => format!(
+                "This file has {data_text}, stored in a wave list. Oversample plays all {data_text} in file order, as one recording."
+            ),
+            _ => format!(
+                "This file has {data_text} and {silence_text}, stored in a wave list. Oversample plays all the chunks in file order, as one recording."
+            ),
+        };
+        WavNote {
+            text,
+            warning: false,
+            detail: Some(
+                "A wave list is a rarely used part of the original 1991 WAV format. Other programs may not open this file. ffmpeg can't open files with a wave list.".into(),
+            ),
+        }
     }
 
     pub fn data_size_stretched(declared: u64, available: u64) -> WavNote {
