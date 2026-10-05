@@ -535,27 +535,6 @@ pub fn detect(
     }
 }
 
-/// Invert (biquad ∘ HPF) on a single window. Input `y` is the firmware's
-/// USB Audio output scaled to int16 units; output is the recovered 12-bit
-/// ADC value `v` (should be integer in [0, 4095] if the source is real
-/// pipistrelle firmware).
-///
-/// Algorithm:
-///
-///  Inverse biquad — solve `iy = b0*ix + b1*ix1 - b1*iy1 + b2*ix2 - a2*iy2`
-///  for `ix[n]` given the firmware-output sequence `iy[n]`:
-///
-///     ix[n] = (iy[n] + b1*iy[n-1] + a2*iy[n-2] - b1*ix[n-1] - b2*ix[n-2]) / b0
-///
-///  This inverse is stable because the biquad's numerator zeros lie inside
-///  the unit circle for all five presets.
-///
-///  Inverse HPF — the forward HPF is `out = ((v-2048)<<16 - d) >> 12` with
-///  `d[n+1] = d[n] + out << 4` (in firmware units). Recovering `v` is then
-///  a simple integrator on `ix`:
-///
-///     d[n+1] = d[n] + 256 * ix[n]
-///     v[n]   = (ix[n] * 4096 + d[n]) / 65536 + 2048
 /// Forward filter (matches the firmware's `HPF + biquad` in float, without
 /// the integer truncations). Used by `detect` to round-trip recovered ADC
 /// values and check fit. `v` is a 12-bit ADC stream (integer in [0, 4095]);
@@ -585,6 +564,31 @@ pub fn forward_filter_chain(v: &[i32], c: &PipistrelleCoeffs) -> Vec<f64> {
     iy_seq
 }
 
+/// Invert (biquad ∘ HPF) on a single window. Input `y` is the firmware's
+/// USB Audio output scaled to int16 units; output is the recovered 12-bit
+/// ADC value `v` (should be integer in [0, 4095] if the source is real
+/// pipistrelle firmware).
+///
+/// Algorithm:
+///
+///  Inverse biquad — solve `iy = b0*ix + b1*ix1 - b1*iy1 + b2*ix2 - a2*iy2`
+///  for `ix[n]` given the firmware-output sequence `iy[n]`:
+///
+/// ```text
+/// ix[n] = (iy[n] + b1*iy[n-1] + a2*iy[n-2] - b1*ix[n-1] - b2*ix[n-2]) / b0
+/// ```
+///
+///  This inverse is stable because the biquad's numerator zeros lie inside
+///  the unit circle for all five presets.
+///
+///  Inverse HPF — the forward HPF is `out = ((v-2048)<<16 - d) >> 12` with
+///  `d[n+1] = d[n] + out << 4` (in firmware units). Recovering `v` is then
+///  a simple integrator on `ix`:
+///
+/// ```text
+/// d[n+1] = d[n] + 256 * ix[n]
+/// v[n]   = (ix[n] * 4096 + d[n]) / 65536 + 2048
+/// ```
 fn inverse_filter_chain(y: &[f64], c: &PipistrelleCoeffs) -> Vec<f64> {
     let n = y.len();
     let mut ix_prev2 = 0.0f64;
