@@ -524,8 +524,8 @@ fn recover_one(
     let wav_name = part_name.trim_end_matches(".part").to_string();
     let meta_path = rec_dir.join(format!("{}.meta.json", wav_name));
 
-    // Find the format and where the samples start. No header, or no
-    // samples after it = nothing useful. Delete and move on.
+    // Find the format and where the samples start. A file no bigger than a
+    // header holds nothing useful: delete it and move on.
     let header = {
         use std::io::Read;
         let mut buf = Vec::new();
@@ -534,8 +534,16 @@ fn recover_one(
     };
     let located = wavfmt::locate_samples(&header).filter(|&(_, offset)| file_size > offset);
     let Some((format, data_offset)) = located else {
-        let _ = std::fs::remove_file(part_path);
-        let _ = std::fs::remove_file(&meta_path);
+        if file_size <= wavfmt::WRITE_HEADER_LEN as u64 {
+            let _ = std::fs::remove_file(part_path);
+            let _ = std::fs::remove_file(&meta_path);
+        } else {
+            // Samples may be there behind a damaged header: keep the files.
+            eprintln!(
+                "recovery: {} has no readable WAV header; left in place",
+                part_path.display()
+            );
+        }
         return Ok(None);
     };
 
