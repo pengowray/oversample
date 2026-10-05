@@ -18,7 +18,7 @@ fn main() {
     );
     if let Some(wav) = &meta.wav {
         for note in &wav.notes {
-            println!("  note: {note}");
+            println!("  note: {}", note.text);
         }
     }
 

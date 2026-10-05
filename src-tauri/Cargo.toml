@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.5.56"
+version = "0.5.57"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -13,7 +13,6 @@ tauri = { version = "2", features = [] }
 serde = { version = "1.0.222", features = ["derive"] }
 serde_json = "1"
 cpal = "0.17"
-hound = "3.5"
 claxon = "0.4"
 lewton = "0.10"
 symphonia = { version = "0.6", default-features = false, features = ["mp3", "isomp4", "aac", "alac", "all-meta"] }

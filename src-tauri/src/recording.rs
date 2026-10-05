@@ -2,7 +2,6 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 pub use oversample_ipc::mic::{DeviceInfo, MicInfo, MicStatus, RecordingResult, SampleRateRange};
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -805,24 +804,9 @@ fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
 }
 
 pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
+    use oversample_core::audio::wav::{header_bytes, WavWriteFormat};
     let out_format = output_format(buffer);
 
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: buffer.sample_rate,
-        bits_per_sample: out_format.bits_per_sample(),
-        sample_format: if out_format.is_float() {
-            hound::SampleFormat::Float
-        } else {
-            hound::SampleFormat::Int
-        },
-    };
-
-    let mut cursor = Cursor::new(Vec::new());
-    let mut writer =
-        hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV writer error: {}", e))?;
-
-    let werr = |e: hound::Error| format!("WAV write error: {}", e);
     // For a target depth that doesn't match the 16-bit WAV size (e.g. a forced or
     // detected 12-bit), zero the surplus low bits so the file is honestly N-bit
     // (12-bit zero-padded). No-op (mask = all ones) for native 16-bit output.
@@ -831,36 +815,36 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
         (NativeSampleFormat::I16, Some(b)) if b < 16 => !((1i16 << (16 - b)) - 1),
         _ => -1,
     };
-    match buffer.format {
-        NativeSampleFormat::I16 => {
-            for &s in &buffer.samples_i16 {
-                writer.write_sample(s & mask16).map_err(werr)?;
-            }
-        }
+    let data: Vec<u8> = match buffer.format {
+        NativeSampleFormat::I16 => buffer
+            .samples_i16
+            .iter()
+            .flat_map(|&s| (s & mask16).to_le_bytes())
+            .collect(),
         // i32 container source: write at the (possibly down-converted) out depth.
         // The shifts drop only the always-zero low bits, so this is lossless for a
         // device that genuinely delivers `out_format` bits.
-        NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
-            for &s in &buffer.samples_i32 {
-                match out_format {
-                    NativeSampleFormat::I16 => writer.write_sample(((s >> 16) as i16) & mask16),
-                    NativeSampleFormat::I24 => writer.write_sample(s >> 8),
-                    _ => writer.write_sample(s),
-                }
-                .map_err(werr)?;
-            }
-        }
-        NativeSampleFormat::F32 => {
-            for &s in &buffer.samples_f32 {
-                writer.write_sample(s).map_err(werr)?;
-            }
-        }
-    }
+        NativeSampleFormat::I24 | NativeSampleFormat::I32 => match out_format {
+            NativeSampleFormat::I16 => buffer
+                .samples_i32
+                .iter()
+                .flat_map(|&s| (((s >> 16) as i16) & mask16).to_le_bytes())
+                .collect(),
+            NativeSampleFormat::I24 => crate::recovery::encode_samples_i24(&buffer.samples_i32),
+            _ => crate::recovery::encode_samples_i32(&buffer.samples_i32),
+        },
+        NativeSampleFormat::F32 => crate::recovery::encode_samples_f32(&buffer.samples_f32),
+    };
 
-    writer
-        .finalize()
-        .map_err(|e| format!("WAV finalize error: {}", e))?;
-    Ok(cursor.into_inner())
+    let format = WavWriteFormat {
+        sample_rate: buffer.sample_rate,
+        channels: 1,
+        bits_per_sample: out_format.bits_per_sample(),
+        is_float: out_format.is_float(),
+    };
+    let mut wav = header_bytes(&format, data.len() as u64, 0);
+    wav.extend_from_slice(&data);
+    Ok(wav)
 }
 
 /// Optional GPS location for GUANO metadata.

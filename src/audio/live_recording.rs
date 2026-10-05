@@ -1510,7 +1510,7 @@ fn persist_and_identify(
         filename.clone(),
         exact_file_size,
         wav_bytes,
-        Some(44),
+        Some(crate::audio::wav::WRITE_HEADER_LEN as u64),
         Some(audio_data_size),
         None,
     );
@@ -1601,7 +1601,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         let fsize = file_size.unwrap_or(0) as u64;
         let live_idx_for_async = live_idx;
         match uri {
-            Some(uri) if fsize > 44 => {
+            Some(uri) if fsize > crate::audio::wav::WRITE_HEADER_LEN as u64 => {
                 let handle = if uri.starts_with("content://") {
                     crate::audio::streaming_source::FileHandle::MediaStoreUri(uri)
                 } else {
@@ -1786,7 +1786,7 @@ async fn finalize_in_memory_recording(
             bits_per_sample,
             is_float,
             guano: Some(meta.guano),
-            data_offset: Some(44),
+            data_offset: Some(crate::audio::wav::WRITE_HEADER_LEN as u64),
             data_size: Some(audio_data_size),
             zc_data: None,
             wav: None,
@@ -2116,7 +2116,7 @@ async fn finalize_streaming_tauri_recording(
         name,
         file_size,
         None,
-        Some(44),
+        Some(header.data_offset),
         Some(header.data_size),
         None,
     );

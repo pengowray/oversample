@@ -32,7 +32,16 @@ pub struct WavDetails {
     pub recorder_block: Option<RecorderBlock>,
     /// Problems found in the file's structure and how they were handled,
     /// written for the user.
-    pub notes: Vec<String>,
+    pub notes: Vec<WavNote>,
+}
+
+/// One problem found in a WAV file's structure, for the metadata panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WavNote {
+    pub text: String,
+    /// The problem changes which audio is read (or how other programs read
+    /// it). False for header details that don't affect the audio.
+    pub warning: bool,
 }
 
 #[derive(Clone, Debug, Default)]

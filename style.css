@@ -371,6 +371,12 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
+.metadata-note {
+    padding: 3px 12px 4px;
+    font-size: 10px;
+    color: #999;
+}
+
 .analysis-scope-row {
     display: flex;
     align-items: center;

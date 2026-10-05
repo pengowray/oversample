@@ -220,28 +220,18 @@ pub fn get_usb_status(state: &UsbStreamState) -> UsbStreamStatus {
 }
 
 pub fn encode_usb_wav(state: &UsbStreamState) -> Result<Vec<u8>, String> {
+    use oversample_core::audio::wav::{header_bytes, WavWriteFormat};
     let buf = state.buffer.lock().unwrap();
-    let spec = hound::WavSpec {
-        channels: 1,
+    let format = WavWriteFormat {
         sample_rate: buf.sample_rate,
+        channels: 1,
         bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
+        is_float: false,
     };
-
-    let mut cursor = std::io::Cursor::new(Vec::new());
-    let mut writer =
-        hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV writer error: {}", e))?;
-
-    for &s in &buf.samples_i16 {
-        writer
-            .write_sample(s)
-            .map_err(|e| format!("WAV write error: {}", e))?;
-    }
-
-    writer
-        .finalize()
-        .map_err(|e| format!("WAV finalize error: {}", e))?;
-    Ok(cursor.into_inner())
+    let data = crate::recovery::encode_samples_i16(&buf.samples_i16);
+    let mut wav = header_bytes(&format, data.len() as u64, 0);
+    wav.extend_from_slice(&data);
+    Ok(wav)
 }
 
 // ── Android isochronous streaming ───────────────────────────────────────

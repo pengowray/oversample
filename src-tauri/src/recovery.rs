@@ -8,6 +8,11 @@
 //! remain on disk; `recover_leftover_recordings` is called on next launch to
 //! patch the WAV header from the file size, reattach GUANO from the sidecar,
 //! and promote the file into the recordings directory.
+//!
+//! The header is `oversample_core::audio::wav::header_bytes`: 80 bytes with a
+//! reserved `JUNK` chunk, so a recording that passes 4 GB is rewritten as
+//! RF64 when it stops, without moving the samples. `.part` files from before
+//! that have a 44-byte header and are recovered with sizes capped at 4 GB.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -16,6 +21,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+use oversample_core::audio::wav::{self as wavfmt, WavWriteFormat};
 
 use crate::recording::NativeSampleFormat;
 
@@ -91,6 +98,7 @@ pub struct RecoveryWriter {
     pub meta_path: PathBuf,
     pub wav_file: File,
     pub data_bytes_written: u64,
+    pub format: WavWriteFormat,
 }
 
 /// Container for recovery state that lives on MicState. Cloning bumps the Arc
@@ -239,7 +247,14 @@ pub fn create(
         .create(true)
         .truncate(true)
         .open(&wav_path)?;
-    write_placeholder_header(&mut wav_file, format, sample_rate, channels)?;
+    let format = WavWriteFormat {
+        sample_rate,
+        channels,
+        bits_per_sample: format.bits_per_sample(),
+        is_float: format.is_float(),
+    };
+    // Sizes stay 0 until the recording stops (or is recovered).
+    wav_file.write_all(&wavfmt::header_bytes(&format, 0, 0))?;
     wav_file.flush()?;
 
     Ok(RecoveryWriter {
@@ -247,6 +262,7 @@ pub fn create(
         meta_path,
         wav_file,
         data_bytes_written: 0,
+        format,
     })
 }
 
@@ -362,25 +378,16 @@ pub fn finalize_in_place_and_take(
         writer.append_bytes(final_tail_bytes)?;
     }
 
-    // Append the GUANO chunk at the end of file.
+    // Append the GUANO chunk at the end of file, then patch the header sizes
+    // (the RIFF size counts the guan chunk too).
     writer.wav_file.seek(SeekFrom::End(0))?;
-    let text_bytes = guano_text.as_bytes();
-    let pad = if text_bytes.len() % 2 == 1 { 1 } else { 0 };
-    let chunk_total_bytes = 8 + text_bytes.len() as u64 + pad as u64;
-    writer.wav_file.write_all(b"guan")?;
-    writer
-        .wav_file
-        .write_all(&(text_bytes.len() as u32).to_le_bytes())?;
-    writer.wav_file.write_all(text_bytes)?;
-    if pad == 1 {
-        writer.wav_file.write_all(&[0u8])?;
-    }
-
-    // Patch header with new sizes (RIFF accounts for the guan chunk too).
-    patch_header_with_extra(
+    let after_data = append_guano(&mut writer.wav_file, writer.data_bytes_written, guano_text)?;
+    patch_sizes(
         &mut writer.wav_file,
+        &writer.format,
+        wavfmt::WRITE_HEADER_LEN as u64,
         writer.data_bytes_written,
-        chunk_total_bytes,
+        after_data,
     )?;
 
     // Durability: force kernel buffers to the device so a crash immediately
@@ -412,63 +419,47 @@ pub fn cleanup(writer: RecoveryWriter) {
     let _ = std::fs::remove_file(&meta_path);
 }
 
-fn write_placeholder_header(
-    f: &mut File,
-    format: NativeSampleFormat,
-    sample_rate: u32,
-    channels: u16,
-) -> std::io::Result<()> {
-    let bits_per_sample = format.bits_per_sample();
-    let is_float = format.is_float();
-    let block_align = channels * (bits_per_sample / 8);
-    let byte_rate = sample_rate * (block_align as u32);
-    let audio_format: u16 = if is_float { 3 } else { 1 };
-
-    // RIFF header (12 bytes)
-    f.write_all(b"RIFF")?;
-    f.write_all(&0u32.to_le_bytes())?; // placeholder: file_size - 8
-    f.write_all(b"WAVE")?;
-    // fmt chunk (24 bytes)
-    f.write_all(b"fmt ")?;
-    f.write_all(&16u32.to_le_bytes())?; // fmt chunk body size
-    f.write_all(&audio_format.to_le_bytes())?;
-    f.write_all(&channels.to_le_bytes())?;
-    f.write_all(&sample_rate.to_le_bytes())?;
-    f.write_all(&byte_rate.to_le_bytes())?;
-    f.write_all(&block_align.to_le_bytes())?;
-    f.write_all(&bits_per_sample.to_le_bytes())?;
-    // data chunk header (8 bytes)
-    f.write_all(b"data")?;
-    f.write_all(&0u32.to_le_bytes())?; // placeholder: data size
-    Ok(())
+/// Write the data pad byte (when the sample data has an odd length) and a
+/// GUANO chunk at the current position. Returns the bytes written, which the
+/// RIFF size has to count.
+fn append_guano(f: &mut File, data_bytes: u64, guano_text: &str) -> std::io::Result<u64> {
+    let text_bytes = guano_text.as_bytes();
+    let data_pad = wavfmt::data_pad_len(data_bytes);
+    let text_pad = (text_bytes.len() % 2) as u64;
+    if data_pad == 1 {
+        f.write_all(&[0u8])?;
+    }
+    f.write_all(b"guan")?;
+    f.write_all(&(text_bytes.len() as u32).to_le_bytes())?;
+    f.write_all(text_bytes)?;
+    if text_pad == 1 {
+        f.write_all(&[0u8])?;
+    }
+    Ok(data_pad + 8 + text_bytes.len() as u64 + text_pad)
 }
 
-fn patch_header(f: &mut File, data_bytes: u64) -> std::io::Result<()> {
-    patch_header_with_extra(f, data_bytes, 0)
-}
-
-/// Patch the RIFF + data size fields. `extra_bytes_after_data` is the size of
-/// any chunks appended after the data chunk (e.g. the GUANO `guan` chunk at
-/// finalize time) so the RIFF size covers them.
-fn patch_header_with_extra(
+/// Write the final sizes into a recording's header. `data_offset` says which
+/// header the file has: the current 80-byte one is rewritten whole (as RF64
+/// past 4 GB); the old 44-byte one gets its two size fields patched, capped
+/// at 4 GB because it has no room for a `ds64` chunk.
+fn patch_sizes(
     f: &mut File,
+    format: &WavWriteFormat,
+    data_offset: u64,
     data_bytes: u64,
-    extra_bytes_after_data: u64,
+    bytes_after_data: u64,
 ) -> std::io::Result<()> {
-    // WAV with PCM/IEEE data size fields are u32. Clamp to u32::MAX so we at
-    // least write a valid (possibly truncated) header for huge recoveries.
-    let data_size: u32 = data_bytes.min(u32::MAX as u64) as u32;
-    // RIFF size = 36 (everything before the data bytes, excluding "RIFF<size>")
-    // + data_size + extra chunks after data.
-    let riff_size: u32 = 36u32
-        .saturating_add(data_size)
-        .saturating_add(extra_bytes_after_data.min(u32::MAX as u64) as u32);
-    f.seek(SeekFrom::Start(4))?;
-    f.write_all(&riff_size.to_le_bytes())?;
-    f.seek(SeekFrom::Start(40))?;
-    f.write_all(&data_size.to_le_bytes())?;
-    f.flush()?;
-    Ok(())
+    if data_offset == wavfmt::WRITE_HEADER_LEN as u64 {
+        f.seek(SeekFrom::Start(0))?;
+        f.write_all(&wavfmt::header_bytes(format, data_bytes, bytes_after_data))?;
+    } else {
+        let riff_size = (data_offset - 8 + data_bytes + bytes_after_data).min(u32::MAX as u64);
+        f.seek(SeekFrom::Start(4))?;
+        f.write_all(&(riff_size as u32).to_le_bytes())?;
+        f.seek(SeekFrom::Start(data_offset - 4))?;
+        f.write_all(&(data_bytes.min(u32::MAX as u64) as u32).to_le_bytes())?;
+    }
+    f.flush()
 }
 
 /// Recovered-recording report — returned to the WASM frontend. Canonical
@@ -533,12 +524,20 @@ fn recover_one(
     let wav_name = part_name.trim_end_matches(".part").to_string();
     let meta_path = rec_dir.join(format!("{}.meta.json", wav_name));
 
-    // Less than header = nothing useful. Delete and move on.
-    if file_size <= 44 {
+    // Find the format and where the samples start. No header, or no
+    // samples after it = nothing useful. Delete and move on.
+    let header = {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        File::open(part_path)?.take(512).read_to_end(&mut buf)?;
+        buf
+    };
+    let located = wavfmt::locate_samples(&header).filter(|&(_, offset)| file_size > offset);
+    let Some((format, data_offset)) = located else {
         let _ = std::fs::remove_file(part_path);
         let _ = std::fs::remove_file(&meta_path);
         return Ok(None);
-    }
+    };
 
     // Load sidecar if present.
     let meta: Option<RecoveryMeta> = if meta_path.exists() {
@@ -550,23 +549,12 @@ fn recover_one(
         None
     };
 
-    // Read block_align from the fmt chunk (offset 32, u16 LE) so we can round
-    // the captured byte count down to a whole-sample boundary. A crash in the
+    // Round the captured byte count down to a whole frame. A crash in the
     // middle of a write can leave a torn last sample (e.g. 1 byte of a 2-byte
     // i16, or 3 bytes of a 4-byte f32). Playing that would produce a single
     // garbled sample at the end.
-    let raw_data_bytes = file_size.saturating_sub(44);
-    let block_align: u64 = {
-        let mut f = File::open(part_path)?;
-        use std::io::Read;
-        f.seek(SeekFrom::Start(32))?;
-        let mut buf = [0u8; 2];
-        let ba = match f.read_exact(&mut buf) {
-            Ok(_) => u16::from_le_bytes(buf).max(1) as u64,
-            Err(_) => 1,
-        };
-        ba
-    };
+    let raw_data_bytes = file_size - data_offset;
+    let block_align = format.block_align().max(1) as u64;
     let data_bytes = (raw_data_bytes / block_align) * block_align;
     if data_bytes < raw_data_bytes {
         eprintln!(
@@ -576,28 +564,9 @@ fn recover_one(
         );
     }
 
-    // Truncate off the torn tail (if any) and patch header sizes.
-    {
-        let mut f = OpenOptions::new().read(true).write(true).open(part_path)?;
-        if data_bytes < raw_data_bytes {
-            f.set_len(44 + data_bytes)?;
-        }
-        patch_header(&mut f, data_bytes)?;
-    }
-
-    // Read the patched WAV and append GUANO.
-    let mut wav_data = std::fs::read(part_path)?;
-
-    let (sample_count, sample_rate, bits_per_sample) = if let Some(ref m) = meta {
-        let bps = m.bits_per_sample.max(1) as u64;
-        (data_bytes * 8 / bps, m.sample_rate, m.bits_per_sample)
-    } else {
-        // No sidecar — parse fmt chunk we just wrote.
-        let sr = u32::from_le_bytes(wav_data[24..28].try_into().unwrap_or([0; 4]));
-        let bps = u16::from_le_bytes(wav_data[34..36].try_into().unwrap_or([0; 2]));
-        let bps_u64 = bps.max(1) as u64;
-        (data_bytes * 8 / bps_u64, sr, bps)
-    };
+    let sample_count = data_bytes / block_align;
+    let sample_rate = meta.as_ref().map_or(format.sample_rate, |m| m.sample_rate);
+    let bits_per_sample = format.bits_per_sample;
 
     let duration_secs = if sample_rate > 0 {
         sample_count as f64 / sample_rate as f64
@@ -630,17 +599,27 @@ fn recover_one(
             sample_rate, duration_secs, bits_per_sample,
         )
     };
-    oversample_core::audio::guano::append_guano_chunk(&mut wav_data, &guano_text);
-    let final_size = wav_data.len() as u64;
+    // Trim the torn tail (if any), append GUANO, and write the final sizes,
+    // in place: a long recording may not fit in memory.
+    let after_data = {
+        let mut f = OpenOptions::new().read(true).write(true).open(part_path)?;
+        f.set_len(data_offset + data_bytes)?;
+        f.seek(SeekFrom::End(0))?;
+        let after = append_guano(&mut f, data_bytes, &guano_text)?;
+        patch_sizes(&mut f, &format, data_offset, data_bytes, after)?;
+        f.sync_data()?;
+        after
+    };
+    let final_size = data_offset + data_bytes + after_data;
 
-    // Write to recordings dir with a "recovered_" prefix so the user can tell.
+    // Move into the recordings dir with a "recovered_" prefix so the user can tell.
     std::fs::create_dir_all(target_dir)?;
     let final_name = format!("recovered_{}", wav_name);
     let final_path = target_dir.join(&final_name);
-    std::fs::write(&final_path, &wav_data)?;
-
-    // Remove the partial + sidecar now that we have a good final file.
-    let _ = std::fs::remove_file(part_path);
+    if std::fs::rename(part_path, &final_path).is_err() {
+        std::fs::copy(part_path, &final_path)?;
+        let _ = std::fs::remove_file(part_path);
+    }
     let _ = std::fs::remove_file(&meta_path);
 
     Ok(Some(RecoveredRecording {

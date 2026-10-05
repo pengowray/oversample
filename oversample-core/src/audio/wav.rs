@@ -11,7 +11,7 @@
 //! streaming recorder can rewrite the header in place when it stops.
 
 use super::guano::{self, GuanoMetadata};
-use crate::types::{RecorderBlock, WavDetails, WavMarker};
+use crate::types::{RecorderBlock, WavDetails, WavMarker, WavNote};
 
 /// How each sample is stored in the `data` chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -602,6 +602,36 @@ pub fn data_pad_len(data_bytes: u64) -> u64 {
     data_bytes & 1
 }
 
+/// The sample format and the offset of the first sample in a WAV this app
+/// wrote, read from its header alone. Works while the size fields are still
+/// placeholders (a recording in progress, or one that crashed), and on the
+/// older 44-byte header with no `JUNK` chunk.
+pub fn locate_samples(header: &[u8]) -> Option<(WavWriteFormat, u64)> {
+    if header.len() < 12 || &header[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut fmt = None;
+    let mut pos = 12usize;
+    while pos + 8 <= header.len() {
+        let size = u32_at(header, pos + 4) as usize;
+        match &header[pos..pos + 4] {
+            b"fmt " if pos + 8 + 16 <= header.len() => {
+                let f = &header[pos + 8..pos + 24];
+                fmt = Some(WavWriteFormat {
+                    sample_rate: u32_at(f, 4),
+                    channels: u16_at(f, 2),
+                    bits_per_sample: u16_at(f, 14),
+                    is_float: u16_at(f, 0) == WAVE_FORMAT_IEEE_FLOAT,
+                });
+            }
+            b"data" => return Some((fmt?, pos as u64 + 8)),
+            _ => {}
+        }
+        pos = pos.checked_add(8 + size + (size & 1))?;
+    }
+    None
+}
+
 /// Set the RIFF size of an in-memory WAV after chunks were added or removed.
 /// For RF64 the size goes in the `ds64` chunk. A plain RIFF that grows past
 /// 4 GB keeps the largest size it can hold.
@@ -637,7 +667,11 @@ fn u64_at(b: &[u8], at: usize) -> u64 {
 /// Messages shown to the user: load errors and the notes listed with a
 /// file's metadata.
 pub mod msg {
-    pub const RIFX: &str = "RIFX (big-endian WAV) isn't supported.";
+    use crate::types::WavNote;
+
+    pub const RIFX: &str = "Unsupported WAV variant: RIFX (big-endian WAV). Convert the file to standard WAV, for example with Audacity or ffmpeg, and open the converted file.";
+
+    const CONVERT: &str = "Oversample can open a WAV file only if its audio is uncompressed. Convert the file to uncompressed WAV, for example with Audacity or ffmpeg, and open the converted file.";
 
     /// Common names for WAV format tags Oversample can't decode.
     pub fn format_name(tag: u16) -> Option<&'static str> {
@@ -649,7 +683,7 @@ pub mod msg {
             0x0031 => "GSM 6.10",
             0x0050 => "MPEG audio",
             0x0055 => "MP3",
-            0x0161 | 0x0162 | 0x0163 => "Windows Media Audio",
+            0x0161..=0x0163 => "Windows Media Audio",
             0x2000 => "Dolby AC-3",
             _ => return None,
         })
@@ -657,48 +691,84 @@ pub mod msg {
 
     pub fn unsupported_format(tag: u16) -> String {
         match format_name(tag) {
-            Some(name) => format!(
-                "Unsupported WAV encoding: {name}. Oversample opens uncompressed WAV files only (integer PCM or floating point)."
-            ),
+            Some(name) => format!("Compressed WAV ({name}). {CONVERT}"),
             None => format!(
-                "Unsupported WAV encoding (format tag 0x{tag:04X}). Oversample opens uncompressed WAV files only (integer PCM or floating point)."
+                "Unknown WAV encoding: the file's header gives format code 0x{tag:04X}, which Oversample doesn't recognize. {CONVERT}"
             ),
         }
     }
 
     pub fn unknown_subformat() -> String {
-        "Unsupported WAV encoding (unknown extensible sub-format). Oversample opens uncompressed WAV files only (integer PCM or floating point).".into()
+        format!(
+            "Unknown WAV encoding: the file's extensible header specifies a sub-format that Oversample doesn't recognize. {CONVERT}"
+        )
     }
 
     pub fn unsupported_width(float: bool, bits: u16) -> String {
-        let kind = if float { "floating-point" } else { "integer" };
-        format!("Unsupported WAV sample size: {bits}-bit {kind}.")
-    }
-
-    pub fn d500x_size_short(block_len: u64) -> String {
+        let kind = if float { "float" } else { "integer" };
         format!(
-            "D500X metadata block ({block_len} bytes) found at the start of the audio data. The block is skipped, and the audio is read in full."
+            "Unsupported sample format: {bits}-bit {kind}. Oversample can open WAV files with 8, 16, 24 or 32-bit integer samples, or 32 or 64-bit float samples. Convert the file to one of these formats, for example with Audacity or ffmpeg, and open the converted file."
         )
     }
 
-    pub fn extra_data_chunks(n: u32) -> String {
-        let s = if n == 1 { "" } else { "s" };
-        format!("File has {n} extra audio data chunk{s}. Only the first one is read.")
+    fn warning(text: String) -> WavNote {
+        WavNote {
+            text,
+            warning: true,
+        }
     }
 
-    pub fn data_size_stretched(declared: u64, available: u64) -> String {
-        format!(
-            "Audio data size in the header ({declared} bytes) is less than the file holds. Reading to the end of the file ({available} bytes)."
-        )
+    /// 1234567 → "1,234,567".
+    fn thousands(n: u64) -> String {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        out
     }
 
-    pub fn data_cut_short(declared: u64, available: u64) -> String {
-        format!(
-            "File is shorter than its header says. The header lists {declared} bytes of audio, but only {available} bytes are present. The file may have been cut short."
-        )
+    pub fn d500x_size_short(block_len: u64) -> WavNote {
+        let n = thousands(block_len);
+        warning(format!(
+            "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio. The metadata is listed below, under Pettersson D500X metadata."
+        ))
     }
 
-    pub fn riff_size_past_end(over: u64) -> String {
-        format!("RIFF size in the header is {over} bytes larger than the file.")
+    pub fn extra_data_chunks(n: u32) -> WavNote {
+        warning(if n == 1 {
+            "This file has 1 extra data chunk. A WAV file normally has one data chunk, the section that contains the audio. Oversample reads only the first data chunk, so any audio in the extra chunk is left out.".to_string()
+        } else {
+            format!(
+                "This file has {n} extra data chunks. A WAV file normally has one data chunk, the section that contains the audio. Oversample reads only the first data chunk, so any audio in the extra chunks is left out."
+            )
+        })
+    }
+
+    pub fn data_size_stretched(declared: u64, available: u64) -> WavNote {
+        let (declared, available) = (thousands(declared), thousands(available));
+        warning(format!(
+            "This file has more audio than the header says. The header says the audio is {declared} bytes, but the file contains {available} bytes of audio. Oversample reads all {available} bytes. Usual causes: a recording over 4 GB saved as standard WAV, which can't store sizes over 4 GB, or a recorder that didn't fill in the size."
+        ))
+    }
+
+    pub fn data_cut_short(declared: u64, available: u64) -> WavNote {
+        let (declared, available) = (thousands(declared), thousands(available));
+        warning(format!(
+            "This file is shorter than the header says. The header says the audio is {declared} bytes, but the file ends after {available} bytes of audio. Oversample reads the {available} bytes that are there. Usual causes: the recording was interrupted, or the file was only partly copied or downloaded."
+        ))
+    }
+
+    pub fn riff_size_past_end(over: u64) -> WavNote {
+        WavNote {
+            text: format!(
+                "The file size in the header is {} bytes larger than the actual file. Oversample reads all of the audio.",
+                thousands(over)
+            ),
+            warning: false,
+        }
     }
 }

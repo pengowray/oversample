@@ -432,3 +432,31 @@ fn real_d500x_recording() {
     // D500X note, and the RIFF size that runs 8 bytes past the end.
     assert_eq!(h.details.notes.len(), 2, "{:?}", h.details.notes);
 }
+
+#[test]
+fn recording_headers_are_located_before_sizes_are_filled_in() {
+    use oversample_core::audio::wav::locate_samples;
+    // Current layout: 80-byte header with JUNK, sizes still 0.
+    let fmt = WavWriteFormat {
+        sample_rate: 384_000,
+        channels: 1,
+        bits_per_sample: 24,
+        is_float: false,
+    };
+    let mut f = header_bytes(&fmt, 0, 0);
+    f.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+    assert_eq!(locate_samples(&f), Some((fmt, WRITE_HEADER_LEN as u64)));
+
+    // The 44-byte header written before 0.5.57.
+    let mut old = Vec::new();
+    old.extend_from_slice(b"RIFF\0\0\0\0WAVEfmt ");
+    old.extend_from_slice(&16u32.to_le_bytes());
+    old.extend_from_slice(&[1, 0, 1, 0]);
+    old.extend_from_slice(&384_000u32.to_le_bytes());
+    old.extend_from_slice(&(384_000u32 * 3).to_le_bytes());
+    old.extend_from_slice(&[3, 0, 24, 0]);
+    old.extend_from_slice(b"data\0\0\0\0");
+    assert_eq!(old.len(), 44);
+    old.extend_from_slice(&[1, 2, 3]);
+    assert_eq!(locate_samples(&old), Some((fmt, 44)));
+}

@@ -801,7 +801,6 @@ pub fn Toolbar() -> impl IntoView {
                                 <div><a href="https://crates.io/crates/realfft" target="_blank" style="color: #8cf; text-decoration: none;">"RealFFT"</a></div>
                                 <div><a href="https://github.com/jhartquist/resonators" target="_blank" style="color: #8cf; text-decoration: none;">"resonators"</a></div>
                                 <div><a href="https://crates.io/crates/cpal" target="_blank" style="color: #8cf; text-decoration: none;">"cpal"</a></div>
-                                <div><a href="https://crates.io/crates/hound" target="_blank" style="color: #8cf; text-decoration: none;">"Hound"</a></div>
                                 <div><a href="https://crates.io/crates/claxon" target="_blank" style="color: #8cf; text-decoration: none;">"Claxon"</a></div>
                                 <div><a href="https://crates.io/crates/lewton" target="_blank" style="color: #8cf; text-decoration: none;">"Lewton"</a></div>
                                 <div><a href="https://crates.io/crates/symphonia" target="_blank" style="color: #8cf; text-decoration: none;">"Symphonia"</a></div>

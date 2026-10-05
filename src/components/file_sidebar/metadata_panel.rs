@@ -636,13 +636,13 @@ fn format_text(meta: &crate::types::FileMetadata) -> String {
     }
 }
 
-/// Bit depth row: "16-bit", "32-bit float", or "12-bit (16-bit samples)" when
+/// Bit depth row: "16-bit", "32-bit float", or "12-bit, stored as 16-bit" when
 /// the file declares fewer significant bits than the sample width.
 fn bit_depth_text(meta: &crate::types::FileMetadata) -> String {
     let width = meta.bits_per_sample;
     let float = if meta.is_float { " float" } else { "" };
     match meta.wav.as_ref().and_then(|w| w.valid_bits) {
-        Some(valid) => format!("{valid}-bit{float} ({width}-bit samples)"),
+        Some(valid) => format!("{valid}-bit{float}, stored as {width}-bit"),
         None => format!("{width}-bit{float}"),
     }
 }
@@ -1128,8 +1128,9 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             .unwrap_or_default();
                         let has_guano = !guano_fields.is_empty();
                         let wav = meta.wav.clone().unwrap_or_default();
-                        let structure_notes: Vec<_> = wav.notes.iter().map(|n| view! {
-                            <div class="analysis-warning">{n.clone()}</div>
+                        let structure_notes: Vec<_> = wav.notes.iter().map(|n| {
+                            let class = if n.warning { "analysis-warning" } else { "metadata-note" };
+                            view! { <div class=class>{n.text.clone()}</div> }
                         }).collect();
                         let recorder_block = wav.recorder_block.clone();
 

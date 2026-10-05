@@ -1848,12 +1848,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hound"
-version = "3.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
-
-[[package]]
 name = "html-escape"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3189,13 +3183,12 @@ checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
 
 [[package]]
 name = "oversample"
-version = "0.5.56"
+version = "0.5.57"
 dependencies = [
  "blake3",
  "claxon",
  "console_error_panic_hook",
  "console_log",
- "hound",
  "js-sys",
  "leptos",
  "lewton",
@@ -3232,12 +3225,11 @@ dependencies = [
 
 [[package]]
 name = "oversample-desktop"
-version = "0.5.56"
+version = "0.5.57"
 dependencies = [
  "chrono",
  "claxon",
  "cpal",
- "hound",
  "lewton",
  "libc",
  "oversample-core",

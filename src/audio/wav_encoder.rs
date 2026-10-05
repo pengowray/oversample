@@ -101,40 +101,26 @@ pub fn insert_cue_chunks(wav: &mut Vec<u8>, cue_bytes: &[u8]) {
 
     wav.splice(insert_pos..insert_pos, cue_bytes.iter().copied());
 
-    // Update RIFF file size (bytes 4..8)
-    let riff_size = (wav.len() - 8) as u32;
-    wav[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    crate::audio::wav::set_riff_size(wav);
 }
 
 /// Encode f32 samples as a 16-bit PCM WAV file (web mode fallback).
 pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let num_samples = samples.len();
-    let data_size = num_samples * 2;
-    let file_size = 36 + data_size;
-
-    let mut buf = Vec::with_capacity(44 + data_size);
-
-    buf.extend_from_slice(b"RIFF");
-    buf.extend_from_slice(&(file_size as u32).to_le_bytes());
-    buf.extend_from_slice(b"WAVE");
-
-    buf.extend_from_slice(b"fmt ");
-    buf.extend_from_slice(&16u32.to_le_bytes());
-    buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    buf.extend_from_slice(&1u16.to_le_bytes()); // mono
-    buf.extend_from_slice(&sample_rate.to_le_bytes());
-    buf.extend_from_slice(&(sample_rate * 2).to_le_bytes());
-    buf.extend_from_slice(&2u16.to_le_bytes()); // block align
-    buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-
-    buf.extend_from_slice(b"data");
-    buf.extend_from_slice(&(data_size as u32).to_le_bytes());
+    use crate::audio::wav::{header_bytes, WavWriteFormat};
+    let fmt = WavWriteFormat {
+        sample_rate,
+        channels: 1,
+        bits_per_sample: 16,
+        is_float: false,
+    };
+    let data_size = samples.len() as u64 * 2;
+    let mut buf = header_bytes(&fmt, data_size, 0);
+    buf.reserve(data_size as usize);
     for &sample in samples {
         let clamped = sample.clamp(-1.0, 1.0);
         let val = (clamped * 32767.0) as i16;
         buf.extend_from_slice(&val.to_le_bytes());
     }
-
     buf
 }
 
