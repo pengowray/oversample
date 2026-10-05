@@ -8,6 +8,33 @@ use std::sync::Arc;
 /// factors that are clearly bad metadata rather than an unusual detector.
 pub const MAX_CORRECTED_SAMPLE_RATE: f64 = 10_000_000.0;
 
+/// A metadata block a recorder wrote in its own layout rather than as a
+/// standard chunk. Fields keep the recorder's own key names.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecorderBlock {
+    /// Recorder model, e.g. "Pettersson D500X".
+    pub recorder: &'static str,
+    pub fields: Vec<(String, String)>,
+}
+
+/// WAV-specific facts beyond rate, channels and sample width.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WavDetails {
+    /// Significant bits per sample, when the file declares fewer than the
+    /// sample width (12-bit audio stored in 16-bit samples, say).
+    pub valid_bits: Option<u16>,
+    /// The `fmt ` chunk is WAVE_FORMAT_EXTENSIBLE.
+    pub extensible: bool,
+    /// The container is RF64 (64-bit sizes in a `ds64` chunk).
+    pub rf64: bool,
+    /// Speaker positions from an extensible header, when non-zero.
+    pub channel_mask: Option<u32>,
+    pub recorder_block: Option<RecorderBlock>,
+    /// Problems found in the file's structure and how they were handled,
+    /// written for the user.
+    pub notes: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FileMetadata {
     pub file_size: usize,
@@ -27,6 +54,8 @@ pub struct FileMetadata {
     /// synthesised placeholder, and the renderer should switch to a
     /// `ZcPlot` view.
     pub zc_data: Option<Arc<ZcData>>,
+    /// WAV-only details. None for other formats.
+    pub wav: Option<WavDetails>,
 }
 
 #[derive(Clone)]

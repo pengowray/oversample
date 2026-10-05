@@ -628,6 +628,40 @@ fn date_row(label: String, value: String, view_mode: MetadataView) -> impl IntoV
     }
 }
 
+/// Format row: the container name, plus RF64 when the file uses 64-bit sizes.
+fn format_text(meta: &crate::types::FileMetadata) -> String {
+    match &meta.wav {
+        Some(w) if w.rf64 => format!("{} (RF64)", meta.format),
+        _ => meta.format.to_string(),
+    }
+}
+
+/// Bit depth row: "16-bit", "32-bit float", or "12-bit (16-bit samples)" when
+/// the file declares fewer significant bits than the sample width.
+fn bit_depth_text(meta: &crate::types::FileMetadata) -> String {
+    let width = meta.bits_per_sample;
+    let float = if meta.is_float { " float" } else { "" };
+    match meta.wav.as_ref().and_then(|w| w.valid_bits) {
+        Some(valid) => format!("{valid}-bit{float} ({width}-bit samples)"),
+        None => format!("{width}-bit{float}"),
+    }
+}
+
+/// D500X "YYMMDD hh:mm:ss" as ISO 8601, assuming 20YY.
+fn d500x_time_iso(v: &str) -> Option<String> {
+    let (date, time) = v.trim().split_once(' ')?;
+    if date.len() != 6 || !date.bytes().all(|b| b.is_ascii_digit()) || time.len() != 8 {
+        return None;
+    }
+    Some(format!(
+        "20{}-{}-{}T{}",
+        &date[0..2],
+        &date[2..4],
+        &date[4..6],
+        time
+    ))
+}
+
 /// "Date" section: every date we can pull from the file's metadata, in rough
 /// order of trust. Filesystem (created/modified) timestamps and the XC download
 /// date need platform plumbing and are a follow-up.
@@ -651,6 +685,21 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
             } else if kl.contains("date") {
                 rows.push((format!("GUANO {k}"), v.clone()));
             }
+        }
+    }
+
+    // 2b. Recording time from a recorder's own metadata block (D500X writes
+    // "File Time: YYMMDD hh:mm:ss").
+    if let Some(block) = f
+        .audio
+        .metadata
+        .wav
+        .as_ref()
+        .and_then(|w| w.recorder_block.as_ref())
+    {
+        if let Some((_, v)) = block.fields.iter().find(|(k, _)| k == "File Time") {
+            let value = d500x_time_iso(v).unwrap_or_else(|| v.clone());
+            rows.push((format!("{} file time", block.recorder), value));
         }
     }
 
@@ -1078,17 +1127,23 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             .map(|g| g.fields.clone())
                             .unwrap_or_default();
                         let has_guano = !guano_fields.is_empty();
+                        let wav = meta.wav.clone().unwrap_or_default();
+                        let structure_notes: Vec<_> = wav.notes.iter().map(|n| view! {
+                            <div class="analysis-warning">{n.clone()}</div>
+                        }).collect();
+                        let recorder_block = wav.recorder_block.clone();
 
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title setting-group-title-major">"File"</div>
                                 {inline_row("Name".into(), f.name.clone(), None)}
-                                {inline_row("Format".into(), meta.format.to_string(), None)}
+                                {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
                                 {inline_row("Sample rate".into(), format!("{} kHz", f.audio.sample_rate / 1000), None)}
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
-                                {inline_row("Bit depth".into(), format!("{}-bit", meta.bits_per_sample), None)}
+                                {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}
+                                {structure_notes}
                             </div>
                             {date_section(f, view_mode)}
                             {zc_header_section(f, view_mode)}
@@ -1153,6 +1208,22 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! { <span></span> }.into_any()
+                            }}
+                            {match recorder_block {
+                                Some(block) => {
+                                    let items: Vec<_> = block.fields.into_iter().map(|(k, v)| {
+                                        spacious_row(k, v, None, view_mode).into_any()
+                                    }).collect();
+                                    view! {
+                                        <div class="setting-group">
+                                            <div class="setting-group-title setting-group-title-major">
+                                                {format!("{} metadata", block.recorder)}
+                                            </div>
+                                            {items}
+                                        </div>
+                                    }.into_any()
+                                }
+                                None => view! { <span></span> }.into_any(),
                             }}
                             {if !f.is_recording {
                                 file_identity_section(f).into_any()

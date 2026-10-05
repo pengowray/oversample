@@ -35,10 +35,9 @@ const CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 struct WavFormatInfo {
     sample_rate: u32,
     channels: u32,
-    bits_per_sample: u16,
-    is_float: bool,
+    encoding: crate::audio::wav::SampleEncoding,
     data_offset: u64,
-    bytes_per_frame: u32, // channels * (bits_per_sample / 8)
+    bytes_per_frame: u32,
 }
 
 /// A single cached chunk of decoded audio.
@@ -311,10 +310,9 @@ impl StreamingWavSource {
             info: WavFormatInfo {
                 sample_rate: header.sample_rate,
                 channels: header.channels as u32,
-                bits_per_sample: header.bits_per_sample,
-                is_float: header.is_float,
+                encoding: header.encoding,
                 data_offset: header.data_offset,
-                bytes_per_frame: header.channels as u32 * (header.bits_per_sample as u32 / 8),
+                bytes_per_frame: header.block_align as u32,
             },
             total_frames: header.total_frames,
             head_mono: Arc::new(head_mono),
@@ -373,7 +371,7 @@ impl StreamingWavSource {
             };
 
             // Decode PCM bytes to f32 samples
-            let interleaved = decode_pcm_bytes(&bytes, &self.info);
+            let interleaved = crate::audio::wav::decode_pcm(&bytes, self.info.encoding);
             let channels = self.info.channels as usize;
 
             let (mono, raw) = if channels == 1 {
@@ -586,54 +584,6 @@ impl AudioSource for StreamingWavSource {
 }
 
 // ─── PCM decoding ───────────────────────────────────────────────────────────
-
-/// Decode raw PCM bytes into interleaved f32 samples.
-fn decode_pcm_bytes(bytes: &[u8], info: &WavFormatInfo) -> Vec<f32> {
-    match (info.is_float, info.bits_per_sample) {
-        (true, 32) => bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect(),
-        (false, 16) => {
-            let max = 32768.0f32;
-            bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / max)
-                .collect()
-        }
-        (false, 24) => {
-            let max = 8388608.0f32; // 2^23
-            bytes
-                .chunks_exact(3)
-                .map(|b| {
-                    // Sign-extend 24-bit to 32-bit
-                    let val = (b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16);
-                    let val = if val & 0x800000 != 0 {
-                        val | !0xFFFFFF
-                    } else {
-                        val
-                    };
-                    val as f32 / max
-                })
-                .collect()
-        }
-        (false, 32) => {
-            let max = 2147483648.0f32; // 2^31
-            bytes
-                .chunks_exact(4)
-                .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / max)
-                .collect()
-        }
-        _ => {
-            log::warn!(
-                "Unsupported PCM format: {}bit {}",
-                info.bits_per_sample,
-                if info.is_float { "float" } else { "int" }
-            );
-            vec![0.0; bytes.len() / (info.bits_per_sample as usize / 8)]
-        }
-    }
-}
 
 /// Mix interleaved multi-channel samples to mono.
 pub(crate) fn mix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {

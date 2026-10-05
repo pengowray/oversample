@@ -110,6 +110,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -207,6 +208,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -454,6 +456,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -1786,6 +1789,7 @@ async fn finalize_in_memory_recording(
             data_offset: Some(44),
             data_size: Some(audio_data_size),
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -1906,7 +1910,7 @@ async fn finalize_streaming_tauri_recording(
     use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
     use crate::audio::streaming_source::StreamingWavSource;
     use crate::canvas::{spectral_store, tile_cache};
-    use crate::components::file_sidebar::streaming_load::{decode_head_pcm, scan_tail_for_guano};
+    use crate::components::file_sidebar::streaming_load::scan_tail_for_guano;
 
     // Read first 64 KB for header parsing (covers fmt, optional fact, and
     // usually the data chunk start). Reads go through the handle, which is a
@@ -1926,15 +1930,10 @@ async fn finalize_streaming_tauri_recording(
     // Decode the first ~30 s into mono f32 for fast display + analysis.
     let head_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * header.sample_rate as f64) as u64)
         .min(header.total_frames);
-    let bytes_per_frame = header.channels as u64 * (header.bits_per_sample as u64 / 8);
+    let bytes_per_frame = header.block_align as u64;
     let head_byte_len = head_frames * bytes_per_frame;
     let head_pcm_bytes = handle.read_range(header.data_offset, head_byte_len).await?;
-    let head_interleaved = decode_head_pcm(
-        &head_pcm_bytes,
-        header.bits_per_sample,
-        header.is_float,
-        header.channels,
-    );
+    let head_interleaved = crate::audio::wav::decode_pcm(&head_pcm_bytes, header.encoding);
     let channels = header.channels as usize;
     let (head_mono, head_raw) = if channels == 1 {
         (head_interleaved, None)
@@ -1983,6 +1982,7 @@ async fn finalize_streaming_tauri_recording(
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            wav: Some(header.details.clone()),
         },
     };
     let preview = crate::dsp::fft::compute_preview(&audio, 256, 128);

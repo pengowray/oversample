@@ -294,7 +294,7 @@ pub(super) async fn try_streaming_wav(
     use crate::audio::source::DEFAULT_ANALYSIS_WINDOW_SECS;
     let head_frames = ((DEFAULT_ANALYSIS_WINDOW_SECS * header.sample_rate as f64) as u64)
         .min(header.total_frames);
-    let bytes_per_frame = header.channels as u64 * (header.bits_per_sample as u64 / 8);
+    let bytes_per_frame = header.block_align as u64;
     let head_byte_len = head_frames * bytes_per_frame;
     let head_byte_start = header.data_offset;
     let head_byte_end = head_byte_start + head_byte_len;
@@ -303,12 +303,7 @@ pub(super) async fn try_streaming_wav(
         read_blob_range(file, head_byte_start as f64, head_byte_end as f64).await?;
 
     // Decode PCM to f32
-    let head_interleaved = decode_head_pcm(
-        &head_pcm_bytes,
-        header.bits_per_sample,
-        header.is_float,
-        header.channels,
-    );
+    let head_interleaved = crate::audio::wav::decode_pcm(&head_pcm_bytes, header.encoding);
 
     let channels = header.channels as usize;
     let (head_mono, head_raw) = if channels == 1 {
@@ -367,6 +362,7 @@ pub(super) async fn try_streaming_wav(
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            wav: Some(header.details.clone()),
         },
     };
 
@@ -626,6 +622,7 @@ pub(super) async fn try_streaming_flac(
             data_offset: Some(header.first_frame_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.first_frame_offset)),
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -969,6 +966,7 @@ pub(super) async fn try_streaming_mp3(
             data_offset: Some(header.data_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.data_offset)),
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -1331,6 +1329,7 @@ pub(super) async fn try_streaming_ogg(
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     };
 
@@ -1691,58 +1690,6 @@ pub(crate) async fn build_streaming_overview(
     );
 }
 
-/// Decode raw PCM bytes to f32 samples (used for head region during streaming load).
-pub(crate) fn decode_head_pcm(
-    bytes: &[u8],
-    bits_per_sample: u16,
-    is_float: bool,
-    _channels: u16,
-) -> Vec<f32> {
-    match (is_float, bits_per_sample) {
-        (true, 32) => bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect(),
-        (false, 16) => {
-            let max = 32768.0f32;
-            bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / max)
-                .collect()
-        }
-        (false, 24) => {
-            let max = 8388608.0f32;
-            bytes
-                .chunks_exact(3)
-                .map(|b| {
-                    let val = (b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16);
-                    let val = if val & 0x800000 != 0 {
-                        val | !0xFFFFFF
-                    } else {
-                        val
-                    };
-                    val as f32 / max
-                })
-                .collect()
-        }
-        (false, 32) => {
-            let max = 2147483648.0f32;
-            bytes
-                .chunks_exact(4)
-                .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / max)
-                .collect()
-        }
-        _ => {
-            log::warn!(
-                "Unsupported PCM format for streaming: {}-bit {}",
-                bits_per_sample,
-                if is_float { "float" } else { "int" }
-            );
-            vec![0.0; bytes.len() / (bits_per_sample as usize / 8)]
-        }
-    }
-}
-
 /// Scan raw bytes (from after the data chunk) for a GUANO "guan" chunk.
 pub(crate) fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMetadata> {
     let mut pos = 0usize;
@@ -2044,6 +1991,7 @@ pub(super) async fn try_streaming_m4a(
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     };
 

@@ -4,46 +4,41 @@
 //!
 //! Run: `cargo run -p oversample-core --example check_wav -- <path/to/file.wav>`
 
-use hound::WavReader;
+use oversample_core::audio::loader::load_audio;
 use oversample_core::dsp::{lsb_autocorr, pipistrelle};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: check_wav <path>");
-    let mut reader = WavReader::open(&path).expect("open wav");
-    let spec = reader.spec();
+    let bytes = std::fs::read(&path).expect("read file");
+    let audio = load_audio(&bytes).expect("decode");
+    let meta = &audio.metadata;
     println!(
-        "File: {}\n  channels={} sample_rate={} bits={} format={:?}",
-        path, spec.channels, spec.sample_rate, spec.bits_per_sample, spec.sample_format
+        "File: {}\n  channels={} sample_rate={} bits={} float={}",
+        path, audio.channels, audio.sample_rate, meta.bits_per_sample, meta.is_float
     );
-
-    let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => {
-            let scale = (1u32 << (spec.bits_per_sample - 1)) as f32;
-            reader
-                .samples::<i32>()
-                .map(|s| s.unwrap() as f32 / scale)
-                .collect()
+    if let Some(wav) = &meta.wav {
+        for note in &wav.notes {
+            println!("  note: {note}");
         }
-        hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
-    };
+    }
 
-    // Downmix to mono if needed
-    let mono: Vec<f32> = if spec.channels > 1 {
-        let ch = spec.channels as usize;
-        samples
-            .chunks(ch)
-            .map(|c| c.iter().sum::<f32>() / ch as f32)
-            .collect()
-    } else {
-        samples
-    };
+    // `samples` is already mixed to mono.
+    let mono: Vec<f32> = audio.samples.to_vec();
     println!(
         "  {} mono samples ({:.2} s)\n",
         mono.len(),
-        mono.len() as f64 / spec.sample_rate as f64
+        mono.len() as f64 / audio.sample_rate as f64
     );
 
-    let is_float = matches!(spec.sample_format, hound::SampleFormat::Float);
+    struct Spec {
+        sample_rate: u32,
+        bits_per_sample: u16,
+    }
+    let spec = Spec {
+        sample_rate: audio.sample_rate,
+        bits_per_sample: meta.bits_per_sample,
+    };
+    let is_float = meta.is_float;
 
     println!("=== LSB autocorrelation ===");
     let lsb = lsb_autocorr::analyze_lsb_autocorr(&mono, spec.bits_per_sample, is_float);

@@ -4,269 +4,7 @@ use crate::types::{AudioData, FileMetadata, WavMarker};
 use std::io::Cursor;
 use std::sync::Arc;
 
-/// Parsed WAV header — enough info to stream from disk without loading all samples.
-#[derive(Clone, Debug)]
-pub struct WavHeader {
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub bits_per_sample: u16,
-    pub is_float: bool,
-    pub data_offset: u64,  // byte offset of PCM "data" chunk body within file
-    pub data_size: u64,    // byte length of PCM data
-    pub total_frames: u64, // data_size / (channels * bytes_per_sample / 8)
-    pub guano: Option<GuanoMetadata>,
-    /// Cue-point markers from `cue ` + `LIST`/`adtl` chunks, if present.
-    pub wav_markers: Vec<WavMarker>,
-}
-
-/// Parse only the WAV header from the given bytes (typically first 8-64KB of file).
-/// Returns enough metadata to open the file for streaming without decoding all samples.
-///
-/// Supports both standard RIFF/WAVE and RF64/WAVE (used by recorders for files >4 GB).
-///
-/// If the GUANO chunk is before the data chunk, it will be included. If GUANO is after
-/// the data chunk (common), the caller must provide tail bytes separately via
-/// `parse_guano_from_tail()`.
-pub fn parse_wav_header(header_bytes: &[u8]) -> Result<WavHeader, String> {
-    parse_wav_header_with_file_size(header_bytes, None)
-}
-
-/// Like `parse_wav_header`, but accepts an optional actual file size to correct
-/// u32 overflow in the `data` chunk size field for files >4 GB.
-pub fn parse_wav_header_with_file_size(
-    header_bytes: &[u8],
-    file_size: Option<u64>,
-) -> Result<WavHeader, String> {
-    if header_bytes.len() < 12 {
-        return Err("File too small for WAV header".into());
-    }
-
-    let is_rf64 = &header_bytes[0..4] == b"RF64" && &header_bytes[8..12] == b"WAVE";
-    let is_riff = &header_bytes[0..4] == b"RIFF" && &header_bytes[8..12] == b"WAVE";
-
-    if !is_riff && !is_rf64 {
-        return Err("Not a RIFF/WAVE or RF64/WAVE file".into());
-    }
-
-    let mut pos = 12usize;
-    let mut fmt_chunk: Option<(u16, u32, u16, u16)> = None; // (format_tag, sample_rate, channels, bits)
-    let mut data_offset: Option<u64> = None;
-    let mut data_size: Option<u64> = None;
-    let mut guano: Option<GuanoMetadata> = None;
-    let mut cue_points: Vec<(u32, u64)> = Vec::new(); // (id, sample_position)
-    let mut labels: Vec<(u32, String)> = Vec::new(); // (cue_id, text)
-    let mut notes: Vec<(u32, String)> = Vec::new(); // (cue_id, text)
-
-    // RF64: 64-bit sizes from the ds64 chunk (must appear before fmt/data)
-    let mut ds64_data_size: Option<u64> = None;
-
-    while pos + 8 <= header_bytes.len() {
-        let chunk_id = &header_bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(
-            header_bytes[pos + 4..pos + 8]
-                .try_into()
-                .map_err(|_| "Invalid chunk size")?,
-        ) as u64;
-        let body_start = pos + 8;
-        // Use u64 to avoid usize overflow on 32-bit WASM for large chunks
-        let body_end_u64 = body_start as u64 + chunk_size;
-        let chunk_fits = body_end_u64 <= header_bytes.len() as u64;
-
-        match chunk_id {
-            b"ds64" => {
-                // RF64 Data Size 64 chunk: provides 64-bit sizes
-                // Layout: riffSize(8) + dataSize(8) + sampleCount(8) + ...
-                if body_start + 24 <= header_bytes.len() {
-                    let ds = &header_bytes[body_start..];
-                    // bytes 0..8: RIFF size (not needed)
-                    // bytes 8..16: data chunk size (64-bit)
-                    ds64_data_size = Some(u64::from_le_bytes([
-                        ds[8], ds[9], ds[10], ds[11], ds[12], ds[13], ds[14], ds[15],
-                    ]));
-                }
-            }
-            b"fmt " => {
-                if chunk_size < 16 || !chunk_fits {
-                    return Err("fmt chunk too small or truncated".into());
-                }
-                let body_end = body_end_u64 as usize;
-                let fmt = &header_bytes[body_start..body_end];
-                let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
-                let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
-                let sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
-                let bits_per_sample = u16::from_le_bytes([fmt[14], fmt[15]]);
-                fmt_chunk = Some((format_tag, sample_rate, channels, bits_per_sample));
-            }
-            b"data" => {
-                data_offset = Some(body_start as u64);
-                // For RF64, the data chunk size field is 0xFFFFFFFF; use ds64 value
-                if is_rf64 && chunk_size == 0xFFFFFFFF {
-                    data_size = ds64_data_size;
-                } else {
-                    data_size = Some(chunk_size);
-                }
-                // Data chunk extends past our header bytes — stop scanning
-                if guano.is_some() || !chunk_fits {
-                    break;
-                }
-                // Skip past the data chunk to look for GUANO after it
-                let aligned = ((chunk_size + 1) & !1) as usize;
-                pos = body_start + aligned;
-                continue;
-            }
-            b"guan" => {
-                if chunk_fits {
-                    let body_end = body_end_u64 as usize;
-                    let guan_bytes = &header_bytes[body_start..body_end];
-                    guano = guano::parse_guano_chunk(guan_bytes);
-                }
-            }
-            b"cue " => {
-                if chunk_fits && chunk_size >= 4 {
-                    let body_end = body_end_u64 as usize;
-                    let cue_data = &header_bytes[body_start..body_end];
-                    let num_points =
-                        u32::from_le_bytes([cue_data[0], cue_data[1], cue_data[2], cue_data[3]]);
-                    let mut cp = 4usize;
-                    for _ in 0..num_points {
-                        if cp + 24 > cue_data.len() {
-                            break;
-                        }
-                        let id = u32::from_le_bytes(cue_data[cp..cp + 4].try_into().unwrap());
-                        // sample_offset is at offset 20 within the cue point struct
-                        let sample_offset =
-                            u32::from_le_bytes(cue_data[cp + 20..cp + 24].try_into().unwrap());
-                        cue_points.push((id, sample_offset as u64));
-                        cp += 24;
-                    }
-                }
-            }
-            b"LIST" => {
-                if chunk_fits && chunk_size >= 4 {
-                    let body_end = body_end_u64 as usize;
-                    let list_data = &header_bytes[body_start..body_end];
-                    let list_type = &list_data[0..4];
-                    if list_type == b"adtl" {
-                        parse_adtl_subchunks(&list_data[4..], &mut labels, &mut notes);
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        // Advance to next chunk (word-aligned)
-        let aligned = ((chunk_size + 1) & !1) as usize;
-        match body_start.checked_add(aligned) {
-            Some(next) if next > pos => pos = next,
-            _ => break, // overflow or no progress — stop
-        }
-    }
-
-    let (format_tag, sample_rate, channels, bits_per_sample) =
-        fmt_chunk.ok_or("No fmt chunk found in WAV header")?;
-    let data_offset = data_offset.ok_or("No data chunk found in WAV header")?;
-    let mut data_size = data_size.ok_or("No data chunk found in WAV header")?;
-
-    // format_tag: 1 = PCM integer, 3 = IEEE float
-    let is_float = format_tag == 3;
-    if format_tag != 1 && format_tag != 3 {
-        return Err(format!("Unsupported WAV format tag: {}", format_tag));
-    }
-
-    let bytes_per_frame = channels as u64 * (bits_per_sample as u64 / 8);
-    if bytes_per_frame == 0 {
-        return Err("Invalid WAV: zero bytes per frame".into());
-    }
-
-    // Fix u32 overflow: if we know the actual file size and the data_size looks
-    // suspiciously small (data extends to end of file but chunk says otherwise),
-    // recalculate from file size. This handles:
-    // - Standard RIFF files >4GB where the u32 data size wrapped
-    // - Recorders that write 0xFFFFFFFF as data size without using RF64
-    if let Some(fs) = file_size {
-        let expected_data = fs.saturating_sub(data_offset);
-        // If the stored data_size is much smaller than what the file contains,
-        // or if it's exactly 0xFFFFFFFF (sentinel used by some writers), fix it.
-        if data_size == 0xFFFFFFFF
-            || (expected_data > data_size + 1024 && expected_data > 1_000_000)
-        {
-            // Align to whole frames
-            let corrected = (expected_data / bytes_per_frame) * bytes_per_frame;
-            log::info!(
-                "Correcting data_size: header says {} bytes, file suggests {} bytes",
-                data_size,
-                corrected
-            );
-            data_size = corrected;
-        }
-    }
-
-    let total_frames = data_size / bytes_per_frame;
-
-    // Build WAV markers from parsed cue points + labels/notes
-    let wav_markers: Vec<WavMarker> = cue_points
-        .iter()
-        .map(|&(id, position)| {
-            let label = labels
-                .iter()
-                .find(|(cid, _)| *cid == id)
-                .map(|(_, t)| t.clone());
-            let note = notes
-                .iter()
-                .find(|(cid, _)| *cid == id)
-                .map(|(_, t)| t.clone());
-            WavMarker {
-                id,
-                position,
-                label,
-                note,
-            }
-        })
-        .collect();
-
-    Ok(WavHeader {
-        sample_rate,
-        channels,
-        bits_per_sample,
-        is_float,
-        data_offset,
-        data_size,
-        total_frames,
-        guano,
-        wav_markers,
-    })
-}
-
-/// Parse `labl` and `note` sub-chunks from a LIST/adtl body.
-fn parse_adtl_subchunks(
-    data: &[u8],
-    labels: &mut Vec<(u32, String)>,
-    notes: &mut Vec<(u32, String)>,
-) {
-    let mut pos = 0;
-    while pos + 8 <= data.len() {
-        let sub_id = &data[pos..pos + 4];
-        let sub_size = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
-        let body_start = pos + 8;
-        let body_end = (body_start + sub_size).min(data.len());
-        if body_end - body_start >= 4 {
-            let cue_id = u32::from_le_bytes(data[body_start..body_start + 4].try_into().unwrap());
-            // Text follows the cue_id, null-terminated
-            let text_bytes = &data[body_start + 4..body_end];
-            let text = std::str::from_utf8(text_bytes)
-                .unwrap_or("")
-                .trim_end_matches('\0')
-                .to_string();
-            match sub_id {
-                b"labl" => labels.push((cue_id, text)),
-                b"note" => notes.push((cue_id, text)),
-                _ => {}
-            }
-        }
-        // Advance (word-aligned)
-        pos = body_start + ((sub_size + 1) & !1);
-    }
-}
+pub use super::wav::{parse_wav_header, parse_wav_header_with_file_size, WavHeader};
 
 /// Parsed FLAC header — enough info to stream without loading all samples.
 #[derive(Clone, Debug)]
@@ -465,6 +203,7 @@ pub fn load_audio(bytes: &[u8]) -> Result<AudioData, String> {
     match &bytes[0..4] {
         b"RIFF" | b"RF64" if is_w4v(bytes) => load_w4v(bytes),
         b"RIFF" | b"RF64" => load_wav(bytes),
+        b"RIFX" => Err(super::wav::msg::RIFX.into()),
         b"fLaC" => load_flac(bytes),
         b"OggS" => load_ogg(bytes),
         _ if is_m4a(bytes) => load_m4a(bytes),
@@ -504,6 +243,7 @@ fn load_zc(bytes: &[u8]) -> Result<AudioData, String> {
         data_offset: None,
         data_size: None,
         zc_data: Some(std::sync::Arc::new(zc)),
+        wav: None,
     };
     Ok(AudioData {
         samples,
@@ -832,81 +572,6 @@ pub fn parse_ogg_header(header_bytes: &[u8], file_size: u64) -> Result<OggHeader
     })
 }
 
-/// Rebuild a minimal RIFF/WAVE with only the `fmt` and `data` chunks.
-/// Hound 3.5 doesn't handle RIFF word-alignment padding on odd-length chunks
-/// (e.g. a 651-byte `bext` chunk), so we strip extraneous chunks and produce
-/// a clean WAV that hound can always parse.
-fn normalize_riff(bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
-        return None;
-    }
-    let magic = &bytes[0..4];
-    if magic != b"RIFF" && magic != b"RF64" {
-        return None;
-    }
-
-    let mut pos = 12usize;
-    let mut fmt_data: Option<&[u8]> = None;
-    let mut audio_data: Option<&[u8]> = None;
-
-    while pos + 8 <= bytes.len() {
-        let chunk_id = &bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().ok()?) as usize;
-        let data_start = pos + 8;
-        let data_end = data_start + chunk_size;
-        if data_end > bytes.len() {
-            break;
-        }
-
-        match chunk_id {
-            b"fmt " => fmt_data = Some(&bytes[data_start..data_end]),
-            b"data" => {
-                audio_data = Some(&bytes[data_start..data_end]);
-                break; // data is always last useful chunk
-            }
-            _ => {}
-        }
-
-        // Advance with RIFF word-alignment (same as guano.rs)
-        pos = data_start + ((chunk_size + 1) & !1);
-    }
-
-    let fmt = fmt_data?;
-    let data = audio_data?;
-
-    // Hound rejects fmt chunks that aren't exactly 16 / 18 / 40 bytes.
-    // Some recorders (e.g. certain Wildlife Acoustics files in the field)
-    // tack non-standard text metadata onto the end of the fmt chunk; for
-    // standard PCM (format tag 1) the first 16 bytes are well-formed and
-    // the trailer is garbage. Strip it.
-    let fmt_normalized: &[u8] =
-        if fmt.len() >= 16 && fmt.len() != 16 && fmt.len() != 18 && fmt.len() != 40 {
-            let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
-            if format_tag == 1 || format_tag == 3 {
-                // PCM int / float — first 16 bytes are the standard header, rest is junk.
-                &fmt[..16]
-            } else {
-                fmt
-            }
-        } else {
-            fmt
-        };
-
-    // WAVE + fmt chunk header + fmt body + data chunk header + data body
-    let riff_body_len = 4 + 8 + fmt_normalized.len() + 8 + data.len();
-    let mut out = Vec::with_capacity(12 + riff_body_len - 4);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(riff_body_len as u32).to_le_bytes());
-    out.extend_from_slice(b"WAVE");
-    out.extend_from_slice(b"fmt ");
-    out.extend_from_slice(&(fmt_normalized.len() as u32).to_le_bytes());
-    out.extend_from_slice(fmt_normalized);
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    out.extend_from_slice(data);
-    Some(out)
-}
-
 fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
     let header = parse_w4v_header(bytes)?;
     let all_samples = decode_w4v_blocks(bytes, &header);
@@ -931,51 +596,19 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            wav: None,
         },
     })
 }
 
 fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
-    // Parse original header for data_offset/data_size before normalization
-    let (orig_data_offset, orig_data_size) =
-        parse_wav_header_with_file_size(bytes, Some(bytes.len() as u64))
-            .map(|h| (Some(h.data_offset), Some(h.data_size)))
-            .unwrap_or((None, None));
-
-    let normalized;
-    let wav_bytes = match normalize_riff(bytes) {
-        Some(clean) => {
-            normalized = clean;
-            &normalized[..]
-        }
-        None => bytes,
-    };
-    let cursor = Cursor::new(wav_bytes);
-    let reader = hound::WavReader::new(cursor).map_err(|e| format!("WAV error: {e}"))?;
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let channels = spec.channels as u32;
-    let bits_per_sample = spec.bits_per_sample;
-
-    let is_float = matches!(spec.sample_format, hound::SampleFormat::Float);
-    let all_samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader
-            .into_samples::<f32>()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("WAV sample error: {e}"))?,
-        hound::SampleFormat::Int => {
-            let max_val = (1u32 << (bits_per_sample - 1)) as f32;
-            reader
-                .into_samples::<i32>()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("WAV sample error: {e}"))?
-                .into_iter()
-                .map(|s| s as f32 / max_val)
-                .collect()
-        }
-    };
-
-    let guano = parse_guano(bytes);
+    let header = parse_wav_header(bytes)?;
+    let start = header.data_offset as usize;
+    let end = start + header.data_size as usize;
+    let all_samples = super::wav::decode_pcm(&bytes[start..end], header.encoding);
+    let guano = header.guano.clone().or_else(|| parse_guano(bytes));
+    let channels = header.channels as u32;
+    let sample_rate = header.sample_rate;
 
     let (samples, source) = build_source(all_samples, channels, sample_rate);
     let duration_secs = samples.len() as f64 / sample_rate as f64;
@@ -989,12 +622,13 @@ fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: "WAV",
-            bits_per_sample,
-            is_float,
+            bits_per_sample: header.bits_per_sample,
+            is_float: header.is_float,
             guano,
-            data_offset: orig_data_offset,
-            data_size: orig_data_size,
+            data_offset: Some(header.data_offset),
+            data_size: Some(header.data_size),
             zc_data: None,
+            wav: Some(header.details),
         },
     })
 }
@@ -1042,6 +676,7 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: flac_data_offset,
             data_size: flac_data_size,
             zc_data: None,
+            wav: None,
         },
     })
 }
@@ -1147,6 +782,7 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: ogg_page_region(bytes).0,
             data_size: ogg_page_region(bytes).1,
             zc_data: None,
+            wav: None,
         },
     })
 }
@@ -1261,6 +897,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
                     .saturating_sub(mp3_trailer_size(bytes)),
             ),
             zc_data: None,
+            wav: None,
         },
     })
 }
@@ -1896,6 +1533,7 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: None,
             data_size: None,
             zc_data: None,
+            wav: None,
         },
     })
 }
