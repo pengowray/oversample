@@ -648,3 +648,162 @@ impl Default for RecoveryHandle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oversample_core::audio::wav::{
+        parse_wav_header, parse_wav_header_with_file_size, SampleEncoding,
+    };
+
+    /// A fresh app-data directory under the system temp dir.
+    fn temp_app_data(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oversample-recovery-test-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn args() -> StartArgs {
+        StartArgs {
+            filename: None,
+            connection_type: None,
+            mic_name: Some("Test mic".into()),
+            mic_make: None,
+            device_make: None,
+            device_model: None,
+            app_version: None,
+            loc_latitude: None,
+            loc_longitude: None,
+            loc_elevation: None,
+            loc_accuracy: None,
+            enable_recovery: Some(true),
+        }
+    }
+
+    fn start(app_data: &Path, name: &str, format: NativeSampleFormat) -> RecoveryWriter {
+        let meta = build_meta(&args(), name, format, 384_000, 1);
+        create(app_data, name, format, 384_000, 1, &meta).unwrap()
+    }
+
+    #[test]
+    fn finalized_recording_reads_back() {
+        let app_data = temp_app_data("finalize");
+        // Five 24-bit samples: an odd data length, so a pad byte must come
+        // before the GUANO chunk.
+        let mut w = start(&app_data, "rec.wav", NativeSampleFormat::I24);
+        let samples: Vec<i32> = (1..=5).map(|i| i << 16).collect();
+        w.append_bytes(&encode_samples_i24(&samples)).unwrap();
+        let path = finalize_in_place_and_take(w, &[], "GUANO|Version: 1.0\nMake: Test\n").unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let h = parse_wav_header(&bytes).unwrap();
+        assert_eq!(h.encoding, SampleEncoding::I24);
+        assert_eq!(h.total_frames, 5);
+        assert_eq!(h.data_offset, wavfmt::WRITE_HEADER_LEN as u64);
+        assert!(h.guano.is_some());
+        assert!(h.details.notes.is_empty(), "{:?}", h.details.notes);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        let riff = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        assert_eq!(riff, bytes.len() - 8);
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn crashed_recording_is_recovered_with_torn_sample_trimmed() {
+        let app_data = temp_app_data("crash");
+        let mut w = start(&app_data, "crash.wav", NativeSampleFormat::I16);
+        // Three and a half 16-bit samples, then the app "crashes".
+        w.append_bytes(&[1, 0, 2, 0, 3, 0, 4]).unwrap();
+        drop(w);
+
+        let out = recover_leftover_recordings(&app_data);
+        assert_eq!(out.len(), 1);
+        let r = &out[0];
+        assert!(r.had_sidecar);
+        assert_eq!(r.sample_count, 3);
+        let bytes = std::fs::read(&r.path).unwrap();
+        assert_eq!(bytes.len() as u64, r.file_size_bytes);
+        let h = parse_wav_header(&bytes).unwrap();
+        assert_eq!(h.total_frames, 3);
+        assert!(h.guano.is_some());
+        assert!(h.details.notes.is_empty(), "{:?}", h.details.notes);
+        assert!(!recovery_dir(&app_data).join("crash.wav.part").exists());
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn old_44_byte_part_file_is_recovered() {
+        let app_data = temp_app_data("legacy");
+        let dir = recovery_dir(&app_data);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut f = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        f.extend_from_slice(&16u32.to_le_bytes());
+        f.extend_from_slice(&[1, 0, 1, 0]);
+        f.extend_from_slice(&48_000u32.to_le_bytes());
+        f.extend_from_slice(&96_000u32.to_le_bytes());
+        f.extend_from_slice(&[2, 0, 16, 0]);
+        f.extend_from_slice(b"data\0\0\0\0");
+        f.extend_from_slice(&[1, 0, 2, 0, 3, 0, 4, 0]);
+        std::fs::write(dir.join("old.wav.part"), &f).unwrap();
+
+        let out = recover_leftover_recordings(&app_data);
+        assert_eq!(out.len(), 1);
+        let bytes = std::fs::read(&out[0].path).unwrap();
+        let h = parse_wav_header(&bytes).unwrap();
+        assert_eq!(h.data_offset, 44);
+        assert_eq!(h.total_frames, 4);
+        assert_eq!(h.sample_rate, 48_000);
+        assert!(h.guano.is_some());
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn header_only_part_is_deleted_and_damaged_one_kept() {
+        let app_data = temp_app_data("junk");
+        let dir = recovery_dir(&app_data);
+        let w = start(&app_data, "empty.wav", NativeSampleFormat::I16);
+        drop(w); // header only, no samples
+        let damaged = dir.join("damaged.wav.part");
+        std::fs::write(&damaged, vec![0xAB; 4096]).unwrap();
+
+        assert!(recover_leftover_recordings(&app_data).is_empty());
+        assert!(!dir.join("empty.wav.part").exists());
+        assert!(damaged.exists(), "a large file with a bad header is kept");
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn recording_past_4gb_is_finalized_as_rf64() {
+        // A sparse file: 5 GB of logical length that takes no disk space.
+        let app_data = temp_app_data("rf64");
+        let mut w = start(&app_data, "long.wav", NativeSampleFormat::I16);
+        let data_bytes = 5_000_000_000u64;
+        w.wav_file
+            .set_len(wavfmt::WRITE_HEADER_LEN as u64 + data_bytes)
+            .unwrap();
+        w.data_bytes_written = data_bytes;
+        let path = finalize_in_place_and_take(w, &[], "GUANO|Version: 1.0\n").unwrap();
+
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        let mut head = Vec::new();
+        {
+            use std::io::Read;
+            File::open(&path)
+                .unwrap()
+                .take(4096)
+                .read_to_end(&mut head)
+                .unwrap();
+        }
+        assert_eq!(&head[0..4], b"RF64");
+        let h = parse_wav_header_with_file_size(&head, Some(file_size)).unwrap();
+        assert!(h.details.rf64);
+        assert_eq!(h.data_size, data_bytes);
+        assert_eq!(h.total_frames, data_bytes / 2);
+        assert!(h.details.notes.is_empty(), "{:?}", h.details.notes);
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+}

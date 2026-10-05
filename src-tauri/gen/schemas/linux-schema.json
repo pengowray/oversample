@@ -177,6 +177,90 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-isIgnoringBatteryOptimizations",
+          "markdownDescription": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the isNotificationPermissionGranted command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-isNotificationPermissionGranted",
+          "markdownDescription": "Enables the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestDisableBatteryOptimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-requestDisableBatteryOptimization",
+          "markdownDescription": "Enables the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestNotificationPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-requestNotificationPermission",
+          "markdownDescription": "Enables the requestNotificationPermission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the startForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-startForegroundAudio",
+          "markdownDescription": "Enables the startForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stopForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-stopForegroundAudio",
+          "markdownDescription": "Enables the stopForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the updateForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-updateForegroundAudio",
+          "markdownDescription": "Enables the updateForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-isIgnoringBatteryOptimizations",
+          "markdownDescription": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the isNotificationPermissionGranted command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-isNotificationPermissionGranted",
+          "markdownDescription": "Denies the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestDisableBatteryOptimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-requestDisableBatteryOptimization",
+          "markdownDescription": "Denies the requestDisableBatteryOptimization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestNotificationPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-requestNotificationPermission",
+          "markdownDescription": "Denies the requestNotificationPermission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the startForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-startForegroundAudio",
+          "markdownDescription": "Denies the startForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stopForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-stopForegroundAudio",
+          "markdownDescription": "Denies the stopForegroundAudio command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the updateForegroundAudio command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-updateForegroundAudio",
+          "markdownDescription": "Denies the updateForegroundAudio command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
@@ -2145,6 +2229,138 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Enables the getCurrentLocation command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-getCurrentLocation",
+          "markdownDescription": "Enables the getCurrentLocation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the getDeviceModel command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-getDeviceModel",
+          "markdownDescription": "Enables the getDeviceModel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the getWifiSsid command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:allow-getWifiSsid",
+          "markdownDescription": "Enables the getWifiSsid command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the getCurrentLocation command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-getCurrentLocation",
+          "markdownDescription": "Denies the getCurrentLocation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the getDeviceModel command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-getDeviceModel",
+          "markdownDescription": "Denies the getDeviceModel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the getWifiSsid command without any pre-configured scope.",
+          "type": "string",
+          "const": "geolocation:deny-getWifiSsid",
+          "markdownDescription": "Denies the getWifiSsid command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancelRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-cancelRecordingEntry",
+          "markdownDescription": "Enables the cancelRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the createRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-createRecordingEntry",
+          "markdownDescription": "Enables the createRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the exportFile command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-exportFile",
+          "markdownDescription": "Enables the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the finalizeRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-finalizeRecordingEntry",
+          "markdownDescription": "Enables the finalizeRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the readRecordingRange command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-readRecordingRange",
+          "markdownDescription": "Enables the readRecordingRange command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the saveExportBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-saveExportBytes",
+          "markdownDescription": "Enables the saveExportBytes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the saveToSharedStorage command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-saveToSharedStorage",
+          "markdownDescription": "Enables the saveToSharedStorage command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the saveWavBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-saveWavBytes",
+          "markdownDescription": "Enables the saveWavBytes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancelRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-cancelRecordingEntry",
+          "markdownDescription": "Denies the cancelRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the createRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-createRecordingEntry",
+          "markdownDescription": "Denies the createRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exportFile command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-exportFile",
+          "markdownDescription": "Denies the exportFile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the finalizeRecordingEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-finalizeRecordingEntry",
+          "markdownDescription": "Denies the finalizeRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the readRecordingRange command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-readRecordingRange",
+          "markdownDescription": "Denies the readRecordingRange command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the saveExportBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-saveExportBytes",
+          "markdownDescription": "Denies the saveExportBytes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the saveToSharedStorage command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-saveToSharedStorage",
+          "markdownDescription": "Denies the saveToSharedStorage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the saveWavBytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-saveWavBytes",
+          "markdownDescription": "Denies the saveWavBytes command without any pre-configured scope."
+        },
+        {
           "description": "Enables the closeUsbDevice command without any pre-configured scope.",
           "type": "string",
           "const": "usb-audio:allow-closeUsbDevice",
@@ -2203,6 +2419,18 @@
           "type": "string",
           "const": "usb-audio:deny-requestUsbPermission",
           "markdownDescription": "Denies the requestUsbPermission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "zoom:allow-reset",
+          "markdownDescription": "Enables the reset command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "zoom:deny-reset",
+          "markdownDescription": "Denies the reset command without any pre-configured scope."
         }
       ]
     },
