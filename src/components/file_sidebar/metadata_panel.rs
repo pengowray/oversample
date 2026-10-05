@@ -1129,8 +1129,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                         let has_guano = !guano_fields.is_empty();
                         let wav = meta.wav.clone().unwrap_or_default();
                         let structure_notes: Vec<_> = wav.notes.iter().map(|n| {
-                            let class = if n.warning { "analysis-warning" } else { "metadata-note" };
-                            view! { <div class=class>{n.text.clone()}</div> }
+                            let class = match (n.warning, n.detail.is_some()) {
+                                (true, false) => "analysis-warning",
+                                (true, true) => "analysis-warning has-detail",
+                                (false, false) => "metadata-note",
+                                (false, true) => "metadata-note has-detail",
+                            };
+                            view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
                         }).collect();
                         let recorder_block = wav.recorder_block.clone();
 

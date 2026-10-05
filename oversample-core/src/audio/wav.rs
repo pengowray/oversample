@@ -764,6 +764,7 @@ pub mod msg {
         WavNote {
             text,
             warning: true,
+            detail: None,
         }
     }
 
@@ -782,9 +783,14 @@ pub mod msg {
 
     pub fn d500x_size_short(block_len: u64) -> WavNote {
         let n = thousands(block_len);
-        warning(format!(
-            "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio. The metadata is listed below, under Pettersson D500X metadata."
-        ))
+        WavNote {
+            detail: Some(format!(
+                "Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio."
+            )),
+            ..warning(format!(
+                "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. The metadata is listed below, under Pettersson D500X metadata."
+            ))
+        }
     }
 
     pub fn extra_data_chunks(n: u32) -> WavNote {
@@ -818,6 +824,7 @@ pub mod msg {
                 thousands(over)
             ),
             warning: false,
+            detail: None,
         }
     }
 }

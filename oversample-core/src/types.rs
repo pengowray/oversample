@@ -42,6 +42,8 @@ pub struct WavNote {
     /// The problem changes which audio is read (or how other programs read
     /// it). False for header details that don't affect the audio.
     pub warning: bool,
+    /// More detail, shown as a tooltip.
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

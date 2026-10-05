@@ -371,6 +371,14 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
+/* A note with more detail in its tooltip. */
+.has-detail {
+    cursor: help;
+    text-decoration: underline dotted;
+    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+    text-underline-offset: 2px;
+}
+
 .metadata-note {
     padding: 3px 12px 4px;
     font-size: 10px;
