@@ -86,18 +86,10 @@ pub fn insert_cue_chunks(wav: &mut Vec<u8>, cue_bytes: &[u8]) {
         return;
     }
 
-    // Find insertion point: just before "guan" chunk, or at end
-    let mut insert_pos = wav.len();
-    let mut pos = 12; // skip RIFF header
-    while pos + 8 <= wav.len() {
-        let chunk_id = &wav[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(wav[pos + 4..pos + 8].try_into().unwrap()) as usize;
-        if chunk_id == b"guan" {
-            insert_pos = pos;
-            break;
-        }
-        pos += 8 + ((chunk_size + 1) & !1);
-    }
+    // Insert just before the "guan" chunk, or at the end.
+    let insert_pos = crate::audio::wav::riff_chunks(wav, 12)
+        .find(|c| c.id == b"guan")
+        .map_or(wav.len(), |c| c.body_offset as usize - 8);
 
     wav.splice(insert_pos..insert_pos, cue_bytes.iter().copied());
 

@@ -11,7 +11,7 @@
 //! streaming recorder can rewrite the header in place when it stops.
 
 use super::guano::{self, GuanoMetadata};
-use crate::types::{RecorderBlock, WavDetails, WavMarker, WavNote};
+use crate::types::{RecorderBlock, WavDetails, WavMarker};
 
 /// How each sample is stored in the `data` chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,6 +484,58 @@ fn parse_adtl_subchunks(
     }
 }
 
+// ─── Chunk iteration ────────────────────────────────────────────────────────
+
+/// One chunk in a RIFF byte stream.
+#[derive(Clone, Copy, Debug)]
+pub struct RiffChunk<'a> {
+    pub id: &'a [u8],
+    /// Byte offset of the chunk body within the bytes walked.
+    pub body_offset: u64,
+    /// Body length from the size field.
+    pub size: u64,
+    /// The body, cut off where the bytes end.
+    pub body: &'a [u8],
+}
+
+impl RiffChunk<'_> {
+    /// The whole body is within the bytes walked.
+    pub fn complete(&self) -> bool {
+        self.body.len() as u64 == self.size
+    }
+}
+
+/// Walk the chunks in `bytes` from `start` (12 for a whole file, after the
+/// `RIFF`/`WAVE` header). Stops at the first chunk header that doesn't fit.
+/// Positions are u64 so a huge size field can't overflow on 32-bit WASM.
+/// Plain 32-bit sizes only: for RF64 `data`, see
+/// [`parse_wav_header_with_file_size`].
+pub fn riff_chunks(bytes: &[u8], start: usize) -> impl Iterator<Item = RiffChunk<'_>> {
+    let len = bytes.len() as u64;
+    let mut pos = start as u64;
+    std::iter::from_fn(move || {
+        if pos + 8 > len {
+            return None;
+        }
+        let p = pos as usize;
+        let size = u32_at(bytes, p + 4) as u64;
+        let body_offset = pos + 8;
+        let body_end = (body_offset + size).min(len);
+        pos = body_offset + size + (size & 1);
+        Some(RiffChunk {
+            id: &bytes[p..p + 4],
+            body_offset,
+            size,
+            body: &bytes[body_offset as usize..body_end as usize],
+        })
+    })
+}
+
+/// Bytes start with a `RIFF` or `RF64` header of form `WAVE`.
+pub fn is_riff_wave(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && matches!(&bytes[0..4], b"RIFF" | b"RF64") && &bytes[8..12] == b"WAVE"
+}
+
 // ─── Decoding ───────────────────────────────────────────────────────────────
 
 /// Decode raw sample bytes into interleaved f32 in [-1, 1). Integer samples
@@ -611,12 +663,10 @@ pub fn locate_samples(header: &[u8]) -> Option<(WavWriteFormat, u64)> {
         return None;
     }
     let mut fmt = None;
-    let mut pos = 12usize;
-    while pos + 8 <= header.len() {
-        let size = u32_at(header, pos + 4) as usize;
-        match &header[pos..pos + 4] {
-            b"fmt " if pos + 8 + 16 <= header.len() => {
-                let f = &header[pos + 8..pos + 24];
+    for chunk in riff_chunks(header, 12) {
+        match chunk.id {
+            b"fmt " if chunk.body.len() >= 16 => {
+                let f = chunk.body;
                 fmt = Some(WavWriteFormat {
                     sample_rate: u32_at(f, 4),
                     channels: u16_at(f, 2),
@@ -624,10 +674,9 @@ pub fn locate_samples(header: &[u8]) -> Option<(WavWriteFormat, u64)> {
                     is_float: u16_at(f, 0) == WAVE_FORMAT_IEEE_FLOAT,
                 });
             }
-            b"data" => return Some((fmt?, pos as u64 + 8)),
+            b"data" => return Some((fmt?, chunk.body_offset)),
             _ => {}
         }
-        pos = pos.checked_add(8 + size + (size & 1))?;
     }
     None
 }

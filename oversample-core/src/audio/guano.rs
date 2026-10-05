@@ -62,37 +62,12 @@ pub fn append_guano_chunk(wav_bytes: &mut Vec<u8>, guano_text: &str) {
 
 /// Search raw WAV bytes for a "guan" RIFF subchunk and parse GUANO metadata.
 pub fn parse_guano(bytes: &[u8]) -> Option<GuanoMetadata> {
-    // Must be RIFF/WAVE or RF64/WAVE
-    if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
+    if !super::wav::is_riff_wave(bytes) {
         return None;
     }
-    let magic = &bytes[0..4];
-    if magic != b"RIFF" && magic != b"RF64" {
-        return None;
-    }
-
-    let mut pos = 12;
-    while pos + 8 <= bytes.len() {
-        let chunk_id = &bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes([
-            bytes[pos + 4],
-            bytes[pos + 5],
-            bytes[pos + 6],
-            bytes[pos + 7],
-        ]) as usize;
-        let data_start = pos + 8;
-        let data_end = data_start + chunk_size;
-
-        if chunk_id == b"guan" && data_end <= bytes.len() {
-            let text = std::str::from_utf8(&bytes[data_start..data_end]).ok()?;
-            return Some(parse_guano_text(text));
-        }
-
-        // Chunks are word-aligned (padded to even size)
-        pos = data_start + ((chunk_size + 1) & !1);
-    }
-
-    None
+    super::wav::riff_chunks(bytes, 12)
+        .find(|c| c.id == b"guan" && c.complete())
+        .and_then(|c| parse_guano_chunk(c.body))
 }
 
 /// Parse GUANO metadata from raw chunk body bytes (without the "guan" chunk header).

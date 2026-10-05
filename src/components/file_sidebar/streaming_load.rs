@@ -1692,20 +1692,9 @@ pub(crate) async fn build_streaming_overview(
 
 /// Scan raw bytes (from after the data chunk) for a GUANO "guan" chunk.
 pub(crate) fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMetadata> {
-    let mut pos = 0usize;
-    while pos + 8 <= tail_bytes.len() {
-        let chunk_id = &tail_bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(tail_bytes[pos + 4..pos + 8].try_into().ok()?) as usize;
-        let body_start = pos + 8;
-        let body_end = body_start + chunk_size;
-
-        if chunk_id == b"guan" && body_end <= tail_bytes.len() {
-            return crate::audio::guano::parse_guano_chunk(&tail_bytes[body_start..body_end]);
-        }
-
-        pos = body_start + ((chunk_size + 1) & !1);
-    }
-    None
+    crate::audio::wav::riff_chunks(tail_bytes, 0)
+        .find(|c| c.id == b"guan" && c.complete())
+        .and_then(|c| crate::audio::guano::parse_guano_chunk(c.body))
 }
 
 /// Attempt to open a large M4A file using the streaming path.

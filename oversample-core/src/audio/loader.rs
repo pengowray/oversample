@@ -304,19 +304,11 @@ pub fn is_w4v(bytes: &[u8]) -> bool {
     if bytes.len() < 12 || &bytes[8..12] != b"WAVE" {
         return false;
     }
-    // Scan for fmt chunk and check format tag
-    let mut pos = 12usize;
-    while pos + 8 <= bytes.len() {
-        let chunk_id = &bytes[pos..pos + 4];
-        let chunk_size =
-            u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap_or([0; 4])) as usize;
-        if chunk_id == b"fmt " && chunk_size >= 2 && pos + 10 <= bytes.len() {
-            let format_tag = u16::from_le_bytes([bytes[pos + 8], bytes[pos + 9]]);
-            return format_tag == W4V_FORMAT_TAG;
-        }
-        pos = pos + 8 + ((chunk_size + 1) & !1);
-    }
-    false
+    super::wav::riff_chunks(bytes, 12)
+        .find(|c| c.id == b"fmt ")
+        .is_some_and(|c| {
+            c.body.len() >= 2 && u16::from_le_bytes([c.body[0], c.body[1]]) == W4V_FORMAT_TAG
+        })
 }
 
 /// Parsed W4V header.
@@ -338,68 +330,38 @@ pub fn parse_w4v_header(bytes: &[u8]) -> Result<W4vHeader, String> {
         return Err("Not a RIFF/WAVE file".into());
     }
 
-    let mut pos = 12usize;
     let mut fmt_info: Option<(u32, u16, u16)> = None; // (sample_rate, channels, block_align)
     let mut data_offset: Option<u64> = None;
     let mut data_size: Option<u64> = None;
     let mut fact_samples: Option<u64> = None;
     let mut guano: Option<GuanoMetadata> = None;
 
-    while pos + 8 <= bytes.len() {
-        let chunk_id = &bytes[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes(
-            bytes[pos + 4..pos + 8]
-                .try_into()
-                .map_err(|_| "Invalid chunk size")?,
-        ) as u64;
-        let body_start = pos + 8;
-        let body_end_u64 = body_start as u64 + chunk_size;
-        let chunk_fits = body_end_u64 <= bytes.len() as u64;
-
-        match chunk_id {
+    for chunk in super::wav::riff_chunks(bytes, 12) {
+        let body = chunk.body;
+        match chunk.id {
             b"fmt " => {
-                if chunk_size < 14 || !chunk_fits {
+                if chunk.size < 14 || !chunk.complete() {
                     return Err("fmt chunk too small or truncated".into());
                 }
-                let body_end = body_end_u64 as usize;
-                let fmt = &bytes[body_start..body_end];
-                let format_tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+                let format_tag = u16::from_le_bytes([body[0], body[1]]);
                 if format_tag != W4V_FORMAT_TAG {
                     return Err(format!("Not a W4V file (format tag 0x{:04X})", format_tag));
                 }
-                let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
-                let sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
-                let block_align = u16::from_le_bytes([fmt[12], fmt[13]]);
+                let channels = u16::from_le_bytes([body[2], body[3]]);
+                let sample_rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+                let block_align = u16::from_le_bytes([body[12], body[13]]);
                 fmt_info = Some((sample_rate, channels, block_align));
             }
-            b"fact" => {
-                if chunk_size >= 4 && chunk_fits {
-                    let f = &bytes[body_start..];
-                    fact_samples = Some(u32::from_le_bytes([f[0], f[1], f[2], f[3]]) as u64);
-                }
+            b"fact" if body.len() >= 4 => {
+                fact_samples =
+                    Some(u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as u64);
             }
-            b"data" => {
-                data_offset = Some(body_start as u64);
-                data_size = Some(chunk_size);
-                if guano.is_some() || !chunk_fits {
-                    break;
-                }
-                let aligned = ((chunk_size + 1) & !1) as usize;
-                pos = body_start + aligned;
-                continue;
+            b"data" if data_offset.is_none() => {
+                data_offset = Some(chunk.body_offset);
+                data_size = Some(chunk.size);
             }
-            b"guan" => {
-                if chunk_fits {
-                    let body_end = body_end_u64 as usize;
-                    guano = guano::parse_guano_chunk(&bytes[body_start..body_end]);
-                }
-            }
+            b"guan" if chunk.complete() => guano = guano::parse_guano_chunk(body),
             _ => {}
-        }
-        let aligned = ((chunk_size + 1) & !1) as usize;
-        match body_start.checked_add(aligned) {
-            Some(next) if next > pos => pos = next,
-            _ => break,
         }
     }
 
