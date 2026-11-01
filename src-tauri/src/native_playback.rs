@@ -98,7 +98,7 @@ pub fn start(params: NativePlayParams, app: tauri::AppHandle) -> Result<Playback
     let is_playing_out = is_playing.clone();
     let stream = device
         .build_output_stream(
-            &config,
+            config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut ring = ring_out.lock().unwrap();
                 for sample in data.iter_mut() {

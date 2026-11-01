@@ -688,7 +688,6 @@ fn remove_from_index_inner(root: &Path, id: u64) -> Result<(), String> {
 /// new entry (the rename only prevents torn writes, not lost updates). The lock
 /// is released when the handle drops, including on process exit/crash.
 fn with_index_lock<T>(root: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    use fs4::fs_std::FileExt;
     let lock_path = root.join("index.json.lock");
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -696,10 +695,10 @@ fn with_index_lock<T>(root: &Path, f: impl FnOnce() -> Result<T, String>) -> Res
         .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("Failed to open index lock {}: {e}", lock_path.display()))?;
-    lock.lock_exclusive()
+    lock.lock()
         .map_err(|e| format!("Failed to acquire index lock: {e}"))?;
     let result = f();
-    let _ = FileExt::unlock(&lock);
+    let _ = lock.unlock();
     result
 }
 

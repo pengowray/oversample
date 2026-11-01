@@ -581,14 +581,14 @@ pub fn open_mic(
     let rec = is_recording.clone();
     let strm = is_streaming.clone();
 
-    let err_callback = |err: cpal::StreamError| {
+    let err_callback = |err: cpal::Error| {
         eprintln!("Audio stream error: {}", err);
     };
 
     let stream = match format {
         NativeSampleFormat::I16 => {
             device.build_input_stream(
-                &stream_config,
+                stream_config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     let mut buf = buf.lock().unwrap();
                     if rec.load(Ordering::Relaxed) {
@@ -644,7 +644,7 @@ pub fn open_mic(
         }
         NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
             device.build_input_stream(
-                &stream_config,
+                stream_config,
                 move |data: &[i32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buf.lock().unwrap();
                     // Accumulate effective-bit-depth detection over the raw i32
@@ -711,7 +711,7 @@ pub fn open_mic(
         }
         NativeSampleFormat::F32 => {
             device.build_input_stream(
-                &stream_config,
+                stream_config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buf.lock().unwrap();
                     if rec.load(Ordering::Relaxed) {

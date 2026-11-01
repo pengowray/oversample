@@ -3,6 +3,7 @@ package com.oversample.app
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.enableEdgeToEdge
+import app.tauri.plugin.PluginManager
 
 private const val TAG = "MainActivity"
 
@@ -32,23 +33,23 @@ class MainActivity : TauriActivity() {
     // Register plugins before super.onCreate (which initializes the WebView)
     val usbPlugin = UsbAudioPlugin(this)
     usbAudioPlugin = usbPlugin
-    pluginManager.load(null, "usb-audio", usbPlugin, "{}")
+    PluginManager.load(null, "usb-audio", usbPlugin, "{}")
 
     val msPlugin = MediaStorePlugin(this)
     mediaStorePlugin = msPlugin
-    pluginManager.load(null, "media-store", msPlugin, "{}")
+    PluginManager.load(null, "media-store", msPlugin, "{}")
 
     val geoPlugin = GeolocationPlugin(this)
     geolocationPlugin = geoPlugin
-    pluginManager.load(null, "geolocation", geoPlugin, "{}")
+    PluginManager.load(null, "geolocation", geoPlugin, "{}")
 
     val zPlugin = ZoomPlugin(this)
     zoomPlugin = zPlugin
-    pluginManager.load(null, "zoom", zPlugin, "{}")
+    PluginManager.load(null, "zoom", zPlugin, "{}")
 
     val audioSvcPlugin = AudioServicePlugin(this)
     audioServicePlugin = audioSvcPlugin
-    pluginManager.load(null, "audio-service", audioSvcPlugin, "{}")
+    PluginManager.load(null, "audio-service", audioSvcPlugin, "{}")
 
     super.onCreate(savedInstanceState)
     // Note: We do NOT override the WebChromeClient. The generated RustWebChromeClient

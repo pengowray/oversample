@@ -3,7 +3,7 @@ members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core", "oversample-
 
 [package]
 name = "oversample"
-version = "0.5.61"
+version = "0.5.62"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 oversample-core = { path = "oversample-core" }
 oversample-ipc = { path = "oversample-ipc" }
 leptos = { version = "0.8", features = ["csr"] }
-reactive_stores = "0.4.2"
+reactive_stores = "0.4.4"
 web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
