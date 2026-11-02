@@ -1,4 +1,5 @@
 use crate::dsp::filters::lowpass_filter;
+use crate::dsp::zero_crossing::{crossings_to_hz, CROSSINGS_PER_CYCLE};
 
 /// Bandpass-filter samples to the ultrasonic range (15 kHz – Nyquist).
 /// Shared by both `zc_divide` and `zc_rate_per_bin`.
@@ -33,8 +34,11 @@ fn adaptive_threshold(filtered: &[f32]) -> (f32, f32) {
 /// Real FD detectors work by:
 /// 1. Bandpass filtering the input to the ultrasonic range (15-150 kHz)
 /// 2. Using a Schmitt trigger (hysteresis comparator) to reject noise crossings
-/// 3. Dividing the crossing rate by `division_factor`
-/// 4. Outputting a short pulse at each divided crossing
+/// 3. Counting whole cycles of the signal (two zero crossings each)
+/// 4. Outputting a short pulse every `division_factor` cycles
+///
+/// So a call at `f` is heard at `f / division_factor`: a 40 kHz call with a
+/// division factor of 10 makes clicks at 4 kHz.
 ///
 /// The output amplitude tracks the input envelope so that louder bat calls
 /// produce louder clicks, matching the behavior of analog FD detectors.
@@ -61,7 +65,9 @@ pub fn zc_divide(
     // Adaptive threshold based on filtered signal peak
     let (threshold_high, threshold_low) = adaptive_threshold(&filtered);
 
-    // Schmitt trigger zero-crossing detection with division
+    // Schmitt trigger zero-crossing detection with division. Each cycle has
+    // two zero crossings, so a click needs twice `division_factor` of them.
+    let crossings_per_click = division_factor.saturating_mul(CROSSINGS_PER_CYCLE);
     let mut output = vec![0.0f32; samples.len()];
     let mut crossing_count: u32 = 0;
     let mut armed = false;
@@ -84,7 +90,7 @@ pub fn zc_divide(
         let curr_positive = filtered[i] >= 0.0;
         if armed && prev_positive != curr_positive {
             crossing_count += 1;
-            if crossing_count >= division_factor {
+            if crossing_count >= crossings_per_click {
                 crossing_count = 0;
                 let amp = (env / threshold_high).min(1.0) * output_gain;
                 let end = (i + click_len).min(samples.len());
@@ -100,9 +106,11 @@ pub fn zc_divide(
     cascaded_lp(&output, 12_000.0, sample_rate, 2)
 }
 
-/// Compute zero-crossing rate per time bin for visualization.
+/// Compute the zero-crossing frequency per time bin for visualization.
 ///
-/// Returns a Vec of (crossings_per_second, is_armed) per bin.
+/// Returns a Vec of (frequency_hz, is_armed) per bin. The frequency is the
+/// number of zero crossings per second divided by two, so a 40 kHz tone reads
+/// 40 kHz.
 /// `bin_duration` is in seconds (e.g. 0.001 for 1ms bins).
 /// Only counts crossings where the Schmitt trigger is armed (signal present).
 pub fn zc_rate_per_bin(
@@ -155,12 +163,7 @@ pub fn zc_rate_per_bin(
             } else {
                 bin_duration
             };
-            let rate = if actual_bin_dur > 0.0 {
-                bin_crossings as f64 / (2.0 * actual_bin_dur)
-            } else {
-                0.0
-            };
-            bins.push((rate, bin_armed));
+            bins.push((crossings_to_hz(bin_crossings, actual_bin_dur), bin_armed));
             bin_crossings = 0;
             bin_armed = false;
         }
@@ -265,6 +268,54 @@ mod tests {
         let input = vec![1.0f32; 1000];
         let output = zc_divide(&input, 44100, 10, false);
         assert!(output.iter().all(|&s| s.abs() < 0.001));
+    }
+
+    /// Count the clicks in `output`: upward crossings of half its peak.
+    fn count_clicks(output: &[f32]) -> usize {
+        let half = output.iter().fold(0.0f32, |m, &s| m.max(s)) * 0.5;
+        output
+            .windows(2)
+            .filter(|w| w[0] < half && w[1] >= half)
+            .count()
+    }
+
+    #[test]
+    fn test_output_is_at_tone_frequency_over_division() {
+        let sr = 192_000;
+        // (tone Hz, division, expected click rate Hz)
+        for (freq, division, expected) in [(40_000.0, 10, 4_000.0), (30_000.0, 6, 5_000.0)] {
+            let input: Vec<f32> = make_sine(freq, sr, 0.1).iter().map(|s| s * 0.5).collect();
+            let output = zc_divide(&input, sr, division, false);
+            // Skip the first 2 ms while the filters settle and the envelope rises.
+            let skip = (sr as f64 * 0.002) as usize;
+            let clicks = count_clicks(&output[skip..]);
+            let rate = clicks as f64 / ((output.len() - skip) as f64 / sr as f64);
+            let error = (rate - expected).abs() / expected;
+            assert!(
+                error < 0.02,
+                "{freq} Hz with division {division}: expected clicks at {expected} Hz, got {rate:.0} Hz"
+            );
+        }
+    }
+
+    #[test]
+    fn test_zc_rate_bins_read_tone_frequency() {
+        let sr = 192_000;
+        let input: Vec<f32> = make_sine(40_000.0, sr, 0.05)
+            .iter()
+            .map(|s| s * 0.5)
+            .collect();
+        let bins = zc_rate_per_bin(&input, sr, 0.001, false);
+        // Leave out the first and last bins, which the tone only partly fills.
+        let interior = &bins[1..bins.len() - 1];
+        assert!(interior.iter().all(|&(_, armed)| armed));
+        for &(freq, _) in interior {
+            let error = (freq - 40_000.0).abs() / 40_000.0;
+            assert!(
+                error < 0.03,
+                "a 40 kHz tone should read 40 kHz, got {freq:.0} Hz"
+            );
+        }
     }
 
     #[test]

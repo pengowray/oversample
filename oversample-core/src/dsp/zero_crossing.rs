@@ -1,5 +1,18 @@
 use crate::types::ZeroCrossingResult;
 
+/// Zero crossings in one cycle of a periodic signal: one upward, one downward.
+pub const CROSSINGS_PER_CYCLE: u32 = 2;
+
+/// Frequency in Hz of a signal that crosses zero `crossings` times in
+/// `duration_secs`. Returns 0 for a zero or negative duration.
+pub fn crossings_to_hz(crossings: usize, duration_secs: f64) -> f64 {
+    if duration_secs > 0.0 {
+        crossings as f64 / (CROSSINGS_PER_CYCLE as f64 * duration_secs)
+    } else {
+        0.0
+    }
+}
+
 /// Estimate the dominant frequency of a signal window by counting zero crossings.
 ///
 /// Works well for narrowband signals like bat echolocation calls where energy
@@ -30,11 +43,7 @@ pub fn zero_crossing_frequency(samples: &[f32], sample_rate: u32) -> ZeroCrossin
     }
 
     let duration_secs = (samples.len() - 1) as f64 / sample_rate as f64;
-    let estimated_frequency_hz = if duration_secs > 0.0 {
-        crossings as f64 / (2.0 * duration_secs)
-    } else {
-        0.0
-    };
+    let estimated_frequency_hz = crossings_to_hz(crossings, duration_secs);
 
     ZeroCrossingResult {
         estimated_frequency_hz,
