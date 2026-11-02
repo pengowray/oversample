@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# rustls-platform-verifier: Rust calls this Kotlin code through JNI, which
+# R8 can't see, so keep it from being removed as unused.
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

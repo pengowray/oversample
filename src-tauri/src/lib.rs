@@ -7,6 +7,7 @@ mod cmd_usb;
 mod native_playback;
 mod recording;
 mod recovery;
+mod tls;
 mod usb_audio;
 mod xc;
 // Compiled only under `cargo test`: cross-checks the plugin command registry
@@ -46,8 +47,9 @@ pub fn run() {
                 .map(|d| d.join("xc-cache"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("xc-cache"));
             let _ = std::fs::create_dir_all(&cache_root);
+            tls::init_platform_verifier();
             app.manage(Mutex::new(xc::XcState {
-                client: reqwest::Client::new(),
+                client: xc_lib::http_client(),
                 cache_root,
             }));
             Ok(())

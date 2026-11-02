@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.5.63"
+version = "0.5.64"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -20,13 +20,17 @@ chrono = "0.4"
 xc-lib = { path = "../xc-lib" }
 oversample-core = { path = "../oversample-core" }
 oversample-ipc = { path = "../oversample-ipc" }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 tokio = { version = "1", features = ["fs"] }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.17"
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
+# TLS certificate checks through Android's trust store (see src/tls.rs).
+jni = "0.22"
+ndk-context = "0.1"
+rustls-platform-verifier = "0.7"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

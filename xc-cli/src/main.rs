@@ -151,7 +151,7 @@ fn require_api_key(explicit: &Option<String>) -> String {
 async fn main() {
     let _ = dotenvy::dotenv();
     let cli = Cli::parse();
-    let client = reqwest::Client::new();
+    let client = xc_lib::http_client();
 
     match cli.command {
         Commands::SetKey { key } => match key_store::save_key(&key) {
