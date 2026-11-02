@@ -29,11 +29,105 @@ fn adaptive_threshold(filtered: &[f32]) -> (f32, f32) {
     (threshold_high, threshold_low)
 }
 
+/// Crossings further apart than one cycle at this frequency (the high-pass
+/// cutoff) belong to different signals.
+const MIN_SIGNAL_HZ: f64 = 15_000.0;
+
+/// A crossing must pass this fraction of the envelope either side of zero.
+/// Low enough that a sine sampled at 192 kHz passes it every half-cycle up to
+/// about 87 kHz.
+const CROSSING_FRACTION: f32 = 0.15;
+
+/// What [`CrossingDetector::step`] found at one sample.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Crossing {
+    None,
+    /// The first crossing since arming, or since a gap of more than one
+    /// 15 kHz cycle. Counting starts again from here.
+    Start,
+    /// A crossing within one 15 kHz cycle of the one before.
+    Next,
+}
+
+/// Finds the zero crossings of a call, as the comparator of an FD detector
+/// does. Shared by `zc_divide` and `zc_rate_per_bin` so that the chart shows
+/// the crossings that make the clicks.
+///
+/// - Crossings count only while armed: the envelope arms the detector when it
+///   rises above `threshold_high` and disarms it when it falls below
+///   `threshold_low`.
+/// - A crossing counts only once the signal passes a threshold either side of
+///   zero: 15% of the envelope, and at least the disarm level. This stops
+///   noise riding on a call from adding crossings.
+/// - A gap of more than one 15 kHz cycle between crossings restarts the
+///   count. With the threshold, this stops noise in the few milliseconds
+///   after a call, while the envelope decays, from making clicks.
+struct CrossingDetector {
+    threshold_high: f32,
+    threshold_low: f32,
+    /// Longest gap between crossings, in samples, that still continues a count.
+    max_gap: usize,
+    armed: bool,
+    /// True after the signal last went above the upper threshold.
+    high: bool,
+    /// Sample index of the last crossing while armed. Cleared on disarm.
+    last_crossing: Option<usize>,
+}
+
+impl CrossingDetector {
+    fn new(filtered: &[f32], sample_rate: u32) -> Self {
+        let (threshold_high, threshold_low) = adaptive_threshold(filtered);
+        Self {
+            threshold_high,
+            threshold_low,
+            max_gap: (sample_rate as f64 / MIN_SIGNAL_HZ).ceil() as usize,
+            armed: false,
+            high: false,
+            last_crossing: None,
+        }
+    }
+
+    /// Process sample `i`, with value `x` and envelope `env`.
+    fn step(&mut self, i: usize, x: f32, env: f32) -> Crossing {
+        if env > self.threshold_high {
+            self.armed = true;
+        } else if env < self.threshold_low {
+            self.armed = false;
+            self.last_crossing = None;
+        }
+
+        let threshold = (env * CROSSING_FRACTION).max(self.threshold_low);
+        let crossed = if self.high {
+            x < -threshold
+        } else {
+            x > threshold
+        };
+        if !crossed {
+            return Crossing::None;
+        }
+        self.high = !self.high;
+        if !self.armed {
+            return Crossing::None;
+        }
+
+        let continues = self
+            .last_crossing
+            .is_some_and(|last| i - last <= self.max_gap);
+        self.last_crossing = Some(i);
+        if continues {
+            Crossing::Next
+        } else {
+            Crossing::Start
+        }
+    }
+}
+
 /// Simulate a zero-crossing frequency division bat detector.
 ///
 /// Real FD detectors work by:
 /// 1. Bandpass filtering the input to the ultrasonic range (15-150 kHz)
 /// 2. Using a Schmitt trigger (hysteresis comparator) to reject noise crossings
+///    (see [`CrossingDetector`])
 /// 3. Counting whole cycles of the signal (two zero crossings each)
 /// 4. Outputting a short pulse every `division_factor` cycles
 ///
@@ -62,45 +156,35 @@ pub fn zc_divide(
     let env_samples = ((sample_rate as f64 * 0.001) as usize).max(1);
     let envelope = smooth_envelope(&filtered, env_samples);
 
-    // Adaptive threshold based on filtered signal peak
-    let (threshold_high, threshold_low) = adaptive_threshold(&filtered);
+    let mut detector = CrossingDetector::new(&filtered, sample_rate);
 
-    // Schmitt trigger zero-crossing detection with division. Each cycle has
-    // two zero crossings, so a click needs twice `division_factor` of them.
+    // Each cycle has two zero crossings, so a click needs twice
+    // `division_factor` of them.
     let crossings_per_click = division_factor.saturating_mul(CROSSINGS_PER_CYCLE);
     let mut output = vec![0.0f32; samples.len()];
     let mut crossing_count: u32 = 0;
-    let mut armed = false;
-    let mut prev_positive = filtered[0] >= 0.0;
 
     // Click duration: ~0.15ms
     let click_len = ((sample_rate as f64 * 0.00015) as usize).max(2);
     let output_gain: f32 = 0.01;
 
-    for i in 1..filtered.len() {
-        let env = envelope[i];
-
-        if env > threshold_high {
-            armed = true;
-        } else if env < threshold_low {
-            armed = false;
-            crossing_count = 0;
-        }
-
-        let curr_positive = filtered[i] >= 0.0;
-        if armed && prev_positive != curr_positive {
-            crossing_count += 1;
-            if crossing_count >= crossings_per_click {
-                crossing_count = 0;
-                let amp = (env / threshold_high).min(1.0) * output_gain;
-                let end = (i + click_len).min(samples.len());
-                for (k, out_sample) in output[i..end].iter_mut().enumerate() {
-                    let phase = k as f64 / click_len as f64 * std::f64::consts::PI;
-                    *out_sample = phase.sin() as f32 * amp;
+    for (i, (&x, &env)) in filtered.iter().zip(&envelope).enumerate() {
+        match detector.step(i, x, env) {
+            Crossing::None => {}
+            Crossing::Start => crossing_count = 0,
+            Crossing::Next => {
+                crossing_count += 1;
+                if crossing_count >= crossings_per_click {
+                    crossing_count = 0;
+                    let amp = (env / detector.threshold_high).min(1.0) * output_gain;
+                    let end = (i + click_len).min(samples.len());
+                    for (k, out_sample) in output[i..end].iter_mut().enumerate() {
+                        let phase = k as f64 / click_len as f64 * std::f64::consts::PI;
+                        *out_sample = phase.sin() as f32 * amp;
+                    }
                 }
             }
         }
-        prev_positive = curr_positive;
     }
 
     cascaded_lp(&output, 12_000.0, sample_rate, 2)
@@ -112,7 +196,8 @@ pub fn zc_divide(
 /// number of zero crossings per second divided by two, so a 40 kHz tone reads
 /// 40 kHz.
 /// `bin_duration` is in seconds (e.g. 0.001 for 1ms bins).
-/// Only counts crossings where the Schmitt trigger is armed (signal present).
+/// Counts the same crossings as `zc_divide`: only while armed (signal
+/// present), and only those that continue a count (see [`CrossingDetector`]).
 pub fn zc_rate_per_bin(
     samples: &[f32],
     sample_rate: u32,
@@ -130,31 +215,24 @@ pub fn zc_rate_per_bin(
     };
     let env_samples = ((sample_rate as f64 * 0.001) as usize).max(1);
     let envelope = smooth_envelope(&filtered, env_samples);
-    let (threshold_high, threshold_low) = adaptive_threshold(&filtered);
+    let mut detector = CrossingDetector::new(&filtered, sample_rate);
 
     let bin_samples = ((sample_rate as f64 * bin_duration) as usize).max(1);
     let num_bins = filtered.len().div_ceil(bin_samples);
     let mut bins = Vec::with_capacity(num_bins);
 
-    let mut armed = false;
-    let mut prev_positive = filtered[0] >= 0.0;
     let mut bin_crossings: usize = 0;
     let mut bin_armed = false;
 
     for i in 1..filtered.len() {
-        let env = envelope[i];
-        if env > threshold_high {
-            armed = true;
-        } else if env < threshold_low {
-            armed = false;
+        match detector.step(i, filtered[i], envelope[i]) {
+            Crossing::None => {}
+            Crossing::Start => bin_armed = true,
+            Crossing::Next => {
+                bin_crossings += 1;
+                bin_armed = true;
+            }
         }
-
-        let curr_positive = filtered[i] >= 0.0;
-        if prev_positive != curr_positive && armed {
-            bin_crossings += 1;
-            bin_armed = true;
-        }
-        prev_positive = curr_positive;
 
         // End of bin?
         if (i % bin_samples) == 0 || i == filtered.len() - 1 {
@@ -316,6 +394,56 @@ mod tests {
                 "a 40 kHz tone should read 40 kHz, got {freq:.0} Hz"
             );
         }
+    }
+
+    /// Uniform noise in -amp..amp from a fixed seed.
+    fn make_noise(amp: f32, n: usize, seed: u32) -> Vec<f32> {
+        let mut state = seed;
+        (0..n)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((state >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * amp
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_noise_after_a_call_makes_no_clicks() {
+        let sr = 192_000;
+        let call_len = (sr as f64 * 0.02) as usize;
+        let mut input = make_noise(0.002, (sr as f64 * 0.05) as usize, 7);
+        let tone = make_sine(40_000.0, sr, 0.02);
+        for (x, t) in input.iter_mut().zip(&tone) {
+            *x += t * 0.5;
+        }
+        let output = zc_divide(&input, sr, 10, false);
+        let peak = output.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        assert!(peak > 0.001, "the call should make clicks, peak={peak}");
+        // Allow 1 ms for the last click and the output filter to die away.
+        let tail_start = call_len + (sr as f64 * 0.001) as usize;
+        let tail_peak = output[tail_start..]
+            .iter()
+            .fold(0.0f32, |m, &s| m.max(s.abs()));
+        assert!(
+            tail_peak < peak * 0.01,
+            "noise after the call made clicks: {tail_peak} against a peak of {peak}"
+        );
+    }
+
+    #[test]
+    fn test_crossings_more_than_a_15khz_cycle_apart_do_not_count() {
+        let sr = 192_000;
+        // Skip the bandpass so the 5 kHz tone reaches the detector. Its
+        // half-cycles are 19.2 samples, longer than one 15 kHz cycle (12.8).
+        let input = make_sine(5_000.0, sr, 0.05);
+        let output = zc_divide(&input, sr, 2, true);
+        assert!(output.iter().all(|&s| s.abs() < 1e-6));
+        let bins = zc_rate_per_bin(&input, sr, 0.001, true);
+        assert!(bins.iter().all(|&(freq, _)| freq == 0.0));
+        // A 10 kHz tone (9.6 samples per half-cycle) still counts.
+        let input = make_sine(10_000.0, sr, 0.05);
+        let output = zc_divide(&input, sr, 2, true);
+        assert!(output.iter().any(|&s| s.abs() > 0.001));
     }
 
     #[test]
