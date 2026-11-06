@@ -956,7 +956,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                             </select>
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
-                                            <label style="font-size: 11px;" title="Sets whether live listening and saved recordings use 1 mixed channel (Mono) or separate left and right channels (Stereo). A mic with only one channel is mono on either setting. The live spectrogram always shows a mix of left and right.">"Channels"</label>
+                                            <label style="font-size: 11px;" title="Sets whether live listening and saved recordings use 1 mixed channel (Mono) or separate left and right channels (Stereo). A mic with only one channel is mono on either setting. On a 2-channel interface with one mic plugged in, use Mono. The live spectrogram always shows a mix of left and right.">"Channels"</label>
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     let val = leptos::prelude::event_target_value(&ev);
