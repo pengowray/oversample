@@ -748,6 +748,7 @@ async fn do_start_recording(state: &AppState, backend: MicBackend) {
 fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult) -> FinalizeParams {
     FinalizeParams {
         samples: rec.samples,
+        interleaved: rec.interleaved,
         sample_rate: rec.sample_rate,
         bits_per_sample: rec.bits_per_sample,
         is_float: rec.is_float,
@@ -763,11 +764,13 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
     match result {
         StopResult::Samples {
             samples,
+            interleaved,
             sample_rate,
         } => {
             finalize_recording(
                 FinalizeParams {
                     samples,
+                    interleaved,
                     sample_rate,
                     bits_per_sample,
                     is_float: false,

@@ -21,6 +21,16 @@ pub fn mix_stereo(left: &[f32], right: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// Append two channels to `out` as interleaved L/R. Stops at the end of the
+/// shorter channel.
+pub fn interleave_stereo(left: &[f32], right: &[f32], out: &mut Vec<f32>) {
+    out.reserve(left.len().min(right.len()) * 2);
+    for (&l, &r) in left.iter().zip(right) {
+        out.push(l);
+        out.push(r);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,6 +47,13 @@ mod tests {
         let (l, r) = split_stereo(&[1.0, -1.0, 2.0]);
         assert_eq!(l, vec![1.0]);
         assert_eq!(r, vec![-1.0]);
+    }
+
+    #[test]
+    fn interleave_stereo_appends_left_then_right() {
+        let mut out = vec![9.0];
+        interleave_stereo(&[1.0, 2.0], &[-1.0, -2.0, -3.0], &mut out);
+        assert_eq!(out, vec![9.0, 1.0, -1.0, 2.0, -2.0]);
     }
 
     #[test]

@@ -81,7 +81,7 @@ pub fn mic_open(
             format: format!("{:?}", m.format),
             supported_sample_rates: m.supported_sample_rates.clone(),
             host_name: cpal_host_name(),
-            listen_channels: m.listen_channels,
+            channels: m.channels,
         });
     }
 
@@ -100,7 +100,7 @@ pub fn mic_open(
         format: format!("{:?}", m.format),
         supported_sample_rates: m.supported_sample_rates.clone(),
         host_name: cpal_host_name(),
-        listen_channels: m.listen_channels,
+        channels: m.channels,
     };
 
     // Start the emitter thread for streaming audio chunks to the frontend
@@ -169,7 +169,7 @@ pub fn mic_start_recording(
         m.is_recording.store(true, Ordering::Relaxed);
         if seeded > 0 {
             eprintln!(
-                "mic_start_recording: seeded {} pre-roll samples to disk",
+                "mic_start_recording: seeded {} pre-roll frames to disk",
                 seeded
             );
         }
@@ -189,14 +189,9 @@ pub fn mic_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    if let Some(writer) = recovery::start_writer(
-        &app,
-        &args,
-        m.format,
-        m.sample_rate,
-        1, // The recording buffer holds a mono mix, whatever the device's channel count.
-        "batcap",
-    ) {
+    if let Some(writer) =
+        recovery::start_writer(&app, &args, m.format, m.sample_rate, m.channels, "batcap")
+    {
         if let Ok(mut guard) = m.recovery.writer.lock() {
             *guard = Some(writer);
         }
@@ -239,6 +234,7 @@ pub fn mic_stop_recording(
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
     let bits_per_sample = m.format.bits_per_sample();
     let is_float = m.format.is_float();
+    let channels = m.channels;
     let duration_secs = num_samples as f64 / sample_rate as f64;
     let skip_save = skip_native_save.unwrap_or(false);
 
@@ -268,6 +264,7 @@ pub fn mic_stop_recording(
             is_float,
             duration_secs,
             num_samples,
+            channels,
             has_memory_samples: false,
             file_size_bytes: 0,
         });
@@ -393,6 +390,7 @@ pub fn mic_stop_recording(
         is_float,
         duration_secs,
         num_samples,
+        channels,
         has_memory_samples,
         file_size_bytes,
     })

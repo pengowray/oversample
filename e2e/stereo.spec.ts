@@ -1,9 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
+import fs from "fs";
 import path from "path";
 
 /**
  * Checks that left and right stay separate through the playback and live-listen
- * DSP. Both fixtures (generated in global-setup) alternate noise bursts between
+ * DSP, and in saved recordings. Both fixtures (generated in global-setup) alternate noise bursts between
  * the channels: L only, then R only. Noise is used instead of a tone so that
  * HET and PS output has energy whichever carrier or factor the app picks.
  *
@@ -30,7 +31,7 @@ test.use({
 });
 
 type Block = { channels: number; left: number; right: number };
-type Tap = { blocks: Block[]; processorChannels: number[] };
+type Tap = { blocks: Block[]; windows: Block[]; processorChannels: number[] };
 
 function installAudioTap() {
   const rms = (d: Float32Array) => {
@@ -42,8 +43,20 @@ function installAudioTap() {
     const left = rms(buf.getChannelData(0));
     const right = buf.numberOfChannels > 1 ? rms(buf.getChannelData(1)) : left;
     tap.blocks.push({ channels: buf.numberOfChannels, left, right });
+    // Playback buffers can span several L and R bursts of a low-rate file, so also
+    // keep the level of each short section.
+    const size = 2048;
+    const l = buf.getChannelData(0);
+    const r = buf.numberOfChannels > 1 ? buf.getChannelData(1) : l;
+    for (let i = 0; i + size <= buf.length; i += size) {
+      tap.windows.push({
+        channels: buf.numberOfChannels,
+        left: rms(l.subarray(i, i + size)),
+        right: rms(r.subarray(i, i + size)),
+      });
+    }
   };
-  const tap: Tap = { blocks: [], processorChannels: [] };
+  const tap: Tap = { blocks: [], windows: [], processorChannels: [] };
   (window as unknown as { __audioTap: Tap }).__audioTap = tap;
 
   const start = AudioBufferSourceNode.prototype.start;
@@ -84,7 +97,9 @@ function readTap(page: Page): Promise<Tap> {
 
 function clearTap(page: Page) {
   return page.evaluate(() => {
-    (window as unknown as { __audioTap: Tap }).__audioTap.blocks.length = 0;
+    const tap = (window as unknown as { __audioTap: Tap }).__audioTap;
+    tap.blocks.length = 0;
+    tap.windows.length = 0;
   });
 }
 
@@ -210,5 +225,166 @@ test.describe("live listen", () => {
     const tap = await readTap(page);
     expect(tap.processorChannels.at(-1)).toBe(1);
     expect(tap.blocks.every((b) => b.channels === 1)).toBe(true);
+  });
+});
+
+test.describe("recording", () => {
+  type Wav = { channels: number; frames: number; left: Float32Array; right: Float32Array };
+
+  /** Reads a 16-bit PCM WAV by walking its RIFF chunks. */
+  function parseWav(buf: Buffer): Wav {
+    expect(buf.toString("latin1", 0, 4)).toBe("RIFF");
+    let channels = 0;
+    let bits = 0;
+    let dataStart = -1;
+    let dataSize = 0;
+    let pos = 12;
+    while (pos + 8 <= buf.length) {
+      const id = buf.toString("latin1", pos, pos + 4);
+      const size = buf.readUInt32LE(pos + 4);
+      if (id === "fmt ") {
+        channels = buf.readUInt16LE(pos + 10);
+        bits = buf.readUInt16LE(pos + 22);
+      } else if (id === "data") {
+        dataStart = pos + 8;
+        dataSize = size;
+      }
+      pos += 8 + size + (size % 2);
+    }
+    expect(bits).toBe(16);
+    expect(dataStart).toBeGreaterThan(0);
+    const frames = dataSize / (2 * channels);
+    expect(Number.isInteger(frames)).toBe(true);
+    const left = new Float32Array(frames);
+    const right = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      left[i] = buf.readInt16LE(dataStart + i * 2 * channels) / 32768;
+      right[i] = channels > 1 ? buf.readInt16LE(dataStart + i * 2 * channels + 2) / 32768 : left[i];
+    }
+    return { channels, frames, left, right };
+  }
+
+  /** The same check as `separation`, on 4096-frame blocks of a saved file. */
+  function wavSeparation(wav: Wav) {
+    const size = 4096;
+    const rms = (d: Float32Array) => Math.sqrt(d.reduce((sum, v) => sum + v * v, 0) / d.length);
+    const blocks: Block[] = [];
+    for (let i = 0; i + size <= wav.frames; i += size) {
+      blocks.push({
+        channels: wav.channels,
+        left: rms(wav.left.subarray(i, i + size)),
+        right: rms(wav.right.subarray(i, i + size)),
+      });
+    }
+    return separation(blocks);
+  }
+
+  /** Sets options in the mic panel, given as [label, value] pairs. */
+  async function setMicOptions(page: Page, options: [string, string][]) {
+    const micOptions = page.locator('button[title^="Microphone options"]').first();
+    await micOptions.click();
+    for (const [label, value] of options) {
+      await page
+        .locator(`.layer-panel-slider-row:has(label:text-is("${label}")) select`)
+        .first()
+        .selectOption(value);
+    }
+    await micOptions.click();
+  }
+
+  /** Listens, records for `recordMs`, stops, and returns the file the app saves. */
+  async function recordFromListening(page: Page, listenMs: number, recordMs: number) {
+    await page.locator('button[title="Toggle live listening (L)"]').first().click();
+    await page.waitForTimeout(listenMs);
+    const record = page.locator('button[title="Record"]').first();
+    await record.click();
+    await page.waitForTimeout(recordMs);
+    await record.click();
+    return saveRecording(page);
+  }
+
+  async function saveRecording(page: Page) {
+    const banner = page.locator(".unsaved-banner").first();
+    await expect(banner).toBeVisible({ timeout: 30_000 });
+    const downloadStarted = page.waitForEvent("download");
+    await banner.click();
+    const download = await downloadStarted;
+    return parseWav(fs.readFileSync(await download.path()));
+  }
+
+  test("Stereo saves a 2-channel WAV that plays back with left and right separate", async ({
+    page,
+  }) => {
+    await openApp(page);
+    await setMicOptions(page, [["Channels", "stereo"]]);
+    const wav = await recordFromListening(page, 500, 3_000);
+    expect(wav.channels).toBe(2);
+    expect(wav.frames).toBeGreaterThan(48_000);
+    const saved = wavSeparation(wav);
+    console.log("saved stereo:", JSON.stringify(saved));
+    expect(saved.leftOnly).toBeGreaterThan(0);
+    expect(saved.rightOnly).toBeGreaterThan(0);
+
+    await selectMode(page, "1:1");
+    await clearTap(page);
+    await page.keyboard.press("Space");
+    // 40 sections of 2048 frames is 1.7 s at 48 kHz, which spans L and R bursts.
+    await page.waitForFunction(
+      () => (window as unknown as { __audioTap: Tap }).__audioTap.windows.length >= 40,
+      undefined,
+      { timeout: 30_000 },
+    );
+    const { windows } = await readTap(page);
+    expect(windows.every((b) => b.channels === 2)).toBe(true);
+    const played = separation(windows);
+    console.log("played stereo:", JSON.stringify(played));
+    expect(played.leftOnly).toBeGreaterThan(0);
+    expect(played.rightOnly).toBeGreaterThan(0);
+  });
+
+  test("Stereo stays 2-channel when the recording starts without listening first", async ({
+    page,
+  }) => {
+    await openApp(page);
+    await setMicOptions(page, [["Channels", "stereo"]]);
+    const record = page.locator('button[title="Record"]').first();
+    await record.click();
+    // The "Ready to record" dialog appears unless the browser just asked for
+    // mic permission.
+    const confirm = page.locator('.xc-modal button:text-is("Record")').first();
+    await confirm.click({ timeout: 2_000 }).catch(() => {});
+    await page.waitForTimeout(3_000);
+    await record.click();
+    const wav = await saveRecording(page);
+    expect(wav.channels).toBe(2);
+    const saved = wavSeparation(wav);
+    expect(saved.leftOnly).toBeGreaterThan(0);
+    expect(saved.rightOnly).toBeGreaterThan(0);
+  });
+
+  test("Stereo pre-roll stays aligned after the listening buffer is trimmed", async ({ page }) => {
+    await openApp(page);
+    await setMicOptions(page, [
+      ["Channels", "stereo"],
+      ["Pre-roll buffer", "2"],
+    ]);
+    // Listening is trimmed to pre-roll + 2 s headroom = 4 s, so 6 s of listening
+    // has been trimmed by the time the recording starts. The saved file is
+    // 2-channel only if both live buffers were trimmed together.
+    const wav = await recordFromListening(page, 6_000, 1_500);
+    expect(wav.channels).toBe(2);
+    expect(wav.frames).toBeGreaterThan(48_000);
+    expect(wav.frames).toBeLessThan(48_000 * 7);
+    const saved = wavSeparation(wav);
+    expect(saved.leftOnly).toBeGreaterThan(0);
+    expect(saved.rightOnly).toBeGreaterThan(0);
+  });
+
+  test("Mono saves a 1-channel WAV", async ({ page }) => {
+    await openApp(page);
+    await setMicOptions(page, [["Channels", "mono"]]);
+    const wav = await recordFromListening(page, 500, 2_000);
+    expect(wav.channels).toBe(1);
+    expect(wav.frames).toBeGreaterThan(48_000);
   });
 });

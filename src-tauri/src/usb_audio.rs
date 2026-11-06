@@ -18,9 +18,9 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Seconds of audio the listening pre-roll ring retains (USB is 16-bit mono, so
-/// ~11.5 MB at 384 kHz). A long-press record seeds up to this much preceding
-/// audio into the recording.
+/// Seconds of audio the listening pre-roll ring retains (USB is 16-bit, so
+/// ~11.5 MB per channel at 384 kHz). A long-press record seeds up to this much
+/// preceding audio into the recording.
 const PREROLL_RING_SECS: usize = 15;
 
 // ── Shared types (all platforms) ────────────────────────────────────────
@@ -40,31 +40,35 @@ pub struct UsbStreamState {
     pub recovery: crate::recovery::RecoveryHandle,
 }
 
+/// `samples_i16`, `preroll_i16` and `pending_f32` hold interleaved L/R when
+/// `channels` is 2. `total_samples` and `preroll_seeded` count frames.
 pub struct UsbRecordingBuffer {
     pub samples_i16: Vec<i16>,
-    /// f32 samples for the frontend: interleaved L/R when the stream was started
-    /// with `stereo_listen`, otherwise mono.
+    /// f32 samples for the frontend.
     pending_f32: Vec<f32>,
     pub total_samples: usize,
     pub sample_rate: u32,
+    /// 2 when a 2-channel stream was started with `stereo`, otherwise 1.
+    pub channels: u16,
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
     pub shared_fd: Option<i32>,
     /// Rolling pre-roll ring (16-bit), filled only while listening (not
     /// recording) and capped to [`PREROLL_RING_SECS`]. Seeded into the recording
     /// at record start so a long-press capture includes the preceding audio.
     preroll_i16: VecDeque<i16>,
-    /// Pre-roll samples seeded at the last record start (for GUANO). Reset on `clear()`.
+    /// Pre-roll frames seeded at the last record start (for GUANO). Reset on `clear()`.
     pub preroll_seeded: usize,
 }
 
 #[allow(dead_code)]
 impl UsbRecordingBuffer {
-    fn new(sample_rate: u32) -> Self {
+    fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             samples_i16: Vec::new(),
             pending_f32: Vec::new(),
             total_samples: 0,
             sample_rate,
+            channels,
             shared_fd: None,
             preroll_i16: VecDeque::new(),
             preroll_seeded: 0,
@@ -80,42 +84,36 @@ impl UsbRecordingBuffer {
         // immediately before `seed_preroll` reads it; seed clears it.
     }
 
-    /// Store mono `data` for the recording or pre-roll, and queue it for the
-    /// frontend unless `listen_stereo` supplies interleaved L/R to queue instead.
-    fn push_samples(&mut self, data: &[i16], listen_stereo: Option<&[i16]>, recording: bool) {
+    /// Store `data` (whole frames) in the recording or the pre-roll ring, and
+    /// queue it for the frontend.
+    fn push_samples(&mut self, data: &[i16], recording: bool) {
         if recording {
-            self.total_samples += data.len();
+            self.total_samples += data.len() / self.channels as usize;
             self.samples_i16.extend_from_slice(data);
         } else {
             // Listening: keep a rolling pre-roll ring, capped to bound memory.
-            self.preroll_i16.extend(data.iter().copied());
             let cap = (self.sample_rate as usize)
                 .saturating_mul(PREROLL_RING_SECS)
+                .saturating_mul(self.channels as usize)
                 .max(1);
-            while self.preroll_i16.len() > cap {
-                self.preroll_i16.pop_front();
-            }
+            crate::recording::push_to_ring(&mut self.preroll_i16, data, cap);
         }
         // Always push to pending for streaming/live display
-        let pending = listen_stereo.unwrap_or(data);
         self.pending_f32
-            .extend(pending.iter().map(|&s| s as f32 / 32768.0));
+            .extend(data.iter().map(|&s| s as f32 / 32768.0));
     }
 
-    /// Seed the just-cleared recording buffer with the last `p` pre-roll samples
-    /// (clamped to the ring), bump `total_samples`, record `preroll_seeded`, and
-    /// clear the ring. Call right after `clear()` at record start.
-    pub fn seed_preroll(&mut self, p: usize) -> usize {
-        let seeded = if p == 0 {
-            0
-        } else {
-            // memcpy the tail (runs under the buffer lock the iso thread takes).
-            let slice = self.preroll_i16.make_contiguous();
-            let take = p.min(slice.len());
-            let start = slice.len() - take;
-            self.samples_i16.extend_from_slice(&slice[start..]);
-            take
-        };
+    /// Seed the just-cleared recording buffer with the last `frames` pre-roll
+    /// frames (clamped to the ring), bump `total_samples`, record `preroll_seeded`,
+    /// and clear the ring. Call right after `clear()` at record start.
+    pub fn seed_preroll(&mut self, frames: usize) -> usize {
+        // memcpy the tail (runs under the buffer lock the iso thread takes).
+        let seeded = crate::recording::seed_from_ring(
+            &mut self.preroll_i16,
+            &mut self.samples_i16,
+            frames,
+            self.channels as usize,
+        );
         self.total_samples += seeded;
         self.preroll_seeded = seeded;
         self.preroll_i16.clear();
@@ -206,6 +204,7 @@ pub fn start_usb_emitter(
     });
 }
 
+/// All recorded samples as f32, interleaved L/R when the stream is stereo.
 pub fn get_usb_samples_f32(state: &UsbStreamState) -> Vec<f32> {
     let buf = state.buffer.lock().unwrap();
     buf.samples_i16
@@ -229,7 +228,7 @@ pub fn encode_usb_wav(state: &UsbStreamState) -> Result<Vec<u8>, String> {
     let buf = state.buffer.lock().unwrap();
     let format = WavWriteFormat {
         sample_rate: buf.sample_rate,
-        channels: 1,
+        channels: buf.channels,
         bits_per_sample: 16,
         is_float: false,
     };
@@ -248,7 +247,7 @@ pub fn start_usb_stream(
     max_packet_size: u32,
     sample_rate: u32,
     num_channels: u32,
-    stereo_listen: bool,
+    stereo: bool,
     device_name: String,
     app: tauri::AppHandle,
     interface_number: u32,
@@ -258,7 +257,11 @@ pub fn start_usb_stream(
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
     let is_recording = Arc::new(AtomicBool::new(false));
-    let buffer = Arc::new(Mutex::new(UsbRecordingBuffer::new(sample_rate)));
+    let stereo = stereo && num_channels == 2;
+    let buffer = Arc::new(Mutex::new(UsbRecordingBuffer::new(
+        sample_rate,
+        if stereo { 2 } else { 1 },
+    )));
 
     let cancel = cancel_flag.clone();
     let streaming = is_streaming.clone();
@@ -277,7 +280,7 @@ pub fn start_usb_stream(
             endpoint_address,
             max_packet_size,
             channels,
-            stereo_listen && channels == 2,
+            stereo,
             interface_number,
             alternate_setting,
             &cancel,
@@ -341,7 +344,7 @@ pub fn start_usb_stream(
     _max_packet_size: u32,
     _sample_rate: u32,
     _num_channels: u32,
-    _stereo_listen: bool,
+    _stereo: bool,
     _device_name: String,
     _app: tauri::AppHandle,
     _interface_number: u32,
@@ -461,7 +464,7 @@ mod isochronous {
         endpoint_address: u32,
         max_packet_size: u32,
         num_channels: usize,
-        stereo_listen: bool,
+        stereo: bool,
         interface_number: u32,
         alternate_setting: u32,
         cancel: &AtomicBool,
@@ -579,8 +582,7 @@ mod isochronous {
         }
 
         let mut balls_in_air = URBS_TO_JUGGLE;
-        let mut mono_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
-        let mut stereo_buf: Vec<i16> = Vec::new();
+        let mut capture_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
         let mut startup_signaled = false;
 
         // EMT2 workaround: retry on poll timeout instead of failing immediately.
@@ -703,8 +705,7 @@ mod isochronous {
                 let reaped = unsafe { &*urb_reaped };
                 let urb_with_packets = unsafe { &*(reaped.usercontext as *const UrbWithPackets) };
 
-                mono_buf.clear();
-                stereo_buf.clear();
+                capture_buf.clear();
 
                 let mut src_byte_offset: usize = 0;
                 for packet in &urb_with_packets.packet_desc {
@@ -720,24 +721,23 @@ mod isochronous {
                         };
 
                         if num_channels == 2 {
-                            for chunk in src.chunks(2) {
-                                if chunk.len() == 2 {
-                                    let avg = ((chunk[0] as i32 + chunk[1] as i32) >> 1) as i16;
-                                    mono_buf.push(avg);
-                                    if stereo_listen {
-                                        stereo_buf.extend_from_slice(chunk);
-                                    }
+                            for frame in src.chunks_exact(2) {
+                                if stereo {
+                                    capture_buf.extend_from_slice(frame);
+                                } else {
+                                    capture_buf
+                                        .push(((frame[0] as i32 + frame[1] as i32) >> 1) as i16);
                                 }
                             }
                         } else {
-                            mono_buf.extend_from_slice(src);
+                            capture_buf.extend_from_slice(src);
                         }
                     }
 
                     src_byte_offset += packet.length as usize;
                 }
 
-                if !mono_buf.is_empty() {
+                if !capture_buf.is_empty() {
                     // Signal startup success on first URB with actual audio data
                     if !startup_signaled {
                         is_streaming.store(true, Ordering::Relaxed);
@@ -747,8 +747,7 @@ mod isochronous {
 
                     let recording = is_recording.load(Ordering::Relaxed);
                     if let Ok(mut buf) = buffer.lock() {
-                        let stereo = stereo_listen.then_some(stereo_buf.as_slice());
-                        buf.push_samples(&mono_buf, stereo, recording);
+                        buf.push_samples(&capture_buf, recording);
                     }
                 }
             }
@@ -809,5 +808,43 @@ mod isochronous {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stereo_recording_counts_frames_and_keeps_left_and_right() {
+        let mut buf = UsbRecordingBuffer::new(48_000, 2);
+        buf.push_samples(&[1, 2, 3, 4], true);
+        assert_eq!(buf.total_samples, 2);
+        assert_eq!(buf.samples_i16, vec![1, 2, 3, 4]);
+        assert_eq!(buf.drain_pending().len(), 4);
+    }
+
+    #[test]
+    fn stereo_preroll_ring_keeps_whole_recent_frames_and_seeds_them() {
+        // Cap: 1 Hz x 15 s = 15 frames.
+        let mut buf = UsbRecordingBuffer::new(1, 2);
+        let frames: Vec<i16> = (0..20).flat_map(|i| [i, 100 + i]).collect();
+        buf.push_samples(&frames, false);
+        assert_eq!(buf.total_samples, 0);
+        assert_eq!(buf.preroll_i16.len(), 30);
+        assert_eq!(buf.preroll_i16.front(), Some(&5));
+
+        buf.clear();
+        assert_eq!(buf.seed_preroll(2), 2);
+        assert_eq!(buf.total_samples, 2);
+        assert_eq!(buf.samples_i16, vec![18, 118, 19, 119]);
+    }
+
+    #[test]
+    fn mono_stream_is_unchanged() {
+        let mut buf = UsbRecordingBuffer::new(48_000, 1);
+        buf.push_samples(&[1, 2, 3], true);
+        assert_eq!(buf.total_samples, 3);
+        assert_eq!(buf.seed_preroll(0), 0);
     }
 }

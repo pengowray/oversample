@@ -304,17 +304,9 @@ pub fn Toolbar() -> impl IntoView {
                     state.status.message().set(Some("Recording saved".into()));
                 } else {
                     // On web, trigger browser download with preserved GUANO + cue markers
-                    let total = f.audio.source.total_samples() as usize;
-                    let samples = f.audio.source.read_region(
-                        crate::audio::source::ChannelView::MonoMix,
-                        0,
-                        total,
-                    );
                     crate::audio::wav_encoder::download_recording_wav(
-                        &samples,
-                        f.audio.sample_rate,
+                        &f.audio,
                         &f.name,
-                        f.audio.metadata.guano.as_ref(),
                         &f.wav_markers,
                     );
                 }

@@ -1,13 +1,15 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 pub use oversample_ipc::mic::{DeviceInfo, MicInfo, MicStatus, RecordingResult, SampleRateRange};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// How many seconds of audio the listening pre-roll ring retains. A long-press
 /// record seeds up to this much preceding audio into the recording. Capped to
-/// bound memory while listening (e.g. ~30 MB at 384 kHz i32 mono).
+/// bound memory while listening (e.g. ~23 MB at 384 kHz i32 mono, twice that in
+/// stereo).
 const PREROLL_RING_SECS: usize = 15;
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -34,16 +36,58 @@ impl NativeSampleFormat {
     }
 }
 
+/// Append `data` to a pre-roll ring, dropping the oldest samples beyond `cap`.
+pub(crate) fn push_to_ring<T: Copy>(ring: &mut VecDeque<T>, data: &[T], cap: usize) {
+    ring.extend(data.iter().copied());
+    let excess = ring.len().saturating_sub(cap);
+    ring.drain(..excess);
+}
+
+/// Copy the last `frames` frames of a pre-roll ring (clamped to what it holds) to
+/// `out`, and return how many frames were copied.
+pub(crate) fn seed_from_ring<T: Copy>(
+    ring: &mut VecDeque<T>,
+    out: &mut Vec<T>,
+    frames: usize,
+    channels: usize,
+) -> usize {
+    let slice = ring.make_contiguous();
+    let seeded = frames.min(slice.len() / channels);
+    out.extend_from_slice(&slice[slice.len() - seeded * channels..]);
+    seeded
+}
+
+/// The samples a capture callback stores: `data` as delivered when it is mono or
+/// when stereo is being kept, otherwise a mono mix made by `mix` from each frame.
+fn samples_to_store<T: Clone>(
+    data: &[T],
+    channels: usize,
+    stereo: bool,
+    mix: impl Fn(&[T]) -> T,
+) -> Cow<'_, [T]> {
+    if channels == 1 || stereo {
+        Cow::Borrowed(data)
+    } else {
+        Cow::Owned(data.chunks(channels).map(mix).collect())
+    }
+}
+
 /// Thread-safe sample storage that keeps raw samples in their native format.
+///
+/// `samples_*`, `preroll_*` and `pending_f32` hold interleaved L/R when `channels`
+/// is 2. `total_samples` and `preroll_seeded` count frames: one frame is one sample
+/// per channel, so their values give the duration directly.
 pub struct RecordingBuffer {
     pub format: NativeSampleFormat,
     pub sample_rate: u32,
+    /// 2 for a 2-channel device opened with Channels set to Stereo, otherwise 1
+    /// (a device with more channels is mixed to mono).
+    pub channels: u16,
     // Native-format storage (only one is active, based on format)
     pub samples_i16: Vec<i16>,
     pub samples_i32: Vec<i32>, // for I24 and I32
     pub samples_f32: Vec<f32>, // for F32 format (native)
-    // f32 copies for streaming to frontend: interleaved L/R when
-    // `MicState::listen_channels` is 2, otherwise mono.
+    // f32 copies for streaming to the frontend.
     pub pending_f32: Vec<f32>,
     pub total_samples: usize,
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
@@ -70,16 +114,17 @@ pub struct RecordingBuffer {
     pub preroll_i16: VecDeque<i16>,
     pub preroll_i32: VecDeque<i32>,
     pub preroll_f32: VecDeque<f32>,
-    /// Number of pre-roll samples seeded at the last record start (for GUANO /
+    /// Number of pre-roll frames seeded at the last record start (for GUANO /
     /// cue marker). Reset on `clear()`.
     pub preroll_seeded: usize,
 }
 
 impl RecordingBuffer {
-    pub fn new(format: NativeSampleFormat, sample_rate: u32) -> Self {
+    pub fn new(format: NativeSampleFormat, sample_rate: u32, channels: u16) -> Self {
         Self {
             format,
             sample_rate,
+            channels,
             samples_i16: Vec::new(),
             samples_i32: Vec::new(),
             samples_f32: Vec::new(),
@@ -96,35 +141,29 @@ impl RecordingBuffer {
         }
     }
 
-    /// Max pre-roll ring length (mono samples) for the current sample rate.
+    /// Max pre-roll ring length in interleaved samples for the current sample
+    /// rate. Always a whole number of frames.
     fn preroll_cap(&self) -> usize {
         (self.sample_rate as usize)
             .saturating_mul(PREROLL_RING_SECS)
+            .saturating_mul(self.channels as usize)
             .max(1)
     }
 
-    /// Append mono native samples to the pre-roll ring, trimming the oldest to
-    /// stay within [`preroll_cap`]. Called only while listening.
+    /// Append native samples to the pre-roll ring, trimming the oldest to stay
+    /// within [`preroll_cap`]. `data` must be whole frames, which keeps the ring
+    /// frame-aligned. Called only while listening.
     pub fn push_preroll_i16(&mut self, data: &[i16]) {
-        self.preroll_i16.extend(data.iter().copied());
         let cap = self.preroll_cap();
-        while self.preroll_i16.len() > cap {
-            self.preroll_i16.pop_front();
-        }
+        push_to_ring(&mut self.preroll_i16, data, cap);
     }
     pub fn push_preroll_i32(&mut self, data: &[i32]) {
-        self.preroll_i32.extend(data.iter().copied());
         let cap = self.preroll_cap();
-        while self.preroll_i32.len() > cap {
-            self.preroll_i32.pop_front();
-        }
+        push_to_ring(&mut self.preroll_i32, data, cap);
     }
     pub fn push_preroll_f32(&mut self, data: &[f32]) {
-        self.preroll_f32.extend(data.iter().copied());
         let cap = self.preroll_cap();
-        while self.preroll_f32.len() > cap {
-            self.preroll_f32.pop_front();
-        }
+        push_to_ring(&mut self.preroll_f32, data, cap);
     }
 
     /// Drop all pre-roll rings (e.g. when a fresh listen session starts).
@@ -134,42 +173,35 @@ impl RecordingBuffer {
         self.preroll_f32.clear();
     }
 
-    /// Seed the recording buffer with the last `p` pre-roll samples (clamped to
-    /// what the ring holds), prepending them to the just-cleared `samples_*`.
+    /// Seed the recording buffer with the last `frames` pre-roll frames (clamped
+    /// to what the ring holds), prepending them to the just-cleared `samples_*`.
     /// Bumps `total_samples`, records `preroll_seeded`, and clears the rings.
     /// MUST be called right after `clear()` at record start so the pre-roll ends
-    /// up at the front of the recording. Returns the number of samples seeded.
-    pub fn seed_preroll(&mut self, p: usize) -> usize {
-        let seeded = if p == 0 {
-            0
-        } else {
-            // `make_contiguous` + `extend_from_slice` so the copy is a memcpy of
-            // the tail rather than an element-wise iterator — this runs under the
-            // buffer lock that the audio callback also takes, so keep it short to
-            // avoid a capture xrun at the pre-roll seam.
-            match self.format {
-                NativeSampleFormat::I16 => {
-                    let slice = self.preroll_i16.make_contiguous();
-                    let take = p.min(slice.len());
-                    let start = slice.len() - take;
-                    self.samples_i16.extend_from_slice(&slice[start..]);
-                    take
-                }
-                NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
-                    let slice = self.preroll_i32.make_contiguous();
-                    let take = p.min(slice.len());
-                    let start = slice.len() - take;
-                    self.samples_i32.extend_from_slice(&slice[start..]);
-                    take
-                }
-                NativeSampleFormat::F32 => {
-                    let slice = self.preroll_f32.make_contiguous();
-                    let take = p.min(slice.len());
-                    let start = slice.len() - take;
-                    self.samples_f32.extend_from_slice(&slice[start..]);
-                    take
-                }
-            }
+    /// up at the front of the recording. Returns the number of frames seeded.
+    pub fn seed_preroll(&mut self, frames: usize) -> usize {
+        let channels = self.channels as usize;
+        // `seed_from_ring` is a memcpy of the tail rather than an element-wise
+        // iterator: this runs under the buffer lock that the audio callback also
+        // takes, so keep it short to avoid a capture xrun at the pre-roll seam.
+        let seeded = match self.format {
+            NativeSampleFormat::I16 => seed_from_ring(
+                &mut self.preroll_i16,
+                &mut self.samples_i16,
+                frames,
+                channels,
+            ),
+            NativeSampleFormat::I24 | NativeSampleFormat::I32 => seed_from_ring(
+                &mut self.preroll_i32,
+                &mut self.samples_i32,
+                frames,
+                channels,
+            ),
+            NativeSampleFormat::F32 => seed_from_ring(
+                &mut self.preroll_f32,
+                &mut self.samples_f32,
+                frames,
+                channels,
+            ),
         };
         self.total_samples += seeded;
         self.preroll_seeded = seeded;
@@ -265,9 +297,9 @@ pub struct MicState {
     pub emitter_stop: Arc<AtomicBool>,
     pub format: NativeSampleFormat,
     pub sample_rate: u32,
-    /// Channels in `pending_f32`: 2 for a 2-channel device opened with Channels
-    /// set to Stereo, otherwise 1. Recordings are always a mono mix.
-    pub listen_channels: u16,
+    /// Channels in the recording, the pre-roll ring and `pending_f32`: 2 for a
+    /// 2-channel device opened with Channels set to Stereo, otherwise 1.
+    pub channels: u16,
     pub device_name: String,
     pub supported_sample_rates: Vec<u32>,
     /// Crash-recovery writer + shared state. Active between
@@ -574,9 +606,14 @@ pub fn open_mic(
     let sample_rate = config.sample_rate();
     let stream_config: cpal::StreamConfig = config.into();
     let channels = stream_config.channels as usize;
-    let listen_stereo = requested_channels == 2 && channels == 2;
+    let stereo = requested_channels == 2 && channels == 2;
+    let stored_channels: usize = if stereo { 2 } else { 1 };
 
-    let buffer = Arc::new(Mutex::new(RecordingBuffer::new(format, sample_rate)));
+    let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        format,
+        sample_rate,
+        stored_channels as u16,
+    )));
     let is_recording = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
     let emitter_stop = Arc::new(AtomicBool::new(false));
@@ -590,182 +627,84 @@ pub fn open_mic(
     };
 
     let stream = match format {
-        NativeSampleFormat::I16 => {
-            device.build_input_stream(
-                stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let mut buf = buf.lock().unwrap();
-                    if rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
-                            let mono: Vec<i16> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32)
-                                        as i16
-                                })
-                                .collect();
-                            buf.total_samples += mono.len();
-                            buf.samples_i16.extend_from_slice(&mono);
-                        } else {
-                            buf.total_samples += data.len();
-                            buf.samples_i16.extend_from_slice(data);
-                        }
-                    } else if strm.load(Ordering::Relaxed) {
-                        // Listening: keep the rolling pre-roll ring (native fmt).
-                        if channels > 1 {
-                            let mono: Vec<i16> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32)
-                                        as i16
-                                })
-                                .collect();
-                            buf.push_preroll_i16(&mono);
-                        } else {
-                            buf.push_preroll_i16(data);
-                        }
-                    }
-                    if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if listen_stereo {
-                            buf.pending_f32
-                                .extend(data.iter().map(|&s| s as f32 / 32768.0));
-                        } else if channels > 1 {
-                            let f32_data: Vec<f32> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
-                                        / channels as f32
-                                })
-                                .collect();
-                            buf.pending_f32.extend_from_slice(&f32_data);
-                        } else {
-                            let f32_data: Vec<f32> =
-                                data.iter().map(|&s| s as f32 / 32768.0).collect();
-                            buf.pending_f32.extend_from_slice(&f32_data);
-                        }
-                    }
-                },
-                err_callback,
-                None,
-            )
-        }
-        NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
-            device.build_input_stream(
-                stream_config,
-                move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                    let mut buf = buf.lock().unwrap();
-                    // Accumulate effective-bit-depth detection over the raw i32
-                    // samples (cheap: one OR per sample) whenever the stream is
-                    // active — covers both live listen and recording.
-                    if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        let mut or = buf.detect_or;
-                        for &s in data {
-                            or |= s;
-                        }
-                        buf.detect_or = or;
-                        buf.detect_samples += data.len() as u64;
-                    }
-                    if rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
-                            let mono: Vec<i32> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64)
-                                        as i32
-                                })
-                                .collect();
-                            buf.total_samples += mono.len();
-                            buf.samples_i32.extend_from_slice(&mono);
-                        } else {
-                            buf.total_samples += data.len();
-                            buf.samples_i32.extend_from_slice(data);
-                        }
-                    } else if strm.load(Ordering::Relaxed) {
-                        // Listening: keep the rolling pre-roll ring (native fmt).
-                        if channels > 1 {
-                            let mono: Vec<i32> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64)
-                                        as i32
-                                })
-                                .collect();
-                            buf.push_preroll_i32(&mono);
-                        } else {
-                            buf.push_preroll_i32(data);
-                        }
-                    }
-                    if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if listen_stereo {
-                            buf.pending_f32
-                                .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
-                        } else if channels > 1 {
-                            let f32_data: Vec<f32> = data
-                                .chunks(channels)
-                                .map(|frame| {
-                                    frame.iter().map(|&s| s as f32 / 2147483648.0).sum::<f32>()
-                                        / channels as f32
-                                })
-                                .collect();
-                            buf.pending_f32.extend_from_slice(&f32_data);
-                        } else {
-                            let f32_data: Vec<f32> =
-                                data.iter().map(|&s| s as f32 / 2147483648.0).collect();
-                            buf.pending_f32.extend_from_slice(&f32_data);
-                        }
-                    }
-                },
-                err_callback,
-                None,
-            )
-        }
-        NativeSampleFormat::F32 => {
-            device.build_input_stream(
-                stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mut buf = buf.lock().unwrap();
-                    if rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
-                            let mono: Vec<f32> = data
-                                .chunks(channels)
-                                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                                .collect();
-                            buf.total_samples += mono.len();
-                            buf.samples_f32.extend_from_slice(&mono);
-                        } else {
-                            buf.total_samples += data.len();
-                            buf.samples_f32.extend_from_slice(data);
-                        }
-                    } else if strm.load(Ordering::Relaxed) {
-                        // Listening: keep the rolling pre-roll ring (native fmt).
-                        if channels > 1 {
-                            let mono: Vec<f32> = data
-                                .chunks(channels)
-                                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                                .collect();
-                            buf.push_preroll_f32(&mono);
-                        } else {
-                            buf.push_preroll_f32(data);
-                        }
-                    }
-                    if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if listen_stereo {
-                            buf.pending_f32.extend_from_slice(data);
-                        } else if channels > 1 {
-                            let f32_data: Vec<f32> = data
-                                .chunks(channels)
-                                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                                .collect();
-                            buf.pending_f32.extend_from_slice(&f32_data);
-                        } else {
-                            buf.pending_f32.extend_from_slice(data);
-                        }
-                    }
-                },
-                err_callback,
-                None,
-            )
-        }
+        NativeSampleFormat::I16 => device.build_input_stream(
+            stream_config,
+            move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                let mut buf = buf.lock().unwrap();
+                let recording = rec.load(Ordering::Relaxed);
+                if !recording && !strm.load(Ordering::Relaxed) {
+                    return;
+                }
+                let stored = samples_to_store(data, channels, stereo, |frame| {
+                    (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32) as i16
+                });
+                if recording {
+                    buf.total_samples += stored.len() / stored_channels;
+                    buf.samples_i16.extend_from_slice(&stored);
+                } else {
+                    buf.push_preroll_i16(&stored);
+                }
+                buf.pending_f32
+                    .extend(stored.iter().map(|&s| s as f32 / 32768.0));
+            },
+            err_callback,
+            None,
+        ),
+        NativeSampleFormat::I24 | NativeSampleFormat::I32 => device.build_input_stream(
+            stream_config,
+            move |data: &[i32], _: &cpal::InputCallbackInfo| {
+                let mut buf = buf.lock().unwrap();
+                let recording = rec.load(Ordering::Relaxed);
+                if !recording && !strm.load(Ordering::Relaxed) {
+                    return;
+                }
+                // Accumulate effective-bit-depth detection over the raw i32
+                // samples (cheap: one OR per sample) whenever the stream is
+                // active: covers both live listen and recording.
+                let mut or = buf.detect_or;
+                for &s in data {
+                    or |= s;
+                }
+                buf.detect_or = or;
+                buf.detect_samples += data.len() as u64;
+
+                let stored = samples_to_store(data, channels, stereo, |frame| {
+                    (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32
+                });
+                if recording {
+                    buf.total_samples += stored.len() / stored_channels;
+                    buf.samples_i32.extend_from_slice(&stored);
+                } else {
+                    buf.push_preroll_i32(&stored);
+                }
+                buf.pending_f32
+                    .extend(stored.iter().map(|&s| s as f32 / 2147483648.0));
+            },
+            err_callback,
+            None,
+        ),
+        NativeSampleFormat::F32 => device.build_input_stream(
+            stream_config,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mut buf = buf.lock().unwrap();
+                let recording = rec.load(Ordering::Relaxed);
+                if !recording && !strm.load(Ordering::Relaxed) {
+                    return;
+                }
+                let stored = samples_to_store(data, channels, stereo, |frame| {
+                    frame.iter().sum::<f32>() / channels as f32
+                });
+                if recording {
+                    buf.total_samples += stored.len() / stored_channels;
+                    buf.samples_f32.extend_from_slice(&stored);
+                } else {
+                    buf.push_preroll_f32(&stored);
+                }
+                buf.pending_f32.extend_from_slice(&stored);
+            },
+            err_callback,
+            None,
+        ),
     }
     .map_err(|e| format!("Failed to open microphone: {}", e))?;
 
@@ -786,7 +725,7 @@ pub fn open_mic(
         emitter_stop,
         format,
         sample_rate,
-        listen_channels: if listen_stereo { 2 } else { 1 },
+        channels: stored_channels as u16,
         device_name,
         supported_sample_rates: supported_rates,
         recovery: crate::recovery::RecoveryHandle::default(),
@@ -850,7 +789,7 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
 
     let format = WavWriteFormat {
         sample_rate: buffer.sample_rate,
-        channels: 1,
+        channels: buffer.channels,
         bits_per_sample: out_format.bits_per_sample(),
         is_float: out_format.is_float(),
     };
@@ -949,7 +888,8 @@ pub fn build_tauri_guano(
     )
 }
 
-/// Get f32 version of all recorded samples (for frontend spectrogram/display).
+/// Get f32 version of all recorded samples (for frontend spectrogram/display),
+/// interleaved L/R when the buffer is stereo.
 pub fn get_samples_f32(buffer: &RecordingBuffer) -> Vec<f32> {
     match buffer.format {
         NativeSampleFormat::I16 => buffer
@@ -1036,4 +976,85 @@ pub fn start_emitter(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oversample_core::audio::wav::parse_wav_header;
+
+    /// L = 100, 101, ... and R = 200, 201, ...
+    fn stereo_frames(first: i16, count: i16) -> Vec<i16> {
+        (first..first + count)
+            .flat_map(|i| [100 + i, 200 + i])
+            .collect()
+    }
+
+    #[test]
+    fn stored_samples_are_a_mix_only_when_stereo_is_not_kept() {
+        let data = [10i16, 20, 30, 40];
+        let mix = |f: &[i16]| (f.iter().map(|&s| s as i32).sum::<i32>() / 2) as i16;
+        assert_eq!(&*samples_to_store(&data, 2, true, mix), &data);
+        assert_eq!(&*samples_to_store(&data, 2, false, mix), &[15, 35]);
+        assert_eq!(&*samples_to_store(&data, 1, false, mix), &data);
+    }
+
+    #[test]
+    fn preroll_ring_keeps_whole_recent_stereo_frames() {
+        // Cap: 1 Hz x 15 s = 15 frames.
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I16, 1, 2);
+        buf.push_preroll_i16(&stereo_frames(0, 10));
+        buf.push_preroll_i16(&stereo_frames(10, 10));
+        assert_eq!(buf.preroll_i16.len(), 30);
+        assert_eq!(buf.preroll_i16.front(), Some(&105));
+    }
+
+    #[test]
+    fn seed_preroll_counts_frames_and_keeps_left_and_right_in_order() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I16, 48_000, 2);
+        buf.push_preroll_i16(&stereo_frames(0, 5));
+        assert_eq!(buf.seed_preroll(2), 2);
+        assert_eq!(buf.total_samples, 2);
+        assert_eq!(buf.preroll_seeded, 2);
+        assert_eq!(buf.samples_i16, stereo_frames(3, 2));
+        assert!(buf.preroll_i16.is_empty());
+    }
+
+    #[test]
+    fn seed_preroll_is_clamped_to_the_frames_in_the_ring() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::F32, 48_000, 2);
+        buf.push_preroll_f32(&[0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(buf.seed_preroll(100), 2);
+        assert_eq!(buf.samples_f32, vec![0.1, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn native_wav_header_matches_the_buffer_channels() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I16, 48_000, 2);
+        buf.samples_i16 = stereo_frames(0, 3);
+        buf.total_samples = 3;
+        let wav = encode_native_wav(&buf).unwrap();
+        let h = parse_wav_header(&wav).unwrap();
+        assert_eq!(h.channels, 2);
+        assert_eq!(h.total_frames, 3);
+        let start = h.data_offset as usize;
+        assert_eq!(i16::from_le_bytes([wav[start], wav[start + 1]]), 100);
+        assert_eq!(i16::from_le_bytes([wav[start + 2], wav[start + 3]]), 200);
+
+        let mut mono = RecordingBuffer::new(NativeSampleFormat::I16, 48_000, 1);
+        mono.samples_i16 = vec![1, 2, 3];
+        let h = parse_wav_header(&encode_native_wav(&mono).unwrap()).unwrap();
+        assert_eq!(h.channels, 1);
+        assert_eq!(h.total_frames, 3);
+    }
+
+    #[test]
+    fn stereo_i32_recording_stays_interleaved_when_written_at_a_lower_depth() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I32, 48_000, 2);
+        buf.force_bits = Some(16);
+        buf.samples_i32 = vec![1 << 16, 2 << 16, 3 << 16, 4 << 16];
+        let wav = encode_native_wav(&buf).unwrap();
+        let h = parse_wav_header(&wav).unwrap();
+        assert_eq!((h.channels, h.total_frames, h.bits_per_sample), (2, 2, 16));
+    }
 }

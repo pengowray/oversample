@@ -469,11 +469,8 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         let on_download = move |_: ()| {
                             let files = state.library.files().get_untracked();
                             if let Some(f) = files.get(i) {
-                                let total = f.audio.source.total_samples() as usize;
-                                let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
                                 crate::audio::wav_encoder::download_recording_wav(
-                                    &samples, f.audio.sample_rate, &name_dl,
-                                    f.audio.metadata.guano.as_ref(), &f.wav_markers,
+                                    &f.audio, &name_dl, &f.wav_markers,
                                 );
                             }
                             // Clear unsaved state after download

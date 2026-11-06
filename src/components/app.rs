@@ -1733,11 +1733,8 @@ fn MainArea() -> impl IntoView {
                                                 let idx = state.library.current_index().get_untracked();
                                                 if let Some(i) = idx {
                                                     if let Some(f) = files.get(i) {
-                                                        let total = f.audio.source.total_samples() as usize;
-                                                        let samples = f.audio.source.read_region(crate::audio::source::ChannelView::MonoMix, 0, total);
                                                         crate::audio::wav_encoder::download_recording_wav(
-                                                            &samples, f.audio.sample_rate, &name,
-                                                            f.audio.metadata.guano.as_ref(), &f.wav_markers,
+                                                            &f.audio, &name, &f.wav_markers,
                                                         );
                                                     }
                                                 }

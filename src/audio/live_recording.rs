@@ -1,4 +1,4 @@
-use crate::audio::mic_backend::{with_live_samples, with_live_samples_mut};
+use crate::audio::mic_backend::{trim_live_samples, with_live_samples};
 use crate::audio::source::InMemorySource;
 use crate::audio::wav_encoder::try_tauri_save;
 use crate::dsp::fft::{compute_preview, compute_spectrogram_partial, compute_stft_columns};
@@ -1115,41 +1115,39 @@ pub(crate) fn spawn_live_processing_loop(state: AppState, file_index: usize, sam
             let should_trim =
                 any_update && (is_listening || (is_recording && !wasm_is_authoritative));
             if should_trim {
-                with_live_samples_mut(is_tauri, |samples| {
-                    // Keep an extra 2 s of headroom beyond the user-requested
-                    // pre-roll duration. `toggle_record_with_preroll` subtracts
-                    // the long-press gesture time (typically 400–700 ms, but
-                    // up to a few seconds if the user holds) from the buffer
-                    // length to work out where the "press moment" was — if the
-                    // buffer were exactly the requested length, the subtracted
-                    // gesture-time would eat into the actual pre-roll the
-                    // user asked for. With headroom the cap below ends up at
-                    // exactly the user's setting.
-                    const GESTURE_HEADROOM_SECS: u32 = 2;
-                    let buf_secs = state
-                        .mic
-                        .preroll_buffer_secs()
-                        .get_untracked()
-                        .max(2)
-                        .saturating_add(GESTURE_HEADROOM_SECS)
-                        as usize;
-                    let max_samples = (sample_rate as usize) * buf_secs;
-                    if samples.len() > max_samples {
-                        // Hop-align the trim so the column index ↔ sample index
-                        // mapping stays exact across trims — required by the
-                        // persistent streaming resonator bank, which feeds new
-                        // samples addressed by column. (A non-aligned trim would
-                        // skip up to hop-1 unconsumed samples each tick.)
-                        let trim = ((samples.len() - max_samples) / hop_size) * hop_size;
-                        if trim > 0 {
-                            samples.drain(..trim);
-                            let trimmed_cols = trim / hop_size;
-                            last_processed_col = last_processed_col.saturating_sub(trimmed_cols);
-                            col_base += trimmed_cols; // keep absolute column index intact
-                            last_snapshot_len = last_snapshot_len.saturating_sub(trim);
-                        }
+                // Keep an extra 2 s of headroom beyond the user-requested
+                // pre-roll duration. `toggle_record_with_preroll` subtracts
+                // the long-press gesture time (typically 400–700 ms, but
+                // up to a few seconds if the user holds) from the buffer
+                // length to work out where the "press moment" was — if the
+                // buffer were exactly the requested length, the subtracted
+                // gesture-time would eat into the actual pre-roll the
+                // user asked for. With headroom the cap below ends up at
+                // exactly the user's setting.
+                const GESTURE_HEADROOM_SECS: u32 = 2;
+                let buf_secs = state
+                    .mic
+                    .preroll_buffer_secs()
+                    .get_untracked()
+                    .max(2)
+                    .saturating_add(GESTURE_HEADROOM_SECS) as usize;
+                let max_samples = (sample_rate as usize) * buf_secs;
+                let buffered = with_live_samples(is_tauri, |samples| samples.len());
+                if buffered > max_samples {
+                    // Hop-align the trim so the column index ↔ sample index
+                    // mapping stays exact across trims — required by the
+                    // persistent streaming resonator bank, which feeds new
+                    // samples addressed by column. (A non-aligned trim would
+                    // skip up to hop-1 unconsumed samples each tick.)
+                    let trim = ((buffered - max_samples) / hop_size) * hop_size;
+                    if trim > 0 {
+                        trim_live_samples(is_tauri, trim);
+                        let trimmed_cols = trim / hop_size;
+                        last_processed_col = last_processed_col.saturating_sub(trimmed_cols);
+                        col_base += trimmed_cols; // keep absolute column index intact
+                        last_snapshot_len = last_snapshot_len.saturating_sub(trim);
                     }
-                });
+                }
             }
             // Publish the ring's absolute base (= total trimmed samples) so the
             // live waveform maps ring samples to absolute positions WITHOUT the
@@ -1272,7 +1270,10 @@ pub(crate) fn spawn_smooth_scroll_animation(state: AppState) {
 
 /// Parameters for the unified recording finalization.
 pub(crate) struct FinalizeParams {
+    /// Mono mix of the recording.
     pub samples: Vec<f32>,
+    /// Interleaved L/R of the recording when it is stereo.
+    pub interleaved: Option<Vec<f32>>,
     pub sample_rate: u32,
     pub bits_per_sample: u16,
     pub is_float: bool,
@@ -1539,6 +1540,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
 
     let FinalizeParams {
         samples,
+        interleaved,
         sample_rate,
         bits_per_sample,
         is_float,
@@ -1685,6 +1687,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
     wasm_bindgen_futures::spawn_local(async move {
         finalize_in_memory_recording(
             samples,
+            interleaved,
             sample_rate,
             bits_per_sample,
             is_float,
@@ -1703,6 +1706,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
 /// long recording's `encode_wav_complete` can't freeze the UI thread at Stop.
 async fn finalize_in_memory_recording(
     samples: Vec<f32>,
+    interleaved: Option<Vec<f32>>,
     sample_rate: u32,
     bits_per_sample: u16,
     is_float: bool,
@@ -1750,11 +1754,13 @@ async fn finalize_in_memory_recording(
     // (the browser path). For to-memory the native side already saved the WAV,
     // so skip this second O(N) encode and hash from disk instead. ─
     let samples: Arc<Vec<f32>> = samples.into();
+    let raw_samples = interleaved.map(Arc::new);
+    let channels: u32 = if raw_samples.is_some() { 2 } else { 1 };
     let source = Arc::new(InMemorySource {
         samples: samples.clone(),
-        raw_samples: None,
+        raw_samples: raw_samples.clone(),
         sample_rate,
-        channels: 1,
+        channels,
     });
     let wav_bytes: Option<Vec<u8>> = if has_disk_file {
         None
@@ -1762,7 +1768,8 @@ async fn finalize_in_memory_recording(
         // Yield so the "Saving…" toast paints before the heavy encode runs.
         crate::web_util::yield_now().await;
         Some(crate::audio::wav_encoder::encode_wav_complete(
-            &samples,
+            raw_samples.as_deref().unwrap_or(&samples),
+            channels as u16,
             sample_rate,
             Some(&meta.guano),
             &meta.wav_markers,
@@ -1772,13 +1779,13 @@ async fn finalize_in_memory_recording(
         .or_else(|| wav_bytes.as_ref().map(|b| b.len()))
         .unwrap_or(0);
     let num_samples = samples.len() as u64;
-    let audio_data_size = num_samples * (bits_per_sample as u64 / 8);
+    let audio_data_size = num_samples * channels as u64 * (bits_per_sample as u64 / 8);
 
     let audio = AudioData {
         samples,
         source,
         sample_rate,
-        channels: 1,
+        channels,
         duration_secs,
         metadata: FileMetadata {
             file_size: exact_file_size,

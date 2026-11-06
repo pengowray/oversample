@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
-use crate::types::WavMarker;
+use crate::types::{AudioData, WavMarker};
 
 /// Build WAV `cue ` and `LIST`/`adtl` chunks for the given markers.
 /// Returns the raw bytes to insert into the RIFF stream (before the GUANO chunk).
@@ -96,12 +96,18 @@ pub fn insert_cue_chunks(wav: &mut Vec<u8>, cue_bytes: &[u8]) {
     crate::audio::wav::set_riff_size(wav);
 }
 
-/// Encode f32 samples as a 16-bit PCM WAV file (web mode fallback).
+/// Encode mono f32 samples as a 16-bit PCM WAV file (web mode fallback).
 pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    encode_wav_interleaved(samples, 1, sample_rate)
+}
+
+/// Encode f32 samples as a 16-bit PCM WAV file. `samples` is interleaved when
+/// `channels` is more than 1.
+pub fn encode_wav_interleaved(samples: &[f32], channels: u16, sample_rate: u32) -> Vec<u8> {
     use crate::audio::wav::{header_bytes, WavWriteFormat};
     let fmt = WavWriteFormat {
         sample_rate,
-        channels: 1,
+        channels,
         bits_per_sample: 16,
         is_float: false,
     };
@@ -118,14 +124,16 @@ pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 
 /// Encode a complete WAV file from samples, GUANO metadata, and WAV markers.
 /// This is the single source of truth for building recording WAVs — ensures
-/// the downloaded/saved file matches the metadata shown in the UI.
+/// the downloaded/saved file matches the metadata shown in the UI. `samples` is
+/// interleaved when `channels` is more than 1.
 pub fn encode_wav_complete(
     samples: &[f32],
+    channels: u16,
     sample_rate: u32,
     guano: Option<&crate::audio::guano::GuanoMetadata>,
     markers: &[WavMarker],
 ) -> Vec<u8> {
-    let mut wav_data = encode_wav(samples, sample_rate);
+    let mut wav_data = encode_wav_interleaved(samples, channels, sample_rate);
 
     // Insert cue markers (before GUANO)
     if !markers.is_empty() {
@@ -180,15 +188,29 @@ pub(crate) fn trigger_browser_wav_download(wav_data: &[u8], filename: &str) {
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Build and download a recording WAV preserving all metadata (GUANO + cue markers).
-pub fn download_recording_wav(
-    samples: &[f32],
-    sample_rate: u32,
-    filename: &str,
-    guano: Option<&crate::audio::guano::GuanoMetadata>,
-    markers: &[WavMarker],
-) {
-    let wav_data = encode_wav_complete(samples, sample_rate, guano, markers);
+/// Build and download a recording WAV preserving all metadata (GUANO + cue
+/// markers). A 2-channel file is saved with left and right separate. Any other
+/// channel count is saved as a mono mix.
+pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavMarker]) {
+    use crate::audio::source::ChannelView;
+    let source = &audio.source;
+    let total = source.total_samples() as usize;
+    let (samples, channels) = if source.channel_count() == 2 {
+        let left = source.read_region(ChannelView::Channel(0), 0, total);
+        let right = source.read_region(ChannelView::Channel(1), 0, total);
+        let mut interleaved = Vec::new();
+        oversample_core::audio::stereo::interleave_stereo(&left, &right, &mut interleaved);
+        (interleaved, 2)
+    } else {
+        (source.read_region(ChannelView::MonoMix, 0, total), 1)
+    };
+    let wav_data = encode_wav_complete(
+        &samples,
+        channels,
+        audio.sample_rate,
+        audio.metadata.guano.as_ref(),
+        markers,
+    );
     trigger_browser_wav_download(&wav_data, filename);
 }
 

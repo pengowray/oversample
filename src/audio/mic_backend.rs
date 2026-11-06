@@ -19,7 +19,7 @@ use crate::tauri_bridge::{
 };
 use leptos::prelude::*;
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
-use oversample_core::audio::stereo::{mix_stereo, split_stereo};
+use oversample_core::audio::stereo::{interleave_stereo, mix_stereo, split_stereo};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -152,7 +152,11 @@ thread_local! {
     static MIC_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     static MIC_STREAM: RefCell<Option<web_sys::MediaStream>> = const { RefCell::new(None) };
     static MIC_PROCESSOR: RefCell<Option<web_sys::ScriptProcessorNode>> = const { RefCell::new(None) };
+    /// Mono mix of the browser mic, for the live waterfall and mono recordings.
     static MIC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    /// Interleaved L/R copy of the same audio as MIC_BUFFER, for stereo recordings.
+    /// Empty for a mono mic; otherwise twice the length of MIC_BUFFER.
+    static MIC_STEREO_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
     /// Live DSP state for each channel (web).
     static WEB_LIVE_DSP: RefCell<LiveDsp> = RefCell::new(new_live_dsp());
@@ -183,7 +187,7 @@ thread_local! {
     /// Live DSP state for each channel (native modes).
     static NATIVE_LIVE_DSP: RefCell<LiveDsp> = RefCell::new(new_live_dsp());
     /// Channels in each `mic_pull_audio` payload: 2 means interleaved L/R.
-    static NATIVE_LISTEN_CHANNELS: std::cell::Cell<u16> = const { std::cell::Cell::new(1) };
+    static NATIVE_CHANNELS: std::cell::Cell<u16> = const { std::cell::Cell::new(1) };
 }
 
 thread_local! {
@@ -207,8 +211,13 @@ enum NativeMode {
 
 /// Result of stopping a recording.
 pub enum StopResult {
-    /// Browser mode: raw samples extracted from the JS callback buffer.
-    Samples { samples: Vec<f32>, sample_rate: u32 },
+    /// Browser mode: raw samples extracted from the JS callback buffer. `samples`
+    /// is a mono mix; `interleaved` has L/R for a stereo recording.
+    Samples {
+        samples: Vec<f32>,
+        interleaved: Option<Vec<f32>>,
+        sample_rate: u32,
+    },
     /// Native (cpal/USB) mode: parsed result from Tauri command.
     TauriResult(TauriRecordingResult),
     /// Recording produced no usable data.
@@ -225,7 +234,10 @@ pub struct TauriRecordingResult {
     pub bits_per_sample: u16,
     pub is_float: bool,
     pub duration_secs: f64,
+    /// To-memory samples as a mono mix (empty when the recording streamed to disk).
     pub samples: Vec<f32>,
+    /// To-memory samples as interleaved L/R, for a stereo recording.
+    pub interleaved: Option<Vec<f32>>,
     pub file_size_bytes: Option<usize>,
 }
 
@@ -243,10 +255,16 @@ impl TauriRecordingResult {
         if r.duration_secs <= 0.0 && !r.has_memory_samples {
             return None;
         }
-        let samples = if r.has_memory_samples {
+        let fetched = if r.has_memory_samples {
             fetch_recorded_samples().await
         } else {
             Vec::new()
+        };
+        let (samples, interleaved) = if r.channels == 2 && !fetched.is_empty() {
+            let (left, right) = split_stereo(&fetched);
+            (mix_stereo(&left, &right), Some(fetched))
+        } else {
+            (fetched, None)
         };
         Some(TauriRecordingResult {
             filename: r.filename,
@@ -256,6 +274,7 @@ impl TauriRecordingResult {
             is_float: r.is_float,
             duration_secs: r.duration_secs,
             samples,
+            interleaved,
             file_size_bytes: Some(r.file_size_bytes),
         })
     }
@@ -282,7 +301,7 @@ async fn fetch_recorded_samples() -> Vec<f32> {
 
 /// Shown when Channels is set to Stereo but the mic has one channel.
 const MIC_IS_MONO_MESSAGE: &str =
-    "Channels is set to Stereo, but this mic has only one channel. Listening live in mono.";
+    "Live listening and recordings will be mono: this mic has 1 channel.";
 
 /// Absolute minimum context for PS/PV (must cover at least one PV FFT window).
 const LISTEN_CONTEXT_FLOOR: usize = 4096;
@@ -554,7 +573,10 @@ impl MicBackend {
     /// Clear the live sample buffer for this backend.
     pub fn clear_buffer(&self) {
         match self {
-            MicBackend::Browser => MIC_BUFFER.with(|buf| buf.borrow_mut().clear()),
+            MicBackend::Browser => {
+                MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
+                MIC_STEREO_BUFFER.with(|buf| buf.borrow_mut().clear());
+            }
             MicBackend::Cpal | MicBackend::RawUsb => {
                 NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
             }
@@ -640,6 +662,7 @@ impl MicBackend {
                 state.mic.recording_start_time().set(None);
                 let sample_rate = state.mic.sample_rate().get_untracked();
                 let samples = MIC_BUFFER.with(|buf| std::mem::take(&mut *buf.borrow_mut()));
+                let stereo = MIC_STEREO_BUFFER.with(|buf| std::mem::take(&mut *buf.borrow_mut()));
                 state.mic.samples_recorded().set(0);
                 if samples.is_empty() || sample_rate == 0 {
                     log::warn!("No samples recorded (web)");
@@ -651,8 +674,12 @@ impl MicBackend {
                         samples.len() as f64 / sample_rate as f64,
                         sample_rate
                     );
+                    // A length mismatch means something else fed MIC_BUFFER (the
+                    // synthetic test signal), so only the mono mix is complete.
+                    let interleaved = (stereo.len() == samples.len() * 2).then_some(stereo);
                     StopResult::Samples {
                         samples,
+                        interleaved,
                         sample_rate,
                     }
                 }
@@ -765,6 +792,24 @@ pub fn with_live_samples_mut<R>(is_tauri: bool, f: impl FnOnce(&mut Vec<f32>) ->
         NATIVE_REC_BUFFER.with(|buf| f(&mut buf.borrow_mut()))
     } else {
         MIC_BUFFER.with(|buf| f(&mut buf.borrow_mut()))
+    }
+}
+
+/// Drop `frames` of the oldest audio from the live recording buffer.
+pub fn trim_live_samples(is_tauri: bool, frames: usize) {
+    if is_tauri {
+        NATIVE_REC_BUFFER.with(|buf| {
+            buf.borrow_mut().drain(..frames);
+        });
+    } else {
+        MIC_BUFFER.with(|buf| {
+            buf.borrow_mut().drain(..frames);
+        });
+        MIC_STEREO_BUFFER.with(|buf| {
+            let mut buf = buf.borrow_mut();
+            let stereo_samples = (frames * 2).min(buf.len());
+            buf.drain(..stereo_samples);
+        });
     }
 }
 
@@ -980,9 +1025,9 @@ pub fn het_context_time() -> Option<f64> {
 /// through the DSP and schedule HET playback. Called from the frontend audio
 /// pull loop (`start_audio_pull_loop`) with samples drained from the native
 /// side as raw f32 bytes (replacing the old JSON `mic-audio-chunk` event).
-/// `input_data` is interleaved L/R when NATIVE_LISTEN_CHANNELS is 2.
+/// `input_data` is interleaved L/R when NATIVE_CHANNELS is 2.
 fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
-    let stereo = NATIVE_LISTEN_CHANNELS.with(|c| c.get()) == 2;
+    let stereo = NATIVE_CHANNELS.with(|c| c.get()) == 2;
     let stereo_input = stereo.then(|| split_stereo(&input_data));
     let mono_mix = stereo_input.as_ref().map(|(l, r)| mix_stereo(l, r));
     let mono: &[f32] = mono_mix.as_deref().unwrap_or(&input_data);
@@ -1403,7 +1448,12 @@ async fn open_web(state: &AppState) -> bool {
             {
                 MIC_BUFFER.with(|buf| {
                     match inputs[..] {
-                        [left, right] => buf.borrow_mut().extend(mix_stereo(left, right)),
+                        [left, right] => {
+                            buf.borrow_mut().extend(mix_stereo(left, right));
+                            MIC_STEREO_BUFFER.with(|stereo| {
+                                interleave_stereo(left, right, &mut stereo.borrow_mut());
+                            });
+                        }
                         _ => buf.borrow_mut().extend_from_slice(inputs[0]),
                     }
                     if state_cb.mic.recording().get_untracked() {
@@ -1475,6 +1525,7 @@ fn close_web(state: &AppState) {
     });
 
     MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
+    MIC_STEREO_BUFFER.with(|buf| buf.borrow_mut().clear());
     reset_live_dsp(&WEB_LIVE_DSP);
     crate::canvas::live_waterfall::clear();
 
@@ -1520,10 +1571,10 @@ async fn open_cpal(state: &AppState) -> bool {
             }
         };
 
-    if channels == 2 && info.listen_channels != 2 {
+    if channels == 2 && info.channels != 2 {
         state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
     }
-    NATIVE_LISTEN_CHANNELS.with(|c| c.set(info.listen_channels));
+    NATIVE_CHANNELS.with(|c| c.set(info.channels));
     let sample_rate = info.sample_rate;
     let bits_per_sample = info.bits_per_sample;
     let device_name = if info.device_name.is_empty() {
@@ -1698,7 +1749,7 @@ async fn open_usb(state: &AppState) -> bool {
         max_packet_size: info.max_packet_size as u32,
         sample_rate,
         num_channels: info.num_channels as u32,
-        stereo_listen: stereo,
+        stereo,
         // Friendly name (not the /dev/bus/usb/… path) so the native GUANO mic
         // name matches what the app displays.
         device_name: product_name.clone(),
@@ -1715,7 +1766,7 @@ async fn open_usb(state: &AppState) -> bool {
         return false;
     }
 
-    NATIVE_LISTEN_CHANNELS.with(|c| c.set(if stereo { 2 } else { 1 }));
+    NATIVE_CHANNELS.with(|c| c.set(if stereo { 2 } else { 1 }));
     state.mic.sample_rate().set(sample_rate);
     // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
     // (never present) so usb_bits was always stuck at the 16 default.
@@ -1766,6 +1817,9 @@ async fn open_usb(state: &AppState) -> bool {
                 crate::audio::live_recording::finalize_recording(
                     crate::audio::live_recording::FinalizeParams {
                         samples,
+                        // This buffer is the live waterfall's mono mix. The file
+                        // recovered from the .part on next launch keeps L and R.
+                        interleaved: None,
                         sample_rate: sr,
                         bits_per_sample: state_err.mic.bits_per_sample().get_untracked(),
                         is_float: false,

@@ -14,7 +14,7 @@ pub fn usb_start_stream(
     max_packet_size: u32,
     sample_rate: u32,
     num_channels: u32,
-    stereo_listen: bool,
+    stereo: bool,
     device_name: String,
     interface_number: Option<u32>,
     alternate_setting: Option<u32>,
@@ -33,7 +33,7 @@ pub fn usb_start_stream(
         max_packet_size,
         sample_rate,
         num_channels,
-        stereo_listen,
+        stereo,
         device_name.clone(),
         app,
         interface_number.unwrap_or(0),
@@ -91,7 +91,7 @@ pub fn usb_start_recording(
     if !s.is_streaming.load(Ordering::Relaxed) {
         return Err("USB stream is not actively streaming — cannot start recording".into());
     }
-    {
+    let channels = {
         let mut buf = s.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
@@ -102,11 +102,12 @@ pub fn usb_start_recording(
         s.is_recording.store(true, Ordering::Relaxed);
         if seeded > 0 {
             eprintln!(
-                "usb_start_recording: seeded {} pre-roll samples to disk",
+                "usb_start_recording: seeded {} pre-roll frames to disk",
                 seeded
             );
         }
-    }
+        buf.channels
+    };
 
     let args = recovery::StartArgs {
         filename,
@@ -122,13 +123,13 @@ pub fn usb_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    // USB streams are always 16-bit mono in this implementation.
+    // USB streams are always 16-bit in this implementation.
     if let Some(writer) = recovery::start_writer(
         &app,
         &args,
         NativeSampleFormat::I16,
         s.sample_rate,
-        1,
+        channels,
         "batcap",
     ) {
         if let Ok(mut guard) = s.recovery.writer.lock() {
@@ -158,11 +159,12 @@ pub fn usb_stop_recording(
     s.is_recording.store(false, Ordering::Relaxed);
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
 
-    let (num_samples, sample_rate, shared_fd, preroll_seeded) = {
+    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded) = {
         let mut buf = s.buffer.lock().unwrap();
         (
             buf.total_samples,
             buf.sample_rate,
+            buf.channels,
             buf.shared_fd.take(),
             buf.preroll_seeded,
         )
@@ -202,6 +204,7 @@ pub fn usb_stop_recording(
             is_float: false,
             duration_secs,
             num_samples,
+            channels,
             has_memory_samples: false,
             file_size_bytes: 0,
         });
@@ -321,6 +324,7 @@ pub fn usb_stop_recording(
         is_float: false,
         duration_secs,
         num_samples,
+        channels,
         has_memory_samples,
         file_size_bytes,
     })

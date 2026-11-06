@@ -736,6 +736,70 @@ mod tests {
     }
 
     #[test]
+    fn crashed_stereo_recording_is_recovered_with_torn_frame_trimmed() {
+        let app_data = temp_app_data("crash-stereo");
+        let meta = build_meta(&args(), "st.wav", NativeSampleFormat::I16, 48_000, 2);
+        let mut w = create(
+            &app_data,
+            "st.wav",
+            NativeSampleFormat::I16,
+            48_000,
+            2,
+            &meta,
+        )
+        .unwrap();
+        // Three whole L/R frames, then half a frame plus one byte: the app "crashes"
+        // part way through a write.
+        let samples: [i16; 6] = [10, -10, 20, -20, 30, -30];
+        w.append_bytes(&encode_samples_i16(&samples)).unwrap();
+        w.append_bytes(&[40, 0, 50]).unwrap();
+        drop(w);
+
+        let out = recover_leftover_recordings(&app_data);
+        assert_eq!(out.len(), 1);
+        let r = &out[0];
+        assert!(r.had_sidecar);
+        assert_eq!(r.sample_count, 3);
+        assert_eq!(r.duration_secs, 3.0 / 48_000.0);
+        let bytes = std::fs::read(&r.path).unwrap();
+        let h = parse_wav_header(&bytes).unwrap();
+        assert_eq!(h.channels, 2);
+        assert_eq!(h.total_frames, 3);
+        assert_eq!(h.data_size, 12);
+        assert!(h.guano.is_some());
+        assert!(h.details.notes.is_empty(), "{:?}", h.details.notes);
+        let start = h.data_offset as usize;
+        let decoded: Vec<i16> = bytes[start..start + 12]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        assert_eq!(decoded, samples);
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn stereo_recording_finalizes_with_a_two_channel_header() {
+        let app_data = temp_app_data("finalize-stereo");
+        let meta = build_meta(&args(), "st.wav", NativeSampleFormat::F32, 48_000, 2);
+        let mut w = create(
+            &app_data,
+            "st.wav",
+            NativeSampleFormat::F32,
+            48_000,
+            2,
+            &meta,
+        )
+        .unwrap();
+        w.append_bytes(&encode_samples_f32(&[0.5, -0.5, 0.25, -0.25]))
+            .unwrap();
+        let path = finalize_in_place_and_take(w, &[], "GUANO|Version: 1.0\n").unwrap();
+        let h = parse_wav_header(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(h.channels, 2);
+        assert_eq!(h.total_frames, 2);
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
     fn old_44_byte_part_file_is_recovered() {
         let app_data = temp_app_data("legacy");
         let dir = recovery_dir(&app_data);

@@ -43,9 +43,9 @@ pub struct MicInfo {
     pub supported_sample_rates: Vec<u32>,
     /// Audio host backend name ("Oboe", "WASAPI", "CoreAudio", "ALSA", "JACK", …).
     pub host_name: String,
-    /// Channels in each `mic_pull_audio` payload: 2 means interleaved L/R, 1 means
-    /// mono or a mono mix. Recordings are always mono.
-    pub listen_channels: u16,
+    /// Channels in each `mic_pull_audio` payload and in recordings: 2 means
+    /// interleaved L/R, 1 means mono or a mono mix.
+    pub channels: u16,
 }
 
 /// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).
@@ -53,7 +53,8 @@ pub struct MicInfo {
 /// To-memory recordings keep the captured audio on the native side; when
 /// `has_memory_samples` is set the frontend fetches it as raw f32 bytes via the
 /// `mic_take_recorded_samples` command (an ArrayBuffer) rather than receiving it
-/// inline as a JSON array of floats.
+/// inline as a JSON array of floats. Those samples are interleaved L/R when
+/// `channels` is 2.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RecordingResult {
     pub filename: String,
@@ -62,7 +63,9 @@ pub struct RecordingResult {
     pub bits_per_sample: u16,
     pub is_float: bool,
     pub duration_secs: f64,
+    /// Length of the recording in frames (one sample per channel).
     pub num_samples: usize,
+    pub channels: u16,
     /// True when the native side has stashed to-memory samples for pickup via
     /// `mic_take_recorded_samples`.
     pub has_memory_samples: bool,

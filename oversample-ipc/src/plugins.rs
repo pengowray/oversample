@@ -142,9 +142,9 @@ pub struct UsbStartStreamArgs {
     pub max_packet_size: u32,
     pub sample_rate: u32,
     pub num_channels: u32,
-    /// Send interleaved L/R to `mic_pull_audio` instead of a mono mix. Needs a
-    /// 2-channel device. Recordings are always mono.
-    pub stereo_listen: bool,
+    /// Keep left and right separate in recordings and `mic_pull_audio` (interleaved
+    /// L/R) instead of a mono mix. Needs a 2-channel device.
+    pub stereo: bool,
     pub device_name: String,
     pub interface_number: u32,
     pub alternate_setting: u32,
