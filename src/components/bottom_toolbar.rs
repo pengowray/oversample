@@ -956,11 +956,18 @@ pub fn BottomToolbar() -> impl IntoView {
                                             </select>
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
-                                            <label style="font-size: 11px;">"Channels"</label>
+                                            <label style="font-size: 11px;" title="Applies to live listening only. Mono mixes the mic's channels, so both ears hear the same sound. Stereo converts the left and right channels separately and plays them in the left and right ears. Saved recordings and the spectrogram are always a mono mix of left and right.">"Channels"</label>
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     let val = leptos::prelude::event_target_value(&ev);
                                                     state.mic.channel_mode().set(if val == "stereo" { ChannelMode::Stereo } else { ChannelMode::Mono });
+                                                    // Restart listening so the new setting applies straight away.
+                                                    if state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
+                                                        wasm_bindgen_futures::spawn_local(async move {
+                                                            crate::audio::microphone::toggle_listen(&state).await;
+                                                            crate::audio::microphone::toggle_listen(&state).await;
+                                                        });
+                                                    }
                                                 }
                                             >
                                                 <option value="mono" selected=move || state.mic.channel_mode().get() == ChannelMode::Mono>"Mono"</option>

@@ -42,6 +42,8 @@ pub struct UsbStreamState {
 
 pub struct UsbRecordingBuffer {
     pub samples_i16: Vec<i16>,
+    /// f32 samples for the frontend: interleaved L/R when the stream was started
+    /// with `stereo_listen`, otherwise mono.
     pending_f32: Vec<f32>,
     pub total_samples: usize,
     pub sample_rate: u32,
@@ -78,7 +80,9 @@ impl UsbRecordingBuffer {
         // immediately before `seed_preroll` reads it; seed clears it.
     }
 
-    fn push_samples(&mut self, data: &[i16], recording: bool) {
+    /// Store mono `data` for the recording or pre-roll, and queue it for the
+    /// frontend unless `listen_stereo` supplies interleaved L/R to queue instead.
+    fn push_samples(&mut self, data: &[i16], listen_stereo: Option<&[i16]>, recording: bool) {
         if recording {
             self.total_samples += data.len();
             self.samples_i16.extend_from_slice(data);
@@ -93,8 +97,9 @@ impl UsbRecordingBuffer {
             }
         }
         // Always push to pending for streaming/live display
-        let f32_data: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
-        self.pending_f32.extend_from_slice(&f32_data);
+        let pending = listen_stereo.unwrap_or(data);
+        self.pending_f32
+            .extend(pending.iter().map(|&s| s as f32 / 32768.0));
     }
 
     /// Seed the just-cleared recording buffer with the last `p` pre-roll samples
@@ -243,6 +248,7 @@ pub fn start_usb_stream(
     max_packet_size: u32,
     sample_rate: u32,
     num_channels: u32,
+    stereo_listen: bool,
     device_name: String,
     app: tauri::AppHandle,
     interface_number: u32,
@@ -271,6 +277,7 @@ pub fn start_usb_stream(
             endpoint_address,
             max_packet_size,
             channels,
+            stereo_listen && channels == 2,
             interface_number,
             alternate_setting,
             &cancel,
@@ -334,6 +341,7 @@ pub fn start_usb_stream(
     _max_packet_size: u32,
     _sample_rate: u32,
     _num_channels: u32,
+    _stereo_listen: bool,
     _device_name: String,
     _app: tauri::AppHandle,
     _interface_number: u32,
@@ -453,6 +461,7 @@ mod isochronous {
         endpoint_address: u32,
         max_packet_size: u32,
         num_channels: usize,
+        stereo_listen: bool,
         interface_number: u32,
         alternate_setting: u32,
         cancel: &AtomicBool,
@@ -571,6 +580,7 @@ mod isochronous {
 
         let mut balls_in_air = URBS_TO_JUGGLE;
         let mut mono_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
+        let mut stereo_buf: Vec<i16> = Vec::new();
         let mut startup_signaled = false;
 
         // EMT2 workaround: retry on poll timeout instead of failing immediately.
@@ -694,6 +704,7 @@ mod isochronous {
                 let urb_with_packets = unsafe { &*(reaped.usercontext as *const UrbWithPackets) };
 
                 mono_buf.clear();
+                stereo_buf.clear();
 
                 let mut src_byte_offset: usize = 0;
                 for packet in &urb_with_packets.packet_desc {
@@ -713,6 +724,9 @@ mod isochronous {
                                 if chunk.len() == 2 {
                                     let avg = ((chunk[0] as i32 + chunk[1] as i32) >> 1) as i16;
                                     mono_buf.push(avg);
+                                    if stereo_listen {
+                                        stereo_buf.extend_from_slice(chunk);
+                                    }
                                 }
                             }
                         } else {
@@ -733,7 +747,8 @@ mod isochronous {
 
                     let recording = is_recording.load(Ordering::Relaxed);
                     if let Ok(mut buf) = buffer.lock() {
-                        buf.push_samples(&mono_buf, recording);
+                        let stereo = stereo_listen.then_some(stereo_buf.as_slice());
+                        buf.push_samples(&mono_buf, stereo, recording);
                     }
                 }
             }

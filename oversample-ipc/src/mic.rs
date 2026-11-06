@@ -43,6 +43,9 @@ pub struct MicInfo {
     pub supported_sample_rates: Vec<u32>,
     /// Audio host backend name ("Oboe", "WASAPI", "CoreAudio", "ALSA", "JACK", …).
     pub host_name: String,
+    /// Channels in each `mic_pull_audio` payload: 2 means interleaved L/R, 1 means
+    /// mono or a mono mix. Recordings are always mono.
+    pub listen_channels: u16,
 }
 
 /// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).

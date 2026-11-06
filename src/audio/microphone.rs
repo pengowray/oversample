@@ -445,6 +445,19 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
         if let Some(backend) = state.mic.backend().get_untracked() {
             let still_open = backend.is_open();
             if still_open {
+                // The mic stays open between listening sessions, so a changed
+                // Channels setting takes effect here. It is left alone while
+                // the mic is in use.
+                if backend.channel_mode_changed(state)
+                    && !state.mic.listening().get_untracked()
+                    && !state.mic.recording().get_untracked()
+                {
+                    backend.close(state).await;
+                    if !backend.open(state).await {
+                        state.mic.acquisition_state().set(MicAcquisitionState::Idle);
+                        return None;
+                    }
+                }
                 return Some(backend);
             }
             // Backend closed unexpectedly — fall through to re-acquire

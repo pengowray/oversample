@@ -42,7 +42,8 @@ pub struct RecordingBuffer {
     pub samples_i16: Vec<i16>,
     pub samples_i32: Vec<i32>, // for I24 and I32
     pub samples_f32: Vec<f32>, // for F32 format (native)
-    // f32 copies for streaming to frontend
+    // f32 copies for streaming to frontend: interleaved L/R when
+    // `MicState::listen_channels` is 2, otherwise mono.
     pub pending_f32: Vec<f32>,
     pub total_samples: usize,
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
@@ -264,7 +265,9 @@ pub struct MicState {
     pub emitter_stop: Arc<AtomicBool>,
     pub format: NativeSampleFormat,
     pub sample_rate: u32,
-    pub channels: usize,
+    /// Channels in `pending_f32`: 2 for a 2-channel device opened with Channels
+    /// set to Stereo, otherwise 1. Recordings are always a mono mix.
+    pub listen_channels: u16,
     pub device_name: String,
     pub supported_sample_rates: Vec<u32>,
     /// Crash-recovery writer + shared state. Active between
@@ -571,6 +574,7 @@ pub fn open_mic(
     let sample_rate = config.sample_rate();
     let stream_config: cpal::StreamConfig = config.into();
     let channels = stream_config.channels as usize;
+    let listen_stereo = requested_channels == 2 && channels == 2;
 
     let buffer = Arc::new(Mutex::new(RecordingBuffer::new(format, sample_rate)));
     let is_recording = Arc::new(AtomicBool::new(false));
@@ -622,7 +626,10 @@ pub fn open_mic(
                         }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
+                        if listen_stereo {
+                            buf.pending_f32
+                                .extend(data.iter().map(|&s| s as f32 / 32768.0));
+                        } else if channels > 1 {
                             let f32_data: Vec<f32> = data
                                 .chunks(channels)
                                 .map(|frame| {
@@ -689,7 +696,10 @@ pub fn open_mic(
                         }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
+                        if listen_stereo {
+                            buf.pending_f32
+                                .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
+                        } else if channels > 1 {
                             let f32_data: Vec<f32> = data
                                 .chunks(channels)
                                 .map(|frame| {
@@ -739,7 +749,9 @@ pub fn open_mic(
                         }
                     }
                     if strm.load(Ordering::Relaxed) || rec.load(Ordering::Relaxed) {
-                        if channels > 1 {
+                        if listen_stereo {
+                            buf.pending_f32.extend_from_slice(data);
+                        } else if channels > 1 {
                             let f32_data: Vec<f32> = data
                                 .chunks(channels)
                                 .map(|frame| frame.iter().sum::<f32>() / channels as f32)
@@ -774,7 +786,7 @@ pub fn open_mic(
         emitter_stop,
         format,
         sample_rate,
-        channels,
+        listen_channels: if listen_stereo { 2 } else { 1 },
         device_name,
         supported_sample_rates: supported_rates,
         recovery: crate::recovery::RecoveryHandle::default(),

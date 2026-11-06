@@ -361,12 +361,7 @@ async fn chunk_loop(
     // ── Pre-buffer phase ─────────────────────────────────────────────────────
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
     // has a comfortable lead and the first audible chunk doesn't skip.
-    struct PreBuf {
-        samples: Vec<f32>,
-        left: Option<Vec<f32>>,
-        right: Option<Vec<f32>>,
-    }
-    let mut prebuf: Vec<PreBuf> = Vec::with_capacity(PREBUFFER_CHUNKS);
+    let mut prebuf: Vec<ChunkAudio> = Vec::with_capacity(PREBUFFER_CHUNKS);
 
     for _ in 0..PREBUFFER_CHUNKS {
         let effective_end = playback_end_bound(&source, end_sample, play_to_eof);
@@ -378,7 +373,7 @@ async fn chunk_loop(
             return;
         }
 
-        let (final_samples, left, right, new_pos) = process_one_chunk(
+        let (chunk, new_pos) = process_one_chunk(
             &source,
             channel_view,
             stereo_out,
@@ -393,11 +388,7 @@ async fn chunk_loop(
         .await;
         pos = new_pos;
 
-        prebuf.push(PreBuf {
-            samples: final_samples,
-            left,
-            right,
-        });
+        prebuf.push(chunk);
 
         // Yield between pre-buffer chunks so the UI stays responsive
         yield_to_browser().await;
@@ -418,36 +409,20 @@ async fn chunk_loop(
     // extra audio that blends with the next chunk via crossfade).
     let stride_duration = CHUNK_SAMPLES as f64 / final_rate as f64;
 
-    for buf in prebuf {
-        if !buf.samples.is_empty() {
-            if stereo_out {
-                if let (Some(ref left), Some(ref right)) = (buf.left, buf.right) {
-                    schedule_buffer_stereo(
-                        &ctx,
-                        &gain_node,
-                        left,
-                        right,
-                        final_rate,
-                        scheduled_time,
-                    );
-                    if pv_hq_mode {
-                        scheduled_time += stride_duration;
-                    } else {
-                        let chunk_duration = left.len() as f64 / final_rate as f64;
-                        scheduled_time += chunk_duration;
-                    }
-                }
-            } else {
-                schedule_buffer(&ctx, &gain_node, &buf.samples, final_rate, scheduled_time);
-                if pv_hq_mode {
-                    // Advance by stride only; the trailing overlap will be summed
-                    // with the next chunk's fade-in by Web Audio.
-                    scheduled_time += stride_duration;
-                } else {
-                    let chunk_duration = buf.samples.len() as f64 / final_rate as f64;
-                    scheduled_time += chunk_duration;
-                }
-            }
+    let advance = |chunk: &ChunkAudio| {
+        if pv_hq_mode {
+            // Advance by stride only; the trailing overlap is summed with the
+            // next chunk's fade-in by Web Audio.
+            stride_duration
+        } else {
+            chunk.frames() as f64 / final_rate as f64
+        }
+    };
+
+    for chunk in prebuf {
+        if chunk.frames() > 0 {
+            chunk.schedule(&ctx, &gain_node, final_rate, scheduled_time);
+            scheduled_time += advance(&chunk);
             SCHEDULED_END.with(|s| s.set(scheduled_time));
         }
     }
@@ -467,7 +442,7 @@ async fn chunk_loop(
             break;
         }
 
-        let (final_samples, left, right, new_pos) = process_one_chunk(
+        let (chunk, new_pos) = process_one_chunk(
             &source,
             channel_view,
             stereo_out,
@@ -482,33 +457,9 @@ async fn chunk_loop(
         .await;
         pos = new_pos;
 
-        if !final_samples.is_empty() {
-            if stereo_out {
-                if let (Some(ref left), Some(ref right)) = (left, right) {
-                    schedule_buffer_stereo(
-                        &ctx,
-                        &gain_node,
-                        left,
-                        right,
-                        final_rate,
-                        scheduled_time,
-                    );
-                    if pv_hq_mode {
-                        scheduled_time += stride_duration;
-                    } else {
-                        let chunk_duration = left.len() as f64 / final_rate as f64;
-                        scheduled_time += chunk_duration;
-                    }
-                }
-            } else {
-                schedule_buffer(&ctx, &gain_node, &final_samples, final_rate, scheduled_time);
-                if pv_hq_mode {
-                    scheduled_time += stride_duration;
-                } else {
-                    let chunk_duration = final_samples.len() as f64 / final_rate as f64;
-                    scheduled_time += chunk_duration;
-                }
-            }
+        if chunk.frames() > 0 {
+            chunk.schedule(&ctx, &gain_node, final_rate, scheduled_time);
+            scheduled_time += advance(&chunk);
             SCHEDULED_END.with(|s| s.set(scheduled_time));
         }
 
@@ -534,8 +485,33 @@ async fn chunk_loop(
     }
 }
 
+/// Audio for one scheduled chunk.
+enum ChunkAudio {
+    Mono(Vec<f32>),
+    Stereo { left: Vec<f32>, right: Vec<f32> },
+}
+
+impl ChunkAudio {
+    fn frames(&self) -> usize {
+        match self {
+            ChunkAudio::Mono(samples) => samples.len(),
+            ChunkAudio::Stereo { left, right } => left.len().min(right.len()),
+        }
+    }
+
+    fn schedule(&self, ctx: &AudioContext, dest: &web_sys::GainNode, rate: u32, when: f64) {
+        match self {
+            ChunkAudio::Mono(samples) => schedule_buffer(ctx, dest, samples, rate, when),
+            ChunkAudio::Stereo { left, right } => {
+                schedule_buffer_stereo(ctx, dest, left, right, rate, when)
+            }
+        }
+    }
+}
+
 /// Process a single chunk: prefetch, read, filter, DSP, trim, gain.
-/// Returns (mono_samples, optional_left, optional_right, next_pos).
+/// With `stereo_out`, left and right each go through the whole pipeline on their
+/// own. Returns the chunk and the next read position.
 async fn process_one_chunk(
     source: &Arc<dyn AudioSource>,
     channel_view: ChannelView,
@@ -547,7 +523,7 @@ async fn process_one_chunk(
     pos: usize,
     start_sample: usize,
     end_sample: usize,
-) -> (Vec<f32>, Option<Vec<f32>>, Option<Vec<f32>>, usize) {
+) -> (ChunkAudio, usize) {
     let pv_hq_mode = params.pv_hq
         && matches!(
             params.mode,
@@ -581,131 +557,73 @@ async fn process_one_chunk(
     )
     .await;
 
-    let chunk_with_warmup = source.read_region(
-        channel_view,
-        warmup_start as u64,
-        trailing_end - warmup_start,
-    );
-    let filtered = apply_filters(&chunk_with_warmup, source_rate, params);
-    let processed = apply_dsp_mode(&filtered, source_rate, params);
-
-    // Helper: process a channel through filters + DSP (same pipeline as mono)
-    let process_ch = |cv: ChannelView| -> Vec<f32> {
-        let raw = source.read_region(cv, warmup_start as u64, trailing_end - warmup_start);
-        let filtered = apply_filters(&raw, source_rate, params);
-        apply_dsp_mode(&filtered, source_rate, params)
+    // Hann fades for the PV HQ overlap, applied after the warmup is trimmed.
+    let core_len = chunk_end - pos; // nominal chunk length (without overlap)
+    let apply_pv_hq_fading = |buf: &mut Vec<f32>| {
+        // Hann fade-in on leading overlap (first chunk's start is clean)
+        if pos > start_sample {
+            let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(buf.len());
+            for (i, sample) in buf.iter_mut().enumerate().take(fade_in_len) {
+                let t = i as f32 / fade_in_len as f32;
+                let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+                *sample *= w;
+            }
+        }
+        // Hann fade-out on trailing overlap
+        if trailing_len > 0 {
+            let fade_out_start = buf.len().saturating_sub(trailing_len);
+            let fade_out_len = buf.len() - fade_out_start;
+            for i in 0..fade_out_len {
+                let t = i as f32 / fade_out_len as f32;
+                let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+                buf[fade_out_start + i] *= w;
+            }
+        }
     };
 
-    if pv_hq_mode {
-        // HQ mode: trim warmup but keep trailing overlap with crossfade envelope.
-        let trim_start = warmup_len;
-        let core_len = chunk_end - pos; // nominal chunk length (without overlap)
-
-        // Apply PV HQ fading to a processed buffer
-        let apply_pv_hq_fading = |buf: &mut Vec<f32>| {
-            // Hann fade-in on leading overlap (first chunk's start is clean)
-            if pos > start_sample {
-                let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(buf.len());
-                for (i, sample) in buf.iter_mut().enumerate().take(fade_in_len) {
-                    let t = i as f32 / fade_in_len as f32;
-                    let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                    *sample *= w;
-                }
-            }
-            // Hann fade-out on trailing overlap
-            if trailing_len > 0 {
-                let fade_out_start = buf.len().saturating_sub(trailing_len);
-                let fade_out_len = buf.len() - fade_out_start;
-                for i in 0..fade_out_len {
-                    let t = i as f32 / fade_out_len as f32;
-                    let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                    buf[fade_out_start + i] *= w;
-                }
-            }
-        };
-
-        let mut final_samples = if trim_start < processed.len() {
-            processed[trim_start..].to_vec()
+    // Read one channel view and run it through filters, DSP, trim and gain.
+    let process_view = |cv: ChannelView| -> Vec<f32> {
+        let raw = source.read_region(cv, warmup_start as u64, trailing_end - warmup_start);
+        let filtered = apply_filters(&raw, source_rate, params);
+        let processed = apply_dsp_mode(&filtered, source_rate, params);
+        let mut out = if pv_hq_mode {
+            // HQ mode: trim warmup but keep trailing overlap for the crossfade.
+            let mut out = if warmup_len < processed.len() {
+                processed[warmup_len..].to_vec()
+            } else {
+                processed
+            };
+            apply_pv_hq_fading(&mut out);
+            out
         } else {
-            processed.to_vec()
+            // Standard mode: trim warmup and trailing
+            let trim_end = processed.len().saturating_sub(trailing_len);
+            if warmup_len < trim_end {
+                processed[warmup_len..trim_end].to_vec()
+            } else {
+                processed
+            }
         };
-        apply_pv_hq_fading(&mut final_samples);
+        apply_gain(&mut out, global_gain);
+        out
+    };
 
-        apply_gain(&mut final_samples, global_gain);
+    let chunk = if stereo_out {
+        let mut left = process_view(ChannelView::Channel(0));
+        let mut right = process_view(ChannelView::Channel(1));
         if let Some(agc_cell) = agc {
-            agc_cell.borrow_mut().process(&mut final_samples);
+            agc_cell.borrow_mut().process_stereo(&mut left, &mut right);
         }
-
-        let (left, right) = if stereo_out {
-            let l_proc = process_ch(ChannelView::Channel(0));
-            let r_proc = process_ch(ChannelView::Channel(1));
-            let mut l = if trim_start < l_proc.len() {
-                l_proc[trim_start..].to_vec()
-            } else {
-                l_proc
-            };
-            let mut r = if trim_start < r_proc.len() {
-                r_proc[trim_start..].to_vec()
-            } else {
-                r_proc
-            };
-            apply_pv_hq_fading(&mut l);
-            apply_pv_hq_fading(&mut r);
-            apply_gain(&mut l, global_gain);
-            apply_gain(&mut r, global_gain);
-            if let Some(agc_cell) = agc {
-                agc_cell.borrow_mut().process_stereo(&mut l, &mut r);
-            }
-            (Some(l), Some(r))
-        } else {
-            (None, None)
-        };
-
-        (final_samples, left, right, chunk_end)
+        ChunkAudio::Stereo { left, right }
     } else {
-        // Standard mode: trim warmup and trailing
-        let trim_start = warmup_len;
-        let trim_end = processed.len().saturating_sub(trailing_len);
-        let trimmed = if trim_start < trim_end {
-            &processed[trim_start..trim_end]
-        } else {
-            &processed[..]
-        };
-
-        let mut final_samples = trimmed.to_vec();
-
-        apply_gain(&mut final_samples, global_gain);
+        let mut samples = process_view(channel_view);
         if let Some(agc_cell) = agc {
-            agc_cell.borrow_mut().process(&mut final_samples);
+            agc_cell.borrow_mut().process(&mut samples);
         }
+        ChunkAudio::Mono(samples)
+    };
 
-        let (left, right) = if stereo_out {
-            let l_proc = process_ch(ChannelView::Channel(0));
-            let r_proc = process_ch(ChannelView::Channel(1));
-            let l_trim_end = l_proc.len().saturating_sub(trailing_len);
-            let r_trim_end = r_proc.len().saturating_sub(trailing_len);
-            let mut l = if trim_start < l_trim_end {
-                l_proc[trim_start..l_trim_end].to_vec()
-            } else {
-                l_proc
-            };
-            let mut r = if trim_start < r_trim_end {
-                r_proc[trim_start..r_trim_end].to_vec()
-            } else {
-                r_proc
-            };
-            apply_gain(&mut l, global_gain);
-            apply_gain(&mut r, global_gain);
-            if let Some(agc_cell) = agc {
-                agc_cell.borrow_mut().process_stereo(&mut l, &mut r);
-            }
-            (Some(l), Some(r))
-        } else {
-            (None, None)
-        };
-
-        (final_samples, left, right, chunk_end)
-    }
+    (chunk, chunk_end)
 }
 
 pub(crate) fn apply_filters(

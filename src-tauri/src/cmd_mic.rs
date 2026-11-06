@@ -81,6 +81,7 @@ pub fn mic_open(
             format: format!("{:?}", m.format),
             supported_sample_rates: m.supported_sample_rates.clone(),
             host_name: cpal_host_name(),
+            listen_channels: m.listen_channels,
         });
     }
 
@@ -99,6 +100,7 @@ pub fn mic_open(
         format: format!("{:?}", m.format),
         supported_sample_rates: m.supported_sample_rates.clone(),
         host_name: cpal_host_name(),
+        listen_channels: m.listen_channels,
     };
 
     // Start the emitter thread for streaming audio chunks to the frontend
@@ -192,7 +194,7 @@ pub fn mic_start_recording(
         &args,
         m.format,
         m.sample_rate,
-        m.channels as u16,
+        1, // The recording buffer holds a mono mix, whatever the device's channel count.
         "batcap",
     ) {
         if let Ok(mut guard) = m.recovery.writer.lock() {

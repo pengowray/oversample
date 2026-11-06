@@ -12,13 +12,14 @@ use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
 use crate::state::store_fields::*;
-use crate::state::{AppState, MicAcquisitionState, MicBackend, PlaybackMode};
+use crate::state::{AppState, ChannelMode, MicAcquisitionState, MicBackend, PlaybackMode};
 use crate::tauri_bridge::{
     get_tauri_internals, tauri_invoke, tauri_invoke_args, tauri_invoke_no_args,
     tauri_invoke_typed_args, tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
+use oversample_core::audio::stereo::{mix_stereo, split_stereo};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -153,9 +154,8 @@ thread_local! {
     static MIC_PROCESSOR: RefCell<Option<web_sys::ScriptProcessorNode>> = const { RefCell::new(None) };
     static MIC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static MIC_HANDLER: RefCell<Option<Closure<dyn FnMut(web_sys::AudioProcessingEvent)>>> = RefCell::new(None);
-    static WEB_RT_HET: RefCell<RealtimeCombHet> = RefCell::new(RealtimeCombHet::new());
-    /// Overlap context state for PS/PV live listening (web).
-    static WEB_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
+    /// Live DSP state for each channel (web).
+    static WEB_LIVE_DSP: RefCell<LiveDsp> = RefCell::new(new_live_dsp());
 }
 
 // ── Thread-local state: Native mode (shared by cpal AND USB) ────────────
@@ -180,10 +180,15 @@ thread_local! {
     static NATIVE_PULL_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Accumulated recording samples on the frontend for native modes (cpal/USB).
     static NATIVE_REC_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
-    /// Realtime heterodyne processor for native modes.
-    static NATIVE_RT_HET: RefCell<RealtimeCombHet> = RefCell::new(RealtimeCombHet::new());
-    /// Overlap context state for PS/PV live listening (native).
-    static NATIVE_LISTEN_STATE: RefCell<ListenDspState> = const { RefCell::new(ListenDspState::new()) };
+    /// Live DSP state for each channel (native modes).
+    static NATIVE_LIVE_DSP: RefCell<LiveDsp> = RefCell::new(new_live_dsp());
+    /// Channels in each `mic_pull_audio` payload: 2 means interleaved L/R.
+    static NATIVE_LISTEN_CHANNELS: std::cell::Cell<u16> = const { std::cell::Cell::new(1) };
+}
+
+thread_local! {
+    /// The Channels setting the open mic was opened with.
+    static OPENED_CHANNEL_MODE: std::cell::Cell<ChannelMode> = const { std::cell::Cell::new(ChannelMode::Mono) };
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -275,6 +280,10 @@ async fn fetch_recorded_samples() -> Vec<f32> {
 
 // ── Live listen DSP dispatch ──────────────────────────────────────────
 
+/// Shown when Channels is set to Stereo but the mic has one channel.
+const MIC_IS_MONO_MESSAGE: &str =
+    "Channels is set to Stereo, but this mic has only one channel. Listening live in mono.";
+
 /// Absolute minimum context for PS/PV (must cover at least one PV FFT window).
 const LISTEN_CONTEXT_FLOOR: usize = 4096;
 
@@ -313,6 +322,39 @@ impl ListenDspState {
         self.prev_tail.clear();
         self.filter_tail.clear();
     }
+}
+
+/// Stateful live DSP for one channel. Heterodyne oscillators and filters, and
+/// the PS/PV overlap context, all carry over between chunks, so each channel
+/// needs its own or the channels would feed into each other.
+struct LiveChannelDsp {
+    het: RealtimeCombHet,
+    listen: ListenDspState,
+}
+
+impl LiveChannelDsp {
+    fn new() -> Self {
+        Self {
+            het: RealtimeCombHet::new(),
+            listen: ListenDspState::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.het.reset();
+        self.listen.clear();
+    }
+}
+
+/// Left and right DSP state. Mono input uses only the first entry.
+type LiveDsp = [LiveChannelDsp; 2];
+
+fn new_live_dsp() -> LiveDsp {
+    [LiveChannelDsp::new(), LiveChannelDsp::new()]
+}
+
+fn reset_live_dsp(dsp: &'static std::thread::LocalKey<RefCell<LiveDsp>>) {
+    dsp.with(|d| d.borrow_mut().iter_mut().for_each(LiveChannelDsp::reset));
 }
 
 /// Apply the bandpass/EQ filter step with warmup-tail continuity so IIR
@@ -362,12 +404,15 @@ fn apply_live_filter(
 fn process_live_audio(
     input: &[f32],
     sample_rate: u32,
-    rt_het: &mut RealtimeCombHet,
-    dsp_state: &mut ListenDspState,
+    channel_dsp: &mut LiveChannelDsp,
     context_samples: usize,
     params: &PlaybackParams,
     mute_output: bool,
 ) -> Vec<f32> {
+    let LiveChannelDsp {
+        het: rt_het,
+        listen: dsp_state,
+    } = channel_dsp;
     if mute_output {
         dsp_state.clear();
         return vec![0.0f32; input.len()];
@@ -469,6 +514,31 @@ fn process_live_audio(
     result
 }
 
+/// Run each input channel through the live DSP using that channel's own state.
+fn process_live_channels(
+    inputs: &[&[f32]],
+    sample_rate: u32,
+    dsp: &mut LiveDsp,
+    context_samples: usize,
+    params: &PlaybackParams,
+    mute_output: bool,
+) -> Vec<Vec<f32>> {
+    inputs
+        .iter()
+        .zip(dsp.iter_mut())
+        .map(|(input, channel_dsp)| {
+            process_live_audio(
+                input,
+                sample_rate,
+                channel_dsp,
+                context_samples,
+                params,
+                mute_output,
+            )
+        })
+        .collect()
+}
+
 // ── Public API on MicBackend ─────────────────────────────────────────
 
 impl MicBackend {
@@ -495,24 +565,29 @@ impl MicBackend {
     /// to prevent stale audio from a previous session leaking into a new one.
     pub fn clear_dsp_state(&self) {
         match self {
-            MicBackend::Browser => {
-                WEB_RT_HET.with(|h| h.borrow_mut().reset());
-                WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
-            }
-            MicBackend::Cpal | MicBackend::RawUsb => {
-                NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
-                NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
-            }
+            MicBackend::Browser => reset_live_dsp(&WEB_LIVE_DSP),
+            MicBackend::Cpal | MicBackend::RawUsb => reset_live_dsp(&NATIVE_LIVE_DSP),
         }
     }
 
     /// Open the mic. Returns true on success.
     pub async fn open(&self, state: &AppState) -> bool {
-        match self {
+        let channel_mode = state.mic.channel_mode().get_untracked();
+        let opened = match self {
             MicBackend::Browser => open_web(state).await,
             MicBackend::Cpal => open_cpal(state).await,
             MicBackend::RawUsb => open_usb(state).await,
+        };
+        if opened {
+            OPENED_CHANNEL_MODE.with(|m| m.set(channel_mode));
         }
+        opened
+    }
+
+    /// Whether the Channels setting has changed since this mic was opened. The
+    /// channel count is fixed when the mic opens, so a change needs a reopen.
+    pub fn channel_mode_changed(&self, state: &AppState) -> bool {
+        OPENED_CHANNEL_MODE.with(|m| m.get()) != state.mic.channel_mode().get_untracked()
     }
 
     /// Close the mic unconditionally.
@@ -833,8 +908,7 @@ async fn setup_het_context(state: &AppState) -> bool {
     HET_CTX.with(|c| *c.borrow_mut() = Some(het_ctx));
     HET_NEXT_TIME.with(|t| *t.borrow_mut() = 0.0);
     HET_SOURCES.with(|s| s.borrow_mut().clear());
-    NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
-    NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
+    reset_live_dsp(&NATIVE_LIVE_DSP);
     true
 }
 
@@ -901,20 +975,25 @@ pub fn het_context_time() -> Option<f64> {
     HET_CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.current_time()))
 }
 
-/// Process one chunk of native mic samples: accumulate them in
+/// Process one chunk of native mic samples: accumulate a mono mix in
 /// NATIVE_REC_BUFFER for the live waterfall and, while listening, run them
 /// through the DSP and schedule HET playback. Called from the frontend audio
 /// pull loop (`start_audio_pull_loop`) with samples drained from the native
 /// side as raw f32 bytes (replacing the old JSON `mic-audio-chunk` event).
+/// `input_data` is interleaved L/R when NATIVE_LISTEN_CHANNELS is 2.
 fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
-    let len = input_data.len();
+    let stereo = NATIVE_LISTEN_CHANNELS.with(|c| c.get()) == 2;
+    let stereo_input = stereo.then(|| split_stereo(&input_data));
+    let mono_mix = stereo_input.as_ref().map(|(l, r)| mix_stereo(l, r));
+    let mono: &[f32] = mono_mix.as_deref().unwrap_or(&input_data);
+    let len = mono.len();
     if len == 0 {
         return;
     }
 
     // Accumulate samples for live waterfall display during recording OR listening
     if state_cb.mic.recording().get_untracked() || state_cb.mic.listening().get_untracked() {
-        NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().extend_from_slice(&input_data));
+        NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().extend_from_slice(mono));
         if state_cb.mic.recording().get_untracked() {
             state_cb.mic.samples_recorded().update(|n| *n += len);
         }
@@ -926,25 +1005,19 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
         let params = snapshot_params(&state_cb, None, sr);
         let mute = state_cb.mic.mute_output().get_untracked();
         let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
-        let out_data = NATIVE_RT_HET.with(|h| {
-            NATIVE_LISTEN_STATE.with(|s| {
-                process_live_audio(
-                    &input_data,
-                    sr,
-                    &mut h.borrow_mut(),
-                    &mut s.borrow_mut(),
-                    ctx_samples,
-                    &params,
-                    mute,
-                )
-            })
+        let inputs: Vec<&[f32]> = match &stereo_input {
+            Some((left, right)) => vec![left, right],
+            None => vec![mono],
+        };
+        let out_channels = NATIVE_LIVE_DSP.with(|d| {
+            process_live_channels(&inputs, sr, &mut d.borrow_mut(), ctx_samples, &params, mute)
         });
 
         // Schedule playback via AudioBuffer with bounded look-ahead so a
         // backgrounded-then-resumed burst of queued chunks can't build a
         // multi-second backlog (which would lag real time and keep sounding
         // after Stop). See `plan_live_schedule`.
-        let out_len = out_data.len();
+        let out_len = out_channels[0].len();
         HET_CTX.with(|ctx_cell| {
             let ctx_ref = ctx_cell.borrow();
             let Some(ctx) = ctx_ref.as_ref() else { return };
@@ -972,10 +1045,14 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
                 HET_SKIP_COUNT.with(|c| c.set(c.get().saturating_add(1)));
             }
 
-            let Ok(buffer) = ctx.create_buffer(1, out_len as u32, sr as f32) else {
+            let Ok(buffer) =
+                ctx.create_buffer(out_channels.len() as u32, out_len as u32, sr as f32)
+            else {
                 return;
             };
-            let _ = buffer.copy_to_channel(&out_data, 0);
+            for (ch, samples) in out_channels.iter().enumerate() {
+                let _ = buffer.copy_to_channel(samples, ch as i32);
+            }
             let Ok(source) = ctx.create_buffer_source() else {
                 return;
             };
@@ -1108,8 +1185,7 @@ fn cleanup_native_state() {
         }
     });
 
-    NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
-    NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
+    reset_live_dsp(&NATIVE_LIVE_DSP);
     NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
     crate::canvas::live_waterfall::clear();
 }
@@ -1148,6 +1224,12 @@ async fn open_web(state: &AppState) -> bool {
     js_sys::Reflect::set(&audio_opts, &"echoCancellation".into(), &JsValue::FALSE).ok();
     js_sys::Reflect::set(&audio_opts, &"noiseSuppression".into(), &JsValue::FALSE).ok();
     js_sys::Reflect::set(&audio_opts, &"autoGainControl".into(), &JsValue::FALSE).ok();
+    let stereo_requested = state.mic.channel_mode().get_untracked() == ChannelMode::Stereo;
+    if stereo_requested {
+        let ideal = js_sys::Object::new();
+        js_sys::Reflect::set(&ideal, &"ideal".into(), &JsValue::from_f64(2.0)).ok();
+        js_sys::Reflect::set(&audio_opts, &"channelCount".into(), &ideal.into()).ok();
+    }
     // If a specific browser device was selected, constrain to that deviceId
     if let Some(device_id) = state.mic.selected_device().get_untracked() {
         if state.mic.backend().get_untracked() == Some(MicBackend::Browser) && !device_id.is_empty()
@@ -1245,7 +1327,13 @@ async fn open_web(state: &AppState) -> bool {
         }
     };
 
-    let processor = match ctx.create_script_processor_with_buffer_size_and_number_of_input_channels_and_number_of_output_channels(4096, 1, 1) {
+    // Some browsers don't report a channel count, so only a reported 1 means mono.
+    let stereo = stereo_requested && track_channel_count(&stream) != Some(1);
+    if stereo_requested && !stereo {
+        state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
+    }
+    let processor_channels: u32 = if stereo { 2 } else { 1 };
+    let processor = match ctx.create_script_processor_with_buffer_size_and_number_of_input_channels_and_number_of_output_channels(4096, processor_channels, processor_channels) {
         Ok(p) => p,
         Err(e) => {
             log::error!("Failed to create ScriptProcessorNode: {:?}", e);
@@ -1262,8 +1350,7 @@ async fn open_web(state: &AppState) -> bool {
         return false;
     }
 
-    WEB_RT_HET.with(|h| h.borrow_mut().reset());
-    WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
+    reset_live_dsp(&WEB_LIVE_DSP);
 
     let state_cb = *state;
     let handler = Closure::<dyn FnMut(web_sys::AudioProcessingEvent)>::new(
@@ -1277,40 +1364,48 @@ async fn open_web(state: &AppState) -> bool {
                 Err(_) => return,
             };
 
-            let input_data = match input_buffer.get_channel_data(0) {
-                Ok(d) => d,
-                Err(_) => return,
-            };
+            let mut input_channels = Vec::with_capacity(processor_channels as usize);
+            for ch in 0..processor_channels {
+                match input_buffer.get_channel_data(ch) {
+                    Ok(d) => input_channels.push(d),
+                    Err(_) => return,
+                }
+            }
+            let inputs: Vec<&[f32]> = input_channels.iter().map(Vec::as_slice).collect();
 
             if state_cb.mic.listening().get_untracked() {
                 let sr = state_cb.mic.sample_rate().get_untracked();
                 let params = snapshot_params(&state_cb, None, sr);
                 let mute = state_cb.mic.mute_output().get_untracked();
                 let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
-                let out_data = WEB_RT_HET.with(|h| {
-                    WEB_LISTEN_STATE.with(|s| {
-                        process_live_audio(
-                            &input_data,
-                            sr,
-                            &mut h.borrow_mut(),
-                            &mut s.borrow_mut(),
-                            ctx_samples,
-                            &params,
-                            mute,
-                        )
-                    })
+                let out_channels = WEB_LIVE_DSP.with(|d| {
+                    process_live_channels(
+                        &inputs,
+                        sr,
+                        &mut d.borrow_mut(),
+                        ctx_samples,
+                        &params,
+                        mute,
+                    )
                 });
-                let _ = output_buffer.copy_to_channel(&out_data, 0);
+                for (ch, samples) in out_channels.iter().enumerate() {
+                    let _ = output_buffer.copy_to_channel(samples, ch as i32);
+                }
             } else {
-                let zeros = vec![0.0f32; input_data.len()];
-                let _ = output_buffer.copy_to_channel(&zeros, 0);
+                let zeros = vec![0.0f32; inputs[0].len()];
+                for ch in 0..processor_channels as i32 {
+                    let _ = output_buffer.copy_to_channel(&zeros, ch);
+                }
             }
 
             // Accumulate samples for live waterfall display during recording OR listening
             if state_cb.mic.recording().get_untracked() || state_cb.mic.listening().get_untracked()
             {
                 MIC_BUFFER.with(|buf| {
-                    buf.borrow_mut().extend_from_slice(&input_data);
+                    match inputs[..] {
+                        [left, right] => buf.borrow_mut().extend(mix_stereo(left, right)),
+                        _ => buf.borrow_mut().extend_from_slice(inputs[0]),
+                    }
                     if state_cb.mic.recording().get_untracked() {
                         state_cb.mic.samples_recorded().set(buf.borrow().len());
                     }
@@ -1326,8 +1421,27 @@ async fn open_web(state: &AppState) -> bool {
     MIC_PROCESSOR.with(|p| *p.borrow_mut() = Some(processor));
     MIC_HANDLER.with(|h| *h.borrow_mut() = Some(handler));
 
-    log::info!("Web mic opened at {} Hz", sample_rate);
+    log::info!(
+        "Web mic opened at {} Hz, {} channel(s)",
+        sample_rate,
+        processor_channels
+    );
     true
+}
+
+/// The channel count the browser reports for a capture stream's audio track.
+fn track_channel_count(stream: &web_sys::MediaStream) -> Option<u32> {
+    let track = stream.get_audio_tracks().get(0);
+    let get_settings = js_sys::Reflect::get(&track, &"getSettings".into()).ok()?;
+    let settings = get_settings
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call0(&track)
+        .ok()?;
+    js_sys::Reflect::get(&settings, &"channelCount".into())
+        .ok()?
+        .as_f64()
+        .map(|n| n as u32)
 }
 
 fn close_web(state: &AppState) {
@@ -1361,8 +1475,7 @@ fn close_web(state: &AppState) {
     });
 
     MIC_BUFFER.with(|buf| buf.borrow_mut().clear());
-    WEB_RT_HET.with(|h| h.borrow_mut().reset());
-    WEB_LISTEN_STATE.with(|s| s.borrow_mut().clear());
+    reset_live_dsp(&WEB_LIVE_DSP);
     crate::canvas::live_waterfall::clear();
 
     state.mic.samples_recorded().set(0);
@@ -1381,7 +1494,6 @@ async fn open_cpal(state: &AppState) -> bool {
     let channel_mode = state.mic.channel_mode().get_untracked();
     let selected_device = state.mic.selected_device().get_untracked();
     let channels: u16 = {
-        use crate::state::ChannelMode;
         match channel_mode {
             ChannelMode::Mono => 1,
             ChannelMode::Stereo => 2,
@@ -1408,6 +1520,10 @@ async fn open_cpal(state: &AppState) -> bool {
             }
         };
 
+    if channels == 2 && info.listen_channels != 2 {
+        state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
+    }
+    NATIVE_LISTEN_CHANNELS.with(|c| c.set(info.listen_channels));
     let sample_rate = info.sample_rate;
     let bits_per_sample = info.bits_per_sample;
     let device_name = if info.device_name.is_empty() {
@@ -1571,12 +1687,18 @@ async fn open_usb(state: &AppState) -> bool {
     }
 
     // Step 4: start the USB stream in the Rust backend.
+    let stereo_requested = state.mic.channel_mode().get_untracked() == ChannelMode::Stereo;
+    let stereo = stereo_requested && info.num_channels == 2;
+    if stereo_requested && !stereo {
+        state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
+    }
     let stream_args = oversample_ipc::plugins::UsbStartStreamArgs {
         fd: info.fd,
         endpoint_address: info.endpoint_address as u32,
         max_packet_size: info.max_packet_size as u32,
         sample_rate,
         num_channels: info.num_channels as u32,
+        stereo_listen: stereo,
         // Friendly name (not the /dev/bus/usb/… path) so the native GUANO mic
         // name matches what the app displays.
         device_name: product_name.clone(),
@@ -1593,6 +1715,7 @@ async fn open_usb(state: &AppState) -> bool {
         return false;
     }
 
+    NATIVE_LISTEN_CHANNELS.with(|c| c.set(if stereo { 2 } else { 1 }));
     state.mic.sample_rate().set(sample_rate);
     // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
     // (never present) so usb_bits was always stuck at the 16 default.
@@ -1661,8 +1784,7 @@ async fn open_usb(state: &AppState) -> bool {
                 let _ = ctx.close();
             }
         });
-        NATIVE_RT_HET.with(|h| h.borrow_mut().reset());
-        NATIVE_LISTEN_STATE.with(|s| s.borrow_mut().clear());
+        reset_live_dsp(&NATIVE_LIVE_DSP);
         NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
     });
     tauri_listen_usb_error("usb-stream-error", error_handler);
@@ -1701,4 +1823,138 @@ async fn close_usb(state: &AppState) {
 
     state.mic.samples_recorded().set(0);
     log::info!("USB mic closed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::filters::BandMode;
+    use crate::dsp::pitch_shift::PitchFactor;
+    use crate::state::{FilterQuality, GainMode};
+
+    const SAMPLE_RATE: u32 = 192_000;
+    const CHUNK: usize = 4096;
+
+    fn params(mode: PlaybackMode) -> PlaybackParams {
+        PlaybackParams {
+            mode,
+            het_freq: 40_000.0,
+            het_cutoff: 15_000.0,
+            het_comb_count: 1,
+            het_comb_spacing: 0.0,
+            te_factor: 10.0,
+            ps_factor: PitchFactor::down(10.0),
+            pv_factor: PitchFactor::down(10.0),
+            pv_hq: false,
+            ps_shift_hz: 0.0,
+            zc_factor: 8.0,
+            gain_db: 0.0,
+            gain_mode: GainMode::Off,
+            auto_peak_gain_db: 0.0,
+            live_gain_db: 0.0,
+            filter_enabled: false,
+            filter_freq_low: 0.0,
+            filter_freq_high: 96_000.0,
+            filter_db_below: 0.0,
+            filter_db_selected: 0.0,
+            filter_db_harmonics: 0.0,
+            filter_db_above: 0.0,
+            filter_band_mode: BandMode::default(),
+            filter_quality: FilterQuality::Fast,
+            sel_freq_low: 0.0,
+            sel_freq_high: 0.0,
+            has_selection: false,
+            notch_enabled: false,
+            notch_bands: Vec::new(),
+            notch_harmonic_suppression: 0.0,
+            noise_reduce_enabled: false,
+            noise_reduce_strength: 0.0,
+            noise_reduce_floor: None,
+        }
+    }
+
+    fn tone(freq: f64, start: usize, len: usize) -> Vec<f32> {
+        (start..start + len)
+            .map(|i| {
+                let t = i as f64 / SAMPLE_RATE as f64;
+                (0.5 * (std::f64::consts::TAU * freq * t).sin()) as f32
+            })
+            .collect()
+    }
+
+    /// Runs `chunks` chunks of a tone through one channel on its own.
+    fn run_mono(mode: PlaybackMode, freq: f64, chunks: usize) -> Vec<Vec<f32>> {
+        let params = params(mode);
+        let mut dsp = new_live_dsp();
+        (0..chunks)
+            .map(|c| {
+                let input = tone(freq, c * CHUNK, CHUNK);
+                let inputs: [&[f32]; 1] = [&input];
+                process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false)
+                    .remove(0)
+            })
+            .collect()
+    }
+
+    /// Runs two different tones through left and right. Each channel must come out
+    /// exactly as it does when processed alone, which fails if the channels share
+    /// any oscillator, filter or context state.
+    fn assert_channels_independent(mode: PlaybackMode) {
+        let chunks = 6;
+        let (left_freq, right_freq) = (38_000.0, 44_000.0);
+        let params = params(mode);
+        let mut dsp = new_live_dsp();
+        let mut left_out = Vec::new();
+        let mut right_out = Vec::new();
+        for c in 0..chunks {
+            let left = tone(left_freq, c * CHUNK, CHUNK);
+            let right = tone(right_freq, c * CHUNK, CHUNK);
+            let inputs: [&[f32]; 2] = [&left, &right];
+            let mut out =
+                process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false);
+            right_out.push(out.remove(1));
+            left_out.push(out.remove(0));
+        }
+        assert_eq!(left_out, run_mono(mode, left_freq, chunks), "left channel");
+        assert_eq!(
+            right_out,
+            run_mono(mode, right_freq, chunks),
+            "right channel"
+        );
+        assert_ne!(left_out, right_out);
+        assert!(left_out[chunks - 1].iter().any(|s| s.abs() > 1e-3));
+    }
+
+    #[test]
+    fn heterodyne_channels_are_independent() {
+        assert_channels_independent(PlaybackMode::Heterodyne);
+    }
+
+    #[test]
+    fn pitch_shift_channels_are_independent() {
+        assert_channels_independent(PlaybackMode::PitchShift);
+    }
+
+    #[test]
+    fn phase_vocoder_channels_are_independent() {
+        assert_channels_independent(PlaybackMode::PhaseVocoder);
+    }
+
+    #[test]
+    fn silence_on_one_channel_stays_silent() {
+        let params = params(PlaybackMode::Heterodyne);
+        let mut dsp = new_live_dsp();
+        let left = tone(38_000.0, 0, CHUNK);
+        let right = vec![0.0f32; CHUNK];
+        let inputs: [&[f32]; 2] = [&left, &right];
+        let out = process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false);
+        assert!(out[0].iter().any(|s| s.abs() > 1e-3));
+        assert!(out[1].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn mono_input_uses_one_channel() {
+        let out = run_mono(PlaybackMode::Heterodyne, 38_000.0, 1);
+        assert_eq!(out[0].len(), CHUNK);
+    }
 }
