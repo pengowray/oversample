@@ -960,7 +960,9 @@ pub fn BottomToolbar() -> impl IntoView {
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
                                                 on:change=move |ev| {
                                                     let val = leptos::prelude::event_target_value(&ev);
-                                                    state.mic.channel_mode().set(if val == "stereo" { ChannelMode::Stereo } else { ChannelMode::Mono });
+                                                    let mode = ChannelMode::from_key(&val);
+                                                    state.mic.channel_mode().set(mode);
+                                                    crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_MODE, mode.key());
                                                     // Restart listening so the new setting applies straight away.
                                                     if state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
                                                         wasm_bindgen_futures::spawn_local(async move {

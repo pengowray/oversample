@@ -27,6 +27,8 @@ pub mod keys {
     pub const MIC_BIT_DEPTHS: &str = "oversample_mic_bit_depths";
     /// JSON map of mic device name -> manual bit-depth override (Auto if absent).
     pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
+    /// The mic panel's Channels setting: "mono" or "stereo".
+    pub const MIC_CHANNEL_MODE: &str = "oversample_mic_channel_mode";
 }
 
 /// Load the persisted per-device effective-bit-depth map (device name -> bits).

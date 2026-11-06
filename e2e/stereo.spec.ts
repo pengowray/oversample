@@ -189,6 +189,20 @@ test.describe("live listen", () => {
     expect(s.rightOnly).toBeGreaterThan(0);
   });
 
+  test("Channels setting is remembered after a reload", async ({ page }) => {
+    await listenInStereo(page, true);
+    await page.reload();
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page.locator('button[title^="Microphone options"]').first().click();
+    await expect(page.locator('select:has(option[value="stereo"])').first()).toHaveValue("stereo");
+    await page.keyboard.press("Escape");
+    await page.locator('button[title="Toggle live listening (L)"]').first().click();
+    await selectMode(page, "HET");
+    await waitForBlocks(page, 5);
+    const tap = await readTap(page);
+    expect(tap.processorChannels.at(-1)).toBe(2);
+  });
+
   test("Channels set to Mono mixes the channels down", async ({ page }) => {
     await listenInStereo(page, false);
     await selectMode(page, "HET");

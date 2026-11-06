@@ -1429,6 +1429,22 @@ pub enum ChannelMode {
     Stereo,
 }
 
+impl ChannelMode {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Mono => "mono",
+            Self::Stereo => "stereo",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "stereo" => Self::Stereo,
+            _ => Self::Mono,
+        }
+    }
+}
+
 /// Information about the selected mic device.
 #[derive(Clone, Debug)]
 pub struct MicDeviceInfo {
@@ -2428,7 +2444,9 @@ impl AppState {
                 starting_recording: false,
                 permission_dialog_shown: false,
                 max_bit_depth: 0,
-                channel_mode: ChannelMode::Mono,
+                channel_mode: crate::settings::get_raw(crate::settings::keys::MIC_CHANNEL_MODE)
+                    .map(|v| ChannelMode::from_key(&v))
+                    .unwrap_or_default(),
                 device_info: None,
                 listen_context_samples: 65536,
                 mute_output: false,
