@@ -1762,7 +1762,13 @@ pub fn draw_annotations(
                 "rgba(210, 255, 220, 0.9)"
             };
             ctx.set_fill_style_str(label_color);
-            let _ = ctx.fill_text(label, x0 + 3.0, y0 + 12.0);
+            // A selected annotation has its "..." button in this corner.
+            let label_inset = if is_selected && annotations_focused {
+                30.0
+            } else {
+                3.0
+            };
+            let _ = ctx.fill_text(label, x0 + label_inset, y0 + 12.0);
         }
 
         // Resize handles for selected annotations (only when annotations have focus and not locked)

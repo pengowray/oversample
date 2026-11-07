@@ -27,6 +27,40 @@ test.describe("mobile layout", () => {
   });
 });
 
+test.describe("selection overflow menu", () => {
+  test("the ... button appears inside the selection", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/stereo-alternating.wav");
+
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    await expect(canvas).toBeVisible({ timeout: 30_000 });
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+
+    const box = (await canvas.boundingBox())!;
+    const left = box.x + box.width * 0.3;
+    const right = box.x + box.width * 0.6;
+    const top = box.y + box.height * 0.2;
+    const bottom = box.y + box.height * 0.7;
+    await page.mouse.move(left, top);
+    await page.mouse.down();
+    await page.mouse.move(right, bottom, { steps: 5 });
+    await page.mouse.up();
+
+    const btn = page.locator(".canvas-overflow-btn");
+    await expect(btn).toBeVisible();
+    const pos = (await btn.boundingBox())!;
+    expect(pos.x).toBeGreaterThanOrEqual(left);
+    expect(pos.x + pos.width).toBeLessThanOrEqual(right);
+    expect(pos.y).toBeGreaterThanOrEqual(top);
+    expect(pos.y + pos.height).toBeLessThanOrEqual(bottom);
+  });
+});
+
 test.describe("sidebar tabs", () => {
   test("Settings tab toggles active class and switches panel", async ({ page }) => {
     await page.goto("/");

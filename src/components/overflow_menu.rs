@@ -193,6 +193,44 @@ fn fmt_freq_range(lo: f64, hi: f64) -> String {
     format!("{:.0}\u{2013}{:.0} kHz", lo / 1000.0, hi / 1000.0)
 }
 
+/// Where the main view's chart canvas sits inside `.main-overlays`, in CSS pixels.
+#[derive(Clone, Copy)]
+pub(crate) struct ChartCanvasBox {
+    pub left: f64,
+    pub top: f64,
+    pub height: f64,
+}
+
+/// Measures the chart canvas. `.main-overlays` covers the whole main view,
+/// including the frequency gutter, so an overlay placed from canvas coordinates
+/// has to add `left` and `top`. Measured because the gutter's width depends on
+/// the view and on mobile layout.
+pub(crate) fn chart_canvas_box() -> ChartCanvasBox {
+    let doc = web_sys::window().and_then(|w| w.document());
+    let rect_of = |selector: &str| {
+        doc.as_ref()?
+            .query_selector(selector)
+            .ok()
+            .flatten()
+            .map(|el| el.get_bounding_client_rect())
+    };
+    match (
+        rect_of(".main-view .chart-stage > canvas"),
+        rect_of(".main-overlays"),
+    ) {
+        (Some(canvas), Some(overlays)) => ChartCanvasBox {
+            left: canvas.left() - overlays.left(),
+            top: canvas.top() - overlays.top(),
+            height: canvas.height(),
+        },
+        _ => ChartCanvasBox {
+            left: 0.0,
+            top: 0.0,
+            height: 400.0,
+        },
+    }
+}
+
 /// Shared: pixel position of the TOP-LEFT corner of a
 /// `[time_start, time_end] × freq_high` box, relative to the spectrogram canvas.
 /// Returns `None` when the box is entirely off-screen (so a valid box sitting in
@@ -320,6 +358,32 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
 const BTN_SIZE: f64 = 22.0;
 const BTN_MARGIN: f64 = 4.0;
 
+/// Menus this close to the canvas's right edge open leftward. Wider than the
+/// menus' usual width, so they don't run off the screen.
+const MENU_FLIP_DISTANCE: f64 = 220.0;
+
+/// Inline style and class for the "..." anchor at the top-left corner of a
+/// selection or annotation. `x` and `y` are canvas coordinates. The button stays
+/// on the canvas when the corner is near its right edge.
+fn overflow_anchor(x: f64, y: f64, canvas_w: f64) -> (String, &'static str) {
+    let chart = chart_canvas_box();
+    let left = (x + BTN_MARGIN)
+        .min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0))
+        .max(0.0);
+    let top = (y + BTN_MARGIN).max(0.0);
+    let class = if canvas_w - left < MENU_FLIP_DISTANCE {
+        "canvas-overflow-anchor menu-opens-left"
+    } else {
+        "canvas-overflow-anchor"
+    };
+    let style = format!(
+        "position: absolute; left: {:.0}px; top: {:.0}px; pointer-events: auto; z-index: 25;",
+        left + chart.left,
+        top + chart.top,
+    );
+    (style, class)
+}
+
 /// Frequency row: "Freq: 20–50 kHz" on the left, [⇅] [⇵] buttons on the right.
 /// Buttons are always shown; disabled when they wouldn't change anything.
 #[component]
@@ -382,7 +446,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = state.interaction.selection_overflow_open();
 
-    // Reactive position: top-right corner of selection
+    // Reactive position: top-left corner of selection, in canvas coordinates
     let pos = Signal::derive(move || {
         let sel = state.interaction.selection().get()?;
         let scroll = state.view.scroll_offset().get();
@@ -397,15 +461,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
         let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
         let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
 
-        let canvas_h = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| {
-                d.query_selector(".spectrogram-container canvas")
-                    .ok()
-                    .flatten()
-            })
-            .map(|el| el.get_bounding_client_rect().height())
-            .unwrap_or(400.0);
+        let canvas_h = chart_canvas_box().height;
 
         selection_top_left(
             &sel, scroll, time_res, zoom, canvas_w, canvas_h, min_freq, max_freq,
@@ -503,18 +559,13 @@ fn SelectionOverflowMenu() -> impl IntoView {
             let (x, y) = match pos.get() { Some(p) => p, None => return None };
             let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
-            // Anchor the "..." at the TOP-LEFT corner of the selection (matching
-            // annotated regions), clamped so it never spills off either edge.
-            let btn_left = (x + BTN_MARGIN).min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0)).max(0.0);
-            let btn_top = (y + BTN_MARGIN).max(0.0);
+
+            let (anchor_style, anchor_class) = overflow_anchor(x, y, canvas_w);
 
             Some(view! {
                 <div
-                    class="canvas-overflow-anchor"
-                    style=format!(
-                        "position: absolute; left: {:.0}px; top: {:.0}px; pointer-events: auto; z-index: 25;",
-                        btn_left, btn_top
-                    )
+                    class=anchor_class
+                    style=anchor_style
                 >
                     <button
                         class="canvas-overflow-btn"
@@ -579,7 +630,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
     let state = expect_context::<AppState>();
     let is_open = state.interaction.annotation_overflow_open();
 
-    // Reactive position: top-right corner of first selected annotation
+    // Reactive position: top-left corner of first selected annotation, in canvas coordinates
     let pos = Signal::derive(move || {
         let ids = state.annotations.selected_ids().get();
         if ids.is_empty() {
@@ -607,15 +658,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
         let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
 
-        let canvas_h = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| {
-                d.query_selector(".spectrogram-container canvas")
-                    .ok()
-                    .flatten()
-            })
-            .map(|el| el.get_bounding_client_rect().height())
-            .unwrap_or(400.0);
+        let canvas_h = chart_canvas_box().height;
 
         annotation_top_left(
             region.time_start,
@@ -792,21 +835,20 @@ fn AnnotationOverflowMenu() -> impl IntoView {
 
     view! {
         {move || {
+            // The label editor opens over this corner.
+            if state.annotations.editing().get() {
+                return None;
+            }
             let (x, y) = match pos.get() { Some(p) => p, None => return None };
             let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
-            // Anchor the "..." at the TOP-LEFT corner of the annotation region,
-            // clamped so it never spills off either edge.
-            let btn_left = (x + BTN_MARGIN).min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0)).max(0.0);
-            let btn_top = (y + BTN_MARGIN).max(0.0);
+
+            let (anchor_style, anchor_class) = overflow_anchor(x, y, canvas_w);
 
             Some(view! {
                 <div
-                    class="canvas-overflow-anchor"
-                    style=format!(
-                        "position: absolute; left: {:.0}px; top: {:.0}px; pointer-events: auto; z-index: 25;",
-                        btn_left, btn_top
-                    )
+                    class=anchor_class
+                    style=anchor_style
                 >
                     <button
                         class="canvas-overflow-btn"

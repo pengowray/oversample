@@ -6857,6 +6857,11 @@ button.canvas-overflow-btn:hover {
     backdrop-filter: blur(10px);
 }
 
+.canvas-overflow-anchor.menu-opens-left .canvas-overflow-menu {
+    left: auto;
+    right: 0;
+}
+
 .canvas-overflow-info {
     padding: 6px 10px;
     font-size: 11px;

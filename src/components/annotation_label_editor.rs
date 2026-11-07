@@ -1,6 +1,7 @@
 use crate::annotations::{AnnotationId, AnnotationKind};
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::file_sidebar::settings_panel::{delete_annotation, update_annotation_label};
+use crate::components::overflow_menu::chart_canvas_box;
 use crate::state::store_fields::*;
 use crate::state::AppState;
 use leptos::prelude::*;
@@ -42,15 +43,8 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
         let canvas_w = state.viewmode.spectrogram_canvas_width().get();
         let min_freq = state.view.min_display_freq().get().unwrap_or(0.0);
         let max_freq = state.view.max_display_freq().get().unwrap_or(file_max_freq);
-        let canvas_h = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| {
-                d.query_selector(".spectrogram-container canvas")
-                    .ok()
-                    .flatten()
-            })
-            .map(|el| el.get_bounding_client_rect().height())
-            .unwrap_or(400.0);
+        let chart = chart_canvas_box();
+        let canvas_h = chart.height;
 
         let visible_time = (canvas_w / zoom) * time_res;
         let start_time = scroll;
@@ -68,7 +62,7 @@ pub fn AnnotationLabelEditor() -> impl IntoView {
             region.label.clone().unwrap_or_default()
         };
 
-        Some((id, x0, y0, initial))
+        Some((id, x0 + chart.left, y0 + chart.top, initial))
     });
 
     view! {
