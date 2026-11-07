@@ -4,6 +4,7 @@ pub mod bit_analysis;
 pub mod chromagram;
 pub mod effective_nyquist;
 pub mod fft;
+pub mod float_grid;
 pub mod filters;
 pub mod harmonics;
 pub mod heterodyne;

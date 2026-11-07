@@ -12,6 +12,7 @@ use oversample_core::device_hint::{
 };
 use oversample_core::dsp::audiomoth::{self, AudioMothResult};
 use oversample_core::dsp::effective_nyquist::{self, EffectiveNyquistResult};
+use oversample_core::dsp::float_grid::{self, FloatGridResult};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -27,6 +28,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     let pipistrelle_result: RwSignal<Option<PipistrelleResult>> = RwSignal::new(None);
     let nyquist_result: RwSignal<Option<EffectiveNyquistResult>> = RwSignal::new(None);
     let audiomoth_result: RwSignal<Option<AudioMothResult>> = RwSignal::new(None);
+    // One result per channel. Empty until computed, and for files that aren't 32-bit float.
+    let float_grid_results: RwSignal<Vec<FloatGridResult>> = RwSignal::new(Vec::new());
     let is_computing = RwSignal::new(false);
     let last_computed_idx: RwSignal<Option<usize>> = RwSignal::new(None);
     let compute_gen = RwSignal::new(0u32);
@@ -50,6 +53,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         pipistrelle_result.set(None);
         nyquist_result.set(None);
         audiomoth_result.set(None);
+        float_grid_results.set(Vec::new());
         is_computing.set(true);
         last_computed_idx.set(idx);
         analysis_is_full.set(full_file);
@@ -94,6 +98,24 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             )
         };
         let duration_secs = samples.len() as f64 / sample_rate as f64;
+
+        // The float grid test needs each channel on its own, because a mono mix
+        // moves samples off the grid whenever the channels differ.
+        let float_grid_channels: Vec<Vec<f32>> = if is_float && bits_per_sample == 32 {
+            let channels = file.audio.channels;
+            (0..channels)
+                .map(|channel| {
+                    let view = if channels == 1 {
+                        ChannelView::MonoMix
+                    } else {
+                        ChannelView::Channel(channel)
+                    };
+                    file.audio.source.read_region(view, 0, samples.len())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         spawn_local(async move {
             yield_to_browser().await;
@@ -173,6 +195,16 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             }
             audiomoth_result.set(Some(am_res));
 
+            let mut grid_results = Vec::with_capacity(float_grid_channels.len());
+            for channel_samples in &float_grid_channels {
+                yield_to_browser().await;
+                if compute_gen.try_get_untracked() != Some(generation) {
+                    return;
+                }
+                grid_results.push(float_grid::detect(channel_samples, bits_per_sample, is_float));
+            }
+            float_grid_results.set(grid_results);
+
             is_computing.set(false);
         });
     };
@@ -201,6 +233,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             pipistrelle_result.set(None);
             nyquist_result.set(None);
             audiomoth_result.set(None);
+            float_grid_results.set(Vec::new());
             last_computed_idx.set(None);
             is_computing.set(false);
             return;
@@ -423,6 +456,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 lsb,
                 pip.as_ref(),
                 am.as_ref(),
+                &float_grid_results.get(),
             );
             report.push_str("\nBit Depth\n");
             report.push_str(&format!("  {}\n", bdc.headline));
@@ -656,6 +690,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 pip,
                 nyq.as_ref(),
                 am.as_ref(),
+                &float_grid_results.get(),
             );
             let guano = f.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
             let xc = f.xc_metadata.clone();
@@ -1101,6 +1136,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         let lsb_ref = lsb_result.get();
                         let pip_ref = pipistrelle_result.get();
                         let am_ref = audiomoth_result.get();
+                        let grid_ref = float_grid_results.get();
                         let bit_clone = a.clone();
                         let format_str: &'static str = {
                             let files = state.library.files().get();
@@ -1117,6 +1153,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                 lsb,
                                 pip_ref.as_ref(),
                                 am_ref.as_ref(),
+                                &grid_ref,
                             )
                         });
                         let headline_class = match bdc_opt.as_ref().map(|b| b.certainty) {
@@ -1267,6 +1304,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 let am_opt = audiomoth_result.get();
                 let hints = device_hint::infer_device_hints(
                     sr, bits, is_float, &bit, &lsb, &pip, nyq_opt.as_ref(), am_opt.as_ref(),
+                    &float_grid_results.get(),
                 );
                 let guano = file.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
                 let xc = file.xc_metadata.clone();

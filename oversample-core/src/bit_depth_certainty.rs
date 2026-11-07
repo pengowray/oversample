@@ -26,6 +26,7 @@
 
 use crate::dsp::audiomoth::{AudioMothResult, AudioMothVerdict};
 use crate::dsp::bit_analysis::BitAnalysis;
+use crate::dsp::float_grid::{FloatGridResult, FloatGridVerdict};
 use crate::dsp::lsb_autocorr::{LsbAutocorrResult, LsbVerdict};
 use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
 
@@ -106,6 +107,7 @@ pub fn compose(
     lsb: &LsbAutocorrResult,
     pip: Option<&PipistrelleResult>,
     am: Option<&AudioMothResult>,
+    float_grid: &[FloatGridResult],
 ) -> BitDepthCertainty {
     // Lossy-compressed audio: all bit-depth signatures are destroyed by
     // the codec. We can still report the container depth but should
@@ -138,6 +140,9 @@ pub fn compose(
 
     // Float files are a different beast — we don't reduce their depth via these tests.
     if is_float {
+        if let Some(verdict) = compose_float_grid(container_bits, float_grid) {
+            return verdict;
+        }
         return BitDepthCertainty {
             container_bits,
             upper_bound: container_bits,
@@ -433,10 +438,190 @@ pub fn compose(
     }
 }
 
+/// Verdict for a float file from the per-channel grid results, or `None` when
+/// no channel could be tested yet. Reports the channel with the most structure,
+/// because a nearly silent channel says little about the recorder.
+fn compose_float_grid(
+    container_bits: u16,
+    channels: &[FloatGridResult],
+) -> Option<BitDepthCertainty> {
+    fn rank(r: &FloatGridResult) -> Option<u8> {
+        match r.verdict {
+            FloatGridVerdict::TwoSteps => Some(0),
+            FloatGridVerdict::OneStep => Some(1),
+            FloatGridVerdict::IntegerSource { .. } => Some(2),
+            FloatGridVerdict::NoFixedStep => Some(3),
+            FloatGridVerdict::TooFewSamples | FloatGridVerdict::NotApplicable => None,
+        }
+    }
+    let (index, chosen) = channels
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| rank(r).is_some())
+        .min_by_key(|(_, r)| rank(r))?;
+
+    let mut facts = Vec::new();
+    let fact = |certainty, statement: String| Fact {
+        certainty,
+        statement,
+    };
+
+    let channels_differ = channels
+        .iter()
+        .filter(|r| rank(r).is_some())
+        .any(|r| !same_grid(r, chosen));
+    if channels_differ {
+        facts.push(fact(
+            CertaintyLevel::Certain,
+            format!(
+                "Showing channel {} only. The channels gave different results.",
+                index + 1
+            ),
+        ));
+    }
+
+    let (certainty, headline, upper_bound, best_estimate) = match chosen.verdict {
+        FloatGridVerdict::IntegerSource { bits } => (
+            CertaintyLevel::Certain,
+            format!(
+                "32-bit float file, but exactly {bits}-bit integers. \
+                 Converting to {bits}-bit integer is lossless."
+            ),
+            bits,
+            bits,
+        ),
+        FloatGridVerdict::NoFixedStep => (
+            CertaintyLevel::Suggestive,
+            "32-bit float file with no fixed step found. Mixing or filtering can hide one."
+                .to_string(),
+            container_bits,
+            container_bits,
+        ),
+        _ => {
+            let fine = chosen.fine?;
+            let resolution = whole_bits_at_full_scale(fine.step);
+            let best = chosen.path_bits.or(resolution).unwrap_or(container_bits);
+            let headline = if let Some(coarse) = chosen.coarse {
+                facts.push(fact(
+                    CertaintyLevel::HighConfidence,
+                    "Samples came from integers, not a continuous float signal.".to_string(),
+                ));
+                facts.push(fact(
+                    CertaintyLevel::HighConfidence,
+                    format!(
+                        "Fine step {}, coarse step {}; coarse step is {:.1} dB larger.",
+                        step_text(fine.step),
+                        step_text(coarse.step),
+                        chosen.step_ratio_db().unwrap_or(0.0),
+                    ),
+                ));
+                facts.push(fact(
+                    CertaintyLevel::Suggestive,
+                    "Consistent with recorders that use one ADC path for quiet sound \
+                     and another for loud sound."
+                        .to_string(),
+                ));
+                "32-bit float file, but most samples are multiples of two fixed steps".to_string()
+            } else {
+                format!(
+                    "32-bit float file with one fixed step, {}: integers multiplied by a gain",
+                    step_text(fine.step),
+                )
+            };
+            if let Some(bits) = resolution {
+                let name = if chosen.coarse.is_some() {
+                    "Fine step"
+                } else {
+                    "This step"
+                };
+                facts.push(fact(
+                    CertaintyLevel::HighConfidence,
+                    format!(
+                        "{name} equals {bits}-bit integer resolution across full scale, \
+                         sign included."
+                    ),
+                ));
+            }
+            (
+                CertaintyLevel::HighConfidence,
+                headline,
+                container_bits,
+                best,
+            )
+        }
+    };
+
+    if let Some(ceiling) = chosen.flat_ceiling {
+        let mut statement = format!(
+            "Clipped: {} samples at the peak of {:+.1} dBFS.",
+            ceiling.samples,
+            20.0 * ceiling.value.log10(),
+        );
+        if let Some(bits) = chosen.path_bits {
+            let name = if chosen.coarse.is_some() {
+                "coarse "
+            } else {
+                ""
+            };
+            statement.push_str(&format!(
+                " The peak is exactly 2^{} {name}steps from zero, which is the range of a \
+                 {bits}-bit integer.",
+                bits - 1,
+            ));
+        }
+        facts.push(fact(CertaintyLevel::HighConfidence, statement));
+    }
+
+    if chosen.fine.is_some() {
+        facts.push(fact(
+            CertaintyLevel::Suggestive,
+            "A gain change rescales the step, so step size alone can't show the \
+             recorder's original step."
+                .to_string(),
+        ));
+    }
+
+    facts.sort_by_key(|f| f.certainty.rank());
+    Some(BitDepthCertainty {
+        container_bits,
+        upper_bound,
+        best_estimate,
+        certainty,
+        headline,
+        facts,
+    })
+}
+
+/// Bit width whose full-scale step this is, when it is within 0.1% of a power of 2.
+fn whole_bits_at_full_scale(step: f64) -> Option<u16> {
+    let exponent = (1.0 / step).log2();
+    let near_whole = (2f64.powf(exponent.round()) * step - 1.0).abs() < 1e-3;
+    (near_whole && (7.0..=31.0).contains(&exponent.round())).then_some(exponent.round() as u16 + 1)
+}
+
+fn step_text(step: f64) -> String {
+    format!("2^{:.2}", step.log2())
+}
+
+fn same_grid(a: &FloatGridResult, b: &FloatGridResult) -> bool {
+    fn same_step(
+        a: Option<crate::dsp::float_grid::GridStep>,
+        b: Option<crate::dsp::float_grid::GridStep>,
+    ) -> bool {
+        match (a, b) {
+            (Some(x), Some(y)) => (x.step / y.step - 1.0).abs() < 1e-3,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    a.verdict == b.verdict && same_step(a.fine, b.fine) && same_step(a.coarse, b.coarse)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dsp::bit_analysis::{BitAnalysis, ValueCoverage};
+    use crate::dsp::float_grid::{FlatCeiling, GridStep};
     use crate::dsp::lsb_autocorr::{LsbAutocorrResult, LsbVerdict};
 
     fn default_bit_analysis(bits: u16, vc: Option<ValueCoverage>) -> BitAnalysis {
@@ -488,7 +673,7 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None);
+        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 12);
         assert_eq!(r.best_estimate, 12);
         assert_eq!(r.certainty, CertaintyLevel::Certain);
@@ -512,7 +697,7 @@ mod tests {
             }),
         );
         let lsb = default_lsb(LsbVerdict::Inconclusive);
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None);
+        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 12);
         assert!(r.headline.contains("≤ 12"), "got: {}", r.headline);
     }
@@ -529,7 +714,7 @@ mod tests {
             }),
         );
         let lsb = default_lsb(LsbVerdict::ConsistentWithClaimedBitDepth);
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None);
+        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 16);
         assert_eq!(r.certainty, CertaintyLevel::HighConfidence);
         assert!(r.headline.contains("16"));
@@ -547,7 +732,7 @@ mod tests {
             effective_bits_in_quiet: 12,
             padding_bits: 4,
         });
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None);
+        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
         // Don't downgrade upper bound (loud sections may use full bits)
         assert_eq!(r.upper_bound, 16);
         assert!(r.headline.contains("noise-gate") || r.headline.contains("loud sections"));
@@ -569,7 +754,7 @@ mod tests {
             padding_bits: 4,
         });
         for fmt in ["MP3", "OGG", "M4A", "W4V"] {
-            let r = compose(16, false, fmt, &bit, &lsb, None, None);
+            let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
             assert!(
                 r.headline.starts_with(&format!("Lossy {}", fmt)),
                 "format={} headline={}",
@@ -603,7 +788,7 @@ mod tests {
             padding_bits: 4,
         });
         for fmt in ["WAV", "FLAC"] {
-            let r = compose(16, false, fmt, &bit, &lsb, None, None);
+            let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
             assert_eq!(r.upper_bound, 12, "format={} should claim reduction", fmt);
         }
     }
@@ -612,10 +797,103 @@ mod tests {
     fn float_is_passthrough() {
         let bit = default_bit_analysis(32, None);
         let lsb = default_lsb(LsbVerdict::NotApplicable);
-        let r = compose(32, true, "WAV", &bit, &lsb, None, None);
+        let r = compose(32, true, "WAV", &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 32);
         assert!(r.headline.contains("float"));
         assert!(r.facts.is_empty());
+    }
+
+    fn grid(verdict: FloatGridVerdict, fine: Option<f64>, coarse: Option<f64>) -> FloatGridResult {
+        let step = |s: f64| GridStep { step: s, fit: 1.0 };
+        FloatGridResult {
+            verdict,
+            fine: fine.map(step),
+            coarse: coarse.map(step),
+            flat_ceiling: None,
+            path_bits: None,
+            negative_zeros: 0,
+            samples_checked: 100_000,
+        }
+    }
+
+    fn compose_float(channels: &[FloatGridResult]) -> BitDepthCertainty {
+        let bit = default_bit_analysis(32, None);
+        let lsb = default_lsb(LsbVerdict::NotApplicable);
+        compose(32, true, "WAV", &bit, &lsb, None, None, channels)
+    }
+
+    #[test]
+    fn float_with_two_steps_reports_both_and_the_path_width() {
+        let fine = 0.99997 * 2f64.powi(-21);
+        let coarse = fine * 10.0;
+        let mut channel = grid(FloatGridVerdict::TwoSteps, Some(fine), Some(coarse));
+        channel.flat_ceiling = Some(FlatCeiling {
+            value: 10.0,
+            samples: 1500,
+        });
+        channel.path_bits = Some(22);
+        let r = compose_float(&[channel]);
+        assert!(r.headline.contains("two fixed steps"), "{}", r.headline);
+        assert_eq!(r.certainty, CertaintyLevel::HighConfidence);
+        assert_eq!(r.upper_bound, 32);
+        assert_eq!(r.best_estimate, 22);
+        let all: Vec<&str> = r.facts.iter().map(|f| f.statement.as_str()).collect();
+        assert!(all.iter().any(|s| s.contains("20.0 dB larger")), "{all:?}");
+        assert!(
+            all.iter().any(|s| s.contains("exactly 2^21 coarse steps")),
+            "{all:?}"
+        );
+        assert!(all.iter().any(|s| s.contains("+20.0 dBFS")), "{all:?}");
+    }
+
+    #[test]
+    fn float_of_exact_integers_is_certain_and_lowers_the_bound() {
+        let r = compose_float(&[grid(
+            FloatGridVerdict::IntegerSource { bits: 16 },
+            None,
+            None,
+        )]);
+        assert_eq!(r.certainty, CertaintyLevel::Certain);
+        assert_eq!(r.upper_bound, 16);
+        assert!(r.headline.contains("16-bit"));
+    }
+
+    #[test]
+    fn float_with_no_step_keeps_the_container_depth_and_a_soft_claim() {
+        let r = compose_float(&[grid(FloatGridVerdict::NoFixedStep, None, None)]);
+        assert_eq!(r.certainty, CertaintyLevel::Suggestive);
+        assert_eq!(r.upper_bound, 32);
+        assert!(r.headline.contains("no fixed step"));
+    }
+
+    #[test]
+    fn one_step_gain_shows_the_step_without_a_bit_width() {
+        let r = compose_float(&[grid(FloatGridVerdict::OneStep, Some(1.343_871e-7), None)]);
+        assert!(r.headline.contains("one fixed step"));
+        assert!(r.headline.contains("2^-22.83"), "{}", r.headline);
+        assert_eq!(r.best_estimate, 32);
+    }
+
+    #[test]
+    fn silent_channel_does_not_count_as_a_difference() {
+        let silent = grid(FloatGridVerdict::TooFewSamples, None, None);
+        let active = grid(FloatGridVerdict::OneStep, Some(2f64.powi(-21)), None);
+        let r = compose_float(&[silent, active]);
+        assert!(r
+            .facts
+            .iter()
+            .all(|f| !f.statement.contains("Showing channel")));
+    }
+
+    #[test]
+    fn differing_channels_name_the_channel_shown() {
+        let one = grid(FloatGridVerdict::OneStep, Some(2f64.powi(-21)), None);
+        let none = grid(FloatGridVerdict::NoFixedStep, None, None);
+        let r = compose_float(&[none, one]);
+        assert!(r
+            .facts
+            .iter()
+            .any(|f| f.statement.contains("Showing channel 2 only")));
     }
 
     #[test]
@@ -634,7 +912,7 @@ mod tests {
             padding_bits: 4,
         });
         lsb.quiet_lsb_chi2 = 61440.0;
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None);
+        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
         // Both ZeroPad and ValueCoverage should be Certain; order preserved.
         let cert_ranks: Vec<u8> = r.facts.iter().map(|f| f.certainty.rank()).collect();
         let sorted: Vec<u8> = {

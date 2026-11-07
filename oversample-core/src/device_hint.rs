@@ -11,6 +11,7 @@
 use crate::dsp::audiomoth::{AudioMothResult, AudioMothVerdict};
 use crate::dsp::bit_analysis::BitAnalysis;
 use crate::dsp::effective_nyquist::{EffectiveNyquistResult, EffectiveNyquistVerdict};
+use crate::dsp::float_grid::{FloatGridResult, FloatGridVerdict};
 use crate::dsp::lsb_autocorr::{LsbAutocorrResult, LsbVerdict};
 use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
 
@@ -55,8 +56,15 @@ pub fn infer_device_hints(
     pip: &PipistrelleResult,
     nyq: Option<&EffectiveNyquistResult>,
     am: Option<&AudioMothResult>,
+    float_grid: &[FloatGridResult],
 ) -> Vec<DeviceHint> {
     let mut hints = Vec::new();
+
+    // 0. Portacapture X8 float signature. Other 32-bit float recorders haven't
+    // been compared, so this stays a possibility however exact the match is.
+    if float_grid.iter().any(has_x8_fine_step) {
+        hints.push(x8_float_hint());
+    }
 
     // 1. Pipistrelle-family firmware signature.
     //
@@ -367,6 +375,29 @@ pub fn infer_device_hints(
     }
 
     hints
+}
+
+/// A fine step within 0.01% of 2^-21, but not exactly 2^-21. An exact value is
+/// reported as an integer source, which other devices also produce.
+fn has_x8_fine_step(result: &FloatGridResult) -> bool {
+    matches!(
+        result.verdict,
+        FloatGridVerdict::OneStep | FloatGridVerdict::TwoSteps
+    ) && result
+        .fine
+        .is_some_and(|fine| (fine.step * 2f64.powi(21) - 1.0).abs() < 1e-4)
+}
+
+fn x8_float_hint() -> DeviceHint {
+    DeviceHint {
+        label: "Fine step matches one tested recorder".to_string(),
+        confidence: HintConfidence::Possible,
+        candidates: vec!["TASCAM Portacapture X8".to_string()],
+        detail: "The fine step is within 0.01% of 2^-21. In test recordings, the TASCAM \
+            Portacapture X8 (firmware 2.03) has this step on inputs with external mics. Other \
+            32-bit float recorders were not compared, so this is only a possibility."
+            .to_string(),
+    }
 }
 
 fn sample_rate_hint(sample_rate: u32) -> Option<DeviceHint> {

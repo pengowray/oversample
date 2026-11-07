@@ -2,8 +2,9 @@
 //! Usage: `cargo run -p oversample-core --release --example bit_depth_check -- <path>`
 
 use oversample_core::audio::loader;
+use oversample_core::audio::source::ChannelView;
 use oversample_core::bit_depth_certainty::{self, CertaintyLevel};
-use oversample_core::dsp::{audiomoth, bit_analysis, lsb_autocorr, pipistrelle};
+use oversample_core::dsp::{audiomoth, bit_analysis, float_grid, lsb_autocorr, pipistrelle};
 
 fn main() {
     let path = std::env::args()
@@ -28,6 +29,19 @@ fn main() {
         lsb_zero_padded,
     );
 
+    let total = audio.source.total_samples() as usize;
+    let grid: Vec<_> = (0..audio.channels)
+        .map(|channel| {
+            let view = if audio.channels == 1 {
+                ChannelView::MonoMix
+            } else {
+                ChannelView::Channel(channel)
+            };
+            let samples = audio.source.read_region(view, 0, total);
+            float_grid::detect(&samples, bits, is_float)
+        })
+        .collect();
+
     let bdc = bit_depth_certainty::compose(
         bits,
         is_float,
@@ -36,6 +50,7 @@ fn main() {
         &lsb,
         Some(&pip),
         Some(&am),
+        &grid,
     );
 
     println!("File: {}", path);
