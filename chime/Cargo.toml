@@ -1,0 +1,10 @@
+[package]
+name = "chime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Decoder for the AudioMoth chime, a data-over-sound format that sets a device clock from a phone. no_std, no allocation. A copy of crates/chime in batchi-tascam-oversample-colab."
+publish = false
+
+[dependencies]
+libm = "0.2.16"

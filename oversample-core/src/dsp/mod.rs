@@ -2,6 +2,7 @@ pub mod agc;
 pub mod audiomoth;
 pub mod bit_analysis;
 pub mod channel_delay;
+pub mod chime_scan;
 pub mod chromagram;
 pub mod effective_nyquist;
 pub mod fft;

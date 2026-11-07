@@ -1,6 +1,9 @@
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView};
 use leptos::prelude::*;
+use leptos::task::spawn_local;
+use oversample_core::audio::source::ChannelView;
+use oversample_core::dsp::chime_scan::{self, ChimeScanResult, ChimeScanner, FoundChime, RemoteCommand};
 
 /// Returns (section, display_key) for a GUANO field.
 /// Known fields return "GUANO" as section; unknown pipe-separated keys
@@ -1066,10 +1069,199 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     }
 }
 
+/// Seconds at each end of a file that are searched for chimes. The X8 phone remote's start
+/// chime is in the first few seconds of a take, and its stop chime in the last few.
+const CHIME_EDGE_SECS: f64 = 30.0;
+/// Seconds of audio decoded between yields to the browser, per channel.
+const CHIME_PIECE_SECS: f64 = 1.0;
+/// More channels than this are left out of the search.
+const CHIME_MAX_CHANNELS: u32 = 8;
+
+/// The chime search for one file.
+#[derive(Clone, PartialEq)]
+enum ChimeSearch {
+    Searching { file_id: u64 },
+    Done { file_id: u64, result: ChimeScanResult },
+}
+
+/// Search the first and last `CHIME_EDGE_SECS` of the current file for chimes, in pieces, with
+/// a yield to the browser after each.
+fn start_chime_search(state: AppState, search: RwSignal<Option<ChimeSearch>>, generation: RwSignal<u32>) {
+    let current = state.library.current_index().get().and_then(|i| {
+        state.library.files().with(|files| {
+            files.get(i).map(|f| {
+                let searchable = f.audio.metadata.zc_data.is_none() && !f.is_live_listen && !f.is_recording;
+                (f.id, searchable, f.audio.source.clone(), f.audio.channels)
+            })
+        })
+    });
+    let Some((file_id, searchable, source, channels)) = current else {
+        return;
+    };
+    let already = search.with_untracked(|s| match s {
+        Some(ChimeSearch::Searching { file_id: id } | ChimeSearch::Done { file_id: id, .. }) => *id == file_id,
+        None => false,
+    });
+    if already {
+        return;
+    }
+    let this_run = generation.get_untracked().wrapping_add(1);
+    generation.set(this_run);
+    if !searchable {
+        search.set(Some(ChimeSearch::Done { file_id, result: ChimeScanResult::default() }));
+        return;
+    }
+    search.set(Some(ChimeSearch::Searching { file_id }));
+    spawn_local(async move {
+        // The panel can close while this runs, which disposes these signals, so reads use try_*.
+        let is_latest = move || generation.try_get_untracked() == Some(this_run);
+        let sample_rate = source.sample_rate();
+        let channels = channels.clamp(1, CHIME_MAX_CHANNELS);
+        let piece = (CHIME_PIECE_SECS * sample_rate as f64) as u64;
+        let mut results = Vec::new();
+        for (start, frames) in chime_scan::edge_ranges(source.total_samples(), sample_rate, CHIME_EDGE_SECS) {
+            let Some(mut scanner) = ChimeScanner::new(sample_rate, channels as usize, start) else {
+                break;
+            };
+            let mut at = start;
+            while at < start + frames {
+                let len = piece.min(start + frames - at) as usize;
+                crate::audio::streaming_source::prefetch_streaming(&*source, at, len).await;
+                if !is_latest() {
+                    return;
+                }
+                for channel in 0..channels {
+                    let view = if channels == 1 { ChannelView::MonoMix } else { ChannelView::Channel(channel) };
+                    scanner.push(channel as usize, &source.read_region(view, at, len));
+                }
+                at += len as u64;
+                crate::web_util::yield_now().await;
+                if !is_latest() {
+                    return;
+                }
+            }
+            results.push(scanner.finish());
+        }
+        let _ = search.try_set(Some(ChimeSearch::Done { file_id, result: chime_scan::merge(results) }));
+    });
+}
+
+/// A position in the file as minutes and seconds.
+fn file_position(secs: f64) -> String {
+    let whole = secs.max(0.0) as u64;
+    format!("{}:{:02}", whole / 60, whole % 60)
+}
+
+/// "1 and 2", "1, 2 and 3", counting from 1.
+fn channel_list(channels: &[u32]) -> String {
+    let names: Vec<String> = channels.iter().map(|c| (c + 1).to_string()).collect();
+    match names.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+fn chime_heading(chime: &FoundChime) -> String {
+    let what = match chime.remote_command() {
+        Some(RemoteCommand::StartRecording) => CHIME_START,
+        Some(RemoteCommand::StopRecording) => CHIME_STOP,
+        None => CHIME_OTHER,
+    };
+    format!("{what} at {}", file_position(chime.start_secs))
+}
+
+fn chime_signal_text(chime: &FoundChime) -> String {
+    let snr = match chime.snr_db {
+        Some(snr) => format!("SNR {snr:.0} dB"),
+        None => "SNR unknown".to_string(),
+    };
+    let channel_word = if chime.channels.len() == 1 { "channel" } else { "channels" };
+    format!("Carrier {:.0} dBFS, {snr}, {channel_word} {}", chime.level_dbfs, channel_list(&chime.channels))
+}
+
+const CHIME_TITLE: &str = "AudioMoth chimes";
+const CHIME_START: &str = "Phone remote: start";
+const CHIME_STOP: &str = "Phone remote: stop";
+const CHIME_OTHER: &str = "Chime";
+const CHIME_TIME_LABEL: &str = "Phone date and time";
+/// Not "phone location": the AudioMoth app can send a location typed in by hand.
+const CHIME_LOCATION_LABEL: &str = "Chime location";
+const CHIME_SIGNAL_LABEL: &str = "Signal";
+const CHIME_ID_LABEL: &str = "Deployment ID";
+const CHIME_SEARCHING: &str = "Searching for AudioMoth chimes\u{2026}";
+
+/// What the chimes in the file say, or nothing if there are none.
+fn chime_section(search: Option<ChimeSearch>, f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl IntoView {
+    let result = match search {
+        Some(ChimeSearch::Done { file_id, result }) if file_id == f.id => result,
+        Some(ChimeSearch::Searching { file_id }) if file_id == f.id && f.audio.sample_rate >= 40_000 => {
+            return view! {
+                <div class="setting-group">
+                    <div class="metadata-note">{CHIME_SEARCHING}</div>
+                </div>
+            }
+            .into_any();
+        }
+        _ => return view! { <span></span> }.into_any(),
+    };
+    if result.chimes.is_empty() && result.unreadable == 0 {
+        return view! { <span></span> }.into_any();
+    }
+    let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
+    for chime in &result.chimes {
+        items.push(view! { <div class="setting-group-title setting-group-title-sub">{chime_heading(chime)}</div> }.into_any());
+        items.push(date_row(CHIME_TIME_LABEL.to_string(), chime.local_time_iso(), view_mode).into_any());
+        if let Some((lat, lon)) = chime.location {
+            let raw = format!("{lat:.6}, {lon:.6}");
+            items.push(
+                view! {
+                    <div class="metadata-row metadata-row-spacious">
+                        <div class="metadata-key-line">
+                            <span class="metadata-key">{CHIME_LOCATION_LABEL}</span>
+                        </div>
+                        {gps_block(lat, lon, raw)}
+                    </div>
+                }
+                .into_any(),
+            );
+        }
+        if chime.remote_command().is_none() {
+            if let Some(hex) = chime.deployment_id_hex() {
+                items.push(inline_row(CHIME_ID_LABEL.to_string(), hex, None).into_any());
+            }
+        }
+        items.push(spacious_row(CHIME_SIGNAL_LABEL.to_string(), chime_signal_text(chime), None, view_mode).into_any());
+    }
+    if result.unreadable > 0 {
+        let line = if result.unreadable == 1 {
+            "1 more chime was detected but could not be read.".to_string()
+        } else {
+            format!("{} more chimes were detected but could not be read.", result.unreadable)
+        };
+        items.push(view! { <div class="metadata-note">{line}</div> }.into_any());
+    }
+    if f.audio.duration_secs > 2.0 * CHIME_EDGE_SECS {
+        items.push(view! { <div class="metadata-note">{CHIME_SEARCHED_EDGES}</div> }.into_any());
+    }
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title setting-group-title-major">{CHIME_TITLE}</div>
+            {items}
+        </div>
+    }
+    .into_any()
+}
+
+const CHIME_SEARCHED_EDGES: &str = "Searched only the first 30 s and the last 30 s of the file.";
+
 #[component]
 pub(crate) fn MetadataPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
     let view_mode = state.panels.metadata_view();
+    let chime_search: RwSignal<Option<ChimeSearch>> = RwSignal::new(None);
+    let chime_generation = RwSignal::new(0u32);
+    Effect::new(move || start_chime_search(state, chime_search, chime_generation));
 
     view! {
         <div class="sidebar-panel">
@@ -1152,6 +1344,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {structure_notes}
                             </div>
                             {date_section(f, view_mode)}
+                            {chime_section(chime_search.get(), f, view_mode)}
                             {zc_header_section(f, view_mode)}
                             {if has_xc {
                                 let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
@@ -1246,7 +1439,16 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{date_from_filename, extract_tz_offset_minutes, format_tz_offset};
+    use super::{channel_list, date_from_filename, extract_tz_offset_minutes, file_position, format_tz_offset};
+
+    #[test]
+    fn chime_positions_and_channels_read_naturally() {
+        assert_eq!(file_position(252.9), "4:12");
+        assert_eq!(file_position(5.0), "0:05");
+        assert_eq!(channel_list(&[0]), "1");
+        assert_eq!(channel_list(&[0, 1]), "1 and 2");
+        assert_eq!(channel_list(&[0, 1, 3]), "1, 2 and 4");
+    }
 
     #[test]
     fn filename_date_patterns() {

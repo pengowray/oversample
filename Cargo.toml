@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core", "oversample-ipc"]
+members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core", "oversample-ipc", "chime"]
 
 [package]
 name = "oversample"
