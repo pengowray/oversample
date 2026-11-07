@@ -3,6 +3,7 @@ use crate::annotations::{
     Marker, Region,
 };
 use crate::canvas::spectrogram_renderer::freq_to_y;
+use crate::components::channel_delay_row::{ChannelDelayRow, DelayRegion};
 use crate::components::file_sidebar::settings_panel::{delete_annotation, toggle_annotation_lock};
 use crate::components::icons::Icon;
 use crate::state::store_fields::*;
@@ -199,6 +200,8 @@ pub(crate) struct ChartCanvasBox {
     pub left: f64,
     pub top: f64,
     pub height: f64,
+    /// Canvas top edge, relative to the browser window.
+    pub viewport_top: f64,
 }
 
 /// Measures the chart canvas. `.main-overlays` covers the whole main view,
@@ -222,11 +225,13 @@ pub(crate) fn chart_canvas_box() -> ChartCanvasBox {
             left: canvas.left() - overlays.left(),
             top: canvas.top() - overlays.top(),
             height: canvas.height(),
+            viewport_top: canvas.top(),
         },
         _ => ChartCanvasBox {
             left: 0.0,
             top: 0.0,
             height: 400.0,
+            viewport_top: 0.0,
         },
     }
 }
@@ -362,6 +367,12 @@ const BTN_MARGIN: f64 = 4.0;
 /// menus' usual width, so they don't run off the screen.
 const MENU_FLIP_DISTANCE: f64 = 220.0;
 
+/// Menus with less room than this below the "..." button open upward. Calls often
+/// sit low on the chart, where a downward menu would run off the bottom of the
+/// window and hide its action buttons. Taller than the tallest menu, which is the
+/// annotation menu at about 300 px.
+const MENU_FLIP_UP_DISTANCE: f64 = 330.0;
+
 /// Inline style and class for the "..." anchor at the top-left corner of a
 /// selection or annotation. `x` and `y` are canvas coordinates. The button stays
 /// on the canvas when the corner is near its right edge.
@@ -371,10 +382,18 @@ fn overflow_anchor(x: f64, y: f64, canvas_w: f64) -> (String, &'static str) {
         .min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0))
         .max(0.0);
     let top = (y + BTN_MARGIN).max(0.0);
-    let class = if canvas_w - left < MENU_FLIP_DISTANCE {
-        "canvas-overflow-anchor menu-opens-left"
-    } else {
-        "canvas-overflow-anchor"
+    let window_height = web_sys::window()
+        .and_then(|w| w.inner_height().ok())
+        .and_then(|h| h.as_f64())
+        .unwrap_or(f64::MAX);
+    let room_below = window_height - (chart.viewport_top + top + BTN_SIZE);
+    let opens_left = canvas_w - left < MENU_FLIP_DISTANCE;
+    let opens_up = room_below < MENU_FLIP_UP_DISTANCE;
+    let class = match (opens_left, opens_up) {
+        (false, false) => "canvas-overflow-anchor",
+        (true, false) => "canvas-overflow-anchor menu-opens-left",
+        (false, true) => "canvas-overflow-anchor menu-opens-up",
+        (true, true) => "canvas-overflow-anchor menu-opens-left menu-opens-up",
     };
     let style = format!(
         "position: absolute; left: {:.0}px; top: {:.0}px; pointer-events: auto; z-index: 25;",
@@ -531,6 +550,16 @@ fn SelectionOverflowMenu() -> impl IntoView {
         }
     });
 
+    let delay_region = Signal::derive(move || {
+        let sel = state.interaction.selection().get()?;
+        (sel.time_end - sel.time_start >= 0.0001).then_some(DelayRegion {
+            time_start: sel.time_start,
+            time_end: sel.time_end,
+            freq_low: sel.freq_low,
+            freq_high: sel.freq_high,
+        })
+    });
+
     let on_expand = Callback::new(move |_: ()| {
         if let Some(sel) = state.interaction.selection().get_untracked() {
             state.interaction.selection().set(Some(Selection {
@@ -600,6 +629,7 @@ fn SelectionOverflowMenu() -> impl IntoView {
                                                 on_expand=on_expand
                                                 on_contract=on_contract
                                             />
+                                            <ChannelDelayRow region=delay_region />
                                             <div class="canvas-overflow-separator"></div>
                                             <button
                                                 class="canvas-overflow-item"
@@ -723,6 +753,29 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                 "\u{2014}".to_string(),
                 false,
             )),
+        }
+    });
+
+    let delay_region = Signal::derive(move || {
+        let ids = state.annotations.selected_ids().get();
+        if ids.len() != 1 {
+            return None;
+        }
+        let file_id = state.current_file_id_tracked()?;
+        let store = state.annotations.store().get();
+        let ann = store
+            .get(file_id)?
+            .annotations
+            .iter()
+            .find(|a| a.id == ids[0])?;
+        match &ann.kind {
+            AnnotationKind::Region(r) if r.time_end - r.time_start >= 0.0001 => Some(DelayRegion {
+                time_start: r.time_start,
+                time_end: r.time_end,
+                freq_low: r.freq_low,
+                freq_high: r.freq_high,
+            }),
+            _ => None,
         }
     });
 
@@ -900,6 +953,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                 on_expand=on_expand
                                                 on_contract=on_contract
                                             />
+                                            <ChannelDelayRow region=delay_region />
                                             {(!tags.is_empty()).then(move || view! {
                                                 <div class="canvas-overflow-info" style="color: #8cf; font-size: 10px;">
                                                     {tags.join(", ")}

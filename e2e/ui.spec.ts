@@ -59,6 +59,58 @@ test.describe("selection overflow menu", () => {
     expect(pos.y).toBeGreaterThanOrEqual(top);
     expect(pos.y + pos.height).toBeLessThanOrEqual(bottom);
   });
+
+  test("shows which channel the sound reached first, and by how much", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/stereo-right-first.wav");
+
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    await expect(canvas).toBeVisible({ timeout: 30_000 });
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.7, { steps: 5 });
+    await page.mouse.up();
+    await page.locator(".canvas-overflow-btn").click();
+
+    const row = page.locator(".channel-delay");
+    await expect(row).toContainText("L/R delay: 1.00 ms, R first");
+    await expect(row).toContainText("Path difference: 34 cm");
+  });
+
+  test("the menu stays inside the window for a selection low on the chart", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/stereo-right-first.wav");
+
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    await expect(canvas).toBeVisible({ timeout: 30_000 });
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.85);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.95, { steps: 5 });
+    await page.mouse.up();
+    await page.locator(".canvas-overflow-btn").click();
+
+    const button = page.locator(".canvas-overflow-menu button", { hasText: "Annotate" });
+    await expect(button).toBeVisible();
+    const menu = (await page.locator(".canvas-overflow-menu").boundingBox())!;
+    expect(menu.y).toBeGreaterThanOrEqual(0);
+    expect(menu.y + menu.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  });
 });
 
 test.describe("sidebar tabs", () => {

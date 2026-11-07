@@ -50,6 +50,45 @@ export default async function globalSetup() {
   // Stereo fixtures for stereo.spec.ts: a file to play back, and a mic stream.
   fs.writeFileSync(path.join(dir, "stereo-alternating.wav"), alternatingStereoWav(192_000, 6, 1.5));
   fs.writeFileSync(path.join(dir, "stereo-mic.wav"), alternatingStereoWav(48_000, 2, 0.5));
+
+  // For the L/R delay row in ui.spec.ts: 192 samples at 192 kHz is exactly 1 ms.
+  fs.writeFileSync(path.join(dir, "stereo-right-first.wav"), delayedStereoWav(192_000, 4, 192));
+}
+
+/**
+ * 16-bit stereo WAV of noise where the left channel is a copy of the right
+ * channel, `delayFrames` later.
+ */
+function delayedStereoWav(sampleRate: number, seconds: number, delayFrames: number): Buffer {
+  const frames = sampleRate * seconds;
+  const dataBytes = frames * 4;
+  const buf = Buffer.alloc(44 + dataBytes);
+
+  buf.write("RIFF", 0);
+  buf.writeUInt32LE(36 + dataBytes, 4);
+  buf.write("WAVE", 8);
+  buf.write("fmt ", 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20); // PCM
+  buf.writeUInt16LE(2, 22); // stereo
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * 4, 28); // byte rate
+  buf.writeUInt16LE(4, 32); // block align
+  buf.writeUInt16LE(16, 34); // bits/sample
+  buf.write("data", 36);
+  buf.writeUInt32LE(dataBytes, 40);
+
+  let rng = 0x12345678;
+  for (let i = 0; i < frames; i++) {
+    // xorshift32, so the fixture is the same on every run.
+    rng ^= rng << 13;
+    rng ^= rng >>> 17;
+    rng ^= rng << 5;
+    const v = Math.round((((rng >>> 0) / 0xffffffff) * 2 - 1) * 0.3 * 32767);
+    buf.writeInt16LE(v, 44 + i * 4 + 2);
+    if (i + delayFrames < frames) buf.writeInt16LE(v, 44 + (i + delayFrames) * 4);
+  }
+  return buf;
 }
 
 /**

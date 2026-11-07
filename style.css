@@ -6862,11 +6862,32 @@ button.canvas-overflow-btn:hover {
     right: 0;
 }
 
+.canvas-overflow-anchor.menu-opens-up .canvas-overflow-menu {
+    top: auto;
+    bottom: calc(100% + 4px);
+}
+
 .canvas-overflow-info {
     padding: 6px 10px;
     font-size: 11px;
     color: #aaa;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Tabular figures: the delay changes as the user moves between selections, and
+   these values get compared with each other. */
+.channel-delay {
+    font-variant-numeric: tabular-nums;
+    /* Keeps the menu's width steady when the reading changes from "measuring" to a
+       result. Under the 220 px at which overflow_anchor opens menus leftward, so a
+       right-opening menu stays on the canvas. */
+    min-width: 210px;
+    box-sizing: border-box;
+}
+
+/* A phone has too little room beside the selection for the wider menu. */
+.app.mobile .channel-delay {
+    min-width: 0;
 }
 
 .canvas-overflow-btn-row {

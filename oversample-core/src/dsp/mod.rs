@@ -1,11 +1,12 @@
 pub mod agc;
 pub mod audiomoth;
 pub mod bit_analysis;
+pub mod channel_delay;
 pub mod chromagram;
 pub mod effective_nyquist;
 pub mod fft;
-pub mod float_grid;
 pub mod filters;
+pub mod float_grid;
 pub mod harmonics;
 pub mod heterodyne;
 pub mod lsb_autocorr;
