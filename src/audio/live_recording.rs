@@ -1960,7 +1960,7 @@ async fn finalize_streaming_tauri_recording(
         if data_end < file_size {
             let tail_len = (file_size - data_end).min(65536);
             if let Ok(tail_bytes) = handle.read_range(data_end, tail_len).await {
-                guano = scan_tail_for_guano(&tail_bytes);
+                guano = scan_tail_for_guano(&tail_bytes, header.data_size);
             }
         }
     }

@@ -332,7 +332,7 @@ pub(super) async fn try_streaming_wav(
             // Read up to 64KB from after the data chunk
             let tail_end = file_size.min(tail_start + 65536.0);
             if let Ok(tail_bytes) = read_blob_range(file, tail_start, tail_end).await {
-                guano = scan_tail_for_guano(&tail_bytes);
+                guano = scan_tail_for_guano(&tail_bytes, header.data_size);
             }
         }
     }
@@ -1696,10 +1696,9 @@ pub(crate) async fn build_streaming_overview(
 }
 
 /// Scan raw bytes (from after the data chunk) for a GUANO "guan" chunk.
-pub(crate) fn scan_tail_for_guano(tail_bytes: &[u8]) -> Option<crate::audio::guano::GuanoMetadata> {
-    crate::audio::wav::riff_chunks(tail_bytes, 0)
-        .find(|c| c.id == b"guan" && c.complete())
-        .and_then(|c| crate::audio::guano::parse_guano_chunk(c.body))
+/// `data_size` is the `data` chunk's size, for the pad byte after odd-sized audio.
+pub(crate) fn scan_tail_for_guano(tail_bytes: &[u8], data_size: u64) -> Option<crate::audio::guano::GuanoMetadata> {
+    crate::audio::guano::parse_guano_after_data(tail_bytes, data_size)
 }
 
 /// Attempt to open a large M4A file using the streaming path.

@@ -70,6 +70,19 @@ pub fn parse_guano(bytes: &[u8]) -> Option<GuanoMetadata> {
         .and_then(|c| parse_guano_chunk(c.body))
 }
 
+/// Search the bytes that follow a WAV file's `data` chunk for a "guan" chunk.
+/// `data_size` is the `data` chunk's size: when it is odd, the next chunk
+/// starts after a pad byte. Some writers leave that byte out, so the unpadded
+/// position is tried as well.
+pub fn parse_guano_after_data(bytes: &[u8], data_size: u64) -> Option<GuanoMetadata> {
+    let starts: &[usize] = if data_size & 1 == 1 { &[1, 0] } else { &[0] };
+    starts.iter().find_map(|&start| {
+        super::wav::riff_chunks(bytes, start)
+            .find(|c| c.id == b"guan" && c.complete())
+            .and_then(|c| parse_guano_chunk(c.body))
+    })
+}
+
 /// Parse GUANO metadata from raw chunk body bytes (without the "guan" chunk header).
 pub fn parse_guano_chunk(chunk_body: &[u8]) -> Option<GuanoMetadata> {
     let text = std::str::from_utf8(chunk_body).ok()?;
@@ -229,4 +242,51 @@ fn parse_guano_text(text: &str) -> GuanoMetadata {
         }
     }
     GuanoMetadata { fields }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A "guan" chunk holding `text`, as the bytes after the `data` chunk,
+    /// with a pad byte first if `pad`.
+    fn after_data(text: &str, pad: bool) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        if pad {
+            bytes.push(0);
+        }
+        bytes.extend_from_slice(b"guan");
+        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    const TEXT: &str = "GUANO|Version: 1.0\nMake: TASCAM\n";
+
+    #[test]
+    fn found_after_even_sized_audio() {
+        let g = parse_guano_after_data(&after_data(TEXT, false), 1000).unwrap();
+        assert_eq!(g.fields[1], ("Make".to_string(), "TASCAM".to_string()));
+    }
+
+    /// 24-bit mono audio with an odd number of frames has an odd size, so the
+    /// chunk after it starts after a pad byte.
+    #[test]
+    fn found_after_the_pad_byte_of_odd_sized_audio() {
+        assert!(parse_guano_after_data(&after_data(TEXT, true), 1001).is_some());
+    }
+
+    #[test]
+    fn found_when_a_writer_left_the_pad_byte_out() {
+        assert!(parse_guano_after_data(&after_data(TEXT, false), 1001).is_some());
+    }
+
+    #[test]
+    fn appended_chunk_round_trips_after_odd_sized_audio() {
+        // RIFF header, then a 3-byte `data` chunk.
+        let mut wav = b"RIFF\0\0\0\0WAVEdata\x03\0\0\0abc".to_vec();
+        append_guano_chunk(&mut wav, TEXT);
+        let g = parse_guano_after_data(&wav[23..], 3).unwrap();
+        assert_eq!(g.fields.len(), 2);
+    }
 }
