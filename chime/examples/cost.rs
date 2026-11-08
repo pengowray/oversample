@@ -41,7 +41,7 @@ struct Signal {
 
 fn command_chime() -> Vec<f64> {
     let mut bytes = generator::time_payload(1_793_000_000, 600);
-    bytes.extend_from_slice(b"BATXREC\x01");
+    bytes.extend_from_slice(&chime::format::RemoteCommand::Start.deployment_id());
     generator::render(RATE, &bytes, generator::tune_for_payload(bytes.len())).mix()
 }
 

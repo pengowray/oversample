@@ -3,7 +3,7 @@
 //!
 //! A chime is a short data-over-sound signal on an 18 kHz carrier that a phone plays to set a
 //! recorder's clock. The TASCAM X8 bat detector firmware also uses it as a phone remote: the
-//! deployment ID is `BATXREC` followed by 1 to start recording or 2 to stop. The stop chime is
+//! deployment ID is `BATX`, a version byte, a command and an argument (see `chime::format`). The stop chime is
 //! recorded at the end of the take, so a take can carry the phone's date, time and location
 //! although the recorder has no GPS.
 //!
@@ -19,7 +19,7 @@ use chime::{Decoder, Event};
 const SAME_CHIME_SECS: f64 = 0.1;
 
 /// The X8 phone remote's command in a chime.
-pub use chime::format::RemoteCommand;
+pub use chime::format::{RemoteCommand, RemoteMessage};
 
 /// A chime that was read.
 #[derive(Clone, Debug, PartialEq)]
@@ -43,8 +43,14 @@ pub struct FoundChime {
 }
 
 impl FoundChime {
+    /// The X8 phone remote message in the deployment ID, known or not.
+    pub fn remote(&self) -> Option<RemoteMessage> {
+        RemoteMessage::from_deployment_id(self.deployment_id.as_ref()?)
+    }
+
+    /// The X8 phone remote command in the deployment ID, if it is one this version knows.
     pub fn remote_command(&self) -> Option<RemoteCommand> {
-        RemoteCommand::from_deployment_id(self.deployment_id.as_ref()?)
+        self.remote()?.known()
     }
 
     /// The phone's local time as ISO 8601 with its UTC offset, such as
@@ -229,7 +235,7 @@ mod tests {
     fn a_stop_chime_gives_its_time_location_and_command() {
         // -33.87, 151.21, packed as the phone page's library packs them.
         let location = [0x50, 0x2F, 0xFB, 0x8D, 0x40, 0x1A, 0x48];
-        let chime = render(&payload(1_793_000_020, 600, Some(location), Some(b"BATXREC\x02")), 0.1);
+        let chime = render(&payload(1_793_000_020, 600, Some(location), Some(&RemoteCommand::Stop.deployment_id())), 0.1);
         let mut seed = 1;
         let mut x = noise(RATE as usize * 2 + chime.len(), &mut seed);
         for (a, b) in x[RATE as usize..].iter_mut().zip(&chime) {
@@ -251,7 +257,7 @@ mod tests {
         let (lat, lon) = found.location.unwrap();
         assert!((lat + 33.87).abs() < 1e-5 && (lon - 151.21).abs() < 1e-5, "{lat} {lon}");
         assert_eq!(found.remote_command(), Some(RemoteCommand::Stop));
-        assert_eq!(found.deployment_id_hex().as_deref(), Some("4241545852454302"));
+        assert_eq!(found.deployment_id_hex().as_deref(), Some("4241545801020000"));
         assert!(found.snr_db.is_some());
     }
 

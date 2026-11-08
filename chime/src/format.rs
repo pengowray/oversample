@@ -130,11 +130,52 @@ pub struct TimeMessage {
     pub deployment_id: Option<[u8; DEPLOYMENT_ID_BYTES]>,
 }
 
-/// The deployment ID of the TASCAM Portacapture X8 bat patch's phone remote, before its command
-/// byte, in the order the decoder gives it. The phone page's encoder reverses the bytes it is given.
-pub const REMOTE_MAGIC: [u8; 7] = *b"BATXREC";
+/// The first 4 bytes of a phone remote deployment ID for the TASCAM Portacapture X8 bat patch, in
+/// the order the decoder gives them. `docs/PHONE_REMOTE.md` in the oversample-tascam-firmware
+/// repository is the full format.
+pub const REMOTE_MAGIC: [u8; 4] = *b"BATX";
 
-/// A command for the X8 bat patch's phone remote, from a chime's deployment ID.
+/// The layout of the 4 bytes after [`REMOTE_MAGIC`] that this crate reads: byte 4 is this version,
+/// byte 5 the command and bytes 6 and 7 a 16-bit argument, low byte first. New commands keep the
+/// version; a new version means bytes 5 to 7 have a different layout.
+pub const REMOTE_VERSION: u8 = 1;
+
+/// A phone remote message: a deployment ID that starts with [`REMOTE_MAGIC`]. It may hold a
+/// version or command that this crate does not know, which the receiver reports as unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemoteMessage {
+    pub version: u8,
+    pub command: u8,
+    pub argument: u16,
+}
+
+impl RemoteMessage {
+    /// The message in a deployment ID, if the ID starts with [`REMOTE_MAGIC`].
+    pub fn from_deployment_id(id: &[u8; DEPLOYMENT_ID_BYTES]) -> Option<Self> {
+        if id[..4] != REMOTE_MAGIC {
+            return None;
+        }
+        Some(Self { version: id[4], command: id[5], argument: u16::from_le_bytes([id[6], id[7]]) })
+    }
+
+    /// The whole deployment ID, as the decoder gives it.
+    pub fn deployment_id(self) -> [u8; DEPLOYMENT_ID_BYTES] {
+        let [low, high] = self.argument.to_le_bytes();
+        let [m0, m1, m2, m3] = REMOTE_MAGIC;
+        [m0, m1, m2, m3, self.version, self.command, low, high]
+    }
+
+    /// The command, if this crate knows the version, the command and its argument.
+    pub fn known(self) -> Option<RemoteCommand> {
+        if self.version != REMOTE_VERSION {
+            return None;
+        }
+        RemoteCommand::ALL.into_iter().find(|command| command.code() == self.command && self.argument == 0)
+    }
+}
+
+/// A command for the X8 bat patch's phone remote. Start and Stop take no argument: their argument
+/// must be 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteCommand {
     /// Start recording.
@@ -144,28 +185,29 @@ pub enum RemoteCommand {
 }
 
 impl RemoteCommand {
-    /// The command byte after [`REMOTE_MAGIC`].
-    pub fn byte(self) -> u8 {
+    pub const ALL: [RemoteCommand; 2] = [RemoteCommand::Start, RemoteCommand::Stop];
+
+    /// The command byte. 0 is never a command.
+    pub const fn code(self) -> u8 {
         match self {
             RemoteCommand::Start => 1,
             RemoteCommand::Stop => 2,
         }
     }
 
-    /// The command in a deployment ID, if it is a phone remote command.
+    /// The message that sends this command.
+    pub const fn message(self) -> RemoteMessage {
+        RemoteMessage { version: REMOTE_VERSION, command: self.code(), argument: 0 }
+    }
+
+    /// The command in a deployment ID, if it holds one this crate knows.
     pub fn from_deployment_id(id: &[u8; DEPLOYMENT_ID_BYTES]) -> Option<Self> {
-        if id[..7] != REMOTE_MAGIC {
-            return None;
-        }
-        [RemoteCommand::Start, RemoteCommand::Stop].into_iter().find(|command| command.byte() == id[7])
+        RemoteMessage::from_deployment_id(id)?.known()
     }
 
     /// The whole deployment ID, as the decoder gives it.
     pub fn deployment_id(self) -> [u8; DEPLOYMENT_ID_BYTES] {
-        let mut id = [0; DEPLOYMENT_ID_BYTES];
-        id[..7].copy_from_slice(&REMOTE_MAGIC);
-        id[7] = self.byte();
-        id
+        self.message().deployment_id()
     }
 }
 
@@ -206,9 +248,15 @@ impl TimeMessage {
         Some(TimeMessage { unix_time, timezone_minutes, location, deployment_id })
     }
 
-    /// The X8 bat patch's phone remote command in the deployment ID, if it holds one.
+    /// The X8 bat patch's phone remote message in the deployment ID, known or not.
+    pub fn remote(&self) -> Option<RemoteMessage> {
+        RemoteMessage::from_deployment_id(self.deployment_id.as_ref()?)
+    }
+
+    /// The X8 bat patch's phone remote command in the deployment ID, if it holds one this crate
+    /// knows.
     pub fn remote_command(&self) -> Option<RemoteCommand> {
-        RemoteCommand::from_deployment_id(self.deployment_id.as_ref()?)
+        self.remote()?.known()
     }
 
     /// The location as latitude and longitude in degrees, if the chime has one.
@@ -579,10 +627,21 @@ mod tests {
 
     #[test]
     fn remote_commands_round_trip() {
-        for command in [RemoteCommand::Start, RemoteCommand::Stop] {
+        for command in RemoteCommand::ALL {
             assert_eq!(RemoteCommand::from_deployment_id(&command.deployment_id()), Some(command));
         }
-        assert_eq!(RemoteCommand::from_deployment_id(b"BATXREC\x03"), None);
+        assert_eq!(&RemoteCommand::Stop.deployment_id(), b"BATX\x01\x02\x00\x00");
         assert_eq!(RemoteCommand::from_deployment_id(b"AUDIOMTH"), None);
+    }
+
+    #[test]
+    fn unknown_remote_messages_are_read_but_not_known() {
+        for id in [b"BATX\x01\x03\x00\x00", b"BATX\x02\x01\x00\x00", b"BATX\x01\x01\x05\x00", b"BATX\x01\x00\x00\x00"] {
+            let message = RemoteMessage::from_deployment_id(id).unwrap();
+            assert_eq!(message.deployment_id(), *id);
+            assert_eq!(message.known(), None, "{id:?}");
+        }
+        assert_eq!(RemoteMessage::from_deployment_id(b"BATX\x01\x01\x34\x12").unwrap().argument, 0x1234);
+        assert_eq!(RemoteMessage::from_deployment_id(b"BATY\x01\x01\x00\x00"), None);
     }
 }

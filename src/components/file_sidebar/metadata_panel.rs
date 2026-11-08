@@ -1163,9 +1163,10 @@ fn channel_list(channels: &[u32]) -> String {
 }
 
 fn chime_heading(chime: &FoundChime) -> String {
-    let what = match chime.remote_command() {
-        Some(RemoteCommand::Start) => CHIME_START,
-        Some(RemoteCommand::Stop) => CHIME_STOP,
+    let what = match chime.remote().map(|remote| remote.known()) {
+        Some(Some(RemoteCommand::Start)) => CHIME_START,
+        Some(Some(RemoteCommand::Stop)) => CHIME_STOP,
+        Some(None) => CHIME_UNKNOWN,
         None => CHIME_OTHER,
     };
     format!("{what} at {}", file_position(chime.start_secs))
@@ -1183,6 +1184,8 @@ fn chime_signal_text(chime: &FoundChime) -> String {
 const CHIME_TITLE: &str = "AudioMoth chimes";
 const CHIME_START: &str = "Phone remote: start";
 const CHIME_STOP: &str = "Phone remote: stop";
+/// A command from a newer phone page than this version of Oversample reads.
+const CHIME_UNKNOWN: &str = "Phone remote: unknown command";
 const CHIME_OTHER: &str = "Chime";
 const CHIME_TIME_LABEL: &str = "Phone date and time";
 /// Not "phone location": the AudioMoth app can send a location typed in by hand.

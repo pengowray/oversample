@@ -306,9 +306,15 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
     }
     if let Some(id) = message.deployment_id {
         let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
-        contents += &match message.remote_command() {
-            Some(RemoteCommand::Start) => format!("Phone remote: start recording (deployment ID {hex}). "),
-            Some(RemoteCommand::Stop) => format!("Phone remote: stop recording (deployment ID {hex}). "),
+        contents += &match message.remote() {
+            Some(remote) => match remote.known() {
+                Some(RemoteCommand::Start) => format!("Phone remote: start recording (deployment ID {hex}). "),
+                Some(RemoteCommand::Stop) => format!("Phone remote: stop recording (deployment ID {hex}). "),
+                None => format!(
+                    "Phone remote: unknown command (version {}, command {}, argument {}, deployment ID {hex}). ",
+                    remote.version, remote.command, remote.argument
+                ),
+            },
             None => format!("Deployment ID {hex}. "),
         };
     }
@@ -926,9 +932,9 @@ mod tests {
         assert!(line.contains("Location -33.870000, 151.210000. Signal"), "{line}");
 
         let mut with_id = payload[..6].to_vec();
-        with_id.extend_from_slice(b"BATXREC\x02");
+        with_id.extend_from_slice(&RemoteCommand::Stop.deployment_id());
         let line = describe_chime(0, RATE, &chime_with_payload(&with_id));
-        assert!(line.contains("Phone remote: stop recording (deployment ID 4241545852454302). Signal"), "{line}");
+        assert!(line.contains("Phone remote: stop recording (deployment ID 4241545801020000). Signal"), "{line}");
 
         payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]);
         let line = describe_chime(0, RATE, &chime_with_payload(&payload));

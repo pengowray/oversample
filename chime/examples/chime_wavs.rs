@@ -47,7 +47,7 @@ fn page_tone(seconds: f64) -> Vec<f64> {
 
 fn press(gain: f64) -> Vec<f64> {
     let mut bytes = generator::time_payload(1_793_000_000, 600);
-    bytes.extend_from_slice(b"BATXREC\x01");
+    bytes.extend_from_slice(&chime::format::RemoteCommand::Start.deployment_id());
     let chime = generator::render(RATE, &bytes, generator::tune_for_payload(bytes.len())).mix();
     let second = RATE as usize;
     let mut x = vec![0.0; second];
