@@ -130,6 +130,45 @@ pub struct TimeMessage {
     pub deployment_id: Option<[u8; DEPLOYMENT_ID_BYTES]>,
 }
 
+/// The deployment ID of the TASCAM Portacapture X8 bat patch's phone remote, before its command
+/// byte, in the order the decoder gives it. The phone page's encoder reverses the bytes it is given.
+pub const REMOTE_MAGIC: [u8; 7] = *b"BATXREC";
+
+/// A command for the X8 bat patch's phone remote, from a chime's deployment ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteCommand {
+    /// Start recording.
+    Start,
+    /// Stop recording.
+    Stop,
+}
+
+impl RemoteCommand {
+    /// The command byte after [`REMOTE_MAGIC`].
+    pub fn byte(self) -> u8 {
+        match self {
+            RemoteCommand::Start => 1,
+            RemoteCommand::Stop => 2,
+        }
+    }
+
+    /// The command in a deployment ID, if it is a phone remote command.
+    pub fn from_deployment_id(id: &[u8; DEPLOYMENT_ID_BYTES]) -> Option<Self> {
+        if id[..7] != REMOTE_MAGIC {
+            return None;
+        }
+        [RemoteCommand::Start, RemoteCommand::Stop].into_iter().find(|command| command.byte() == id[7])
+    }
+
+    /// The whole deployment ID, as the decoder gives it.
+    pub fn deployment_id(self) -> [u8; DEPLOYMENT_ID_BYTES] {
+        let mut id = [0; DEPLOYMENT_ID_BYTES];
+        id[..7].copy_from_slice(&REMOTE_MAGIC);
+        id[7] = self.byte();
+        id
+    }
+}
+
 impl TimeMessage {
     /// Parses a payload without its CRC. The valid lengths are 6, 13 (with
     /// location), 14 (with deployment ID) and 21 bytes (with both, location
@@ -165,6 +204,11 @@ impl TimeMessage {
         }
 
         Some(TimeMessage { unix_time, timezone_minutes, location, deployment_id })
+    }
+
+    /// The X8 bat patch's phone remote command in the deployment ID, if it holds one.
+    pub fn remote_command(&self) -> Option<RemoteCommand> {
+        RemoteCommand::from_deployment_id(self.deployment_id.as_ref()?)
     }
 
     /// The location as latitude and longitude in degrees, if the chime has one.
@@ -531,5 +575,14 @@ mod tests {
     fn local_time_display() {
         let time = LocalTime { year: 2026, month: 3, day: 5, hour: 7, minute: 8, second: 9 };
         assert_eq!(format!("{time}"), "2026-03-05 07:08:09");
+    }
+
+    #[test]
+    fn remote_commands_round_trip() {
+        for command in [RemoteCommand::Start, RemoteCommand::Stop] {
+            assert_eq!(RemoteCommand::from_deployment_id(&command.deployment_id()), Some(command));
+        }
+        assert_eq!(RemoteCommand::from_deployment_id(b"BATXREC\x03"), None);
+        assert_eq!(RemoteCommand::from_deployment_id(b"AUDIOMTH"), None);
     }
 }

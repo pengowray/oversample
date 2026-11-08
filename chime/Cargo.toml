@@ -3,8 +3,29 @@ name = "chime"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Decoder for the AudioMoth chime, a data-over-sound format that sets a device clock from a phone. no_std, no allocation. A copy of crates/chime in batchi-tascam-oversample-colab."
+description = "Decoder for the AudioMoth chime, a data-over-sound format that sets a device clock from a phone. no_std, no allocation; an encoder for tests with the std feature."
 publish = false
 
 [dependencies]
 libm = "0.2.16"
+
+[features]
+# The encoder in `encode`, which needs std: for tests and for writing test files.
+std = []
+# Lets the `cost` example stop the decoder after a given stage, to time the stages one by one.
+profile = []
+
+[dev-dependencies]
+hound = "3.5"
+# The integration tests and examples use the encoder.
+chime = { path = ".", features = ["std"] }
+
+# Cargo skips the unit tests inside examples unless asked. The bext parser in
+# decode_wav.rs has unit tests that "cargo test -p chime" must run.
+[[example]]
+name = "decode_wav"
+test = true
+
+[[example]]
+name = "cost"
+required-features = ["profile"]

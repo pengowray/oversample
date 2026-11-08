@@ -61,9 +61,17 @@
 //! `thumbv7em-none-eabihf` at opt-level 3 with fat LTO. Nothing has run on the device.
 //!
 //! The rest of this section is an estimate, because nothing has been timed on a Cortex-M7.
-//! The front end costs 47 floating-point operations per input sample. The rest costs about
-//! 23 per baseband sample while listening and about 375 per baseband sample during a
-//! message, which at 192 kHz is 1 and 16 per input sample. In one call of `push`, the
+//! At 192 kHz the front end costs about 19 floating-point operations per input sample: 12
+//! in its first stage and 53 per output of the first stage, which comes every 8 samples.
+//! With one stage it cost 47. The rest costs about 23 per baseband sample while listening
+//! and about 375 per baseband sample during a message, which at 192 kHz is 1 and 16 per
+//! input sample.
+//!
+//! Feed the decoder with [`Decoder::push_block`] where you can. It keeps the first stage's
+//! sums in registers across the block, where [`Decoder::push`] loads and stores them for
+//! each sample. On a PC without auto-vectorisation, at 192 kHz with no chime, `push_block`
+//! costs 0.6 ms a second and `push` 0.8 ms. With one stage `push` cost 1.8 ms. The `cost`
+//! example measures this. In one call of `push`, the
 //! timing search is about 7600 operations and two trellis steps are about 6500, and one
 //! call never does both.
 //!
@@ -92,7 +100,7 @@ mod walker;
 
 use self::cplx::Cplx;
 use self::detector::Detector;
-use self::front_end::{FrontEnd, Ring};
+use self::front_end::{Baseband, FrontEnd, Ring};
 use self::timing_search::MAX_FOLD_SLOTS;
 use self::trellis::Path;
 use self::walker::{MOVING, STEADY, WalkEnd, Walker};
@@ -192,6 +200,19 @@ fn heard_a_chime(coherence: f32, well_above_noise: bool, path: &Path) -> bool {
     (well_above_noise && start_symbols_seen) || path.codeword_score() >= CODEWORD_SCORE_OF_A_CHIME
 }
 
+/// The last stage that [`Decoder::push`] runs, for timing the stages one by one. Each
+/// stage needs the ones before it. With a stage other than `Walk`, the decoder reads no
+/// chime.
+#[cfg(feature = "profile")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage {
+    FrontEnd,
+    Detector,
+    /// The timing search runs when the detector asks for it, but no walk starts.
+    Search,
+    Walk,
+}
+
 /// Streaming chime decoder for one channel of audio.
 pub struct Decoder {
     front_end: FrontEnd,
@@ -203,6 +224,8 @@ pub struct Decoder {
     /// The coherence from the timing search that started the latest walk.
     coherence: f32,
     walkers: [Walker; 2],
+    #[cfg(feature = "profile")]
+    last_stage: Stage,
 }
 
 impl Decoder {
@@ -227,15 +250,14 @@ impl Decoder {
         if sample_rate_hz < MIN_SAMPLE_RATE_HZ {
             return None;
         }
-        let front_end = FrontEnd::new(sample_rate_hz);
-        let baseband_rate = front_end.baseband_rate();
-        let bucket_len = BUCKET_S * baseband_rate;
         let this = slot.as_mut_ptr();
         // SAFETY: `this` comes from a reference, so it is valid for writes and aligned. The
         // writes below cover every field, and the reference to the whole decoder is made
-        // after them.
+        // after them. The front end is complete before its baseband rate is read.
         unsafe {
-            addr_of_mut!((*this).front_end).write(front_end);
+            FrontEnd::init_in_place(addr_of_mut!((*this).front_end), sample_rate_hz);
+            let baseband_rate = (*this).front_end.baseband_rate();
+            let bucket_len = BUCKET_S * baseband_rate;
             Ring::init_in_place(addr_of_mut!((*this).ring));
             addr_of_mut!((*this).detector).write(Detector::new(baseband_rate));
             fill(addr_of_mut!((*this).fold_slots), Cplx::ZERO);
@@ -244,14 +266,41 @@ impl Decoder {
             let walkers = addr_of_mut!((*this).walkers).cast::<Walker>();
             Walker::init_in_place(walkers, STEADY, bucket_len);
             Walker::init_in_place(walkers.add(1), MOVING, bucket_len);
+            #[cfg(feature = "profile")]
+            addr_of_mut!((*this).last_stage).write(Stage::Walk);
             Some(&mut *this)
         }
     }
 
     /// Feeds one sample of any scale, normally +-1.0. Returns an event when a chime
     /// ends.
+    ///
+    /// [`Decoder::push_block`] does the same for a block of samples, at a lower cost per
+    /// sample.
     pub fn push(&mut self, sample: f32) -> Option<Event> {
-        let baseband = self.front_end.push(sample, &mut self.ring)?;
+        let baseband = self.front_end.push_one(sample, &mut self.ring)?;
+        self.take_baseband(baseband)
+    }
+
+    /// Feeds a block of samples, as [`Decoder::push`] does one at a time, and calls
+    /// `on_event` with each event and the index in `block` of the sample that ended it.
+    pub fn push_block(&mut self, block: &[f32], mut on_event: impl FnMut(usize, Event)) {
+        let mut at = 0;
+        while at < block.len() {
+            let (taken, baseband) = self.front_end.push(&block[at..], &mut self.ring);
+            at += taken;
+            if let Some(event) = baseband.and_then(|baseband| self.take_baseband(baseband)) {
+                on_event(at - 1, event);
+            }
+        }
+    }
+
+    /// Everything after the front end, for one baseband sample.
+    fn take_baseband(&mut self, baseband: Baseband) -> Option<Event> {
+        #[cfg(feature = "profile")]
+        if self.last_stage == Stage::FrontEnd {
+            return None;
+        }
 
         // At the start of a walk a few buckets are waiting. Taking one for each baseband
         // sample bounds the work in one call of push, and the walk soon catches up. A
@@ -259,6 +308,10 @@ impl Decoder {
         // is a large cost.
         let was_walking = self.walking;
         if self.detector.push(baseband.limited, baseband.raw_power, was_walking) {
+            #[cfg(feature = "profile")]
+            if self.last_stage == Stage::Detector {
+                return None;
+            }
             self.search_for_symbols();
         }
         if was_walking {
@@ -272,6 +325,12 @@ impl Decoder {
             }
         }
         None
+    }
+
+    /// Makes [`Decoder::push`] stop after `stage`.
+    #[cfg(feature = "profile")]
+    pub fn set_last_stage(&mut self, stage: Stage) {
+        self.last_stage = stage;
     }
 
     /// RMS level of the 17 to 19 kHz band, in dBFS. This is a running average with a time
@@ -290,6 +349,10 @@ impl Decoder {
             self.detector.lag_product(),
             self.front_end.power_limit(),
         );
+        #[cfg(feature = "profile")]
+        if self.last_stage == Stage::Search {
+            return;
+        }
         if let Some(found) = found {
             self.walking = true;
             self.coherence = found.coherence;

@@ -15,18 +15,11 @@ use std::mem::MaybeUninit;
 use chime::format::TimeMessage;
 use chime::{Decoder, Event};
 
-/// The X8 phone remote's deployment ID, before its command byte.
-const REMOTE_MAGIC: &[u8; 7] = b"BATXREC";
-
 /// Two readings this close together, with the same contents, are one chime heard on two channels.
 const SAME_CHIME_SECS: f64 = 0.1;
 
 /// The X8 phone remote's command in a chime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RemoteCommand {
-    StartRecording,
-    StopRecording,
-}
+pub use chime::format::RemoteCommand;
 
 /// A chime that was read.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,15 +44,7 @@ pub struct FoundChime {
 
 impl FoundChime {
     pub fn remote_command(&self) -> Option<RemoteCommand> {
-        let id = self.deployment_id?;
-        if &id[..7] != REMOTE_MAGIC {
-            return None;
-        }
-        match id[7] {
-            1 => Some(RemoteCommand::StartRecording),
-            2 => Some(RemoteCommand::StopRecording),
-            _ => None,
-        }
+        RemoteCommand::from_deployment_id(self.deployment_id.as_ref()?)
     }
 
     /// The phone's local time as ISO 8601 with its UTC offset, such as
@@ -212,37 +197,11 @@ mod tests {
 
     const RATE: u32 = 192_000;
 
-    /// The library's waveform for a chime: start symbols, the bytes and CRC as Hamming-coded
-    /// symbol lengths, stop symbols. No melody.
+    /// A chime's 18 kHz symbols with no melody, from the chime crate's encoder, at `gain` times the
+    /// level the phone page plays them.
     fn render(payload: &[u8], gain: f32) -> Vec<f32> {
-        use chime::format::*;
-        let mut bytes = payload.to_vec();
-        let crc = crc16(payload);
-        bytes.extend_from_slice(&[crc as u8, (crc >> 8) as u8]);
-        let mut lengths = vec![START_STOP_US; START_SYMBOLS];
-        for byte in bytes {
-            let (low, high) = (HAMMING_CODEWORDS[(byte & 0x0f) as usize], HAMMING_CODEWORDS[(byte >> 4) as usize]);
-            for bit in 0..7 {
-                for word in [low, high] {
-                    lengths.push(if word >> bit & 1 == 1 { DATA_1_US } else { DATA_0_US });
-                }
-            }
-        }
-        lengths.extend(std::iter::repeat_n(START_STOP_US, STOP_SYMBOLS));
-        let mut out = Vec::new();
-        let mut polarity = 1.0f32;
-        for us in lengths {
-            let n = (us as u64 * RATE as u64 / 1_000_000) as usize;
-            let ramp = (RAMP_US as u64 * RATE as u64 / 1_000_000) as usize;
-            for i in 0..n {
-                let edge = (i.min(n - i) as f32 / ramp as f32).min(1.0);
-                let envelope = (edge * std::f32::consts::FRAC_PI_2).sin().powi(2);
-                let t = out.len() as f32 / RATE as f32;
-                out.push(gain * CARRIER_AMPLITUDE * polarity * envelope * (std::f32::consts::TAU * CARRIER_HZ as f32 * t).sin());
-            }
-            polarity = -polarity;
-        }
-        out
+        let carrier = chime::encode::render(RATE, payload, &[]).carrier;
+        carrier.iter().map(|&c| (c * (gain * chime::format::CARRIER_AMPLITUDE) as f64) as f32).collect()
     }
 
     fn payload(unix: u32, tz: i16, location: Option<[u8; 7]>, id: Option<&[u8; 8]>) -> Vec<u8> {
@@ -291,7 +250,7 @@ mod tests {
         assert_eq!(found.local_time_iso(), "2026-10-26T17:33:40+10:00");
         let (lat, lon) = found.location.unwrap();
         assert!((lat + 33.87).abs() < 1e-5 && (lon - 151.21).abs() < 1e-5, "{lat} {lon}");
-        assert_eq!(found.remote_command(), Some(RemoteCommand::StopRecording));
+        assert_eq!(found.remote_command(), Some(RemoteCommand::Stop));
         assert_eq!(found.deployment_id_hex().as_deref(), Some("4241545852454302"));
         assert!(found.snr_db.is_some());
     }

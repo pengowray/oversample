@@ -54,16 +54,20 @@
 //! The format constants and the Hamming codewords in [`format`] are taken from
 //! that encoder.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(test)]
 extern crate std;
 
 mod biquad;
 mod decoder;
+#[cfg(feature = "std")]
+pub mod encode;
 pub mod format;
 
 pub use decoder::Decoder;
+#[cfg(feature = "profile")]
+pub use decoder::Stage;
 pub use format::{LocalTime, MAX_PAYLOAD_BYTES, TimeMessage};
 
 /// A chime that was decoded and passed its CRC check.

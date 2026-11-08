@@ -1164,8 +1164,8 @@ fn channel_list(channels: &[u32]) -> String {
 
 fn chime_heading(chime: &FoundChime) -> String {
     let what = match chime.remote_command() {
-        Some(RemoteCommand::StartRecording) => CHIME_START,
-        Some(RemoteCommand::StopRecording) => CHIME_STOP,
+        Some(RemoteCommand::Start) => CHIME_START,
+        Some(RemoteCommand::Stop) => CHIME_STOP,
         None => CHIME_OTHER,
     };
     format!("{what} at {}", file_position(chime.start_secs))
