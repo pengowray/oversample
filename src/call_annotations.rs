@@ -2,12 +2,15 @@
 //! gives each kind of detection.
 //!
 //! Annotations made here carry the tag `auto=<detector id>`
-//! ([`DETECTOR_ID`]), so a later run can find and replace them. Annotations
-//! without that tag are never removed.
+//! ([`DETECTOR_ID`]), so a later run can find and replace them, including
+//! those from earlier versions of the detector (`auto=calls-1`). Annotations
+//! without such a tag are never removed.
 
 use crate::annotations::{Annotation, AnnotationId, AnnotationKind, Region};
 use oversample_core::annotation_tags::{self, Tag, AUTO, CALL, TRAIN};
-use oversample_core::dsp::call_detect::{CallKind, CallTrain, DetectedCall, DETECTOR_ID};
+use oversample_core::dsp::call_detect::{
+    is_detector_id, CallKind, CallTrain, DetectedCall, DETECTOR_ID,
+};
 
 /// What to add as annotations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +38,7 @@ pub fn kind_label(kind: CallKind) -> &'static str {
         CallKind::Bat => "Bat call",
         CallKind::Single => "Single call",
         CallKind::Tone => "Tone",
+        CallKind::Pulses => "Periodic pulse",
         CallKind::Broadband => "Broadband noise",
         CallKind::TooLow => "Low frequency",
         CallKind::Audible => "Audible sound",
@@ -70,9 +74,26 @@ fn detector_tags(kind: &str) -> Vec<String> {
     ]
 }
 
-/// True for an annotation made by this detector (tagged `auto=calls-1`).
+/// True for an annotation made by any version of this detector (tagged
+/// `auto=calls-1`, `auto=calls-2` and so on).
 pub fn is_from_detector(annotation: &Annotation) -> bool {
-    annotation_tags::value_of(&annotation.tags, None, AUTO).as_deref() == Some(DETECTOR_ID)
+    annotation_tags::value_of(&annotation.tags, None, AUTO).is_some_and(|v| is_detector_id(&v))
+}
+
+/// The `auto` tags on annotations from this detector, each once, in order,
+/// as the user sees them (`#auto=calls-1`).
+pub fn detector_tags_in(annotations: &[Annotation]) -> Vec<String> {
+    let mut values: Vec<String> = annotations
+        .iter()
+        .filter_map(|a| annotation_tags::value_of(&a.tags, None, AUTO))
+        .filter(|v| is_detector_id(v))
+        .collect();
+    values.sort();
+    values.dedup();
+    values
+        .into_iter()
+        .map(|v| format!("#{}", Tag::with_value(AUTO, &v).to_stored()))
+        .collect()
 }
 
 /// Build annotations for `calls` and `trains` (the trains' indices point
@@ -255,6 +276,7 @@ mod tests {
             end_s: (start + 960) as f64 / fs,
             kind,
             contour: Vec::new(),
+            steady_s: 0.0,
         }
     }
 
@@ -299,7 +321,7 @@ mod tests {
         assert!(b
             .annotations
             .iter()
-            .all(|a| a.tags == ["call", "auto=calls-1"]));
+            .all(|a| a.tags == ["call", "auto=calls-2"]));
         assert_eq!(label(&b.annotations[0]), "Call: 45.0 kHz");
 
         let all = build_call_annotations(&calls, &trains, AnnotateWhat::Calls, false, "t", ids());
@@ -313,7 +335,7 @@ mod tests {
         let b = build_call_annotations(&calls, &trains, AnnotateWhat::Trains, true, "t", ids());
         assert_eq!((b.calls, b.trains), (0, 2));
         let a = &b.annotations[0];
-        assert_eq!(a.tags, ["train", "auto=calls-1"]);
+        assert_eq!(a.tags, ["train", "auto=calls-2"]);
         assert_eq!(label(a), "Train: 3 calls, median 45.0 kHz");
         let AnnotationKind::Region(r) = &a.kind else {
             panic!("not a region")
@@ -392,6 +414,23 @@ mod tests {
     }
 
     #[test]
+    fn annotations_from_an_earlier_detector_version_are_replaced_too() {
+        let (calls, trains) = sample();
+        let mut set =
+            build_call_annotations(&calls, &trains, AnnotateWhat::Calls, true, "t", ids())
+                .annotations;
+        set[0].tags = vec!["call".into(), "auto=calls-1".into()];
+        let mut other = set[1].clone();
+        other.id = AnnotationId::from("other-detector");
+        other.tags = vec!["call".into(), "auto=birdnet-1".into()];
+        set.push(other);
+        assert_eq!(detector_tags_in(&set), ["#auto=calls-1", "#auto=calls-2"]);
+        assert_eq!(count_detector_annotations(&set), 7);
+        assert_eq!(remove_detector_annotations(&mut set), 7);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
     fn counts_match_what_is_built() {
         let (calls, trains) = sample();
         for what in [
@@ -417,6 +456,7 @@ mod tests {
             CallKind::Bat,
             CallKind::Single,
             CallKind::Tone,
+            CallKind::Pulses,
             CallKind::Broadband,
             CallKind::TooLow,
             CallKind::Audible,

@@ -73,6 +73,13 @@ impl Column<'_> {
     pub fn freq_bin(&self, hz: f32) -> usize {
         nearest_bin(hz, self.bin_hz, self.db.len() - 1)
     }
+
+    /// True when every bin reads [`MIN_DB`], which happens only when every
+    /// sample in the frame is zero: digital silence, such as padding or a
+    /// stretch cut out of a recording.
+    pub fn is_silent(&self) -> bool {
+        self.db.iter().all(|&v| v <= MIN_DB + 0.01)
+    }
 }
 
 fn nearest_bin(hz: f32, bin_hz: f32, last: usize) -> usize {
@@ -355,6 +362,18 @@ mod tests {
         let mut an = SpectrumAnalyzer::new(FS, 256);
         let cols = columns(&mut an, &[0.0; 256], 256);
         assert!(cols[0].1.iter().all(|&v| (v - MIN_DB).abs() < 0.01));
+    }
+
+    #[test]
+    fn only_all_zero_frames_are_silent() {
+        let mut an = SpectrumAnalyzer::new(FS, 256);
+        an.set_hop(256);
+        let mut x = vec![0.0; 512];
+        // One sample at the 16-bit step, in the second frame only.
+        x[400] = 1.0 / 32_768.0;
+        let mut silent = Vec::new();
+        an.push(&x, |c| silent.push(c.is_silent()));
+        assert_eq!(silent, [true, false]);
     }
 
     #[test]

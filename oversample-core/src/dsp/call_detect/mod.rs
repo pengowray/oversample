@@ -9,7 +9,7 @@
 //! 1. [`spectrum::SpectrumAnalyzer`] makes Hann-windowed FFT columns in dB.
 //! 2. [`detector::CallDetector`] finds calls against a per-bin noise floor.
 //! 3. [`classify::CallClassifier`] sorts each detection: bat call, single,
-//!    steady tone, broadband click, too low, or audible sound.
+//!    steady tone, regular pulses, broadband click, too low, or audible sound.
 //! 4. [`scan::CallScanner`] runs the three over a recording, records each
 //!    call's contour (its loudest frequency, column by column), and at the end
 //!    groups bat calls into [`trains::CallTrain`]s.
@@ -38,10 +38,27 @@ pub use spectrum::{Column, SpectrumAnalyzer};
 pub use trains::{group_trains, CallTrain, TrainParams};
 
 /// Names this detector and its settings in annotations it makes
-/// (`auto=calls-1`). Change it when a change to the detector or its defaults
-/// changes which calls it finds, so annotations from each version can be
-/// told apart.
-pub const DETECTOR_ID: &str = "calls-1";
+/// (`auto=calls-2`). Change the number when a change to the detector or its
+/// defaults changes which calls it finds, so annotations from each version
+/// can be told apart.
+///
+/// - `calls-1`: as ported from `bat-dsp`.
+/// - `calls-2`: digital silence is skipped (see [`scan`]), constant-frequency
+///   calls are recognised (see [`classify`]), and regular pulses have their
+///   own kind.
+pub const DETECTOR_ID: &str = "calls-2";
+
+/// The part of [`DETECTOR_ID`] before the version number.
+pub const DETECTOR_NAME: &str = "calls";
+
+/// True for an `auto` tag value made by any version of this detector:
+/// `calls-` followed by a number.
+pub fn is_detector_id(value: &str) -> bool {
+    value
+        .strip_prefix(DETECTOR_NAME)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
 
 /// Bin width the FFT size is chosen for, in Hz: 512 points at 192 kHz.
 pub const TARGET_BIN_HZ: f64 = 375.0;
@@ -76,6 +93,23 @@ impl FrameConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detector_ids_of_every_version_are_recognised() {
+        assert!(is_detector_id(DETECTOR_ID));
+        assert!(is_detector_id("calls-1"));
+        assert!(is_detector_id("calls-12"));
+        for other in [
+            "calls",
+            "calls-",
+            "calls-x",
+            "calls-1a",
+            "notcalls-1",
+            "bats-1",
+        ] {
+            assert!(!is_detector_id(other), "{other}");
+        }
+    }
 
     #[test]
     fn frames_keep_375_hz_bins_and_1_ms_columns_at_each_rate() {

@@ -10,8 +10,8 @@
 
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::{
-    build_call_annotations, count_call_annotations, count_detector_annotations, kind_label,
-    remove_detector_annotations, AnnotateWhat,
+    build_call_annotations, count_call_annotations, count_detector_annotations, detector_tags_in,
+    kind_label, remove_detector_annotations, AnnotateWhat,
 };
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
@@ -64,16 +64,21 @@ fn undo_keys() -> &'static str {
 fn kind_tooltip(kind: CallKind, params: &CallScanParams) -> String {
     match kind {
         CallKind::Bat => {
-            "A similar call (peak within 5 kHz) is within 0.6 s before or after this detection."
+            "A similar call (peak within 5 kHz) is within 0.6 s before or after this detection. \
+             At least one of the two is 18 dB or more above the noise floor, or both are \
+             constant-frequency (CF) calls with peaks within 1.5 kHz."
                 .to_string()
         }
         CallKind::Single => "Probably a bat call, but no similar call (peak within 5 kHz) is \
-                             within 0.6 s before or after this detection."
+                             within 0.6 s before or after this detection, or neither of the \
+                             two is 18 dB or more above the noise floor."
             .to_string(),
         CallKind::Tone => "Part of a steady tone lasting longer than 150 ms, such as a rat's \
-                           22 kHz alarm call or electrical hum. Also used for 8 or more sounds \
-                           with the same spacing (within 1 ms), usually electrical \
-                           interference. Bats vary the spacing of their calls."
+                           22 kHz alarm call or electrical hum."
+            .to_string(),
+        CallKind::Pulses => "Probably electrical interference. Part of a series of 8 or more \
+                             detections with peaks within 1.5 kHz and the same spacing between \
+                             them (within 1 ms). Bats vary the spacing of their calls."
             .to_string(),
         CallKind::Broadband => format!(
             "Probably a click, rustle or footstep. Its frequency range reaches within 1 kHz of \
@@ -95,15 +100,22 @@ fn kind_tooltip(kind: CallKind, params: &CallScanParams) -> String {
 
 fn row_tooltip(n: usize, call: &DetectedCall, train: Option<usize>) -> String {
     let mut text = format!(
-        "Detection {n}: {}\nStart: {}\nPeak frequency: {:.1} kHz\nFrequency range: {:.1} to {:.1} kHz\nDuration: {:.1} ms\nLevel: {:.1} dB above the noise floor",
+        "Detection {n}: {}\nStart: {}\nPeak frequency: {:.1} kHz\nFrequency range: {:.1} to {:.1} kHz\nDuration: {:.1} ms",
         kind_label(call.kind),
         crate::format_time::format_time_display(call.start_s, 3),
         call.event.peak_freq_hz / 1000.0,
         call.event.min_freq_hz / 1000.0,
         call.event.max_freq_hz / 1000.0,
         call.duration_ms(),
-        call.event.peak_db_above_floor,
     );
+    // How long a horseshoe or leaf-nosed bat's call held its constant frequency.
+    if call.is_constant_frequency() {
+        text.push_str(&format!("\nCF duration: {:.1} ms", call.steady_s * 1000.0));
+    }
+    text.push_str(&format!(
+        "\nLevel: {:.1} dB above the noise floor",
+        call.event.peak_db_above_floor
+    ));
     if call.kind == CallKind::Bat {
         match train {
             Some(t) => text.push_str(&format!("\nCall train: {}", t + 1)),
@@ -330,16 +342,22 @@ pub(crate) fn PulsePanel() -> impl IntoView {
             .with(|d| d.iter().filter(|c| c.kind == CallKind::Bat).count())
     });
     let total_count = Memo::new(move |_| state.pulse.detected().with(|d| d.len()));
-    // Annotations in this file made by the detector earlier.
+    // Annotations in this file made by the detector earlier, and their tags
+    // (an earlier version of the detector has its own tag).
     let existing_auto = Memo::new(move |_| {
         let Some(file_id) = current_file.get() else {
-            return 0;
+            return (0, Vec::new());
         };
         state.annotations.store().with(|store| {
             store
                 .get(file_id)
-                .map(|set| count_detector_annotations(&set.annotations))
-                .unwrap_or(0)
+                .map(|set| {
+                    (
+                        count_detector_annotations(&set.annotations),
+                        detector_tags_in(&set.annotations),
+                    )
+                })
+                .unwrap_or_default()
         })
     });
     let to_add = Memo::new(move |_| {
@@ -473,16 +491,17 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                 "No call trains found".to_string()
             }
         });
-        let existing = existing_auto.get();
+        let (existing, existing_tags) = existing_auto.get();
         let note = (existing > 0 && n > 0).then(|| {
+            let tags = existing_tags.join(" or ");
             if existing == 1 {
                 format!(
-                    "Replaces 1 annotation tagged #auto=calls-1, even if you edited it. Undo with {}.",
+                    "Replaces 1 annotation tagged {tags}, even if you edited it. Undo with {}.",
                     undo_keys()
                 )
             } else {
                 format!(
-                    "Replaces {existing} annotations tagged #auto=calls-1, including any you edited. Undo with {}.",
+                    "Replaces {existing} annotations tagged {tags}, including any you edited. Undo with {}.",
                     undo_keys()
                 )
             }

@@ -15,12 +15,21 @@
 //! the merge gap), so the scanner keeps the last columns, enough for the
 //! longest call, to trace it from.
 //!
+//! A column of digital silence (every sample zero, as in padding or where a
+//! stretch was cut out of a recording) is passed to the detector as missing
+//! input ([`CallDetector::gap`]), not as a column. Fed as a column, it would
+//! pull the noise floor down towards −200 dB; when sound came back, everything
+//! would be far above the floor for longer than a call lasts and be treated
+//! as background, so calls in the next second or so would be missed.
+//!
 //! When the classifier confirms a train on its second call, it hands back the
 //! first, reported earlier as a single; the scanner marks that call as a bat
 //! call too. At the end, [`CallScanner::finish`] groups the bat calls into
 //! trains with [`group_trains`].
 
-use super::classify::{CallClassifier, CallKind, DEFAULT_MIN_BAT_HZ};
+use super::classify::{
+    is_constant_frequency, CallClassifier, CallKind, CF_STEADY_HZ, DEFAULT_MIN_BAT_HZ,
+};
 use super::detector::{
     default_band_hi_hz, CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ,
     DEFAULT_MAX_CALL_MS, DEFAULT_MERGE_GAP_MS, DEFAULT_MIN_CALL_MS, DEFAULT_RANGE_DB,
@@ -143,11 +152,22 @@ pub struct DetectedCall {
     /// whose columns had already left the scanner's memory, which happens
     /// only for a call that ran across a [`CallScanner::gap`].
     pub contour: Vec<ContourPoint>,
+    /// Longest time the contour held one frequency, in seconds: the longest
+    /// run of points in consecutive columns that are all within
+    /// [`CF_STEADY_HZ`] of one another. Long for the constant-frequency
+    /// part of a horseshoe bat's call; short for a sweep.
+    pub steady_s: f64,
 }
 
 impl DetectedCall {
     pub fn duration_ms(&self) -> f64 {
         (self.end_s - self.start_s) * 1000.0
+    }
+
+    /// A constant-frequency call, as horseshoe and leaf-nosed bats make; see
+    /// [`is_constant_frequency`].
+    pub fn is_constant_frequency(&self) -> bool {
+        is_constant_frequency(self.steady_s, self.event.peak_freq_hz)
     }
 }
 
@@ -217,6 +237,8 @@ impl ColumnHistory {
 #[derive(Clone, Copy, Debug)]
 struct ContourSettings {
     sample_rate: f64,
+    /// Time between columns, in seconds.
+    hop_s: f64,
     bin_hz: f32,
     margin_hz: f32,
     range_db: f32,
@@ -264,6 +286,30 @@ fn trace_contour(
     let loudest = points.iter().map(|p| p.db).fold(f32::MIN, f32::max);
     points.retain(|p| p.db >= loudest - s.range_db);
     points
+}
+
+/// Longest time, in seconds, that a contour stays within [`CF_STEADY_HZ`]:
+/// the longest run of points in consecutive columns (`hop_s` apart) whose
+/// frequencies are all within that of one another.
+fn steady_span(points: &[ContourPoint], hop_s: f64) -> f64 {
+    let mut longest = 0.0f64;
+    let mut first = 0;
+    for (i, p) in points.iter().enumerate() {
+        if i > 0 && p.time_s - points[i - 1].time_s > 1.5 * hop_s {
+            first = i;
+        }
+        while first < i {
+            let run = &points[first..=i];
+            let lo = run.iter().map(|q| q.freq_hz).fold(f32::MAX, f32::min);
+            let hi = run.iter().map(|q| q.freq_hz).fold(f32::MIN, f32::max);
+            if hi - lo <= CF_STEADY_HZ {
+                break;
+            }
+            first += 1;
+        }
+        longest = longest.max(p.time_s - points[first].time_s);
+    }
+    longest
 }
 
 /// Offset (in bins, within ±0.5) and height of the peak of a parabola
@@ -327,6 +373,7 @@ impl CallScanner {
             analyzer,
             contour: ContourSettings {
                 sample_rate: sample_rate as f64,
+                hop_s: frame.hop as f64 / sample_rate as f64,
                 bin_hz: detector.bin_hz(),
                 margin_hz: params.contour_margin_hz.max(0.0),
                 range_db: params.contour_range_db.max(0.0),
@@ -371,7 +418,12 @@ impl CallScanner {
         } = self;
         analyzer.push(samples, |column| {
             history.push(column);
-            if let Some(event) = detector.process(column) {
+            let event = if column.is_silent() {
+                detector.gap()
+            } else {
+                detector.process(column)
+            };
+            if let Some(event) = event {
                 record(event, detector, classifier, history, contour, calls);
             }
         });
@@ -426,7 +478,8 @@ fn record(
     calls: &mut Vec<DetectedCall>,
 ) {
     let points = trace_contour(history, &event, |k| detector.floor_db(k), contour);
-    let verdict = classifier.classify(&event);
+    let steady_s = steady_span(&points, contour.hop_s);
+    let verdict = classifier.classify_with_steady(&event, steady_s);
     if let Some(first) = verdict.earlier {
         if let Some(c) = calls
             .iter_mut()
@@ -442,6 +495,7 @@ fn record(
         end_s: event.end_sample as f64 / contour.sample_rate,
         kind: verdict.kind,
         contour: points,
+        steady_s,
     });
 }
 
@@ -455,6 +509,7 @@ pub fn scan_calls(samples: &[f32], sample_rate: u32, params: &CallScanParams) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::call_detect::classify::CF_MIN_MS;
     use crate::dsp::call_detect::test_util::{add, faded_chirp, noise, sine};
 
     fn secs(rate: u32, s: f64) -> usize {
@@ -544,6 +599,97 @@ mod tests {
         let result = scan_calls(&x, rate, &CallScanParams::default());
         assert_found(&result, &starts, "horseshoe");
         assert!((result.calls[0].event.peak_freq_hz - 110_000.0).abs() < 400.0);
+        for c in &result.calls {
+            assert!(c.steady_s > 0.03, "{c:?}");
+        }
+    }
+
+    #[test]
+    fn faint_horseshoe_calls_are_bat_calls() {
+        // Constant-frequency calls at 110 kHz, about 16 dB above the floor:
+        // too faint for the train check's 18 dB, but steady for 15 ms or more.
+        let rate = 384_000;
+        let fs = rate as f32;
+        let mut x = noise(0.003, secs(rate, 1.5), 9);
+        let call = faded_chirp(fs, 110_000.0, 110_000.0, 0.002, secs(rate, 0.04));
+        let mut starts = Vec::new();
+        for i in 0..6 {
+            let t = 0.3 + 0.12 * i as f64 + 0.004 * (i % 3) as f64;
+            add(&mut x, secs(rate, t), &call);
+            starts.push(t);
+        }
+        let result = scan_calls(&x, rate, &CallScanParams::default());
+        assert!(
+            result
+                .calls
+                .iter()
+                .all(|c| c.event.peak_db_above_floor < 18.0 && c.steady_s * 1000.0 >= CF_MIN_MS),
+            "{:#?}",
+            result.calls
+        );
+        // The faded calls are found from where they rise above the threshold.
+        let starts: Vec<f64> = result.calls.iter().map(|c| c.start_s).collect();
+        assert_eq!(starts.len(), 6);
+        assert_found(&result, &starts, "faint horseshoe");
+    }
+
+    /// FM calls every 0.1 s from `from_s` for `count` calls, in noise, added
+    /// to `x`; returns their start times.
+    fn add_calls(x: &mut [f32], rate: u32, from_s: f64, count: usize, seed: u32) -> Vec<f64> {
+        let fs = rate as f32;
+        let call = faded_chirp(fs, 80_000.0, 40_000.0, 0.1, secs(rate, 0.005));
+        let mut starts = Vec::new();
+        for i in 0..count {
+            let t = from_s + i as f64 * 0.1 + 0.003 * ((i + seed as usize) * 7 % 5) as f64;
+            add(x, secs(rate, t), &call);
+            starts.push(t);
+        }
+        starts
+    }
+
+    #[test]
+    fn calls_just_after_a_stretch_of_digital_silence_are_found() {
+        // Calls, then 1 s of zeros, as where a recording was cut and joined,
+        // then calls straight away.
+        let rate = 192_000;
+        let mut x = noise(0.003, secs(rate, 3.0), 5);
+        x[secs(rate, 1.0)..secs(rate, 2.0)].fill(0.0);
+        let mut starts = add_calls(&mut x, rate, 0.3, 6, 0);
+        starts.extend(add_calls(&mut x, rate, 2.02, 8, 1));
+        let result = scan_calls(&x, rate, &CallScanParams::default());
+        assert_found(&result, &starts, "silence");
+    }
+
+    #[test]
+    fn leading_digital_silence_does_not_set_the_floor() {
+        let rate = 192_000;
+        let mut x = noise(0.003, secs(rate, 1.5), 7);
+        x[..secs(rate, 0.3)].fill(0.0);
+        let starts = add_calls(&mut x, rate, 0.4, 8, 0);
+        let result = scan_calls(&x, rate, &CallScanParams::default());
+        assert_found(&result, &starts, "leading silence");
+    }
+
+    #[test]
+    fn steady_span_measures_the_flat_part_of_a_contour() {
+        let hop = 0.001;
+        let point = |i: usize, khz: f32| ContourPoint {
+            time_s: i as f64 * hop,
+            freq_hz: khz * 1000.0,
+            db: 20.0,
+        };
+        // A rise, 20 ms flat within 0.5 kHz, a drop.
+        let mut pts = vec![point(0, 100.0), point(1, 106.0)];
+        pts.extend((2..23).map(|i| point(i, 110.0 + 0.5 * (i % 2) as f32)));
+        pts.extend([point(23, 104.0), point(24, 98.0)]);
+        assert!((steady_span(&pts, hop) - 0.020).abs() < 1e-9);
+        // A sweep of 0.4 kHz per column stays within 0.75 kHz for 1 column.
+        let sweep: Vec<ContourPoint> = (0..20).map(|i| point(i, 50.0 - 0.4 * i as f32)).collect();
+        assert!((steady_span(&sweep, hop) - 0.001).abs() < 1e-9);
+        // A missing column breaks the run.
+        let mut gap = pts.clone();
+        gap.remove(12);
+        assert!((steady_span(&gap, hop) - 0.009).abs() < 1e-9);
     }
 
     #[test]

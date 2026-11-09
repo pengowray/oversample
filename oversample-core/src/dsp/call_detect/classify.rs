@@ -16,7 +16,6 @@
 //!    1.5 kHz of it in that time are pieces of it too, so the tone does not
 //!    start again as a train of bat calls after each pause. Pieces of the
 //!    chain from before it reached 150 ms can no longer start a train.
-//!    Regular pulses count as a steady tone too (see below).
 //! 2. **Broadband**: the call's range reaches the bottom of the detection
 //!    band. Clicks and rustles are loudest at low frequencies and reach down
 //!    to it; bat calls stop well above it.
@@ -26,18 +25,20 @@
 //!    caught as broadband.
 //! 4. **Audible**: the audible band (2 to 12 kHz) was loud at the same moment
 //!    (default: more than 4 dB above its floor). Bats are silent there; birds,
-//!    voices and footsteps are not.
+//!    voices and footsteps are not. Constant-frequency calls are exempt (see
+//!    below).
 //! 5. **Train**: bats call in trains, several calls a second at similar
 //!    frequencies. A call that passes the first four checks is a bat call
 //!    once a similar call (peak within 5 kHz) passed them in the last 0.6 s,
-//!    and at least one of the two is 18 dB above the floor. Until then it is
-//!    a single.
+//!    and at least one of the two is 18 dB above the floor, or both are
+//!    constant-frequency calls (see below). Until then it is a single.
 //!
 //! The first call of a train only becomes a bat call when the second arrives,
 //! so [`Verdict::earlier`] hands it back then, for a display to mark too.
 //!
-//! **Regular pulses.** A detection that passes the first four checks is a
-//! piece of a steady tone when it extends a run of 8 or more pulses at a similar
+//! **Regular pulses.** A detection that passes the first four checks is one of
+//! a run of regular pulses ([`CallKind::Pulses`]) when it extends a run of 8
+//! or more pulses at a similar
 //! frequency (peak within 1.5 kHz) with the same spacing, within 1 ms, up to 3
 //! pulses in a row being allowed to go missing. Pulses that regular are not a bat's:
 //! bats vary the spacing of their calls. In 286 recordings (the library and the X8's),
@@ -47,7 +48,38 @@
 //! interference; that has not been checked. 261105_0082 has 3,570 such pulses, which
 //! the train check took for bat calls. With this check, it has none, and 276 of the
 //! 286 recordings have the same bat calls as before. Pieces of the run from before it
-//! reached 8 can no longer start a train.
+//! reached 8 can no longer start a train. (In `bat-dsp` these were reported as
+//! [`CallKind::Tone`].)
+//!
+//! **Constant-frequency calls.** Horseshoe and leaf-nosed bats (and Parnell's
+//! mustached bats) make long calls at one frequency, 10 to 90 ms, with a short
+//! sweep at each end, several times a second. The checks above, tuned on
+//! sweeps, lose many of them:
+//! - A faint call is narrow, because only its constant part rises above the
+//!   threshold, and two faint calls never make a train when neither is 18 dB
+//!   above the floor.
+//! - The audible check takes the loudest moment of the audible band anywhere
+//!   in the call, so a 50 ms call is more likely than a 3 ms sweep to meet a
+//!   bird or a rustle. Very loud calls that overload the recorder also put
+//!   sound into the audible band themselves.
+//!
+//! So a detection is a constant-frequency call when its contour (see
+//! [`scan`](super::scan)) stays within [`CF_STEADY_HZ`] for at least
+//! [`CF_MIN_MS`], and its peak is at least [`CF_MIN_HZ`]. Such a call skips the
+//! audible check, and two of them within 0.6 s with peaks within
+//! [`CF_FREQ_HZ`] make a train at any level. Below 40 kHz the rules stay as
+//! they were: steady sounds there include a rat's 22 kHz call and the upper
+//! harmonics of bird whistles, and most bats with long, nearly flat sweeps
+//! (noctules, free-tailed and sheath-tailed bats) call there. The steady-tone
+//! and regular-pulse checks still come first.
+//!
+//! On the 288 recordings in `bat-demo-sounds`, at each file's own rate, this
+//! raised bat calls in the 34 recordings of horseshoe, leaf-nosed and mustached
+//! bats from 3,029 to 3,243, and moved none the other way. In the other 254
+//! recordings it changed 4 detections, all bat calls of a soprano pipistrelle
+//! (XC1060750) and a greater dog-like bat (XC821954) that the audible check
+//! had taken: 2 steady 10 ms calls near 60 kHz and one of 16 ms at 44 kHz,
+//! and a call that then had a partner.
 //!
 //! Tuned on Portacapture X8 recordings at 192 kHz (call detector with
 //! 512-point columns every 128 samples): of 97 calls from a bat at 45 to
@@ -117,6 +149,25 @@ pub const REGULAR_MIN_PULSES: u32 = 8;
 /// whole columns, so this is at least a column at the app's 1 ms per column.
 pub const REGULAR_TOLERANCE_MS: f32 = 1.0;
 
+/// Most a constant-frequency stretch of a call may vary, from its lowest to
+/// its highest point; see [`DetectedCall::steady_s`](super::DetectedCall::steady_s).
+pub const CF_STEADY_HZ: f32 = 750.0;
+/// A detection whose frequency holds steady at least this long can be a
+/// constant-frequency call.
+pub const CF_MIN_MS: f64 = 10.0;
+/// A constant-frequency call peaks at or above this.
+pub const CF_MIN_HZ: f32 = 40_000.0;
+/// Most two constant-frequency calls' peaks may differ and still make a
+/// train without either being 18 dB above the floor.
+pub const CF_FREQ_HZ: f32 = 1_500.0;
+
+/// Whether a detection that held one frequency for `steady_s` seconds and
+/// peaked at `peak_hz` is a constant-frequency call: steady for at least
+/// [`CF_MIN_MS`], at [`CF_MIN_HZ`] or above.
+pub fn is_constant_frequency(steady_s: f64, peak_hz: f32) -> bool {
+    steady_s * 1000.0 >= CF_MIN_MS && peak_hz >= CF_MIN_HZ
+}
+
 /// A range whose bottom is within this of the band's bottom reaches it.
 const EDGE_MARGIN_HZ: f32 = 1_000.0;
 /// Recent calls remembered for trains.
@@ -135,8 +186,11 @@ const MOST_SPACINGS: u64 = 4;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallKind {
     /// A piece of a steady tone lasting longer than a bat call, such as a
-    /// rat's 22 kHz alarm call, or one of a run of regular pulses.
+    /// rat's 22 kHz alarm call.
     Tone,
+    /// One of a run of regular pulses: evenly spaced at one frequency, which
+    /// bats' calls are not.
+    Pulses,
     /// Reaches the bottom of the detection band: a click or rustle.
     Broadband,
     /// Peak below the lowest bat frequency.
@@ -162,6 +216,9 @@ struct Recent {
     event: CallEvent,
     /// Already reported as a bat call, directly or as `earlier`.
     bat: bool,
+    /// A constant-frequency call: held one frequency for at least CF_MIN_MS,
+    /// at CF_MIN_HZ or above.
+    constant: bool,
 }
 
 /// A narrow detection, kept to see whether it continues a chain.
@@ -297,13 +354,27 @@ impl CallClassifier {
     /// When the latest detection was a piece of a steady tone, where the tone
     /// started: the first piece of the chain that made it a tone. Pauses of
     /// up to 2 s, after which pieces still count as the same tone, are
-    /// included.
+    /// included. For one of a run of regular pulses, the run's first pulse.
     pub fn tone_start(&self) -> Option<u64> {
         self.last_was_tone.then_some(self.tone_since)
     }
 
-    /// Classify the next detection. Detections must come in time order.
+    /// Classify the next detection, without its contour, so it cannot count
+    /// as a constant-frequency call (as in `bat-dsp`). Detections must come
+    /// in time order.
     pub fn classify(&mut self, event: &CallEvent) -> Verdict {
+        self.classify_with_steady(event, 0.0)
+    }
+
+    /// Classify the next detection, given how long its loudest frequency
+    /// held steady, in seconds (see
+    /// [`DetectedCall::steady_s`](super::DetectedCall::steady_s)). Steady for
+    /// [`CF_MIN_MS`] or more with its peak at [`CF_MIN_HZ`] or above, it is a
+    /// constant-frequency call: it skips the audible check, and two such
+    /// calls with peaks within [`CF_FREQ_HZ`] make a train at any level. See
+    /// the module documentation. Detections must come in time order.
+    pub fn classify_with_steady(&mut self, event: &CallEvent, steady_s: f64) -> Verdict {
+        let constant = is_constant_frequency(steady_s, event.peak_freq_hz);
         self.last_was_tone = self.is_tone(event);
         let kind = if self.last_was_tone {
             CallKind::Tone
@@ -311,7 +382,7 @@ impl CallClassifier {
             CallKind::Broadband
         } else if event.peak_freq_hz < self.min_bat_hz {
             CallKind::TooLow
-        } else if event.audible_db_above_floor > self.max_audible_db {
+        } else if event.audible_db_above_floor > self.max_audible_db && !constant {
             CallKind::Audible
         } else {
             CallKind::Single
@@ -326,7 +397,7 @@ impl CallClassifier {
             self.last_was_tone = true;
             self.tone_since = first;
             return Verdict {
-                kind: CallKind::Tone,
+                kind: CallKind::Pulses,
                 earlier: None,
             };
         }
@@ -336,13 +407,15 @@ impl CallClassifier {
         for (i, slot) in self.recent.iter().enumerate() {
             let Some(r) = slot else { continue };
             let gap = event.start_sample.saturating_sub(r.event.start_sample);
-            let similar = (r.event.peak_freq_hz - event.peak_freq_hz).abs() <= self.train_freq_hz;
+            let freq_diff = (r.event.peak_freq_hz - event.peak_freq_hz).abs();
+            let similar = freq_diff <= self.train_freq_hz;
             let strong =
                 r.event.peak_db_above_floor.max(event.peak_db_above_floor) >= self.train_min_db;
+            let both_constant = constant && r.constant && freq_diff <= CF_FREQ_HZ;
             let later = partner.is_none_or(|p| {
                 self.recent[p].is_some_and(|q| r.event.start_sample > q.event.start_sample)
             });
-            if gap <= self.train_window && similar && strong && later {
+            if gap <= self.train_window && ((similar && strong) || both_constant) && later {
                 partner = Some(i);
             }
         }
@@ -363,6 +436,7 @@ impl CallClassifier {
         self.recent[self.next] = Some(Recent {
             event: *event,
             bat: verdict.kind == CallKind::Bat,
+            constant,
         });
         self.next = (self.next + 1) % RECENT;
         verdict
@@ -544,14 +618,14 @@ mod tests {
         for spacing_ms in [10.0, 17.0, 50.0, 401.0] {
             let mut c = classifier();
             let kinds = pulses(&mut c, 1.0, spacing_ms, 20, 44.6);
-            let first_tone = kinds.iter().position(|&k| k == CallKind::Tone).unwrap();
+            let first_tone = kinds.iter().position(|&k| k == CallKind::Pulses).unwrap();
             assert_eq!(
                 first_tone,
                 REGULAR_MIN_PULSES as usize - 1,
                 "{spacing_ms}: {kinds:?}"
             );
             assert!(
-                kinds[first_tone..].iter().all(|&k| k == CallKind::Tone),
+                kinds[first_tone..].iter().all(|&k| k == CallKind::Pulses),
                 "{spacing_ms}: {kinds:?}"
             );
         }
@@ -563,7 +637,7 @@ mod tests {
         for i in (0..30).filter(|i| ![5, 12, 13, 14].contains(i)) {
             let kind = c.classify(&call(1.0 + i as f32 * 0.010, 44.6, 40.0)).kind;
             if i > 10 {
-                assert_eq!(kind, CallKind::Tone, "pulse {i}");
+                assert_eq!(kind, CallKind::Pulses, "pulse {i}");
             }
         }
     }
@@ -747,6 +821,57 @@ mod tests {
         assert_eq!(c.classify(&bird).kind, CallKind::Audible);
         // None of them start a train.
         assert_eq!(c.classify(&call(1.3, 22.0, 30.0)).kind, CallKind::Single);
+    }
+
+    #[test]
+    fn faint_constant_frequency_calls_make_a_train() {
+        // Two 15 ms horseshoe calls at 102 kHz, 13 and 15 dB above the floor,
+        // steady for their whole length.
+        let mut c = classifier();
+        let first = piece(1.0, 15.0, 102.0, 13.0);
+        assert_eq!(c.classify_with_steady(&first, 0.015).kind, CallKind::Single);
+        let second = piece(1.1, 15.0, 102.5, 15.0);
+        let v = c.classify_with_steady(&second, 0.015);
+        assert_eq!(v.kind, CallKind::Bat);
+        assert_eq!(v.earlier, Some(first));
+    }
+
+    #[test]
+    fn faint_calls_that_are_not_steady_need_a_strong_partner() {
+        // The same pair held steady for only 5 ms, as a sweep would.
+        let mut c = classifier();
+        c.classify_with_steady(&piece(1.0, 15.0, 102.0, 13.0), 0.005);
+        let v = c.classify_with_steady(&piece(1.1, 15.0, 102.5, 15.0), 0.005);
+        assert_eq!(v.kind, CallKind::Single);
+        // Steady, but 2 kHz apart.
+        let mut c = classifier();
+        c.classify_with_steady(&piece(1.0, 15.0, 102.0, 13.0), 0.015);
+        let v = c.classify_with_steady(&piece(1.1, 15.0, 104.0, 15.0), 0.015);
+        assert_eq!(v.kind, CallKind::Single);
+        // Steady, but below the lowest constant frequency.
+        let mut c = classifier();
+        c.classify_with_steady(&piece(1.0, 15.0, 30.0, 13.0), 0.015);
+        let v = c.classify_with_steady(&piece(1.1, 15.0, 30.0, 15.0), 0.015);
+        assert_eq!(v.kind, CallKind::Single);
+    }
+
+    #[test]
+    fn a_constant_frequency_call_is_not_taken_for_an_audible_sound() {
+        let mut c = classifier();
+        let mut loud = piece(1.0, 60.0, 109.0, 80.0);
+        loud.audible_db_above_floor = 20.0;
+        assert_eq!(c.classify_with_steady(&loud, 0.05).kind, CallKind::Single);
+        // Not steady: still an audible sound.
+        let mut sweep = call(1.2, 60.0, 40.0);
+        sweep.audible_db_above_floor = 20.0;
+        assert_eq!(
+            c.classify_with_steady(&sweep, 0.004).kind,
+            CallKind::Audible
+        );
+        // Steady, but at a bird's harmonic's frequency.
+        let mut bird = piece(1.4, 30.0, 25.0, 30.0);
+        bird.audible_db_above_floor = 12.0;
+        assert_eq!(c.classify_with_steady(&bird, 0.03).kind, CallKind::Audible);
     }
 
     #[test]

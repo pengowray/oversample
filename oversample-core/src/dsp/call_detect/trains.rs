@@ -161,6 +161,7 @@ mod tests {
             end_s: end as f64 / FS,
             kind,
             contour: Vec::new(),
+            steady_s: 0.0,
         }
     }
 

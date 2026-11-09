@@ -1,6 +1,6 @@
 [package]
 name = "oversample-core"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "DSP, audio codecs, color mapping, and spectrogram rendering core for bat call analysis"
