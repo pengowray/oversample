@@ -5927,8 +5927,9 @@ button.toolbar-overflow-btn {
 }
 
 /* Country picker row: name on the left, the group's recording count for
-   that country right-aligned and muted, so the names stay easy to scan. */
-.xc-combobox-option:has(.xc-country-count) {
+   that country right-aligned and muted, so the names stay easy to scan.
+   Every option is a flex row (no :has()), for older WebKitGTK. */
+.xc-combobox-option {
     display: flex;
     align-items: baseline;
     gap: 8px;
