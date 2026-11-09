@@ -12,12 +12,23 @@
 //!   Oversample proxy, which adds a server key. The proxy rejects any request
 //!   that carries a `key` parameter, so none is ever sent to it.
 //!
+//! The Oversample server also keeps an index of every recording in each
+//! group. Species lists come from its `/xc/taxonomy/{group}` endpoint in all
+//! three modes. While the server is still building a group's index it answers
+//! 202 with its progress, and [`browse_group`] asks again every few seconds.
+//! With the user's own key, a server that is unreachable or fails is skipped
+//! and the list is built locally as before, so those users never depend on
+//! the Oversample server. In Proxy mode the species' recordings also come
+//! from the index (`/xc/recordings/{group}`), and the country picker uses
+//! `/xc/countries/{group}` in every mode.
+//!
 //! Direct and Proxy share one code path: the same JSON parsing as the native
 //! side (`xc_lib::api`), a species-list builder (`xc_lib::taxonomy`) driven
-//! page by page from here, and a taxonomy cache in OPFS that both sources use.
+//! page by page from here, and a taxonomy cache in OPFS that all sources use.
+//! Native mode falls back to the Tauri commands, which have their own cache.
 //!
-//! The pure helpers (URL building, error classification) are unit-tested on
-//! the host; the fetch wrappers are thin.
+//! The pure helpers (URL building, error classification, fallback decisions)
+//! are unit-tested on the host; the fetch wrappers are thin.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -49,12 +60,13 @@ const TAXONOMY_PER_PAGE: u32 = 500;
 /// Minimum gap between requests from the browser. XC asks for at most one
 /// request per second; the proxy refills one search token per second.
 const MIN_REQUEST_GAP_MS: f64 = 1100.0;
-/// The proxy will page through at most this many pages for one species list.
-/// Larger groups (birds, grasshoppers) need a country filter or the user's
-/// own key. Each 500-result page takes about 5 s, so this is about 5 minutes.
-pub const PROXY_MAX_TAXONOMY_PAGES: u32 = 60;
-/// [`PROXY_MAX_TAXONOMY_PAGES`] in recordings, for messages.
-pub const PROXY_MAX_TAXONOMY_RECORDINGS: u32 = PROXY_MAX_TAXONOMY_PAGES * TAXONOMY_PER_PAGE;
+/// Seconds to wait before asking the server again while it builds an index,
+/// when its reply has no usable `Retry-After` header.
+const DEFAULT_RETRY_SECS: u32 = 5;
+/// Limits on the server's `Retry-After`, so a bad value neither floods the
+/// server nor leaves the user waiting for minutes.
+const MIN_RETRY_SECS: u32 = 2;
+const MAX_RETRY_SECS: u32 = 60;
 /// With the user's own key, a species list estimated to take longer than
 /// this stops after page 1 and returns [`XcError::LongBuild`] so the user can
 /// confirm.
@@ -107,12 +119,6 @@ pub enum XcError {
     /// HTTP 413: the file is larger than the proxy will relay. [`download`]
     /// fills in the recording's id.
     TooLarge { id: Option<u64> },
-    /// Proxy only: this group needs more than [`PROXY_MAX_TAXONOMY_PAGES`].
-    GroupTooLarge {
-        group: String,
-        country: Option<String>,
-        recordings: u32,
-    },
     /// Own key on the web: building this species list would take longer than
     /// [`LONG_BUILD_SECS`]. Call [`browse_group`] again with `allow_long` to
     /// go ahead.
@@ -157,12 +163,43 @@ pub struct BuildProgress {
     pub secs_left: f64,
 }
 
-/// How old a species list is.
-pub enum TaxonomyAge {
-    /// Already formatted by the native cache (`xc_lib::cache`).
-    Text(String),
-    /// Seconds since the list was built (web paths).
-    Seconds(f64),
+/// The Oversample server's progress while it builds a group's index (the
+/// body of its 202 reply). `pages_total` is 0 until the server knows it.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+pub struct ServerIndexing {
+    pub pages_done: u32,
+    pub pages_total: u32,
+}
+
+/// Progress of a species list, for the progress line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TaxonomyProgress {
+    /// The list is being built here, page by page (own key, web).
+    Local(BuildProgress),
+    /// The Oversample server is still indexing the group; we wait for it.
+    Server(ServerIndexing),
+}
+
+/// One country in a group, from the server's `/xc/countries/{group}`.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct CountryCount {
+    /// XC's country name, as in a recording's `cnt` field.
+    pub country: String,
+    pub recordings: u32,
+    pub species: u32,
+}
+
+/// A reply from one of the server's index endpoints.
+#[derive(Debug, PartialEq)]
+enum ServerReply {
+    /// HTTP 200 with this body.
+    Ready(String),
+    /// HTTP 202: the group is still being indexed. Ask again after
+    /// `retry_secs` seconds.
+    Indexing {
+        status: ServerIndexing,
+        retry_secs: u32,
+    },
 }
 
 // ── Source selection and key storage ────────────────────────────────
@@ -268,9 +305,15 @@ pub async fn search(src: &XcSource, query: &str, page: u32) -> Result<XcSearchRe
     }
 }
 
-/// One page of recordings of a species.
+/// One page of recordings of a species in `group`.
+///
+/// Proxy mode reads the server's index (`/xc/recordings/{group}`), so
+/// browsing does not send searches to Xeno-canto. If the server is still
+/// indexing the group (202) or has no such endpoint (404), it falls back to a
+/// live search through the proxy. Native and Direct search XC as before.
 pub async fn species_recordings(
     src: &XcSource,
+    group: &str,
     genus: &str,
     species: &str,
     page: u32,
@@ -286,20 +329,43 @@ pub async fn species_recordings(
         )
         .await
         .map_err(XcError::Other),
-        _ => web_search(src, &species_query(genus, species), page, PER_PAGE).await,
+        XcSource::Proxy => {
+            let url =
+                server_recordings_url(&proxy_base(), group, genus, species, None, page, PER_PAGE);
+            match server_get(&url).await {
+                Ok(ServerReply::Ready(body)) => parse_search_body(&body),
+                Ok(ServerReply::Indexing { .. }) => {
+                    web_search(src, &species_query(genus, species), page, PER_PAGE).await
+                }
+                Err(e) if index_route_missing(&e) => {
+                    log::warn!("Server has no recordings index, searching live: {e:?}");
+                    web_search(src, &species_query(genus, species), page, PER_PAGE).await
+                }
+                Err(e) => Err(e),
+            }
+        }
+        XcSource::Direct { .. } => {
+            web_search(src, &species_query(genus, species), page, PER_PAGE).await
+        }
     }
 }
 
 /// The species list for a group, optionally limited to one country.
 ///
-/// Uses the cache unless `refresh` is set. On the web paths a build pages
-/// through every recording in the group, calling `progress` after each page
-/// and stopping with [`XcError::Cancelled`] as soon as `keep_going()` returns
-/// false. Through the proxy, a group over [`PROXY_MAX_TAXONOMY_PAGES`] stops
-/// with [`XcError::GroupTooLarge`]. With the user's own key, a build that
-/// would take over [`LONG_BUILD_SECS`] stops after page 1 with
-/// [`XcError::LongBuild`] unless `allow_long` is set. The native path
-/// reports no progress and never asks.
+/// Order of sources:
+/// 1. The cached list (OPFS), unless `refresh` is set.
+/// 2. The Oversample server's index (`/xc/taxonomy/{group}`), in every mode.
+///    While the server answers 202 it reports [`TaxonomyProgress::Server`]
+///    and asks again every few seconds until the list is ready or
+///    `keep_going()` returns false ([`XcError::Cancelled`]).
+/// 3. With the user's own key, if the server failed (see
+///    [`falls_back_to_local`]): the list is built locally. Native calls the
+///    Tauri command. Direct pages through every recording in the group from
+///    the browser, reporting [`TaxonomyProgress::Local`] after each page;
+///    a build that would take over [`LONG_BUILD_SECS`] stops after page 1
+///    with [`XcError::LongBuild`] unless `allow_long` is set.
+///
+/// In Proxy mode a server failure is returned as the error.
 #[allow(clippy::too_many_arguments)]
 pub async fn browse_group(
     src: &XcSource,
@@ -307,9 +373,27 @@ pub async fn browse_group(
     country: Option<&str>,
     refresh: bool,
     allow_long: bool,
-    mut progress: impl FnMut(BuildProgress),
+    mut progress: impl FnMut(TaxonomyProgress),
     keep_going: impl Fn() -> bool,
 ) -> Result<XcGroupTaxonomy, XcError> {
+    let cache_key = taxonomy_cache_key(group, country);
+    if !refresh {
+        if let Some(cached) = load_cached_taxonomy(&cache_key).await {
+            return Ok(cached);
+        }
+    }
+
+    match server_taxonomy(group, country, &mut progress, &keep_going).await {
+        Ok(taxonomy) => {
+            save_cached_taxonomy(&cache_key, &taxonomy).await;
+            return Ok(taxonomy);
+        }
+        Err(e) if falls_back_to_local(src, &e) => {
+            log::warn!("Oversample server species list failed, building it here: {e:?}");
+        }
+        Err(e) => return Err(e),
+    }
+
     if *src == XcSource::Native {
         let cmd = if refresh {
             "xc_refresh_taxonomy"
@@ -327,65 +411,55 @@ pub async fn browse_group(
         .map_err(XcError::Other);
     }
 
-    let cache_key = taxonomy_cache_key(group, country);
-    if !refresh {
-        if let Some(cached) = load_cached_taxonomy(&cache_key).await {
-            return Ok(cached);
-        }
-    }
-
     let query = xc_lib::taxonomy::group_query(group, country);
     let acc = build_taxonomy(
-        *src == XcSource::Proxy,
         allow_long,
         group,
         country,
         |page| web_search(src, &query, page, TAXONOMY_PER_PAGE),
         js_sys::Date::now,
-        &mut progress,
+        &mut |p| progress(TaxonomyProgress::Local(p)),
         &keep_going,
     )
     .await?;
 
     let now: String = js_sys::Date::new_0().to_iso_string().into();
     let taxonomy = acc.finish(now);
-    match serde_json::to_string(&taxonomy) {
-        Ok(json) => {
-            if let Err(e) = crate::opfs::opfs_save_in(TAXONOMY_OPFS_DIR, &cache_key, &json).await {
-                log::warn!("XC species list not cached: {e}");
-            }
-        }
-        Err(e) => log::warn!("XC species list not cached: {e}"),
-    }
+    save_cached_taxonomy(&cache_key, &taxonomy).await;
     Ok(taxonomy)
 }
 
-/// How old the species list for this group is. `taxonomy` is the list just
-/// returned by [`browse_group`]; the web paths read its timestamp.
-pub async fn taxonomy_age(
-    src: &XcSource,
-    group: &str,
-    country: Option<&str>,
-    taxonomy: &XcGroupTaxonomy,
-) -> Option<TaxonomyAge> {
-    if *src == XcSource::Native {
-        let val = tauri_invoke_with_args(
-            "xc_taxonomy_age",
-            &XcGroupArgs {
-                group: group.to_string(),
-                country: country.map(str::to_string),
-            },
-        )
-        .await
-        .ok()?;
-        return val.as_string().map(TaxonomyAge::Text);
-    }
+/// Seconds since `taxonomy` was built, from its `last_updated` timestamp.
+/// The server, xc-lib and the browser build all write RFC 3339 times. For a
+/// list from the server this is the time of the server's last update of the
+/// group, not the time it was downloaded.
+pub fn taxonomy_age_secs(taxonomy: &XcGroupTaxonomy) -> Option<f64> {
     let built_ms = js_sys::Date::parse(&taxonomy.last_updated);
     if built_ms.is_nan() {
         return None;
     }
-    let secs = ((js_sys::Date::now() - built_ms) / 1000.0).max(0.0);
-    Some(TaxonomyAge::Seconds(secs))
+    Some(((js_sys::Date::now() - built_ms) / 1000.0).max(0.0))
+}
+
+/// The countries with recordings in `group`, with their counts, from the
+/// server's index. `None` if the server is unreachable, fails, or is still
+/// indexing the group; the caller then shows its built-in country list.
+pub async fn group_countries(group: &str) -> Option<Vec<CountryCount>> {
+    let url = server_countries_url(&proxy_base(), group);
+    match server_get(&url).await {
+        Ok(ServerReply::Ready(body)) => match parse_countries(&body) {
+            Ok(list) => Some(list),
+            Err(e) => {
+                log::warn!("Country list from server not read: {e}");
+                None
+            }
+        },
+        Ok(ServerReply::Indexing { .. }) => None,
+        Err(e) => {
+            log::warn!("Country list from server failed: {e:?}");
+            None
+        }
+    }
 }
 
 /// Download a recording's audio with everything the loader needs.
@@ -458,9 +532,58 @@ async fn web_search(
     let url = search_url(src, &proxy_base(), query, page, per_page)
         .ok_or_else(|| XcError::Other("no web source".into()))?;
     let text = get_text(&url, src.uses_own_key()).await?;
-    let body: serde_json::Value = serde_json::from_str(&text)
+    parse_search_body(&text)
+}
+
+/// Parse an XC search response, or the server's `/xc/recordings` reply,
+/// which has the same shape.
+fn parse_search_body(text: &str) -> Result<XcSearchResult, XcError> {
+    let body: serde_json::Value = serde_json::from_str(text)
         .map_err(|e| XcError::Other(format!("unexpected response: {e}")))?;
     xc_lib::api::parse_search_response(&body).map_err(XcError::Other)
+}
+
+/// The species list from the server's index, waiting while it is built.
+async fn server_taxonomy(
+    group: &str,
+    country: Option<&str>,
+    progress: &mut impl FnMut(TaxonomyProgress),
+    keep_going: &impl Fn() -> bool,
+) -> Result<XcGroupTaxonomy, XcError> {
+    let url = server_taxonomy_url(&proxy_base(), group, country);
+    let body = poll_until_ready(
+        || server_get(&url),
+        |secs| crate::web_util::sleep_ms((secs * 1000) as i32),
+        progress,
+        keep_going,
+    )
+    .await?;
+    serde_json::from_str(&body)
+        .map_err(|e| XcError::Other(format!("unexpected species list from server: {e}")))
+}
+
+/// GET one of the server's index endpoints. A 202 is returned as
+/// [`ServerReply::Indexing`]; any other non-2xx status is an error. The
+/// server never sees the user's key, so a 401/403 is not
+/// [`XcError::BadKey`].
+async fn server_get(url: &str) -> Result<ServerReply, XcError> {
+    let resp = fetch(url).await?;
+    let status = resp.status();
+    // Only readable if the server lists it in Access-Control-Expose-Headers.
+    let retry_after = resp.headers().get("Retry-After").ok().flatten();
+    let body = read_text(&resp).await;
+    server_reply(status, body, retry_after.as_deref())
+}
+
+async fn save_cached_taxonomy(cache_key: &str, taxonomy: &XcGroupTaxonomy) {
+    match serde_json::to_string(taxonomy) {
+        Ok(json) => {
+            if let Err(e) = crate::opfs::opfs_save_in(TAXONOMY_OPFS_DIR, cache_key, &json).await {
+                log::warn!("XC species list not cached: {e}");
+            }
+        }
+        Err(e) => log::warn!("XC species list not cached: {e}"),
+    }
 }
 
 async fn load_cached_taxonomy(cache_key: &str) -> Option<XcGroupTaxonomy> {
@@ -490,28 +613,38 @@ async fn throttle() {
     }
 }
 
-/// GET `url`; on a non-2xx status, read the body for the error message.
-async fn get_ok(url: &str, own_key: bool) -> Result<web_sys::Response, XcError> {
+/// Wait for a request slot, then GET `url`. Any HTTP status is returned as
+/// a response; only a failed connection is an error.
+async fn fetch(url: &str) -> Result<web_sys::Response, XcError> {
     throttle().await;
     let window = web_sys::window().ok_or_else(|| XcError::Other("no window".into()))?;
-    let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
+    JsFuture::from(window.fetch_with_str(url))
         .await
         .map_err(|_| XcError::Network)?
         .dyn_into()
-        .map_err(|_| XcError::Other("fetch did not return a Response".into()))?;
-    if resp.ok() {
-        return Ok(resp);
-    }
-    let status = resp.status();
-    let body = match resp.text() {
+        .map_err(|_| XcError::Other("fetch did not return a Response".into()))
+}
+
+/// The response body as text, or an empty string if it can't be read.
+async fn read_text(resp: &web_sys::Response) -> String {
+    match resp.text() {
         Ok(p) => JsFuture::from(p)
             .await
             .ok()
             .and_then(|v| v.as_string())
             .unwrap_or_default(),
         Err(_) => String::new(),
-    };
-    Err(classify_http_error(status, &body, own_key))
+    }
+}
+
+/// GET `url`; on a non-2xx status, read the body for the error message.
+async fn get_ok(url: &str, own_key: bool) -> Result<web_sys::Response, XcError> {
+    let resp = fetch(url).await?;
+    if resp.ok() {
+        return Ok(resp);
+    }
+    let body = read_text(&resp).await;
+    Err(classify_http_error(resp.status(), &body, own_key))
 }
 
 async fn get_text(url: &str, own_key: bool) -> Result<String, XcError> {
@@ -542,28 +675,17 @@ enum Step {
     Next(u32),
     /// That was the last page.
     Done,
-    /// Proxy only: the group has more than [`PROXY_MAX_TAXONOMY_PAGES`].
-    TooLarge,
     /// Own key: the whole build would take `est_secs`, over [`LONG_BUILD_SECS`].
     AskFirst { est_secs: f64 },
 }
 
 /// Decide the next step after `page` of `num_pages` arrived. `ms_per_page` is
 /// the average time per page so far. Only page 1 can return `AskFirst`.
-fn after_page(
-    is_proxy: bool,
-    allow_long: bool,
-    page: u32,
-    num_pages: u32,
-    ms_per_page: f64,
-) -> Step {
-    if is_proxy && num_pages > PROXY_MAX_TAXONOMY_PAGES {
-        return Step::TooLarge;
-    }
+fn after_page(allow_long: bool, page: u32, num_pages: u32, ms_per_page: f64) -> Step {
     if page >= num_pages {
         return Step::Done;
     }
-    if page == 1 && !is_proxy && !allow_long {
+    if page == 1 && !allow_long {
         let est_secs = estimate_secs(ms_per_page, num_pages);
         if est_secs > LONG_BUILD_SECS {
             return Step::AskFirst { est_secs };
@@ -580,9 +702,7 @@ fn estimate_secs(ms_per_page: f64, pages: u32) -> f64 {
 
 /// Page through a group search and count its species. `fetch_page(n)` gets
 /// page `n`; `now_ms` reads the clock, for the time estimates.
-#[allow(clippy::too_many_arguments)]
 async fn build_taxonomy<F, Fut>(
-    is_proxy: bool,
     allow_long: bool,
     group: &str,
     country: Option<&str>,
@@ -608,15 +728,8 @@ where
             return Err(XcError::Cancelled);
         }
         let ms_per_page = (now_ms() - started) / page as f64;
-        let step = after_page(is_proxy, allow_long, page, result.num_pages, ms_per_page);
+        let step = after_page(allow_long, page, result.num_pages, ms_per_page);
         match step {
-            Step::TooLarge => {
-                return Err(XcError::GroupTooLarge {
-                    group: group.to_string(),
-                    country: country.map(str::to_string),
-                    recordings: result.num_recordings,
-                })
-            }
             Step::AskFirst { est_secs } => {
                 return Err(XcError::LongBuild {
                     group: group.to_string(),
@@ -644,7 +757,147 @@ where
     }
 }
 
+/// Ask the server until it has the data. `fetch()` makes one request;
+/// `sleep(secs)` waits between them. Each 202 reply is reported to
+/// `progress`. Stops with [`XcError::Cancelled`] as soon as `keep_going()`
+/// returns false.
+async fn poll_until_ready<F, Fut, S, SFut>(
+    mut fetch: F,
+    mut sleep: S,
+    progress: &mut impl FnMut(TaxonomyProgress),
+    keep_going: &impl Fn() -> bool,
+) -> Result<String, XcError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<ServerReply, XcError>>,
+    S: FnMut(u32) -> SFut,
+    SFut: std::future::Future<Output = ()>,
+{
+    loop {
+        if !keep_going() {
+            return Err(XcError::Cancelled);
+        }
+        let reply = fetch().await?;
+        if !keep_going() {
+            return Err(XcError::Cancelled);
+        }
+        match reply {
+            ServerReply::Ready(body) => return Ok(body),
+            ServerReply::Indexing { status, retry_secs } => {
+                progress(TaxonomyProgress::Server(status));
+                sleep(retry_secs).await;
+            }
+        }
+    }
+}
+
 // ── Pure helpers (host-tested) ──────────────────────────────────────
+
+/// With the user's own key, whether a failed server request should be
+/// replaced by a local build. Any failure counts (unreachable, 404, 5xx,
+/// rate limit, unreadable reply), so these users never depend on the
+/// Oversample server. In Proxy mode there is nothing to fall back to.
+fn falls_back_to_local(src: &XcSource, e: &XcError) -> bool {
+    src.uses_own_key() && *e != XcError::Cancelled
+}
+
+/// Whether a server error means the index endpoint does not exist (an
+/// older server), so a live search should be used instead.
+fn index_route_missing(e: &XcError) -> bool {
+    matches!(e, XcError::Http { status: 404, .. })
+}
+
+/// `{base}/xc/taxonomy/{group}`, with `?country=` when one is chosen.
+fn server_taxonomy_url(base: &str, group: &str, country: Option<&str>) -> String {
+    use crate::web_util::encode_component as enc;
+    let mut url = format!("{base}/xc/taxonomy/{}", enc(group));
+    if let Some(c) = country {
+        url.push_str(&format!("?country={}", enc(c)));
+    }
+    url
+}
+
+/// `{base}/xc/countries/{group}`.
+fn server_countries_url(base: &str, group: &str) -> String {
+    format!(
+        "{base}/xc/countries/{}",
+        crate::web_util::encode_component(group)
+    )
+}
+
+/// `{base}/xc/recordings/{group}?gen=..&sp=..[&country=..]&page=..&per_page=..`.
+/// `per_page` is clamped to the server's range, 50 to 500.
+fn server_recordings_url(
+    base: &str,
+    group: &str,
+    genus: &str,
+    species: &str,
+    country: Option<&str>,
+    page: u32,
+    per_page: u32,
+) -> String {
+    use crate::web_util::encode_component as enc;
+    let mut url = format!(
+        "{base}/xc/recordings/{}?gen={}&sp={}",
+        enc(group),
+        enc(genus),
+        enc(species)
+    );
+    if let Some(c) = country {
+        url.push_str(&format!("&country={}", enc(c)));
+    }
+    url.push_str(&format!(
+        "&page={}&per_page={}",
+        page.max(1),
+        per_page.clamp(50, 500)
+    ));
+    url
+}
+
+/// Sort a server reply into [`ServerReply`] or an error. `retry_after` is
+/// the `Retry-After` header, if the browser let us read it.
+fn server_reply(
+    status: u16,
+    body: String,
+    retry_after: Option<&str>,
+) -> Result<ServerReply, XcError> {
+    match status {
+        202 => Ok(ServerReply::Indexing {
+            status: parse_indexing(&body),
+            retry_secs: retry_secs(retry_after),
+        }),
+        200..=299 => Ok(ServerReply::Ready(body)),
+        _ => Err(classify_http_error(status, &body, false)),
+    }
+}
+
+/// The progress in a 202 body: `{"status":"indexing","pages_done":3,"pages_total":23}`.
+/// An unreadable body counts as no progress yet.
+fn parse_indexing(body: &str) -> ServerIndexing {
+    serde_json::from_str(body).unwrap_or(ServerIndexing {
+        pages_done: 0,
+        pages_total: 0,
+    })
+}
+
+/// Seconds to wait from a `Retry-After` header given in seconds, kept
+/// between [`MIN_RETRY_SECS`] and [`MAX_RETRY_SECS`].
+fn retry_secs(header: Option<&str>) -> u32 {
+    header
+        .and_then(|h| h.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT_RETRY_SECS)
+        .clamp(MIN_RETRY_SECS, MAX_RETRY_SECS)
+}
+
+/// The body of `/xc/countries/{group}`: `[{"country":..,"recordings":..,"species":..}]`.
+/// Entries with an empty name or no recordings are dropped.
+fn parse_countries(body: &str) -> Result<Vec<CountryCount>, String> {
+    let list: Vec<CountryCount> = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    Ok(list
+        .into_iter()
+        .filter(|c| !c.country.trim().is_empty() && c.recordings > 0)
+        .collect())
+}
 
 /// Book the next request slot. Returns `(slot, new_next)`: the request may
 /// start at `slot`, and the one after it at `new_next`.
@@ -875,18 +1128,11 @@ mod tests {
     /// Build a list whose search has `num_pages` pages. Each fetch takes
     /// `ms_per_page` on a fake clock. `stop_after` makes keep_going() false
     /// once that many pages have been fetched.
-    fn build(
-        is_proxy: bool,
-        allow_long: bool,
-        num_pages: u32,
-        ms_per_page: f64,
-        stop_after: Option<usize>,
-    ) -> Run {
+    fn build(allow_long: bool, num_pages: u32, ms_per_page: f64, stop_after: Option<usize>) -> Run {
         let fetched = std::cell::RefCell::new(Vec::new());
         let clock = Cell::new(0.0);
         let mut progress = Vec::new();
         let result = run(build_taxonomy(
-            is_proxy,
             allow_long,
             "bats",
             None,
@@ -910,7 +1156,7 @@ mod tests {
     #[test]
     fn zero_or_one_page_stops_after_one_request() {
         for pages in [0, 1] {
-            let r = build(false, false, pages, 5000.0, None);
+            let r = build(false, pages, 5000.0, None);
             assert_eq!(r.result, Ok(()));
             assert_eq!(r.fetched, [1]);
             assert_eq!(r.progress.len(), 1);
@@ -920,28 +1166,9 @@ mod tests {
     }
 
     #[test]
-    fn proxy_allows_limit_and_rejects_one_more() {
-        let r = build(true, false, PROXY_MAX_TAXONOMY_PAGES, 100.0, None);
-        assert_eq!(r.result, Ok(()));
-        assert_eq!(r.fetched.len(), PROXY_MAX_TAXONOMY_PAGES as usize);
-
-        let r = build(true, false, PROXY_MAX_TAXONOMY_PAGES + 1, 100.0, None);
-        assert_eq!(
-            r.result,
-            Err(XcError::GroupTooLarge {
-                group: "bats".into(),
-                country: None,
-                recordings: (PROXY_MAX_TAXONOMY_PAGES + 1) * 500,
-            })
-        );
-        assert_eq!(r.fetched, [1]);
-        assert!(r.progress.is_empty());
-    }
-
-    #[test]
     fn direct_has_no_page_limit() {
         // 61 pages at the 1.1 s minimum is about 67 s, under the long-build limit.
-        let r = build(false, false, PROXY_MAX_TAXONOMY_PAGES + 1, 0.0, None);
+        let r = build(false, 61, 0.0, None);
         assert_eq!(r.result, Ok(()));
         assert_eq!(r.fetched.len(), 61);
         let last = r.progress.last().unwrap();
@@ -952,7 +1179,7 @@ mod tests {
     #[test]
     fn long_direct_build_asks_after_page_one() {
         // 2105 pages at 5 s each is about 2.9 hours.
-        let r = build(false, false, 2105, 5000.0, None);
+        let r = build(false, 2105, 5000.0, None);
         match r.result {
             Err(XcError::LongBuild {
                 recordings,
@@ -967,21 +1194,21 @@ mod tests {
         assert_eq!(r.fetched, [1]);
 
         // allow_long goes ahead (stopped early here to keep the test short).
-        let r = build(false, true, 2105, 5000.0, Some(3));
+        let r = build(true, 2105, 5000.0, Some(3));
         assert_eq!(r.result, Err(XcError::Cancelled));
         assert_eq!(r.fetched, [1, 2, 3]);
     }
 
     #[test]
     fn progress_estimate_uses_measured_time() {
-        let r = build(false, false, 4, 5000.0, None);
+        let r = build(false, 4, 5000.0, None);
         let secs: Vec<f64> = r.progress.iter().map(|p| p.secs_left).collect();
         assert_eq!(secs, [15.0, 10.0, 5.0, 0.0]);
     }
 
     #[test]
     fn cancel_after_fetch_adds_no_page() {
-        let r = build(false, false, 5, 0.0, Some(2));
+        let r = build(false, 5, 0.0, Some(2));
         assert_eq!(r.result, Err(XcError::Cancelled));
         assert_eq!(r.fetched, [1, 2]);
         assert_eq!(r.progress.len(), 1, "page 2 was fetched but not added");
@@ -1008,5 +1235,237 @@ mod tests {
             }
         );
         assert!(!s.contains("secret"));
+    }
+
+    // ── Server index endpoints ──
+
+    #[test]
+    fn server_urls_encode_group_and_country() {
+        assert_eq!(
+            server_taxonomy_url("https://p.example", "land mammals", None),
+            "https://p.example/xc/taxonomy/land%20mammals"
+        );
+        assert_eq!(
+            server_taxonomy_url("https://p.example", "bats", Some("Côte d'Ivoire")),
+            "https://p.example/xc/taxonomy/bats?country=C%C3%B4te%20d%27Ivoire"
+        );
+        assert_eq!(
+            server_countries_url("https://p.example", "land mammals"),
+            "https://p.example/xc/countries/land%20mammals"
+        );
+    }
+
+    #[test]
+    fn server_recordings_url_params() {
+        assert_eq!(
+            server_recordings_url("b", "bats", "Myotis", "daubentonii", None, 2, 100),
+            "b/xc/recordings/bats?gen=Myotis&sp=daubentonii&page=2&per_page=100"
+        );
+        assert_eq!(
+            server_recordings_url(
+                "b",
+                "land mammals",
+                "Vulpes",
+                "vulpes",
+                Some("United States"),
+                0,
+                10
+            ),
+            "b/xc/recordings/land%20mammals?gen=Vulpes&sp=vulpes&country=United%20States\
+             &page=1&per_page=50"
+        );
+        assert!(!server_recordings_url("b", "bats", "a", "b", None, 1, 100).contains("key"));
+    }
+
+    #[test]
+    fn server_reply_by_status() {
+        assert_eq!(
+            server_reply(200, "[]".into(), None),
+            Ok(ServerReply::Ready("[]".into()))
+        );
+        assert_eq!(
+            server_reply(
+                202,
+                r#"{"status":"indexing","pages_done":3,"pages_total":23}"#.into(),
+                Some("5")
+            ),
+            Ok(ServerReply::Indexing {
+                status: ServerIndexing {
+                    pages_done: 3,
+                    pages_total: 23
+                },
+                retry_secs: 5
+            })
+        );
+        // A 401 from the server is never about the user's own key.
+        assert_eq!(
+            server_reply(401, String::new(), None),
+            Err(XcError::Http {
+                status: 401,
+                message: None
+            })
+        );
+        assert_eq!(
+            server_reply(404, r#"{"error":"unknown group"}"#.into(), None),
+            Err(XcError::Http {
+                status: 404,
+                message: Some("unknown group".into())
+            })
+        );
+        assert_eq!(
+            server_reply(503, String::new(), None),
+            Err(XcError::Busy(None))
+        );
+    }
+
+    #[test]
+    fn indexing_progress_parsing() {
+        assert_eq!(
+            parse_indexing(r#"{"status":"indexing","pages_done":0,"pages_total":0}"#),
+            ServerIndexing {
+                pages_done: 0,
+                pages_total: 0
+            }
+        );
+        // An unreadable body counts as no progress yet.
+        assert_eq!(
+            parse_indexing("<html>"),
+            ServerIndexing {
+                pages_done: 0,
+                pages_total: 0
+            }
+        );
+    }
+
+    #[test]
+    fn retry_after_is_clamped() {
+        assert_eq!(retry_secs(None), 5);
+        assert_eq!(retry_secs(Some(" 10 ")), 10);
+        assert_eq!(retry_secs(Some("0")), MIN_RETRY_SECS);
+        assert_eq!(retry_secs(Some("3600")), MAX_RETRY_SECS);
+        // HTTP-date form is not used by the server; use the default.
+        assert_eq!(retry_secs(Some("Wed, 21 Oct 2026 07:28:00 GMT")), 5);
+    }
+
+    #[test]
+    fn countries_parsing() {
+        let body = r#"[{"country":"Australia","recordings":22,"species":9},
+                      {"country":"","recordings":3,"species":1},
+                      {"country":"Brazil","recordings":0,"species":0}]"#;
+        assert_eq!(
+            parse_countries(body),
+            Ok(vec![CountryCount {
+                country: "Australia".into(),
+                recordings: 22,
+                species: 9
+            }])
+        );
+        assert!(parse_countries(r#"{"error":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn fallback_decisions() {
+        let direct = XcSource::Direct { key: "k".into() };
+        let http = |status| XcError::Http {
+            status,
+            message: None,
+        };
+        for e in [
+            XcError::Network,
+            XcError::Busy(None),
+            XcError::Upstream(None),
+            XcError::RateLimited,
+            http(404),
+            http(500),
+            XcError::Other("bad json".into()),
+        ] {
+            assert!(falls_back_to_local(&direct, &e), "{e:?}");
+            assert!(falls_back_to_local(&XcSource::Native, &e), "{e:?}");
+            assert!(!falls_back_to_local(&XcSource::Proxy, &e), "{e:?}");
+        }
+        assert!(!falls_back_to_local(&direct, &XcError::Cancelled));
+
+        assert!(index_route_missing(&http(404)));
+        assert!(!index_route_missing(&http(500)));
+        assert!(!index_route_missing(&XcError::Network));
+    }
+
+    fn indexing(done: u32, total: u32) -> Result<ServerReply, XcError> {
+        Ok(ServerReply::Indexing {
+            status: ServerIndexing {
+                pages_done: done,
+                pages_total: total,
+            },
+            retry_secs: 5,
+        })
+    }
+
+    #[test]
+    fn poll_waits_while_indexing() {
+        let replies = std::cell::RefCell::new(vec![
+            indexing(1, 23),
+            indexing(5, 23),
+            Ok(ServerReply::Ready("{}".into())),
+        ]);
+        let slept = std::cell::RefCell::new(Vec::new());
+        let mut progress = Vec::new();
+        let body = run(poll_until_ready(
+            || std::future::ready(replies.borrow_mut().remove(0)),
+            |secs| {
+                slept.borrow_mut().push(secs);
+                std::future::ready(())
+            },
+            &mut |p| progress.push(p),
+            &|| true,
+        ));
+        assert_eq!(body, Ok("{}".to_string()));
+        assert_eq!(slept.into_inner(), [5, 5]);
+        assert_eq!(
+            progress,
+            [
+                TaxonomyProgress::Server(ServerIndexing {
+                    pages_done: 1,
+                    pages_total: 23
+                }),
+                TaxonomyProgress::Server(ServerIndexing {
+                    pages_done: 5,
+                    pages_total: 23
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn poll_stops_on_cancel_and_on_error() {
+        let calls = Cell::new(0);
+        let result = run(poll_until_ready(
+            || {
+                calls.set(calls.get() + 1);
+                std::future::ready(indexing(1, 23))
+            },
+            |_| std::future::ready(()),
+            &mut |_| {},
+            &|| calls.get() < 2,
+        ));
+        assert_eq!(result, Err(XcError::Cancelled));
+        assert_eq!(calls.get(), 2, "the reply after the stop is not reported");
+
+        let result = run(poll_until_ready(
+            || std::future::ready(Err(XcError::Network)),
+            |_| std::future::ready(()),
+            &mut |_| {},
+            &|| true,
+        ));
+        assert_eq!(result, Err(XcError::Network));
+    }
+
+    #[test]
+    fn server_taxonomy_body_matches_frontend_type() {
+        let body = r#"{"group":"bats","country":null,"species":[{"gen":"Myotis",
+            "sp":"daubentonii","en":"Daubenton's Bat","fam":"","recording_count":12}],
+            "total_recordings":11494,"last_updated":"2026-11-09T05:00:00Z"}"#;
+        let t: XcGroupTaxonomy = serde_json::from_str(body).unwrap();
+        assert_eq!(t.species[0].genus, "Myotis");
+        assert_eq!(t.total_recordings, 11494);
     }
 }

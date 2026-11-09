@@ -5889,7 +5889,8 @@ button.toolbar-overflow-btn {
     position: absolute;
     top: 100%;
     left: 0;
-    width: 200px;
+    /* Wide enough for a long country name and its recording count. */
+    width: 240px;
     max-height: 240px;
     overflow-y: auto;
     background: #2a2a3a;
@@ -5923,6 +5924,31 @@ button.toolbar-overflow-btn {
 .xc-combobox-option.sel {
     color: #6ea8fe;
     font-weight: 600;
+}
+
+/* Country picker row: name on the left, the group's recording count for
+   that country right-aligned and muted, so the names stay easy to scan. */
+.xc-combobox-option:has(.xc-country-count) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.xc-country-name {
+    flex: 1;
+    min-width: 0;
+}
+
+.xc-country-count {
+    color: #888;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.xc-combobox-option:hover .xc-country-count,
+.xc-combobox-option.highlight .xc-country-count {
+    color: #bbb;
 }
 
 .xc-cache-info {

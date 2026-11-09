@@ -15,7 +15,7 @@
 
 use crate::state::store_fields::*;
 use crate::state::AppState;
-use crate::xc_client::{self, BuildProgress, TaxonomyAge, XcError, XcSource};
+use crate::xc_client::{self, CountryCount, ServerIndexing, TaxonomyProgress, XcError, XcSource};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_ipc::xc::{XcGroupTaxonomy, XcRecording, XcSearchResult, XcSpecies};
@@ -73,6 +73,13 @@ const SEARCH_PLACEHOLDER: &str = "Search (e.g. Myotis daubentonii, or grp:bats c
 const BTN_STOP: &str = "Stop";
 /// Starts a long species-list build after the warning.
 const BTN_LOAD_ALL: &str = "Load all";
+
+/// Without your own key: what the proxy option means.
+const NO_KEY_INTRO: &str = "Oversample's server sends your requests to Xeno-canto and saves the \
+     results, so the newest recordings may be missing.";
+/// After Stop while waiting for the server to build a species list.
+const STOPPED_WAITING_FOR_SERVER: &str = "Stopped waiting for the species list. Oversample's \
+     server is still building it. Click Go to check again.";
 
 const ERR_NETWORK_PROXY: &str = "Couldn't connect to Oversample's server. Check your internet \
      connection, or add your own API key.";
@@ -153,28 +160,19 @@ fn text_duration(secs: f64) -> String {
     }
 }
 
-/// Without your own key, the proxy option and its limit.
-fn text_no_key_intro() -> String {
-    format!(
-        "Oversample's server sends your requests to Xeno-canto. Results can be up to 24 hours \
-         old, and species lists are limited to {} recordings, so large groups such as birds \
-         need a country.",
-        with_commas(xc_client::PROXY_MAX_TAXONOMY_RECORDINGS)
-    )
-}
-
-/// Loading line while a species list is built. `None` before page 1 arrives.
-fn text_progress(group: &str, country: Option<&str>, p: Option<BuildProgress>) -> String {
+/// Loading line while a species list loads. `None` before the first reply.
+fn text_progress(group: &str, country: Option<&str>, p: Option<TaxonomyProgress>) -> String {
     let what = group_phrase(group, country);
     match p {
         None => format!("Loading species list for {what}..."),
-        Some(p) if p.secs_left >= 30.0 => format!(
+        Some(TaxonomyProgress::Server(s)) => text_server_progress(group, s),
+        Some(TaxonomyProgress::Local(p)) if p.secs_left >= 30.0 => format!(
             "Loading species list for {what}: {} of {} recordings, {} left",
             with_commas(p.recordings_done),
             with_commas(p.total_recordings),
             text_duration(p.secs_left)
         ),
-        Some(p) => format!(
+        Some(TaxonomyProgress::Local(p)) => format!(
             "Loading species list for {what}: {} of {} recordings",
             with_commas(p.recordings_done),
             with_commas(p.total_recordings)
@@ -182,20 +180,34 @@ fn text_progress(group: &str, country: Option<&str>, p: Option<BuildProgress>) -
     }
 }
 
-/// After Stop. `p` is the last progress seen, if any page had arrived.
-fn text_stopped(country: Option<&str>, p: Option<BuildProgress>) -> String {
-    let what = match p {
-        Some(p) => format!(
-            "Species list stopped after {} of {} recordings.",
-            with_commas(p.recordings_done),
-            with_commas(p.total_recordings)
-        ),
-        None => "Species list stopped.".to_string(),
-    };
-    if country.is_some() {
-        format!("{what} Click Go to start again.")
-    } else {
-        format!("{what} Choose a country for a shorter list, or click Go to start again.")
+/// While the server builds its index of `group`. The server indexes the
+/// whole group, so the country is left out. Percent rather than pages,
+/// because the user never sees the server's pages.
+fn text_server_progress(group: &str, s: ServerIndexing) -> String {
+    if s.pages_total == 0 {
+        return format!("Oversample's server is building the species list for {group}...");
+    }
+    let pct = (s.pages_done.min(s.pages_total) as u64 * 100 / s.pages_total as u64) as u32;
+    format!("Oversample's server is building the species list for {group}: {pct}% done")
+}
+
+/// After Stop. `p` is the last progress seen, if any reply had arrived.
+fn text_stopped(country: Option<&str>, p: Option<TaxonomyProgress>) -> String {
+    match p {
+        Some(TaxonomyProgress::Server(_)) => STOPPED_WAITING_FOR_SERVER.to_string(),
+        Some(TaxonomyProgress::Local(p)) => {
+            let what = format!(
+                "Species list stopped after {} of {} recordings.",
+                with_commas(p.recordings_done),
+                with_commas(p.total_recordings)
+            );
+            if country.is_some() {
+                format!("{what} Click Go to start again.")
+            } else {
+                format!("{what} Choose a country for a shorter list, or click Go to start again.")
+            }
+        }
+        None => "Species list stopped. Click Go to start again.".to_string(),
     }
 }
 
@@ -214,20 +226,24 @@ fn text_long_build(group: &str, country: Option<&str>, recordings: u32, est_secs
     }
 }
 
-/// Proxy: the group is over the species-list limit.
-fn text_group_too_large(group: &str, country: Option<&str>, recordings: u32) -> String {
-    let limit = with_commas(xc_client::PROXY_MAX_TAXONOMY_RECORDINGS);
-    let head = format!(
-        "{} has {} recordings, too many to list without your own API key. The limit is {limit} \
-         recordings.",
-        group_title(group, country),
-        with_commas(recordings)
-    );
-    if country.is_some() {
-        format!("{head} Add your API key to list them.")
+/// Country picker: the number of recordings beside a country, matching the
+/// "Recs" column of the species list.
+fn text_country_recs(recordings: u32) -> String {
+    if recordings == 1 {
+        "1 rec".to_string()
     } else {
-        format!("{head} Choose a country, or add your API key.")
+        format!("{} recs", with_commas(recordings))
     }
+}
+
+/// Country picker: hover text for a country's counts.
+fn text_country_counts_title(recordings: u32, species: u32) -> String {
+    format!(
+        "{} recording{}, {} species",
+        with_commas(recordings),
+        if recordings == 1 { "" } else { "s" },
+        with_commas(species)
+    )
 }
 
 /// Any other HTTP error when the server gave no message.
@@ -265,11 +281,6 @@ fn error_text(e: &XcError, src: &XcSource) -> String {
         XcError::Upstream(_) => ERR_UPSTREAM_DIRECT.to_string(),
         XcError::BadKey(_) => ERR_BAD_KEY.to_string(),
         XcError::TooLarge { id } => text_too_large(*id),
-        XcError::GroupTooLarge {
-            group,
-            country,
-            recordings,
-        } => text_group_too_large(group, country.as_deref(), *recordings),
         XcError::LongBuild {
             group,
             country,
@@ -292,9 +303,7 @@ fn error_text(e: &XcError, src: &XcSource) -> String {
 fn error_actions(e: &XcError, src: &XcSource) -> ErrorActions {
     let is_proxy = *src == XcSource::Proxy;
     match e {
-        XcError::GroupTooLarge { .. } | XcError::TooLarge { .. } | XcError::Busy(_) if is_proxy => {
-            ErrorActions::AddKey
-        }
+        XcError::TooLarge { .. } | XcError::Busy(_) if is_proxy => ErrorActions::AddKey,
         XcError::BadKey(_) => ErrorActions::FixKey,
         _ => ErrorActions::None,
     }
@@ -317,6 +326,44 @@ fn xc_countries() -> Vec<&'static str> {
     XC_COUNTRIES_RAW.lines().filter(|l| !l.is_empty()).collect()
 }
 
+/// One row of the country picker. `counts` is (recordings, species) when the
+/// server's country list for the group is loaded.
+#[derive(Clone, Debug, PartialEq)]
+struct CountryOption {
+    name: String,
+    counts: Option<(u32, u32)>,
+}
+
+/// The rows of the country picker that match `filter` (case-insensitive
+/// substring). With the server's list for the group, only countries with
+/// recordings are listed, with their counts. Without it, the built-in list.
+fn country_options(
+    server: Option<&[CountryCount]>,
+    builtin: &[&str],
+    filter: &str,
+) -> Vec<CountryOption> {
+    let filter = filter.trim().to_lowercase();
+    let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
+    match server {
+        Some(list) if !list.is_empty() => list
+            .iter()
+            .filter(|c| matches(&c.country))
+            .map(|c| CountryOption {
+                name: c.country.clone(),
+                counts: Some((c.recordings, c.species)),
+            })
+            .collect(),
+        _ => builtin
+            .iter()
+            .filter(|name| matches(name))
+            .map(|name| CountryOption {
+                name: name.to_string(),
+                counts: None,
+            })
+            .collect(),
+    }
+}
+
 fn format_sample_rate(smp: &str) -> String {
     match smp.parse::<u64>() {
         Ok(hz) if hz >= 1000 => format!("{}kHz", hz / 1000),
@@ -335,6 +382,7 @@ enum BrowserView {
     KeySetup,
     GroupBrowse,
     SpeciesRecordings {
+        group: String,
         genus: String,
         species: String,
         en: String,
@@ -374,8 +422,9 @@ pub fn XcBrowser() -> impl IntoView {
     let taxonomy_loading = RwSignal::new(false);
     // The group and country of the build in progress, for its progress line.
     let taxonomy_target: RwSignal<(String, Option<String>)> = RwSignal::new((String::new(), None));
-    // Progress of a species list built in the browser, after each page.
-    let taxonomy_progress: RwSignal<Option<BuildProgress>> = RwSignal::new(None);
+    // Progress of a species list: pages built in the browser, or the
+    // server's progress while it indexes the group.
+    let taxonomy_progress: RwSignal<Option<TaxonomyProgress>> = RwSignal::new(None);
     // Bumped to cancel a running species-list build.
     let taxonomy_gen = RwSignal::new(0u64);
     // Bumped for each recordings request, so an older response is dropped.
@@ -394,17 +443,40 @@ pub fn XcBrowser() -> impl IntoView {
     let country_filter_text = RwSignal::new(String::new());
     let country_highlight_idx = RwSignal::new(0usize);
     let countries = xc_countries();
+    // The server's countries for each group, once fetched. A group whose
+    // fetch failed has no entry, and the picker shows the built-in list.
+    let country_counts: RwSignal<std::collections::HashMap<String, Vec<CountryCount>>> =
+        RwSignal::new(std::collections::HashMap::new());
+    // Bumped for each country-list request, so a slow reply for a group the
+    // user has already left is dropped.
+    let countries_gen = RwSignal::new(0u64);
     let filtered_countries = Memo::new(move |_| {
-        let filter = country_filter_text.get().to_lowercase();
-        if filter.is_empty() {
-            countries.clone()
-        } else {
-            countries
-                .iter()
-                .copied()
-                .filter(|c| c.to_lowercase().contains(&filter))
-                .collect::<Vec<_>>()
+        let filter = country_filter_text.get();
+        let group = selected_group.get();
+        country_counts
+            .with(|m| country_options(m.get(&group).map(Vec::as_slice), &countries, &filter))
+    });
+
+    // Fetch the server's country list for the selected group, once per
+    // group. Failures are ignored.
+    Effect::new(move |_| {
+        let group = selected_group.get();
+        if source.get().is_none() || country_counts.with_untracked(|m| m.contains_key(&group)) {
+            return;
         }
+        let my_gen = countries_gen.get_untracked() + 1;
+        countries_gen.set(my_gen);
+        spawn_local(async move {
+            let list = xc_client::group_countries(&group).await;
+            if countries_gen.try_get_untracked() != Some(my_gen) {
+                return;
+            }
+            if let Some(list) = list {
+                country_counts.try_update(|m| {
+                    m.insert(group, list);
+                });
+            }
+        });
     });
 
     // Pick the source: the proxy if chosen before, else a saved key, else ask.
@@ -587,14 +659,7 @@ pub fn XcBrowser() -> impl IntoView {
                 }
             };
             if let Some(t) = taxonomy {
-                let age = xc_client::taxonomy_age(&src, &group, country.as_deref(), &t).await;
-                if !is_current() {
-                    return;
-                }
-                taxonomy_age.try_set(age.map(|a| match a {
-                    TaxonomyAge::Text(s) => s,
-                    TaxonomyAge::Seconds(secs) => text_age(secs),
-                }));
+                taxonomy_age.try_set(xc_client::taxonomy_age_secs(&t).map(text_age));
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
@@ -674,7 +739,10 @@ pub fn XcBrowser() -> impl IntoView {
         let Some(src) = source.get_untracked() else {
             return;
         };
+        // The group of the species list on screen.
+        let (group, _) = taxonomy_target.get_untracked();
         view.set(BrowserView::SpeciesRecordings {
+            group: group.clone(),
             genus: genus.clone(),
             species: species.clone(),
             en,
@@ -683,7 +751,7 @@ pub fn XcBrowser() -> impl IntoView {
         recordings_page.set(1);
 
         spawn_local(async move {
-            let result = xc_client::species_recordings(&src, &genus, &species, 1).await;
+            let result = xc_client::species_recordings(&src, &group, &genus, &species, 1).await;
             show_results(my_gen, src, result);
         });
     };
@@ -719,9 +787,9 @@ pub fn XcBrowser() -> impl IntoView {
                 if idx == 0 {
                     country_input.set(String::new());
                     country_filter_text.set(String::new());
-                } else if let Some(name) = list.get(idx - 1) {
-                    country_input.set(name.to_string());
-                    country_filter_text.set(name.to_string());
+                } else if let Some(opt) = list.get(idx - 1) {
+                    country_input.set(opt.name.clone());
+                    country_filter_text.set(opt.name.clone());
                 }
                 country_dropdown_open.set(false);
             } else {
@@ -766,9 +834,12 @@ pub fn XcBrowser() -> impl IntoView {
 
         spawn_local(async move {
             let result = match &current_view {
-                BrowserView::SpeciesRecordings { genus, species, .. } => {
-                    xc_client::species_recordings(&src, genus, species, page_num).await
-                }
+                BrowserView::SpeciesRecordings {
+                    group,
+                    genus,
+                    species,
+                    ..
+                } => xc_client::species_recordings(&src, group, genus, species, page_num).await,
                 BrowserView::SearchResults => {
                     let query = search_input.get_untracked();
                     xc_client::search(&src, &query, page_num).await
@@ -990,7 +1061,7 @@ pub fn XcBrowser() -> impl IntoView {
                                 <p class="xc-choose-heading">{CHOOSE_HEADING}</p>
                                 <div class="xc-option">
                                     <h3 class="xc-option-heading">{NO_KEY_HEADING}</h3>
-                                    <p class="xc-info">{text_no_key_intro()}</p>
+                                    <p class="xc-info">{NO_KEY_INTRO}</p>
                                     <button class="xc-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
                                 </div>
                             })}
@@ -1112,12 +1183,14 @@ pub fn XcBrowser() -> impl IntoView {
                                                             >
                                                                 "All (no filter)"
                                                             </button>
-                                                            {list.into_iter().enumerate().map(|(i, name)| {
-                                                                let name_owned = name.to_string();
+                                                            {list.into_iter().enumerate().map(|(i, opt)| {
+                                                                let name_owned = opt.name;
                                                                 let name_for_set = name_owned.clone();
                                                                 let name_for_cls = name_owned.clone();
+                                                                let title = opt.counts.map(|(r, s)| text_country_counts_title(r, s));
                                                                 view! {
                                                                     <button
+                                                                        title=title
                                                                         class=move || {
                                                                             let mut cls = "xc-combobox-option".to_string();
                                                                             if country_input.get() == name_for_cls {
@@ -1135,7 +1208,10 @@ pub fn XcBrowser() -> impl IntoView {
                                                                             country_dropdown_open.set(false);
                                                                         }
                                                                     >
-                                                                        {name_owned}
+                                                                        <span class="xc-country-name">{name_owned}</span>
+                                                                        {opt.counts.map(|(r, _)| view! {
+                                                                            <span class="xc-country-count">{text_country_recs(r)}</span>
+                                                                        })}
                                                                     </button>
                                                                 }
                                                             }).collect::<Vec<_>>()}
@@ -1243,7 +1319,7 @@ pub fn XcBrowser() -> impl IntoView {
                     }
                     let recs = recordings.get();
                     let title = match &current_view {
-                        BrowserView::SpeciesRecordings { en, genus, species } => {
+                        BrowserView::SpeciesRecordings { en, genus, species, .. } => {
                             format!("{en} ({genus} {species})")
                         }
                         BrowserView::SearchResults => "Search results".to_string(),
@@ -1385,14 +1461,14 @@ pub fn XcBrowser() -> impl IntoView {
 mod tests {
     use super::*;
 
-    fn progress(done: u32, total: u32, secs_left: f64) -> BuildProgress {
-        BuildProgress {
+    fn progress(done: u32, total: u32, secs_left: f64) -> TaxonomyProgress {
+        TaxonomyProgress::Local(xc_client::BuildProgress {
             pages_done: 1,
             total_pages: 1,
             recordings_done: done,
             total_recordings: total,
             secs_left,
-        }
+        })
     }
 
     #[test]
@@ -1433,17 +1509,64 @@ mod tests {
     }
 
     #[test]
-    fn group_too_large_text() {
+    fn server_progress_text() {
+        let server = |done, total| {
+            Some(TaxonomyProgress::Server(ServerIndexing {
+                pages_done: done,
+                pages_total: total,
+            }))
+        };
         assert_eq!(
-            text_group_too_large("birds", None, 1_052_345),
-            "Birds has 1,052,345 recordings, too many to list without your own API key. The \
-             limit is 30,000 recordings. Choose a country, or add your API key."
+            text_progress("bats", Some("Australia"), server(3, 23)),
+            "Oversample's server is building the species list for bats: 13% done"
         );
         assert_eq!(
-            text_group_too_large("land mammals", Some("United States"), 77_277),
-            "Land mammals in United States has 77,277 recordings, too many to list without your \
-             own API key. The limit is 30,000 recordings. Add your API key to list them."
+            text_progress("land mammals", None, server(0, 0)),
+            "Oversample's server is building the species list for land mammals..."
         );
+        assert_eq!(
+            text_progress("bats", None, server(30, 23)),
+            "Oversample's server is building the species list for bats: 100% done"
+        );
+    }
+
+    #[test]
+    fn country_options_prefer_server_list() {
+        let builtin = ["Australia", "Brazil", "Spain"];
+        let server = vec![
+            CountryCount {
+                country: "Australia".into(),
+                recordings: 22,
+                species: 9,
+            },
+            CountryCount {
+                country: "Côte d'Ivoire".into(),
+                recordings: 1,
+                species: 1,
+            },
+        ];
+        let names = |opts: Vec<CountryOption>| -> Vec<String> {
+            opts.into_iter().map(|o| o.name).collect()
+        };
+        // No server data, or an empty list: the built-in list.
+        assert_eq!(names(country_options(None, &builtin, "")), builtin);
+        assert_eq!(names(country_options(Some(&[]), &builtin, "a")), builtin);
+        // Server data: only countries with recordings, with counts.
+        let opts = country_options(Some(&server), &builtin, "");
+        assert_eq!(opts[0].counts, Some((22, 9)));
+        assert_eq!(names(opts), ["Australia", "Côte d'Ivoire"]);
+        assert_eq!(
+            names(country_options(Some(&server), &builtin, " CÔTE")),
+            ["Côte d'Ivoire"]
+        );
+    }
+
+    #[test]
+    fn country_count_text() {
+        assert_eq!(text_country_recs(1), "1 rec");
+        assert_eq!(text_country_recs(11_494), "11,494 recs");
+        assert_eq!(text_country_counts_title(1, 1), "1 recording, 1 species");
+        assert_eq!(text_country_counts_title(22, 9), "22 recordings, 9 species");
     }
 
     #[test]
@@ -1491,6 +1614,20 @@ mod tests {
         assert_eq!(
             text_stopped(Some("Spain"), None),
             "Species list stopped. Click Go to start again."
+        );
+        assert_eq!(
+            text_stopped(None, None),
+            "Species list stopped. Click Go to start again."
+        );
+        assert_eq!(
+            text_stopped(
+                None,
+                Some(TaxonomyProgress::Server(ServerIndexing {
+                    pages_done: 3,
+                    pages_total: 23
+                }))
+            ),
+            STOPPED_WAITING_FOR_SERVER
         );
     }
 
