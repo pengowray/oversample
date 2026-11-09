@@ -86,6 +86,14 @@ fn range_text(r: Option<&Range>, unit: &str) -> Option<String> {
     }
 }
 
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 fn fmt(v: f64) -> String {
     if (v - v.round()).abs() < 0.05 {
         format!("{}", v.round() as i64)
@@ -307,20 +315,63 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
     move || {
         let s = sketch.get()?;
         let lay = layout.get()?;
-        let first = s.sequence().first().copied()?;
+        // Each kind of call once, in train order: two for a species that
+        // alternates high and low calls.
+        let mut kinds: Vec<&call_sketch::SketchCall> = Vec::new();
+        for c in s.sequence() {
+            if !kinds.iter().any(|k| k.name == c.name) {
+                kinds.push(c);
+            }
+        }
+        if kinds.is_empty() {
+            return None;
+        }
         // The bat book's name, so the strip and the bat book match.
         let name = crate::bat_book::auto_resolve::find_entry_any_book(&s.id)
             .map(|e| e.name.to_string())
             .or_else(|| s.common_name.clone())
             .unwrap_or_else(|| s.scientific_name.clone());
         let mut facts: Vec<String> = Vec::new();
-        if let Some(t) = range_text(first.peak_khz.as_ref(), "kHz") {
-            facts.push(format!("Peak frequency {t}"));
-        } else if let Some(t) = range_text(first.characteristic_khz.as_ref(), "kHz") {
-            facts.push(format!("Characteristic frequency {t}"));
+        let several = kinds.len() > 1;
+        // "Low call: " before each line when the species has more than one
+        // kind of call.
+        let prefix = |c: &call_sketch::SketchCall| {
+            if several {
+                format!("{} call: ", capitalize(&c.name))
+            } else {
+                String::new()
+            }
+        };
+        for c in &kinds {
+            let freq = range_text(c.peak_khz.as_ref(), "kHz")
+                .map(|t| ("Peak frequency", t))
+                .or_else(|| {
+                    range_text(c.characteristic_khz.as_ref(), "kHz")
+                        .map(|t| ("Characteristic frequency", t))
+                });
+            if let Some((label, t)) = freq {
+                let label = if several {
+                    label.to_lowercase()
+                } else {
+                    label.to_string()
+                };
+                facts.push(format!("{}{label} {t}", prefix(c)));
+            }
         }
-        if let Some(t) = range_text(first.duration_ms.as_ref(), "ms") {
-            facts.push(format!("Call length {t}"));
+        let lengths: Vec<Option<String>> = kinds
+            .iter()
+            .map(|c| range_text(c.duration_ms.as_ref(), "ms"))
+            .collect();
+        if lengths.iter().all(|l| *l == lengths[0]) {
+            if let Some(t) = &lengths[0] {
+                facts.push(format!("Call length {t}"));
+            }
+        } else {
+            for (c, l) in kinds.iter().zip(&lengths) {
+                if let Some(t) = l {
+                    facts.push(format!("{}length {t}", prefix(c)));
+                }
+            }
         }
         if let Some(t) = range_text(s.train.as_ref().and_then(|t| t.interval_ms.as_ref()), "ms") {
             facts.push(format!("Call interval {t}"));
