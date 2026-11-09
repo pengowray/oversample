@@ -119,22 +119,6 @@ pub fn decode_component(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Percent-encode for use as a query-string value. Everything outside the
-/// unreserved set is escaped, which is stricter than `encodeURIComponent` but
-/// always valid.
-fn encode_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 fn is_file_title(title: &str) -> bool {
     // The API normalises localised namespaces for us, so only the canonical
     // English prefixes need recognising up front.
@@ -269,7 +253,7 @@ async fn api_get(host: &str, params: &[(&str, &str)]) -> Result<serde_json::Valu
         url.push('&');
         url.push_str(k);
         url.push('=');
-        url.push_str(&encode_component(v));
+        url.push_str(&crate::web_util::encode_component(v));
     }
     let text = crate::components::file_sidebar::fetch_text(&url).await?;
     let json: serde_json::Value = serde_json::from_str(&text)

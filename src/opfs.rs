@@ -9,6 +9,11 @@ const OPFS_DIR: &str = "oversample-annotations";
 
 /// Get the OPFS oversample-annotations directory, creating it if needed.
 async fn get_opfs_dir() -> Result<FileSystemDirectoryHandle, String> {
+    get_opfs_subdir(OPFS_DIR).await
+}
+
+/// Get (creating if needed) a top-level OPFS directory by name.
+async fn get_opfs_subdir(name: &str) -> Result<FileSystemDirectoryHandle, String> {
     let window = web_sys::window().ok_or("no window")?;
     let navigator = window.navigator();
     let storage = navigator.storage();
@@ -20,7 +25,7 @@ async fn get_opfs_dir() -> Result<FileSystemDirectoryHandle, String> {
     let opts = web_sys::FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
     let dir: FileSystemDirectoryHandle =
-        JsFuture::from(root.get_directory_handle_with_options(OPFS_DIR, &opts))
+        JsFuture::from(root.get_directory_handle_with_options(name, &opts))
             .await
             .map_err(|e| format!("OPFS dir: {e:?}"))?
             .unchecked_into();
@@ -55,7 +60,12 @@ fn opfs_fallback_key(filename: &str, file_size: u64) -> String {
 
 /// Save annotation YAML to OPFS.
 pub async fn opfs_save(key: &str, yaml: &str) -> Result<(), String> {
-    let dir = get_opfs_dir().await?;
+    opfs_save_in(OPFS_DIR, key, yaml).await
+}
+
+/// Save a text file to the OPFS directory `dir_name`, replacing any old copy.
+pub async fn opfs_save_in(dir_name: &str, key: &str, yaml: &str) -> Result<(), String> {
+    let dir = get_opfs_subdir(dir_name).await?;
 
     let opts = web_sys::FileSystemGetFileOptions::new();
     opts.set_create(true);
@@ -88,7 +98,13 @@ pub async fn opfs_save(key: &str, yaml: &str) -> Result<(), String> {
 
 /// Load annotation YAML from OPFS. Returns None if file doesn't exist.
 pub async fn opfs_load(key: &str) -> Result<Option<String>, String> {
-    let dir = get_opfs_dir().await?;
+    opfs_load_in(OPFS_DIR, key).await
+}
+
+/// Load a text file from the OPFS directory `dir_name`. Returns None if the
+/// file doesn't exist.
+pub async fn opfs_load_in(dir_name: &str, key: &str) -> Result<Option<String>, String> {
+    let dir = get_opfs_subdir(dir_name).await?;
 
     // Try to get file handle without create — returns error if not found
     let file_handle_result = JsFuture::from(dir.get_file_handle(key)).await;

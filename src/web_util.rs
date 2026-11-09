@@ -29,3 +29,19 @@ pub async fn sleep_ms(ms: i32) {
 pub async fn yield_now() {
     sleep_ms(0).await;
 }
+
+/// Percent-encode for use as a query-string value. Everything outside the
+/// unreserved set is escaped, which is stricter than `encodeURIComponent` but
+/// always valid.
+pub fn encode_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
