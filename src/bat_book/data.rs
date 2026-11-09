@@ -104,7 +104,8 @@ const VIC_AUSTRALIA_BOOK: &[BookEntryDef] = &[
         commonness: Some(Commonness::VeryCommon),
         description: Some("Common across southern Australia. Small, dark bat roosting in tree hollows and buildings. Higher frequency calls than Gould's Wattled Bat."),
         name: None,
-        freq_hz: None,
+        // Riverina 47.5 to 53 kHz and Southern NSW 48 to 52 (Pennay et al. 2004); SA Murray 49 to 52.
+        freq_hz: Some((47500.0, 53000.0)),
     },
     BookEntryDef {
         species: &species::NYCTOPHILUS_GEOFFROYI,
@@ -3687,7 +3688,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::SACCOLAIMUS_FLAVIVENTRIS,
         commonness: Some(Commonness::Common),
-        description: Some("Large, fast-flying bat with glossy black fur and yellow belly. QCF ~18\u{2013}22 kHz. Migratory; high-altitude open-air forager across northern and eastern Australia."),
+        description: Some("Large, fast-flying bat with glossy black fur and yellow belly. QCF ~15\u{2013}22.5 kHz. Migratory; high-altitude open-air forager across northern and eastern Australia."),
         name: None,
         freq_hz: None,
     },
@@ -3730,14 +3731,14 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::OZIMOPS_PLANICEPS,
         commonness: Some(Commonness::Common),
-        description: Some("Small free-tailed bat of south-eastern Australia. QCF search calls at ~26\u{2013}29 kHz. Roosts in tree hollows and buildings. Rapid, direct flight."),
+        description: Some("Small free-tailed bat of south-eastern Australia. QCF search calls at ~25\u{2013}30.5 kHz. Roosts in tree hollows and buildings. Rapid, direct flight."),
         name: None,
         freq_hz: None,
     },
     BookEntryDef {
         species: &species::OZIMOPS_RIDEI,
         commonness: Some(Commonness::Common),
-        description: Some("Widespread across eastern Australian coasts. QCF search calls at ~30\u{2013}35 kHz. Similar to Southern Free-tailed Bat but slightly higher frequency. Tree-hollow roosting."),
+        description: Some("Widespread across eastern Australian coasts. QCF search calls at ~28.5\u{2013}36 kHz. Similar to Southern Free-tailed Bat but slightly higher frequency. Tree-hollow roosting."),
         name: None,
         freq_hz: None,
     },
@@ -3766,7 +3767,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::MINIOPTERUS_ORIANAE_OCEANENSIS,
         commonness: Some(Commonness::Common),
-        description: Some("Cave-roosting bat found along eastern Australia. FM calls at ~43\u{2013}48 kHz. Fast, agile flier. Forms large maternity colonies. Vulnerable in some states."),
+        description: Some("Cave-roosting bat found along eastern Australia. FM calls at ~43\u{2013}48.5 kHz. Fast, agile flier. Forms large maternity colonies. Vulnerable in some states."),
         name: None,
         freq_hz: None,
     },
@@ -3780,7 +3781,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::MINIOPTERUS_ORIANAE_BASSANII,
         commonness: Some(Commonness::Endangered),
-        description: Some("Critically Endangered (EPBC Act). FM calls similar to Eastern Bent-winged Bat (~43\u{2013}48 kHz). Dependent on a single maternity cave near Warrnambool. Southwest Victoria only."),
+        description: Some("Critically Endangered (EPBC Act). FM calls similar to Eastern Bent-winged Bat (~44\u{2013}50 kHz). Dependent on a single maternity cave near Warrnambool. Southwest Victoria only."),
         name: None,
         freq_hz: None,
     },
@@ -3788,14 +3789,14 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::CHALINOLOBUS_GOULDII,
         commonness: Some(Commonness::VeryCommon),
-        description: Some("Australia's most commonly recorded bat. FM calls with alternating frequencies distinctive (~25\u{2013}34 kHz). Roosts in tree hollows, buildings, and bat boxes across the continent."),
+        description: Some("Australia's most commonly recorded bat. FM calls with alternating frequencies distinctive (~25\u{2013}34.5 kHz). Roosts in tree hollows, buildings, and bat boxes across the continent."),
         name: None,
         freq_hz: None,
     },
     BookEntryDef {
         species: &species::CHALINOLOBUS_MORIO,
         commonness: Some(Commonness::VeryCommon),
-        description: Some("Common across southern Australia. FM calls at ~48\u{2013}53 kHz. Small, dark bat roosting in tree hollows and buildings. Higher frequency calls than Gould's Wattled Bat."),
+        description: Some("Common across southern Australia. FM calls at ~46.5\u{2013}56 kHz. Small, dark bat roosting in tree hollows and buildings. Higher frequency calls than Gould's Wattled Bat."),
         name: None,
         freq_hz: None,
     },
@@ -3809,14 +3810,14 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::VESPADELUS_VULTURNUS,
         commonness: Some(Commonness::VeryCommon),
-        description: Some("One of Australia's smallest bats (~4 g). FM calls at ~45\u{2013}53 kHz. Common in forests and urban areas across south-eastern Australia. High-frequency calls."),
+        description: Some("One of Australia's smallest bats (~4 g). FM calls at ~42.5\u{2013}53.5 kHz. Common in forests and urban areas across south-eastern Australia. High-frequency calls."),
         name: None,
         freq_hz: None,
     },
     BookEntryDef {
         species: &species::VESPADELUS_REGULUS,
         commonness: Some(Commonness::Common),
-        description: Some("Small forest bat found across southern Australia. FM calls at ~40\u{2013}55 kHz. Roosts in tree hollows. Call frequency overlaps with Little Forest Bat."),
+        description: Some("Small forest bat found across southern Australia. FM calls at ~39\u{2013}57 kHz. Roosts in tree hollows. Call frequency overlaps with Little Forest Bat."),
         name: None,
         freq_hz: None,
     },
@@ -3830,7 +3831,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::VESPADELUS_DARLINGTONI,
         commonness: Some(Commonness::Common),
-        description: Some("Largest Vespadelus species. FM calls at ~38\u{2013}46 kHz. Found in wet and dry forests of south-eastern Australia including Tasmania."),
+        description: Some("Largest Vespadelus species. FM calls at ~38\u{2013}48 kHz. Found in wet and dry forests of south-eastern Australia including Tasmania."),
         name: None,
         freq_hz: None,
     },
@@ -3844,7 +3845,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::SCOTOREPENS_BALSTONI,
         commonness: Some(Commonness::Common),
-        description: Some("Widespread across inland Australia. FM calls at ~28\u{2013}34 kHz. Found in drier regions. Similar frequency to Gould's Wattled Bat. Tree-hollow roosting."),
+        description: Some("Widespread across inland Australia. FM calls at ~28\u{2013}36.5 kHz. Found in drier regions. Similar frequency to Gould's Wattled Bat. Tree-hollow roosting."),
         name: None,
         freq_hz: None,
     },
@@ -3858,21 +3859,21 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::MYOTIS_MACROPUS,
         commonness: Some(Commonness::Uncommon),
-        description: Some("Australia's only fishing bat. Very quiet FM calls (35\u{2013}80 kHz). Trawls water surfaces with large feet. Found near rivers, lakes, and dams across eastern Australia."),
+        description: Some("Australia's only fishing bat. Very quiet FM calls (28\u{2013}80.5 kHz). Trawls water surfaces with large feet. Found near rivers, lakes, and dams across eastern Australia."),
         name: None,
         freq_hz: None,
     },
     BookEntryDef {
         species: &species::FALSISTRELLUS_TASMANIENSIS,
         commonness: Some(Commonness::Uncommon),
-        description: Some("Large vesper bat of south-eastern forests. FM calls at ~34\u{2013}39 kHz. Roosts in tree hollows and buildings. Vulnerable (IUCN)."),
+        description: Some("Large vesper bat of south-eastern forests. FM calls at ~35\u{2013}40.5 kHz. Roosts in tree hollows and buildings. Vulnerable (IUCN)."),
         name: None,
         freq_hz: None,
     },
     BookEntryDef {
         species: &species::SCOTEANAX_RUEPPELLII,
         commonness: Some(Commonness::Uncommon),
-        description: Some("Large, robust bat of eastern coastal forests. FM calls at ~30\u{2013}38 kHz. Aggressive predator of large insects and small vertebrates. Near Threatened."),
+        description: Some("Large, robust bat of eastern coastal forests. FM calls at ~32\u{2013}36.5 kHz. Aggressive predator of large insects and small vertebrates. Near Threatened."),
         name: None,
         freq_hz: None,
     },
@@ -3900,7 +3901,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::VESPADELUS_BAVERSTOCKI,
         commonness: Some(Commonness::Uncommon),
-        description: Some("Small bat of inland Australia. FM calls at ~45\u{2013}50 kHz. Restricted to semi-arid regions of central and western Australia."),
+        description: Some("Small bat of inland Australia. FM calls at ~44\u{2013}47 kHz. Restricted to semi-arid regions of central and western Australia."),
         name: None,
         freq_hz: None,
     },
@@ -3942,7 +3943,7 @@ const AUSTRALIA_BOOK: &[BookEntryDef] = &[
     BookEntryDef {
         species: &species::NYCTOPHILUS_CORBENI,
         commonness: Some(Commonness::Endangered),
-        description: Some("Vulnerable (EPBC Act). Very quiet FM gleaning calls (35\u{2013}65 kHz). Restricted to semi-arid woodlands of inland NSW and Queensland. Extremely rare."),
+        description: Some("Vulnerable (EPBC Act). Very quiet FM gleaning calls (31\u{2013}80 kHz). Restricted to semi-arid woodlands of inland NSW and Queensland. Extremely rare."),
         name: None,
         freq_hz: None,
     },

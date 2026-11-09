@@ -182,8 +182,9 @@ pub const CHALINOLOBUS_MORIO: BatSpecies = BatSpecies {
     scientific_name: "Chalinolobus morio",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 48_000.0,
-    freq_hi_hz: 53_000.0,
+    // Fc: Pennay et al. 2004 NSW from 46.5 kHz; Tasmanian key (Cawthen) to 56. VIC book narrows it.
+    freq_lo_hz: 46_500.0,
+    freq_hi_hz: 56_000.0,
     description: "Common across southern Australia. Small, dark bat roosting in tree hollows and buildings. Higher frequency calls than Gould's Wattled Bat.",
     echolocates: true,
 };
@@ -269,8 +270,9 @@ pub const MINIOPTERUS_ORIANAE_OCEANENSIS: BatSpecies = BatSpecies {
     scientific_name: "Miniopterus orianae oceanensis",
     family: "Miniopteridae",
     call_type: "FM",
+    // Fc: Pennay et al. 2004 NSW 43 to 48 kHz, Western Slopes & Plains to 48.5.
     freq_lo_hz: 43_000.0,
-    freq_hi_hz: 48_000.0,
+    freq_hi_hz: 48_500.0,
     description: "Cave-roosting bat found along eastern Australia. Fast, agile flier.",
     echolocates: true,
 };
@@ -345,8 +347,10 @@ pub const MYOTIS_MACROPUS: BatSpecies = BatSpecies {
     scientific_name: "Myotis macropus",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 35_000.0,
-    freq_hi_hz: 80_000.0,
+    // Sweep extent: Lumsden & Coles (Victoria) down to 28 kHz; Pennay et al. 2004 NSW and
+    // HMW (south-east Queensland, average start 80.2) up to 80.5.
+    freq_lo_hz: 28_000.0,
+    freq_hi_hz: 80_500.0,
     description: "Australia's only fishing bat. Trawls water surfaces with large feet. Found near rivers, lakes, and dams. Very quiet calls.",
     echolocates: true,
 };
@@ -407,8 +411,10 @@ pub const VESPADELUS_BAVERSTOCKI: BatSpecies = BatSpecies {
     scientific_name: "Vespadelus baverstocki",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 45_000.0,
-    freq_hi_hz: 50_000.0,
+    // Fc: Pennay et al. 2004 Riverina 44.5 to 45.5 kHz (2 calls); Bullen & McKenzie 2019, central
+    // Australia, peak 44 to 47. The old 50 kHz top matched V. vulturnus calls.
+    freq_lo_hz: 44_000.0,
+    freq_hi_hz: 47_000.0,
     description: "Small bat of inland Australia. Restricted to semi-arid regions.",
     echolocates: true,
 };
@@ -419,8 +425,9 @@ pub const SCOTEANAX_RUEPPELLII: BatSpecies = BatSpecies {
     scientific_name: "Scoteanax rueppellii",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 30_000.0,
-    freq_hi_hz: 38_000.0,
+    // Fc: Pennay et al. 2004 NSW 32 to 36.5 kHz (12 calls), the only independent source.
+    freq_lo_hz: 32_000.0,
+    freq_hi_hz: 36_500.0,
     description: "Large, robust bat of eastern coastal forests. Aggressive predator of large insects and small vertebrates.",
     echolocates: true,
 };
@@ -431,8 +438,10 @@ pub const MINIOPTERUS_ORIANAE_BASSANII: BatSpecies = BatSpecies {
     scientific_name: "Miniopterus orianae bassanii",
     family: "Miniopteridae",
     call_type: "FM",
-    freq_lo_hz: 43_000.0,
-    freq_hi_hz: 48_000.0,
+    // Fc: Bush & Lumsden 2025 (Arthur Rylah Institute, Victoria) 44 to 50 kHz. The old 43 to 48
+    // was the NSW figure for M. o. oceanensis.
+    freq_lo_hz: 44_000.0,
+    freq_hi_hz: 50_000.0,
     description: "Critically Endangered (EPBC Act). Dependent on a single maternity cave. Population critically low.",
     echolocates: true,
 };
@@ -443,8 +452,9 @@ pub const NYCTOPHILUS_CORBENI: BatSpecies = BatSpecies {
     scientific_name: "Nyctophilus corbeni",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 35_000.0,
-    freq_hi_hz: 65_000.0,
+    // Sweep extent: Pennay et al. 2004 NSW (as N. timoriensis, 16 calls) start 60 to 80 kHz, end 31 to 37.
+    freq_lo_hz: 31_000.0,
+    freq_hi_hz: 80_000.0,
     description: "Vulnerable (EPBC Act). Extremely rare; restricted to northwest woodlands.",
     echolocates: true,
 };
