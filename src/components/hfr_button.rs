@@ -160,7 +160,7 @@ fn file_species_source(state: AppState) -> Option<String> {
             .iter()
             .any(|(k, v)| k == "Scientific name" && !v.is_empty())
         {
-            return Some("Xeno-Canto: species".to_string());
+            return Some("Xeno-canto: species".to_string());
         }
     }
     if let Some(guano) = &file.audio.metadata.guano {

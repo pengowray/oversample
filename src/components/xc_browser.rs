@@ -15,7 +15,7 @@
 
 use crate::state::store_fields::*;
 use crate::state::AppState;
-use crate::xc_client::{self, TaxonomyAge, XcError, XcSource, PROXY_MAX_TAXONOMY_PAGES};
+use crate::xc_client::{self, BuildProgress, TaxonomyAge, XcError, XcSource};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_ipc::xc::{XcGroupTaxonomy, XcRecording, XcSearchResult, XcSpecies};
@@ -27,58 +27,206 @@ use wasm_bindgen::prelude::*;
 // wording can be replaced in one place. Strings that existed before and are
 // still correct stay inline in the view below.
 
-/// Source line when requests use the user's own key (web or desktop).
-const SOURCE_OWN_KEY: &str = "Using your Xeno-Canto API key.";
-/// Source line when requests go through the Oversample proxy.
-const SOURCE_PROXY: &str =
-    "Using Oversample's server, no key needed. Large groups need a country filter.";
-/// Link in the source line: open the key form to replace the saved key.
-const LINK_CHANGE_KEY: &str = "Change key";
-/// Link in the source line: switch from the user's key to the proxy.
-const LINK_USE_PROXY: &str = "Use without key";
-/// Link in the source line (proxy mode, no key saved): open the key form.
-const LINK_ADD_KEY: &str = "Add your key";
-/// Link in the source line (proxy mode, key saved): switch back to the key.
-const LINK_USE_OWN_KEY: &str = "Use my key";
+/// Dialog title.
+const TITLE: &str = "Explore Xeno-canto";
 
-/// Key form intro, before the xeno-canto.org link. (Existing text.)
-const KEY_INTRO_BEFORE_LINK: &str =
-    "Enter your Xeno-Canto API key. You can get one by creating a free account at ";
-/// Key form intro, after the link. (Existing text.)
-const KEY_INTRO_AFTER_LINK: &str = " and going to your account settings.";
-/// Under the key form, web build only: where the key is kept.
-const KEY_STORED_WEB: &str = "Your key is saved in this browser only.";
-/// Key form button: forget the saved key.
+/// Source line label when requests go through the Oversample proxy.
+const SOURCE_PROXY: &str = "Source: Oversample's server (no API key)";
+/// Source line label when requests use the user's own key (web or desktop).
+const SOURCE_OWN_KEY: &str = "Source: Xeno-canto, with your API key";
+/// Opens the key form (proxy mode, no key saved; also in error messages).
+const BTN_ADD_KEY: &str = "Add API key";
+/// Switches from the proxy back to the saved key.
+const BTN_USE_OWN_KEY: &str = "Use your API key";
+/// Opens the key form to replace the saved key.
+const BTN_CHANGE_KEY: &str = "Change key";
+/// Forgets the saved key.
 const BTN_REMOVE_KEY: &str = "Remove key";
-/// Key form button: leave the form without changes.
+/// Chooses the proxy, on the first screen and in the source line.
+const BTN_CONTINUE_WITHOUT_KEY: &str = "Continue without key";
 const BTN_CANCEL: &str = "Cancel";
-/// Explains the no-key option, above its button.
-const NO_KEY_INTRO: &str = "No key? You can search and load recordings through Oversample's \
-     server instead. Large species lists need a country filter.";
-/// Button that chooses the proxy.
-const BTN_CONTINUE_WITHOUT_KEY: &str = "Continue without a key";
+const BTN_SAVE_KEY: &str = "Save key";
 
-/// Button that stops a species list that is still loading.
+/// First screen: heading above the two options.
+const CHOOSE_HEADING: &str = "Choose how Oversample gets recordings from Xeno-canto.";
+const NO_KEY_HEADING: &str = "Without an API key";
+const OWN_KEY_HEADING: &str = "With your own API key";
+/// Key option text, before the xeno-canto.org link.
+const KEY_INTRO_BEFORE_LINK: &str = "Oversample connects to Xeno-canto directly. An API key is \
+     a code from your Xeno-canto account. To get one, create a free account at ";
+/// Key option text, after the link.
+const KEY_INTRO_AFTER_LINK: &str = " and open your account settings.";
+const KEY_FIELD_LABEL: &str = "Xeno-canto API key";
+const KEY_FIELD_PLACEHOLDER: &str = "Paste your API key";
+/// Under the key field: where the key is kept.
+const KEY_STORED_WEB: &str = "Your key is saved in this browser only.";
+const KEY_STORED_APP: &str = "Your key is saved on this device.";
+
+/// Desktop only: asked before deleting the key file that xc-cli also reads.
+const CONFIRM_REMOVE_DESKTOP: &str = "Remove your Xeno-canto API key from this computer? The \
+     xc-cli command uses the same key and will stop working too.";
+const NOTICE_KEY_REMOVED: &str = "API key removed.";
+
+const SEARCH_PLACEHOLDER: &str = "Search (e.g. Myotis daubentonii, or grp:bats cnt:Australia)";
+
+/// Stops a species list that is still loading.
 const BTN_STOP: &str = "Stop";
+/// Starts a long species-list build after the warning.
+const BTN_LOAD_ALL: &str = "Load all";
 
-const ERR_NETWORK: &str = "Couldn't reach the server. Check your internet connection.";
+const ERR_NETWORK_PROXY: &str = "Couldn't connect to Oversample's server. Check your internet \
+     connection, or add your own API key.";
+const ERR_NETWORK_DIRECT: &str =
+    "Couldn't connect to xeno-canto.org. Check your internet connection.";
 const ERR_RATE_LIMITED: &str = "Too many requests. Wait a few seconds and try again.";
-const ERR_BUSY: &str = "Oversample's Xeno-Canto server is busy or unavailable. Try again \
-     later, or add your own key.";
-const ERR_UPSTREAM: &str = "Xeno-Canto didn't respond. Try again later.";
-const ERR_BAD_KEY: &str =
-    "Xeno-Canto didn't accept your API key. Check it on your xeno-canto.org account page.";
-const ERR_TOO_LARGE: &str =
-    "This recording is too large to download without a key. Add your own key to load it.";
+const ERR_BUSY_PROXY: &str = "Oversample's server is busy or unavailable. Try again later, or \
+     add your own API key.";
+const ERR_BUSY_DIRECT: &str = "Xeno-canto is busy or unavailable (HTTP 503). Try again later.";
+const ERR_UPSTREAM_PROXY: &str =
+    "Oversample's server couldn't get a response from Xeno-canto. Try again later.";
+const ERR_UPSTREAM_DIRECT: &str = "Xeno-canto had a server error (HTTP 502). Try again later.";
+/// A search or download failed because XC rejected the saved key.
+const ERR_BAD_KEY: &str = "Xeno-canto rejected your API key. Copy the key again from your \
+     Xeno-canto account settings, then change it here.";
+/// Save key: XC rejected the key just entered, so it was not saved.
+const ERR_BAD_NEW_KEY: &str = "Xeno-canto rejected this API key. Copy the key again from your \
+     Xeno-canto account settings.";
 
-/// Progress while a species list is built page by page.
-fn text_progress(done: u32, total: u32) -> String {
-    let secs_left = total.saturating_sub(done) as f64 * 1.1;
-    let mins_left = (secs_left / 60.0).ceil() as u32;
-    if mins_left >= 2 {
-        format!("Loading species list: page {done} of {total}, about {mins_left} minutes left")
+/// Recording too large for the proxy. `id` is unknown only if the error
+/// came from somewhere other than a download.
+fn text_too_large(id: Option<u64>) -> String {
+    let what = match id {
+        Some(id) => format!("XC{id}"),
+        None => "This recording".to_string(),
+    };
+    format!(
+        "{what} is too large to load through Oversample's server. Add your own API key, or \
+         download the file from xeno-canto.org and open it in Oversample."
+    )
+}
+
+/// "Birds" or "Birds in Spain", for the start of a sentence.
+fn group_title(group: &str, country: Option<&str>) -> String {
+    let mut chars = group.chars();
+    let mut out = match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    };
+    if let Some(c) = country {
+        out.push_str(" in ");
+        out.push_str(c);
+    }
+    out
+}
+
+/// "birds" or "birds in Spain", for the middle of a sentence.
+fn group_phrase(group: &str, country: Option<&str>) -> String {
+    match country {
+        Some(c) => format!("{group} in {c}"),
+        None => group.to_string(),
+    }
+}
+
+/// 1052345 -> "1,052,345".
+fn with_commas(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// "about 3 hours", "about 12 minutes", "about 1 minute".
+fn text_duration(secs: f64) -> String {
+    let mins = (secs / 60.0).ceil().max(1.0) as u32;
+    if mins >= 90 {
+        let hours = (secs / 3600.0).round().max(2.0) as u32;
+        format!("about {hours} hours")
+    } else if mins == 1 {
+        "about 1 minute".to_string()
     } else {
-        format!("Loading species list: page {done} of {total}")
+        format!("about {mins} minutes")
+    }
+}
+
+/// Without your own key, the proxy option and its limit.
+fn text_no_key_intro() -> String {
+    format!(
+        "Oversample's server sends your requests to Xeno-canto. Results can be up to 24 hours \
+         old, and species lists are limited to {} recordings, so large groups such as birds \
+         need a country.",
+        with_commas(xc_client::PROXY_MAX_TAXONOMY_RECORDINGS)
+    )
+}
+
+/// Loading line while a species list is built. `None` before page 1 arrives.
+fn text_progress(group: &str, country: Option<&str>, p: Option<BuildProgress>) -> String {
+    let what = group_phrase(group, country);
+    match p {
+        None => format!("Loading species list for {what}..."),
+        Some(p) if p.secs_left >= 30.0 => format!(
+            "Loading species list for {what}: {} of {} recordings, {} left",
+            with_commas(p.recordings_done),
+            with_commas(p.total_recordings),
+            text_duration(p.secs_left)
+        ),
+        Some(p) => format!(
+            "Loading species list for {what}: {} of {} recordings",
+            with_commas(p.recordings_done),
+            with_commas(p.total_recordings)
+        ),
+    }
+}
+
+/// After Stop. `p` is the last progress seen, if any page had arrived.
+fn text_stopped(country: Option<&str>, p: Option<BuildProgress>) -> String {
+    let what = match p {
+        Some(p) => format!(
+            "Species list stopped after {} of {} recordings.",
+            with_commas(p.recordings_done),
+            with_commas(p.total_recordings)
+        ),
+        None => "Species list stopped.".to_string(),
+    };
+    if country.is_some() {
+        format!("{what} Click Go to start again.")
+    } else {
+        format!("{what} Choose a country for a shorter list, or click Go to start again.")
+    }
+}
+
+/// Own key: a species list that would take a long time, before it starts.
+fn text_long_build(group: &str, country: Option<&str>, recordings: u32, est_secs: f64) -> String {
+    let base = format!(
+        "{} has {} recordings. Loading the species list takes {}.",
+        group_title(group, country),
+        with_commas(recordings),
+        text_duration(est_secs)
+    );
+    if country.is_some() {
+        base
+    } else {
+        format!("{base} Choose a country for a shorter list.")
+    }
+}
+
+/// Proxy: the group is over the species-list limit.
+fn text_group_too_large(group: &str, country: Option<&str>, recordings: u32) -> String {
+    let limit = with_commas(xc_client::PROXY_MAX_TAXONOMY_RECORDINGS);
+    let head = format!(
+        "{} has {} recordings, too many to list without your own API key. The limit is {limit} \
+         recordings.",
+        group_title(group, country),
+        with_commas(recordings)
+    );
+    if country.is_some() {
+        format!("{head} Add your API key to list them.")
+    } else {
+        format!("{head} Choose a country, or add your API key.")
     }
 }
 
@@ -87,45 +235,47 @@ fn text_http_failed(status: u16) -> String {
     format!("Request failed (HTTP {status})")
 }
 
-/// The group is too big to list through the proxy.
-fn text_group_too_large(pages: u32) -> String {
-    format!(
-        "This species list needs {pages} pages of results. Without a key the limit is \
-         {PROXY_MAX_TAXONOMY_PAGES}. Choose a country, or add your own Xeno-Canto key."
-    )
-}
-
-/// Age of a species list built in the browser. Same wording as the
-/// desktop cache (`xc_lib::cache::taxonomy_age_string`).
+/// Age of a species list built in the browser. Same wording as the desktop
+/// cache.
 fn text_age(secs: f64) -> String {
-    let hours = (secs / 3600.0).floor() as i64;
-    if hours < 1 {
-        "just now".to_string()
-    } else if hours < 24 {
-        format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" })
-    } else {
-        let days = hours / 24;
-        format!("{days} day{} ago", if days == 1 { "" } else { "s" })
-    }
+    xc_lib::cache::age_text((secs / 3600.0).floor() as i64)
 }
 
-/// A server message added after one of the fixed error texts.
-fn with_detail(text: &str, detail: &Option<String>) -> String {
-    match detail {
-        Some(d) => format!("{text} ({d})"),
-        None => text.to_string(),
-    }
+/// Buttons shown inside an error message.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ErrorActions {
+    None,
+    /// [Add API key]
+    AddKey,
+    /// [Change key] [Remove key]
+    FixKey,
 }
 
-fn error_text(e: &XcError) -> String {
+/// Text for an error, worded for the source that produced it. Server
+/// details for Busy, Upstream and BadKey go to the log, not the message.
+fn error_text(e: &XcError, src: &XcSource) -> String {
+    let is_proxy = *src == XcSource::Proxy;
     match e {
-        XcError::Network => ERR_NETWORK.to_string(),
+        XcError::Network if is_proxy => ERR_NETWORK_PROXY.to_string(),
+        XcError::Network => ERR_NETWORK_DIRECT.to_string(),
         XcError::RateLimited => ERR_RATE_LIMITED.to_string(),
-        XcError::Busy(d) => with_detail(ERR_BUSY, d),
-        XcError::Upstream(d) => with_detail(ERR_UPSTREAM, d),
-        XcError::BadKey(d) => with_detail(ERR_BAD_KEY, d),
-        XcError::TooLarge => ERR_TOO_LARGE.to_string(),
-        XcError::GroupTooLarge { pages } => text_group_too_large(*pages),
+        XcError::Busy(_) if is_proxy => ERR_BUSY_PROXY.to_string(),
+        XcError::Busy(_) => ERR_BUSY_DIRECT.to_string(),
+        XcError::Upstream(_) if is_proxy => ERR_UPSTREAM_PROXY.to_string(),
+        XcError::Upstream(_) => ERR_UPSTREAM_DIRECT.to_string(),
+        XcError::BadKey(_) => ERR_BAD_KEY.to_string(),
+        XcError::TooLarge { id } => text_too_large(*id),
+        XcError::GroupTooLarge {
+            group,
+            country,
+            recordings,
+        } => text_group_too_large(group, country.as_deref(), *recordings),
+        XcError::LongBuild {
+            group,
+            country,
+            recordings,
+            est_secs,
+        } => text_long_build(group, country.as_deref(), *recordings, *est_secs),
         XcError::Http {
             message: Some(m), ..
         } => m.clone(),
@@ -135,6 +285,25 @@ fn error_text(e: &XcError) -> String {
         } => text_http_failed(*status),
         XcError::Cancelled => String::new(),
         XcError::Other(m) => m.clone(),
+    }
+}
+
+/// Which buttons an error gets.
+fn error_actions(e: &XcError, src: &XcSource) -> ErrorActions {
+    let is_proxy = *src == XcSource::Proxy;
+    match e {
+        XcError::GroupTooLarge { .. } | XcError::TooLarge { .. } | XcError::Busy(_) if is_proxy => {
+            ErrorActions::AddKey
+        }
+        XcError::BadKey(_) => ErrorActions::FixKey,
+        _ => ErrorActions::None,
+    }
+}
+
+/// Log the server's own message for errors whose text leaves it out.
+fn log_detail(e: &XcError) {
+    if let XcError::Busy(Some(d)) | XcError::Upstream(Some(d)) | XcError::BadKey(Some(d)) = e {
+        log::warn!("XC request failed: {d}");
     }
 }
 
@@ -189,13 +358,28 @@ pub fn XcBrowser() -> impl IntoView {
     let country_input = RwSignal::new(String::new());
     let species_list: RwSignal<Vec<XcSpecies>> = RwSignal::new(Vec::new());
     let recordings: RwSignal<Vec<XcRecording>> = RwSignal::new(Vec::new());
+    // A page of recordings (species view or search results) is loading.
     let loading = RwSignal::new(false);
-    let error_msg: RwSignal<Option<String>> = RwSignal::new(None);
+    // The error message and the buttons shown with it.
+    let error_msg: RwSignal<Option<(String, ErrorActions)>> = RwSignal::new(None);
+    // A status message that is not an error ("API key removed.").
+    let notice: RwSignal<Option<String>> = RwSignal::new(None);
+    // Own key: a long species list is waiting for [Load all] or [Cancel].
+    let long_build_prompt: RwSignal<Option<String>> = RwSignal::new(None);
+    // Desktop: asking before the key file is deleted.
+    let confirm_remove = RwSignal::new(false);
     let taxonomy_age: RwSignal<Option<String>> = RwSignal::new(None);
-    // (pages done, total pages) while a species list is built in the browser.
-    let taxonomy_progress: RwSignal<Option<(u32, u32)>> = RwSignal::new(None);
+    // A species list is being built or loaded. Separate from `loading`, so a
+    // search during a build leaves the progress line and Stop in place.
+    let taxonomy_loading = RwSignal::new(false);
+    // The group and country of the build in progress, for its progress line.
+    let taxonomy_target: RwSignal<(String, Option<String>)> = RwSignal::new((String::new(), None));
+    // Progress of a species list built in the browser, after each page.
+    let taxonomy_progress: RwSignal<Option<BuildProgress>> = RwSignal::new(None);
     // Bumped to cancel a running species-list build.
     let taxonomy_gen = RwSignal::new(0u64);
+    // Bumped for each recordings request, so an older response is dropped.
+    let results_gen = RwSignal::new(0u64);
     let search_input = RwSignal::new(String::new());
     let recordings_page = RwSignal::new(1u32);
     let recordings_total_pages = RwSignal::new(1u32);
@@ -203,6 +387,7 @@ pub fn XcBrowser() -> impl IntoView {
     let recordings_total: RwSignal<u32> = RwSignal::new(0);
     let cached_ids: RwSignal<std::collections::HashSet<u64>> =
         RwSignal::new(std::collections::HashSet::new());
+    let is_desktop = is_tauri && !state.is_mobile_platform;
 
     // Country combobox state
     let country_dropdown_open = RwSignal::new(false);
@@ -236,6 +421,19 @@ pub fn XcBrowser() -> impl IntoView {
         view.try_set(next);
     });
 
+    let clear_messages = move || {
+        error_msg.set(None);
+        notice.set(None);
+        long_build_prompt.set(None);
+        confirm_remove.set(false);
+    };
+
+    // Show an XC error in the error box, worded for `src`.
+    let show_error = move |e: &XcError, src: &XcSource| {
+        log_detail(e);
+        error_msg.try_set(Some((error_text(e, src), error_actions(e, src))));
+    };
+
     let on_close = move |_: web_sys::MouseEvent| {
         state.dialogs.xc_browser_open().set(false);
     };
@@ -250,6 +448,7 @@ pub fn XcBrowser() -> impl IntoView {
         if key.is_empty() {
             return;
         }
+        clear_messages();
         spawn_local(async move {
             match xc_client::save_key(is_tauri, &key).await {
                 Ok(src) => {
@@ -259,35 +458,54 @@ pub fn XcBrowser() -> impl IntoView {
                     view.try_set(BrowserView::GroupBrowse);
                     error_msg.try_set(None);
                 }
+                Err(XcError::BadKey(d)) => {
+                    log_detail(&XcError::BadKey(d));
+                    error_msg.try_set(Some((ERR_BAD_NEW_KEY.to_string(), ErrorActions::None)));
+                }
                 Err(e) => {
-                    error_msg.try_set(Some(format!("Failed to save key: {}", error_text(&e))));
+                    let text = format!("Failed to save key: {}", error_text(&e, &XcSource::Native));
+                    error_msg.try_set(Some((text, ErrorActions::None)));
                 }
             }
         });
     };
 
-    let on_remove_key = move |_: web_sys::MouseEvent| {
+    let do_remove_key = move || {
+        confirm_remove.set(false);
         spawn_local(async move {
             match xc_client::remove_key(is_tauri).await {
                 Ok(()) => {
                     own_key.try_set(None);
-                    // Using the key until now: there is no source left.
+                    // Using the key until now: there is no source left, so
+                    // go back to the first screen.
                     if source.try_get_untracked().flatten() != Some(XcSource::Proxy) {
                         source.try_set(None);
+                        view.try_set(BrowserView::KeySetup);
                     }
                     error_msg.try_set(None);
+                    notice.try_set(Some(NOTICE_KEY_REMOVED.to_string()));
                 }
                 Err(e) => {
-                    error_msg.try_set(Some(error_text(&e)));
+                    show_error(&e, &XcSource::Native);
                 }
             }
         });
+    };
+
+    // Desktop asks first, because the key file is shared with xc-cli.
+    let on_remove_key = move |_: web_sys::MouseEvent| {
+        clear_messages();
+        if is_desktop {
+            confirm_remove.set(true);
+        } else {
+            do_remove_key();
+        }
     };
 
     let on_use_proxy = move |_: web_sys::MouseEvent| {
         xc_client::set_use_proxy(true);
         source.set(Some(XcSource::Proxy));
-        error_msg.set(None);
+        clear_messages();
         if view.get_untracked() == BrowserView::KeySetup {
             view.set(BrowserView::GroupBrowse);
         }
@@ -297,21 +515,23 @@ pub fn XcBrowser() -> impl IntoView {
         if let Some(src) = own_key.get_untracked() {
             xc_client::set_use_proxy(false);
             source.set(Some(src));
-            error_msg.set(None);
+            clear_messages();
         }
     };
 
     let on_open_key_form = move |_: web_sys::MouseEvent| {
-        error_msg.set(None);
+        clear_messages();
         view.set(BrowserView::KeySetup);
     };
 
     let on_cancel_key_form = move |_: web_sys::MouseEvent| {
+        error_msg.set(None);
         view.set(BrowserView::GroupBrowse);
     };
 
     // Build or reload the species list for the selected group and country.
-    let load_group = move |refresh: bool| {
+    // `allow_long` skips the warning for a long build (own key, web).
+    let load_group = move |refresh: bool, allow_long: bool| {
         let Some(src) = source.get_untracked() else {
             return;
         };
@@ -326,10 +546,11 @@ pub fn XcBrowser() -> impl IntoView {
         };
         let my_gen = taxonomy_gen.get_untracked() + 1;
         taxonomy_gen.set(my_gen);
-        loading.set(true);
-        error_msg.set(None);
+        taxonomy_loading.set(true);
+        clear_messages();
         taxonomy_age.set(None);
         taxonomy_progress.set(None);
+        taxonomy_target.set((group.clone(), country.clone()));
         if !refresh {
             species_list.set(Vec::new());
         }
@@ -341,9 +562,10 @@ pub fn XcBrowser() -> impl IntoView {
                 &group,
                 country.as_deref(),
                 refresh,
-                move |done, total| {
+                allow_long,
+                move |p| {
                     if is_current() {
-                        taxonomy_progress.try_set(Some((done, total)));
+                        taxonomy_progress.try_set(Some(p));
                     }
                 },
                 is_current,
@@ -355,8 +577,12 @@ pub fn XcBrowser() -> impl IntoView {
             let taxonomy: Option<XcGroupTaxonomy> = match result {
                 Ok(t) => Some(t),
                 Err(XcError::Cancelled) => return,
+                Err(e @ XcError::LongBuild { .. }) => {
+                    long_build_prompt.try_set(Some(error_text(&e, &src)));
+                    None
+                }
                 Err(e) => {
-                    error_msg.try_set(Some(error_text(&e)));
+                    show_error(&e, &src);
                     None
                 }
             };
@@ -372,14 +598,25 @@ pub fn XcBrowser() -> impl IntoView {
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
-            loading.try_set(false);
+            taxonomy_loading.try_set(false);
         });
     };
 
     let on_stop_taxonomy = move |_: web_sys::MouseEvent| {
         taxonomy_gen.update(|g| *g += 1);
+        let last = taxonomy_progress.get_untracked();
+        let (_, country) = taxonomy_target.get_untracked();
         taxonomy_progress.set(None);
-        loading.set(false);
+        taxonomy_loading.set(false);
+        notice.set(Some(text_stopped(country.as_deref(), last)));
+    };
+
+    let on_load_all = move |_: web_sys::MouseEvent| {
+        load_group(false, true);
+    };
+
+    let on_cancel_long_build = move |_: web_sys::MouseEvent| {
+        long_build_prompt.set(None);
     };
 
     let on_load_group = move |_: web_sys::MouseEvent| {
@@ -387,11 +624,11 @@ pub fn XcBrowser() -> impl IntoView {
         let text = country_filter_text.get_untracked().trim().to_string();
         country_input.set(text);
         country_dropdown_open.set(false);
-        load_group(false);
+        load_group(false, false);
     };
 
     let on_refresh = move |_: web_sys::MouseEvent| {
-        load_group(true);
+        load_group(true, false);
     };
 
     let check_cached = move |src: XcSource, ids: Vec<u64>| {
@@ -401,23 +638,37 @@ pub fn XcBrowser() -> impl IntoView {
         });
     };
 
-    // Show one page of recordings (species view or search results).
-    let show_results = move |src: XcSource, result: Result<XcSearchResult, XcError>| {
-        match result {
-            Ok(r) => {
-                let ids: Vec<u64> = r.recordings.iter().map(|rec| rec.id_num()).collect();
-                recordings_page.try_set(r.page);
-                recordings_total_pages.try_set(r.num_pages);
-                recordings_total.try_set(r.num_recordings);
-                recordings.try_set(r.recordings);
-                check_cached(src, ids);
-            }
-            Err(e) => {
-                error_msg.try_set(Some(error_text(&e)));
-            }
-        }
-        loading.try_set(false);
+    // Start a recordings request: returns its generation number. Any older
+    // request still in flight is ignored when it finishes.
+    let begin_results = move || {
+        let my_gen = results_gen.get_untracked() + 1;
+        results_gen.set(my_gen);
+        loading.set(true);
+        recordings.set(Vec::new());
+        clear_messages();
+        my_gen
     };
+
+    // Show one page of recordings (species view or search results), unless
+    // a newer request has started since this one.
+    let show_results =
+        move |my_gen: u64, src: XcSource, result: Result<XcSearchResult, XcError>| {
+            if results_gen.try_get_untracked() != Some(my_gen) {
+                return;
+            }
+            match result {
+                Ok(r) => {
+                    let ids: Vec<u64> = r.recordings.iter().map(|rec| rec.id_num()).collect();
+                    recordings_page.try_set(r.page);
+                    recordings_total_pages.try_set(r.num_pages);
+                    recordings_total.try_set(r.num_recordings);
+                    recordings.try_set(r.recordings);
+                    check_cached(src, ids);
+                }
+                Err(e) => show_error(&e, &src),
+            }
+            loading.try_set(false);
+        };
 
     let load_species_recordings = move |genus: String, species: String, en: String| {
         let Some(src) = source.get_untracked() else {
@@ -428,14 +679,12 @@ pub fn XcBrowser() -> impl IntoView {
             species: species.clone(),
             en,
         });
-        loading.set(true);
-        recordings.set(Vec::new());
+        let my_gen = begin_results();
         recordings_page.set(1);
-        error_msg.set(None);
 
         spawn_local(async move {
             let result = xc_client::species_recordings(&src, &genus, &species, 1).await;
-            show_results(src, result);
+            show_results(my_gen, src, result);
         });
     };
 
@@ -448,13 +697,11 @@ pub fn XcBrowser() -> impl IntoView {
             return;
         };
         view.set(BrowserView::SearchResults);
-        loading.set(true);
-        recordings.set(Vec::new());
-        error_msg.set(None);
+        let my_gen = begin_results();
 
         spawn_local(async move {
             let result = xc_client::search(&src, &query, 1).await;
-            show_results(src, result);
+            show_results(my_gen, src, result);
         });
     };
 
@@ -481,7 +728,7 @@ pub fn XcBrowser() -> impl IntoView {
                 let text = country_filter_text.get_untracked().trim().to_string();
                 country_input.set(text);
             }
-            load_group(false);
+            load_group(false, false);
         }
         "Escape" => {
             country_dropdown_open.set(false);
@@ -503,6 +750,9 @@ pub fn XcBrowser() -> impl IntoView {
     };
 
     let on_back = move |_: web_sys::MouseEvent| {
+        // Drop any recordings request still in flight.
+        results_gen.update(|g| *g += 1);
+        loading.set(false);
         view.set(BrowserView::GroupBrowse);
         recordings.set(Vec::new());
     };
@@ -512,9 +762,7 @@ pub fn XcBrowser() -> impl IntoView {
         let Some(src) = source.get_untracked() else {
             return;
         };
-        loading.set(true);
-        recordings.set(Vec::new());
-        error_msg.set(None);
+        let my_gen = begin_results();
 
         spawn_local(async move {
             let result = match &current_view {
@@ -530,7 +778,7 @@ pub fn XcBrowser() -> impl IntoView {
                     return;
                 }
             };
-            show_results(src, result);
+            show_results(my_gen, src, result);
         });
     };
 
@@ -540,13 +788,18 @@ pub fn XcBrowser() -> impl IntoView {
         };
         let id = rec.id_num();
         downloading.set(Some(id));
-        error_msg.set(None);
+        clear_messages();
         spawn_local(async move {
+            let dl = match xc_client::download(&src, &rec).await {
+                Ok(dl) => dl,
+                Err(e) => {
+                    log::error!("Failed to download XC{id}: {e:?}");
+                    show_error(&e, &src);
+                    downloading.try_set(None);
+                    return;
+                }
+            };
             let result: Result<(), String> = async {
-                let dl = xc_client::download(&src, &rec)
-                    .await
-                    .map_err(|e| error_text(&e))?;
-
                 // Use the standard loading pipeline (WASM-side decode, spectrogram, etc.)
                 let load_id = state.loading_start(&dl.filename);
                 let load_result = crate::components::file_sidebar::load_named_bytes(
@@ -580,7 +833,7 @@ pub fn XcBrowser() -> impl IntoView {
 
             if let Err(e) = result {
                 log::error!("Failed to load XC{id}: {e}");
-                error_msg.try_set(Some(format!("Failed to load: {e}")));
+                error_msg.try_set(Some((format!("Failed to load: {e}"), ErrorActions::None)));
             }
             downloading.try_set(None);
         });
@@ -590,7 +843,7 @@ pub fn XcBrowser() -> impl IntoView {
         <div class="xc-modal-overlay" on:click=on_close>
             <div class="xc-modal" on:click=on_content_click>
                 <div class="xc-modal-header">
-                    <span class="xc-modal-title">"Explore Xeno-Canto"</span>
+                    <span class="xc-modal-title">{TITLE}</span>
                     <button class="xc-modal-close" on:click=on_close>{"\u{00D7}"}</button>
                 </div>
 
@@ -608,28 +861,74 @@ pub fn XcBrowser() -> impl IntoView {
                             {if is_proxy {
                                 if has_own {
                                     view! {
-                                        <button class="xc-link-btn" on:click=on_use_own_key>{LINK_USE_OWN_KEY}</button>
+                                        <button class="xc-link-btn" on:click=on_use_own_key>{BTN_USE_OWN_KEY}</button>
+                                        <button class="xc-link-btn" on:click=on_remove_key>{BTN_REMOVE_KEY}</button>
                                     }.into_any()
                                 } else {
                                     view! {
-                                        <button class="xc-link-btn" on:click=on_open_key_form>{LINK_ADD_KEY}</button>
+                                        <button class="xc-link-btn" on:click=on_open_key_form>{BTN_ADD_KEY}</button>
                                     }.into_any()
                                 }
                             } else {
                                 view! {
-                                    <button class="xc-link-btn" on:click=on_open_key_form>{LINK_CHANGE_KEY}</button>
-                                    <button class="xc-link-btn" on:click=on_use_proxy>{LINK_USE_PROXY}</button>
+                                    <button class="xc-link-btn" on:click=on_open_key_form>{BTN_CHANGE_KEY}</button>
+                                    <button class="xc-link-btn" on:click=on_remove_key>{BTN_REMOVE_KEY}</button>
+                                    <button class="xc-link-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
                                 }.into_any()
                             }}
                         </div>
                     })
                 }}
 
-                // Error display
-                {move || error_msg.get().filter(|m| !m.is_empty()).map(|msg| view! {
+                // Desktop: confirm before deleting the key file shared with xc-cli.
+                {move || confirm_remove.get().then(|| view! {
+                    <div class="xc-confirm">
+                        <span>{CONFIRM_REMOVE_DESKTOP}</span>
+                        <div class="xc-confirm-buttons">
+                            <button class="xc-btn" on:click=move |_| do_remove_key()>{BTN_REMOVE_KEY}</button>
+                            <button class="xc-btn" on:click=move |_| confirm_remove.set(false)>{BTN_CANCEL}</button>
+                        </div>
+                    </div>
+                })}
+
+                // Error display, with buttons that fix the problem.
+                {move || error_msg.get().filter(|(m, _)| !m.is_empty()).map(|(msg, actions)| view! {
                     <div class="xc-error">
-                        <span>{msg}</span>
+                        <span>
+                            {msg}
+                            {match actions {
+                                ErrorActions::None => None,
+                                ErrorActions::AddKey => Some(view! {
+                                    " "
+                                    <button class="xc-link-btn" on:click=on_open_key_form>{BTN_ADD_KEY}</button>
+                                }.into_any()),
+                                ErrorActions::FixKey => Some(view! {
+                                    " "
+                                    <button class="xc-link-btn" on:click=on_open_key_form>{BTN_CHANGE_KEY}</button>
+                                    <button class="xc-link-btn" on:click=on_remove_key>{BTN_REMOVE_KEY}</button>
+                                }.into_any()),
+                            }}
+                        </span>
                         <button class="xc-error-dismiss" on:click=move |_| error_msg.set(None)>{"\u{00D7}"}</button>
+                    </div>
+                })}
+
+                // Status messages that are not errors.
+                {move || notice.get().map(|msg| view! {
+                    <div class="xc-notice">
+                        <span>{msg}</span>
+                        <button class="xc-error-dismiss" on:click=move |_| notice.set(None)>{"\u{00D7}"}</button>
+                    </div>
+                })}
+
+                // Own key: a long species list waits for the user to confirm.
+                {move || long_build_prompt.get().map(|msg| view! {
+                    <div class="xc-confirm">
+                        <span>{msg}</span>
+                        <div class="xc-confirm-buttons">
+                            <button class="xc-btn" on:click=on_load_all>{BTN_LOAD_ALL}</button>
+                            <button class="xc-btn" on:click=on_cancel_long_build>{BTN_CANCEL}</button>
+                        </div>
                     </div>
                 })}
 
@@ -638,24 +937,27 @@ pub fn XcBrowser() -> impl IntoView {
                     <div class="xc-downloading">{format!("Downloading XC{id}\u{2026}")}</div>
                 })}
 
-                // API key form and the no-key option
+                // First screen: choose the proxy or your own key. From proxy
+                // mode ("Add API key") only the key option is shown.
                 {move || {
                     if view.get() != BrowserView::KeySetup { return None; }
-                    let has_own = own_key.get().is_some();
                     let has_source = source.get().is_some();
                     let on_proxy = source.get() == Some(XcSource::Proxy);
-                    Some(view! {
-                        <div class="xc-section">
+                    let key_option = view! {
+                        <div class="xc-option">
+                            <h3 class="xc-option-heading">{OWN_KEY_HEADING}</h3>
                             <p class="xc-info">
                                 {KEY_INTRO_BEFORE_LINK}
                                 <a href="https://xeno-canto.org" target="_blank">"xeno-canto.org"</a>
                                 {KEY_INTRO_AFTER_LINK}
                             </p>
+                            <label class="xc-field-label" for="xc-api-key">{KEY_FIELD_LABEL}</label>
                             <div class="xc-key-form">
                                 <input
+                                    id="xc-api-key"
                                     type="password"
                                     class="xc-input"
-                                    placeholder="API key"
+                                    placeholder=KEY_FIELD_PLACEHOLDER
                                     prop:value=move || api_key_input.get()
                                     on:input=move |ev| {
                                         let val = event_target_value(&ev);
@@ -667,25 +969,28 @@ pub fn XcBrowser() -> impl IntoView {
                                         }
                                     }
                                 />
-                                <button class="xc-btn" on:click=on_save_key>"Save key"</button>
-                                {has_own.then(|| view! {
-                                    <button class="xc-btn" on:click=on_remove_key>{BTN_REMOVE_KEY}</button>
-                                })}
+                                <button class="xc-btn" on:click=on_save_key>{BTN_SAVE_KEY}</button>
                                 {has_source.then(|| view! {
                                     <button class="xc-btn" on:click=on_cancel_key_form>{BTN_CANCEL}</button>
                                 })}
                             </div>
-                            {(!is_tauri).then(|| view! {
-                                <p class="xc-info xc-key-note">{KEY_STORED_WEB}</p>
-                            })}
+                            <p class="xc-info xc-key-note">
+                                {if is_tauri { KEY_STORED_APP } else { KEY_STORED_WEB }}
+                            </p>
                         </div>
-                        // Hidden when already using the proxy (came here via "Add your key").
-                        {(!on_proxy).then(|| view! {
-                            <div class="xc-section">
-                                <p class="xc-info">{NO_KEY_INTRO}</p>
-                                <button class="xc-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
-                            </div>
-                        })}
+                    };
+                    Some(view! {
+                        <div class="xc-section">
+                            {(!on_proxy).then(|| view! {
+                                <p class="xc-choose-heading">{CHOOSE_HEADING}</p>
+                                <div class="xc-option">
+                                    <h3 class="xc-option-heading">{NO_KEY_HEADING}</h3>
+                                    <p class="xc-info">{text_no_key_intro()}</p>
+                                    <button class="xc-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
+                                </div>
+                            })}
+                            {key_option}
+                        </div>
                     })
                 }}
 
@@ -705,7 +1010,7 @@ pub fn XcBrowser() -> impl IntoView {
                                 <input
                                     type="text"
                                     class="xc-input xc-search-input"
-                                    placeholder="Search (e.g. Myotis, bat, Australia...)"
+                                    placeholder=SEARCH_PLACEHOLDER
                                     prop:value=move || search_input.get()
                                     on:input=move |ev| search_input.set(event_target_value(&ev))
                                     on:keydown=on_search_keydown
@@ -841,7 +1146,7 @@ pub fn XcBrowser() -> impl IntoView {
                                             })}
                                             <button
                                                 class="xc-btn xc-btn-small"
-                                                disabled=move || loading.get()
+                                                disabled=move || taxonomy_loading.get()
                                                 on:click=on_refresh
                                             >"Refresh"</button>
                                         </div>
@@ -867,26 +1172,32 @@ pub fn XcBrowser() -> impl IntoView {
                     })
                 }}
 
-                // Loading indicator. A species list built in the browser shows
-                // its page count and can be stopped.
-                {move || loading.get().then(|| match taxonomy_progress.get() {
-                    Some((done, total)) => view! {
+                // A species list being built: what is loading, how far it
+                // has got, and a Stop button. Shown in every view, so a search
+                // during a build leaves it visible.
+                {move || taxonomy_loading.get().then(|| {
+                    let (group, country) = taxonomy_target.get();
+                    view! {
                         <div class="xc-loading">
-                            <span class="xc-progress-text">{text_progress(done, total)}</span>
+                            <span class="xc-progress-text">
+                                {move || text_progress(&group, country.as_deref(), taxonomy_progress.get())}
+                            </span>
                             " "
                             <button class="xc-btn xc-btn-small" on:click=on_stop_taxonomy>{BTN_STOP}</button>
                         </div>
-                    }.into_any(),
-                    None => view! {
-                        <div class="xc-loading">"Loading..."</div>
-                    }.into_any(),
+                    }
+                })}
+
+                // A page of recordings is loading.
+                {move || loading.get().then(|| view! {
+                    <div class="xc-loading">"Loading..."</div>
                 })}
 
                 // Species list (group browse view)
                 {move || {
                     if view.get() != BrowserView::GroupBrowse { return None; }
                     let list = species_list.get();
-                    if list.is_empty() && !loading.get() { return None; }
+                    if list.is_empty() && !taxonomy_loading.get() { return None; }
 
                     let count = list.len();
                     Some(view! {
@@ -1062,5 +1373,126 @@ pub fn XcBrowser() -> impl IntoView {
                 }}
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn progress(done: u32, total: u32, secs_left: f64) -> BuildProgress {
+        BuildProgress {
+            pages_done: 1,
+            total_pages: 1,
+            recordings_done: done,
+            total_recordings: total,
+            secs_left,
+        }
+    }
+
+    #[test]
+    fn commas() {
+        assert_eq!(with_commas(0), "0");
+        assert_eq!(with_commas(999), "999");
+        assert_eq!(with_commas(30_000), "30,000");
+        assert_eq!(with_commas(1_052_345), "1,052,345");
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(text_duration(10.0), "about 1 minute");
+        assert_eq!(text_duration(61.0), "about 2 minutes");
+        assert_eq!(text_duration(89.0 * 60.0), "about 89 minutes");
+        assert_eq!(text_duration(2105.0 * 5.0), "about 3 hours");
+    }
+
+    #[test]
+    fn progress_text() {
+        assert_eq!(
+            text_progress("bats", None, None),
+            "Loading species list for bats..."
+        );
+        // Short builds show no time estimate.
+        assert_eq!(
+            text_progress("bats", None, Some(progress(500, 11_200, 20.0))),
+            "Loading species list for bats: 500 of 11,200 recordings"
+        );
+        assert_eq!(
+            text_progress(
+                "birds",
+                Some("Spain"),
+                Some(progress(500, 39_710, 79.0 * 5.0))
+            ),
+            "Loading species list for birds in Spain: 500 of 39,710 recordings, about 7 minutes left"
+        );
+    }
+
+    #[test]
+    fn group_too_large_text() {
+        assert_eq!(
+            text_group_too_large("birds", None, 1_052_345),
+            "Birds has 1,052,345 recordings, too many to list without your own API key. The \
+             limit is 30,000 recordings. Choose a country, or add your API key."
+        );
+        assert_eq!(
+            text_group_too_large("land mammals", Some("United States"), 77_277),
+            "Land mammals in United States has 77,277 recordings, too many to list without your \
+             own API key. The limit is 30,000 recordings. Add your API key to list them."
+        );
+    }
+
+    #[test]
+    fn errors_by_source() {
+        let proxy = XcSource::Proxy;
+        let direct = XcSource::Direct { key: "k".into() };
+        assert_eq!(error_text(&XcError::Network, &proxy), ERR_NETWORK_PROXY);
+        assert_eq!(error_text(&XcError::Network, &direct), ERR_NETWORK_DIRECT);
+        let up = XcError::Upstream(Some("Xeno-canto rejected this server's API key.".into()));
+        assert_eq!(error_text(&up, &proxy), ERR_UPSTREAM_PROXY);
+        assert_eq!(error_text(&up, &direct), ERR_UPSTREAM_DIRECT);
+        // The proxy's own message is not appended.
+        let busy = XcError::Busy(Some("Proxy is busy. Try again in a minute.".into()));
+        assert_eq!(error_text(&busy, &proxy), ERR_BUSY_PROXY);
+        assert_eq!(error_actions(&busy, &proxy), ErrorActions::AddKey);
+        assert_eq!(error_actions(&busy, &direct), ErrorActions::None);
+        assert_eq!(
+            error_actions(&XcError::BadKey(None), &direct),
+            ErrorActions::FixKey
+        );
+        assert_eq!(
+            error_text(
+                &XcError::Http {
+                    status: 500,
+                    message: None
+                },
+                &direct
+            ),
+            "Request failed (HTTP 500)"
+        );
+        assert_eq!(
+            error_text(&XcError::TooLarge { id: Some(928094) }, &proxy),
+            "XC928094 is too large to load through Oversample's server. Add your own API key, \
+             or download the file from xeno-canto.org and open it in Oversample."
+        );
+    }
+
+    #[test]
+    fn stopped_text() {
+        assert_eq!(
+            text_stopped(None, Some(progress(1_000, 11_200, 0.0))),
+            "Species list stopped after 1,000 of 11,200 recordings. Choose a country for a \
+             shorter list, or click Go to start again."
+        );
+        assert_eq!(
+            text_stopped(Some("Spain"), None),
+            "Species list stopped. Click Go to start again."
+        );
+    }
+
+    #[test]
+    fn age_matches_desktop_wording() {
+        assert_eq!(text_age(59.0 * 60.0), "just now");
+        assert_eq!(text_age(3600.0), "1 hour ago");
+        assert_eq!(text_age(48.0 * 3600.0), "2 days ago");
     }
 }

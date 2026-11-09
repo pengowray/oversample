@@ -45,3 +45,31 @@ pub fn encode_component(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::encode_component;
+
+    #[test]
+    fn encodes_utf8_as_bytes() {
+        assert_eq!(encode_component("Côte"), "C%C3%B4te");
+    }
+
+    #[test]
+    fn encodes_quotes_and_apostrophe() {
+        assert_eq!(
+            encode_component("cnt:\"Côte d'Ivoire\""),
+            "cnt%3A%22C%C3%B4te%20d%27Ivoire%22"
+        );
+    }
+
+    #[test]
+    fn encodes_query_delimiters() {
+        assert_eq!(encode_component("a&b=c+d"), "a%26b%3Dc%2Bd");
+    }
+
+    #[test]
+    fn leaves_unreserved_alone() {
+        assert_eq!(encode_component("-_.~AZaz09"), "-_.~AZaz09");
+    }
+}

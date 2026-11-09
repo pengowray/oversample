@@ -5958,6 +5958,62 @@ button.toolbar-overflow-btn {
     opacity: 1;
 }
 
+/* Status that is not an error ("API key removed.", "Species list stopped"). */
+.xc-notice {
+    background: #1a2a3a;
+    color: #9cc4f0;
+    padding: 8px 16px;
+    font-size: 12px;
+    border-bottom: 1px solid #2a3a5a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.xc-notice .xc-error-dismiss {
+    color: #9cc4f0;
+}
+
+/* A question with buttons: remove the key (desktop), or start a long
+   species list (own key). */
+.xc-confirm {
+    background: #2a2a1a;
+    color: #e0d8a0;
+    padding: 8px 16px;
+    font-size: 12px;
+    line-height: 1.5;
+    border-bottom: 1px solid #4a4a2a;
+}
+.xc-confirm-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+/* First screen: a heading that states the choice, then one block per option. */
+.xc-choose-heading {
+    color: #ddd;
+    font-size: 13px;
+    margin: 0 0 10px;
+}
+.xc-option + .xc-option {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #2a2a3a;
+}
+.xc-option-heading {
+    color: #ccc;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+.xc-field-label {
+    display: block;
+    color: #aaa;
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
 .xc-downloading {
     color: #8ac;
     padding: 8px 16px;
