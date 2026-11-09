@@ -82,6 +82,11 @@ fn text_progress(done: u32, total: u32) -> String {
     }
 }
 
+/// Any other HTTP error when the server gave no message.
+fn text_http_failed(status: u16) -> String {
+    format!("Request failed (HTTP {status})")
+}
+
 /// The group is too big to list through the proxy.
 fn text_group_too_large(pages: u32) -> String {
     format!(
@@ -127,7 +132,7 @@ fn error_text(e: &XcError) -> String {
         XcError::Http {
             status,
             message: None,
-        } => format!("Request failed (HTTP {status})"),
+        } => text_http_failed(*status),
         XcError::Cancelled => String::new(),
         XcError::Other(m) => m.clone(),
     }
@@ -638,6 +643,7 @@ pub fn XcBrowser() -> impl IntoView {
                     if view.get() != BrowserView::KeySetup { return None; }
                     let has_own = own_key.get().is_some();
                     let has_source = source.get().is_some();
+                    let on_proxy = source.get() == Some(XcSource::Proxy);
                     Some(view! {
                         <div class="xc-section">
                             <p class="xc-info">
@@ -673,10 +679,13 @@ pub fn XcBrowser() -> impl IntoView {
                                 <p class="xc-info xc-key-note">{KEY_STORED_WEB}</p>
                             })}
                         </div>
-                        <div class="xc-section">
-                            <p class="xc-info">{NO_KEY_INTRO}</p>
-                            <button class="xc-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
-                        </div>
+                        // Hidden when already using the proxy (came here via "Add your key").
+                        {(!on_proxy).then(|| view! {
+                            <div class="xc-section">
+                                <p class="xc-info">{NO_KEY_INTRO}</p>
+                                <button class="xc-btn" on:click=on_use_proxy>{BTN_CONTINUE_WITHOUT_KEY}</button>
+                            </div>
+                        })}
                     })
                 }}
 
