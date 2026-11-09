@@ -71,9 +71,14 @@ impl SpeciesAccumulator {
 }
 
 /// The search query that lists every recording in a group, optionally
-/// limited to one country.
+/// limited to one country. Values with spaces are quoted, because XC rejects
+/// `grp:land mammals` ("only accepts queries using tags").
 pub fn group_query(group: &str, country: Option<&str>) -> String {
-    let mut query = format!("grp:{group}");
+    let mut query = if group.contains(char::is_whitespace) {
+        format!("grp:\"{group}\"")
+    } else {
+        format!("grp:{group}")
+    };
     if let Some(cnt) = country {
         query.push_str(&format!(" cnt:\"{cnt}\""));
     }
@@ -153,6 +158,18 @@ mod tests {
             group_query("bats", Some("United Kingdom")),
             "grp:bats cnt:\"United Kingdom\""
         );
+    }
+
+    #[test]
+    fn group_query_quotes_group_with_space() {
+        assert_eq!(group_query("land mammals", None), "grp:\"land mammals\"");
+        assert_eq!(
+            group_query("land mammals", Some("Côte d'Ivoire")),
+            "grp:\"land mammals\" cnt:\"Côte d'Ivoire\""
+        );
+        // normalize_query must still see a tag and leave the query alone.
+        let q = group_query("land mammals", None);
+        assert_eq!(crate::api::normalize_query(&q), q);
     }
 
     #[test]

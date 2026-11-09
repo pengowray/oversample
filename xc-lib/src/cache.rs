@@ -167,20 +167,20 @@ pub fn taxonomy_age_string(root: &Path, group: &str, country: Option<&str>) -> O
     let now = chrono::Utc::now();
     let duration = now.signed_duration_since(updated);
 
-    let hours = duration.num_hours();
+    Some(age_text(duration.num_hours()))
+}
+
+/// How old something is, from whole hours: "just now" under 1 hour, then
+/// "N hours ago", then "N days ago" from 24 hours. The web build uses this
+/// too, so desktop and web show the same wording.
+pub fn age_text(hours: i64) -> String {
     if hours < 1 {
-        Some("just now".to_string())
+        "just now".to_string()
     } else if hours < 24 {
-        Some(format!(
-            "{hours} hour{} ago",
-            if hours == 1 { "" } else { "s" }
-        ))
+        format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" })
     } else {
-        let days = duration.num_days();
-        Some(format!(
-            "{days} day{} ago",
-            if days == 1 { "" } else { "s" }
-        ))
+        let days = hours / 24;
+        format!("{days} day{} ago", if days == 1 { "" } else { "s" })
     }
 }
 
@@ -777,4 +777,18 @@ fn update_index_inner(
         .map_err(|e| format!("Failed to finalize index.json: {e}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::age_text;
+
+    #[test]
+    fn age_text_thresholds() {
+        assert_eq!(age_text(0), "just now");
+        assert_eq!(age_text(1), "1 hour ago");
+        assert_eq!(age_text(23), "23 hours ago");
+        assert_eq!(age_text(24), "1 day ago");
+        assert_eq!(age_text(48), "2 days ago");
+    }
 }
