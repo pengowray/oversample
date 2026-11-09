@@ -29,6 +29,15 @@ pub mod keys {
     pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
     /// The mic panel's Channels setting: "mono" or "stereo".
     pub const MIC_CHANNEL_MODE: &str = "oversample_mic_channel_mode";
+    /// Xeno-Canto API key saved in the browser (web build only; the desktop app
+    /// keeps its key in a native config file, see `xc_lib::key_store`).
+    pub const XC_WEB_API_KEY: &str = "oversample_xc_api_key";
+    /// "true" when the user chose to explore Xeno-Canto through the Oversample
+    /// proxy (no key of their own), even if a key is saved.
+    pub const XC_USE_PROXY: &str = "oversample_xc_use_proxy";
+    /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
+    /// No UI; set it from the browser console. Unset means the build default.
+    pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
 }
 
 /// Load the persisted per-device effective-bit-depth map (device name -> bits).
@@ -86,6 +95,13 @@ pub fn get_raw(key: &str) -> Option<String> {
 pub fn set_raw(key: &str, value: &str) {
     if let Some(ls) = local_storage() {
         let _ = ls.set_item(key, value);
+    }
+}
+
+/// Remove a setting. Errors are ignored, as in [`set_raw`].
+pub fn remove_raw(key: &str) {
+    if let Some(ls) = local_storage() {
+        let _ = ls.remove_item(key);
     }
 }
 

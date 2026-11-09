@@ -72,6 +72,7 @@ pub fn run() {
             cmd_playback::native_stop,
             xc::xc_set_api_key,
             xc::xc_get_api_key,
+            xc::xc_delete_api_key,
             xc::xc_browse_group,
             xc::xc_refresh_taxonomy,
             xc::xc_taxonomy_age,

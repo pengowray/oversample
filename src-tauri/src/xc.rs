@@ -23,6 +23,13 @@ pub fn xc_get_api_key() -> Result<Option<String>, String> {
     Ok(key_store::load_key())
 }
 
+/// Remove the saved key. The key file is shared with `xc-cli`, so this also
+/// signs the CLI out.
+#[tauri::command]
+pub fn xc_delete_api_key() -> Result<(), String> {
+    key_store::delete_key()
+}
+
 fn require_api_key() -> Result<String, String> {
     key_store::resolve_key(&None)
         .ok_or_else(|| "No XC API key configured. Please set your key first.".into())

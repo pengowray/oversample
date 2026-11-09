@@ -20,6 +20,7 @@ pub mod types;
 pub mod viewport;
 pub mod web_util;
 pub mod wikimedia;
+pub mod xc_client;
 
 use components::app::App;
 use leptos::prelude::*;

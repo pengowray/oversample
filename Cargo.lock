@@ -3155,6 +3155,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "xc-lib",
  "yaml_serde",
 ]
 

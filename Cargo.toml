@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 oversample-core = { path = "oversample-core" }
 oversample-ipc = { path = "oversample-ipc" }
+# Parsing, query and species-list helpers only; no reqwest/tokio in WASM.
+xc-lib = { path = "xc-lib", default-features = false }
 leptos = { version = "0.8", features = ["csr"] }
 reactive_stores = "0.4.4"
 web-sys = { version = "0.3", features = [

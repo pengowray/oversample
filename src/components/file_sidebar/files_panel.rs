@@ -778,11 +778,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 <button class="upload-btn add-files-btn" on:click=on_demo_click>
                                     {move || if demo_loading.get() { "Loading\u{2026}" } else { "Load demo" }}
                                 </button>
-                                {is_tauri.then(|| view! {
-                                    <button class="upload-btn add-files-btn" on:click=move |_| {
-                                        state.dialogs.xc_browser_open().set(true);
-                                    }>"Explore XC"</button>
-                                })}
+                                <button class="upload-btn add-files-btn" on:click=move |_| {
+                                    state.dialogs.xc_browser_open().set(true);
+                                }>"Explore XC"</button>
                                 <button
                                     class="upload-btn add-files-btn"
                                     title="Load a WAV or other recording from Wikimedia Commons or Wikipedia, correcting any declared time expansion factor"
