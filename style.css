@@ -744,6 +744,34 @@ body.sidebar-resizing {
     flex-wrap: wrap;
 }
 
+/* Taller than the PSD panel's buttons: 24 px click targets. */
+.pulse-annotate-row .psd-btn {
+    padding: 4px 8px;
+}
+
+.pulse-radio-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.pulse-radio {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    cursor: pointer;
+}
+
+/* Lines up with the option's text, past the radio button. */
+.pulse-radio-note {
+    padding-left: 19px;
+}
+
+.pulse-add-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 .pulse-list {
     max-height: 400px;
     overflow-y: auto;
@@ -764,14 +792,16 @@ body.sidebar-resizing {
     position: sticky;
     top: 0;
     background: #111;
-    color: #777;
+    color: #888;
     font-weight: normal;
     text-align: left;
     padding: 2px;
 }
 
 .pulse-table td {
-    padding: 2px;
+    /* 24 px rows: each row is a click target. */
+    padding: 4px 2px;
+    line-height: 16px;
     color: #aaa;
     white-space: nowrap;
 }
@@ -781,9 +811,10 @@ body.sidebar-resizing {
     padding-left: 10px;
 }
 
+/* Clear of overlay scrollbars (phones), which sit on top of the content. */
 .pulse-table th:last-child,
 .pulse-table td:last-child {
-    padding-right: 4px;
+    padding-right: 8px;
 }
 
 .pulse-table .pulse-col-num {
@@ -804,9 +835,9 @@ body.sidebar-resizing {
 }
 
 /* Detections that are not bat calls: muted, like their dashed boxes on the
-   spectrogram. */
+   spectrogram, but still 4.5:1 against the panel. */
 .pulse-row-other td {
-    color: #6c6c6c;
+    color: #888;
 }
 
 .pulse-row.selected td {

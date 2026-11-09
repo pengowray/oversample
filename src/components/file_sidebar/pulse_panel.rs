@@ -492,27 +492,32 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         } else {
             format!("Add {}", count(n, "annotation", "annotations"))
         };
+        // Radio buttons in a column: the sidebar is too narrow for the three
+        // options side by side.
         let option = move |value: AnnotateWhat, label: &'static str| {
             view! {
-                <button
-                    class=move || if annotate_what.get() == value { "psd-btn psd-btn-active" } else { "psd-btn" }
-                    on:click=move |_| annotate_what.set(value)
-                >{label}</button>
+                <label class="setting-label pulse-radio">
+                    <input
+                        type="radio"
+                        name="pulse-annotate-what"
+                        prop:checked=move || annotate_what.get() == value
+                        on:change=move |_| annotate_what.set(value)
+                    />
+                    {label}
+                </label>
             }
         };
         Some(view! {
             <div class="setting-group">
                 <div class="setting-group-title">"Annotate Calls and Trains"</div>
-                <div class="pulse-annotate-row">
-                    <div class="psd-btn-group">
-                        {option(AnnotateWhat::Calls, "Calls")}
-                        {option(AnnotateWhat::Trains, "Trains")}
-                        {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
-                    </div>
+                <div class="pulse-annotate-row pulse-radio-group">
+                    {option(AnnotateWhat::Calls, "Calls")}
+                    {option(AnnotateWhat::Trains, "Trains")}
+                    {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
+                    {(what == AnnotateWhat::TrainsWithCalls).then(|| view! {
+                        <div class="pulse-status-note pulse-radio-note">"Calls not in a train are added at the top level"</div>
+                    })}
                 </div>
-                {(what == AnnotateWhat::TrainsWithCalls).then(|| view! {
-                    <div class="pulse-status-note pulse-annotate-row">"Calls not in a train are added at the top level"</div>
-                })}
                 <div class="setting-row">
                     <label
                         class="setting-label"
@@ -533,13 +538,11 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                         title="Annotations without this tag are kept. Any that were inside a removed train move to the top level of the Annotations tab."
                     >{t}</div>
                 })}
-                <div class="setting-row">
-                    <button
-                        class="setting-button"
-                        disabled=n == 0
-                        on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
-                    >{button_text}</button>
-                </div>
+                <button
+                    class="sidebar-btn pulse-add-btn"
+                    disabled=n == 0
+                    on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
+                >{button_text}</button>
             </div>
         })
     };
@@ -602,8 +605,9 @@ pub(crate) fn PulsePanel() -> impl IntoView {
             <div class="setting-group">
                 <div class="pulse-annotate-row">
                     <div class="psd-btn-group">
-                        {filter_button(ListFilter::BatCalls, format!("Bat calls ({})", bat_count.get()))}
-                        {filter_button(ListFilter::All, format!("All detections ({})", total_count.get()))}
+                        // The counts are in the status line above.
+                        {filter_button(ListFilter::BatCalls, "Bat calls".to_string())}
+                        {filter_button(ListFilter::All, "All detections".to_string())}
                     </div>
                 </div>
                 <div class="pulse-list">
