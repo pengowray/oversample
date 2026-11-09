@@ -404,7 +404,8 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
         // starts typing, their input becomes the user-authored label.
         let initial_edit = if label_is_default { String::new() } else { existing_label.unwrap_or_default() };
         let edit_value = RwSignal::new(initial_edit);
-        let tags_value = RwSignal::new(existing_tags.join(", "));
+        let tags_value = RwSignal::new(oversample_core::annotation_tags::display_all(&existing_tags));
+        let tags_error = RwSignal::new(None::<String>);
 
         let indent_px = depth * 16;
 
@@ -534,22 +535,34 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                 let _ = el.focus();
                             }
                         });
-                        let save_all = move |id_l: &AnnotationId, id_t: &AnnotationId| {
+                        // Saves the label and tags. Returns false (and keeps the
+                        // editor open) when the tags can't be read.
+                        let save_all = move |id_l: &AnnotationId, id_t: &AnnotationId| -> bool {
                             let val = match edit_value.try_get_untracked() {
                                 Some(v) => v,
-                                None => return,
+                                None => return true,
                             };
-                            let label = if val.trim().is_empty() { None } else { Some(val) };
+                            let label = sanitize_label(&val);
                             update_annotation_label(state, id_l, label);
                             let tags_str = match tags_value.try_get_untracked() {
                                 Some(v) => v,
-                                None => return,
+                                None => return true,
                             };
-                            let tags: Vec<String> = tags_str.split(',')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-                            update_annotation_tags(state, id_t, tags);
+                            match oversample_core::annotation_tags::parse_tag_input(&tags_str) {
+                                Ok(tags) => {
+                                    let _ = tags_error.try_set(None);
+                                    update_annotation_tags(
+                                        state,
+                                        id_t,
+                                        oversample_core::annotation_tags::to_stored(&tags),
+                                    );
+                                    true
+                                }
+                                Err(e) => {
+                                    let _ = tags_error.try_set(Some(e.to_string()));
+                                    false
+                                }
+                            }
                         };
                         let id_l_enter = id_save.clone();
                         let id_t_enter = id_tags_save.clone();
@@ -569,8 +582,7 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                         let node: web_sys::Node = r.unchecked_into();
                                         container.contains(Some(&node))
                                     }).unwrap_or(false);
-                                    if !still_inside {
-                                        save_all(&id_l_focusout, &id_t_focusout);
+                                    if !still_inside && save_all(&id_l_focusout, &id_t_focusout) {
                                         let _ = editing.try_set(false);
                                     }
                                 }
@@ -586,8 +598,9 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                     }
                                     on:keydown=move |ev| {
                                         if ev.key() == "Enter" {
-                                            save_all(&id_l_enter, &id_t_enter);
-                                            let _ = editing.try_set(false);
+                                            if save_all(&id_l_enter, &id_t_enter) {
+                                                let _ = editing.try_set(false);
+                                            }
                                         } else if ev.key() == "Escape" {
                                             let _ = editing.try_set(false);
                                         }
@@ -597,19 +610,24 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                     class="annotation-label-input annotation-tags-input"
                                     type="text"
                                     prop:value=move || tags_value.try_get().unwrap_or_default()
-                                    placeholder="Tags (comma separated)..."
+                                    placeholder="Tags, such as #call #train"
+                                    title="Hashtags, such as #call, #train, #buzz or #species=Myotis_daubentonii. A value with spaces goes in quotes: #note=\"near the pond\""
                                     on:input=move |ev| {
                                         let _ = tags_value.try_set(leptos::prelude::event_target_value(&ev));
                                     }
                                     on:keydown=move |ev| {
                                         if ev.key() == "Enter" {
-                                            save_all(&id_l_blur, &id_t_blur);
-                                            let _ = editing.try_set(false);
+                                            if save_all(&id_l_blur, &id_t_blur) {
+                                                let _ = editing.try_set(false);
+                                            }
                                         } else if ev.key() == "Escape" {
                                             let _ = editing.try_set(false);
                                         }
                                     }
                                 />
+                                {move || tags_error.try_get().flatten().map(|msg| view! {
+                                    <div class="annotation-tags-error">{msg}</div>
+                                })}
                             </div>
                         }.into_any()
                     } else {
@@ -624,10 +642,10 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                             {tags_pills.into_iter().map(|tag| {
                                                 let tag_click = tag.clone();
                                                 let tag_title = tag.clone();
-                                                let tag_display = tag.clone();
+                                                let tag_display = oversample_core::annotation_tags::Tag::from_stored(&tag).display();
                                                 view! {
                                                     <span class="annotation-tag"
-                                                        title=format!("Select all with tag '{}'", tag_title)
+                                                        title=format!("Select all with {}", oversample_core::annotation_tags::Tag::from_stored(&tag_title).display())
                                                         on:click=move |ev: web_sys::MouseEvent| {
                                                             ev.stop_propagation();
                                                             let target_tag = tag_click.clone();
@@ -858,6 +876,21 @@ pub(crate) fn update_annotation_label(
         }
     });
     state.annotations.dirty().set(true);
+}
+
+/// A label as typed, with line breaks and other control characters removed.
+/// None when nothing is left.
+pub(crate) fn sanitize_label(text: &str) -> Option<String> {
+    let cleaned: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 pub(crate) fn update_annotation_tags(

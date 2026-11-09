@@ -1,3 +1,4 @@
+pub mod annotation_tags;
 pub mod audio;
 pub mod bit_depth_certainty;
 pub mod canvas;

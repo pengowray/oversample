@@ -969,6 +969,11 @@ body.sidebar-resizing {
 .annotation-tags-input {
     font-size: 11px;
 }
+.annotation-tags-error {
+    font-size: 10px;
+    color: #f99;
+    white-space: normal;
+}
 .annotation-tags {
     display: inline-flex;
     gap: 3px;

@@ -956,7 +956,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                             <ChannelDelayRow region=delay_region />
                                             {(!tags.is_empty()).then(move || view! {
                                                 <div class="canvas-overflow-info" style="color: #8cf; font-size: 10px;">
-                                                    {tags.join(", ")}
+                                                    {oversample_core::annotation_tags::display_all(&tags)}
                                                 </div>
                                             })}
                                             <div class="canvas-overflow-separator"></div>
