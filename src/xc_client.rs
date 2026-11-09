@@ -317,14 +317,22 @@ pub async fn search(src: &XcSource, query: &str, page: u32) -> Result<XcSearchRe
 /// indexing the group (202) or has no such endpoint (404), it falls back to a
 /// live search through the proxy. A 503 (the server has no index for the
 /// group) does the same. Native and Direct search XC as before.
+///
+/// `country` limits the list to recordings from that country (the country
+/// the species list was built for).
 pub async fn species_recordings(
     src: &XcSource,
     group: &str,
     genus: &str,
     species: &str,
+    country: Option<&str>,
     page: u32,
 ) -> Result<XcSearchResult, XcError> {
+    let query = species_query(genus, species, country);
     match src {
+        // The Tauri species command has no country argument, so a country
+        // goes through the general search command instead.
+        XcSource::Native if country.is_some() => search(src, &query, page).await,
         XcSource::Native => tauri_invoke_typed_args(
             "xc_species_recordings",
             &XcSpeciesArgs {
@@ -336,23 +344,26 @@ pub async fn species_recordings(
         .await
         .map_err(XcError::Other),
         XcSource::Proxy => {
-            let url =
-                server_recordings_url(&proxy_base(), group, genus, species, None, page, PER_PAGE);
+            let url = server_recordings_url(
+                &proxy_base(),
+                group,
+                genus,
+                species,
+                country,
+                page,
+                PER_PAGE,
+            );
             match server_get(&url).await {
                 Ok(ServerReply::Ready(body)) => parse_search_body(&body),
-                Ok(ServerReply::Indexing { .. }) => {
-                    web_search(src, &species_query(genus, species), page, PER_PAGE).await
-                }
+                Ok(ServerReply::Indexing { .. }) => web_search(src, &query, page, PER_PAGE).await,
                 Err(e) if index_unavailable(&e) => {
                     log::warn!("Server recordings index unavailable, searching live: {e:?}");
-                    web_search(src, &species_query(genus, species), page, PER_PAGE).await
+                    web_search(src, &query, page, PER_PAGE).await
                 }
                 Err(e) => Err(e),
             }
         }
-        XcSource::Direct { .. } => {
-            web_search(src, &species_query(genus, species), page, PER_PAGE).await
-        }
+        XcSource::Direct { .. } => web_search(src, &query, page, PER_PAGE).await,
     }
 }
 
@@ -843,7 +854,7 @@ where
                     country: country.map(str::to_string),
                     recordings: result.num_recordings,
                     est_secs,
-                })
+                });
             }
             Step::Next(_) | Step::Done => {}
         }
@@ -1024,8 +1035,11 @@ fn reserve_slot(next_ms: f64, now_ms: f64, gap_ms: f64) -> (f64, f64) {
     (slot, slot + gap_ms)
 }
 
-fn species_query(genus: &str, species: &str) -> String {
-    format!("gen:{genus} sp:{species}")
+fn species_query(genus: &str, species: &str, country: Option<&str>) -> String {
+    match country {
+        Some(c) => format!("gen:{genus} sp:{species} cnt:\"{c}\""),
+        None => format!("gen:{genus} sp:{species}"),
+    }
 }
 
 /// The search URL for a web source, or `None` for [`XcSource::Native`].
@@ -1107,6 +1121,18 @@ fn classify_http_error(status: u16, body: &str, own_key: bool) -> XcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn species_query_adds_quoted_country() {
+        assert_eq!(
+            species_query("Myotis", "daubentonii", None),
+            "gen:Myotis sp:daubentonii"
+        );
+        assert_eq!(
+            species_query("Myotis", "daubentonii", Some("Bosnia Herzegovina")),
+            "gen:Myotis sp:daubentonii cnt:\"Bosnia Herzegovina\""
+        );
+    }
 
     fn rec(id: &str, file: &str) -> XcRecording {
         xc_lib::api::parse_recording(&serde_json::json!({

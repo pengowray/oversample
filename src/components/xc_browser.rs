@@ -13,8 +13,8 @@
 //! The `#XC<id>` URL-hash deep-link (app.rs) is separate: it searches the
 //! curated demo index, not the live API.
 
-use crate::state::store_fields::*;
 use crate::state::AppState;
+use crate::state::store_fields::*;
 use crate::xc_client::{self, CountryCount, ServerIndexing, TaxonomyProgress, XcError, XcSource};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -390,6 +390,7 @@ enum BrowserView {
     GroupBrowse,
     SpeciesRecordings {
         group: String,
+        country: Option<String>,
         genus: String,
         species: String,
         en: String,
@@ -416,6 +417,9 @@ pub fn XcBrowser() -> impl IntoView {
     // `species_list`; `taxonomy_target` names the group being loaded, which
     // can differ during a Refresh.
     let species_list_group = RwSignal::new(String::new());
+    // Country the species list was built for, so a species' recordings are
+    // limited to the same country.
+    let species_list_country: RwSignal<Option<String>> = RwSignal::new(None);
     let recordings: RwSignal<Vec<XcRecording>> = RwSignal::new(Vec::new());
     // A page of recordings (species view or search results) is loading.
     let loading = RwSignal::new(false);
@@ -621,11 +625,7 @@ pub fn XcBrowser() -> impl IntoView {
         let group = selected_group.get_untracked();
         let country = {
             let c = country_input.get_untracked().trim().to_string();
-            if c.is_empty() {
-                None
-            } else {
-                Some(c)
-            }
+            if c.is_empty() { None } else { Some(c) }
         };
         let my_gen = taxonomy_gen.get_untracked() + 1;
         taxonomy_gen.set(my_gen);
@@ -641,6 +641,7 @@ pub fn XcBrowser() -> impl IntoView {
         let is_current = move || taxonomy_gen.try_get_untracked() == Some(my_gen);
         spawn_local(async move {
             let list_group = group.clone();
+            let list_country = country.clone();
             let result = xc_client::browse_group(
                 &src,
                 &group,
@@ -673,6 +674,7 @@ pub fn XcBrowser() -> impl IntoView {
             if let Some(t) = taxonomy {
                 taxonomy_age.try_set(xc_client::taxonomy_age_secs(&t).map(text_age));
                 species_list_group.try_set(list_group);
+                species_list_country.try_set(list_country);
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
@@ -753,8 +755,10 @@ pub fn XcBrowser() -> impl IntoView {
             return;
         };
         let group = species_list_group.get_untracked();
+        let country = species_list_country.get_untracked();
         view.set(BrowserView::SpeciesRecordings {
             group: group.clone(),
+            country: country.clone(),
             genus: genus.clone(),
             species: species.clone(),
             en,
@@ -763,7 +767,15 @@ pub fn XcBrowser() -> impl IntoView {
         recordings_page.set(1);
 
         spawn_local(async move {
-            let result = xc_client::species_recordings(&src, &group, &genus, &species, 1).await;
+            let result = xc_client::species_recordings(
+                &src,
+                &group,
+                &genus,
+                &species,
+                country.as_deref(),
+                1,
+            )
+            .await;
             show_results(my_gen, src, result);
         });
     };
@@ -848,10 +860,21 @@ pub fn XcBrowser() -> impl IntoView {
             let result = match &current_view {
                 BrowserView::SpeciesRecordings {
                     group,
+                    country,
                     genus,
                     species,
                     ..
-                } => xc_client::species_recordings(&src, group, genus, species, page_num).await,
+                } => {
+                    xc_client::species_recordings(
+                        &src,
+                        group,
+                        genus,
+                        species,
+                        country.as_deref(),
+                        page_num,
+                    )
+                    .await
+                }
                 BrowserView::SearchResults => {
                     let query = search_input.get_untracked();
                     xc_client::search(&src, &query, page_num).await
@@ -1334,8 +1357,11 @@ pub fn XcBrowser() -> impl IntoView {
                     }
                     let recs = recordings.get();
                     let title = match &current_view {
-                        BrowserView::SpeciesRecordings { en, genus, species, .. } => {
-                            format!("{en} ({genus} {species})")
+                        BrowserView::SpeciesRecordings { en, genus, species, country, .. } => {
+                            match country {
+                                Some(c) => format!("{en} ({genus} {species}) in {c}"),
+                                None => format!("{en} ({genus} {species})"),
+                            }
                         }
                         BrowserView::SearchResults => "Search results".to_string(),
                         _ => String::new(),
@@ -1347,7 +1373,9 @@ pub fn XcBrowser() -> impl IntoView {
                             <span class="xc-result-count">
                                 {move || {
                                     let total = recordings_total.get();
-                                    if total > 0 {
+                                    if total == 1 {
+                                        " \u{2014} 1 recording".to_string()
+                                    } else if total > 0 {
                                         format!(" \u{2014} {} recordings", total)
                                     } else {
                                         String::new()
