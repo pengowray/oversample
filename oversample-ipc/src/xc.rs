@@ -1,9 +1,10 @@
 //! Xeno-Canto wire types.
 //!
-//! Canonical home (shared between `xc-lib`, the Tauri backend, and the WASM
-//! frontend, which can't depend on `xc-lib` because it pulls `reqwest`). The
-//! serde field renames map the real Xeno-Canto API field names (`gen`, `type`,
-//! `file`, `file-name`); they are also the on-disk/IPC wire names.
+//! Canonical home, shared between `xc-lib`, the Tauri backend, and the WASM
+//! frontend. The frontend can also use `xc-lib` itself with
+//! `default-features = false`, which leaves out the `http` feature (reqwest).
+//! The serde field renames map the real Xeno-Canto API field names (`gen`,
+//! `type`, `file`, `file-name`); they are also the on-disk/IPC wire names.
 
 use crate::SidecarHashes;
 use serde::{Deserialize, Serialize};

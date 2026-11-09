@@ -1,5 +1,6 @@
 use crate::types::{XcRecording, XcSearchResult};
 
+#[cfg(feature = "http")]
 const API_BASE: &str = "https://xeno-canto.org/api/3/recordings";
 
 /// Parse an XC recording from API JSON.
@@ -11,7 +12,7 @@ const API_BASE: &str = "https://xeno-canto.org/api/3/recordings";
 ///    0, which would collide as `XC0` in the cache/index filename scheme.
 ///  - `file` (the download URL) must be present and non-empty, else the record
 ///    is undownloadable and would only fail at download time.
-fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
+pub fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
     let id = rec["id"].as_str()?;
     if id.parse::<u64>().is_err() {
         return None; // non-numeric id → would collide at XC0
@@ -68,7 +69,10 @@ fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
 }
 
 /// Parse a search response from the XC API.
-fn parse_search_response(body: &serde_json::Value) -> Result<XcSearchResult, String> {
+///
+/// Also accepts responses from the Oversample proxy's
+/// `/xc/api/3/recordings` endpoint, which returns the same JSON.
+pub fn parse_search_response(body: &serde_json::Value) -> Result<XcSearchResult, String> {
     if let Some(err) = body.get("error") {
         return Err(format!("API error: {}", err));
     }
@@ -117,6 +121,7 @@ fn parse_search_response(body: &serde_json::Value) -> Result<XcSearchResult, Str
 ///
 /// Plain text without tags is automatically wrapped in `sp:"..."`,
 /// since XC API v3 requires all queries to use tags.
+#[cfg(feature = "http")]
 pub async fn search(
     client: &reqwest::Client,
     api_key: &str,
@@ -155,6 +160,7 @@ pub async fn search(
 }
 
 /// Fetch a single recording by XC number.
+#[cfg(feature = "http")]
 pub async fn fetch_recording(
     client: &reqwest::Client,
     api_key: &str,
@@ -169,6 +175,7 @@ pub async fn fetch_recording(
 }
 
 /// Download audio bytes for a recording.
+#[cfg(feature = "http")]
 pub async fn download_audio(client: &reqwest::Client, file_url: &str) -> Result<Vec<u8>, String> {
     let resp = client.get(file_url).send().await.map_err(|e| {
         if e.is_timeout() {
@@ -205,7 +212,11 @@ pub async fn download_audio(client: &reqwest::Client, file_url: &str) -> Result<
 /// If the query already contains tags (e.g. `gen:Myotis`, `grp:bats`),
 /// it is returned as-is. Otherwise the plain text is wrapped in `sp:"..."`
 /// — the v3 replacement for v2's tag-less species search.
-fn normalize_query(query: &str) -> String {
+///
+/// [`search`] calls this itself. Callers that build their own request URL
+/// (the WASM frontend, or anything going through the proxy) must call it
+/// before sending the query.
+pub fn normalize_query(query: &str) -> String {
     let q = query.trim();
     if q.is_empty() {
         return q.to_string();
@@ -228,6 +239,7 @@ fn normalize_query(query: &str) -> String {
 }
 
 /// Minimal URL encoding for query parameters.
+#[cfg(feature = "http")]
 fn urlencod(s: &str) -> String {
     s.replace(' ', "%20")
         .replace('"', "%22")
@@ -288,6 +300,32 @@ mod tests {
         assert_eq!(rec.id, "928094");
         assert_eq!(rec.id_num(), 928094);
         assert_eq!(rec.file_url, "https://x/a.mp3");
+    }
+
+    #[test]
+    fn normalize_query_keeps_tagged_queries() {
+        assert_eq!(normalize_query(""), "");
+        assert_eq!(normalize_query("   "), "");
+        assert_eq!(normalize_query("grp:bats"), "grp:bats");
+        assert_eq!(
+            normalize_query("  grp:bats cnt:Australia "),
+            "grp:bats cnt:Australia"
+        );
+        assert_eq!(
+            normalize_query("Pipistrellus nr:928094"),
+            "Pipistrellus nr:928094"
+        );
+    }
+
+    #[test]
+    fn normalize_query_wraps_plain_text_as_species() {
+        assert_eq!(normalize_query("Myotis"), "sp:Myotis");
+        assert_eq!(
+            normalize_query(" Myotis dasycneme "),
+            "sp:\"Myotis dasycneme\""
+        );
+        // A colon after non-letters is not a tag.
+        assert_eq!(normalize_query("12:30"), "sp:12:30");
     }
 
     #[test]
