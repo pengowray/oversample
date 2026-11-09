@@ -710,58 +710,108 @@ body.sidebar-resizing {
     font-variant-numeric: tabular-nums;
 }
 
-/* Pulse detection panel */
+/* Call detection panel (the Pulses tab) */
+.pulse-status {
+    padding: 2px 16px 6px;
+    font-size: 12px;
+    color: #ccc;
+}
+
+.pulse-status-note {
+    font-size: 11px;
+    color: #888;
+}
+
+.pulse-progress {
+    height: 3px;
+    margin-top: 4px;
+    background: #2a2a2a;
+    border-radius: 2px;
+}
+
+.pulse-progress-fill {
+    height: 100%;
+    background: #4a8;
+    border-radius: 2px;
+}
+
+/* Rows inside the panel that are not setting rows: same side padding. */
+.pulse-annotate-row {
+    padding: 2px 16px;
+}
+
+.pulse-annotate-row .psd-btn-group {
+    flex-wrap: wrap;
+}
+
 .pulse-list {
     max-height: 400px;
     overflow-y: auto;
     margin: 4px 0;
 }
 
-.pulse-item {
-    display: flex;
-    gap: 6px;
-    padding: 4px 8px;
-    cursor: pointer;
+/* One row per detection. Narrow padding: the sidebar is about 220 px wide,
+   and after the panel's and the list's scrollbars about 190 px is left for
+   five columns. Only the kind column wraps. */
+.pulse-table {
+    width: 100%;
+    border-collapse: collapse;
     font-size: 11px;
-    color: #aaa;
-    border-left: 2px solid transparent;
-    align-items: baseline;
+    font-variant-numeric: tabular-nums;
 }
 
-.pulse-item:hover {
+.pulse-table th {
+    position: sticky;
+    top: 0;
+    background: #111;
+    color: #777;
+    font-weight: normal;
+    text-align: left;
+    padding: 2px;
+}
+
+.pulse-table td {
+    padding: 2px;
+    color: #aaa;
+    white-space: nowrap;
+}
+
+.pulse-table th:first-child,
+.pulse-table td:first-child {
+    padding-left: 10px;
+}
+
+.pulse-table th:last-child,
+.pulse-table td:last-child {
+    padding-right: 4px;
+}
+
+.pulse-table .pulse-col-num {
+    text-align: right;
+}
+
+.pulse-table .pulse-col-kind {
+    white-space: normal;
+}
+
+.pulse-row {
+    cursor: pointer;
+}
+
+.pulse-row:hover td {
     background: #1a2a20;
     color: #ccc;
 }
 
-.pulse-item.selected {
-    background: #1f2f25;
+/* Detections that are not bat calls: muted, like their dashed boxes on the
+   spectrogram. */
+.pulse-row-other td {
+    color: #6c6c6c;
+}
+
+.pulse-row.selected td {
+    background: #3a3020;
     color: #eee;
-    border-left-color: #4a8;
-}
-
-.pulse-index {
-    color: #6a6;
-    font-weight: 600;
-    min-width: 28px;
-}
-
-.pulse-time {
-    min-width: 48px;
-}
-
-.pulse-dur {
-    min-width: 40px;
-    color: #888;
-}
-
-.pulse-freq {
-    min-width: 48px;
-    color: #8af;
-}
-
-.pulse-snr {
-    color: #888;
-    margin-left: auto;
 }
 
 /* Settings panel */

@@ -1,6 +1,7 @@
 pub mod annotations;
 pub mod audio;
 pub mod bat_book;
+pub mod call_annotations;
 pub mod canvas;
 pub mod components;
 pub mod dsp;

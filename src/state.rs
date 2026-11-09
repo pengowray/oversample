@@ -1583,13 +1583,29 @@ pub struct NoiseReduceState {
     pub learning: bool,
 }
 
-/// Pulse detection overlay.
+/// Bat call detection (the Pulses tab) and its spectrogram overlay.
 #[derive(Clone, Debug, Store)]
 pub struct PulseState {
-    pub detected: Vec<crate::dsp::pulse_detect::DetectedPulse>,
+    /// Detector settings, kept while the tab is closed.
+    pub params: crate::dsp::call_detect::CallScanParams,
+    /// The file and settings `detected` came from. Train settings are left at
+    /// their defaults here: changing them regroups without a new search.
+    pub scanned: Option<(u64, crate::dsp::call_detect::CallScanParams)>,
+    /// The band searched, or `None` when the file's sample rate was too low.
+    pub band_hz: Option<(f32, f32)>,
+    /// Detections in time order, with their kinds.
+    pub detected: Vec<crate::dsp::call_detect::DetectedCall>,
+    /// Bat calls grouped into trains; indices point into `detected`.
+    pub trains: Vec<crate::dsp::call_detect::CallTrain>,
     pub overlay_enabled: bool,
+    /// Index into `detected`.
     pub selected_index: Option<usize>,
-    pub detecting: bool,
+    /// The file and settings being searched now, if a search is running.
+    pub scanning: Option<(u64, crate::dsp::call_detect::CallScanParams)>,
+    /// Bumped by each new search; a running search stops when it changes.
+    pub scan_generation: u32,
+    /// Share of the file searched so far, 0 to 1, while `scanning`.
+    pub progress: f64,
 }
 
 /// Power-spectral-density panel settings.
@@ -2174,7 +2190,7 @@ pub struct AppState {
     pub notch: Store<NotchState>,
     /// Spectral-subtraction noise-reduction settings.
     pub noise_reduce: Store<NoiseReduceState>,
-    /// Pulse-detection overlay settings.
+    /// Bat call detection results and settings.
     pub pulse: Store<PulseState>,
     /// PSD (Power Spectral Density) panel settings.
     pub psd: Store<PsdState>,
@@ -2526,10 +2542,16 @@ impl AppState {
             }),
 
             pulse: Store::new(PulseState {
+                params: crate::dsp::call_detect::CallScanParams::default(),
+                scanned: None,
+                band_hz: None,
                 detected: Vec::new(),
+                trains: Vec::new(),
                 overlay_enabled: false,
                 selected_index: None,
-                detecting: false,
+                scanning: None,
+                scan_generation: 0,
+                progress: 0.0,
             }),
 
             annotations: Store::new(AnnotationsState {

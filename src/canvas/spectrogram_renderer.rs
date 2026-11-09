@@ -17,8 +17,8 @@ pub use crate::canvas::flow::{
     composite_flow, compute_flow_data, pre_render_flow_columns, FlowAlgo, FlowData,
 };
 pub use crate::canvas::overlays::{
-    draw_annotations, draw_band_ff_overlay, draw_filter_overlay, draw_freq_markers,
-    draw_harmonic_shadows, draw_het_overlay, draw_notch_bands, draw_pulses, draw_selection,
+    draw_annotations, draw_band_ff_overlay, draw_calls, draw_filter_overlay, draw_freq_markers,
+    draw_harmonic_shadows, draw_het_overlay, draw_notch_bands, draw_selection,
     draw_tile_debug_overlay, draw_time_marker_lines, draw_time_markers, pixel_to_time_freq,
     DebugTileKind, FreqMarkerState, FreqShiftMode, TimeMarkerStyle,
 };
