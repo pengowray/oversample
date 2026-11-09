@@ -1,7 +1,8 @@
 //! Bat species catalog — all species and families defined once, reused across books.
 //!
 //! Each constant represents a base species or family. Regional bat books
-//! reference these via `BookEntryDef` and can override description/name.
+//! reference these via `BookEntryDef` and can override description, name and
+//! frequency range.
 
 use super::types::BatSpecies;
 

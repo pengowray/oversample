@@ -54,20 +54,25 @@ pub struct BookEntryDef {
     pub description: Option<&'static str>,
     /// Override display name for this book (None = use species default)
     pub name: Option<&'static str>,
+    /// Override frequency range (lo, hi) in Hz for this book (None = use the
+    /// species range). The species range covers every region the sources
+    /// cover; a regional book may narrow it to the calls heard there.
+    pub freq_hz: Option<(f64, f64)>,
 }
 
 impl BookEntryDef {
     /// Materialize into a full BatBookEntry by resolving overrides.
     pub fn materialize(&self) -> BatBookEntry {
         let s = self.species;
+        let (freq_lo_hz, freq_hi_hz) = self.freq_hz.unwrap_or((s.freq_lo_hz, s.freq_hi_hz));
         BatBookEntry {
             id: s.id,
             name: self.name.unwrap_or(s.name),
             scientific_name: s.scientific_name,
             family: s.family,
             call_type: s.call_type,
-            freq_lo_hz: s.freq_lo_hz,
-            freq_hi_hz: s.freq_hi_hz,
+            freq_lo_hz,
+            freq_hi_hz,
             description: self.description.unwrap_or(s.description),
             commonness: self.commonness,
             echolocates: s.echolocates,
