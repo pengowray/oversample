@@ -1,6 +1,7 @@
 pub mod agc;
 pub mod audiomoth;
 pub mod bit_analysis;
+pub mod call_detect;
 pub mod channel_delay;
 pub mod chime_scan;
 pub mod chromagram;
