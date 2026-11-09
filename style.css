@@ -5938,9 +5938,12 @@ button.toolbar-overflow-btn {
 .xc-country-name {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .xc-country-count {
+    flex-shrink: 0;
     color: #888;
     font-size: 11px;
     font-variant-numeric: tabular-nums;

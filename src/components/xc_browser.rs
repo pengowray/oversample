@@ -180,15 +180,21 @@ fn text_progress(group: &str, country: Option<&str>, p: Option<TaxonomyProgress>
     }
 }
 
-/// While the server builds its index of `group`. The server indexes the
-/// whole group, so the country is left out. Percent rather than pages,
-/// because the user never sees the server's pages.
+/// While the server collects every recording in `group` from Xeno-canto
+/// (Proxy mode only). The server collects the whole group, so the country
+/// is left out. Percent rather than pages, because the user never sees the
+/// server's pages. `pages_total` is 0 while the group waits in the server's
+/// queue behind other groups.
 fn text_server_progress(group: &str, s: ServerIndexing) -> String {
     if s.pages_total == 0 {
-        return format!("Oversample's server is building the species list for {group}...");
+        return format!(
+            "Waiting for Oversample's server to start collecting {group} recordings for the species list..."
+        );
     }
     let pct = (s.pages_done.min(s.pages_total) as u64 * 100 / s.pages_total as u64) as u32;
-    format!("Oversample's server is building the species list for {group}: {pct}% done")
+    format!(
+        "Oversample's server is collecting {group} recordings for the species list: {pct}% done"
+    )
 }
 
 /// After Stop. `p` is the last progress seen, if any reply had arrived.
@@ -236,10 +242,11 @@ fn text_country_recs(recordings: u32) -> String {
     }
 }
 
-/// Country picker: hover text for a country's counts.
-fn text_country_counts_title(recordings: u32, species: u32) -> String {
+/// Country picker: hover text for a country with its counts. The name is
+/// included because a long one is cut off in the row.
+fn text_country_counts_title(country: &str, recordings: u32, species: u32) -> String {
     format!(
-        "{} recording{}, {} species",
+        "{country}: {} recording{}, {} species",
         with_commas(recordings),
         if recordings == 1 { "" } else { "s" },
         with_commas(species)
@@ -405,6 +412,10 @@ pub fn XcBrowser() -> impl IntoView {
     let selected_group = RwSignal::new("bats".to_string());
     let country_input = RwSignal::new(String::new());
     let species_list: RwSignal<Vec<XcSpecies>> = RwSignal::new(Vec::new());
+    // The group of the species list on screen. Set together with
+    // `species_list`; `taxonomy_target` names the group being loaded, which
+    // can differ during a Refresh.
+    let species_list_group = RwSignal::new(String::new());
     let recordings: RwSignal<Vec<XcRecording>> = RwSignal::new(Vec::new());
     // A page of recordings (species view or search results) is loading.
     let loading = RwSignal::new(false);
@@ -629,6 +640,7 @@ pub fn XcBrowser() -> impl IntoView {
 
         let is_current = move || taxonomy_gen.try_get_untracked() == Some(my_gen);
         spawn_local(async move {
+            let list_group = group.clone();
             let result = xc_client::browse_group(
                 &src,
                 &group,
@@ -660,6 +672,7 @@ pub fn XcBrowser() -> impl IntoView {
             };
             if let Some(t) = taxonomy {
                 taxonomy_age.try_set(xc_client::taxonomy_age_secs(&t).map(text_age));
+                species_list_group.try_set(list_group);
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
@@ -739,8 +752,7 @@ pub fn XcBrowser() -> impl IntoView {
         let Some(src) = source.get_untracked() else {
             return;
         };
-        // The group of the species list on screen.
-        let (group, _) = taxonomy_target.get_untracked();
+        let group = species_list_group.get_untracked();
         view.set(BrowserView::SpeciesRecordings {
             group: group.clone(),
             genus: genus.clone(),
@@ -1187,7 +1199,10 @@ pub fn XcBrowser() -> impl IntoView {
                                                                 let name_owned = opt.name;
                                                                 let name_for_set = name_owned.clone();
                                                                 let name_for_cls = name_owned.clone();
-                                                                let title = opt.counts.map(|(r, s)| text_country_counts_title(r, s));
+                                                                let title = match opt.counts {
+                                                                    Some((r, s)) => text_country_counts_title(&name_owned, r, s),
+                                                                    None => name_owned.clone(),
+                                                                };
                                                                 view! {
                                                                     <button
                                                                         title=title
@@ -1518,15 +1533,15 @@ mod tests {
         };
         assert_eq!(
             text_progress("bats", Some("Australia"), server(3, 23)),
-            "Oversample's server is building the species list for bats: 13% done"
+            "Oversample's server is collecting bats recordings for the species list: 13% done"
         );
         assert_eq!(
             text_progress("land mammals", None, server(0, 0)),
-            "Oversample's server is building the species list for land mammals..."
+            "Waiting for Oversample's server to start collecting land mammals recordings for the species list..."
         );
         assert_eq!(
             text_progress("bats", None, server(30, 23)),
-            "Oversample's server is building the species list for bats: 100% done"
+            "Oversample's server is collecting bats recordings for the species list: 100% done"
         );
     }
 
@@ -1565,8 +1580,14 @@ mod tests {
     fn country_count_text() {
         assert_eq!(text_country_recs(1), "1 rec");
         assert_eq!(text_country_recs(11_494), "11,494 recs");
-        assert_eq!(text_country_counts_title(1, 1), "1 recording, 1 species");
-        assert_eq!(text_country_counts_title(22, 9), "22 recordings, 9 species");
+        assert_eq!(
+            text_country_counts_title("Chad", 1, 1),
+            "Chad: 1 recording, 1 species"
+        );
+        assert_eq!(
+            text_country_counts_title("Australia", 22, 9),
+            "Australia: 22 recordings, 9 species"
+        );
     }
 
     #[test]
