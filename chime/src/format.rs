@@ -170,34 +170,59 @@ impl RemoteMessage {
         if self.version != REMOTE_VERSION {
             return None;
         }
-        RemoteCommand::ALL.into_iter().find(|command| command.code() == self.command && self.argument == 0)
+        RemoteCommand::ALL.into_iter().find(|command| command.message() == self)
     }
 }
 
-/// A command for the X8 bat patch's phone remote. Start and Stop take no argument: their argument
-/// must be 0.
+/// A command for the X8 bat patch's phone remote. Only [`RemoteCommand::Listen`] has an argument;
+/// the others are sent with argument 0, and any other argument makes the message unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteCommand {
     /// Start recording.
     Start,
     /// Stop recording.
     Stop,
+    /// Set the clock to the chime's time. Start, stop and listening mode chimes set the clock too,
+    /// but only if the receiver is set to.
+    SetClock,
+    /// Play this listening mode in the headphones.
+    Listen(ListeningMode),
 }
 
 impl RemoteCommand {
-    pub const ALL: [RemoteCommand; 2] = [RemoteCommand::Start, RemoteCommand::Stop];
+    pub const ALL: [RemoteCommand; 9] = [
+        RemoteCommand::Start,
+        RemoteCommand::Stop,
+        RemoteCommand::SetClock,
+        RemoteCommand::Listen(ListeningMode::Het),
+        RemoteCommand::Listen(ListeningMode::Comb),
+        RemoteCommand::Listen(ListeningMode::Fd),
+        RemoteCommand::Listen(ListeningMode::Te),
+        RemoteCommand::Listen(ListeningMode::Pitch),
+        RemoteCommand::Listen(ListeningMode::Thru),
+    ];
 
     /// The command byte. 0 is never a command.
     pub const fn code(self) -> u8 {
         match self {
             RemoteCommand::Start => 1,
             RemoteCommand::Stop => 2,
+            RemoteCommand::SetClock => 3,
+            RemoteCommand::Listen(_) => 4,
+        }
+    }
+
+    /// The 16-bit argument.
+    pub const fn argument(self) -> u16 {
+        match self {
+            RemoteCommand::Listen(mode) => mode.code(),
+            _ => 0,
         }
     }
 
     /// The message that sends this command.
     pub const fn message(self) -> RemoteMessage {
-        RemoteMessage { version: REMOTE_VERSION, command: self.code(), argument: 0 }
+        RemoteMessage { version: REMOTE_VERSION, command: self.code(), argument: self.argument() }
     }
 
     /// The command in a deployment ID, if it holds one this crate knows.
@@ -208,6 +233,59 @@ impl RemoteCommand {
     /// The whole deployment ID, as the decoder gives it.
     pub fn deployment_id(self) -> [u8; DEPLOYMENT_ID_BYTES] {
         self.message().deployment_id()
+    }
+}
+
+/// A listening mode of the X8 bat patch, the argument of [`RemoteCommand::Listen`]. The codes
+/// follow the order of the X8's mode buttons, from 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListeningMode {
+    /// Heterodyne.
+    Het,
+    /// Heterodyne at several frequencies at once.
+    Comb,
+    /// Frequency division.
+    Fd,
+    /// Time expansion.
+    Te,
+    /// Pitch shift.
+    Pitch,
+    /// The input as it is, at 1:1.
+    Thru,
+}
+
+impl ListeningMode {
+    pub const ALL: [ListeningMode; 6] = [
+        ListeningMode::Het,
+        ListeningMode::Comb,
+        ListeningMode::Fd,
+        ListeningMode::Te,
+        ListeningMode::Pitch,
+        ListeningMode::Thru,
+    ];
+
+    /// The argument that selects this mode.
+    pub const fn code(self) -> u16 {
+        match self {
+            ListeningMode::Het => 1,
+            ListeningMode::Comb => 2,
+            ListeningMode::Fd => 3,
+            ListeningMode::Te => 4,
+            ListeningMode::Pitch => 5,
+            ListeningMode::Thru => 6,
+        }
+    }
+
+    /// The name on the X8's mode button.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ListeningMode::Het => "HET",
+            ListeningMode::Comb => "COMB",
+            ListeningMode::Fd => "FD",
+            ListeningMode::Te => "TE",
+            ListeningMode::Pitch => "PITCH",
+            ListeningMode::Thru => "1:1",
+        }
     }
 }
 
@@ -631,12 +709,22 @@ mod tests {
             assert_eq!(RemoteCommand::from_deployment_id(&command.deployment_id()), Some(command));
         }
         assert_eq!(&RemoteCommand::Stop.deployment_id(), b"BATX\x01\x02\x00\x00");
+        assert_eq!(&RemoteCommand::SetClock.deployment_id(), b"BATX\x01\x03\x00\x00");
+        assert_eq!(&RemoteCommand::Listen(ListeningMode::Thru).deployment_id(), b"BATX\x01\x04\x06\x00");
         assert_eq!(RemoteCommand::from_deployment_id(b"AUDIOMTH"), None);
     }
 
     #[test]
     fn unknown_remote_messages_are_read_but_not_known() {
-        for id in [b"BATX\x01\x03\x00\x00", b"BATX\x02\x01\x00\x00", b"BATX\x01\x01\x05\x00", b"BATX\x01\x00\x00\x00"] {
+        for id in [
+            b"BATX\x01\x05\x00\x00",
+            b"BATX\x02\x01\x00\x00",
+            b"BATX\x01\x01\x05\x00",
+            b"BATX\x01\x03\x01\x00",
+            b"BATX\x01\x04\x00\x00",
+            b"BATX\x01\x04\x07\x00",
+            b"BATX\x01\x00\x00\x00",
+        ] {
             let message = RemoteMessage::from_deployment_id(id).unwrap();
             assert_eq!(message.deployment_id(), *id);
             assert_eq!(message.known(), None, "{id:?}");

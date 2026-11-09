@@ -310,6 +310,10 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
             Some(remote) => match remote.known() {
                 Some(RemoteCommand::Start) => format!("Phone remote: start recording (deployment ID {hex}). "),
                 Some(RemoteCommand::Stop) => format!("Phone remote: stop recording (deployment ID {hex}). "),
+                Some(RemoteCommand::SetClock) => format!("Phone remote: set the clock (deployment ID {hex}). "),
+                Some(RemoteCommand::Listen(mode)) => {
+                    format!("Phone remote: listening mode {} (deployment ID {hex}). ", mode.name())
+                }
                 None => format!(
                     "Phone remote: unknown command (version {}, command {}, argument {}, deployment ID {hex}). ",
                     remote.version, remote.command, remote.argument

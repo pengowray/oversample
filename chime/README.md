@@ -12,6 +12,6 @@ depends on this folder by path.
   else.
 - `src/encode.rs`, with the `std` feature: the encoder, a port of the phone page's JavaScript, for tests
   and test files.
-- `format::RemoteCommand`: the X8 phone remote's start and stop commands in a chime's deployment ID.
+- `format::RemoteCommand`: the X8 phone remote's commands in a chime's deployment ID: start, stop, set the clock, and a listening mode.
 - Examples: `decode_wav` (finds chimes in WAV files and compares an X8's clock with the phone),
   `chime_wavs` (writes phone remote test files), `cost` (times the decoder's stages, feature `profile`).
