@@ -137,6 +137,17 @@ impl CallSketch {
         }
     }
 
+    /// Lowest and highest kHz of the calls in the train (their shape points).
+    pub fn khz_extent(&self) -> Option<(f64, f64)> {
+        self.sequence()
+            .iter()
+            .flat_map(|c| c.shape.iter().map(|p| p[1]))
+            .fold(None, |acc, k| match acc {
+                None => Some((k, k)),
+                Some((lo, hi)) => Some((f64::min(lo, k), f64::max(hi, k))),
+            })
+    }
+
     /// Start-to-start time between calls, seconds.
     pub fn interval_s(&self) -> Option<f64> {
         self.train
@@ -348,6 +359,12 @@ mod tests {
     fn layout_flags_calls_too_small_to_see() {
         let s = sketch(Some(100.0), 6.0);
         assert!(layout(&s, 200.0, 400.0).too_small);
+    }
+
+    #[test]
+    fn khz_extent_covers_every_shape_point() {
+        let s = sketch(Some(100.0), 6.0);
+        assert_eq!(s.khz_extent(), Some((40.0, 60.0)));
     }
 
     #[test]

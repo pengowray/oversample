@@ -21,6 +21,37 @@ use crate::state::AppState;
 /// Widest the strip may get, as a fraction of the spectrogram's width.
 const MAX_WIDTH_FRACTION: f64 = 0.35;
 
+/// The main view's scale, which the strip copies.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ViewScale {
+    /// CSS px per second.
+    px_per_s: f64,
+    /// Visible frequency range, Hz.
+    min_hz: f64,
+    max_hz: f64,
+    /// Highest frequency in the recording (half its sample rate), Hz.
+    file_max_hz: f64,
+    /// Spectrogram size, CSS px.
+    css_w: f64,
+    css_h: f64,
+}
+
+/// Where the sketched calls are when none of them is in the visible
+/// frequency range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OutOfView {
+    /// Above the view; zooming out on frequency shows them.
+    Above,
+    /// Above the recording's highest frequency: the recording can't show them.
+    AboveRecording {
+        lo_khz: f64,
+        hi_khz: f64,
+        top_khz: f64,
+    },
+    /// Below the view; zooming out on frequency shows them.
+    Below,
+}
+
 /// The first selected bat book species that has a sketch that can be drawn.
 fn selected_sketch(state: AppState) -> Option<&'static CallSketch> {
     state.bat_book.selected_ids().with(|ids| {
@@ -63,6 +94,28 @@ fn fmt(v: f64) -> String {
     }
 }
 
+fn out_of_view_text(o: OutOfView) -> String {
+    match o {
+        OutOfView::Above => "Calls are above the top of the spectrogram. Zoom out on frequency \
+                             (Shift + scroll wheel) to see them."
+            .to_string(),
+        OutOfView::AboveRecording {
+            lo_khz,
+            hi_khz,
+            top_khz,
+        } => format!(
+            "Calls are at {} to {} kHz, above the highest frequency in this recording ({} kHz). \
+             Zooming will not show them.",
+            fmt(lo_khz),
+            fmt(hi_khz),
+            fmt(top_khz)
+        ),
+        OutOfView::Below => "Calls are below the bottom of the spectrogram. Zoom out on frequency \
+                             (Shift + scroll wheel) to see them."
+            .to_string(),
+    }
+}
+
 #[component]
 pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -75,8 +128,7 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         selected_sketch(state)
     });
 
-    // Scale of the main view: (CSS px per second, min Hz, max Hz, CSS width,
-    // CSS height). None until the main canvas has a size.
+    // None until the main canvas has a size.
     let scale = Memo::new(move |_| {
         let _ = state.viewmode.spectrogram_canvas_width().get();
         let zoom = state.view.zoom_level().get();
@@ -98,13 +150,43 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         }
         // zoom is backing px per spectrogram column.
         let px_per_s = zoom / time_res * (css_w / backing_w);
-        Some((px_per_s, min_f, max_f, css_w, css_h))
+        Some(ViewScale {
+            px_per_s,
+            min_hz: min_f,
+            max_hz: max_f,
+            file_max_hz: file_max,
+            css_w,
+            css_h,
+        })
     });
 
     let layout = Memo::new(move |_| {
         let s = sketch.get()?;
-        let (pps, _, _, css_w, _) = scale.get()?;
-        Some(call_sketch::layout(s, pps, css_w * MAX_WIDTH_FRACTION))
+        let sc = scale.get()?;
+        Some(call_sketch::layout(
+            s,
+            sc.px_per_s,
+            sc.css_w * MAX_WIDTH_FRACTION,
+        ))
+    });
+
+    let out_of_view = Memo::new(move |_| {
+        let (lo, hi) = sketch.get()?.khz_extent()?;
+        let sc = scale.get()?;
+        let (lo_hz, hi_hz) = (lo * 1000.0, hi * 1000.0);
+        if lo_hz > sc.file_max_hz {
+            Some(OutOfView::AboveRecording {
+                lo_khz: lo,
+                hi_khz: hi,
+                top_khz: sc.file_max_hz / 1000.0,
+            })
+        } else if lo_hz > sc.max_hz {
+            Some(OutOfView::Above)
+        } else if hi_hz < sc.min_hz {
+            Some(OutOfView::Below)
+        } else {
+            None
+        }
     });
 
     // Left edge of the strip, CSS px. At the left of the view, unless the
@@ -113,7 +195,8 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
     // memo follows scrolling, and it only moves the strip.
     let left_px = Memo::new(move |_| {
         let lay = layout.get()?;
-        let (pps, _, _, css_w, _) = scale.get()?;
+        let sc = scale.get()?;
+        let (pps, css_w) = (sc.px_per_s, sc.css_w);
         let idx = state.library.current_index().get()?;
         let duration = state
             .library
@@ -130,11 +213,10 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
     });
 
     Effect::new(move |_| {
-        let (Some(s), Some((_, min_f, max_f, _, css_h)), Some(lay)) =
-            (sketch.get(), scale.get(), layout.get())
-        else {
+        let (Some(s), Some(sc), Some(lay)) = (sketch.get(), scale.get(), layout.get()) else {
             return;
         };
+        let (min_f, max_f, css_h) = (sc.min_hz, sc.max_hz, sc.css_h);
         let cmap = sketch_colormap(state);
         let Some(canvas) = strip_ref.get() else {
             return;
@@ -226,9 +308,10 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         let s = sketch.get()?;
         let lay = layout.get()?;
         let first = s.sequence().first().copied()?;
-        let name = s
-            .common_name
-            .clone()
+        // The bat book's name, so the strip and the bat book match.
+        let name = crate::bat_book::auto_resolve::find_entry_any_book(&s.id)
+            .map(|e| e.name.to_string())
+            .or_else(|| s.common_name.clone())
             .unwrap_or_else(|| s.scientific_name.clone());
         let mut facts: Vec<String> = Vec::new();
         if let Some(t) = range_text(first.peak_khz.as_ref(), "kHz") {
@@ -270,10 +353,15 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
                     <div class="call-sketch-sources" title=sources_tip>
                         {format!("Sketch based on {n_sources} published sources")}
                     </div>
-                    {too_small.then(|| view! {
+                    // Only one warning: when the calls are outside the
+                    // frequency range, their width doesn't matter.
+                    {move || (too_small && out_of_view.get().is_none()).then(|| view! {
                         <div class="call-sketch-warn">
                             "Calls are under 2 pixels wide at this zoom. Zoom in on time to see them."
                         </div>
+                    })}
+                    {move || out_of_view.get().map(|o| view! {
+                        <div class="call-sketch-warn">{out_of_view_text(o)}</div>
                     })}
                 </div>
             </div>
