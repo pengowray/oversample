@@ -106,6 +106,10 @@ pub struct CallSketch {
     #[serde(default)]
     pub notes: Option<String>,
     pub sources: Vec<Source>,
+    /// Fields whose numbers come from one source only so far, such as
+    /// `duration_ms`. They apply to every call in the sketch.
+    #[serde(default)]
+    pub one_source: Vec<String>,
 }
 
 impl CallSketch {
@@ -146,6 +150,11 @@ impl CallSketch {
                 None => Some((k, k)),
                 Some((lo, hi)) => Some((f64::min(lo, k), f64::max(hi, k))),
             })
+    }
+
+    /// True when `field` (such as `"duration_ms"`) rests on one source.
+    pub fn is_one_source(&self, field: &str) -> bool {
+        self.one_source.iter().any(|f| f == field)
     }
 
     /// Start-to-start time between calls, seconds.
@@ -335,6 +344,7 @@ mod tests {
             }),
             notes: None,
             sources: vec![],
+            one_source: vec![],
         }
     }
 

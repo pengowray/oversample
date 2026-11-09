@@ -333,6 +333,14 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
             .unwrap_or_else(|| s.scientific_name.clone());
         let mut facts: Vec<String> = Vec::new();
         let several = kinds.len() > 1;
+        // ", 1 source" after a number that only one source gives so far.
+        let one_source = |field: &str| {
+            if s.is_one_source(field) {
+                ", 1 source"
+            } else {
+                ""
+            }
+        };
         // "Low call: " before each line when the species has more than one
         // kind of call.
         let prefix = |c: &call_sketch::SketchCall| {
@@ -344,18 +352,18 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         };
         for c in &kinds {
             let freq = range_text(c.peak_khz.as_ref(), "kHz")
-                .map(|t| ("Peak frequency", t))
+                .map(|t| ("Peak frequency", "peak_khz", t))
                 .or_else(|| {
                     range_text(c.characteristic_khz.as_ref(), "kHz")
-                        .map(|t| ("Characteristic frequency", t))
+                        .map(|t| ("Characteristic frequency", "characteristic_khz", t))
                 });
-            if let Some((label, t)) = freq {
+            if let Some((label, field, t)) = freq {
                 let label = if several {
                     label.to_lowercase()
                 } else {
                     label.to_string()
                 };
-                facts.push(format!("{}{label} {t}", prefix(c)));
+                facts.push(format!("{}{label} {t}{}", prefix(c), one_source(field)));
             }
         }
         let lengths: Vec<Option<String>> = kinds
@@ -364,17 +372,21 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
             .collect();
         if lengths.iter().all(|l| *l == lengths[0]) {
             if let Some(t) = &lengths[0] {
-                facts.push(format!("Call length {t}"));
+                facts.push(format!("Call length {t}{}", one_source("duration_ms")));
             }
         } else {
             for (c, l) in kinds.iter().zip(&lengths) {
                 if let Some(t) = l {
-                    facts.push(format!("{}length {t}", prefix(c)));
+                    facts.push(format!(
+                        "{}length {t}{}",
+                        prefix(c),
+                        one_source("duration_ms")
+                    ));
                 }
             }
         }
         if let Some(t) = range_text(s.train.as_ref().and_then(|t| t.interval_ms.as_ref()), "ms") {
-            facts.push(format!("Call interval {t}"));
+            facts.push(format!("Call interval {t}{}", one_source("interval_ms")));
         }
         let sources_tip = std::iter::once("Sources:".to_string())
             .chain(s.sources.iter().map(|src| match &src.url {

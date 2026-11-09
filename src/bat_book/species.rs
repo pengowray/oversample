@@ -160,6 +160,8 @@ pub const PTEROPODIDAE: BatSpecies = BatSpecies {
 // - Milne (2002): Key to the Bat Calls of the Top End of the NT
 // - Wikipedia: List of bats of Australia
 // - Museums Victoria, Atlas of Living Australia
+// - Pennay, Law & Reinhold (2004): Bat calls of New South Wales (call key)
+// - Per-species frequency sources: batchi-extras/bat-call-sketches species notes
 
 pub const CHALINOLOBUS_GOULDII: BatSpecies = BatSpecies {
     id: "chalinolobus_gouldii",
@@ -167,8 +169,9 @@ pub const CHALINOLOBUS_GOULDII: BatSpecies = BatSpecies {
     scientific_name: "Chalinolobus gouldii",
     family: "Vespertilionidae",
     call_type: "FM",
+    // Fc: Pennay et al. 2004 NSW 25 to 34 kHz; Riverina high calls to 34.5.
     freq_lo_hz: 25_000.0,
-    freq_hi_hz: 34_000.0,
+    freq_hi_hz: 34_500.0,
     description: "Widespread and abundant across Australia. Roosts in tree hollows, buildings, and bat boxes. Alternating call frequencies are distinctive.",
     echolocates: true,
 };
@@ -215,8 +218,9 @@ pub const VESPADELUS_VULTURNUS: BatSpecies = BatSpecies {
     scientific_name: "Vespadelus vulturnus",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 45_000.0,
-    freq_hi_hz: 53_000.0,
+    // Fc: Pennay et al. 2004 NSW 42.5 to 53 kHz, Narooma north to 53.5. VIC book narrows it.
+    freq_lo_hz: 42_500.0,
+    freq_hi_hz: 53_500.0,
     description: "One of Australia's smallest bats (~4 g). Common in forests and urban areas. High-frequency calls.",
     echolocates: true,
 };
@@ -227,8 +231,9 @@ pub const VESPADELUS_REGULUS: BatSpecies = BatSpecies {
     scientific_name: "Vespadelus regulus",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 40_000.0,
-    freq_hi_hz: 55_000.0,
+    // Fc: Pennay et al. 2004 NSW 40 to 55 kHz; Gibson & Lumsden 2003, northern Victoria 51 to 57.
+    freq_lo_hz: 39_000.0,
+    freq_hi_hz: 57_000.0,
     description: "Small forest bat found across southern Australia. Roosts in tree hollows. Call frequency overlaps with Little Forest Bat.",
     echolocates: true,
 };
@@ -251,8 +256,9 @@ pub const VESPADELUS_DARLINGTONI: BatSpecies = BatSpecies {
     scientific_name: "Vespadelus darlingtoni",
     family: "Vespertilionidae",
     call_type: "FM",
+    // Fc: Pennay et al. 2004 regional ranges, far south-east NSW 38 kHz to the Queensland border 48.
     freq_lo_hz: 38_000.0,
-    freq_hi_hz: 46_000.0,
+    freq_hi_hz: 48_000.0,
     description: "Largest Vespadelus species. Found in wet and dry forests of south-eastern Australia including Tasmania.",
     echolocates: true,
 };
@@ -275,8 +281,9 @@ pub const OZIMOPS_PLANICEPS: BatSpecies = BatSpecies {
     scientific_name: "Ozimops planiceps",
     family: "Molossidae",
     call_type: "QCF",
+    // Fc: Pennay et al. 2004 26 to 30.5 kHz (Riverina to 30.5); Reardon, flat pulses down to 25.
     freq_lo_hz: 25_000.0,
-    freq_hi_hz: 29_000.0,
+    freq_hi_hz: 30_500.0,
     description: "Small free-tailed bat of south-eastern Australia. Roosts in tree hollows and buildings. Rapid, direct flight.",
     echolocates: true,
 };
@@ -287,8 +294,9 @@ pub const OZIMOPS_RIDEI: BatSpecies = BatSpecies {
     scientific_name: "Ozimops ridei",
     family: "Molossidae",
     call_type: "QCF",
-    freq_lo_hz: 30_000.0,
-    freq_hi_hz: 35_000.0,
+    // Fc: Pennay et al. 2004 NE NSW 28.5 to 31 kHz; Reinhold et al. 2001 (via Makeham & Conacher 2007) 29 to 36.
+    freq_lo_hz: 28_500.0,
+    freq_hi_hz: 36_000.0,
     description: "Widespread across eastern Australian coasts. Similar to Southern Free-tailed Bat but slightly higher frequency calls.",
     echolocates: true,
 };
@@ -299,8 +307,9 @@ pub const FALSISTRELLUS_TASMANIENSIS: BatSpecies = BatSpecies {
     scientific_name: "Falsistrellus tasmaniensis",
     family: "Vespertilionidae",
     call_type: "FM",
-    freq_lo_hz: 34_000.0,
-    freq_hi_hz: 39_000.0,
+    // Fc: Pennay et al. 2004 NSW 35 to 39 kHz; Southern NSW to 40.5.
+    freq_lo_hz: 35_000.0,
+    freq_hi_hz: 40_500.0,
     description: "Large vesper bat of south-eastern forests. Roosts in tree hollows. Vulnerable (IUCN). Distinctive mid-range frequency calls.",
     echolocates: true,
 };
@@ -323,8 +332,9 @@ pub const SCOTOREPENS_BALSTONI: BatSpecies = BatSpecies {
     scientific_name: "Scotorepens balstoni",
     family: "Vespertilionidae",
     call_type: "FM",
+    // Fc: Pennay et al. 2004 NSW 28 to 34 kHz; McKenzie & Muir 2000 (WA) to 36.5. VIC book narrows it.
     freq_lo_hz: 28_000.0,
-    freq_hi_hz: 34_000.0,
+    freq_hi_hz: 36_500.0,
     description: "Widespread across inland Australia. Found in drier regions. Similar frequency to Gould's Wattled Bat.",
     echolocates: true,
 };
@@ -347,7 +357,8 @@ pub const SACCOLAIMUS_FLAVIVENTRIS: BatSpecies = BatSpecies {
     scientific_name: "Saccolaimus flaviventris",
     family: "Emballonuridae",
     call_type: "QCF",
-    freq_lo_hz: 17_500.0,
+    // Fc: Pennay et al. 2004 NSW 17.5 to 22.5 kHz; McKenzie et al. (WA) down to 15.
+    freq_lo_hz: 15_000.0,
     freq_hi_hz: 22_500.0,
     description: "Large, fast-flying bat with glossy black fur and yellow belly. Migratory. High-altitude forager.",
     echolocates: true,
@@ -359,8 +370,9 @@ pub const RHINOLOPHUS_MEGAPHYLLUS: BatSpecies = BatSpecies {
     scientific_name: "Rhinolophus megaphyllus",
     family: "Rhinolophidae",
     call_type: "CF",
-    freq_lo_hz: 67_000.0,
-    freq_hi_hz: 71_000.0,
+    // CF: Pennay et al. 2004 NSW 66 to 70 kHz; Coles, east coast to 74. VIC book narrows it.
+    freq_lo_hz: 66_000.0,
+    freq_hi_hz: 74_000.0,
     description: "Constant-frequency echolocation using distinctive horseshoe-shaped noseleaf. Cave-roosting. Found in forests of eastern Australia.",
     echolocates: true,
 };

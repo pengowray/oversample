@@ -125,7 +125,8 @@ const VIC_AUSTRALIA_BOOK: &[BookEntryDef] = &[
         commonness: Some(Commonness::VeryCommon),
         description: Some("One of Australia's smallest bats (~4 g). Common in forests and urban areas throughout Victoria. High-frequency calls."),
         name: None,
-        freq_hz: None,
+        // Riverina 44.5 to 51 kHz (Pennay et al. 2004); northern Victoria lower (Gibson & Lumsden 2003).
+        freq_hz: Some((42500.0, 51000.0)),
     },
     // ── Common ───────────────────────────────────────────────────
     BookEntryDef {
@@ -190,7 +191,8 @@ const VIC_AUSTRALIA_BOOK: &[BookEntryDef] = &[
         commonness: Some(Commonness::Uncommon),
         description: Some("Widespread across inland Australia. Found in drier regions of northern and western Victoria. Similar frequency to Gould's Wattled Bat."),
         name: None,
-        freq_hz: None,
+        // Pennay et al. 2004 NSW and Riverina; the 36.5 kHz top is from WA.
+        freq_hz: Some((28000.0, 34000.0)),
     },
     BookEntryDef {
         species: &species::MYOTIS_MACROPUS,
@@ -211,7 +213,8 @@ const VIC_AUSTRALIA_BOOK: &[BookEntryDef] = &[
         commonness: Some(Commonness::Uncommon),
         description: Some("Constant-frequency echolocation using distinctive horseshoe-shaped noseleaf. Cave-roosting. Found in forests of eastern and southern Victoria."),
         name: None,
-        freq_hz: None,
+        // Southern NSW (Pennay et al. 2004), next to East Gippsland.
+        freq_hz: Some((66500.0, 70000.0)),
     },
     // ── Rare ─────────────────────────────────────────────────────
     BookEntryDef {
@@ -4506,5 +4509,49 @@ pub fn get_manifest(region: BatBookRegion) -> BatBookManifest {
     BatBookManifest {
         region: region.short_label().to_string(),
         entries,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn range(region: BatBookRegion, id: &str) -> (f64, f64) {
+        let e = get_manifest(region)
+            .entries
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap();
+        (e.freq_lo_hz, e.freq_hi_hz)
+    }
+
+    #[test]
+    fn vic_book_overrides_the_species_range() {
+        assert_eq!(
+            range(BatBookRegion::Australia, "vespadelus_vulturnus"),
+            (42_500.0, 53_500.0)
+        );
+        assert_eq!(
+            range(BatBookRegion::VicAustralia, "vespadelus_vulturnus"),
+            (42_500.0, 51_000.0)
+        );
+        // No override: the VIC book uses the species range.
+        assert_eq!(
+            range(BatBookRegion::VicAustralia, "vespadelus_regulus"),
+            range(BatBookRegion::Australia, "vespadelus_regulus")
+        );
+    }
+
+    #[test]
+    fn overrides_are_valid_ranges() {
+        for &region in BatBookRegion::ALL {
+            for e in get_manifest(region).entries {
+                assert!(
+                    e.freq_lo_hz <= e.freq_hi_hz,
+                    "{} in {region:?}: lo above hi",
+                    e.id
+                );
+            }
+        }
     }
 }
