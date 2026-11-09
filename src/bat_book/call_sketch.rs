@@ -61,6 +61,10 @@ pub struct SketchCall {
     pub end_khz: Option<Range>,
     #[serde(default)]
     pub peak_khz: Option<Range>,
+    /// Characteristic frequency (Fc): the flattest part of the call, as
+    /// AnaBat-based keys report it. Kept apart from peak frequency.
+    #[serde(default)]
+    pub characteristic_khz: Option<Range>,
     /// `[time 0..1, kHz]` points.
     pub shape: Vec<[f64; 2]>,
     #[serde(default)]
@@ -306,6 +310,7 @@ mod tests {
                 start_khz: None,
                 end_khz: None,
                 peak_khz: None,
+                characteristic_khz: None,
                 shape: vec![[0.0, 60.0], [1.0, 40.0]],
                 harmonics: vec![],
             }],

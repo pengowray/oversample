@@ -233,6 +233,8 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         let mut facts: Vec<String> = Vec::new();
         if let Some(t) = range_text(first.peak_khz.as_ref(), "kHz") {
             facts.push(format!("Peak frequency {t}"));
+        } else if let Some(t) = range_text(first.characteristic_khz.as_ref(), "kHz") {
+            facts.push(format!("Characteristic frequency {t}"));
         }
         if let Some(t) = range_text(first.duration_ms.as_ref(), "ms") {
             facts.push(format!("Call length {t}"));

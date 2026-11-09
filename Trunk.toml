@@ -1,3 +1,8 @@
 [build]
 target = "index.html"
 dist = "dist"
+
+[watch]
+# Agent worktrees live under .claude/worktrees/; edits there are not this
+# checkout's and must not rebuild and reload it.
+ignore = [".claude", "target", "e2e", "node_modules"]
