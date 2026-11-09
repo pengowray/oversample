@@ -295,9 +295,15 @@ pub fn Spectrogram() -> impl IntoView {
             let notch_enabled = state.notch.enabled().get();
             let notch_hovering = state.notch.hovering_band().get();
             let harmonic_suppression = state.notch.harmonic_suppression().get();
-            let detected_pulses = state.pulse.detected().get();
+            // Detected calls are drawn by reference below; only subscribe here.
+            state.pulse.detected().with(|_| ());
+            state.pulse.trains().with(|_| ());
             let pulse_overlay = state.pulse.overlay_enabled().get();
             let selected_pulse = state.pulse.selected_index().get();
+            let pulse_file = state
+                .pulse
+                .scanned()
+                .with(|s| s.as_ref().map(|(id, _)| *id));
             let main_view = state.viewmode.main_view().get();
             // Intensity is always a spectrogram setting (shared by the XForm view) —
             // the XForm toggle reuses the Spectrogram menu's intensity sliders.
@@ -1143,18 +1149,25 @@ pub fn Spectrogram() -> impl IntoView {
                 // <TimeGutter/> strip below, which keeps the bottom rows of
                 // the spectrogram readable for low frequencies.
 
-                // Pulse detection overlay
-                if pulse_overlay && !detected_pulses.is_empty() {
-                    spectrogram_renderer::draw_pulses(
-                        &ctx,
-                        &detected_pulses,
-                        selected_pulse,
-                        scroll,
-                        time_res,
-                        zoom,
-                        display_w as f64,
-                        display_h as f64,
-                    );
+                // Call detection overlay, for the file the calls came from.
+                if pulse_overlay && pulse_file.is_some() && pulse_file == state.current_file_id() {
+                    state.pulse.detected().with_untracked(|calls| {
+                        state.pulse.trains().with_untracked(|trains| {
+                            spectrogram_renderer::draw_calls(
+                                &ctx,
+                                calls,
+                                trains,
+                                selected_pulse,
+                                min_freq,
+                                max_freq,
+                                scroll,
+                                time_res,
+                                zoom,
+                                display_w as f64,
+                                display_h as f64,
+                            );
+                        })
+                    });
                 }
 
                 // Notch filter band markers

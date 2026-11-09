@@ -1,6 +1,7 @@
 pub mod agc;
 pub mod audiomoth;
 pub mod bit_analysis;
+pub mod call_detect;
 pub mod channel_delay;
 pub mod chime_scan;
 pub mod chromagram;
@@ -16,7 +17,6 @@ pub mod phase_vocoder;
 pub mod pipistrelle;
 pub mod pitch_shift;
 pub mod psd;
-pub mod pulse_detect;
 pub mod resonators;
 pub mod spectral_sub;
 pub mod wsnr;

@@ -704,7 +704,9 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                     }
                 >"\u{00d7}"</button>
             </div>
-            {if is_group && !is_collapsed && !children.is_empty() {
+            // Groups can be collapsed. A region can hold child annotations
+            // too (a call train holds its calls); those are always shown.
+            {if !is_collapsed && !children.is_empty() {
                 view! { <div class="annotation-group-children">{render_tree_nodes(children, state)}</div> }.into_any()
             } else {
                 view! { <span></span> }.into_any()

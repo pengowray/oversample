@@ -1004,18 +1004,25 @@ pub fn draw_het_overlay(
     }
 }
 
-/// Draw detected pulse markers as vertical bands on the spectrogram.
-pub fn draw_pulses(
+/// Draw the call detector's results on the spectrogram: a box around each
+/// detection (time by frequency range) and a line along the top for each
+/// train. Bat calls get a solid green box; other detections a dashed grey one,
+/// so they stay visible without competing with the bat calls.
+pub fn draw_calls(
     ctx: &CanvasRenderingContext2d,
-    pulses: &[crate::dsp::pulse_detect::DetectedPulse],
+    calls: &[crate::dsp::call_detect::DetectedCall],
+    trains: &[crate::dsp::call_detect::CallTrain],
     selected_index: Option<usize>,
+    min_freq: f64,
+    max_freq: f64,
     scroll_offset: f64,
     time_resolution: f64,
     zoom: f64,
     canvas_width: f64,
     canvas_height: f64,
 ) {
-    if pulses.is_empty() {
+    use crate::dsp::call_detect::CallKind;
+    if calls.is_empty() || max_freq <= min_freq {
         return;
     }
 
@@ -1023,54 +1030,89 @@ pub fn draw_pulses(
     let start_time = scroll_offset;
     let end_time = start_time + visible_time;
     let px_per_sec = canvas_width / visible_time;
+    let x_of = |t: f64| (t - start_time) * px_per_sec;
+    // A 2 ms call is under a pixel wide when zoomed out; keep it visible.
+    const MIN_BOX_PX: f64 = 2.0;
 
-    for pulse in pulses {
-        // Skip pulses not in view
-        if pulse.end_time < start_time || pulse.start_time > end_time {
+    // Trains: a line along the top edge.
+    ctx.set_stroke_style_str("rgba(80, 220, 150, 0.6)");
+    ctx.set_line_width(2.0);
+    for train in trains {
+        if train.end_s < start_time || train.start_s > end_time {
             continue;
         }
+        let x0 = x_of(train.start_s).max(0.0);
+        let x1 = x_of(train.end_s).min(canvas_width).max(x0 + MIN_BOX_PX);
+        ctx.begin_path();
+        ctx.move_to(x0, 2.0);
+        ctx.line_to(x1, 2.0);
+        ctx.stroke();
+    }
 
-        let x0 = ((pulse.start_time - start_time) * px_per_sec).max(0.0);
-        let x1 = ((pulse.end_time - start_time) * px_per_sec).min(canvas_width);
-        if x1 <= x0 {
+    let dashes = js_sys::Array::of2(&3.0.into(), &3.0.into());
+    let no_dashes = js_sys::Array::new();
+    ctx.set_font("9px sans-serif");
+    ctx.set_text_baseline("bottom");
+    for (i, call) in calls.iter().enumerate() {
+        if call.end_s < start_time || call.start_s > end_time {
             continue;
         }
+        let x0 = x_of(call.start_s).max(0.0);
+        let x1 = x_of(call.end_s).min(canvas_width).max(x0 + MIN_BOX_PX);
+        let y0 = freq_to_y(
+            call.event.max_freq_hz as f64,
+            min_freq,
+            max_freq,
+            canvas_height,
+        )
+        .clamp(0.0, canvas_height);
+        let y1 = freq_to_y(
+            call.event.min_freq_hz as f64,
+            min_freq,
+            max_freq,
+            canvas_height,
+        )
+        .clamp(0.0, canvas_height);
+        if y1 <= y0 {
+            continue;
+        }
+        let is_selected = selected_index == Some(i);
+        let is_bat = call.kind == CallKind::Bat;
 
-        let is_selected = selected_index == Some(pulse.index);
-
-        // Fill — full-height vertical band
         if is_selected {
             ctx.set_fill_style_str("rgba(255, 180, 50, 0.20)");
-        } else {
-            ctx.set_fill_style_str("rgba(50, 200, 120, 0.08)");
-        }
-        ctx.fill_rect(x0, 0.0, x1 - x0, canvas_height);
-
-        // Edge lines
-        if is_selected {
-            ctx.set_stroke_style_str("rgba(255, 200, 80, 0.8)");
+            ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+            ctx.set_stroke_style_str("rgba(255, 200, 80, 0.9)");
             ctx.set_line_width(1.5);
+        } else if is_bat {
+            ctx.set_fill_style_str("rgba(50, 200, 120, 0.08)");
+            ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+            ctx.set_stroke_style_str("rgba(80, 220, 150, 0.7)");
+            ctx.set_line_width(1.0);
         } else {
-            ctx.set_stroke_style_str("rgba(80, 220, 150, 0.4)");
-            ctx.set_line_width(0.5);
+            ctx.set_stroke_style_str("rgba(180, 180, 180, 0.5)");
+            ctx.set_line_width(1.0);
         }
-        ctx.begin_path();
-        ctx.move_to(x0, 0.0);
-        ctx.line_to(x0, canvas_height);
-        ctx.stroke();
+        let _ = ctx.set_line_dash(if is_bat || is_selected {
+            &no_dashes
+        } else {
+            &dashes
+        });
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
 
-        // Pulse number label at top (only if wide enough)
-        if x1 - x0 > 12.0 {
-            if is_selected {
-                ctx.set_fill_style_str("rgba(255, 200, 80, 0.9)");
+        // The detection's number in the list, above the box when there is room.
+        if x1 - x0 > 14.0 && y0 > 12.0 {
+            ctx.set_fill_style_str(if is_selected {
+                "rgba(255, 200, 80, 0.9)"
+            } else if is_bat {
+                "rgba(80, 220, 150, 0.8)"
             } else {
-                ctx.set_fill_style_str("rgba(80, 220, 150, 0.7)");
-            }
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_baseline("top");
-            let _ = ctx.fill_text(&format!("{}", pulse.index), x0 + 2.0, 2.0);
+                "rgba(180, 180, 180, 0.7)"
+            });
+            let _ = ctx.fill_text(&format!("{}", i + 1), x0, y0 - 1.0);
         }
     }
+    let _ = ctx.set_line_dash(&no_dashes);
 }
 
 /// Draw selection rectangle overlay on spectrogram.
@@ -1768,7 +1810,17 @@ pub fn draw_annotations(
             } else {
                 3.0
             };
-            let _ = ctx.fill_text(label, x0 + label_inset, y0 + 12.0);
+            // The call detector adds annotations by the hundred, often far
+            // narrower than their labels, so their labels would pile up on
+            // each other. Draw those only when the label fits inside the box.
+            let fits = !crate::call_annotations::is_from_detector(annotation)
+                || ctx
+                    .measure_text(label)
+                    .map(|m| label_inset + m.width() <= x1 - x0)
+                    .unwrap_or(false);
+            if fits {
+                let _ = ctx.fill_text(label, x0 + label_inset, y0 + 12.0);
+            }
         }
 
         // Resize handles for selected annotations (only when annotations have focus and not locked)
