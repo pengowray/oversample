@@ -65,7 +65,18 @@ pub fn parse_recording(rec: &serde_json::Value) -> Option<XcRecording> {
         dvc: s("dvc"),
         mic: s("mic"),
         smp: s("smp"),
+        annotation_set: parse_annotation_set(&rec["annotation-set"]),
     })
+}
+
+/// Read a recording's `annotation-set` field. `None` when the recording has
+/// no annotations (XC sends `[]`) or the field can't be read.
+pub fn parse_annotation_set(v: &serde_json::Value) -> Option<crate::types::AnnotaSet> {
+    if !v.is_object() {
+        return None;
+    }
+    let set: crate::types::AnnotaSet = serde_json::from_value(v.clone()).ok()?;
+    (!set.annotations.is_empty()).then_some(set)
 }
 
 /// Parse a search response from the XC API.

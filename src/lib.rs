@@ -1,3 +1,4 @@
+pub mod annota;
 pub mod annotations;
 pub mod audio;
 pub mod bat_book;

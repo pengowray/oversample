@@ -250,6 +250,28 @@ pub fn BatBookRefPanel() -> impl IntoView {
                                 <div class="ref-panel-family">{entry.family}</div>
                                 <div class="ref-panel-freq">{entry.freq_range_label()}</div>
                                 <div class="ref-panel-call-type">"Call type: " {entry.call_type}</div>
+                                {match crate::bat_book::call_sketch::for_species(entry.id).filter(|s| s.drawable()) {
+                                    Some(_) => view! {
+                                        <button
+                                            class="ref-panel-sketch-btn"
+                                            on:click=move |ev: web_sys::MouseEvent| {
+                                                ev.stop_propagation();
+                                                state.bat_book.sketch_shown().update(|v| *v = !*v);
+                                            }
+                                        >
+                                            {move || if state.bat_book.sketch_shown().get() {
+                                                "Hide typical calls"
+                                            } else {
+                                                "Show typical calls"
+                                            }}
+                                        </button>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="ref-panel-no-sketch">
+                                            "No sketch of typical calls for this species yet"
+                                        </div>
+                                    }.into_any(),
+                                }}
                                 <div class="ref-panel-desc">{entry.description}</div>
                             </div>
                         }

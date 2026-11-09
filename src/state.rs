@@ -1644,6 +1644,9 @@ pub struct BatBookState {
     /// Currently selected bat book entry IDs (multi-select via shift-click).
     pub selected_ids: Vec<String>,
     pub ref_open: bool,
+    /// Draw the selected species' call sketch at the left of the spectrogram
+    /// (when the species has one).
+    pub sketch_shown: bool,
     /// Last-clicked bat book entry ID, used for shift-click range selection.
     pub last_clicked_id: Option<String>,
     /// When true, selecting bat book entries pushes their frequency focus override.
@@ -2631,6 +2634,7 @@ impl AppState {
                     .unwrap_or_default(),
                 selected_ids: Vec::new(),
                 ref_open: false,
+                sketch_shown: true,
                 last_clicked_id: None,
                 auto_focus: true,
             }),

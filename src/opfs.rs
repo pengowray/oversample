@@ -445,6 +445,9 @@ fn apply_loaded_sidecar(
     state.annotations.store().update(|store| {
         store.insert(file_id, loaded);
     });
+    // Saved annotations replace the file's set; add back any XC annotations
+    // that came with the recording and aren't in the saved file.
+    crate::annota::merge_xc_set(state, file_id, false);
 }
 
 /// Try to load annotations for a file (OPFS on browser, central store + sidecar on Tauri).

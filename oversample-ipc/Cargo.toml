@@ -7,3 +7,6 @@ description = "Shared IPC wire types (DTOs, enums, errors) for the Oversample fr
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

@@ -1773,6 +1773,7 @@ pub fn Spectrogram() -> impl IntoView {
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
             />
+            <crate::components::call_sketch_strip::CallSketchStrip canvas_ref=canvas_ref/>
             <Playhead/>
             </div>
             </div>

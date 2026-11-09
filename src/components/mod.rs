@@ -6,6 +6,7 @@ pub mod bar_pan;
 pub mod bat_book_ref_panel;
 pub mod bat_book_strip;
 pub mod bottom_toolbar;
+pub mod call_sketch_strip;
 pub mod channel_delay_row;
 pub mod chromagram_view;
 pub mod combo_button;

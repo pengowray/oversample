@@ -84,6 +84,15 @@ pub struct XcRecording {
     pub mic: String,
     /// Sample rate (as string from API, e.g. "256000")
     pub smp: String,
+    /// Annotations of sounds in the recording (Annota-JSON), when it has any.
+    /// The API sends `[]` when there are none, which reads as `None`.
+    #[serde(
+        default,
+        rename = "annotation-set",
+        deserialize_with = "crate::annota::deserialize_recording_set",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub annotation_set: Option<crate::annota::AnnotaSet>,
 }
 
 impl XcRecording {

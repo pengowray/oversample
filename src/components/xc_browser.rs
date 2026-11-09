@@ -821,6 +821,11 @@ pub fn XcBrowser() -> impl IntoView {
                 let file_count = state.library.files().with_untracked(|files| files.len());
                 if file_count > 0 {
                     state.library.current_index().set(Some(file_count - 1));
+                    if let (Some(set), Some(file_id)) =
+                        (rec.annotation_set.clone(), state.file_id_at(file_count - 1))
+                    {
+                        crate::annota::attach_xc_set(state, file_id, set);
+                    }
                 }
 
                 cached_ids.try_update(|s| {

@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod annota;
 pub mod mic;
 pub mod plugins;
 pub mod xc;

@@ -88,20 +88,22 @@ impl fmt::Display for TagError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TagError::MissingName { .. } => {
-                write!(f, "A tag name must follow # and start with a letter")
+                write!(f, "Tag name must start with a letter, right after #.")
             }
             TagError::BadNameChar { ch, .. } => write!(
                 f,
-                "Tag names can use letters, digits, _ and - only, not \u{201C}{ch}\u{201D}"
+                "Tag names can't contain \"{ch}\". Use letters, digits, _ or -."
             ),
-            TagError::MissingValue { .. } => write!(f, "A value must follow ="),
-            TagError::UnclosedQuote { .. } => write!(f, "A quoted value is missing its closing \""),
-            TagError::ControlChar { .. } => {
-                write!(f, "Tag values can't contain tabs or line breaks")
+            TagError::MissingValue { .. } => {
+                write!(f, "Missing value after =. Add a value or remove the =.")
             }
+            TagError::UnclosedQuote { .. } => {
+                write!(f, "Missing closing quote. Add \" at the end of the value.")
+            }
+            TagError::ControlChar { .. } => write!(f, "Values can't contain tabs or line breaks."),
             TagError::TooLong { .. } => write!(
                 f,
-                "Tag names and values can be at most {MAX_PART_LEN} characters"
+                "Too long: tag names and values can be up to {MAX_PART_LEN} characters."
             ),
         }
     }
@@ -489,10 +491,7 @@ mod tests {
             stored("good example, Pipistrelle"),
             vec!["good example", "Pipistrelle"]
         );
-        assert_eq!(
-            stored("nice one, #call"),
-            vec!["nice one", "call"]
-        );
+        assert_eq!(stored("nice one, #call"), vec!["nice one", "call"]);
     }
 
     #[test]

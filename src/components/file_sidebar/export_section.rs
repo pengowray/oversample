@@ -23,6 +23,7 @@ pub fn ExportSection(
     has_file_path: Signal<Option<bool>>,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
+    let xc_form_open = RwSignal::new(false);
 
     let webcodecs_available = wc::has_video_encoder() && wc::has_mp4_muxer();
     let audio_encoder_available = wc::has_audio_encoder();
@@ -391,10 +392,28 @@ pub fn ExportSection(
                             let cb = on_import_batm;
                             move |_: web_sys::MouseEvent| cb.run(())
                         }
+                        title="Add annotations from a .batm file, or from a Xeno-canto Annota-JSON file (.json), such as the file from XC's \"Download annotations\" link."
                     >
-                        "Import .batm"
+                        "Import .batm/.json"
                     </button>
                 </div>
+                <div class="setting-row" style="gap: 4px;">
+                    <button
+                        class="sidebar-btn"
+                        style="flex: 1;"
+                        class:active=move || xc_form_open.get()
+                        on:click=move |_| xc_form_open.update(|o| *o = !*o)
+                        disabled=move || has_annotations.get().is_none()
+                        title="Save this recording's annotations as an Annota-JSON file, the format Xeno-canto accepts for uploads."
+                    >
+                        "Export for XC"
+                    </button>
+                </div>
+                {move || xc_form_open.get().then(|| view! {
+                    <crate::components::file_sidebar::xc_annotation_export::XcAnnotationExport
+                        on_close=Callback::new(move |()| xc_form_open.set(false))
+                    />
+                })}
             </div>
         </div>
     }

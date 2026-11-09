@@ -610,8 +610,8 @@ fn render_tree_nodes(nodes: Vec<AnnotationNode>, state: AppState) -> impl IntoVi
                                     class="annotation-label-input annotation-tags-input"
                                     type="text"
                                     prop:value=move || tags_value.try_get().unwrap_or_default()
-                                    placeholder="Tags, such as #call #train"
-                                    title="Hashtags, such as #call, #train, #buzz or #species=Myotis_daubentonii. A value with spaces goes in quotes: #note=\"near the pond\""
+                                    placeholder="#call #species=Myotis_daubentonii"
+                                    title="Start each tag with #, for example #call.\nAdd a value with =: #species=Myotis_daubentonii (use _ for spaces in species names).\nPut a value with spaces in double quotes: #note=\"near the pond\"."
                                     on:input=move |ev| {
                                         let _ = tags_value.try_set(leptos::prelude::event_target_value(&ev));
                                     }
@@ -1193,11 +1193,115 @@ fn export_annotations(state: AppState) {
     }
 }
 
+/// Add the annotations of an Annota-JSON file (Xeno-canto's format) to the
+/// open recording.
+fn import_annota_json(state: AppState, text: &str) {
+    let set: oversample_ipc::annota::AnnotaSet = match serde_json::from_str(text) {
+        Ok(s) => s,
+        Err(e) => {
+            state.show_error_toast(format!("Not an Annota-JSON file: {e}"));
+            return;
+        }
+    };
+    let Some(file_id) = state.current_file_id() else {
+        state.show_error_toast("Open a recording first");
+        return;
+    };
+    let Some(file_idx) = state.file_idx_for_id(file_id) else {
+        return;
+    };
+    let (name, metadata) = state.library.files().with_untracked(|files| {
+        files
+            .get(file_idx)
+            .map(|f| (f.name.clone(), f.xc_metadata.clone()))
+            .unwrap_or_default()
+    });
+    let open_nr = crate::components::file_sidebar::xc_annotation_export::xc_number_of(
+        &name,
+        metadata.as_deref(),
+    );
+    let set_nr = set.annotations.iter().find_map(|a| a.xc_nr.clone());
+
+    let existing: Vec<crate::annotations::Annotation> =
+        state.annotations.store().with_untracked(|store| {
+            store
+                .get(file_id)
+                .map(|s| s.annotations.clone())
+                .unwrap_or_default()
+        });
+    let out = crate::annota::import_set(&set, &existing, AnnotationId::new, &now_iso8601());
+    let added = out.regions_added();
+    if !out.added.is_empty() {
+        let new_set = state.library.files().with_untracked(|files| {
+            files.get(file_idx).map(|f| {
+                let id = f.identity.clone().unwrap_or_else(|| {
+                    crate::file_identity::identity_layer1(
+                        &f.name,
+                        f.audio.metadata.file_size as u64,
+                    )
+                });
+                AnnotationSet::new_with_metadata(
+                    id,
+                    &f.audio,
+                    f.cached_peak_db,
+                    f.cached_full_peak_db,
+                )
+            })
+        });
+        let Some(new_set) = new_set else { return };
+        state.snapshot_annotations();
+        state.annotations.store().update(|store| {
+            store
+                .entry_or_insert_with(file_id, || new_set)
+                .annotations
+                .extend(out.added);
+        });
+        state.annotations.dirty().set(true);
+    }
+    let set_name = set.meta.set_name.clone();
+    let from = set_name
+        .as_ref()
+        .map(|n| format!(" from \"{n}\""))
+        .unwrap_or_default();
+    let plural = |n: usize| if n == 1 { "annotation" } else { "annotations" };
+    let mut msg = if added > 0 {
+        format!("Added {added} {}{from}", plural(added))
+    } else if out.already_present > 0 {
+        let n = out.already_present;
+        match &set_name {
+            Some(name) => format!(
+                "All {n} {} in \"{name}\" are already in this recording",
+                plural(n)
+            ),
+            None => format!("All {n} {} are already in this recording", plural(n)),
+        }
+    } else {
+        "No annotations added".to_string()
+    };
+    if out.unusable > 0 {
+        msg.push_str(&format!(
+            ". Skipped {} with no start or end time.",
+            out.unusable
+        ));
+    }
+    if let (Some(a), Some(b)) = (&set_nr, &open_nr) {
+        if a != b {
+            msg = format!(
+                "Different recording: the file's annotations are for XC{a}, but XC{b} is open. Added {added} {} anyway.",
+                plural(added)
+            );
+        }
+    }
+    state.show_info_toast(msg);
+}
+
 fn import_annotations(state: AppState) {
     let doc = web_sys::window().unwrap().document().unwrap();
     let input: web_sys::HtmlInputElement = doc.create_element("input").unwrap().unchecked_into();
     input.set_type("file");
-    input.set_attribute("accept", ".batm,.yaml,.yml").unwrap();
+    input
+        .set_attribute("accept", ".batm,.yaml,.yml,.json")
+        .unwrap();
 
     let on_change = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
         move |ev: web_sys::Event| {
@@ -1213,6 +1317,10 @@ fn import_annotations(state: AppState) {
                 move |_: web_sys::Event| {
                     let result = reader_clone.result().unwrap();
                     let text = result.as_string().unwrap_or_default();
+                    if text.trim_start().starts_with('{') {
+                        import_annota_json(state, &text);
+                        return;
+                    }
                     match yaml_serde::from_str::<AnnotationSet>(&text) {
                         Ok(imported) => {
                             let Some(id) = state.current_file_id() else {

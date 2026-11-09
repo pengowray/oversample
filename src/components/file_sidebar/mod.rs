@@ -16,6 +16,7 @@ pub mod pulse_panel;
 pub mod settings_panel;
 pub(crate) mod streaming_load;
 mod suggestions;
+pub(crate) mod xc_annotation_export;
 
 use crate::components::icons::Icon;
 use crate::state::store_fields::*;
