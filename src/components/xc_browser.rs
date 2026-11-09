@@ -188,12 +188,12 @@ fn text_progress(group: &str, country: Option<&str>, p: Option<TaxonomyProgress>
 fn text_server_progress(group: &str, s: ServerIndexing) -> String {
     if s.pages_total == 0 {
         return format!(
-            "Waiting for Oversample's server to start collecting {group} recordings for the species list..."
+            "Waiting for Oversample's server to start collecting recordings of {group} for the species list..."
         );
     }
     let pct = (s.pages_done.min(s.pages_total) as u64 * 100 / s.pages_total as u64) as u32;
     format!(
-        "Oversample's server is collecting {group} recordings for the species list: {pct}% done"
+        "Oversample's server is collecting recordings of {group} for the species list: {pct}% done"
     )
 }
 
@@ -1533,15 +1533,15 @@ mod tests {
         };
         assert_eq!(
             text_progress("bats", Some("Australia"), server(3, 23)),
-            "Oversample's server is collecting bats recordings for the species list: 13% done"
+            "Oversample's server is collecting recordings of bats for the species list: 13% done"
         );
         assert_eq!(
             text_progress("land mammals", None, server(0, 0)),
-            "Waiting for Oversample's server to start collecting land mammals recordings for the species list..."
+            "Waiting for Oversample's server to start collecting recordings of land mammals for the species list..."
         );
         assert_eq!(
             text_progress("bats", None, server(30, 23)),
-            "Oversample's server is collecting bats recordings for the species list: 100% done"
+            "Oversample's server is collecting recordings of bats for the species list: 100% done"
         );
     }
 
