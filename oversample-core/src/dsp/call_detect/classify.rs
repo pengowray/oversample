@@ -36,12 +36,11 @@
 //! The first call of a train only becomes a bat call when the second arrives,
 //! so [`Verdict::earlier`] hands it back then, for a display to mark too.
 //!
-//! **Regular pulses.** A detection that passes the first four checks is one of
-//! a run of regular pulses ([`CallKind::Pulses`]) when it extends a run of 8
-//! or more pulses at a similar
-//! frequency (peak within 1.5 kHz) with the same spacing, within 1 ms, up to 3
-//! pulses in a row being allowed to go missing. Pulses that regular are not a bat's:
-//! bats vary the spacing of their calls. In 286 recordings (the library and the X8's),
+//! **Periodic pulses.** A detection that passes the first four checks is one of
+//! a run of periodic pulses ([`CallKind::PeriodicPulse`]) when it extends a run of
+//! 8 or more pulses at a similar frequency (peak within 1.5 kHz) with the same
+//! spacing, within 1 ms, up to 3 pulses in a row being allowed to go missing.
+//! Pulses this evenly spaced are not a bat's: bats vary the spacing of their calls. In 286 recordings (the library and the X8's),
 //! runs of bat calls stopped at 5 pulses. 12 recordings had runs of 7 to 445, spaced
 //! about 10, 17, 33 or 400 ms, at one frequency each, such as 44.6 or 83 kHz. Some of
 //! those spacings fit the mains (10 ms is twice 50 Hz), so these may be electrical
@@ -72,7 +71,7 @@
 //! they were: steady sounds there include a rat's 22 kHz call and the upper
 //! harmonics of bird whistles, and most bats with long, nearly flat sweeps
 //! (noctules, free-tailed and sheath-tailed bats) call there. The steady-tone
-//! and regular-pulse checks still come first.
+//! and periodic-pulse checks still come first.
 //!
 //! On the 288 recordings in `bat-demo-sounds`, at each file's own rate, this
 //! raised bat calls in the 34 recordings of horseshoe, leaf-nosed and mustached
@@ -153,11 +152,11 @@ pub const TONE_GAP_MS: f32 = 20.0;
 pub const TONE_MIN_MS: f32 = 150.0;
 /// How long a tone's frequency is remembered after its last piece.
 pub const TONE_HOLD_S: f32 = 2.0;
-/// Pulses at the same spacing that make a run of regular pulses.
-pub const REGULAR_MIN_PULSES: u32 = 8;
+/// Pulses at the same spacing that make a run of periodic pulses.
+pub const PERIODIC_MIN_PULSES: u32 = 8;
 /// How far a pulse may be from the spacing of its run. The detector's times are
 /// whole columns, so this is at least a column at the app's 1 ms per column.
-pub const REGULAR_TOLERANCE_MS: f32 = 1.0;
+pub const PERIODIC_TOLERANCE_MS: f32 = 1.0;
 
 /// Most a constant-frequency stretch of a call may vary, from its lowest to
 /// its highest point; see [`DetectedCall::steady_s`](super::DetectedCall::steady_s).
@@ -197,7 +196,7 @@ const TONES: usize = 4;
 /// Runs of evenly spaced pulses followed at once.
 const PULSE_RUNS: usize = 4;
 /// Most pulses in a row that may go missing from a run that has not yet reached
-/// REGULAR_MIN_PULSES, plus one. The detector misses some, and so does a gap in the
+/// PERIODIC_MIN_PULSES, plus one. The detector misses some, and so does a gap in the
 /// analysis.
 const MOST_SPACINGS: u64 = 4;
 
@@ -206,9 +205,9 @@ pub enum CallKind {
     /// A piece of a steady tone lasting longer than a bat call, such as a
     /// rat's 22 kHz alarm call.
     Tone,
-    /// One of a run of regular pulses: evenly spaced at one frequency, which
+    /// One of a run of periodic pulses: evenly spaced at one frequency, which
     /// bats' calls are not.
-    Pulses,
+    PeriodicPulse,
     /// Reaches the bottom of the detection band: a click or rustle.
     Broadband,
     /// Peak below the lowest bat frequency.
@@ -288,7 +287,7 @@ pub struct CallClassifier {
     next_piece: usize,
     tones: [Option<Tone>; TONES],
     pulse_runs: [Option<PulseRun>; PULSE_RUNS],
-    regular_tolerance: u64,
+    periodic_tolerance: u64,
     /// Start of the tone the latest detection belongs to, if it is a piece
     /// of one.
     tone_since: u64,
@@ -316,7 +315,7 @@ impl CallClassifier {
             next_piece: 0,
             tones: [None; TONES],
             pulse_runs: [None; PULSE_RUNS],
-            regular_tolerance: (REGULAR_TOLERANCE_MS * 0.001 * sample_rate) as u64 + 1,
+            periodic_tolerance: (PERIODIC_TOLERANCE_MS * 0.001 * sample_rate) as u64 + 1,
             tone_since: 0,
             last_was_tone: false,
         };
@@ -372,7 +371,7 @@ impl CallClassifier {
     /// When the latest detection was a piece of a steady tone, where the tone
     /// started: the first piece of the chain that made it a tone. Pauses of
     /// up to 2 s, after which pieces still count as the same tone, are
-    /// included. For one of a run of regular pulses, the run's first pulse.
+    /// included. For one of a run of periodic pulses, the run's first pulse.
     pub fn tone_start(&self) -> Option<u64> {
         self.last_was_tone.then_some(self.tone_since)
     }
@@ -411,11 +410,11 @@ impl CallClassifier {
                 earlier: None,
             };
         }
-        if let Some(first) = self.regular_pulses_since(event) {
+        if let Some(first) = self.periodic_pulses_since(event) {
             self.last_was_tone = true;
             self.tone_since = first;
             return Verdict {
-                kind: CallKind::Pulses,
+                kind: CallKind::PeriodicPulse,
                 earlier: None,
             };
         }
@@ -460,17 +459,17 @@ impl CallClassifier {
         verdict
     }
 
-    /// When the detection extends a run of regular pulses, the start of the run; see
+    /// When the detection extends a run of periodic pulses, the start of the run; see
     /// the module documentation. Follows the detection's run as it goes.
     ///
     /// A detection at a run's frequency that does not fit the run's spacing starts
     /// the run again. Otherwise a bat's calls, one of which fits by chance now and
-    /// then, would build up a run over time. A run that has reached REGULAR_MIN_PULSES
+    /// then, would build up a run over time. A run that has reached PERIODIC_MIN_PULSES
     /// is not restarted, because such a detection may be a bat at the same frequency
     /// as a machine that is still running.
-    fn regular_pulses_since(&mut self, event: &CallEvent) -> Option<u64> {
+    fn periodic_pulses_since(&mut self, event: &CallEvent) -> Option<u64> {
         let (start, peak) = (event.start_sample, event.peak_freq_hz);
-        let tolerance = self.regular_tolerance;
+        let tolerance = self.periodic_tolerance;
         let tone_hold = self.tone_hold;
         let fits = |run: &PulseRun, most_spacings: u64| {
             let since = start.saturating_sub(run.last);
@@ -482,7 +481,7 @@ impl CallClassifier {
         let similar = |run: &PulseRun| (run.peak_hz - peak).abs() <= TONE_FREQ_HZ;
 
         for run in self.pulse_runs.iter_mut().flatten() {
-            if run.pulses >= REGULAR_MIN_PULSES
+            if run.pulses >= PERIODIC_MIN_PULSES
                 && similar(run)
                 && start.saturating_sub(run.last) <= tone_hold
                 && fits(run, u64::MAX)
@@ -502,7 +501,7 @@ impl CallClassifier {
             .pulse_runs
             .iter_mut()
             .flatten()
-            .find(|run| run.pulses < REGULAR_MIN_PULSES && similar(run));
+            .find(|run| run.pulses < PERIODIC_MIN_PULSES && similar(run));
         let Some(run) = building else {
             // Replace the run that has gone longest without a pulse.
             let slot = (0..PULSE_RUNS)
@@ -519,7 +518,7 @@ impl CallClassifier {
         }
         run.last = start;
         run.pulses += 1;
-        if run.pulses < REGULAR_MIN_PULSES {
+        if run.pulses < PERIODIC_MIN_PULSES {
             return None;
         }
         // The run's earlier pulses can no longer start a train.
@@ -636,26 +635,31 @@ mod tests {
         for spacing_ms in [10.0, 17.0, 50.0, 401.0] {
             let mut c = classifier();
             let kinds = pulses(&mut c, 1.0, spacing_ms, 20, 44.6);
-            let first_tone = kinds.iter().position(|&k| k == CallKind::Pulses).unwrap();
+            let first_periodic = kinds
+                .iter()
+                .position(|&k| k == CallKind::PeriodicPulse)
+                .unwrap();
             assert_eq!(
-                first_tone,
-                REGULAR_MIN_PULSES as usize - 1,
+                first_periodic,
+                PERIODIC_MIN_PULSES as usize - 1,
                 "{spacing_ms}: {kinds:?}"
             );
             assert!(
-                kinds[first_tone..].iter().all(|&k| k == CallKind::Pulses),
+                kinds[first_periodic..]
+                    .iter()
+                    .all(|&k| k == CallKind::PeriodicPulse),
                 "{spacing_ms}: {kinds:?}"
             );
         }
     }
 
     #[test]
-    fn a_missing_pulse_does_not_restart_a_run_of_regular_pulses() {
+    fn a_missing_pulse_does_not_restart_a_run_of_periodic_pulses() {
         let mut c = classifier();
         for i in (0..30).filter(|i| ![5, 12, 13, 14].contains(i)) {
             let kind = c.classify(&call(1.0 + i as f32 * 0.010, 44.6, 40.0)).kind;
             if i > 10 {
-                assert_eq!(kind, CallKind::Pulses, "pulse {i}");
+                assert_eq!(kind, CallKind::PeriodicPulse, "pulse {i}");
             }
         }
     }
@@ -674,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bat_at_another_frequency_is_still_a_bat_beside_regular_pulses() {
+    fn a_bat_at_another_frequency_is_still_a_bat_beside_periodic_pulses() {
         let mut c = classifier();
         pulses(&mut c, 1.0, 10.0, 30, 44.6);
         let first = c.classify(&call(1.31, 60.0, 40.0));
@@ -684,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_pulses_cannot_start_a_train_afterwards() {
+    fn periodic_pulses_cannot_start_a_train_afterwards() {
         let mut c = classifier();
         pulses(&mut c, 1.0, 10.0, 8, 44.6);
         // Just after the run, at an uneven time: nothing left to pair with.
@@ -777,7 +781,7 @@ mod tests {
         // Constant-frequency calls of 50 ms every 100 ms, as a horseshoe bat
         // makes: narrow, but with gaps longer than the tone check allows.
         let mut c = classifier();
-        // Fewer than REGULAR_MIN_PULSES, because these are evenly spaced.
+        // Fewer than PERIODIC_MIN_PULSES, because these are evenly spaced.
         let kinds: Vec<_> = pieces(1.0, 1.7, 50.0, 100.0, 70.0)
             .iter()
             .map(|e| c.classify(e).kind)

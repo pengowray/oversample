@@ -12,7 +12,7 @@ pub mod metadata_panel;
 pub mod mic_chooser;
 pub mod privacy_settings;
 pub mod psd_panel;
-pub mod pulse_panel;
+pub mod call_detection_panel;
 pub mod settings_panel;
 pub(crate) mod streaming_load;
 mod suggestions;
@@ -38,7 +38,7 @@ pub(crate) use loading::{
 pub(crate) use metadata_panel::MetadataPanel;
 use project_panel::ProjectPanel;
 pub(crate) use psd_panel::PsdPanel;
-pub(crate) use pulse_panel::PulsePanel;
+pub(crate) use call_detection_panel::CallDetectionPanel;
 pub(crate) use settings_panel::{run_resonator_bench, SelectionPanel};
 
 fn copy_to_clipboard(text: &str) {

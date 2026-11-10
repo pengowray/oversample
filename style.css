@@ -710,51 +710,51 @@ body.sidebar-resizing {
     font-variant-numeric: tabular-nums;
 }
 
-/* Call detection panel (the Pulses tab) */
-.pulse-status {
+/* Call detection panel (the Call detection tab) */
+.detection-status {
     padding: 2px 16px 6px;
     font-size: 12px;
     color: #ccc;
 }
 
-.pulse-status-note {
+.detection-status-note {
     font-size: 11px;
     color: #888;
 }
 
-.pulse-progress {
+.detection-progress {
     height: 3px;
     margin-top: 4px;
     background: #2a2a2a;
     border-radius: 2px;
 }
 
-.pulse-progress-fill {
+.detection-progress-fill {
     height: 100%;
     background: #4a8;
     border-radius: 2px;
 }
 
 /* Rows inside the panel that are not setting rows: same side padding. */
-.pulse-annotate-row {
+.detection-annotate-row {
     padding: 2px 16px;
 }
 
-.pulse-annotate-row .psd-btn-group {
+.detection-annotate-row .psd-btn-group {
     flex-wrap: wrap;
 }
 
 /* Taller than the PSD panel's buttons: 24 px click targets. */
-.pulse-annotate-row .psd-btn {
+.detection-annotate-row .psd-btn {
     padding: 4px 8px;
 }
 
-.pulse-radio-group {
+.detection-radio-group {
     display: flex;
     flex-direction: column;
 }
 
-.pulse-radio {
+.detection-radio {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -763,16 +763,16 @@ body.sidebar-resizing {
 }
 
 /* Lines up with the option's text, past the radio button. */
-.pulse-radio-note {
+.detection-radio-note {
     padding-left: 19px;
 }
 
-.pulse-add-btn:disabled {
+.detection-add-btn:disabled {
     opacity: 0.45;
     cursor: default;
 }
 
-.pulse-list {
+.detection-list {
     max-height: 400px;
     overflow-y: auto;
     margin: 4px 0;
@@ -781,14 +781,14 @@ body.sidebar-resizing {
 /* One row per detection. Narrow padding: the sidebar is about 220 px wide,
    and after the panel's and the list's scrollbars about 190 px is left for
    five columns. Only the kind column wraps. */
-.pulse-table {
+.detection-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 
-.pulse-table th {
+.detection-table th {
     position: sticky;
     top: 0;
     background: #111;
@@ -798,7 +798,7 @@ body.sidebar-resizing {
     padding: 2px;
 }
 
-.pulse-table td {
+.detection-table td {
     /* 24 px rows: each row is a click target. */
     padding: 4px 2px;
     line-height: 16px;
@@ -806,41 +806,41 @@ body.sidebar-resizing {
     white-space: nowrap;
 }
 
-.pulse-table th:first-child,
-.pulse-table td:first-child {
+.detection-table th:first-child,
+.detection-table td:first-child {
     padding-left: 10px;
 }
 
 /* Clear of overlay scrollbars (phones), which sit on top of the content. */
-.pulse-table th:last-child,
-.pulse-table td:last-child {
+.detection-table th:last-child,
+.detection-table td:last-child {
     padding-right: 8px;
 }
 
-.pulse-table .pulse-col-num {
+.detection-table .detection-col-num {
     text-align: right;
 }
 
-.pulse-table .pulse-col-kind {
+.detection-table .detection-col-kind {
     white-space: normal;
 }
 
-.pulse-row {
+.detection-row {
     cursor: pointer;
 }
 
-.pulse-row:hover td {
+.detection-row:hover td {
     background: #1a2a20;
     color: #ccc;
 }
 
 /* Detections that are not bat calls: muted, like their dashed boxes on the
    spectrogram, but still 4.5:1 against the panel. */
-.pulse-row-other td {
+.detection-row-other td {
     color: #888;
 }
 
-.pulse-row.selected td {
+.detection-row.selected td {
     background: #3a3020;
     color: #eee;
 }

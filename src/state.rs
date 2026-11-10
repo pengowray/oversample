@@ -522,7 +522,7 @@ pub enum RightSidebarTab {
     Psd,
     Analysis,
     Harmonics,
-    Pulses,
+    CallDetection,
     DebugLog,
 }
 
@@ -534,7 +534,7 @@ impl RightSidebarTab {
             Self::Psd => "Power spectrum",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
-            Self::Pulses => "Pulses",
+            Self::CallDetection => "Call detection",
             Self::DebugLog => "Debug Log",
         }
     }
@@ -545,7 +545,7 @@ impl RightSidebarTab {
         Self::Psd,
         Self::Analysis,
         Self::Harmonics,
-        Self::Pulses,
+        Self::CallDetection,
         Self::DebugLog,
     ];
 }
@@ -1583,9 +1583,9 @@ pub struct NoiseReduceState {
     pub learning: bool,
 }
 
-/// Bat call detection (the Pulses tab) and its spectrogram overlay.
+/// Bat call detection (the Call detection tab) and its spectrogram overlay.
 #[derive(Clone, Debug, Store)]
-pub struct PulseState {
+pub struct CallDetectionState {
     /// Detector settings, kept while the tab is closed.
     pub params: crate::dsp::call_detect::CallScanParams,
     /// The file and settings `detected` came from. Train settings are left at
@@ -1786,15 +1786,15 @@ pub struct GainState {
 /// `FooStateStoreFields` trait individually. Extend as more groups migrate.
 pub mod store_fields {
     pub use super::{
-        AnnotationsStateStoreFields, BatBookStateStoreFields, ChromaStateStoreFields,
-        DialogsStateStoreFields, DisplayStateStoreFields, ExportStateStoreFields,
-        FilterStateStoreFields, FlowStateStoreFields, GainStateStoreFields,
+        AnnotationsStateStoreFields, BatBookStateStoreFields, CallDetectionStateStoreFields,
+        ChromaStateStoreFields, DialogsStateStoreFields, DisplayStateStoreFields,
+        ExportStateStoreFields, FilterStateStoreFields, FlowStateStoreFields, GainStateStoreFields,
         InteractionStateStoreFields, LibraryStateStoreFields, MicStateStoreFields,
         NoiseReduceStateStoreFields, NotchStateStoreFields, PanelsStateStoreFields,
         PlaybackStateStoreFields, ProjectStateStoreFields, PsdStateStoreFields,
-        PulseStateStoreFields, RecordingMetaStateStoreFields, ResonatorStateStoreFields,
-        SpectStateStoreFields, StatusStateStoreFields, TimelineStateStoreFields,
-        TransformStateStoreFields, ViewModeStateStoreFields, ViewStateStoreFields,
+        RecordingMetaStateStoreFields, ResonatorStateStoreFields, SpectStateStoreFields,
+        StatusStateStoreFields, TimelineStateStoreFields, TransformStateStoreFields,
+        ViewModeStateStoreFields, ViewStateStoreFields,
     };
 }
 
@@ -2194,7 +2194,7 @@ pub struct AppState {
     /// Spectral-subtraction noise-reduction settings.
     pub noise_reduce: Store<NoiseReduceState>,
     /// Bat call detection results and settings.
-    pub pulse: Store<PulseState>,
+    pub call_detection: Store<CallDetectionState>,
     /// PSD (Power Spectral Density) panel settings.
     pub psd: Store<PsdState>,
     /// Mic capture + recording lifecycle.
@@ -2544,7 +2544,7 @@ impl AppState {
                 learning: false,
             }),
 
-            pulse: Store::new(PulseState {
+            call_detection: Store::new(CallDetectionState {
                 params: crate::dsp::call_detect::CallScanParams::default(),
                 scanned: None,
                 band_hz: None,

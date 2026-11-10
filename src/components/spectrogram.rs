@@ -296,12 +296,12 @@ pub fn Spectrogram() -> impl IntoView {
             let notch_hovering = state.notch.hovering_band().get();
             let harmonic_suppression = state.notch.harmonic_suppression().get();
             // Detected calls are drawn by reference below; only subscribe here.
-            state.pulse.detected().with(|_| ());
-            state.pulse.trains().with(|_| ());
-            let pulse_overlay = state.pulse.overlay_enabled().get();
-            let selected_pulse = state.pulse.selected_index().get();
-            let pulse_file = state
-                .pulse
+            state.call_detection.detected().with(|_| ());
+            state.call_detection.trains().with(|_| ());
+            let detection_overlay = state.call_detection.overlay_enabled().get();
+            let selected_detection = state.call_detection.selected_index().get();
+            let detection_file = state
+                .call_detection
                 .scanned()
                 .with(|s| s.as_ref().map(|(id, _)| *id));
             let main_view = state.viewmode.main_view().get();
@@ -1150,14 +1150,17 @@ pub fn Spectrogram() -> impl IntoView {
                 // the spectrogram readable for low frequencies.
 
                 // Call detection overlay, for the file the calls came from.
-                if pulse_overlay && pulse_file.is_some() && pulse_file == state.current_file_id() {
-                    state.pulse.detected().with_untracked(|calls| {
-                        state.pulse.trains().with_untracked(|trains| {
+                if detection_overlay
+                    && detection_file.is_some()
+                    && detection_file == state.current_file_id()
+                {
+                    state.call_detection.detected().with_untracked(|calls| {
+                        state.call_detection.trains().with_untracked(|trains| {
                             spectrogram_renderer::draw_calls(
                                 &ctx,
                                 calls,
                                 trains,
-                                selected_pulse,
+                                selected_detection,
                                 min_freq,
                                 max_freq,
                                 scroll,

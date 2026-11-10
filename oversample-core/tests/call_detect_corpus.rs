@@ -60,6 +60,20 @@ fn wav_files(dir: &Path, label: &str) -> Vec<(String, PathBuf)> {
     files
 }
 
+/// A fixed code per kind, so renaming a kind in the code does not change the
+/// snapshot. A new kind needs a new code here.
+fn kind_code(kind: CallKind) -> u8 {
+    match kind {
+        CallKind::Bat => 1,
+        CallKind::Single => 2,
+        CallKind::Tone => 3,
+        CallKind::PeriodicPulse => 4,
+        CallKind::Broadband => 5,
+        CallKind::TooLow => 6,
+        CallKind::Audible => 7,
+    }
+}
+
 /// One recording's result as a snapshot value: detections, bat calls, and a
 /// hash of every detection's times, frequency range and kind.
 fn scan_file(path: &Path) -> String {
@@ -83,7 +97,7 @@ fn scan_file(path: &Path) -> String {
         h.bytes(&c.event.end_sample.to_le_bytes());
         h.bytes(&(c.event.min_freq_hz.round() as u32).to_le_bytes());
         h.bytes(&(c.event.max_freq_hz.round() as u32).to_le_bytes());
-        h.bytes(format!("{:?};", c.kind).as_bytes());
+        h.bytes(&[kind_code(c.kind)]);
     }
     let bats = result
         .calls

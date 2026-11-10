@@ -1,11 +1,11 @@
-//! The Pulses tab: finds bat calls in the current file with the call
+//! The Call detection tab: finds bat calls in the current file with the call
 //! detector (`oversample_core::dsp::call_detect`), lists every detection with
 //! its kind, and adds calls or trains as annotations.
 //!
 //! The search runs when the tab is open and the file or the detector settings
 //! change. It reads the file a piece at a time and yields to the browser
 //! between pieces, so long files keep the page responsive. Results live in
-//! `AppState::pulse`, so they survive closing the tab and the overlay keeps
+//! `AppState::call_detection`, so they survive closing the tab and the overlay keeps
 //! showing them.
 
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
@@ -76,10 +76,12 @@ fn kind_tooltip(kind: CallKind, params: &CallScanParams) -> String {
         CallKind::Tone => "Part of a steady tone lasting longer than 150 ms, such as a rat's \
                            22 kHz alarm call or electrical hum."
             .to_string(),
-        CallKind::Pulses => "Probably electrical interference. Part of a series of 8 or more \
+        CallKind::PeriodicPulse => {
+            "Probably electrical interference. Part of a series of 8 or more \
                              detections with peaks within 1.5 kHz and the same spacing between \
                              them (within 1 ms). Bats vary the spacing of their calls."
-            .to_string(),
+                .to_string()
+        }
         CallKind::Broadband => format!(
             "Probably a click, rustle or footstep. Its frequency range reaches within 1 kHz of \
              the lowest frequency searched ({} kHz).",
@@ -143,18 +145,19 @@ fn start_search(state: AppState, file_id: u64, params: CallScanParams) {
     spawn_local(async move {
         crate::web_util::yield_now().await;
         let generation = state
-            .pulse
+            .call_detection
             .scan_generation()
             .get_untracked()
             .wrapping_add(1);
-        state.pulse.scan_generation().set(generation);
-        state.pulse.scanning().set(Some(key.clone()));
-        state.pulse.scanned().set(None);
-        state.pulse.detected().set(Vec::new());
-        state.pulse.trains().set(Vec::new());
-        state.pulse.selected_index().set(None);
-        state.pulse.progress().set(0.0);
-        let is_latest = move || state.pulse.scan_generation().get_untracked() == generation;
+        state.call_detection.scan_generation().set(generation);
+        state.call_detection.scanning().set(Some(key.clone()));
+        state.call_detection.scanned().set(None);
+        state.call_detection.detected().set(Vec::new());
+        state.call_detection.trains().set(Vec::new());
+        state.call_detection.selected_index().set(None);
+        state.call_detection.progress().set(0.0);
+        let is_latest =
+            move || state.call_detection.scan_generation().get_untracked() == generation;
 
         let mut scanner = CallScanner::new(rate, &params);
         if scanner.band_hz().is_some() {
@@ -178,7 +181,10 @@ fn start_search(state: AppState, file_id: u64, params: CallScanParams) {
                     scanner.gap((len - samples.len()) as u64);
                 }
                 at += len as u64;
-                state.pulse.progress().set(at as f64 / total as f64);
+                state
+                    .call_detection
+                    .progress()
+                    .set(at as f64 / total as f64);
                 crate::web_util::yield_now().await;
                 if !is_latest() {
                     return;
@@ -187,14 +193,17 @@ fn start_search(state: AppState, file_id: u64, params: CallScanParams) {
         }
         let band = scanner.band_hz();
         let result = scanner.finish();
-        let train_params = state.pulse.params().with_untracked(|p| p.trains.clone());
+        let train_params = state
+            .call_detection
+            .params()
+            .with_untracked(|p| p.trains.clone());
         let trains = group_trains(&result.calls, &train_params);
-        state.pulse.band_hz().set(band);
-        state.pulse.detected().set(result.calls);
-        state.pulse.trains().set(trains);
-        state.pulse.scanned().set(Some(key));
-        state.pulse.scanning().set(None);
-        state.pulse.progress().set(1.0);
+        state.call_detection.band_hz().set(band);
+        state.call_detection.detected().set(result.calls);
+        state.call_detection.trains().set(trains);
+        state.call_detection.scanned().set(Some(key));
+        state.call_detection.scanning().set(None);
+        state.call_detection.progress().set(1.0);
     });
 }
 
@@ -208,15 +217,15 @@ fn add_annotations(state: AppState, what: AnnotateWhat, bat_calls_only: bool) {
         return;
     };
     let results_file = state
-        .pulse
+        .call_detection
         .scanned()
         .with_untracked(|s| s.as_ref().map(|(id, _)| *id));
     if results_file != Some(file_id) {
         return;
     }
     let now = now_iso8601();
-    let built = state.pulse.detected().with_untracked(|calls| {
-        state.pulse.trains().with_untracked(|trains| {
+    let built = state.call_detection.detected().with_untracked(|calls| {
+        state.call_detection.trains().with_untracked(|trains| {
             build_call_annotations(calls, trains, what, bat_calls_only, &now, AnnotationId::new)
         })
     });
@@ -274,28 +283,28 @@ fn add_annotations(state: AppState, what: AnnotateWhat, bat_calls_only: bool) {
 }
 
 #[component]
-pub(crate) fn PulsePanel() -> impl IntoView {
+pub(crate) fn CallDetectionPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     // Settings as shown while a slider is dragged; copied to the detector's
     // settings when it is released.
-    let draft = RwSignal::new(state.pulse.params().get_untracked());
+    let draft = RwSignal::new(state.call_detection.params().get_untracked());
     let annotate_what = RwSignal::new(AnnotateWhat::Calls);
     let bat_calls_only = RwSignal::new(true);
     let list_filter = RwSignal::new(ListFilter::All);
 
     // Search when the tab is open and the file or the search settings change.
     Effect::new(move || {
-        if state.panels.right_tab().get() != RightSidebarTab::Pulses {
+        if state.panels.right_tab().get() != RightSidebarTab::CallDetection {
             return;
         }
         let Some(file_id) = state.current_file_id_tracked() else {
             return;
         };
-        let params = state.pulse.params().get();
+        let params = state.call_detection.params().get();
         let key = Some((file_id, search_key(&params)));
-        if state.pulse.scanned().get_untracked() == key
-            || state.pulse.scanning().get_untracked() == key
+        if state.call_detection.scanned().get_untracked() == key
+            || state.call_detection.scanning().get_untracked() == key
         {
             return;
         }
@@ -303,23 +312,23 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     });
 
     // Regroup trains when the train settings change; no new search needed.
-    let train_params = Memo::new(move |_| state.pulse.params().with(|p| p.trains.clone()));
+    let train_params = Memo::new(move |_| state.call_detection.params().with(|p| p.trains.clone()));
     Effect::new(move |prev: Option<TrainParams>| {
         let tp = train_params.get();
         if prev.is_some_and(|p| p != tp) {
             let trains = state
-                .pulse
+                .call_detection
                 .detected()
                 .with_untracked(|calls| group_trains(calls, &tp));
-            state.pulse.trains().set(trains);
+            state.call_detection.trains().set(trains);
         }
         tp
     });
 
     let commit = move || {
         let d = draft.get_untracked();
-        if state.pulse.params().get_untracked() != d {
-            state.pulse.params().set(d);
+        if state.call_detection.params().get_untracked() != d {
+            state.call_detection.params().set(d);
         }
     };
 
@@ -328,20 +337,20 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     let current_file = Memo::new(move |_| state.current_file_id_tracked());
     let has_results = Memo::new(move |_| {
         let scanned = state
-            .pulse
+            .call_detection
             .scanned()
             .with(|s| s.as_ref().map(|(id, _)| *id));
-        state.pulse.scanning().with(|s| s.is_none())
+        state.call_detection.scanning().with(|s| s.is_none())
             && scanned.is_some()
             && scanned == current_file.get()
     });
     let bat_count = Memo::new(move |_| {
         state
-            .pulse
+            .call_detection
             .detected()
             .with(|d| d.iter().filter(|c| c.kind == CallKind::Bat).count())
     });
-    let total_count = Memo::new(move |_| state.pulse.detected().with(|d| d.len()));
+    let total_count = Memo::new(move |_| state.call_detection.detected().with(|d| d.len()));
     // Annotations in this file made by the detector earlier, and their tags
     // (an earlier version of the detector has its own tag).
     let existing_auto = Memo::new(move |_| {
@@ -362,9 +371,9 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     });
     let to_add = Memo::new(move |_| {
         let (what, bat_only) = (annotate_what.get(), bat_calls_only.get());
-        state.pulse.detected().with(|calls| {
+        state.call_detection.detected().with(|calls| {
             state
-                .pulse
+                .call_detection
                 .trains()
                 .with(|trains| count_call_annotations(calls, trains, what, bat_only))
         })
@@ -372,9 +381,9 @@ pub(crate) fn PulsePanel() -> impl IntoView {
 
     // Click a row: select it and scroll the spectrogram to it.
     let on_row_click = move |i: usize| {
-        state.pulse.selected_index().set(Some(i));
+        state.call_detection.selected_index().set(Some(i));
         let mid = state
-            .pulse
+            .call_detection
             .detected()
             .with_untracked(|d| d.get(i).map(|c| 0.5 * (c.start_s + c.end_s)));
         let Some(mid) = mid else { return };
@@ -395,23 +404,23 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         if current_file.get().is_none() {
             return view! { <div class="sidebar-panel-empty">"No file selected"</div> }.into_any();
         }
-        if state.pulse.scanning().with(|s| s.is_some()) {
-            let pct = (state.pulse.progress().get() * 100.0).round();
+        if state.call_detection.scanning().with(|s| s.is_some()) {
+            let pct = (state.call_detection.progress().get() * 100.0).round();
             return view! {
-                <div class="pulse-status">
+                <div class="detection-status">
                     <div>{format!("Searching for bat calls\u{2026} {pct:.0}% done")}</div>
-                    <div class="pulse-progress">
-                        <div class="pulse-progress-fill" style=format!("width:{pct:.0}%")></div>
+                    <div class="detection-progress">
+                        <div class="detection-progress-fill" style=format!("width:{pct:.0}%")></div>
                     </div>
                 </div>
             }
             .into_any();
         }
         if !has_results.get() {
-            return view! { <div class="pulse-status"></div> }.into_any();
+            return view! { <div class="detection-status"></div> }.into_any();
         }
-        let params = state.pulse.params().get();
-        let Some((lo, hi)) = state.pulse.band_hz().get() else {
+        let params = state.call_detection.params().get();
+        let Some((lo, hi)) = state.call_detection.band_hz().get() else {
             let rate = state.library.files().with(|files| {
                 state
                     .library
@@ -430,13 +439,13 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                 )
             });
             return view! {
-                <div class="pulse-status">
+                <div class="detection-status">
                     <div>{format!(
                         "Sample rate too low: {} kHz. The search needs a sample rate above {} kHz.",
                         khz(rate as f32),
                         khz(min_rate)
                     )}</div>
-                    {hint.map(|h| view! { <div class="pulse-status-note">{h}</div> })}
+                    {hint.map(|h| view! { <div class="detection-status-note">{h}</div> })}
                 </div>
             }
             .into_any();
@@ -444,25 +453,25 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         let total = total_count.get();
         if total == 0 {
             return view! {
-                <div class="pulse-status">
+                <div class="detection-status">
                     <div>{format!("Nothing detected from {} to {} kHz.", khz(lo), khz(hi))}</div>
-                    <div class="pulse-status-note">"Lower the threshold to find fainter sounds."</div>
+                    <div class="detection-status-note">"Lower the threshold to find fainter sounds."</div>
                 </div>
             }
             .into_any();
         }
         let bats = bat_count.get();
-        let trains = state.pulse.trains().with(|t| t.len());
+        let trains = state.call_detection.trains().with(|t| t.len());
         let others = total - bats;
         view! {
-            <div class="pulse-status">
-                <div class="pulse-summary">{format!(
+            <div class="detection-status">
+                <div class="detection-summary">{format!(
                     "{}, {}",
                     count(bats, "bat call", "bat calls"),
                     count(trains, "call train", "call trains")
                 )}</div>
                 {(others > 0).then(|| view! {
-                    <div class="pulse-status-note">{count(others, "other detection", "other detections")}</div>
+                    <div class="detection-status-note">{count(others, "other detection", "other detections")}</div>
                 })}
             </div>
         }
@@ -515,10 +524,10 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         // options side by side.
         let option = move |value: AnnotateWhat, label: &'static str| {
             view! {
-                <label class="setting-label pulse-radio">
+                <label class="setting-label detection-radio">
                     <input
                         type="radio"
-                        name="pulse-annotate-what"
+                        name="detection-annotate-what"
                         prop:checked=move || annotate_what.get() == value
                         on:change=move |_| annotate_what.set(value)
                     />
@@ -529,12 +538,12 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         Some(view! {
             <div class="setting-group">
                 <div class="setting-group-title">"Annotate Calls and Trains"</div>
-                <div class="pulse-annotate-row pulse-radio-group">
+                <div class="detection-annotate-row detection-radio-group">
                     {option(AnnotateWhat::Calls, "Calls")}
                     {option(AnnotateWhat::Trains, "Trains")}
                     {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
                     {(what == AnnotateWhat::TrainsWithCalls).then(|| view! {
-                        <div class="pulse-status-note pulse-radio-note">"Calls not in a train are added at the top level"</div>
+                        <div class="detection-status-note detection-radio-note">"Calls not in a train are added at the top level"</div>
                     })}
                 </div>
                 <div class="setting-row">
@@ -550,15 +559,15 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                         " Bat calls only"
                     </label>
                 </div>
-                {reason.map(|r| view! { <div class="pulse-status-note pulse-annotate-row">{r}</div> })}
+                {reason.map(|r| view! { <div class="detection-status-note detection-annotate-row">{r}</div> })}
                 {note.map(|t| view! {
                     <div
-                        class="pulse-status-note pulse-annotate-row"
+                        class="detection-status-note detection-annotate-row"
                         title="Annotations without this tag are kept. Any that were inside a removed train move to the top level of the Annotations tab."
                     >{t}</div>
                 })}
                 <button
-                    class="sidebar-btn pulse-add-btn"
+                    class="sidebar-btn detection-add-btn"
                     disabled=n == 0
                     on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
                 >{button_text}</button>
@@ -571,17 +580,17 @@ pub(crate) fn PulsePanel() -> impl IntoView {
             return None;
         }
         let filter = list_filter.get();
-        let params = state.pulse.params().get();
+        let params = state.call_detection.params().get();
         // Which train each call is in.
         let train_of: std::collections::HashMap<usize, usize> =
-            state.pulse.trains().with(|trains| {
+            state.call_detection.trains().with(|trains| {
                 trains
                     .iter()
                     .enumerate()
                     .flat_map(|(t, train)| train.calls.iter().map(move |&i| (i, t)))
                     .collect()
             });
-        let rows = state.pulse.detected().with(|calls| {
+        let rows = state.call_detection.detected().with(|calls| {
             calls
                 .iter()
                 .enumerate()
@@ -591,22 +600,22 @@ pub(crate) fn PulsePanel() -> impl IntoView {
                     let tooltip = row_tooltip(i + 1, c, train_of.get(&i).copied());
                     let kind_title = kind_tooltip(c.kind, &params);
                     let row_class = move || {
-                        let mut class = String::from("pulse-row");
+                        let mut class = String::from("detection-row");
                         if !is_bat {
-                            class.push_str(" pulse-row-other");
+                            class.push_str(" detection-row-other");
                         }
-                        if state.pulse.selected_index().get() == Some(i) {
+                        if state.call_detection.selected_index().get() == Some(i) {
                             class.push_str(" selected");
                         }
                         class
                     };
                     view! {
                         <tr class=row_class title=tooltip on:click=move |_| on_row_click(i)>
-                            <td class="pulse-col-num">{i + 1}</td>
+                            <td class="detection-col-num">{i + 1}</td>
                             <td>{crate::format_time::format_time_display(c.start_s, 3)}</td>
-                            <td class="pulse-col-kind" title=kind_title>{kind_label(c.kind)}</td>
-                            <td class="pulse-col-num">{format!("{:.1}", c.event.peak_freq_hz / 1000.0)}</td>
-                            <td class="pulse-col-num">{format!("{:.1}", c.duration_ms())}</td>
+                            <td class="detection-col-kind" title=kind_title>{kind_label(c.kind)}</td>
+                            <td class="detection-col-num">{format!("{:.1}", c.event.peak_freq_hz / 1000.0)}</td>
+                            <td class="detection-col-num">{format!("{:.1}", c.duration_ms())}</td>
                         </tr>
                     }
                 })
@@ -622,22 +631,22 @@ pub(crate) fn PulsePanel() -> impl IntoView {
         };
         Some(view! {
             <div class="setting-group">
-                <div class="pulse-annotate-row">
+                <div class="detection-annotate-row">
                     <div class="psd-btn-group">
                         // The counts are in the status line above.
                         {filter_button(ListFilter::BatCalls, "Bat calls".to_string())}
                         {filter_button(ListFilter::All, "All detections".to_string())}
                     </div>
                 </div>
-                <div class="pulse-list">
-                    <table class="pulse-table">
+                <div class="detection-list">
+                    <table class="detection-table">
                         <thead>
                             <tr>
-                                <th class="pulse-col-num">"#"</th>
+                                <th class="detection-col-num">"#"</th>
                                 <th>"Start"</th>
                                 <th>"Kind"</th>
-                                <th class="pulse-col-num" title="Peak frequency">"kHz"</th>
-                                <th class="pulse-col-num" title="Duration">"ms"</th>
+                                <th class="detection-col-num" title="Peak frequency">"kHz"</th>
+                                <th class="detection-col-num" title="Duration">"ms"</th>
                             </tr>
                         </thead>
                         <tbody>{rows}</tbody>
@@ -681,12 +690,12 @@ pub(crate) fn PulsePanel() -> impl IntoView {
     view! {
         <div class="sidebar-panel">
             {status}
-            <div class="setting-row pulse-annotate-row">
+            <div class="setting-row detection-annotate-row">
                 <label class="setting-label">
                     <input
                         type="checkbox"
-                        prop:checked=move || state.pulse.overlay_enabled().get()
-                        on:change=move |ev| state.pulse.overlay_enabled().set(event_target_checked(&ev))
+                        prop:checked=move || state.call_detection.overlay_enabled().get()
+                        on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
                     />
                     " Show overlay"
                 </label>

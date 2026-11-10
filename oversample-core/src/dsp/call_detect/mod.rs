@@ -9,7 +9,7 @@
 //! 1. [`spectrum::SpectrumAnalyzer`] makes Hann-windowed FFT columns in dB.
 //! 2. [`detector::CallDetector`] finds calls against a per-bin noise floor.
 //! 3. [`classify::CallClassifier`] sorts each detection: bat call, single,
-//!    steady tone, regular pulses, broadband click, too low, or audible sound.
+//!    steady tone, periodic pulses, broadband click, too low, or audible sound.
 //! 4. [`scan::CallScanner`] runs the three over a recording, records each
 //!    call's contour (its loudest frequency, column by column), and at the end
 //!    groups bat calls into [`trains::CallTrain`]s.
@@ -44,7 +44,7 @@ pub use trains::{group_trains, CallTrain, TrainParams};
 ///
 /// - `calls-1`: as ported from `bat-dsp`.
 /// - `calls-2`: digital silence is skipped (see [`scan`]), constant-frequency
-///   calls are recognised (see [`classify`]), and regular pulses have their
+///   calls are recognised (see [`classify`]), and periodic pulses have their
 ///   own kind.
 /// - `calls-3`: a constant-frequency call is at most 30 kHz wide, so a
 ///   broadband insect chirp with a steady peak is not one.

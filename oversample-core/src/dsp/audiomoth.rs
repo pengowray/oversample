@@ -430,13 +430,12 @@ mod tests {
         let sample_multiplier = 16.0 / (oversample_rate as f64 * sample_rate_divider as f64);
         let total_gain = design_gain * sample_multiplier;
 
-        let mut xv0 = 0.0;
         let mut xv1 = 0.0;
         let mut yv1 = 0.0;
         let mut out = Vec::with_capacity(raw_samples.len() / sample_rate_divider as usize);
         for chunk in raw_samples.chunks_exact(sample_rate_divider as usize) {
             let s: f64 = chunk.iter().map(|&v| v as f64).sum();
-            xv0 = xv1;
+            let xv0 = xv1;
             xv1 = s * total_gain;
             let y = xv1 - xv0 + yc0 * yv1;
             yv1 = y;

@@ -1,365 +1,365 @@
 # Call detector results per recording: detections, bat calls, hash.
 # Made by oversample-core/tests/call_detect_corpus.rs; see there before editing.
 detector	calls-3
-bat-demo-sounds/XC1002565 - Banana Serotine - Afronycteris nanus.wav	50	34	1cbe0225099b2cda
-bat-demo-sounds/XC1002568 - Egyptian Slit-faced Bat - Nycteris thebaica.wav	204	190	824201f6b84d896c
-bat-demo-sounds/XC1002569 - Egyptian Slit-faced Bat - Nycteris thebaica.wav	227	214	11d0bf899496a8b9
-bat-demo-sounds/XC1002570 - Darling's Horseshoe Bat - Rhinolophus darlingi.wav	157	137	ad0d0a46da2c2bff
-bat-demo-sounds/XC1002572 - Sundevall's Leaf-nosed Bat - Hipposideros caffer.wav	40	31	a868b525098fc9c9
-bat-demo-sounds/XC1002573 - Sundevall's Leaf-nosed Bat - Hipposideros caffer.wav	11	7	1ad445a4f602558c
-bat-demo-sounds/XC1002576 - Bocage's Myotis - Myotis bocagii.wav	390	326	908c0b675edcdf75
-bat-demo-sounds/XC1002581 - Dusky Pipistrelle - Pipistrellus hesperidus.wav	156	82	3dd3e7aea83bd1f8
-bat-demo-sounds/XC1002662 - Ognev's Long-eared Bat - Plecotus ognevi.wav	340	339	7b786d181a1a3b13
-bat-demo-sounds/XC1003004 - Common Whiskered Myotis - Myotis mystacinus.wav	74	56	e998ee69f30dc80a
-bat-demo-sounds/XC1003029 - Brandt's Myotis - Myotis brandtii.wav	102	89	988300197711716c
-bat-demo-sounds/XC1003030 - Brandt's Myotis - Myotis brandtii.wav	52	43	ffece242c77fe472
-bat-demo-sounds/XC1007514 - Daubenton's Myotis - Myotis daubentonii.wav	55	54	1204a503d4c8217a
-bat-demo-sounds/XC1008337 - Nathusius's Pipistrelle - Pipistrellus nathusii.wav	106	74	da1c6fcc76ca8485
-bat-demo-sounds/XC1014596 - Canyon Bat - Parastrellus hesperus.wav	97	90	cadc723335465530
-bat-demo-sounds/XC1016176 - Big Crested Mastiff Bat - Promops centralis.wav	13	13	ae90fc6e63c00e38
-bat-demo-sounds/XC1016531 - Pocketed Free-tailed Bat - Nyctinomops femorosaccus.wav	13	3	77d5f34df16928c1
-bat-demo-sounds/XC1016600 - Identity unknown - Mystery mystery.wav	81	78	7d4b8b91fd603f5c
-bat-demo-sounds/XC1016895 - Eurasian Serotine - Eptesicus serotinus.wav	206	150	0f6ba70d64cff635
-bat-demo-sounds/XC1018942 - Daubenton's Myotis - Myotis daubentonii.wav	112	104	1d4241a7872c679d
-bat-demo-sounds/XC1019133 - Mediterranean Horseshoe Bat - Rhinolophus euryale.wav	5	3	9cf2692e25079ad3
-bat-demo-sounds/XC1019203 - East Asian Free-tailed Bat - Tadarida insignis.wav	13	0	6227372499d79e46
-bat-demo-sounds/XC1025210 - Rafinesque's Big-eared Bat - Corynorhinus rafinesquii.wav	44	42	4c0b73e132ad22b4
-bat-demo-sounds/XC1025213 - Rafinesque's Big-eared Bat - Corynorhinus rafinesquii.wav	34	34	4df3111db907bba4
-bat-demo-sounds/XC1025241 - Spotted Bat - Euderma maculatum.wav	85	34	e703100ec4b3381f
-bat-demo-sounds/XC1025242 - Spotted Bat - Euderma maculatum.wav	173	33	52075b085c2a6252
-bat-demo-sounds/XC1025247 - Allen's Big-eared Bat - Idionycteris phyllotis.wav	361	199	6c6cf74fe7b3e86b
-bat-demo-sounds/XC1025248 - Allen's Big-eared Bat - Idionycteris phyllotis.wav	102	28	f259bc100ddf9b39
-bat-demo-sounds/XC1025257 - Silver-haired Bat - Lasionycteris noctivagans.wav	63	55	1587b2f6204e058d
-bat-demo-sounds/XC1025269 - Silver-haired Bat - Lasionycteris noctivagans.wav	299	292	c3188616c7ef8b72
-bat-demo-sounds/XC1025973 - Spectacled Flying Fox - Pteropus conspicillatus.wav	4	0	83e10ec7edc542cf
+bat-demo-sounds/XC1002565 - Banana Serotine - Afronycteris nanus.wav	50	34	529896846ca92a44
+bat-demo-sounds/XC1002568 - Egyptian Slit-faced Bat - Nycteris thebaica.wav	204	190	12bf64b347b3862c
+bat-demo-sounds/XC1002569 - Egyptian Slit-faced Bat - Nycteris thebaica.wav	227	214	7a1ecf1d07618ce3
+bat-demo-sounds/XC1002570 - Darling's Horseshoe Bat - Rhinolophus darlingi.wav	157	137	797e02f78c0c6176
+bat-demo-sounds/XC1002572 - Sundevall's Leaf-nosed Bat - Hipposideros caffer.wav	40	31	2740ccf1f9d3a191
+bat-demo-sounds/XC1002573 - Sundevall's Leaf-nosed Bat - Hipposideros caffer.wav	11	7	f4f30a02c1409af1
+bat-demo-sounds/XC1002576 - Bocage's Myotis - Myotis bocagii.wav	390	326	a029ed9d78fe9ca2
+bat-demo-sounds/XC1002581 - Dusky Pipistrelle - Pipistrellus hesperidus.wav	156	82	de43625a00136bbd
+bat-demo-sounds/XC1002662 - Ognev's Long-eared Bat - Plecotus ognevi.wav	340	339	91a2b963723d96ba
+bat-demo-sounds/XC1003004 - Common Whiskered Myotis - Myotis mystacinus.wav	74	56	0ed856319d97a923
+bat-demo-sounds/XC1003029 - Brandt's Myotis - Myotis brandtii.wav	102	89	373a905e4abfb018
+bat-demo-sounds/XC1003030 - Brandt's Myotis - Myotis brandtii.wav	52	43	9c9d41f83c25eece
+bat-demo-sounds/XC1007514 - Daubenton's Myotis - Myotis daubentonii.wav	55	54	aeceabb2cc4dbecf
+bat-demo-sounds/XC1008337 - Nathusius's Pipistrelle - Pipistrellus nathusii.wav	106	74	a3e29be6905c2ae4
+bat-demo-sounds/XC1014596 - Canyon Bat - Parastrellus hesperus.wav	97	90	553b40b505e1d7f3
+bat-demo-sounds/XC1016176 - Big Crested Mastiff Bat - Promops centralis.wav	13	13	53ac51ac92996abb
+bat-demo-sounds/XC1016531 - Pocketed Free-tailed Bat - Nyctinomops femorosaccus.wav	13	3	f69b5826f5bafd14
+bat-demo-sounds/XC1016600 - Identity unknown - Mystery mystery.wav	81	78	a88e9f7405d19077
+bat-demo-sounds/XC1016895 - Eurasian Serotine - Eptesicus serotinus.wav	206	150	118083ad1874b0c6
+bat-demo-sounds/XC1018942 - Daubenton's Myotis - Myotis daubentonii.wav	112	104	85621da1b1dcd9d8
+bat-demo-sounds/XC1019133 - Mediterranean Horseshoe Bat - Rhinolophus euryale.wav	5	3	63c623e653ddfee1
+bat-demo-sounds/XC1019203 - East Asian Free-tailed Bat - Tadarida insignis.wav	13	0	18ac812ac783b389
+bat-demo-sounds/XC1025210 - Rafinesque's Big-eared Bat - Corynorhinus rafinesquii.wav	44	42	7019c68f1d8b7d2c
+bat-demo-sounds/XC1025213 - Rafinesque's Big-eared Bat - Corynorhinus rafinesquii.wav	34	34	2a6b4f5fc8276a76
+bat-demo-sounds/XC1025241 - Spotted Bat - Euderma maculatum.wav	85	34	01ba12f136efcc0a
+bat-demo-sounds/XC1025242 - Spotted Bat - Euderma maculatum.wav	173	33	ee3bd36e28febc6f
+bat-demo-sounds/XC1025247 - Allen's Big-eared Bat - Idionycteris phyllotis.wav	361	199	05af78f4e0af5cc2
+bat-demo-sounds/XC1025248 - Allen's Big-eared Bat - Idionycteris phyllotis.wav	102	28	558951c9a9aa2410
+bat-demo-sounds/XC1025257 - Silver-haired Bat - Lasionycteris noctivagans.wav	63	55	75f55d0cc2cc66d2
+bat-demo-sounds/XC1025269 - Silver-haired Bat - Lasionycteris noctivagans.wav	299	292	fc1cd3af736cc10b
+bat-demo-sounds/XC1025973 - Spectacled Flying Fox - Pteropus conspicillatus.wav	4	0	75b63614390b275f
 bat-demo-sounds/XC1025974 - Spectacled Flying Fox - Pteropus conspicillatus.wav	0	0	cbf29ce484222325
-bat-demo-sounds/XC1027138 - Big Crested Mastiff Bat - Promops centralis.wav	76	31	480d23190ef39afd
-bat-demo-sounds/XC1033511 - Eurasian Serotine - Eptesicus serotinus.wav	111	104	b1adcd4f5bd97f83
-bat-demo-sounds/XC1033536 - Marianas Flying Fox - Pteropus mariannus.wav	10	0	6e621c1d2275f9b7
-bat-demo-sounds/XC1033558 - Marianas Flying Fox - Pteropus mariannus.wav	6	0	9d390be14a01a1c3
-bat-demo-sounds/XC1034114 - Pond Myotis - Myotis dasycneme.wav	51	41	591fb9f88093eb52
-bat-demo-sounds/XC1036989 - Alcathoe Whiskered Myotis - Myotis alcathoe.wav	33	25	e935dcc638a12104
-bat-demo-sounds/XC1037039 - Soprano Pipistrelle - Pipistrellus pygmaeus.wav	123	101	370992156f82629b
-bat-demo-sounds/XC1037974 - Common Noctule - Nyctalus noctula.wav	42	36	b13c84387bf1e110
-bat-demo-sounds/XC1038046 - Common Noctule - Nyctalus noctula.wav	14	11	ebdb624a9ec0e2bc
-bat-demo-sounds/XC1041837 - Nathusius's Pipistrelle - Pipistrellus nathusii.wav	129	117	58f659fd1441484c
-bat-demo-sounds/XC1049571 - Greater Myotis - Myotis myotis.wav	126	91	7c66069ed0de5406
-bat-demo-sounds/XC1056563 - Yellow-faced Horseshoe Bat - Rhinolophus virgo.wav	17	8	241665285e140c50
-bat-demo-sounds/XC1058152 - Schreibers's Long-fingered Bat - Miniopterus schreibersii.wav	24	24	0bf850e7d944435e
-bat-demo-sounds/XC1058153 - Schreibers's Long-fingered Bat - Miniopterus schreibersii.wav	28	22	7c056f34db635e59
-bat-demo-sounds/XC1058382 - Small Asian Sheath-tailed Bat - Emballonura alecto.wav	134	118	67a3d366d8af7d8d
-bat-demo-sounds/XC1058426 - David's Myotis - Myotis davidii.wav	29	23	e955d4d5bd85761a
-bat-demo-sounds/XC1058427 - David's Myotis - Myotis davidii.wav	9	9	c612edca0ed54be9
-bat-demo-sounds/XC1058561 - Long-fingered Myotis - Myotis capaccinii.wav	47	33	ebd97042adf1b1e3
-bat-demo-sounds/XC1058562 - Long-fingered Myotis - Myotis capaccinii.wav	12	9	38b3403cceaaf7fd
-bat-demo-sounds/XC1058570 - Brown Long-eared Bat - Plecotus auritus.wav	48	44	aa0650c74072693a
-bat-demo-sounds/XC1058571 - Black-bearded Tomb Bat - Taphozous melanopogon.wav	169	105	00de91539de5b4cd
-bat-demo-sounds/XC1058572 - Brown Long-eared Bat - Plecotus auritus.wav	14	13	ffb374c99190e19d
-bat-demo-sounds/XC1058573 - Lesser Asian Yellow Bat - Scotophilus kuhlii.wav	52	29	a2706314f1ca617d
-bat-demo-sounds/XC1059617 - Bare-rumped Sheath-tailed Bat - Saccolaimus saccolaimus.wav	988	875	1f2ff276f7944e6f
-bat-demo-sounds/XC1060577 - Geoffroy's Myotis - Myotis emarginatus.wav	54	31	b9bb9a988337e477
-bat-demo-sounds/XC1060636 - Mediterranean Long-eared Bat - Plecotus kolombatovici.wav	108	29	6a1dd614eedae524
-bat-demo-sounds/XC1060637 - Mediterranean Long-eared Bat - Plecotus kolombatovici.wav	34	21	68bbdb03bf0ad444
-bat-demo-sounds/XC1060638 - Greater Horseshoe Bat - Rhinolophus ferrumequinum.wav	26	22	39300d9f270dd9ee
-bat-demo-sounds/XC1060673 - Kuhl's Pipistrelle - Pipistrellus kuhlii.wav	1	0	d13dd02d54991afb
-bat-demo-sounds/XC1060674 - Kuhl's Pipistrelle - Pipistrellus kuhlii.wav	2	2	b2ef6b887e3fb3d8
-bat-demo-sounds/XC1060750 - Soprano Pipistrelle - Pipistrellus pygmaeus.wav	67	37	be0f21a77615f11f
-bat-demo-sounds/XC1061371 - Greater Horseshoe Bat - Rhinolophus ferrumequinum.wav	9	8	6cb04522f201ad3a
-bat-demo-sounds/XC1061815 - Lesser Horseshoe Bat - Rhinolophus hipposideros.wav	2	0	f727923c97da991c
-bat-demo-sounds/XC1061935 - European Free-tailed Bat - Tadarida teniotis.wav	2	0	4bcf96444871a65a
-bat-demo-sounds/XC1061936 - European Free-tailed Bat - Tadarida teniotis.wav	3	0	6f3255bcd78ef573
-bat-demo-sounds/XC1061984 - Blasius's Horseshoe Bat - Rhinolophus blasii.wav	2	2	4f710dd0077b18ad
-bat-demo-sounds/XC1061986 - Blasius's Horseshoe Bat - Rhinolophus blasii.wav	8	8	1d73fd77880adfbf
-bat-demo-sounds/XC1061989 - Savi's Pipistrelle - Hypsugo savii.wav	2	2	8d2e977122a4137a
-bat-demo-sounds/XC1061990 - Savi's Pipistrelle - Hypsugo savii.wav	4	4	5cafd6dd2687f338
-bat-demo-sounds/XC1062064 - Common Pipistrelle - Pipistrellus pipistrellus.wav	3	3	d0dd41c1222422b6
-bat-demo-sounds/XC1062065 - Common Pipistrelle - Pipistrellus pipistrellus.wav	2	2	e3deebb789a3324e
-bat-demo-sounds/XC1062124 - Lesser Horseshoe Bat - Rhinolophus hipposideros.wav	45	26	fb4e09d46ab0f452
-bat-demo-sounds/XC1062211 - Hanak's Pipistrelle - Pipistrellus hanaki.wav	32	24	18b7c2f272f53653
-bat-demo-sounds/XC1062212 - Hanak's Pipistrelle - Pipistrellus hanaki.wav	23	12	f1a2b3c41939fa4f
-bat-demo-sounds/XC1062984 - Trumbull's Bonneted Bat - Eumops trumbulli.wav	97	60	115fa46a3ab2f795
-bat-demo-sounds/XC1063009 - Greenhall's Dog-faced Bat - Cynomops greenhalli.wav	118	90	f634c533424a029f
-bat-demo-sounds/XC1063018 - Southern Dog-faced Bat - Cynomops planirostris.wav	49	38	1369d647c1b25955
-bat-demo-sounds/XC1063024 - Greenhall's Dog-faced Bat - Cynomops greenhalli.wav	94	88	ceba6433ea2c1958
-bat-demo-sounds/XC1063198 - Lesser Asian Yellow Bat - Scotophilus kuhlii.wav	51	35	c0e2033efafbdb42
-bat-demo-sounds/XC1063243 - Black Bonneted Bat - Eumops auripendulus.wav	185	178	785e7c472ffbe132
-bat-demo-sounds/XC1063374 - Javan Pipistrelle - Pipistrellus javanicus.wav	156	109	98b54c2c3d9c3586
-bat-demo-sounds/XC1064985 - Jamaican Fruit-eating Bat - Artibeus jamaicensis.wav	50	46	b4f6d1b3ed42182b
-bat-demo-sounds/XC1064993 - Pallas's Long-tongued Bat - Glossophaga soricina.wav	71	49	dd69a631fb014c20
-bat-demo-sounds/XC1064994 - Common Big-eared Bat - Micronycteris microtis.wav	26	21	efc3319749b09124
-bat-demo-sounds/XC1064995 - Mesoamerican Common Mustached Bat - Pteronotus mesoamericanus.wav	56	52	31622a1bbdba5d0b
-bat-demo-sounds/XC1064996 - Jamaican Round-eared Bat - Tonatia saurophila.wav	66	62	7f0f6cd516be29f0
-bat-demo-sounds/XC1064997 - Pacific Tent-making Bat - Uroderma convexum.wav	27	20	77bf3fec048318bc
-bat-demo-sounds/XC1064998 - Northern Little Yellow-eared Bat - Vampyressa thyone.wav	29	27	9aa1c8090f0ce698
-bat-demo-sounds/XC1064999 - Great Fruit-eating Bat - Artibeus lituratus.wav	87	74	3d2eb95bf16f9654
-bat-demo-sounds/XC1065003 - Brazilian Serotine - Eptesicus brasiliensis.wav	77	66	74a9ad51440a92d7
-bat-demo-sounds/XC1065004 - White-throated Round-eared Bat - Lophostoma silvicola.wav	66	45	aad388c2d7bd1d78
-bat-demo-sounds/XC1065005 - Tiny Big-eared Bat - Micronycteris minuta.wav	16	9	c183cd68c9da0de5
-bat-demo-sounds/XC1065006 - Riparian Myotis - Myotis riparius.wav	247	159	94e49d6bbfb130c3
-bat-demo-sounds/XC1065007 - Pale Spear-nosed Bat - Phyllostomus discolor.wav	49	44	f47a7b7afaef1418
-bat-demo-sounds/XC1065008 - Heller's Broad-nosed Bat - Platyrrhinus helleri.wav	37	27	c677acd31c750387
-bat-demo-sounds/XC1065009 - Mesoamerican Common Mustached Bat - Pteronotus mesoamericanus.wav	72	48	8e2616178384a7a8
-bat-demo-sounds/XC1065010 - Pacific Tent-making Bat - Uroderma convexum.wav	41	27	f966e5a48e7f650c
-bat-demo-sounds/XC1065648 - Leisler's Noctule - Nyctalus leisleri.wav	3	2	8b798e34bf15bc43
-bat-demo-sounds/XC1070349 - Hammer-headed Fruit Bat - Hypsignathus monstrosus.wav	15	0	788a49446ad2c2ba
-bat-demo-sounds/XC1070352 - Hammer-headed Fruit Bat - Hypsignathus monstrosus.wav	9	0	78bc542fab12055f
+bat-demo-sounds/XC1027138 - Big Crested Mastiff Bat - Promops centralis.wav	76	31	ebac7e02994cbd76
+bat-demo-sounds/XC1033511 - Eurasian Serotine - Eptesicus serotinus.wav	111	104	4927943ad5afbf2b
+bat-demo-sounds/XC1033536 - Marianas Flying Fox - Pteropus mariannus.wav	10	0	4e1063433beae687
+bat-demo-sounds/XC1033558 - Marianas Flying Fox - Pteropus mariannus.wav	6	0	7ebbdbcddf742bf6
+bat-demo-sounds/XC1034114 - Pond Myotis - Myotis dasycneme.wav	51	41	dc259db8fe273bef
+bat-demo-sounds/XC1036989 - Alcathoe Whiskered Myotis - Myotis alcathoe.wav	33	25	588a2f3172c2d33b
+bat-demo-sounds/XC1037039 - Soprano Pipistrelle - Pipistrellus pygmaeus.wav	123	101	f6bc58439a763d42
+bat-demo-sounds/XC1037974 - Common Noctule - Nyctalus noctula.wav	42	36	49ddb12a8a8270c8
+bat-demo-sounds/XC1038046 - Common Noctule - Nyctalus noctula.wav	14	11	5c3f9ca0f892f108
+bat-demo-sounds/XC1041837 - Nathusius's Pipistrelle - Pipistrellus nathusii.wav	129	117	4673c3cc06d2c94c
+bat-demo-sounds/XC1049571 - Greater Myotis - Myotis myotis.wav	126	91	2c63512df5225a31
+bat-demo-sounds/XC1056563 - Yellow-faced Horseshoe Bat - Rhinolophus virgo.wav	17	8	3ad19e0437196f71
+bat-demo-sounds/XC1058152 - Schreibers's Long-fingered Bat - Miniopterus schreibersii.wav	24	24	eade441c4b688e4e
+bat-demo-sounds/XC1058153 - Schreibers's Long-fingered Bat - Miniopterus schreibersii.wav	28	22	cbec21e0845cd985
+bat-demo-sounds/XC1058382 - Small Asian Sheath-tailed Bat - Emballonura alecto.wav	134	118	10277060cc49349e
+bat-demo-sounds/XC1058426 - David's Myotis - Myotis davidii.wav	29	23	899ea54b9a25f410
+bat-demo-sounds/XC1058427 - David's Myotis - Myotis davidii.wav	9	9	fa2588be99169404
+bat-demo-sounds/XC1058561 - Long-fingered Myotis - Myotis capaccinii.wav	47	33	20ce4df19e674920
+bat-demo-sounds/XC1058562 - Long-fingered Myotis - Myotis capaccinii.wav	12	9	f4b04db08d62b9ad
+bat-demo-sounds/XC1058570 - Brown Long-eared Bat - Plecotus auritus.wav	48	44	9c2cbb5e1ec30f50
+bat-demo-sounds/XC1058571 - Black-bearded Tomb Bat - Taphozous melanopogon.wav	169	105	6ec3fec5b4dc1d37
+bat-demo-sounds/XC1058572 - Brown Long-eared Bat - Plecotus auritus.wav	14	13	20e52488f78e2cb5
+bat-demo-sounds/XC1058573 - Lesser Asian Yellow Bat - Scotophilus kuhlii.wav	52	29	ca4dc0613c8acd52
+bat-demo-sounds/XC1059617 - Bare-rumped Sheath-tailed Bat - Saccolaimus saccolaimus.wav	988	875	ee9c2931f5a9795b
+bat-demo-sounds/XC1060577 - Geoffroy's Myotis - Myotis emarginatus.wav	54	31	2b85299164ff900e
+bat-demo-sounds/XC1060636 - Mediterranean Long-eared Bat - Plecotus kolombatovici.wav	108	29	53d36da987c528d6
+bat-demo-sounds/XC1060637 - Mediterranean Long-eared Bat - Plecotus kolombatovici.wav	34	21	011782dbde32e3b2
+bat-demo-sounds/XC1060638 - Greater Horseshoe Bat - Rhinolophus ferrumequinum.wav	26	22	2f236a19c2e66df0
+bat-demo-sounds/XC1060673 - Kuhl's Pipistrelle - Pipistrellus kuhlii.wav	1	0	eaeb457ca39892c8
+bat-demo-sounds/XC1060674 - Kuhl's Pipistrelle - Pipistrellus kuhlii.wav	2	2	9a334066e1d7b0e0
+bat-demo-sounds/XC1060750 - Soprano Pipistrelle - Pipistrellus pygmaeus.wav	67	37	e533136a111790a3
+bat-demo-sounds/XC1061371 - Greater Horseshoe Bat - Rhinolophus ferrumequinum.wav	9	8	a6287e5919b12af1
+bat-demo-sounds/XC1061815 - Lesser Horseshoe Bat - Rhinolophus hipposideros.wav	2	0	e857dd76aeae4bc6
+bat-demo-sounds/XC1061935 - European Free-tailed Bat - Tadarida teniotis.wav	2	0	639d235f38d92f22
+bat-demo-sounds/XC1061936 - European Free-tailed Bat - Tadarida teniotis.wav	3	0	e0472011938419f8
+bat-demo-sounds/XC1061984 - Blasius's Horseshoe Bat - Rhinolophus blasii.wav	2	2	ce9907ea1e2c16e3
+bat-demo-sounds/XC1061986 - Blasius's Horseshoe Bat - Rhinolophus blasii.wav	8	8	1e957942cb0f310f
+bat-demo-sounds/XC1061989 - Savi's Pipistrelle - Hypsugo savii.wav	2	2	fa0b087068a6d090
+bat-demo-sounds/XC1061990 - Savi's Pipistrelle - Hypsugo savii.wav	4	4	43c5a3e37922b3be
+bat-demo-sounds/XC1062064 - Common Pipistrelle - Pipistrellus pipistrellus.wav	3	3	e9f6a01a5f9f87f9
+bat-demo-sounds/XC1062065 - Common Pipistrelle - Pipistrellus pipistrellus.wav	2	2	5b3dd8c3dac1056e
+bat-demo-sounds/XC1062124 - Lesser Horseshoe Bat - Rhinolophus hipposideros.wav	45	26	3455f21f2e140454
+bat-demo-sounds/XC1062211 - Hanak's Pipistrelle - Pipistrellus hanaki.wav	32	24	7921a0429b3991e7
+bat-demo-sounds/XC1062212 - Hanak's Pipistrelle - Pipistrellus hanaki.wav	23	12	d3430ca489b56453
+bat-demo-sounds/XC1062984 - Trumbull's Bonneted Bat - Eumops trumbulli.wav	97	60	8cada430e9946a3e
+bat-demo-sounds/XC1063009 - Greenhall's Dog-faced Bat - Cynomops greenhalli.wav	118	90	9185d640ac5b8983
+bat-demo-sounds/XC1063018 - Southern Dog-faced Bat - Cynomops planirostris.wav	49	38	22cb91e91ef52af1
+bat-demo-sounds/XC1063024 - Greenhall's Dog-faced Bat - Cynomops greenhalli.wav	94	88	3b0695316a475df5
+bat-demo-sounds/XC1063198 - Lesser Asian Yellow Bat - Scotophilus kuhlii.wav	51	35	b67ce0166f3d70cb
+bat-demo-sounds/XC1063243 - Black Bonneted Bat - Eumops auripendulus.wav	185	178	c0d6b881b62d77fb
+bat-demo-sounds/XC1063374 - Javan Pipistrelle - Pipistrellus javanicus.wav	156	109	a0204406ac72b9d5
+bat-demo-sounds/XC1064985 - Jamaican Fruit-eating Bat - Artibeus jamaicensis.wav	50	46	5cac27d0fdeb4573
+bat-demo-sounds/XC1064993 - Pallas's Long-tongued Bat - Glossophaga soricina.wav	71	49	eb14a5cd05c3d9f1
+bat-demo-sounds/XC1064994 - Common Big-eared Bat - Micronycteris microtis.wav	26	21	b97166a9507b4cc0
+bat-demo-sounds/XC1064995 - Mesoamerican Common Mustached Bat - Pteronotus mesoamericanus.wav	56	52	0f5be24ba6c6f3d5
+bat-demo-sounds/XC1064996 - Jamaican Round-eared Bat - Tonatia saurophila.wav	66	62	2cfbf68f6c8836e3
+bat-demo-sounds/XC1064997 - Pacific Tent-making Bat - Uroderma convexum.wav	27	20	fecfb64c93e6a541
+bat-demo-sounds/XC1064998 - Northern Little Yellow-eared Bat - Vampyressa thyone.wav	29	27	2c3ee86d31849ac7
+bat-demo-sounds/XC1064999 - Great Fruit-eating Bat - Artibeus lituratus.wav	87	74	40092f9d1c1cf399
+bat-demo-sounds/XC1065003 - Brazilian Serotine - Eptesicus brasiliensis.wav	77	66	f7646558de8dded2
+bat-demo-sounds/XC1065004 - White-throated Round-eared Bat - Lophostoma silvicola.wav	66	45	73e088293a9e4eab
+bat-demo-sounds/XC1065005 - Tiny Big-eared Bat - Micronycteris minuta.wav	16	9	ef33a6184c25a04f
+bat-demo-sounds/XC1065006 - Riparian Myotis - Myotis riparius.wav	247	159	d7f086054e6ed365
+bat-demo-sounds/XC1065007 - Pale Spear-nosed Bat - Phyllostomus discolor.wav	49	44	eadcfe3244cc8ef5
+bat-demo-sounds/XC1065008 - Heller's Broad-nosed Bat - Platyrrhinus helleri.wav	37	27	5ed54e406a3ba428
+bat-demo-sounds/XC1065009 - Mesoamerican Common Mustached Bat - Pteronotus mesoamericanus.wav	72	48	d41d87c2b65a1c62
+bat-demo-sounds/XC1065010 - Pacific Tent-making Bat - Uroderma convexum.wav	41	27	3e7fb59518d3edc3
+bat-demo-sounds/XC1065648 - Leisler's Noctule - Nyctalus leisleri.wav	3	2	e5e91ebff9556f0d
+bat-demo-sounds/XC1070349 - Hammer-headed Fruit Bat - Hypsignathus monstrosus.wav	15	0	1555d9abffdf3ce7
+bat-demo-sounds/XC1070352 - Hammer-headed Fruit Bat - Hypsignathus monstrosus.wav	9	0	6eaea5b89118b767
 bat-demo-sounds/XC1072782 - Gambian Epauletted Fruit Bat - Epomophorus gambianus.wav	0	0	cbf29ce484222325
-bat-demo-sounds/XC1080503 - New Zealand Long-tailed Bat - Chalinolobus tuberculatus.wav	51	50	e2f8ed446e023b65
-bat-demo-sounds/XC1080504 - New Zealand Long-tailed Bat - Chalinolobus tuberculatus.wav	110	108	237f606077249b71
-bat-demo-sounds/XC1082359 - Long-tailed Serotine - Eptesicus hottentotus.wav	418	116	91c84bfcaf1ac879
-bat-demo-sounds/XC1084193 - Western Barbastelle - Barbastella barbastellus.wav	14	14	ba13e76bf87f327e
-bat-demo-sounds/XC1084195 - Natterer's Myotis - Myotis nattereri.wav	9	6	dd93e7243719db96
-bat-demo-sounds/XC1084196 - Natterer's Myotis - Myotis nattereri.wav	28	24	67c8941b8db10042
-bat-demo-sounds/XC1084197 - Western Barbastelle - Barbastella barbastellus.wav	20	15	9b6c2b47fc8b7ee5
-bat-demo-sounds/XC1084199 - Eurasian Particolored Bat - Vespertilio murinus.wav	15	0	fc9ecbdd4c2667c3
-bat-demo-sounds/XC1087566 - Cyclops Leaf-nosed Bat - Doryrhina cyclops.wav	84	66	71b9bb02d42e3d7a
-bat-demo-sounds/XC1087567 - Cyclops Leaf-nosed Bat - Doryrhina cyclops.wav	140	108	eced85729f9ab0a6
-bat-demo-sounds/XC1087579 - Halcyon Horseshoe Bat - Rhinolophus alcyone.wav	154	126	9b55493e6799dc92
-bat-demo-sounds/XC1087580 - Halcyon Horseshoe Bat - Rhinolophus alcyone.wav	51	35	6584dcf9bb0c2ead
-bat-demo-sounds/XC1087673 - Large Slit-faced Bat - Nycteris grandis.wav	5	5	7e5ba4eb863a75d7
-bat-demo-sounds/XC1087675 - Large Slit-faced Bat - Nycteris grandis.wav	3	2	e2b0b9665259a0b5
-bat-demo-sounds/XC1087684 - Nut-colored Yellow Bat - Scotophilus nux.wav	290	194	d49a294f648d4c83
-bat-demo-sounds/XC803691 - Eastern Red Bat - Lasiurus borealis.wav	75	75	7f242438bf3c83d5
-bat-demo-sounds/XC803693 - Northern Hoary Bat - Aeorestes cinereus.wav	118	118	84f16c85d0eb6afc
-bat-demo-sounds/XC805275 - Wrinkle-faced Bat - Centurio senex.wav	23	22	af47c646f2e322b5
-bat-demo-sounds/XC805278 - Brazilian Serotine - Eptesicus brasiliensis.wav	323	294	adc983fc785ef56b
-bat-demo-sounds/XC805281 - Argentine Serotine - Eptesicus furinalis.wav	221	156	40594e445a1da6b5
-bat-demo-sounds/XC805282 - Pallas's Long-tongued Bat - Glossophaga soricina.wav	38	27	866f022049b6a00e
-bat-demo-sounds/XC805283 - Southern Yellow Bat - Dasypterus ega.wav	75	65	78f496db76a316a7
-bat-demo-sounds/XC805284 - Pygmy Round-eared Bat - Lophostoma brasiliense.wav	32	26	e9b8c7174b4b010f
-bat-demo-sounds/XC805293 - Tiny Big-eared Bat - Micronycteris minuta.wav	67	63	f634e2b44cefc531
-bat-demo-sounds/XC805297 - Striped Hairy-nosed Bat - Gardnerycteris crenulatum.wav	34	26	73becd00e25c713d
-bat-demo-sounds/XC805641 - Geoffroy's Myotis - Myotis emarginatus.wav	30	26	6096f7e713392374
-bat-demo-sounds/XC805642 - Escalera's Myotis - Myotis escalerai.wav	72	50	a633c12038f7cc45
-bat-demo-sounds/XC805650 - Cryptic Myotis - Myotis crypticus.wav	14	9	a7e90b220fe83fd8
-bat-demo-sounds/XC805652 - Alpine Long-eared Bat - Plecotus macrobullaris.wav	11	8	d2aae7df396677e6
-bat-demo-sounds/XC805748 - Maghreb Myotis - Myotis punicus.wav	289	253	e802fb25b84936fc
-bat-demo-sounds/XC805892 - Naked-rumped Tomb Bat - Taphozous nudiventris.wav	33	31	38964cb0a63aadc1
-bat-demo-sounds/XC805944 - Arabian Barbastelle - Barbastella leucomelas.wav	26	23	37870bc2c79baed9
-bat-demo-sounds/XC806101 - Spectral Bat - Vampyrum spectrum.wav	63	32	8777ddade571c4dc
-bat-demo-sounds/XC806287 - Arabian Mouse-tailed Bat - Rhinopoma cystops.wav	40	34	da66ff0450a779c5
-bat-demo-sounds/XC809053 - Soundscape - Sonus naturalis.wav	91	89	7b1734a22156a955
-bat-demo-sounds/XC809855 - Queensland Tube-nosed Fruit Bat - Nyctimene robinsoni.wav	36	0	91d74fe045194fd5
-bat-demo-sounds/XC809882 - White-striped Free-tailed Bat - Austronomus australis.wav	97	54	86dc30bda6da8d41
-bat-demo-sounds/XC811514 - Little Red Flying Fox - Pteropus scapulatus.wav	47	0	f27e37ed6796dbe4
-bat-demo-sounds/XC812362 - Hairy Big-eared Bat - Micronycteris hirsuta.wav	35	30	375ec71f7c539d0a
-bat-demo-sounds/XC814304 - Leisler's Noctule - Nyctalus leisleri.wav	23	21	bb538de3cbf65789
-bat-demo-sounds/XC815137 - Japanese Pipistrelle - Pipistrellus abramus.wav	106	106	8bb0037fbebb80e4
-bat-demo-sounds/XC815138 - Fringed Long-footed Myotis - Myotis fimbriatus.wav	7	4	d893c563b17c8506
-bat-demo-sounds/XC817761 - Northern Serotine - Eptesicus nilssonii.wav	56	50	03cbe98ea746d842
-bat-demo-sounds/XC819281 - Niceforo's Big-eared Bat - Trinycteris nicefori.wav	20	15	28f96d43174d60ea
-bat-demo-sounds/XC819295 - Common Big-eared Bat - Micronycteris microtis.wav	158	117	eb40bc9ca2abb4b1
-bat-demo-sounds/XC819299 - Big Naked-backed Bat - Pteronotus gymnonotus.wav	103	34	6061204c279b9cbd
-bat-demo-sounds/XC819300 - Big Naked-backed Bat - Pteronotus gymnonotus.wav	154	94	41c99e950bdff0d8
-bat-demo-sounds/XC819302 - Hairy-legged Vampire Bat - Diphylla ecaudata.wav	43	34	40737ec041c28460
-bat-demo-sounds/XC819554 - Dark Long-tongued Bat - Lichonycteris obscura.wav	320	139	ebb170787b451566
-bat-demo-sounds/XC819555 - Dark Long-tongued Bat - Lichonycteris obscura.wav	135	93	daf38e214f879857
-bat-demo-sounds/XC819627 - Jamaican Fruit-eating Bat - Artibeus jamaicensis.wav	41	34	ddfdeca9258a85e2
-bat-demo-sounds/XC819768 - Chestnut Short-tailed Bat - Carollia castanea.wav	34	30	118d289ab76776bd
-bat-demo-sounds/XC819769 - Chestnut Short-tailed Bat - Carollia castanea.wav	10	3	1241de3848ce5446
-bat-demo-sounds/XC819773 - White-throated Round-eared Bat - Lophostoma silvicola.wav	16	16	fea01ccab2a38b2c
-bat-demo-sounds/XC820305 - Hairy Big-eared Bat - Micronycteris hirsuta.wav	14	8	607b744c05cad391
-bat-demo-sounds/XC820604 - Spix's Disk-winged Bat - Thyroptera tricolor.wav	46	41	ac947a399a9ea2a5
-bat-demo-sounds/XC820791 - Heller's Broad-nosed Bat - Platyrrhinus helleri.wav	28	9	638fcbaf3e57d8ff
-bat-demo-sounds/XC821193 - Greater Bulldog Bat - Noctilio leporinus.wav	92	65	612a34d9ead7b0e1
-bat-demo-sounds/XC821194 - Greater Bulldog Bat - Noctilio leporinus.wav	161	106	21cebe9171f4cb7e
-bat-demo-sounds/XC821201 - Orange-throated Bat - Lampronycteris brachyotis.wav	13	7	e5afdf344567cf20
-bat-demo-sounds/XC821207 - Northern Stripe-headed Round-eared Bat - Tonatia bakeri.wav	34	23	45459dc58c4e64db
-bat-demo-sounds/XC821208 - Northern Stripe-headed Round-eared Bat - Tonatia bakeri.wav	34	23	45459dc58c4e64db
-bat-demo-sounds/XC821221 - Underwood's Long-tongued Bat - Hylonycteris underwoodi.wav	42	26	2dde22fa211b7243
-bat-demo-sounds/XC821237 - Thomas's Shaggy Bat - Centronycteris centralis.wav	80	76	20b67c2b24e0a44c
-bat-demo-sounds/XC821238 - Hairy Big-eyed Bat - Chiroderma villosum.wav	16	15	124c398b6af0a1d9
-bat-demo-sounds/XC821244 - Caracciolo's Stripe-faced Bat - Vampyrodes caraccioli.wav	8	8	baa4ef6774a600de
-bat-demo-sounds/XC821667 - Fringe-lipped Bat - Trachops cirrhosus.wav	19	16	9614937773cc4054
-bat-demo-sounds/XC821671 - Wrinkle-faced Bat - Centurio senex.wav	19	16	4dcbc4fe9bd4391d
-bat-demo-sounds/XC821715 - Seba's Short-tailed Bat - Carollia perspicillata.wav	27	24	06d20078ffca858b
-bat-demo-sounds/XC821717 - Seba's Short-tailed Bat - Carollia perspicillata.wav	31	23	66059e983465cd13
-bat-demo-sounds/XC821723 - Thomas's Fruit-eating Bat - Dermanura watsoni.wav	5	5	d126f88fc592573a
-bat-demo-sounds/XC821724 - Common Tent-making Bat - Uroderma bilobatum.wav	10	9	3fc65a23f65b689c
-bat-demo-sounds/XC821725 - Common Tent-making Bat - Uroderma bilobatum.wav	8	6	8e5fafb87037eddb
-bat-demo-sounds/XC821924 - Silver-tipped Myotis - Myotis albescens.wav	119	116	150f49fa3a541483
-bat-demo-sounds/XC821925 - Silver-tipped Myotis - Myotis albescens.wav	153	146	7489460613dc95d4
-bat-demo-sounds/XC821954 - Greater Dog-like Bat - Peropteryx kappleri.wav	46	38	048e040c7b0d431b
-bat-demo-sounds/XC821955 - Greater Dog-like Bat - Peropteryx kappleri.wav	21	14	8cbf8c3b861d18cc
-bat-demo-sounds/XC821988 - Southern Red Bat - Lasiurus blossevillii.wav	74	62	084d7ac3202110d0
-bat-demo-sounds/XC821989 - Elegant Myotis - Myotis elegans.wav	168	154	8d73b84668a9f88e
-bat-demo-sounds/XC821990 - Elegant Myotis - Myotis elegans.wav	109	96	8e56baaad96e6683
-bat-demo-sounds/XC821991 - Proboscis Bat - Rhynchonycteris naso.wav	155	136	42b7d68960c75fc5
-bat-demo-sounds/XC821992 - Proboscis Bat - Rhynchonycteris naso.wav	75	66	5c1578112ab29ef7
-bat-demo-sounds/XC822005 - Blunt-eared Bat - Tomopeas ravus.wav	94	81	ba7d57bf023219e8
-bat-demo-sounds/XC822350 - Lesser Sac-winged Bat - Saccopteryx leptura.wav	135	111	48436390671f539f
-bat-demo-sounds/XC822579 - Lesser Myotis - Myotis blythii.wav	101	100	caf03792014d122e
-bat-demo-sounds/XC822580 - Lesser Myotis - Myotis blythii.wav	29	27	ee58e1a322e6da37
-bat-demo-sounds/XC822581 - Alcathoe Whiskered Myotis - Myotis alcathoe.wav	29	25	f25c2feb1f8d6144
-bat-demo-sounds/XC822916 - Pallas's Mastiff Bat - Molossus molossus.wav	93	83	bd25dbc73efb9d4f
-bat-demo-sounds/XC822917 - Pallas's Mastiff Bat - Molossus molossus.wav	193	176	1e365c0a4eca3b62
-bat-demo-sounds/XC822919 - Common Black Mastiff Bat - Molossus rufus.wav	180	157	a94ba5c18e43d449
-bat-demo-sounds/XC822920 - Common Black Mastiff Bat - Molossus rufus.wav	66	52	d8d7663f86020733
-bat-demo-sounds/XC822921 - Black-winged Little Yellow Bat - Rhogeessa tumida.wav	186	155	06a8f3a86ff26d82
-bat-demo-sounds/XC822922 - Black-winged Little Yellow Bat - Rhogeessa tumida.wav	260	206	9febbaa37149bbba
-bat-demo-sounds/XC822923 - Greater Sac-winged Bat - Saccopteryx bilineata.wav	181	109	981fced238f26148
-bat-demo-sounds/XC822978 - Fringe-lipped Bat - Trachops cirrhosus.wav	68	46	79177784f479447d
-bat-demo-sounds/XC823130 - Caracciolo's Stripe-faced Bat - Vampyrodes caraccioli.wav	13	9	2cf09fe511c1fb19
-bat-demo-sounds/XC823132 - Sowell's Short-tailed Bat - Carollia sowelli.wav	25	21	13eb15de68134580
-bat-demo-sounds/XC823144 - Common Vampire Bat - Desmodus rotundus.wav	54	51	6515139061ea6cc3
-bat-demo-sounds/XC823154 - Little Yellow-shouldered Bat - Sturnira lilium.wav	78	55	e7e38b269d411164
-bat-demo-sounds/XC823155 - Great Fruit-eating Bat - Artibeus lituratus.wav	85	55	78fbf896aa8a596a
-bat-demo-sounds/XC823157 - Northern Little Yellow-eared Bat - Vampyressa thyone.wav	18	11	beb748ffc4d472ba
-bat-demo-sounds/XC823559 - Common Black Myotis - Myotis nigricans.wav	349	168	30c222b674731e4a
-bat-demo-sounds/XC823573 - Velvety Fruit-eating Bat - Enchisthenes hartii.wav	613	217	c2a888039914f0cf
-bat-demo-sounds/XC824042 - Sowell's Short-tailed Bat - Carollia sowelli.wav	45	37	6f3336f591cde00c
-bat-demo-sounds/XC824078 - Mediterranean Horseshoe Bat - Rhinolophus euryale.wav	67	65	ed04dc597b6e69c5
-bat-demo-sounds/XC825084 - Niceforo's Big-eared Bat - Trinycteris nicefori.wav	43	21	599e22974ae02cdf
-bat-demo-sounds/XC825336 - Soundscape - Sonus naturalis.wav	54	46	8198da682e82e4a4
-bat-demo-sounds/XC825957 - Orange-throated Bat - Lampronycteris brachyotis.wav	50	23	5fd6792a27176bec
-bat-demo-sounds/XC826213 - Goldman's Nectar Bat - Lonchophylla concava.wav	8	4	ff241550922c6dd6
-bat-demo-sounds/XC826214 - Goldman's Nectar Bat - Lonchophylla concava.wav	11	9	4492035fe8b8bb95
-bat-demo-sounds/XC827322 - Bornean Horseshoe Bat - Rhinolophus borneensis.wav	1207	1137	f5f75ea7c8624147
-bat-demo-sounds/XC827655 - Acuminate Horseshoe Bat - Rhinolophus acuminatus.wav	949	561	ed847a27c8f1c92d
-bat-demo-sounds/XC830021 - Bechstein's Myotis - Myotis bechsteinii.wav	65	49	c3d18a2fb63d7235
-bat-demo-sounds/XC830023 - Bechstein's Myotis - Myotis bechsteinii.wav	50	45	bc8afee1d7c3c20b
-bat-demo-sounds/XC837607 - Pallid Bat - Antrozous pallidus.wav	34	31	63a74462c34053bf
-bat-demo-sounds/XC837608 - Fringed Myotis - Myotis thysanodes.wav	86	81	d219df992c55905b
-bat-demo-sounds/XC838106 - Dobson's Lesser Mustached Bat - Pteronotus psilotis.wav	77	52	0c5c6d9f9ce28445
-bat-demo-sounds/XC838108 - Thomas's Naked-backed Bat - Pteronotus fulvus.wav	46	41	937c99b6dcb27d15
-bat-demo-sounds/XC838110 - Yucatan Yellow Bat - Rhogeessa aenea.wav	85	74	564c07e84a69d457
-bat-demo-sounds/XC838114 - Northern Hairy-legged Myotis - Myotis pilosatibialis.wav	135	126	756cd39da7bd5ee7
-bat-demo-sounds/XC838116 - Alvarez's Mastiff Bat - Molossus alvarezi.wav	63	61	b7f0c3bd70d2755e
-bat-demo-sounds/XC838306 - Lesser Dog-like Bat - Peropteryx macrotis.wav	89	70	63a9b634f131b751
-bat-demo-sounds/XC838313 - Northern Black Mastiff Bat - Molossus nigricans.wav	369	146	2485a55e58e4e151
-bat-demo-sounds/XC838455 - Honduran White Bat - Ectophylla alba.wav	4	3	690def4724c7ed1f
-bat-demo-sounds/XC838712 - Southern Hairy-legged Myotis - Myotis keaysi.wav	99	11	f543e6051106c09a
-bat-demo-sounds/XC838716 - Southern Hairy-legged Myotis - Myotis keaysi.wav	109	93	92f7aa8314a1af9b
-bat-demo-sounds/XC838726 - Montane Myotis - Myotis oxyotus.wav	118	91	bd183d4f524a212f
-bat-demo-sounds/XC838798 - Eurasian Particolored Bat - Vespertilio murinus.wav	177	143	b5f4f481800fd8b1
-bat-demo-sounds/XC839630 - Highland Yellow-shouldered Bat - Sturnira ludovici.wav	20	19	d35caabe8381e07e
-bat-demo-sounds/XC839631 - Highland Yellow-shouldered Bat - Sturnira ludovici.wav	18	18	39ceeb26d3ae8091
-bat-demo-sounds/XC839651 - Commissaris's Long-tongued Bat - Glossophaga commissarisi.wav	130	111	a398fff559929eb4
-bat-demo-sounds/XC839654 - Orange Nectar Bat - Lonchophylla robusta.wav	40	37	0ff2625a40dc9c20
-bat-demo-sounds/XC839655 - Orange Nectar Bat - Lonchophylla robusta.wav	61	51	bbf057c4075d3479
-bat-demo-sounds/XC839659 - Pale Spear-nosed Bat - Phyllostomus discolor.wav	57	51	7c9249625e1d2214
-bat-demo-sounds/XC840308 - Bird-like Noctule - Nyctalus aviator.wav	55	0	49d64f0d67efbb77
-bat-demo-sounds/XC843108 - Heart-nosed False-vampire - Cardioderma cor.wav	261	98	ee0c86c15ab35a84
-bat-demo-sounds/XC843493 - Lappet-eared Free-tailed Bat - Mops major.wav	132	43	ba1ba82c818601de
-bat-demo-sounds/XC843524 - Mount Gargues Pipistrelle - Pipistrellus aero.wav	385	175	0d54c39d8a201d88
-bat-demo-sounds/XC843530 - Common Butterfly Bat - Glauconycteris argentata.wav	89	52	c743b5eef4015e2b
-bat-demo-sounds/XC843531 - Common Butterfly Bat - Glauconycteris argentata.wav	112	79	2ebfcdcd7571b68c
-bat-demo-sounds/XC843532 - African Long-fingered Bat - Miniopterus africanus.wav	195	123	5e815aafab46beaa
-bat-demo-sounds/XC843534 - Natal Long-fingered Bat - Miniopterus natalensis.wav	233	186	82b8ef2f59d6764f
-bat-demo-sounds/XC843537 - Lander's Horseshoe Bat - Rhinolophus landeri.wav	166	111	4e321136de3184d4
-bat-demo-sounds/XC843538 - Lander's Horseshoe Bat - Rhinolophus landeri.wav	180	105	eef63eb098a10f09
-bat-demo-sounds/XC843542 - Mauritian Tomb Bat - Taphozous mauritianus.wav	129	61	e1d14ffe1e1a00b8
-bat-demo-sounds/XC843544 - Rusty Pipistrelle - Pipistrellus rusticus.wav	112	67	573783b5e054b504
-bat-demo-sounds/XC843548 - Little Free-tailed Bat - Mops pumilus.wav	364	133	e122002a31ab291d
-bat-demo-sounds/XC843549 - Little Free-tailed Bat - Mops pumilus.wav	249	55	d742342aad2347a2
-bat-demo-sounds/XC843556 - White-throated Lesser House Bat - Scotoecus albigula.wav	291	148	df9f87323310984d
-bat-demo-sounds/XC843557 - African Yellow Bat - Scotophilus dinganii.wav	837	465	2418a9be20fd819b
-bat-demo-sounds/XC844384 - Gray Long-eared Bat - Plecotus austriacus.wav	7	0	787f4f09d859d5ed
-bat-demo-sounds/XC844387 - Gray Long-eared Bat - Plecotus austriacus.wav	17	15	6a2158d7edab0e57
-bat-demo-sounds/XC882095 - Northern Ghost Bat - Diclidurus albus.wav	6	6	7a8cf8cb3c59c3e6
-bat-demo-sounds/XC882096 - Northern Ghost Bat - Diclidurus albus.wav	15	15	e1a36eaea153c281
-bat-demo-sounds/XC883290 - Big Brown Bat - Eptesicus fuscus.wav	100	62	96a7b5dfd8dfecad
-bat-demo-sounds/XC883297 - Little Brown Myotis - Myotis lucifugus.wav	89	82	f2755c91c0d229a9
-bat-demo-sounds/XC883306 - Tricolored Bat - Perimyotis subflavus.wav	67	61	f2f3d304409bc1d7
-bat-demo-sounds/XC883523 - Eastern Small-footed Myotis - Myotis leibii.wav	188	80	412cd7929f262fda
-bat-demo-sounds/XC883525 - Little Brown Myotis - Myotis lucifugus.wav	139	129	66bc774163c815f4
-bat-demo-sounds/XC889809 - Big Brown Bat - Eptesicus fuscus.wav	101	92	4883dec157a2766f
-bat-demo-sounds/XC890407 - Northern Myotis - Myotis septentrionalis.wav	118	79	c7314cfc3e65706d
-bat-demo-sounds/XC890408 - Northern Myotis - Myotis septentrionalis.wav	22	0	21fbeb6e837c4ce4
+bat-demo-sounds/XC1080503 - New Zealand Long-tailed Bat - Chalinolobus tuberculatus.wav	51	50	e6cbdcf7bac21e22
+bat-demo-sounds/XC1080504 - New Zealand Long-tailed Bat - Chalinolobus tuberculatus.wav	110	108	5f983e17e0acf9bd
+bat-demo-sounds/XC1082359 - Long-tailed Serotine - Eptesicus hottentotus.wav	418	116	5af47daeb68d17ba
+bat-demo-sounds/XC1084193 - Western Barbastelle - Barbastella barbastellus.wav	14	14	87b97e137c7b0c0a
+bat-demo-sounds/XC1084195 - Natterer's Myotis - Myotis nattereri.wav	9	6	2c9b6038aa76cab1
+bat-demo-sounds/XC1084196 - Natterer's Myotis - Myotis nattereri.wav	28	24	c352127abb970f7c
+bat-demo-sounds/XC1084197 - Western Barbastelle - Barbastella barbastellus.wav	20	15	77c778ee8f9d12fb
+bat-demo-sounds/XC1084199 - Eurasian Particolored Bat - Vespertilio murinus.wav	15	0	2ebfb91b0ee57414
+bat-demo-sounds/XC1087566 - Cyclops Leaf-nosed Bat - Doryrhina cyclops.wav	84	66	c55f0ec7e226ecef
+bat-demo-sounds/XC1087567 - Cyclops Leaf-nosed Bat - Doryrhina cyclops.wav	140	108	a0e3277ce937db7f
+bat-demo-sounds/XC1087579 - Halcyon Horseshoe Bat - Rhinolophus alcyone.wav	154	126	bec5e3e34f854eae
+bat-demo-sounds/XC1087580 - Halcyon Horseshoe Bat - Rhinolophus alcyone.wav	51	35	7fcc0bbb20b2839c
+bat-demo-sounds/XC1087673 - Large Slit-faced Bat - Nycteris grandis.wav	5	5	825be35b548a2644
+bat-demo-sounds/XC1087675 - Large Slit-faced Bat - Nycteris grandis.wav	3	2	c5c86562ef7ede0c
+bat-demo-sounds/XC1087684 - Nut-colored Yellow Bat - Scotophilus nux.wav	290	194	aead32d201667d0b
+bat-demo-sounds/XC803691 - Eastern Red Bat - Lasiurus borealis.wav	75	75	518ba25811f07a78
+bat-demo-sounds/XC803693 - Northern Hoary Bat - Aeorestes cinereus.wav	118	118	f0a87df498a68e90
+bat-demo-sounds/XC805275 - Wrinkle-faced Bat - Centurio senex.wav	23	22	fd9aaa47a21f0a7a
+bat-demo-sounds/XC805278 - Brazilian Serotine - Eptesicus brasiliensis.wav	323	294	82e98c8b47ecedd7
+bat-demo-sounds/XC805281 - Argentine Serotine - Eptesicus furinalis.wav	221	156	59a745f7bea4695f
+bat-demo-sounds/XC805282 - Pallas's Long-tongued Bat - Glossophaga soricina.wav	38	27	f2fd2b8f6fd7663b
+bat-demo-sounds/XC805283 - Southern Yellow Bat - Dasypterus ega.wav	75	65	53cc69781cb69754
+bat-demo-sounds/XC805284 - Pygmy Round-eared Bat - Lophostoma brasiliense.wav	32	26	bbe1881dac2d8c51
+bat-demo-sounds/XC805293 - Tiny Big-eared Bat - Micronycteris minuta.wav	67	63	9eb8940b1cda5646
+bat-demo-sounds/XC805297 - Striped Hairy-nosed Bat - Gardnerycteris crenulatum.wav	34	26	f3f3df62c61686be
+bat-demo-sounds/XC805641 - Geoffroy's Myotis - Myotis emarginatus.wav	30	26	b05aced21de8e2da
+bat-demo-sounds/XC805642 - Escalera's Myotis - Myotis escalerai.wav	72	50	a907bf2cee323d75
+bat-demo-sounds/XC805650 - Cryptic Myotis - Myotis crypticus.wav	14	9	0f60763dd92042f0
+bat-demo-sounds/XC805652 - Alpine Long-eared Bat - Plecotus macrobullaris.wav	11	8	fa0b6c2b5425927b
+bat-demo-sounds/XC805748 - Maghreb Myotis - Myotis punicus.wav	289	253	67281eab685ceec0
+bat-demo-sounds/XC805892 - Naked-rumped Tomb Bat - Taphozous nudiventris.wav	33	31	0fa1c7766f6161de
+bat-demo-sounds/XC805944 - Arabian Barbastelle - Barbastella leucomelas.wav	26	23	9a295ba53501f99f
+bat-demo-sounds/XC806101 - Spectral Bat - Vampyrum spectrum.wav	63	32	e3b2b71d33ce4380
+bat-demo-sounds/XC806287 - Arabian Mouse-tailed Bat - Rhinopoma cystops.wav	40	34	a3092c1d8ad6e3f9
+bat-demo-sounds/XC809053 - Soundscape - Sonus naturalis.wav	91	89	cce50f27541069de
+bat-demo-sounds/XC809855 - Queensland Tube-nosed Fruit Bat - Nyctimene robinsoni.wav	36	0	bacb9c4105d1efbe
+bat-demo-sounds/XC809882 - White-striped Free-tailed Bat - Austronomus australis.wav	97	54	f9a5d664942bb00b
+bat-demo-sounds/XC811514 - Little Red Flying Fox - Pteropus scapulatus.wav	47	0	b99da9ca93c707ea
+bat-demo-sounds/XC812362 - Hairy Big-eared Bat - Micronycteris hirsuta.wav	35	30	f985afe774a04333
+bat-demo-sounds/XC814304 - Leisler's Noctule - Nyctalus leisleri.wav	23	21	343c0e375ae166a6
+bat-demo-sounds/XC815137 - Japanese Pipistrelle - Pipistrellus abramus.wav	106	106	d1285f5d0c568d48
+bat-demo-sounds/XC815138 - Fringed Long-footed Myotis - Myotis fimbriatus.wav	7	4	36626dda940b6ccd
+bat-demo-sounds/XC817761 - Northern Serotine - Eptesicus nilssonii.wav	56	50	acdc40edaf01909e
+bat-demo-sounds/XC819281 - Niceforo's Big-eared Bat - Trinycteris nicefori.wav	20	15	1a26e9cfefaa2551
+bat-demo-sounds/XC819295 - Common Big-eared Bat - Micronycteris microtis.wav	158	117	fff74f16d3dd188b
+bat-demo-sounds/XC819299 - Big Naked-backed Bat - Pteronotus gymnonotus.wav	103	34	11e2f52cdd52848d
+bat-demo-sounds/XC819300 - Big Naked-backed Bat - Pteronotus gymnonotus.wav	154	94	6cb78dfac2aa8c4b
+bat-demo-sounds/XC819302 - Hairy-legged Vampire Bat - Diphylla ecaudata.wav	43	34	0660a84776b35679
+bat-demo-sounds/XC819554 - Dark Long-tongued Bat - Lichonycteris obscura.wav	320	139	6fe68403b34d03b3
+bat-demo-sounds/XC819555 - Dark Long-tongued Bat - Lichonycteris obscura.wav	135	93	583b52cec13dd0d8
+bat-demo-sounds/XC819627 - Jamaican Fruit-eating Bat - Artibeus jamaicensis.wav	41	34	da49f59d42f8947f
+bat-demo-sounds/XC819768 - Chestnut Short-tailed Bat - Carollia castanea.wav	34	30	df36ab544da80279
+bat-demo-sounds/XC819769 - Chestnut Short-tailed Bat - Carollia castanea.wav	10	3	3ba1b26132d9de6c
+bat-demo-sounds/XC819773 - White-throated Round-eared Bat - Lophostoma silvicola.wav	16	16	7d000e425ac4123a
+bat-demo-sounds/XC820305 - Hairy Big-eared Bat - Micronycteris hirsuta.wav	14	8	a332c10527b4625f
+bat-demo-sounds/XC820604 - Spix's Disk-winged Bat - Thyroptera tricolor.wav	46	41	615f3ce33350705e
+bat-demo-sounds/XC820791 - Heller's Broad-nosed Bat - Platyrrhinus helleri.wav	28	9	39e7c045ff7bad81
+bat-demo-sounds/XC821193 - Greater Bulldog Bat - Noctilio leporinus.wav	92	65	2bb0df776203dcda
+bat-demo-sounds/XC821194 - Greater Bulldog Bat - Noctilio leporinus.wav	161	106	6e400c9473ded3fa
+bat-demo-sounds/XC821201 - Orange-throated Bat - Lampronycteris brachyotis.wav	13	7	14b8469a57484865
+bat-demo-sounds/XC821207 - Northern Stripe-headed Round-eared Bat - Tonatia bakeri.wav	34	23	6b1d3ca60ea708b6
+bat-demo-sounds/XC821208 - Northern Stripe-headed Round-eared Bat - Tonatia bakeri.wav	34	23	6b1d3ca60ea708b6
+bat-demo-sounds/XC821221 - Underwood's Long-tongued Bat - Hylonycteris underwoodi.wav	42	26	122e429e093b85bb
+bat-demo-sounds/XC821237 - Thomas's Shaggy Bat - Centronycteris centralis.wav	80	76	01b07a9768a1fcd9
+bat-demo-sounds/XC821238 - Hairy Big-eyed Bat - Chiroderma villosum.wav	16	15	5e7b66a8cb9c31f7
+bat-demo-sounds/XC821244 - Caracciolo's Stripe-faced Bat - Vampyrodes caraccioli.wav	8	8	81adef375fbf9c82
+bat-demo-sounds/XC821667 - Fringe-lipped Bat - Trachops cirrhosus.wav	19	16	8dfe726890ee3e23
+bat-demo-sounds/XC821671 - Wrinkle-faced Bat - Centurio senex.wav	19	16	c6a963bb940f2a26
+bat-demo-sounds/XC821715 - Seba's Short-tailed Bat - Carollia perspicillata.wav	27	24	72fc6ac80c591205
+bat-demo-sounds/XC821717 - Seba's Short-tailed Bat - Carollia perspicillata.wav	31	23	63a0a2f0f8a3c65e
+bat-demo-sounds/XC821723 - Thomas's Fruit-eating Bat - Dermanura watsoni.wav	5	5	f2983e1addc12d15
+bat-demo-sounds/XC821724 - Common Tent-making Bat - Uroderma bilobatum.wav	10	9	2c157081201f640e
+bat-demo-sounds/XC821725 - Common Tent-making Bat - Uroderma bilobatum.wav	8	6	55f41b3a00ed0cf7
+bat-demo-sounds/XC821924 - Silver-tipped Myotis - Myotis albescens.wav	119	116	8573a910f1a00441
+bat-demo-sounds/XC821925 - Silver-tipped Myotis - Myotis albescens.wav	153	146	fa7e07d1ca0054be
+bat-demo-sounds/XC821954 - Greater Dog-like Bat - Peropteryx kappleri.wav	46	38	c6cdcfbf22850e46
+bat-demo-sounds/XC821955 - Greater Dog-like Bat - Peropteryx kappleri.wav	21	14	1eaeed1b92366cac
+bat-demo-sounds/XC821988 - Southern Red Bat - Lasiurus blossevillii.wav	74	62	dd2b317461005aa5
+bat-demo-sounds/XC821989 - Elegant Myotis - Myotis elegans.wav	168	154	483f24111ef5f168
+bat-demo-sounds/XC821990 - Elegant Myotis - Myotis elegans.wav	109	96	8c4da15483ec29f5
+bat-demo-sounds/XC821991 - Proboscis Bat - Rhynchonycteris naso.wav	155	136	0db2baf063d508d7
+bat-demo-sounds/XC821992 - Proboscis Bat - Rhynchonycteris naso.wav	75	66	b8aefa1829d8cca9
+bat-demo-sounds/XC822005 - Blunt-eared Bat - Tomopeas ravus.wav	94	81	212c3e23fa769ec1
+bat-demo-sounds/XC822350 - Lesser Sac-winged Bat - Saccopteryx leptura.wav	135	111	86fc7bf0719b38c2
+bat-demo-sounds/XC822579 - Lesser Myotis - Myotis blythii.wav	101	100	86b36f9c41d88357
+bat-demo-sounds/XC822580 - Lesser Myotis - Myotis blythii.wav	29	27	12124f619f2faea4
+bat-demo-sounds/XC822581 - Alcathoe Whiskered Myotis - Myotis alcathoe.wav	29	25	b6504da8e42de97d
+bat-demo-sounds/XC822916 - Pallas's Mastiff Bat - Molossus molossus.wav	93	83	693812fd2d6a24bc
+bat-demo-sounds/XC822917 - Pallas's Mastiff Bat - Molossus molossus.wav	193	176	d58ec3b6393a8ff3
+bat-demo-sounds/XC822919 - Common Black Mastiff Bat - Molossus rufus.wav	180	157	6c1d746c2d06ed87
+bat-demo-sounds/XC822920 - Common Black Mastiff Bat - Molossus rufus.wav	66	52	e4e1be5048a3c2f3
+bat-demo-sounds/XC822921 - Black-winged Little Yellow Bat - Rhogeessa tumida.wav	186	155	e601c5788e229c50
+bat-demo-sounds/XC822922 - Black-winged Little Yellow Bat - Rhogeessa tumida.wav	260	206	a5b797e11381943e
+bat-demo-sounds/XC822923 - Greater Sac-winged Bat - Saccopteryx bilineata.wav	181	109	3a8150a9a52c12a4
+bat-demo-sounds/XC822978 - Fringe-lipped Bat - Trachops cirrhosus.wav	68	46	06c92be1855b7ba2
+bat-demo-sounds/XC823130 - Caracciolo's Stripe-faced Bat - Vampyrodes caraccioli.wav	13	9	8de0489e69e718cf
+bat-demo-sounds/XC823132 - Sowell's Short-tailed Bat - Carollia sowelli.wav	25	21	3b2a3106de735e5f
+bat-demo-sounds/XC823144 - Common Vampire Bat - Desmodus rotundus.wav	54	51	e39455fd05753085
+bat-demo-sounds/XC823154 - Little Yellow-shouldered Bat - Sturnira lilium.wav	78	55	5a71130dad451c51
+bat-demo-sounds/XC823155 - Great Fruit-eating Bat - Artibeus lituratus.wav	85	55	b978281b4a766ae7
+bat-demo-sounds/XC823157 - Northern Little Yellow-eared Bat - Vampyressa thyone.wav	18	11	b2bb677217966e1c
+bat-demo-sounds/XC823559 - Common Black Myotis - Myotis nigricans.wav	349	168	0cbe8655160ab02d
+bat-demo-sounds/XC823573 - Velvety Fruit-eating Bat - Enchisthenes hartii.wav	613	217	d1b4bfb2309d85e3
+bat-demo-sounds/XC824042 - Sowell's Short-tailed Bat - Carollia sowelli.wav	45	37	955acc3f7cc35ad3
+bat-demo-sounds/XC824078 - Mediterranean Horseshoe Bat - Rhinolophus euryale.wav	67	65	1d2d8452ab4b278a
+bat-demo-sounds/XC825084 - Niceforo's Big-eared Bat - Trinycteris nicefori.wav	43	21	3ffc3c3ab17520db
+bat-demo-sounds/XC825336 - Soundscape - Sonus naturalis.wav	54	46	efbcb2cb325f3d34
+bat-demo-sounds/XC825957 - Orange-throated Bat - Lampronycteris brachyotis.wav	50	23	e5b9a3557ef9a6c5
+bat-demo-sounds/XC826213 - Goldman's Nectar Bat - Lonchophylla concava.wav	8	4	9007d115efff60a6
+bat-demo-sounds/XC826214 - Goldman's Nectar Bat - Lonchophylla concava.wav	11	9	554bc40a25bec8ea
+bat-demo-sounds/XC827322 - Bornean Horseshoe Bat - Rhinolophus borneensis.wav	1207	1137	396bdae96633f9c8
+bat-demo-sounds/XC827655 - Acuminate Horseshoe Bat - Rhinolophus acuminatus.wav	949	561	af46803ebd3f4779
+bat-demo-sounds/XC830021 - Bechstein's Myotis - Myotis bechsteinii.wav	65	49	691a64701223b9ad
+bat-demo-sounds/XC830023 - Bechstein's Myotis - Myotis bechsteinii.wav	50	45	906e34d604232133
+bat-demo-sounds/XC837607 - Pallid Bat - Antrozous pallidus.wav	34	31	b5374fbf8f12d3d1
+bat-demo-sounds/XC837608 - Fringed Myotis - Myotis thysanodes.wav	86	81	1657b01b0c07be11
+bat-demo-sounds/XC838106 - Dobson's Lesser Mustached Bat - Pteronotus psilotis.wav	77	52	11f21dda14f5b87e
+bat-demo-sounds/XC838108 - Thomas's Naked-backed Bat - Pteronotus fulvus.wav	46	41	59ed8f6a45f27819
+bat-demo-sounds/XC838110 - Yucatan Yellow Bat - Rhogeessa aenea.wav	85	74	ad6e44bcdf75e9a3
+bat-demo-sounds/XC838114 - Northern Hairy-legged Myotis - Myotis pilosatibialis.wav	135	126	1e6a344b668c74fa
+bat-demo-sounds/XC838116 - Alvarez's Mastiff Bat - Molossus alvarezi.wav	63	61	66e19f7720bd45b9
+bat-demo-sounds/XC838306 - Lesser Dog-like Bat - Peropteryx macrotis.wav	89	70	cddcc7c96e360cbc
+bat-demo-sounds/XC838313 - Northern Black Mastiff Bat - Molossus nigricans.wav	369	146	ea9b4d0dd1e331a8
+bat-demo-sounds/XC838455 - Honduran White Bat - Ectophylla alba.wav	4	3	c925d076ea7e0307
+bat-demo-sounds/XC838712 - Southern Hairy-legged Myotis - Myotis keaysi.wav	99	11	48a971893bd48762
+bat-demo-sounds/XC838716 - Southern Hairy-legged Myotis - Myotis keaysi.wav	109	93	0a43266f4ddba7b0
+bat-demo-sounds/XC838726 - Montane Myotis - Myotis oxyotus.wav	118	91	09351d1173bd8a38
+bat-demo-sounds/XC838798 - Eurasian Particolored Bat - Vespertilio murinus.wav	177	143	0286f4f3bf2d7234
+bat-demo-sounds/XC839630 - Highland Yellow-shouldered Bat - Sturnira ludovici.wav	20	19	a02cdcc531379660
+bat-demo-sounds/XC839631 - Highland Yellow-shouldered Bat - Sturnira ludovici.wav	18	18	107b52e40eebf113
+bat-demo-sounds/XC839651 - Commissaris's Long-tongued Bat - Glossophaga commissarisi.wav	130	111	28c2ce5c50a890a4
+bat-demo-sounds/XC839654 - Orange Nectar Bat - Lonchophylla robusta.wav	40	37	4d3ebbdd53e8c1e7
+bat-demo-sounds/XC839655 - Orange Nectar Bat - Lonchophylla robusta.wav	61	51	db03f31bab4cfbea
+bat-demo-sounds/XC839659 - Pale Spear-nosed Bat - Phyllostomus discolor.wav	57	51	ea0b9ca1e66f6f13
+bat-demo-sounds/XC840308 - Bird-like Noctule - Nyctalus aviator.wav	55	0	363f015b0a087dd3
+bat-demo-sounds/XC843108 - Heart-nosed False-vampire - Cardioderma cor.wav	261	98	6f6ebc7c4a62bfea
+bat-demo-sounds/XC843493 - Lappet-eared Free-tailed Bat - Mops major.wav	132	43	6c3e9babb5218450
+bat-demo-sounds/XC843524 - Mount Gargues Pipistrelle - Pipistrellus aero.wav	385	175	c56849c3a5a1352c
+bat-demo-sounds/XC843530 - Common Butterfly Bat - Glauconycteris argentata.wav	89	52	910e06413270106f
+bat-demo-sounds/XC843531 - Common Butterfly Bat - Glauconycteris argentata.wav	112	79	48135160334c9bb9
+bat-demo-sounds/XC843532 - African Long-fingered Bat - Miniopterus africanus.wav	195	123	1c99cc6d0f7d5148
+bat-demo-sounds/XC843534 - Natal Long-fingered Bat - Miniopterus natalensis.wav	233	186	9d9e6ab27e927495
+bat-demo-sounds/XC843537 - Lander's Horseshoe Bat - Rhinolophus landeri.wav	166	111	f21e50e4eb50a7c2
+bat-demo-sounds/XC843538 - Lander's Horseshoe Bat - Rhinolophus landeri.wav	180	105	9eb08403f12b8747
+bat-demo-sounds/XC843542 - Mauritian Tomb Bat - Taphozous mauritianus.wav	129	61	c26b7934d6914dca
+bat-demo-sounds/XC843544 - Rusty Pipistrelle - Pipistrellus rusticus.wav	112	67	9562de1a0ef5a046
+bat-demo-sounds/XC843548 - Little Free-tailed Bat - Mops pumilus.wav	364	133	b9ffbb66a5558f97
+bat-demo-sounds/XC843549 - Little Free-tailed Bat - Mops pumilus.wav	249	55	2f69e62dc7605b4f
+bat-demo-sounds/XC843556 - White-throated Lesser House Bat - Scotoecus albigula.wav	291	148	457f3188d152dd20
+bat-demo-sounds/XC843557 - African Yellow Bat - Scotophilus dinganii.wav	837	465	2049173f7522c330
+bat-demo-sounds/XC844384 - Gray Long-eared Bat - Plecotus austriacus.wav	7	0	4b0f8dedf67dd590
+bat-demo-sounds/XC844387 - Gray Long-eared Bat - Plecotus austriacus.wav	17	15	33c78324cfc5ea75
+bat-demo-sounds/XC882095 - Northern Ghost Bat - Diclidurus albus.wav	6	6	433c13b7ffe70ab4
+bat-demo-sounds/XC882096 - Northern Ghost Bat - Diclidurus albus.wav	15	15	f4aa8b40ea753aa6
+bat-demo-sounds/XC883290 - Big Brown Bat - Eptesicus fuscus.wav	100	62	35506724cd829d25
+bat-demo-sounds/XC883297 - Little Brown Myotis - Myotis lucifugus.wav	89	82	c164a56f2d737695
+bat-demo-sounds/XC883306 - Tricolored Bat - Perimyotis subflavus.wav	67	61	f43453fc76382745
+bat-demo-sounds/XC883523 - Eastern Small-footed Myotis - Myotis leibii.wav	188	80	7c3829cc376099df
+bat-demo-sounds/XC883525 - Little Brown Myotis - Myotis lucifugus.wav	139	129	56a30bc0a58d585f
+bat-demo-sounds/XC889809 - Big Brown Bat - Eptesicus fuscus.wav	101	92	f06fe660c7f6b8fb
+bat-demo-sounds/XC890407 - Northern Myotis - Myotis septentrionalis.wav	118	79	a5fbe044db7d6dcc
+bat-demo-sounds/XC890408 - Northern Myotis - Myotis septentrionalis.wav	22	0	aee0faba0a8686d7
 bat-demo-sounds/XC891469 - Big Free-tailed Bat - Nyctinomops macrotis.wav	0	0	cbf29ce484222325
-bat-demo-sounds/XC892143 - Black Flying Fox - Pteropus alecto.wav	175	14	ff079169f82b9995
-bat-demo-sounds/XC892144 - Black Flying Fox - Pteropus alecto.wav	33	0	b3067b10fef9e1be
+bat-demo-sounds/XC892143 - Black Flying Fox - Pteropus alecto.wav	175	14	3bf9c900ecfbc1c8
+bat-demo-sounds/XC892144 - Black Flying Fox - Pteropus alecto.wav	33	0	d1170bfd6ff5c5d4
 bat-demo-sounds/XC892810 - Parnell's Common Mustached Bat - Pteronotus parnellii.wav	0	0	cbf29ce484222325
 bat-demo-sounds/XC892815 - Sooty Mustached Bat - Pteronotus quadridens.wav	0	0	cbf29ce484222325
-bat-demo-sounds/XC899851 - Chestnut Sac-winged Bat - Cormura brevirostris.wav	49	47	7e867934c44896a3
-bat-demo-sounds/XC906210 - Greater Myotis - Myotis myotis.wav	84	84	ad956b1e58069f34
-bat-demo-sounds/XC909905 - Brazilian Free-tailed Bat - Tadarida brasiliensis.wav	711	536	b8382f2f5fd68b4f
-bat-demo-sounds/XC910437 - Big Red Bat - Aeorestes egregius.wav	71	70	60ae63299b1985c1
-bat-demo-sounds/XC911682 - Northern Serotine - Eptesicus nilssonii.wav	53	48	f362a7712b68ba8b
-bat-demo-sounds/XC915951 - Lesser Sac-winged Bat - Saccopteryx leptura.wav	158	134	5bb10889ea3d0720
-bat-demo-sounds/XC921254 - Tricolored Bat - Perimyotis subflavus.wav	163	158	4f70ce80e87e5c2e
-bat-demo-sounds/XC924726 - Okinawa Horseshoe Bat - Rhinolophus pumilus.wav	16	2	8f28f18f03a77d1e
-bat-demo-sounds/XC924727 - Okinawa Horseshoe Bat - Rhinolophus pumilus.wav	4	0	e7944900b9f43481
-bat-demo-sounds/XC925998 - Greater Noctule - Nyctalus lasiopterus.wav	25	0	8bc7bcd82ba8646c
-bat-demo-sounds/XC928094 - Pond Myotis - Myotis dasycneme.wav	200	120	043c85652c447fd3
-bat-demo-sounds/XC953337 - Madeira Pipistrelle - Pipistrellus maderensis.wav	23	23	1d066b82c47b5fd1
-bat-demo-sounds/XC954775 - Bird-like Noctule - Nyctalus aviator.wav	213	170	f363ff0ff0c6b1ad
-bat-demo-sounds/XC956659 - Mauritian Tomb Bat - Taphozous mauritianus.wav	41	38	0e7cd7ea4eea735b
-bat-demo-sounds/XC956660 - Reunion Little Mastiff Bat - Mormopterus francoismoutoui.wav	166	157	29693c1f80886eb0
-bat-demo-sounds/XC959643 - Egyptian Rousette - Rousettus aegyptiacus.wav	2	0	21f44e33f05b574c
-bat-demo-sounds/XC959645 - Egyptian Rousette - Rousettus aegyptiacus.wav	12	0	009620690b500fdd
-bat-demo-sounds/XC959788 - Lesser Short-nosed Fruit Bat - Cynopterus brachyotis.wav	27	0	605396afbec7a711
-bat-demo-sounds/XC968561 - Egyptian Free-tailed Bat - Tadarida aegyptiaca.wav	173	59	74f6280d4ae6998d
-bat-demo-sounds/XC980394 - Homfray's Horseshoe Bat - Rhinolophus andamanensis.wav	65	54	5124da8ca88e1452
-bat-demo-sounds/XC981817 - Andaman Horseshoe Bat - Rhinolophus cognatus.wav	55	25	8ec320e56687175f
-bat-demo-sounds/XC981818 - Homfray's Horseshoe Bat - Rhinolophus andamanensis.wav	87	75	225c3e6418e14827
-bat-demo-sounds/XC994474 - Pearson's Horseshoe Bat - Rhinolophus pearsonii.wav	575	200	1789ba498d1fab4d
-no-bat-sounds/XC1003711 - Giant Gladiator Treefrog - Boana boans.wav	9	6	a5f2f78105e657f8
-no-bat-sounds/XC1028084 - European Badger - Meles meles.wav	568	150	c3ce36bf61de37e1
-no-bat-sounds/XC1048203 - Pallas's Squirrel - Callosciurus erythraeus.wav	4	0	3cdcd2504e0d54c2
-no-bat-sounds/XC1053609 - Cave Swiftlet - Collocalia linchi.wav	1	0	b4cdd3d858ffa005
-no-bat-sounds/XC1072439 - Identity unknown - Mystery mystery.wav	16	0	d4cc7bfc93241037
-no-bat-sounds/XC1078076 - Northern Screamer - Chauna chavaria.wav	11	0	e32b9809268370a7
-no-bat-sounds/XC1083547 - Lyre-tailed Nightjar - Uropsalis lyra.wav	311	20	1cfe55ed26548000
-no-bat-sounds/XC1083732 - White-necked Jacobin - Florisuga mellivora.wav	104	7	a2009413619c5f9b
-no-bat-sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav	30	2	6bae8a2a96a11fe3
-no-bat-sounds/XC1083798 - Brown-headed Spider Monkey - Ateles fusciceps.wav	5	0	74b456a59f175bd2
-no-bat-sounds/XC1083971 - American Bullfrog - Aquarana catesbeiana.wav	111	17	e807ef7059d09b5f
+bat-demo-sounds/XC899851 - Chestnut Sac-winged Bat - Cormura brevirostris.wav	49	47	3be4633095c9922c
+bat-demo-sounds/XC906210 - Greater Myotis - Myotis myotis.wav	84	84	6b41d2a0a44c23b8
+bat-demo-sounds/XC909905 - Brazilian Free-tailed Bat - Tadarida brasiliensis.wav	711	536	6cafe9f41efbbc65
+bat-demo-sounds/XC910437 - Big Red Bat - Aeorestes egregius.wav	71	70	92278788100a8a72
+bat-demo-sounds/XC911682 - Northern Serotine - Eptesicus nilssonii.wav	53	48	1235848e08514a03
+bat-demo-sounds/XC915951 - Lesser Sac-winged Bat - Saccopteryx leptura.wav	158	134	ae907368e45f8b6a
+bat-demo-sounds/XC921254 - Tricolored Bat - Perimyotis subflavus.wav	163	158	60575fea6e2d6b2d
+bat-demo-sounds/XC924726 - Okinawa Horseshoe Bat - Rhinolophus pumilus.wav	16	2	a46231896378bef7
+bat-demo-sounds/XC924727 - Okinawa Horseshoe Bat - Rhinolophus pumilus.wav	4	0	7ef6920c31b9a33d
+bat-demo-sounds/XC925998 - Greater Noctule - Nyctalus lasiopterus.wav	25	0	b53249fa3160fbad
+bat-demo-sounds/XC928094 - Pond Myotis - Myotis dasycneme.wav	200	120	6dda8b3333ef9b52
+bat-demo-sounds/XC953337 - Madeira Pipistrelle - Pipistrellus maderensis.wav	23	23	d6025ee6a5a40d42
+bat-demo-sounds/XC954775 - Bird-like Noctule - Nyctalus aviator.wav	213	170	994823abbcb058e5
+bat-demo-sounds/XC956659 - Mauritian Tomb Bat - Taphozous mauritianus.wav	41	38	41470e86b1e2c530
+bat-demo-sounds/XC956660 - Reunion Little Mastiff Bat - Mormopterus francoismoutoui.wav	166	157	4a7c9aff69757d8c
+bat-demo-sounds/XC959643 - Egyptian Rousette - Rousettus aegyptiacus.wav	2	0	9f78963d9ad3589d
+bat-demo-sounds/XC959645 - Egyptian Rousette - Rousettus aegyptiacus.wav	12	0	0ca25ff8ccd3f5af
+bat-demo-sounds/XC959788 - Lesser Short-nosed Fruit Bat - Cynopterus brachyotis.wav	27	0	0145f027db561f5e
+bat-demo-sounds/XC968561 - Egyptian Free-tailed Bat - Tadarida aegyptiaca.wav	173	59	983e7fca6b906de0
+bat-demo-sounds/XC980394 - Homfray's Horseshoe Bat - Rhinolophus andamanensis.wav	65	54	e0da9cb4b426e063
+bat-demo-sounds/XC981817 - Andaman Horseshoe Bat - Rhinolophus cognatus.wav	55	25	d0a7119d81a4491c
+bat-demo-sounds/XC981818 - Homfray's Horseshoe Bat - Rhinolophus andamanensis.wav	87	75	646a9b2466ad30b1
+bat-demo-sounds/XC994474 - Pearson's Horseshoe Bat - Rhinolophus pearsonii.wav	575	200	5c996b1c11eb33be
+no-bat-sounds/XC1003711 - Giant Gladiator Treefrog - Boana boans.wav	9	6	29e5ebba8d909c67
+no-bat-sounds/XC1028084 - European Badger - Meles meles.wav	568	150	329f53f4d91693f9
+no-bat-sounds/XC1048203 - Pallas's Squirrel - Callosciurus erythraeus.wav	4	0	0616706ae3cc3256
+no-bat-sounds/XC1053609 - Cave Swiftlet - Collocalia linchi.wav	1	0	8a68a6189c513443
+no-bat-sounds/XC1072439 - Identity unknown - Mystery mystery.wav	16	0	deeb9106ca88369b
+no-bat-sounds/XC1078076 - Northern Screamer - Chauna chavaria.wav	11	0	f3cf81f883df991e
+no-bat-sounds/XC1083547 - Lyre-tailed Nightjar - Uropsalis lyra.wav	311	20	e8172f05b04c3c7f
+no-bat-sounds/XC1083732 - White-necked Jacobin - Florisuga mellivora.wav	104	7	a5e3ac363e0d6709
+no-bat-sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav	30	2	8a8bb7c36ff1283f
+no-bat-sounds/XC1083798 - Brown-headed Spider Monkey - Ateles fusciceps.wav	5	0	93a253dc1c382945
+no-bat-sounds/XC1083971 - American Bullfrog - Aquarana catesbeiana.wav	111	17	237979c945850da2
 no-bat-sounds/XC1086259 - Common Scoter - Melanitta nigra.wav	0	0	cbf29ce484222325
-no-bat-sounds/XC1099081 - Common Swift - Apus apus.wav	62	34	629ef58b80224cb8
-no-bat-sounds/XC1100511 - Common Toad - Bufo bufo.wav	4	0	7eecc19916677052
-no-bat-sounds/XC1101681 - Eurasian Otter - Lutra lutra.wav	3	0	5a347b2ec0973684
-no-bat-sounds/XC1135608 - Identity unknown - Mystery mystery.wav	116	54	7ffaed6cc998d439
-no-bat-sounds/XC1140427 - Alpine Swift - Tachymarptis melba.wav	21	0	be40947eb2b0a172
-no-bat-sounds/XC1154613 -  - Tessellana tessellata.wav	68	44	9add5900532afd42
-no-bat-sounds/XC1157166 - Sepia Bush-cricket - Sepiana sepium.wav	75	9	bbe25cc6711ef1ad
-no-bat-sounds/XC1158214 - Lily Bush-cricket - Tylopsis lilifolia.wav	37	3	84a4ea53a5c6461a
-no-bat-sounds/XC1160786 - Asian Palm Swift - Cypsiurus balasiensis.wav	79	4	0d2ac19fea12a2dc
+no-bat-sounds/XC1099081 - Common Swift - Apus apus.wav	62	34	e8c13271d0ad1b88
+no-bat-sounds/XC1100511 - Common Toad - Bufo bufo.wav	4	0	c445c6a5303feaea
+no-bat-sounds/XC1101681 - Eurasian Otter - Lutra lutra.wav	3	0	133e68b7fc34083d
+no-bat-sounds/XC1135608 - Identity unknown - Mystery mystery.wav	116	54	372c806cb4ad8963
+no-bat-sounds/XC1140427 - Alpine Swift - Tachymarptis melba.wav	21	0	e9abb0ca6bec6e9c
+no-bat-sounds/XC1154613 -  - Tessellana tessellata.wav	68	44	e16178269763d0fa
+no-bat-sounds/XC1157166 - Sepia Bush-cricket - Sepiana sepium.wav	75	9	06ce3e814e46d7ee
+no-bat-sounds/XC1158214 - Lily Bush-cricket - Tylopsis lilifolia.wav	37	3	4587994550dbb417
+no-bat-sounds/XC1160786 - Asian Palm Swift - Cypsiurus balasiensis.wav	79	4	742dfc8f38e78bb0
 no-bat-sounds/XC1160798 - Lesser Whistling Duck - Dendrocygna javanica.wav	0	0	cbf29ce484222325
-no-bat-sounds/XC1161410 -  - Anonconotus occidentalis.wav	1370	758	4c36d5e54a163914
-no-bat-sounds/XC1161498 -  - Neocallicrania selligera.wav	51	5	441d10a50e59163b
-no-bat-sounds/XC1161967 - Spanish Saddle Bush-cricket - Ephippigerida areolaria.wav	29	0	66a4439396139520
-no-bat-sounds/XC1165208 -  - Platycleis albopunctata.wav	118	105	44500a3b54fd68ef
-no-bat-sounds/XC1172573 - Identity unknown - Mystery mystery.wav	12	10	76f1bd4234e7e8a9
-no-bat-sounds/XC1172576 - Identity unknown - Mystery mystery.wav	28	25	d3c2e2d7d84f412a
-no-bat-sounds/XC1172578 - Identity unknown - Mystery mystery.wav	13	10	e689d68069757391
-no-bat-sounds/XC1172609 -  - Stenobothrus lineatus.wav	187	13	0ce416a18ebec18e
-no-bat-sounds/XC1174013 - Common Straw Grasshopper - Euchorthippus declivus.wav	487	163	516ce4e8c420c9ba
-no-bat-sounds/XC1174016 -  - Pseudochorthippus parallelus.wav	550	274	2142b2fbb321c79d
-no-bat-sounds/XC1174017 -  - Nemobius sylvestris.wav	252	95	670d9078dea04caf
-no-bat-sounds/XC1174132 -  - Stauroderus scalaris.wav	425	100	17cf9666fc86be67
-no-bat-sounds/XC1175161 - Large Conehead - Ruspolia nitidula.wav	227	65	ec057470142a94c9
-no-bat-sounds/XC1180464 -  - Hexacentrus japonicus.wav	172	25	74c1eb48a394d671
-no-bat-sounds/XC1180736 - Eurasian Red Squirrel - Sciurus vulgaris.wav	55	0	55e020d3d4ffe003
-no-bat-sounds/XC1182094 - Upland Green Bush-cricket - Tettigonia cantans.wav	938	152	2d64918ee26eeecb
-no-bat-sounds/XC1182099 -  - Pholidoptera aptera.wav	118	21	fdf03de6d3c6a11e
-no-bat-sounds/XC1182137 - Bog Bush-cricket - Metrioptera brachyptera.wav	940	374	bea739a7a81a37ad
-no-bat-sounds/XC1182847 - Greater White-toothed Shrew - Crocidura russula.wav	146	84	ffd327c01c0af64e
-no-bat-sounds/XC1183922 - African Meadow Katydid - Conocephalus conocephalus.wav	13	0	aea8f75fa06be613
-no-bat-sounds/XC1184660 - Two-spotted Cricket - Gryllus bimaculatus.wav	347	0	d5e0fdb3b196a5f4
-no-bat-sounds/XC1184661 -  - Eumodicogryllus bordigalensis.wav	676	46	e651a5e687024573
-no-bat-sounds/XC1185052 - Allard’s ground cricket - Allonemobius allardi.wav	428	48	05c6cfab617c0f9f
-no-bat-sounds/XC1186683 - Italian Bow-winged Grasshopper - Chorthippus rubratibialis.wav	502	112	a5c3c76cde6d7d2e
-no-bat-sounds/XC1186685 - Carlotta's Saddle Bush-cricket - Ephippiger carlottae.wav	212	9	14fedcc18c06352a
-no-bat-sounds/XC1186686 - Mediterranean Bush-cricket - Rhacocleis germanica.wav	98	59	91a924f47a1b72c7
-no-bat-sounds/XC1186909 - Woodland Grasshopper - Omocestus rufipes.wav	173	27	3c4ce57d6f0948c8
-no-bat-sounds/XC818790 - Western Red Deer - Cervus elaphus.wav	256	160	1965b3d47d599f9b
-no-bat-sounds/XC871079 - Ring-necked Duck - Aythya collaris.wav	2	0	aec9116e8b4b574f
-no-bat-sounds/XC871135 - Northern Shoveler - Spatula clypeata.wav	34	0	22ffe42c9afde2c7
+no-bat-sounds/XC1161410 -  - Anonconotus occidentalis.wav	1370	758	913de6b799ec7ec5
+no-bat-sounds/XC1161498 -  - Neocallicrania selligera.wav	51	5	3977f25ce04ec094
+no-bat-sounds/XC1161967 - Spanish Saddle Bush-cricket - Ephippigerida areolaria.wav	29	0	b6c49a396f98ff45
+no-bat-sounds/XC1165208 -  - Platycleis albopunctata.wav	118	105	f7b020f323545cd6
+no-bat-sounds/XC1172573 - Identity unknown - Mystery mystery.wav	12	10	27b2deb57b6c74b9
+no-bat-sounds/XC1172576 - Identity unknown - Mystery mystery.wav	28	25	4c83bc0fb17b5936
+no-bat-sounds/XC1172578 - Identity unknown - Mystery mystery.wav	13	10	df2cfbd04035d606
+no-bat-sounds/XC1172609 -  - Stenobothrus lineatus.wav	187	13	dc297f25b2eb2b38
+no-bat-sounds/XC1174013 - Common Straw Grasshopper - Euchorthippus declivus.wav	487	163	be3cffa5aa771f3c
+no-bat-sounds/XC1174016 -  - Pseudochorthippus parallelus.wav	550	274	85ea3dca08a022f2
+no-bat-sounds/XC1174017 -  - Nemobius sylvestris.wav	252	95	a4dbe660c96770dc
+no-bat-sounds/XC1174132 -  - Stauroderus scalaris.wav	425	100	b352bf6a2afe638c
+no-bat-sounds/XC1175161 - Large Conehead - Ruspolia nitidula.wav	227	65	33e4570835751fa1
+no-bat-sounds/XC1180464 -  - Hexacentrus japonicus.wav	172	25	efba71c8a42a3b3c
+no-bat-sounds/XC1180736 - Eurasian Red Squirrel - Sciurus vulgaris.wav	55	0	bf2405bbeb5a85e8
+no-bat-sounds/XC1182094 - Upland Green Bush-cricket - Tettigonia cantans.wav	938	152	48471c6e112eafb4
+no-bat-sounds/XC1182099 -  - Pholidoptera aptera.wav	118	21	1adf945d7a2cf574
+no-bat-sounds/XC1182137 - Bog Bush-cricket - Metrioptera brachyptera.wav	940	374	51d280112c7560ce
+no-bat-sounds/XC1182847 - Greater White-toothed Shrew - Crocidura russula.wav	146	84	19abece0df448f30
+no-bat-sounds/XC1183922 - African Meadow Katydid - Conocephalus conocephalus.wav	13	0	dcc85d938ee5f080
+no-bat-sounds/XC1184660 - Two-spotted Cricket - Gryllus bimaculatus.wav	347	0	4bfe3f1109f677ef
+no-bat-sounds/XC1184661 -  - Eumodicogryllus bordigalensis.wav	676	46	2c13c369ef98d4a5
+no-bat-sounds/XC1185052 - Allard’s ground cricket - Allonemobius allardi.wav	428	48	5f63e2d9f7cdd048
+no-bat-sounds/XC1186683 - Italian Bow-winged Grasshopper - Chorthippus rubratibialis.wav	502	112	0481141193a04ea0
+no-bat-sounds/XC1186685 - Carlotta's Saddle Bush-cricket - Ephippiger carlottae.wav	212	9	8ce491653388565d
+no-bat-sounds/XC1186686 - Mediterranean Bush-cricket - Rhacocleis germanica.wav	98	59	8df5fa115e05cd15
+no-bat-sounds/XC1186909 - Woodland Grasshopper - Omocestus rufipes.wav	173	27	83b820f94418cf5c
+no-bat-sounds/XC818790 - Western Red Deer - Cervus elaphus.wav	256	160	af656c05bdbdb62e
+no-bat-sounds/XC871079 - Ring-necked Duck - Aythya collaris.wav	2	0	4761214dd9711ed5
+no-bat-sounds/XC871135 - Northern Shoveler - Spatula clypeata.wav	34	0	796ddc2e870df3dd
 no-bat-sounds/XC872893 - Wood Duck - Aix sponsa.wav	0	0	cbf29ce484222325
-no-bat-sounds/XC872896 - Eurasian Wigeon - Mareca penelope.wav	93	3	ec07e018defff5a7
-no-bat-sounds/XC874757 - Blackish Meadow Katydid - Conocephalus semivittatus.wav	36	8	c61eabb181b7baee
-no-bat-sounds/XC874892 -  - Hexacentrus unicolor.wav	216	0	c69d79d1e5604609
-no-bat-sounds/XC875004 -  - Mecopoda elongata.wav	2380	655	88c9bbafb0cd57aa
-no-bat-sounds/XC911013 - Bicolored White-toothed Shrew - Crocidura leucodon.wav	20	0	086d6de9c813dc6f
-no-bat-sounds/XC911014 - Bicolored White-toothed Shrew - Crocidura leucodon.wav	36	7	65b522ea20ba7dc7
+no-bat-sounds/XC872896 - Eurasian Wigeon - Mareca penelope.wav	93	3	5d2ff33c80ff5be2
+no-bat-sounds/XC874757 - Blackish Meadow Katydid - Conocephalus semivittatus.wav	36	8	d9405ad215fe1bf6
+no-bat-sounds/XC874892 -  - Hexacentrus unicolor.wav	216	0	0b2f0ae13e7b2d31
+no-bat-sounds/XC875004 -  - Mecopoda elongata.wav	2380	655	3ca92c65df45ecb2
+no-bat-sounds/XC911013 - Bicolored White-toothed Shrew - Crocidura leucodon.wav	20	0	b19d1e7e44729d72
+no-bat-sounds/XC911014 - Bicolored White-toothed Shrew - Crocidura leucodon.wav	36	7	979860c417e827d3
 no-bat-sounds/XC913518 - Pyburn's Pancake Frog - Otophryne pyburni.wav	0	0	cbf29ce484222325
-no-bat-sounds/XC913744 - Variegated Tinamou - Crypturellus variegatus.wav	4	0	716e1e8fba0c5b8c
-no-bat-sounds/XC931013 - Common Shrew - Sorex araneus.wav	2	0	7391e308b9535a7b
-no-bat-sounds/XC943538 -  - Ameerega hahneli.wav	3	0	6c313258687d6526
-no-bat-sounds/XC943542 -  - Atelopus flavescens.wav	19	3	e08801aad1219d08
-no-bat-sounds/XC945231 -  - Psyrana tigrina.wav	2	0	311e9a524de43cf5
-no-bat-sounds/XC962752 - Greater White-toothed Shrew - Crocidura russula.wav	88	24	eb6f9a4aef312042
-no-bat-sounds/XC962754 - Common Shrew - Sorex araneus.wav	21	2	c1499a2f33dbe17c
-no-bat-sounds/XC976836 - Common Shrew - Sorex araneus.wav	32	11	f7bef21f4ed27ce8
-no-bat-sounds/XC997031 - Identity unknown - Mystery mystery.wav	104	94	07b6c426e1d8786a
+no-bat-sounds/XC913744 - Variegated Tinamou - Crypturellus variegatus.wav	4	0	6bd54e7006de0d06
+no-bat-sounds/XC931013 - Common Shrew - Sorex araneus.wav	2	0	aa222227bea7489b
+no-bat-sounds/XC943538 -  - Ameerega hahneli.wav	3	0	5cc2ad9aa8bc7c9f
+no-bat-sounds/XC943542 -  - Atelopus flavescens.wav	19	3	4f474a43496a437d
+no-bat-sounds/XC945231 -  - Psyrana tigrina.wav	2	0	b99c0150595791f4
+no-bat-sounds/XC962752 - Greater White-toothed Shrew - Crocidura russula.wav	88	24	5dbd9749d324575b
+no-bat-sounds/XC962754 - Common Shrew - Sorex araneus.wav	21	2	b8977966be1f6c08
+no-bat-sounds/XC976836 - Common Shrew - Sorex araneus.wav	32	11	a5abd049afac62b8
+no-bat-sounds/XC997031 - Identity unknown - Mystery mystery.wav	104	94	d2b65d41a12e822c
