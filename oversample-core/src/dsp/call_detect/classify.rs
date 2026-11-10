@@ -65,7 +65,8 @@
 //!
 //! So a detection is a constant-frequency call when its contour (see
 //! [`scan`](super::scan)) stays within [`CF_STEADY_HZ`] for at least
-//! [`CF_MIN_MS`], and its peak is at least [`CF_MIN_HZ`]. Such a call skips the
+//! [`CF_MIN_MS`], its peak is at least [`CF_MIN_HZ`], and its frequency range
+//! is at most [`CF_MAX_WIDTH_HZ`] wide. Such a call skips the
 //! audible check, and two of them within 0.6 s with peaks within
 //! [`CF_FREQ_HZ`] make a train at any level. Below 40 kHz the rules stay as
 //! they were: steady sounds there include a rat's 22 kHz call and the upper
@@ -80,6 +81,15 @@
 //! (XC1060750) and a greater dog-like bat (XC821954) that the audible check
 //! had taken: 2 steady 10 ms calls near 60 kHz and one of 16 ms at 44 kHz,
 //! and a call that then had a partner.
+//!
+//! Checked for false bat calls on 69 Xeno-canto recordings of other animals,
+//! at 192 to 500 kHz (25 minutes: 29 of crickets, katydids and grasshoppers,
+//! 19 of shrews and other land mammals, 6 of them unidentified, 15 of birds,
+//! 6 of frogs). Without the width limit ([`CF_MAX_WIDTH_HZ`]), a Spanish
+//! saddle bush-cricket's chirps (XC1161967) became 3 bat calls; with it,
+//! these rules add none. The checks above, without these rules, already take
+//! 3,703 detections in the 63 identified recordings for bat calls, 3,169 of
+//! them from the insects.
 //!
 //! Tuned on Portacapture X8 recordings at 192 kHz (call detector with
 //! 512-point columns every 128 samples): of 97 calls from a bat at 45 to
@@ -157,15 +167,23 @@ pub const CF_STEADY_HZ: f32 = 750.0;
 pub const CF_MIN_MS: f64 = 10.0;
 /// A constant-frequency call peaks at or above this.
 pub const CF_MIN_HZ: f32 = 40_000.0;
+/// Widest frequency range a constant-frequency call can have, from its
+/// lowest to its highest frequency: the constant part and the sweeps at its
+/// ends. The widest in the demo recordings of horseshoe, leaf-nosed and
+/// mustached bats is 26 kHz; a saddle bush-cricket's chirp, steady at 50 kHz
+/// but reaching from 35 to 191 kHz, is far wider.
+pub const CF_MAX_WIDTH_HZ: f32 = 30_000.0;
 /// Most two constant-frequency calls' peaks may differ and still make a
 /// train without either being 18 dB above the floor.
 pub const CF_FREQ_HZ: f32 = 1_500.0;
 
-/// Whether a detection that held one frequency for `steady_s` seconds and
-/// peaked at `peak_hz` is a constant-frequency call: steady for at least
-/// [`CF_MIN_MS`], at [`CF_MIN_HZ`] or above.
-pub fn is_constant_frequency(steady_s: f64, peak_hz: f32) -> bool {
-    steady_s * 1000.0 >= CF_MIN_MS && peak_hz >= CF_MIN_HZ
+/// Whether a detection that held one frequency for `steady_s` seconds is a
+/// constant-frequency call: steady for at least [`CF_MIN_MS`], peaking at
+/// [`CF_MIN_HZ`] or above, and no wider than [`CF_MAX_WIDTH_HZ`].
+pub fn is_constant_frequency(event: &CallEvent, steady_s: f64) -> bool {
+    steady_s * 1000.0 >= CF_MIN_MS
+        && event.peak_freq_hz >= CF_MIN_HZ
+        && event.max_freq_hz - event.min_freq_hz <= CF_MAX_WIDTH_HZ
 }
 
 /// A range whose bottom is within this of the band's bottom reaches it.
@@ -374,7 +392,7 @@ impl CallClassifier {
     /// calls with peaks within [`CF_FREQ_HZ`] make a train at any level. See
     /// the module documentation. Detections must come in time order.
     pub fn classify_with_steady(&mut self, event: &CallEvent, steady_s: f64) -> Verdict {
-        let constant = is_constant_frequency(steady_s, event.peak_freq_hz);
+        let constant = is_constant_frequency(event, steady_s);
         self.last_was_tone = self.is_tone(event);
         let kind = if self.last_was_tone {
             CallKind::Tone
@@ -868,6 +886,13 @@ mod tests {
             c.classify_with_steady(&sweep, 0.004).kind,
             CallKind::Audible
         );
+        // Steady at 50 kHz, but reaching from 35 to 191 kHz, like a
+        // bush-cricket's chirp: still an audible sound.
+        let mut chirp = piece(1.6, 80.0, 50.0, 60.0);
+        chirp.min_freq_hz = 35_000.0;
+        chirp.max_freq_hz = 191_000.0;
+        chirp.audible_db_above_floor = 45.0;
+        assert_eq!(c.classify_with_steady(&chirp, 0.02).kind, CallKind::Audible);
         // Steady, but at a bird's harmonic's frequency.
         let mut bird = piece(1.4, 30.0, 25.0, 30.0);
         bird.audible_db_above_floor = 12.0;

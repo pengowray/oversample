@@ -38,7 +38,7 @@ pub use spectrum::{Column, SpectrumAnalyzer};
 pub use trains::{group_trains, CallTrain, TrainParams};
 
 /// Names this detector and its settings in annotations it makes
-/// (`auto=calls-2`). Change the number when a change to the detector or its
+/// (`auto=calls-3`). Change the number when a change to the detector or its
 /// defaults changes which calls it finds, so annotations from each version
 /// can be told apart.
 ///
@@ -46,7 +46,9 @@ pub use trains::{group_trains, CallTrain, TrainParams};
 /// - `calls-2`: digital silence is skipped (see [`scan`]), constant-frequency
 ///   calls are recognised (see [`classify`]), and regular pulses have their
 ///   own kind.
-pub const DETECTOR_ID: &str = "calls-2";
+/// - `calls-3`: a constant-frequency call is at most 30 kHz wide, so a
+///   broadband insect chirp with a steady peak is not one.
+pub const DETECTOR_ID: &str = "calls-3";
 
 /// The part of [`DETECTOR_ID`] before the version number.
 pub const DETECTOR_NAME: &str = "calls";

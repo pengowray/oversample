@@ -321,7 +321,7 @@ mod tests {
         assert!(b
             .annotations
             .iter()
-            .all(|a| a.tags == ["call", "auto=calls-2"]));
+            .all(|a| a.tags == ["call".to_string(), format!("auto={DETECTOR_ID}")]));
         assert_eq!(label(&b.annotations[0]), "Call: 45.0 kHz");
 
         let all = build_call_annotations(&calls, &trains, AnnotateWhat::Calls, false, "t", ids());
@@ -335,7 +335,7 @@ mod tests {
         let b = build_call_annotations(&calls, &trains, AnnotateWhat::Trains, true, "t", ids());
         assert_eq!((b.calls, b.trains), (0, 2));
         let a = &b.annotations[0];
-        assert_eq!(a.tags, ["train", "auto=calls-2"]);
+        assert_eq!(a.tags, ["train".to_string(), format!("auto={DETECTOR_ID}")]);
         assert_eq!(label(a), "Train: 3 calls, median 45.0 kHz");
         let AnnotationKind::Region(r) = &a.kind else {
             panic!("not a region")
@@ -424,7 +424,10 @@ mod tests {
         other.id = AnnotationId::from("other-detector");
         other.tags = vec!["call".into(), "auto=birdnet-1".into()];
         set.push(other);
-        assert_eq!(detector_tags_in(&set), ["#auto=calls-1", "#auto=calls-2"]);
+        assert_eq!(
+            detector_tags_in(&set),
+            ["#auto=calls-1".to_string(), format!("#auto={DETECTOR_ID}")]
+        );
         assert_eq!(count_detector_annotations(&set), 7);
         assert_eq!(remove_detector_annotations(&mut set), 7);
         assert_eq!(set.len(), 1);

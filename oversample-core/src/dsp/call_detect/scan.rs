@@ -167,7 +167,7 @@ impl DetectedCall {
     /// A constant-frequency call, as horseshoe and leaf-nosed bats make; see
     /// [`is_constant_frequency`].
     pub fn is_constant_frequency(&self) -> bool {
-        is_constant_frequency(self.steady_s, self.event.peak_freq_hz)
+        is_constant_frequency(&self.event, self.steady_s)
     }
 }
 
