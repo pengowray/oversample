@@ -72,10 +72,6 @@ const NOTICE_KEY_REMOVED: &str = "API key removed.";
 const SEARCH_PLACEHOLDER: &str =
     "Species name in any language, or an XC query such as grp:bats cnt:Australia";
 
-/// Name search failed (server unreachable, or a server without `/xc/species`).
-const NAME_SEARCH_UNAVAILABLE: &str =
-    "Name search isn't available right now. Press Search to search Xeno-canto.";
-
 /// Wait after the last key press before searching names, so typing a word
 /// sends one request rather than one per letter.
 const NAME_SEARCH_DEBOUNCE_MS: i32 = 250;
@@ -120,7 +116,8 @@ extern "C" {
     fn language_name(code: &str) -> String;
 }
 
-/// The line under a found species saying which name matched, or `None` when
+/// The line under a found species giving the name that matched, such as
+/// "Zwergfledermaus (German)", or `None` when
 /// it matched the English or scientific name already shown in the row.
 /// `lang` turns a language code into its name.
 fn text_match_note(hit: &NamedSpecies, lang: impl Fn(&str) -> String) -> Option<String> {
@@ -138,7 +135,7 @@ fn text_match_note(hit: &NamedSpecies, lang: impl Fn(&str) -> String) -> Option<
         (_, Some(code)) => lang(code),
         _ => "common name".to_string(),
     };
-    Some(format!("Matched: {} ({kind})", m.name))
+    Some(format!("{} ({kind})", m.name))
 }
 
 /// Stops a species list that is still loading.
@@ -518,8 +515,10 @@ pub fn XcBrowser() -> impl IntoView {
     let results_gen = RwSignal::new(0u64);
     let search_input = RwSignal::new(String::new());
     // Species found by name for the text in the search box: (query, result).
-    // `None` while the box is empty, too short, or holds an XC query.
-    let name_results: RwSignal<Option<(String, Result<SpeciesSearch, ()>)>> = RwSignal::new(None);
+    // `None` while the box is empty, too short, or holds an XC query, and when
+    // the name search failed (a server without `/xc/species`, or offline):
+    // then the dialog works as it did before name search.
+    let name_results: RwSignal<Option<(String, SpeciesSearch)>> = RwSignal::new(None);
     // Bumped on each key press in the search box, so only the last one searches.
     let name_search_gen = RwSignal::new(0u64);
     let recordings_page = RwSignal::new(1u32);
@@ -905,11 +904,29 @@ pub fn XcBrowser() -> impl IntoView {
             if name_search_gen.try_get_untracked() != Some(my_gen) {
                 return;
             }
-            let result = xc_client::find_species(&query).await.map_err(|e| {
-                log::warn!("Species name search failed: {e:?}");
-            });
-            if name_search_gen.try_get_untracked() == Some(my_gen) {
-                name_results.try_set(Some((query, result)));
+            let result = xc_client::find_species(&query).await;
+            if name_search_gen.try_get_untracked() != Some(my_gen) {
+                return;
+            }
+            match result {
+                Ok(found) => {
+                    // Typing a new name in a recordings view goes back to the
+                    // species list, where the results are shown.
+                    if matches!(
+                        view.get_untracked(),
+                        BrowserView::SpeciesRecordings { .. } | BrowserView::SearchResults
+                    ) {
+                        results_gen.update(|g| *g += 1);
+                        loading.set(false);
+                        recordings.set(Vec::new());
+                        view.set(BrowserView::GroupBrowse);
+                    }
+                    name_results.try_set(Some((query, found)));
+                }
+                Err(e) => {
+                    log::warn!("Species name search failed: {e:?}");
+                    name_results.try_set(None);
+                }
             }
         });
     };
@@ -1242,7 +1259,12 @@ pub fn XcBrowser() -> impl IntoView {
 
                             // Group/country filters
                             {move || {
-                                if matches!(current_view, BrowserView::GroupBrowse) {
+                                // Group, Country and Refresh apply to the group's
+                                // species list, so they are hidden while name
+                                // results from all groups replace it.
+                                if matches!(current_view, BrowserView::GroupBrowse)
+                                    && name_results.with(Option::is_none)
+                                {
                                     Some(view! {
                                         <div class="xc-filters">
                                             <label>"Group: "</label>
@@ -1427,12 +1449,7 @@ pub fn XcBrowser() -> impl IntoView {
                 // box holds a name). Replaces the group's species list.
                 {move || {
                     if view.get() != BrowserView::GroupBrowse { return None; }
-                    let (query, result) = name_results.get()?;
-                    let Ok(found) = result else {
-                        return Some(view! {
-                            <div class="xc-result-summary">{NAME_SEARCH_UNAVAILABLE}</div>
-                        }.into_any());
-                    };
+                    let (query, found) = name_results.get()?;
                     let indexing = text_groups_indexing(&found.groups_indexing);
                     if found.species.is_empty() {
                         return Some(view! {
@@ -1697,9 +1714,9 @@ mod tests {
     fn match_note_names_what_matched_unless_it_is_shown() {
         let lang = |c: &str| if c == "de" { "German".to_string() } else { c.to_string() };
         let note = |h: NamedSpecies| text_match_note(&h, lang);
-        assert_eq!(note(hit("Zwergfledermaus", "common", Some("de"), "col")).as_deref(), Some("Matched: Zwergfledermaus (German)"));
-        assert_eq!(note(hit("Vespertilio pipistrellus", "synonym", None, "col")).as_deref(), Some("Matched: Vespertilio pipistrellus (synonym)"));
-        assert_eq!(note(hit("Pipistrel", "common", None, "iucn")).as_deref(), Some("Matched: Pipistrel (common name)"));
+        assert_eq!(note(hit("Zwergfledermaus", "common", Some("de"), "col")).as_deref(), Some("Zwergfledermaus (German)"));
+        assert_eq!(note(hit("Vespertilio pipistrellus", "synonym", None, "col")).as_deref(), Some("Vespertilio pipistrellus (synonym)"));
+        assert_eq!(note(hit("Pipistrel", "common", None, "iucn")).as_deref(), Some("Pipistrel (common name)"));
         assert_eq!(note(hit("common pipistrelle", "common", Some("en"), "iucn")), None);
         assert_eq!(note(hit("Pipistrellus pipistrellus", "scientific", None, "iucn")), None);
         assert_eq!(note(hit("Anything", "common", Some("en"), "xc")), None);
