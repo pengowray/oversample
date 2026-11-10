@@ -1164,10 +1164,13 @@ fn channel_list(channels: &[u32]) -> String {
 
 fn chime_heading(chime: &FoundChime) -> String {
     let what = match chime.remote().map(|remote| remote.known()) {
-        Some(Some(RemoteCommand::Start)) => CHIME_START,
-        Some(Some(RemoteCommand::Stop)) => CHIME_STOP,
-        Some(None) => CHIME_UNKNOWN,
-        None => CHIME_OTHER,
+        Some(Some(RemoteCommand::Start)) => CHIME_START.to_string(),
+        Some(Some(RemoteCommand::Stop)) => CHIME_STOP.to_string(),
+        Some(Some(RemoteCommand::SetClock)) => CHIME_SET_CLOCK.to_string(),
+        // Mode name first, so "1:1" doesn't sit next to the file position.
+        Some(Some(RemoteCommand::Listen(mode))) => format!("{CHIME_REMOTE_PREFIX}{} listening mode", mode.name()),
+        Some(None) => CHIME_UNKNOWN.to_string(),
+        None => CHIME_OTHER.to_string(),
     };
     format!("{what} at {}", file_position(chime.start_secs))
 }
@@ -1184,6 +1187,9 @@ fn chime_signal_text(chime: &FoundChime) -> String {
 const CHIME_TITLE: &str = "AudioMoth chimes";
 const CHIME_START: &str = "Phone remote: start";
 const CHIME_STOP: &str = "Phone remote: stop";
+const CHIME_SET_CLOCK: &str = "Phone remote: set clock";
+/// Followed by the X8 mode button's name ("HET", "1:1") and " listening mode".
+const CHIME_REMOTE_PREFIX: &str = "Phone remote: ";
 /// A command from a newer phone page than this version of Oversample reads.
 const CHIME_UNKNOWN: &str = "Phone remote: unknown command";
 const CHIME_OTHER: &str = "Chime";
