@@ -242,24 +242,29 @@ pub fn configure_audio_encoder(
     Ok(())
 }
 
-/// Create an `AudioData` object from f32 samples.
+/// Create an `AudioData` object from f32 samples, one slice per channel
+/// (all the same length), stored as `f32-planar`.
 pub fn create_audio_data(
-    samples: &[f32],
+    channels: &[&[f32]],
     sample_rate: u32,
     timestamp_us: i64,
 ) -> Result<JsValue, JsValue> {
-    let data = Float32Array::new_with_length(samples.len() as u32);
-    data.copy_from(samples);
+    let frames = channels.first().map_or(0, |c| c.len());
+    let data = Float32Array::new_with_length((frames * channels.len()) as u32);
+    for (i, ch) in channels.iter().enumerate() {
+        data.subarray((i * frames) as u32, ((i + 1) * frames) as u32)
+            .copy_from(&ch[..frames]);
+    }
 
     let opts = Object::new();
     Reflect::set(&opts, &"format".into(), &"f32-planar".into())?;
     Reflect::set(&opts, &"sampleRate".into(), &sample_rate.into())?;
-    Reflect::set(&opts, &"numberOfChannels".into(), &1u32.into())?;
     Reflect::set(
         &opts,
-        &"numberOfFrames".into(),
-        &(samples.len() as u32).into(),
+        &"numberOfChannels".into(),
+        &(channels.len() as u32).into(),
     )?;
+    Reflect::set(&opts, &"numberOfFrames".into(), &(frames as u32).into())?;
     Reflect::set(
         &opts,
         &"timestamp".into(),
@@ -318,13 +323,13 @@ pub fn muxer_video_codec(webcodecs_codec: &str) -> &'static str {
 /// `target` is the `ArrayBufferTarget`.
 /// `video_codec` should be a WebCodecs codec string (e.g. "avc1.42001f") — it will be
 /// mapped to the mp4-muxer short name (e.g. "avc") automatically.
-/// `audio` is optional: (muxer_codec, sample_rate) — use "aac" or "opus".
+/// `audio` is optional: (muxer_codec, sample_rate, channels) — use "aac" or "opus".
 pub fn create_muxer(
     target: &JsValue,
     video_codec: &str,
     video_width: u32,
     video_height: u32,
-    audio_codec: Option<(&str, u32)>, // (muxer_codec like "aac", sample_rate)
+    audio_codec: Option<(&str, u32, u32)>, // (muxer_codec like "aac", sample_rate, channels)
 ) -> Result<JsValue, JsValue> {
     let ns = Reflect::get(&js_sys::global(), &"Mp4Muxer".into())?;
     let ctor = Reflect::get(&ns, &"Muxer".into())?;
@@ -341,11 +346,11 @@ pub fn create_muxer(
     Reflect::set(&video, &"height".into(), &video_height.into())?;
     Reflect::set(&opts, &"video".into(), &video)?;
 
-    if let Some((ac, sr)) = audio_codec {
+    if let Some((ac, sr, channels)) = audio_codec {
         let audio = Object::new();
         Reflect::set(&audio, &"codec".into(), &ac.into())?;
         Reflect::set(&audio, &"sampleRate".into(), &sr.into())?;
-        Reflect::set(&audio, &"numberOfChannels".into(), &1u32.into())?;
+        Reflect::set(&audio, &"numberOfChannels".into(), &channels.into())?;
         Reflect::set(&opts, &"audio".into(), &audio)?;
     }
 

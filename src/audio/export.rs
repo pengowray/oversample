@@ -5,13 +5,13 @@ use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::annotations::{Annotation, AnnotationKind, Region};
-use crate::audio::microphone::encode_wav;
 use crate::audio::playback::apply_gain;
 use crate::audio::playback::snapshot_params;
 use crate::audio::source::{AudioSource, ChannelView};
 use crate::audio::streaming_playback::{
-    apply_dsp_mode, apply_filters, PlaybackParams, PV_MODE_BOOST_DB,
+    apply_dsp_mode, apply_filters, te_speed_ratio, PlaybackParams, PV_MODE_BOOST_DB,
 };
+use crate::audio::wav_encoder::encode_wav_interleaved;
 use crate::state::{AppState, PlaybackMode, Selection};
 
 // Chunk size + filter warmup are shared with streaming playback so the offline
@@ -46,9 +46,56 @@ pub(crate) fn build_export_params(
     snapshot_params(state, selection, sample_rate)
 }
 
-/// Process a time range through the DSP pipeline and return processed f32 samples.
+/// The channel views an export reads, matching what playback sends to the
+/// speakers: a 2+ channel source in the Stereo view gives `[L, R]`, anything
+/// else gives the single view that playback uses.
+pub(crate) fn export_channel_views(
+    source: &dyn AudioSource,
+    view: ChannelView,
+) -> Vec<ChannelView> {
+    if source.channel_count() >= 2 && view == ChannelView::Stereo {
+        vec![ChannelView::Channel(0), ChannelView::Channel(1)]
+    } else {
+        vec![view]
+    }
+}
+
+/// Process a time range through the DSP pipeline, once per channel view.
+/// Returns one sample buffer per view, each the same length.
 pub(crate) fn process_region(
     source: &dyn AudioSource,
+    views: &[ChannelView],
+    sample_rate: u32,
+    start_time: f64,
+    end_time: f64,
+    params: &PlaybackParams,
+) -> Vec<Vec<f32>> {
+    let mut channels: Vec<Vec<f32>> = views
+        .iter()
+        .map(|&view| process_region_view(source, view, sample_rate, start_time, end_time, params))
+        .collect();
+    let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
+    for ch in &mut channels {
+        ch.truncate(frames);
+    }
+    channels
+}
+
+/// Sample rate of the exported audio. Time expansion keeps every sample and
+/// changes the rate instead (slower for TE > 1, faster for negative TE).
+pub(crate) fn export_output_rate(sample_rate: u32, params: &PlaybackParams) -> u32 {
+    match params.mode {
+        PlaybackMode::TimeExpansion => {
+            (sample_rate as f64 * te_speed_ratio(params.te_factor)) as u32
+        }
+        _ => sample_rate,
+    }
+}
+
+/// Process one channel view of a time range through the DSP pipeline.
+fn process_region_view(
+    source: &dyn AudioSource,
+    view: ChannelView,
     sample_rate: u32,
     start_time: f64,
     end_time: f64,
@@ -86,11 +133,8 @@ pub(crate) fn process_region(
         };
         let trailing_len = trailing_end - chunk_end;
 
-        let chunk_with_warmup = source.read_region(
-            ChannelView::MonoMix,
-            warmup_start as u64,
-            trailing_end - warmup_start,
-        );
+        let chunk_with_warmup =
+            source.read_region(view, warmup_start as u64, trailing_end - warmup_start);
         let filtered = apply_filters(&chunk_with_warmup, sample_rate, params);
         let processed = apply_dsp_mode(&filtered, sample_rate, params);
 
@@ -209,42 +253,141 @@ pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Export a single region as a WAV file and trigger browser download.
+/// Process one region and encode it as a WAV file with GUANO metadata.
+/// Stereo when `views` has two entries (see [`export_channel_views`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn export_one_region(
     source: &dyn AudioSource,
+    views: &[ChannelView],
     sample_rate: u32,
     start_time: f64,
     end_time: f64,
     params: &PlaybackParams,
-    filename: &str,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
 ) -> Vec<u8> {
-    let samples = process_region(source, sample_rate, start_time, end_time, params);
+    let channels = process_region(source, views, sample_rate, start_time, end_time, params);
+    let frames = channels.first().map_or(0, Vec::len);
+    let output_rate = export_output_rate(sample_rate, params);
 
-    // Determine output sample rate — TimeExpansion slows playback by changing rate
-    let output_rate = match params.mode {
-        PlaybackMode::TimeExpansion => {
-            let te = params.te_factor;
-            (sample_rate as f64 / te) as u32
-        }
-        _ => sample_rate,
-    };
-
-    let mut wav_data = encode_wav(&samples, output_rate);
-
-    // Build GUANO metadata for the export
-    let guano = build_export_guano(
+    let mut wav_data = encode_wav_interleaved(
+        &interleave(&channels),
+        channels.len().max(1) as u16,
         output_rate,
-        &samples,
-        params,
-        filename,
-        source_filename,
-        source_guano,
     );
+
+    let guano = build_export_guano(output_rate, frames, params, source_filename, source_guano);
     crate::audio::guano::append_guano_chunk(&mut wav_data, &guano.to_text());
 
     wav_data
+}
+
+/// Interleave equal-length channel buffers into L R L R ... order.
+fn interleave(channels: &[Vec<f32>]) -> Vec<f32> {
+    match channels {
+        [] => Vec::new(),
+        [mono] => mono.clone(),
+        _ => {
+            let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
+            let mut out = Vec::with_capacity(frames * channels.len());
+            for i in 0..frames {
+                for ch in channels {
+                    out.push(ch[i]);
+                }
+            }
+            out
+        }
+    }
+}
+
+/// File name without its audio extension (`bat.WAV` → `bat`).
+pub(crate) fn export_base_name(name: &str) -> &str {
+    const AUDIO_EXTS: [&str; 7] = ["wav", "w4v", "flac", "ogg", "mp3", "m4a", "m4b"];
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if AUDIO_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)) => stem,
+        _ => name,
+    }
+}
+
+/// Filename tag for a factor: whole numbers without decimals, others to 2 places
+/// with trailing zeros dropped (`10` → `10`, `0.333` → `0.33`).
+fn factor_tag(f: f64) -> String {
+    if (f - f.round()).abs() < 1e-6 {
+        format!("{}", f.round() as i64)
+    } else {
+        let s = format!("{f:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Filename suffix naming the playback transform, so a time-expanded or
+/// frequency-shifted export can't be mistaken for the original recording.
+/// Empty when the audio is 1:1 (Normal mode, or a factor of 1).
+///
+/// `_TE10` (10x slower), `_TE0.1` (10x faster), `_PS10` / `_PSup10`,
+/// `_PV10`, `_HET45k`, `_HET20k-comb4`, `_ZC8`.
+pub(crate) fn transform_suffix(params: &PlaybackParams) -> String {
+    match params.mode {
+        PlaybackMode::Normal => String::new(),
+        PlaybackMode::TimeExpansion => {
+            let ratio = te_speed_ratio(params.te_factor);
+            if (ratio - 1.0).abs() < 1e-9 {
+                String::new()
+            } else {
+                format!("_TE{}", factor_tag(1.0 / ratio))
+            }
+        }
+        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
+            let (tag, factor) = if params.mode == PlaybackMode::PitchShift {
+                ("PS", params.ps_factor)
+            } else {
+                ("PV", params.pv_factor)
+            };
+            if factor.is_bypass() {
+                String::new()
+            } else {
+                let dir = if factor.is_up() { "up" } else { "" };
+                format!("_{tag}{dir}{}", factor_tag(factor.magnitude()))
+            }
+        }
+        PlaybackMode::Heterodyne => {
+            let has_sel =
+                params.has_selection && (params.sel_freq_low > 0.0 || params.sel_freq_high > 0.0);
+            let khz = |hz: f64| factor_tag((hz / 100.0).round() / 10.0);
+            if params.het_comb_count <= 1 {
+                let carrier = if has_sel {
+                    (params.sel_freq_low + params.sel_freq_high) / 2.0
+                } else {
+                    params.het_freq
+                };
+                format!("_HET{}k", khz(carrier))
+            } else {
+                let base = if has_sel {
+                    params.sel_freq_low
+                } else {
+                    params.het_freq
+                };
+                format!("_HET{}k-comb{}", khz(base), params.het_comb_count)
+            }
+        }
+        PlaybackMode::ZeroCrossing => format!("_ZC{}", params.zc_factor as u32),
+    }
+}
+
+/// Filename suffix for exporting one channel of a multi-channel file
+/// (`_L`, `_R`, `_ch3`, `_mono`, `_L-R`). Empty for stereo or mono sources.
+pub(crate) fn channel_suffix(source: &dyn AudioSource, views: &[ChannelView]) -> String {
+    if source.channel_count() < 2 || views.len() != 1 {
+        return String::new();
+    }
+    match views[0] {
+        ChannelView::Stereo => String::new(),
+        ChannelView::MonoMix => "_mono".to_string(),
+        ChannelView::Channel(0) => "_L".to_string(),
+        ChannelView::Channel(1) => "_R".to_string(),
+        ChannelView::Channel(n) => format!("_ch{}", n + 1),
+        ChannelView::Difference => "_L-R".to_string(),
+    }
 }
 
 /// Outcome of saving one exported file.
@@ -429,15 +572,14 @@ fn short_path(path: &str) -> String {
 /// For TE exports, Length is the "actual length" (WAV length / TE factor) per GUANO spec.
 fn build_export_guano(
     output_rate: u32,
-    samples: &[f32],
+    frames: usize,
     params: &PlaybackParams,
-    _filename: &str,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
 ) -> crate::audio::guano::GuanoMetadata {
     use crate::audio::guano::GuanoMetadata;
     let version = env!("CARGO_PKG_VERSION");
-    let wav_duration_secs = samples.len() as f64 / output_rate as f64;
+    let wav_duration_secs = frames as f64 / output_rate as f64;
 
     let mut g = GuanoMetadata::new();
 
@@ -460,10 +602,11 @@ fn build_export_guano(
     // which equals WAV length for direct recordings, but WAV length / TE
     // for time-expanded recordings.
     if let PlaybackMode::TimeExpansion = params.mode {
-        let te = params.te_factor;
+        // GUANO TE is the expansion factor: 10 for 10x slower, 0.1 for 10x faster.
+        let te = 1.0 / te_speed_ratio(params.te_factor);
         let actual_length = wav_duration_secs / te;
         g.add("Length", &format!("{:.6}", actual_length));
-        g.add("TE", &format!("{}", te));
+        g.add("TE", &factor_tag(te));
     } else {
         g.add("Length", &format!("{:.6}", wav_duration_secs));
     }
@@ -601,7 +744,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     };
 
     let estimated_duration_secs = source_duration.map(|d| match mode {
-        PlaybackMode::TimeExpansion => d * state.transform.te_factor().get(),
+        PlaybackMode::TimeExpansion => d / te_speed_ratio(state.transform.te_factor().get()),
         _ => d,
     });
 
@@ -668,95 +811,92 @@ pub fn export_selected(state: &AppState) {
     let use_region_focus = state.annotations.export_use_region_focus().get_untracked();
     let source_filename = &file.name;
     let source_guano = file.audio.metadata.guano.as_ref();
-
-    // Strip extension from source filename for export naming
-    let base_name = file
-        .name
-        .trim_end_matches(".wav")
-        .trim_end_matches(".WAV")
-        .trim_end_matches(".w4v")
-        .trim_end_matches(".W4V")
-        .trim_end_matches(".flac")
-        .trim_end_matches(".FLAC")
-        .trim_end_matches(".ogg")
-        .trim_end_matches(".OGG")
-        .trim_end_matches(".mp3")
-        .trim_end_matches(".MP3")
-        .trim_end_matches(".m4a")
-        .trim_end_matches(".M4A")
-        .trim_end_matches(".m4b")
-        .trim_end_matches(".M4B");
+    let views = export_channel_views(
+        source.as_ref(),
+        state.viewmode.channel_view().get_untracked(),
+    );
+    let base_name = export_base_name(&file.name);
+    let channel_tag = channel_suffix(source.as_ref(), &views);
 
     let regions = get_selected_regions(state);
+
+    // (filename part, region time range, params) for each file to write.
+    let mut jobs: Vec<(String, f64, f64, PlaybackParams)> = Vec::new();
+    if !regions.is_empty() {
+        for (i, (_annotation, region)) in regions.iter().enumerate() {
+            let params = build_export_params(state, Some(region), use_region_focus, sample_rate);
+            let suffix = match region.label.as_deref() {
+                Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
+                _ if regions.len() > 1 => format!("_{}", i + 1),
+                _ => String::new(),
+            };
+            jobs.push((suffix, region.time_start, region.time_end, params));
+        }
+    } else if let Some(sel) = state.interaction.selection().get_untracked() {
+        let params = build_export_params(state, None, false, sample_rate);
+        jobs.push((
+            "_selection".to_string(),
+            sel.time_start,
+            sel.time_end,
+            params,
+        ));
+    } else {
+        let params = build_export_params(state, None, false, sample_rate);
+        let duration = file.audio.source.duration_secs();
+        jobs.push(("_export".to_string(), 0.0, duration, params));
+    }
 
     // Collect every region's WAV bytes first, then hand them to save_exports
     // as a batch so multi-region exports are saved one-at-a-time (no stacked
     // dialogs / racing permission prompts) and reported with a single toast.
-    let mut exports: Vec<(String, Vec<u8>)> = Vec::new();
-
-    if !regions.is_empty() {
-        // Export selected annotation regions
-        for (i, (_annotation, region)) in regions.iter().enumerate() {
-            let params = build_export_params(state, Some(region), use_region_focus, sample_rate);
-            let label = region
-                .label
-                .as_deref()
-                .or(if regions.len() > 1 { None } else { Some("") });
-            let suffix = match label {
-                Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
-                _ => {
-                    if regions.len() > 1 {
-                        format!("_{}", i + 1)
-                    } else {
-                        String::new()
-                    }
-                }
-            };
-            let filename = format!("{base_name}{suffix}.wav");
+    let exports: Vec<(String, Vec<u8>)> = jobs
+        .into_iter()
+        .map(|(suffix, start, end, params)| {
+            let filename = format!(
+                "{base_name}{suffix}{}{channel_tag}.wav",
+                transform_suffix(&params)
+            );
             let wav_data = export_one_region(
                 source.as_ref(),
+                &views,
                 sample_rate,
-                region.time_start,
-                region.time_end,
+                start,
+                end,
                 &params,
-                &filename,
                 source_filename,
                 source_guano,
             );
-            exports.push((filename, wav_data));
-        }
-    } else if let Some(sel) = state.interaction.selection().get_untracked() {
-        // Export current selection
-        let params = build_export_params(state, None, false, sample_rate);
-        let filename = format!("{base_name}_selection.wav");
-        let wav_data = export_one_region(
-            source.as_ref(),
-            sample_rate,
-            sel.time_start,
-            sel.time_end,
-            &params,
-            &filename,
-            source_filename,
-            source_guano,
-        );
-        exports.push((filename, wav_data));
-    } else {
-        // No selection — export the whole file
-        let params = build_export_params(state, None, false, sample_rate);
-        let duration = file.audio.source.duration_secs();
-        let filename = format!("{base_name}_export.wav");
-        let wav_data = export_one_region(
-            source.as_ref(),
-            sample_rate,
-            0.0,
-            duration,
-            &params,
-            &filename,
-            source_filename,
-            source_guano,
-        );
-        exports.push((filename, wav_data));
-    }
+            (filename, wav_data)
+        })
+        .collect();
 
     save_exports(state, exports, false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_name_strips_audio_extensions_only() {
+        assert_eq!(export_base_name("bat.WAV"), "bat");
+        assert_eq!(export_base_name("a.b.flac"), "a.b");
+        assert_eq!(export_base_name("notes.txt"), "notes.txt");
+        assert_eq!(export_base_name("noext"), "noext");
+    }
+
+    #[test]
+    fn factor_tag_formats() {
+        assert_eq!(factor_tag(10.0), "10");
+        assert_eq!(factor_tag(0.1), "0.1");
+        assert_eq!(factor_tag(1.0 / 3.0), "0.33");
+        assert_eq!(factor_tag(45.0), "45");
+        assert_eq!(factor_tag(42.5), "42.5");
+    }
+
+    #[test]
+    fn interleave_stereo() {
+        let ch = vec![vec![1.0, 2.0], vec![-1.0, -2.0]];
+        assert_eq!(interleave(&ch), vec![1.0, -1.0, 2.0, -2.0]);
+    }
 }

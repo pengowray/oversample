@@ -11,11 +11,12 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 use crate::audio::export::{
-    build_export_params, get_selected_regions, process_region, save_export_bytes,
+    build_export_params, channel_suffix, export_base_name, export_channel_views,
+    export_output_rate, get_selected_regions, process_region, save_export_bytes, transform_suffix,
 };
 use crate::audio::webcodecs_bindings as wc;
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, SpectDisplaySettings, TileSource};
-use crate::state::{AppState, AudioCodecOption, PlaybackMode, VideoCodec, VideoViewMode};
+use crate::state::{AppState, AudioCodecOption, VideoCodec, VideoViewMode};
 use crate::web_util::{sleep_ms, yield_now};
 
 /// Frames per second for exported video.
@@ -266,26 +267,29 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         None
     };
     let audio_params = build_export_params(state, region, use_region_focus, sample_rate);
-    let audio_samples = process_region(
+    let views = export_channel_views(
         source.as_ref(),
+        state.viewmode.channel_view().get_untracked(),
+    );
+    let audio_channels = process_region(
+        source.as_ref(),
+        &views,
         sample_rate,
         start_time,
         end_time,
         &audio_params,
     );
-
-    // Output sample rate (TE mode changes it)
-    let output_rate = match audio_params.mode {
-        PlaybackMode::TimeExpansion => {
-            let te = audio_params.te_factor;
-            (sample_rate as f64 / te) as u32
-        }
-        _ => sample_rate,
-    };
+    let output_rate = export_output_rate(sample_rate, &audio_params);
 
     // Resample to a standard rate if needed (many players struggle with high rates)
-    let (final_samples, final_rate) = normalize_audio_rate(&audio_samples, output_rate);
-    let audio_duration = final_samples.len() as f64 / final_rate as f64;
+    let final_rate = normalized_rate(output_rate);
+    let final_channels: Vec<Vec<f32>> = audio_channels
+        .iter()
+        .map(|ch| resample_linear(ch, output_rate, final_rate))
+        .collect();
+    let n_channels = final_channels.len().max(1) as u32;
+    let final_frames = final_channels.first().map_or(0, Vec::len);
+    let audio_duration = final_frames as f64 / final_rate as f64;
 
     // ── Create offscreen canvas ──────────────────────────────────────────────
     let document = web_sys::window().unwrap().document().unwrap();
@@ -315,7 +319,8 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
                 ));
             }
             log::info!("Video export: checking AAC support at {}Hz...", final_rate);
-            if !wc::is_audio_config_supported(wc::AAC_WEBCODECS_CODEC, final_rate, 1).await {
+            if !wc::is_audio_config_supported(wc::AAC_WEBCODECS_CODEC, final_rate, n_channels).await
+            {
                 return Err(JsValue::from_str(&format!(
                     "AAC audio not supported at {}Hz in this browser",
                     final_rate
@@ -330,7 +335,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
                 ));
             }
             log::info!("Video export: checking Opus support at {}Hz...", final_rate);
-            if !wc::is_audio_config_supported(wc::OPUS_WEBCODECS_CODEC, final_rate, 1).await {
+            if !wc::is_audio_config_supported(wc::OPUS_WEBCODECS_CODEC, final_rate, n_channels)
+                .await
+            {
                 return Err(JsValue::from_str(&format!(
                     "Opus audio not supported at {}Hz in this browser",
                     final_rate
@@ -349,10 +356,17 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
                 "Video export: auto-detecting audio codec at {}Hz...",
                 final_rate
             );
-            if wc::is_audio_config_supported(wc::AAC_WEBCODECS_CODEC, final_rate, 1).await {
+            if wc::is_audio_config_supported(wc::AAC_WEBCODECS_CODEC, final_rate, n_channels).await
+            {
                 log::info!("Video export: using AAC");
                 Some((wc::AAC_WEBCODECS_CODEC, wc::AAC_MUXER_CODEC))
-            } else if wc::is_audio_config_supported(wc::OPUS_WEBCODECS_CODEC, final_rate, 1).await {
+            } else if wc::is_audio_config_supported(
+                wc::OPUS_WEBCODECS_CODEC,
+                final_rate,
+                n_channels,
+            )
+            .await
+            {
                 log::info!("Video export: AAC not supported, using Opus");
                 Some((wc::OPUS_WEBCODECS_CODEC, wc::OPUS_MUXER_CODEC))
             } else {
@@ -373,7 +387,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         codec_str,
         vid_w,
         vid_h,
-        resolved_audio.map(|(_, muxer_codec)| (muxer_codec, final_rate)),
+        resolved_audio.map(|(_, muxer_codec)| (muxer_codec, final_rate, n_channels)),
     )?;
 
     // Shared muxer reference for closures
@@ -422,7 +436,13 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
             log::error!("AudioEncoder error: {msg}");
         });
         let enc = wc::create_audio_encoder(&cb, &eb)?;
-        wc::configure_audio_encoder(&enc, webcodecs_codec, final_rate, 1, DEFAULT_AUDIO_BITRATE)?;
+        wc::configure_audio_encoder(
+            &enc,
+            webcodecs_codec,
+            final_rate,
+            n_channels,
+            DEFAULT_AUDIO_BITRATE,
+        )?;
         audio_encoder = Some(enc);
         _on_audio_chunk = Some(cb);
         _on_audio_error = Some(eb);
@@ -441,19 +461,17 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         yield_now().await;
 
         log::info!(
-            "Video export: encoding {} audio samples at {}Hz...",
-            final_samples.len(),
-            final_rate
+            "Video export: encoding {final_frames} audio frames x {n_channels} channels at {final_rate}Hz..."
         );
 
-        // Feed audio in chunks of 1024 samples (AAC frame size)
+        // Feed audio in chunks of 1024 frames (AAC frame size)
         let chunk_size = 1024usize;
         let mut offset = 0usize;
-        while offset < final_samples.len() {
-            let end = (offset + chunk_size).min(final_samples.len());
-            let chunk = &final_samples[offset..end];
+        while offset < final_frames {
+            let end = (offset + chunk_size).min(final_frames);
+            let chunk: Vec<&[f32]> = final_channels.iter().map(|ch| &ch[offset..end]).collect();
             let timestamp_us = (offset as f64 / final_rate as f64 * 1_000_000.0) as i64;
-            let audio_data = wc::create_audio_data(chunk, final_rate, timestamp_us)?;
+            let audio_data = wc::create_audio_data(&chunk, final_rate, timestamp_us)?;
 
             let encode_fn = js_sys::Reflect::get(enc, &"encode".into())?;
             let encode_fn: js_sys::Function = encode_fn.dyn_into()?;
@@ -638,25 +656,12 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let mp4_bytes = wc::muxer_finalize(&muxer, &target)?;
     log::info!("Video export: MP4 size = {} bytes", mp4_bytes.len());
 
-    // Build filename
-    let file = state.current_file().unwrap();
-    let base_name = file
-        .name
-        .trim_end_matches(".wav")
-        .trim_end_matches(".WAV")
-        .trim_end_matches(".w4v")
-        .trim_end_matches(".W4V")
-        .trim_end_matches(".flac")
-        .trim_end_matches(".FLAC")
-        .trim_end_matches(".ogg")
-        .trim_end_matches(".OGG")
-        .trim_end_matches(".mp3")
-        .trim_end_matches(".MP3")
-        .trim_end_matches(".m4a")
-        .trim_end_matches(".M4A")
-        .trim_end_matches(".m4b")
-        .trim_end_matches(".M4B");
-    let filename = format!("{base_name}.mp4");
+    let filename = format!(
+        "{}{}{}.mp4",
+        export_base_name(&file.name),
+        transform_suffix(&audio_params),
+        channel_suffix(source.as_ref(), &views),
+    );
 
     save_export_bytes(state, mp4_bytes, filename, true);
     Ok(())
@@ -737,15 +742,17 @@ fn render_frame(
     );
 }
 
-/// Resample audio to a standard rate if the output rate is above 48 kHz
-/// (high sample rates often cause playback issues in video players).
-fn normalize_audio_rate(samples: &[f32], rate: u32) -> (Vec<f32>, u32) {
-    if rate <= 48000 {
-        return (samples.to_vec(), rate);
-    }
+/// Audio rate for the video: rates above 48 kHz drop to 48 kHz (high sample
+/// rates often cause playback issues in video players).
+fn normalized_rate(rate: u32) -> u32 {
+    rate.min(48_000)
+}
 
-    // Simple linear interpolation downsampling to 48 kHz
-    let target_rate = 48000u32;
+/// Linear-interpolation resample of one channel from `rate` to `target_rate`.
+fn resample_linear(samples: &[f32], rate: u32, target_rate: u32) -> Vec<f32> {
+    if rate == target_rate {
+        return samples.to_vec();
+    }
     let ratio = rate as f64 / target_rate as f64;
     let new_len = (samples.len() as f64 / ratio).ceil() as usize;
     let mut out = Vec::with_capacity(new_len);
@@ -759,5 +766,5 @@ fn normalize_audio_rate(samples: &[f32], rate: u32) -> (Vec<f32>, u32) {
         out.push(s0 + frac * (s1 - s0));
     }
 
-    (out, target_rate)
+    out
 }

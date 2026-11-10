@@ -388,3 +388,105 @@ test.describe("recording", () => {
     expect(wav.frames).toBeGreaterThan(48_000);
   });
 });
+
+test.describe("export", () => {
+  /** Reads the channel count and sample rate from a WAV's fmt chunk, plus its data. */
+  function wavInfo(buf: Buffer) {
+    expect(buf.toString("latin1", 0, 4)).toBe("RIFF");
+    let channels = 0;
+    let rate = 0;
+    let dataStart = -1;
+    let dataSize = 0;
+    let pos = 12;
+    while (pos + 8 <= buf.length) {
+      const id = buf.toString("latin1", pos, pos + 4);
+      const size = buf.readUInt32LE(pos + 4);
+      if (id === "fmt ") {
+        channels = buf.readUInt16LE(pos + 10);
+        rate = buf.readUInt32LE(pos + 12);
+      } else if (id === "data") {
+        dataStart = pos + 8;
+        dataSize = size;
+      }
+      pos += 8 + size + (size % 2);
+    }
+    const frames = dataSize / (2 * channels);
+    const left = new Float32Array(frames);
+    const right = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      left[i] = buf.readInt16LE(dataStart + i * 2 * channels) / 32768;
+      right[i] = channels > 1 ? buf.readInt16LE(dataStart + i * 2 * channels + 2) / 32768 : left[i];
+    }
+    return { channels, rate, frames, left, right };
+  }
+
+  async function exportFile(page: Page, format: "WAV" | "MP4") {
+    const showInfo = page.locator('button[title="Show info panel"]').first();
+    if (await showInfo.count()) await showInfo.click();
+    await page.locator(".sidebar-tab-dropdown").first().click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).first().click();
+    const header = page.locator(".export-section-header").first();
+    if (!(await page.locator(".export-section-body.open").count())) await header.click();
+    await page.locator(".export-radio", { hasText: format }).locator("input").check();
+    const downloadStarted = page.waitForEvent("download", { timeout: 60_000 });
+    await page.locator(".export-section-body button", { hasText: /^Export .* to \./ }).first().click();
+    const download = await downloadStarted;
+    return { name: download.suggestedFilename(), buf: fs.readFileSync(await download.path()) };
+  }
+
+  test("WAV export of a stereo file keeps left and right, and names the TE factor", async ({
+    page,
+  }) => {
+    await openApp(page);
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(fileFixture);
+    await expect(page.locator(".file-item, .file-row").first()).toBeVisible({ timeout: 30_000 });
+    await selectMode(page, "TE");
+
+    const { name, buf } = await exportFile(page, "WAV");
+    console.log("exported:", name);
+    expect(name).toMatch(/_TE\d+(\.\d+)?\.wav$/);
+    const wav = wavInfo(buf);
+    expect(wav.channels).toBe(2);
+    const te = Number(name.match(/_TE(\d+)/)![1]);
+    expect(wav.rate).toBe(192_000 / te);
+    const size = 4096;
+    const rms = (d: Float32Array) => Math.sqrt(d.reduce((sum, v) => sum + v * v, 0) / d.length);
+    const blocks: Block[] = [];
+    for (let i = 0; i + size <= wav.frames; i += size) {
+      blocks.push({
+        channels: 2,
+        left: rms(wav.left.subarray(i, i + size)),
+        right: rms(wav.right.subarray(i, i + size)),
+      });
+    }
+    const s = separation(blocks);
+    expect(s.leftOnly).toBeGreaterThan(0);
+    expect(s.rightOnly).toBeGreaterThan(0);
+  });
+
+  test("WAV export in 1:1 has no transform suffix", async ({ page }) => {
+    await openApp(page);
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(fileFixture);
+    await expect(page.locator(".file-item, .file-row").first()).toBeVisible({ timeout: 30_000 });
+    await selectMode(page, "1:1");
+    const { name, buf } = await exportFile(page, "WAV");
+    expect(name).toBe("stereo-alternating_export.wav");
+    expect(wavInfo(buf).channels).toBe(2);
+  });
+
+  test("MP4 export of a stereo file has 2 audio channels and names the TE factor", async ({
+    page,
+  }) => {
+    await openApp(page);
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(fileFixture);
+    await expect(page.locator(".file-item, .file-row").first()).toBeVisible({ timeout: 30_000 });
+    await selectMode(page, "TE");
+    const { name, buf } = await exportFile(page, "MP4");
+    console.log("exported:", name);
+    expect(name).toMatch(/^stereo-alternating_TE\d+\.mp4$/);
+    // AudioSampleEntry ('mp4a' or 'Opus'): channelcount is 24 bytes after the box start.
+    const entry = [buf.indexOf("mp4a"), buf.indexOf("Opus")].filter((i) => i >= 4)[0];
+    expect(entry).toBeGreaterThan(0);
+    expect(buf.readUInt16BE(entry - 4 + 24)).toBe(2);
+  });
+});
