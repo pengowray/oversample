@@ -669,7 +669,7 @@ fn build_export_guano(
 /// Information about what will be exported, used for button text.
 pub struct ExportInfo {
     pub count: usize,
-    pub source_label: &'static str, // "selection" or "region" or "regions"
+    pub source_label: &'static str, // "selection", "region", "regions" or "whole file"
     pub estimated_duration_secs: Option<f64>,
 }
 
@@ -721,7 +721,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
             .get()
             .and_then(|idx| files.get(idx))
             .map(|f| f.audio.duration_secs);
-        (1, "file", file_dur)
+        (1, "whole file", file_dur)
     } else {
         return None;
     };

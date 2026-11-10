@@ -147,7 +147,7 @@ pub fn ExportPanel() -> impl IntoView {
                                         }
                                     >
                                         <option value="static" selected=move || state.export.video_view_mode().get() == VideoViewMode::StaticPlayhead>
-                                            "Static + playhead"
+                                            "Fixed"
                                         </option>
                                         <option value="scroll" selected=move || state.export.video_view_mode().get() == VideoViewMode::ScrollingView>
                                             "Scrolling"

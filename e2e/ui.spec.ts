@@ -94,6 +94,20 @@ test.describe("selection overflow menu", () => {
     await expect(page.locator(".canvas-overflow-menu")).toHaveCount(0);
   });
 
+  test("with nothing selected, the Export tab exports the whole file", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/stereo-alternating.wav");
+    await expect(page.locator(".main-view .chart-stage > canvas")).toBeVisible({ timeout: 30_000 });
+    await page.locator('button[title="Show info panel"]').first().click();
+    await page.locator(".sidebar-tab-dropdown").first().click();
+    await page.locator(".sidebar-tab-option", { hasText: /^Export$/ }).first().click();
+    await expect(page.locator(".export-panel button", { hasText: "Export whole file (.wav)" })).toBeVisible();
+  });
+
   test("shows which channel the sound reached first, and by how much", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
