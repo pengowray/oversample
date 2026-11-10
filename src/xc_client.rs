@@ -194,6 +194,70 @@ pub struct CountryCount {
     pub species: u32,
 }
 
+/// A species the Oversample server found by name (`/xc/species`).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct NamedSpecies {
+    /// XC group, such as "bats" or "land mammals".
+    pub group: String,
+    #[serde(rename = "gen")]
+    pub genus: String,
+    pub sp: String,
+    /// XC's English name.
+    pub en: String,
+    pub recording_count: u32,
+    /// The name that matched the query.
+    #[serde(rename = "match")]
+    pub matched: NameMatch,
+}
+
+/// The name a species was found by.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct NameMatch {
+    pub name: String,
+    /// "scientific", "synonym" or "common".
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Language code of a common name ("de"), when known.
+    pub language: Option<String>,
+    /// "xc" for XC's own names, else where the name comes from.
+    pub source: String,
+}
+
+/// Species found by name, best match first.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct SpeciesSearch {
+    pub species: Vec<NamedSpecies>,
+    /// Groups the server is still indexing for the first time.
+    #[serde(default)]
+    pub groups_indexing: Vec<String>,
+}
+
+/// True for text written in XC's query syntax (`grp:bats cnt:Australia`),
+/// which goes to Xeno-canto's own search rather than the name search.
+pub fn is_xc_query(text: &str) -> bool {
+    text.contains(':')
+}
+
+/// Species whose scientific name, synonym or common name in any language
+/// matches `query`, from the Oversample server. Works with any source: the
+/// server answers from its own index and never contacts Xeno-canto.
+pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
+    let url = format!(
+        "{}/xc/species?q={}",
+        proxy_base(),
+        String::from(js_sys::encode_uri_component(query))
+    );
+    // Not throttled: it runs as the user types, and the server rate-limits it.
+    match server_get(&url, false).await? {
+        ServerReply::Ready(body) => serde_json::from_str(&body)
+            .map_err(|e| XcError::Other(format!("unexpected species search reply: {e}"))),
+        ServerReply::Indexing { .. } => Ok(SpeciesSearch {
+            species: Vec::new(),
+            groups_indexing: Vec::new(),
+        }),
+    }
+}
+
 /// A reply from one of the server's index endpoints.
 #[derive(Debug, PartialEq)]
 enum ServerReply {
@@ -353,7 +417,7 @@ pub async fn species_recordings(
                 page,
                 PER_PAGE,
             );
-            match server_get(&url).await {
+            match server_get(&url, true).await {
                 Ok(ServerReply::Ready(body)) => parse_search_body(&body),
                 Ok(ServerReply::Indexing { .. }) => web_search(src, &query, page, PER_PAGE).await,
                 Err(e) if index_unavailable(&e) => {
@@ -472,7 +536,7 @@ pub fn taxonomy_age_secs(taxonomy: &XcGroupTaxonomy) -> Option<f64> {
 /// indexing the group; the caller then shows its built-in country list.
 pub async fn group_countries(group: &str) -> Option<Vec<CountryCount>> {
     let url = server_countries_url(&proxy_base(), group);
-    match server_get(&url).await {
+    match server_get(&url, true).await {
         Ok(ServerReply::Ready(body)) => match parse_countries(&body) {
             Ok(list) => Some(list),
             Err(e) => {
@@ -613,7 +677,7 @@ async fn server_taxonomy(
 ) -> Result<Option<XcGroupTaxonomy>, XcError> {
     let url = server_taxonomy_url(&proxy_base(), group, country);
     let Some(body) = poll_until_ready(
-        || server_get(&url),
+        || server_get(&url, true),
         |secs| crate::web_util::sleep_ms((secs * 1000) as i32),
         wait,
         progress,
@@ -636,10 +700,14 @@ async fn server_taxonomy(
 /// The request is cancelled after [`SERVER_TIMEOUT_MS`] (counted after the
 /// throttle wait) and reported as [`XcError::Network`], so with the user's
 /// own key a slow server does not hold up the local build for long.
-async fn server_get(url: &str) -> Result<ServerReply, XcError> {
+///
+/// `throttled` waits for the shared request slot first, as XC requests do.
+async fn server_get(url: &str, throttled: bool) -> Result<ServerReply, XcError> {
     use wasm_bindgen::closure::Closure;
 
-    throttle().await;
+    if throttled {
+        throttle().await;
+    }
     let window = web_sys::window().ok_or_else(|| XcError::Other("no window".into()))?;
     let controller =
         web_sys::AbortController::new().map_err(|_| XcError::Other("no AbortController".into()))?;

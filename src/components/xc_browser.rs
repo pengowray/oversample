@@ -15,7 +15,9 @@
 
 use crate::state::AppState;
 use crate::state::store_fields::*;
-use crate::xc_client::{self, CountryCount, ServerIndexing, TaxonomyProgress, XcError, XcSource};
+use crate::xc_client::{
+    self, CountryCount, NamedSpecies, ServerIndexing, SpeciesSearch, TaxonomyProgress, XcError, XcSource,
+};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_ipc::xc::{XcGroupTaxonomy, XcRecording, XcSearchResult, XcSpecies};
@@ -67,7 +69,77 @@ const CONFIRM_REMOVE_DESKTOP: &str = "Remove your Xeno-canto API key from this c
      xc-cli command uses the same key and will stop working too.";
 const NOTICE_KEY_REMOVED: &str = "API key removed.";
 
-const SEARCH_PLACEHOLDER: &str = "Search (e.g. Myotis daubentonii, or grp:bats cnt:Australia)";
+const SEARCH_PLACEHOLDER: &str =
+    "Species name in any language, or an XC query such as grp:bats cnt:Australia";
+
+/// Name search failed (server unreachable, or a server without `/xc/species`).
+const NAME_SEARCH_UNAVAILABLE: &str =
+    "Name search isn't available right now. Press Search to search Xeno-canto.";
+
+/// Wait after the last key press before searching names, so typing a word
+/// sends one request rather than one per letter.
+const NAME_SEARCH_DEBOUNCE_MS: i32 = 250;
+
+/// Heading over the species a name search found. The server sends at most 50.
+fn text_name_results(count: usize, query: &str) -> String {
+    match count {
+        1 => format!("1 species matches \u{201C}{query}\u{201D}"),
+        50.. => format!("Best {count} matches for \u{201C}{query}\u{201D}"),
+        n => format!("{n} species match \u{201C}{query}\u{201D}"),
+    }
+}
+
+fn text_no_name_results(query: &str) -> String {
+    format!(
+        "No species match \u{201C}{query}\u{201D}. Press Search to look for recordings on \
+         Xeno-canto."
+    )
+}
+
+/// "Birds are still being indexed, so some may be missing."
+fn text_groups_indexing(groups: &[String]) -> Option<String> {
+    let names: Vec<String> = groups.iter().map(|g| group_title(g, None)).collect();
+    match names.as_slice() {
+        [] => None,
+        [one] => Some(format!("{one} are still being indexed, so some may be missing.")),
+        [rest @ .., last] => Some(format!(
+            "{} and {} are still being indexed, so some may be missing.",
+            rest.join(", "),
+            last.to_lowercase()
+        )),
+    }
+}
+
+#[wasm_bindgen(inline_js = "export function language_name(code) {
+    try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; }
+    catch (e) { return code; }
+}")]
+extern "C" {
+    /// English name of a language code ("de" gives "German"); the code itself
+    /// if the browser doesn't know it.
+    fn language_name(code: &str) -> String;
+}
+
+/// The line under a found species saying which name matched, or `None` when
+/// it matched the English or scientific name already shown in the row.
+/// `lang` turns a language code into its name.
+fn text_match_note(hit: &NamedSpecies, lang: impl Fn(&str) -> String) -> Option<String> {
+    let m = &hit.matched;
+    let shown = |name: &str| {
+        name.eq_ignore_ascii_case(&hit.en)
+            || name.eq_ignore_ascii_case(&format!("{} {}", hit.genus, hit.sp))
+    };
+    if m.source == "xc" || shown(&m.name) {
+        return None;
+    }
+    let kind = match (m.kind.as_str(), m.language.as_deref()) {
+        ("synonym", _) => "synonym".to_string(),
+        ("scientific", _) => "scientific name".to_string(),
+        (_, Some(code)) => lang(code),
+        _ => "common name".to_string(),
+    };
+    Some(format!("Matched: {} ({kind})", m.name))
+}
 
 /// Stops a species list that is still loading.
 const BTN_STOP: &str = "Stop";
@@ -445,6 +517,11 @@ pub fn XcBrowser() -> impl IntoView {
     // Bumped for each recordings request, so an older response is dropped.
     let results_gen = RwSignal::new(0u64);
     let search_input = RwSignal::new(String::new());
+    // Species found by name for the text in the search box: (query, result).
+    // `None` while the box is empty, too short, or holds an XC query.
+    let name_results: RwSignal<Option<(String, Result<SpeciesSearch, ()>)>> = RwSignal::new(None);
+    // Bumped on each key press in the search box, so only the last one searches.
+    let name_search_gen = RwSignal::new(0u64);
     let recordings_page = RwSignal::new(1u32);
     let recordings_total_pages = RwSignal::new(1u32);
     let downloading: RwSignal<Option<u64>> = RwSignal::new(None);
@@ -750,12 +827,15 @@ pub fn XcBrowser() -> impl IntoView {
             loading.try_set(false);
         };
 
-    let load_species_recordings = move |genus: String, species: String, en: String| {
+    // Show a species' recordings, limited to `country` if given.
+    let load_species_recordings = move |group: String,
+                                        country: Option<String>,
+                                        genus: String,
+                                        species: String,
+                                        en: String| {
         let Some(src) = source.get_untracked() else {
             return;
         };
-        let group = species_list_group.get_untracked();
-        let country = species_list_country.get_untracked();
         view.set(BrowserView::SpeciesRecordings {
             group: group.clone(),
             country: country.clone(),
@@ -797,10 +877,41 @@ pub fn XcBrowser() -> impl IntoView {
         });
     };
 
-    let on_search_keydown = move |ev: web_sys::KeyboardEvent| {
-        if ev.key() == "Enter" {
-            on_search(ev.unchecked_into());
+    let on_search_keydown = move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
+        "Enter" => on_search(ev.unchecked_into()),
+        "Escape" if !search_input.get_untracked().is_empty() => {
+            // Clear the box rather than close the dialog.
+            ev.stop_propagation();
+            search_input.set(String::new());
+            name_search_gen.update(|g| *g += 1);
+            name_results.set(None);
         }
+        _ => {}
+    };
+
+    // Search species names as the user types. Plain text only: an XC query
+    // (with ":") waits for Search, as before.
+    let on_search_input = move |text: String| {
+        search_input.set(text.clone());
+        let my_gen = name_search_gen.get_untracked() + 1;
+        name_search_gen.set(my_gen);
+        let query = text.trim().to_string();
+        if query.chars().count() < 2 || xc_client::is_xc_query(&query) {
+            name_results.set(None);
+            return;
+        }
+        spawn_local(async move {
+            crate::web_util::sleep_ms(NAME_SEARCH_DEBOUNCE_MS).await;
+            if name_search_gen.try_get_untracked() != Some(my_gen) {
+                return;
+            }
+            let result = xc_client::find_species(&query).await.map_err(|e| {
+                log::warn!("Species name search failed: {e:?}");
+            });
+            if name_search_gen.try_get_untracked() == Some(my_gen) {
+                name_results.try_set(Some((query, result)));
+            }
+        });
     };
 
     let on_country_keydown = move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
@@ -1123,7 +1234,7 @@ pub fn XcBrowser() -> impl IntoView {
                                     class="xc-input xc-search-input"
                                     placeholder=SEARCH_PLACEHOLDER
                                     prop:value=move || search_input.get()
-                                    on:input=move |ev| search_input.set(event_target_value(&ev))
+                                    on:input=move |ev| on_search_input(event_target_value(&ev))
                                     on:keydown=on_search_keydown
                                 />
                                 <button class="xc-btn" on:click=on_search>"Search"</button>
@@ -1312,9 +1423,65 @@ pub fn XcBrowser() -> impl IntoView {
                     <div class="xc-loading">"Loading..."</div>
                 })}
 
+                // Species found by name (group browse view, while the search
+                // box holds a name). Replaces the group's species list.
+                {move || {
+                    if view.get() != BrowserView::GroupBrowse { return None; }
+                    let (query, result) = name_results.get()?;
+                    let Ok(found) = result else {
+                        return Some(view! {
+                            <div class="xc-result-summary">{NAME_SEARCH_UNAVAILABLE}</div>
+                        }.into_any());
+                    };
+                    let indexing = text_groups_indexing(&found.groups_indexing);
+                    if found.species.is_empty() {
+                        return Some(view! {
+                            <div class="xc-result-summary">{text_no_name_results(&query)}</div>
+                            {indexing.map(|t| view! { <div class="xc-result-summary">{t}</div> })}
+                        }.into_any());
+                    }
+                    Some(view! {
+                        <div class="xc-result-summary">{text_name_results(found.species.len(), &query)}</div>
+                        {indexing.map(|t| view! { <div class="xc-result-summary">{t}</div> })}
+                        <div class="xc-species-list">
+                            <div class="xc-list-header xc-named">
+                                <span class="xc-col-name">"Species"</span>
+                                <span class="xc-col-sci">"Scientific name"</span>
+                                <span class="xc-col-group">"Group"</span>
+                                <span class="xc-col-count">"Recs"</span>
+                            </div>
+                            {found.species.into_iter().map(|hit| {
+                                let note = text_match_note(&hit, language_name);
+                                let sci = format!("{} {}", hit.genus, hit.sp);
+                                let NamedSpecies { group, genus, sp, en, recording_count, .. } = hit;
+                                let (group_shown, en_shown) = (group.clone(), en.clone());
+                                view! {
+                                    <button
+                                        class="xc-species-row xc-named"
+                                        on:click=move |_| {
+                                            load_species_recordings(
+                                                group.clone(), None, genus.clone(), sp.clone(), en.clone(),
+                                            );
+                                        }
+                                    >
+                                        <span class="xc-col-name">
+                                            {en_shown}
+                                            {note.map(|n| view! { <span class="xc-match-note">{n}</span> })}
+                                        </span>
+                                        <span class="xc-col-sci">{sci}</span>
+                                        <span class="xc-col-group">{group_shown}</span>
+                                        <span class="xc-col-count">{with_commas(recording_count)}</span>
+                                    </button>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </div>
+                    }.into_any())
+                }}
+
                 // Species list (group browse view)
                 {move || {
                     if view.get() != BrowserView::GroupBrowse { return None; }
+                    if name_results.with(Option::is_some) { return None; }
                     let list = species_list.get();
                     if list.is_empty() && !taxonomy_loading.get() { return None; }
 
@@ -1336,7 +1503,13 @@ pub fn XcBrowser() -> impl IntoView {
                                     <button
                                         class="xc-species-row"
                                         on:click=move |_| {
-                                            load_sp(genus.clone(), species.clone(), en.clone());
+                                            load_sp(
+                                                species_list_group.get_untracked(),
+                                                species_list_country.get_untracked(),
+                                                genus.clone(),
+                                                species.clone(),
+                                                en.clone(),
+                                            );
                                         }
                                     >
                                         <span class="xc-col-name">{sp.en}</span>
@@ -1503,6 +1676,47 @@ pub fn XcBrowser() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hit(name: &str, kind: &str, language: Option<&str>, source: &str) -> NamedSpecies {
+        NamedSpecies {
+            group: "bats".into(),
+            genus: "Pipistrellus".into(),
+            sp: "pipistrellus".into(),
+            en: "Common Pipistrelle".into(),
+            recording_count: 3,
+            matched: xc_client::NameMatch {
+                name: name.into(),
+                kind: kind.into(),
+                language: language.map(Into::into),
+                source: source.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn match_note_names_what_matched_unless_it_is_shown() {
+        let lang = |c: &str| if c == "de" { "German".to_string() } else { c.to_string() };
+        let note = |h: NamedSpecies| text_match_note(&h, lang);
+        assert_eq!(note(hit("Zwergfledermaus", "common", Some("de"), "col")).as_deref(), Some("Matched: Zwergfledermaus (German)"));
+        assert_eq!(note(hit("Vespertilio pipistrellus", "synonym", None, "col")).as_deref(), Some("Matched: Vespertilio pipistrellus (synonym)"));
+        assert_eq!(note(hit("Pipistrel", "common", None, "iucn")).as_deref(), Some("Matched: Pipistrel (common name)"));
+        assert_eq!(note(hit("common pipistrelle", "common", Some("en"), "iucn")), None);
+        assert_eq!(note(hit("Pipistrellus pipistrellus", "scientific", None, "iucn")), None);
+        assert_eq!(note(hit("Anything", "common", Some("en"), "xc")), None);
+    }
+
+    #[test]
+    fn name_search_headings() {
+        assert_eq!(text_name_results(1, "noctule"), "1 species matches \u{201C}noctule\u{201D}");
+        assert_eq!(text_name_results(5, "noctule"), "5 species match \u{201C}noctule\u{201D}");
+        assert_eq!(text_name_results(50, "ba"), "Best 50 matches for \u{201C}ba\u{201D}");
+        assert_eq!(text_groups_indexing(&[]), None);
+        assert_eq!(text_groups_indexing(&["birds".into()]).as_deref(), Some("Birds are still being indexed, so some may be missing."));
+        assert_eq!(
+            text_groups_indexing(&["birds".into(), "frogs".into()]).as_deref(),
+            Some("Birds and frogs are still being indexed, so some may be missing.")
+        );
+    }
 
     fn progress(done: u32, total: u32, secs_left: f64) -> TaxonomyProgress {
         TaxonomyProgress::Local(xc_client::BuildProgress {

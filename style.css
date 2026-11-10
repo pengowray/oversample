@@ -6199,6 +6199,35 @@ button.toolbar-overflow-btn {
     color: #888;
 }
 
+/* Species found by name: adds a Group column, since the results come from
+   every group, and a line under the name saying which name matched. */
+.xc-list-header.xc-named, .xc-species-row.xc-named {
+    grid-template-columns: 1fr 1fr 90px 60px;
+}
+
+/* #a0a0a0 rather than the list's #888: the note must stay readable (4.5:1)
+   on the highlighted row's #2a2a4a too. */
+.xc-col-group {
+    color: #a0a0a0;
+}
+
+.xc-match-note {
+    display: block;
+    color: #a0a0a0;
+    font-size: 11px;
+}
+
+/* On a phone the Group column squeezes the names into many lines; the
+   species and scientific names already say what kind of animal it is. */
+@media (max-width: 500px) {
+    .xc-list-header.xc-named, .xc-species-row.xc-named {
+        grid-template-columns: 1fr 1fr 44px;
+    }
+    .xc-named .xc-col-group {
+        display: none;
+    }
+}
+
 /* Recordings list */
 
 .xc-recordings-header {
