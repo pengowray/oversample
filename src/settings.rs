@@ -35,6 +35,10 @@ pub mod keys {
     /// "true" when the user chose to explore Xeno-Canto through the Oversample
     /// proxy (no key of their own), even if a key is saved.
     pub const XC_USE_PROXY: &str = "oversample_xc_use_proxy";
+    /// The language Explore Xeno-canto shows species names in: "en" for
+    /// English only, or a language code such as "de". Unset means the
+    /// browser's languages.
+    pub const XC_NAMES_LANGUAGE: &str = "oversample_xc_names_language";
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";

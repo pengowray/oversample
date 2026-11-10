@@ -208,6 +208,9 @@ pub struct NamedSpecies {
     /// The common name in the user's language, when asked for and known.
     #[serde(default)]
     pub local: Option<String>,
+    /// The language of `local`.
+    #[serde(default)]
+    pub local_lang: Option<String>,
     /// The name that matched the query.
     #[serde(rename = "match")]
     pub matched: NameMatch,
@@ -250,9 +253,10 @@ pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
         proxy_base(),
         String::from(js_sys::encode_uri_component(query))
     );
-    if let Some(lang) = user_language() {
+    let langs = names_language().codes();
+    if !langs.is_empty() {
         url.push_str("&lang=");
-        url.push_str(&lang);
+        url.push_str(&langs.join(","));
     }
     // Not throttled: it runs as the user types, and the server rate-limits it.
     match server_get(&url, false).await? {
@@ -265,52 +269,186 @@ pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
     }
 }
 
-/// The language to show common names in: the primary subtag of the browser's
-/// first preferred language ("de" for "de-AT"), or `None` for English, since
-/// Xeno-canto's names are English.
-pub fn user_language() -> Option<String> {
-    let nav = web_sys::window()?.navigator();
-    let tag = nav
+/// Which language Explore Xeno-canto shows species names in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NamesLanguage {
+    /// The browser's preferred languages, in order, up to the first English
+    /// one. The default.
+    Browser,
+    /// Xeno-canto's English names only.
+    English,
+    /// One language, such as "de", then English.
+    One(String),
+}
+
+impl NamesLanguage {
+    /// From the stored setting: absent or "browser", "en", or a language code.
+    pub fn from_stored(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            None | Some("") | Some("browser") => Self::Browser,
+            Some(v) => match language_code(v) {
+                Some(code) => Self::One(code),
+                None if v.eq_ignore_ascii_case("en") => Self::English,
+                None => Self::Browser,
+            },
+        }
+    }
+
+    /// The value stored, and used as the `<select>` value.
+    pub fn stored(&self) -> &str {
+        match self {
+            Self::Browser => "browser",
+            Self::English => "en",
+            Self::One(code) => code,
+        }
+    }
+
+    /// The language codes to ask the server for, in order. Empty for English.
+    pub fn codes(&self) -> Vec<String> {
+        match self {
+            Self::Browser => browser_languages(),
+            Self::English => Vec::new(),
+            Self::One(code) => vec![code.clone()],
+        }
+    }
+}
+
+pub fn names_language() -> NamesLanguage {
+    NamesLanguage::from_stored(
+        crate::settings::get_raw(crate::settings::keys::XC_NAMES_LANGUAGE).as_deref(),
+    )
+}
+
+pub fn set_names_language(choice: &NamesLanguage) {
+    match choice {
+        NamesLanguage::Browser => {
+            crate::settings::remove_raw(crate::settings::keys::XC_NAMES_LANGUAGE)
+        }
+        other => crate::settings::set_raw(crate::settings::keys::XC_NAMES_LANGUAGE, other.stored()),
+    }
+}
+
+/// Most languages sent to the server; it uses no more.
+const MAX_LANGUAGES: usize = 5;
+
+/// The browser's preferred languages as language codes, in order, without
+/// repeats, up to the first English one ("nl-BE, nl, de, en-US, fr" gives
+/// "nl", "de"). Empty when English comes first.
+pub fn browser_languages() -> Vec<String> {
+    let Some(nav) = web_sys::window().map(|w| w.navigator()) else {
+        return Vec::new();
+    };
+    let mut tags: Vec<String> = nav
         .languages()
-        .get(0)
-        .as_string()
-        .or_else(|| nav.language())?;
-    language_code(&tag)
+        .iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    if tags.is_empty() {
+        tags.extend(nav.language());
+    }
+    languages_from_tags(&tags)
+}
+
+fn languages_from_tags(tags: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in tags {
+        let primary = tag.trim().split(['-', '_']).next().unwrap_or("");
+        if primary.eq_ignore_ascii_case("en") {
+            break;
+        }
+        if let Some(code) = language_code(tag) {
+            if !out.contains(&code) {
+                out.push(code);
+            }
+        }
+    }
+    out.truncate(MAX_LANGUAGES);
+    out
 }
 
 /// "de-AT" gives "de"; English, or a tag that doesn't start with a 2 or 3
 /// letter code, gives `None`.
 fn language_code(tag: &str) -> Option<String> {
     let primary = tag.trim().split(['-', '_']).next()?.to_ascii_lowercase();
-    let valid = (2..=3).contains(&primary.len()) && primary.chars().all(|c| c.is_ascii_alphabetic());
+    let valid =
+        (2..=3).contains(&primary.len()) && primary.chars().all(|c| c.is_ascii_alphabetic());
     (valid && primary != "en").then_some(primary)
+}
+
+/// A species' common name in a language other than English.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalName {
+    pub name: String,
+    /// Its language code, such as "de".
+    pub lang: String,
 }
 
 #[derive(serde::Deserialize)]
 struct CommonNamesReply {
     names: std::collections::HashMap<String, String>,
+    /// The language of each name not in the first language asked for.
+    #[serde(default)]
+    languages: std::collections::HashMap<String, String>,
 }
 
-/// The common names in `lang` of the species of `group` (keyed "Genus
-/// species", as Xeno-canto writes them), from the Oversample server. Works
-/// with any source. `None` if the server can't give them (unreachable, an
-/// older server, or still indexing the group).
-pub async fn common_names(group: &str, lang: &str) -> Option<std::collections::HashMap<String, String>> {
+/// The common names of the species of `group` (keyed "Genus species", as
+/// Xeno-canto writes them), each in the first of `langs` that has one, from
+/// the Oversample server. Works with any source. `None` if the server can't
+/// give them (unreachable, an older server, or still indexing the group).
+pub async fn common_names(
+    group: &str,
+    langs: &[String],
+) -> Option<std::collections::HashMap<String, LocalName>> {
+    let first = langs.first()?;
     let url = format!(
-        "{}/xc/common-names/{}?lang={lang}",
+        "{}/xc/common-names/{}?lang={}",
         proxy_base(),
-        String::from(js_sys::encode_uri_component(group))
+        String::from(js_sys::encode_uri_component(group)),
+        langs.join(",")
     );
     match server_get(&url, false).await {
-        Ok(ServerReply::Ready(body)) => serde_json::from_str::<CommonNamesReply>(&body)
-            .map(|r| r.names)
-            .map_err(|e| log::warn!("Common names from server not read: {e}"))
-            .ok(),
+        Ok(ServerReply::Ready(body)) => match serde_json::from_str::<CommonNamesReply>(&body) {
+            Ok(mut r) => Some(
+                r.names
+                    .into_iter()
+                    .map(|(sp, name)| {
+                        let lang = r.languages.remove(&sp).unwrap_or_else(|| first.clone());
+                        (sp, LocalName { name, lang })
+                    })
+                    .collect(),
+            ),
+            Err(e) => {
+                log::warn!("Common names from server not read: {e}");
+                None
+            }
+        },
         Ok(ServerReply::Indexing { .. }) => None,
         Err(e) => {
             log::warn!("Common names from server failed: {e:?}");
             None
         }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct NameLanguagesReply {
+    languages: Vec<NameLanguageEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct NameLanguageEntry {
+    code: String,
+}
+
+/// The language codes the server has common names in. `None` if the server
+/// can't say (unreachable, or an older server).
+pub async fn name_language_list() -> Option<Vec<String>> {
+    let url = format!("{}/xc/name-languages", proxy_base());
+    match server_get(&url, false).await {
+        Ok(ServerReply::Ready(body)) => serde_json::from_str::<NameLanguagesReply>(&body)
+            .ok()
+            .map(|r| r.languages.into_iter().map(|l| l.code).collect()),
+        _ => None,
     }
 }
 
@@ -1253,6 +1391,43 @@ mod tests {
         assert_eq!(language_code("en-GB"), None);
         assert_eq!(language_code("EN"), None);
         assert_eq!(language_code("*"), None);
+    }
+
+    #[test]
+    fn browser_language_lists() {
+        let tags = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            languages_from_tags(&tags(&["nl-BE", "nl", "de", "en-US", "fr"])),
+            ["nl", "de"]
+        );
+        assert_eq!(
+            languages_from_tags(&tags(&["en-GB", "de"])),
+            Vec::<String>::new()
+        );
+        assert_eq!(languages_from_tags(&tags(&["*", "ja"])), ["ja"]);
+    }
+
+    #[test]
+    fn names_language_setting() {
+        assert_eq!(NamesLanguage::from_stored(None), NamesLanguage::Browser);
+        assert_eq!(
+            NamesLanguage::from_stored(Some("browser")),
+            NamesLanguage::Browser
+        );
+        assert_eq!(
+            NamesLanguage::from_stored(Some("en")),
+            NamesLanguage::English
+        );
+        assert_eq!(
+            NamesLanguage::from_stored(Some("de")),
+            NamesLanguage::One("de".into())
+        );
+        assert_eq!(
+            NamesLanguage::from_stored(Some("!!")),
+            NamesLanguage::Browser
+        );
+        assert_eq!(NamesLanguage::One("de".into()).stored(), "de");
+        assert_eq!(NamesLanguage::English.codes(), Vec::<String>::new());
     }
 
     #[test]

@@ -13,10 +13,11 @@
 //! The `#XC<id>` URL-hash deep-link (app.rs) is separate: it searches the
 //! curated demo index, not the live API.
 
-use crate::state::AppState;
 use crate::state::store_fields::*;
+use crate::state::AppState;
 use crate::xc_client::{
-    self, CountryCount, NamedSpecies, ServerIndexing, SpeciesSearch, TaxonomyProgress, XcError, XcSource,
+    self, CountryCount, LocalName, NamedSpecies, NamesLanguage, ServerIndexing, SpeciesSearch,
+    TaxonomyProgress, XcError, XcSource,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -97,7 +98,9 @@ fn text_groups_indexing(groups: &[String]) -> Option<String> {
     let names: Vec<String> = groups.iter().map(|g| group_title(g, None)).collect();
     match names.as_slice() {
         [] => None,
-        [one] => Some(format!("{one} are still being indexed, so some may be missing.")),
+        [one] => Some(format!(
+            "{one} are still being indexed, so some may be missing."
+        )),
         [rest @ .., last] => Some(format!(
             "{} and {} are still being indexed, so some may be missing.",
             rest.join(", "),
@@ -116,13 +119,80 @@ extern "C" {
     fn language_name(code: &str) -> String;
 }
 
+#[wasm_bindgen(inline_js = "export function language_autonym(code) {
+    try { return new Intl.DisplayNames([code], { type: 'language' }).of(code) || code; }
+    catch (e) { return code; }
+}")]
+extern "C" {
+    /// A language's name in that language ("de" gives "Deutsch").
+    fn language_autonym(code: &str) -> String;
+}
+
+/// A language in the names menu: "German (Deutsch)", or just "German" when
+/// both names are the same, the browser doesn't know the language's own name,
+/// or the English name already has brackets ("Serbian (Latin)").
+fn text_language_option(english: &str, own: &str) -> String {
+    if own.is_empty() || own.eq_ignore_ascii_case(english) || english.contains('(') {
+        english.to_string()
+    } else {
+        format!("{english} ({own})")
+    }
+}
+
+/// The names menu's first option, naming the browser's languages:
+/// "Browser languages (Dutch, German)", or "Browser language (English)".
+fn text_browser_option(names: &[String]) -> String {
+    match names {
+        [] => "Browser language (English)".to_string(),
+        [one] => format!("Browser language ({one})"),
+        many => format!("Browser languages ({})", many.join(", ")),
+    }
+}
+
+/// "German", "Dutch or German", "Dutch, German or French".
+fn text_or_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
+}
+
+/// The species list's count line: "1,350 species, 1,102 with German names".
+/// `local` is `None` when the names couldn't be loaded. `langs` are language
+/// names; empty for English.
+fn text_species_count(count: usize, local: Option<usize>, langs: &[String]) -> String {
+    let species = format!("{} species", with_commas(count as u32));
+    if langs.is_empty() {
+        return species;
+    }
+    let langs = text_or_list(langs);
+    match local {
+        None => format!("{species}. Couldn't load {langs} names."),
+        Some(0) => format!("{species}, none with {langs} names"),
+        Some(n) => format!("{species}, {} with {langs} names", with_commas(n as u32)),
+    }
+}
+
 /// The name to show for a species: its common name in the user's language from
 /// `local` (keyed "Genus species"), else Xeno-canto's English name.
-fn display_name(sp: &XcSpecies, local: &std::collections::HashMap<String, String>) -> String {
+fn display_name(sp: &XcSpecies, local: &std::collections::HashMap<String, LocalName>) -> String {
     local
         .get(&format!("{} {}", sp.genus, sp.sp))
-        .cloned()
+        .map(|l| l.name.clone())
         .unwrap_or_else(|| sp.en.clone())
+}
+
+/// The common names of a group's species in `langs`, for the species list.
+/// An empty map for English; `None` if the server can't give them.
+async fn local_names_for(
+    group: &str,
+    langs: &[String],
+) -> Option<std::collections::HashMap<String, LocalName>> {
+    if langs.is_empty() {
+        return Some(Default::default());
+    }
+    xc_client::common_names(group, langs).await
 }
 
 /// The line under a found species giving the name that matched, such as
@@ -134,7 +204,10 @@ fn text_match_note(hit: &NamedSpecies, lang: impl Fn(&str) -> String) -> Option<
     let shown = |name: &str| {
         name.eq_ignore_ascii_case(&hit.en)
             || name.eq_ignore_ascii_case(&format!("{} {}", hit.genus, hit.sp))
-            || hit.local.as_deref().is_some_and(|l| l.to_lowercase() == name.to_lowercase())
+            || hit
+                .local
+                .as_deref()
+                .is_some_and(|l| l.to_lowercase() == name.to_lowercase())
     };
     if m.source == "xc" || shown(&m.name) {
         return None;
@@ -493,9 +566,16 @@ pub fn XcBrowser() -> impl IntoView {
     let country_input = RwSignal::new(String::new());
     let species_list: RwSignal<Vec<XcSpecies>> = RwSignal::new(Vec::new());
     // Common names in the user's language for `species_list`, keyed "Genus
-    // species". Empty for English, or when the server can't give them.
-    let species_local_names: RwSignal<std::collections::HashMap<String, String>> =
-        RwSignal::new(std::collections::HashMap::new());
+    // species". Empty for English; `None` when the server can't give them.
+    let species_local_names: RwSignal<Option<std::collections::HashMap<String, LocalName>>> =
+        RwSignal::new(Some(Default::default()));
+    // The language species names are shown in (the names menu).
+    let names_language = RwSignal::new(xc_client::names_language());
+    // Languages the server has names in, for the names menu. Empty until
+    // loaded, or if the server can't say.
+    let language_choices: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
+    // Counts reloads of the species list's names after a language change.
+    let local_names_gen = RwSignal::new(0u64);
     // The group of the species list on screen. Set together with
     // `species_list`; `taxonomy_target` names the group being loaded, which
     // can differ during a Refresh.
@@ -715,7 +795,11 @@ pub fn XcBrowser() -> impl IntoView {
         let group = selected_group.get_untracked();
         let country = {
             let c = country_input.get_untracked().trim().to_string();
-            if c.is_empty() { None } else { Some(c) }
+            if c.is_empty() {
+                None
+            } else {
+                Some(c)
+            }
         };
         let my_gen = taxonomy_gen.get_untracked() + 1;
         taxonomy_gen.set(my_gen);
@@ -764,17 +848,14 @@ pub fn XcBrowser() -> impl IntoView {
             if let Some(mut t) = taxonomy {
                 // Names in the user's language, fetched before the list is shown
                 // so it is not sorted again under the reader.
-                let local = match xc_client::user_language() {
-                    Some(lang) => xc_client::common_names(&list_group, &lang).await.unwrap_or_default(),
-                    None => Default::default(),
-                };
+                let langs = names_language.get_untracked().codes();
+                let local = local_names_for(&list_group, &langs).await;
                 if !is_current() {
                     return;
                 }
-                if !local.is_empty() {
-                    t.species.sort_by_cached_key(|s| {
-                        display_name(s, &local).to_lowercase()
-                    });
+                if let Some(local) = local.as_ref().filter(|l| !l.is_empty()) {
+                    t.species
+                        .sort_by_cached_key(|s| display_name(s, local).to_lowercase());
                 }
                 taxonomy_age.try_set(xc_client::taxonomy_age_secs(&t).map(text_age));
                 species_list_group.try_set(list_group);
@@ -958,6 +1039,104 @@ pub fn XcBrowser() -> impl IntoView {
                 }
             }
         });
+    };
+
+    // The languages the server has names in, for the names menu.
+    spawn_local(async move {
+        if let Some(codes) = xc_client::name_language_list().await {
+            language_choices.try_set(codes);
+        }
+    });
+
+    // A new choice in the names menu: saved, then the names on screen are
+    // loaded again in the new language.
+    let on_names_language = move |ev: web_sys::Event| {
+        let choice = NamesLanguage::from_stored(Some(&event_target_value(&ev)));
+        xc_client::set_names_language(&choice);
+        names_language.set(choice.clone());
+        if name_results.with_untracked(Option::is_some) {
+            on_search_input(search_input.get_untracked());
+        }
+        let list_group = species_list_group.get_untracked();
+        if list_group.is_empty() || species_list.with_untracked(Vec::is_empty) {
+            return;
+        }
+        let my_gen = local_names_gen.get_untracked() + 1;
+        local_names_gen.set(my_gen);
+        let list_gen = taxonomy_gen.get_untracked();
+        spawn_local(async move {
+            let local = local_names_for(&list_group, &choice.codes()).await;
+            if local_names_gen.try_get_untracked() != Some(my_gen)
+                || taxonomy_gen.try_get_untracked() != Some(list_gen)
+            {
+                return;
+            }
+            let mut list = species_list.get_untracked();
+            // Sorted by the names shown, as when the list was loaded; by
+            // English name (Xeno-canto's order) when no other names are shown.
+            match local.as_ref().filter(|l| !l.is_empty()) {
+                Some(l) => list.sort_by_cached_key(|s| display_name(s, l).to_lowercase()),
+                None => list.sort_by_cached_key(|s| s.en.to_lowercase()),
+            }
+            species_local_names.set(local);
+            species_list.set(list);
+        });
+    };
+
+    // The names menu, on the count line of both species lists.
+    let names_menu = move || {
+        let browser: Vec<String> = xc_client::browser_languages()
+            .iter()
+            .map(|c| language_name(c))
+            .collect();
+        let is = move |v: &'static str| move || names_language.get().stored() == v;
+        view! {
+            <label class="xc-names-menu">
+                "Names: "
+                <select class="xc-select" on:change=on_names_language>
+                    <option value="browser" selected=is("browser")>{text_browser_option(&browser)}</option>
+                    <option value="en" selected=is("en")>"English"</option>
+                    {move || {
+                        let mut codes = language_choices.get();
+                        if let NamesLanguage::One(c) = names_language.get() {
+                            if !codes.contains(&c) {
+                                codes.push(c);
+                            }
+                        }
+                        // Languages the browser can't name are left out (it
+                        // gives back a code, such as "arz", or "chm" for
+                        // "mhr"), and so is a
+                        // second code with the same name ("mhr" and "chm").
+                        // Codes come most names first, so the code kept has
+                        // more names.
+                        let mut options: Vec<(String, String)> = Vec::new();
+                        for c in codes {
+                            let english = language_name(&c);
+                            let unnamed = english.len() <= 3 && english.chars().all(|ch| ch.is_ascii_lowercase());
+                            if unnamed && names_language.get().stored() != c {
+                                continue;
+                            }
+                            let label = text_language_option(&english, &language_autonym(&c));
+                            if options.iter().all(|(l, _)| *l != label) {
+                                options.push((label, c));
+                            }
+                        }
+                        options.sort_by_cached_key(|(label, _)| label.to_lowercase());
+                        (!options.is_empty()).then(|| view! {
+                            <optgroup label="Other languages">
+                                {options.into_iter().map(|(label, code)| {
+                                    let selected = {
+                                        let code = code.clone();
+                                        move || names_language.get().stored() == code
+                                    };
+                                    view! { <option value=code selected=selected>{label}</option> }
+                                }).collect::<Vec<_>>()}
+                            </optgroup>
+                        })
+                    }}
+                </select>
+            </label>
+        }
     };
 
     let on_country_keydown = move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
@@ -1487,7 +1666,10 @@ pub fn XcBrowser() -> impl IntoView {
                         }.into_any());
                     }
                     Some(view! {
-                        <div class="xc-result-summary">{text_name_results(found.species.len(), &query)}</div>
+                        <div class="xc-result-summary">
+                            <span>{text_name_results(found.species.len(), &query)}</span>
+                            {names_menu()}
+                        </div>
                         {indexing.map(|t| view! { <div class="xc-result-summary">{t}</div> })}
                         <div class="xc-species-list">
                             <div class="xc-list-header xc-named">
@@ -1499,7 +1681,7 @@ pub fn XcBrowser() -> impl IntoView {
                             {found.species.into_iter().map(|hit| {
                                 let note = text_match_note(&hit, language_name);
                                 let sci = format!("{} {}", hit.genus, hit.sp);
-                                let NamedSpecies { group, genus, sp, en, recording_count, local, .. } = hit;
+                                let NamedSpecies { group, genus, sp, en, recording_count, local, local_lang, .. } = hit;
                                 // The English name goes under a name in the user's language.
                                 let english = local.as_ref().map(|_| en.clone());
                                 let shown = local.unwrap_or(en);
@@ -1514,7 +1696,7 @@ pub fn XcBrowser() -> impl IntoView {
                                         }
                                     >
                                         <span class="xc-col-name">
-                                            {name_shown}
+                                            <span lang=local_lang>{name_shown}</span>
                                             {english.map(|n| view! { <span class="xc-name-note">{n}</span> })}
                                             {note.map(|n| view! { <span class="xc-name-note">{n}</span> })}
                                         </span>
@@ -1536,8 +1718,15 @@ pub fn XcBrowser() -> impl IntoView {
                     if list.is_empty() && !taxonomy_loading.get() { return None; }
 
                     let count = list.len();
+                    let local_count = species_local_names.with(|m| {
+                        m.as_ref().map(|m| list.iter().filter(|s| m.contains_key(&format!("{} {}", s.genus, s.sp))).count())
+                    });
+                    let lang_names: Vec<String> = names_language.get().codes().iter().map(|c| language_name(c)).collect();
                     Some(view! {
-                        <div class="xc-result-summary">{format!("{count} species")}</div>
+                        <div class="xc-result-summary">
+                            <span>{text_species_count(count, local_count, &lang_names)}</span>
+                            {names_menu()}
+                        </div>
                         <div class="xc-species-list">
                             <div class="xc-list-header">
                                 <span class="xc-col-name">"Species"</span>
@@ -1547,11 +1736,13 @@ pub fn XcBrowser() -> impl IntoView {
                             {list.into_iter().map(|sp| {
                                 let genus = sp.genus.clone();
                                 let species = sp.sp.clone();
-                                let local = species_local_names
-                                    .with_untracked(|m| m.get(&format!("{} {}", sp.genus, sp.sp)).cloned());
+                                let local = species_local_names.with_untracked(|m| {
+                                    m.as_ref()?.get(&format!("{} {}", sp.genus, sp.sp)).cloned()
+                                });
                                 // The English name goes under a name in the user's language.
                                 let english = local.as_ref().map(|_| sp.en.clone());
-                                let en = local.unwrap_or_else(|| sp.en.clone());
+                                let local_lang = local.as_ref().map(|l| l.lang.clone());
+                                let en = local.map(|l| l.name).unwrap_or_else(|| sp.en.clone());
                                 let name_shown = en.clone();
                                 let load_sp = load_species_recordings;
                                 view! {
@@ -1568,7 +1759,7 @@ pub fn XcBrowser() -> impl IntoView {
                                         }
                                     >
                                         <span class="xc-col-name">
-                                            {name_shown}
+                                            <span lang=local_lang>{name_shown}</span>
                                             {english.map(|n| view! { <span class="xc-name-note">{n}</span> })}
                                         </span>
                                         <span class="xc-col-sci">{format!("{} {}", sp.genus, sp.sp)}</span>
@@ -1735,6 +1926,47 @@ pub fn XcBrowser() -> impl IntoView {
 mod tests {
     use super::*;
 
+    #[test]
+    fn species_count_line() {
+        let de = ["German".to_string()];
+        assert_eq!(
+            text_species_count(1350, Some(1102), &de),
+            "1,350 species, 1,102 with German names"
+        );
+        assert_eq!(
+            text_species_count(1350, Some(0), &de),
+            "1,350 species, none with German names"
+        );
+        assert_eq!(
+            text_species_count(1350, None, &de),
+            "1,350 species. Couldn't load German names."
+        );
+        assert_eq!(text_species_count(12, None, &[]), "12 species");
+        let three = [
+            "Dutch".to_string(),
+            "German".to_string(),
+            "French".to_string(),
+        ];
+        assert_eq!(
+            text_species_count(5, Some(2), &three),
+            "5 species, 2 with Dutch, German or French names"
+        );
+        assert_eq!(text_browser_option(&[]), "Browser language (English)");
+        assert_eq!(
+            text_browser_option(&three[..2]),
+            "Browser languages (Dutch, German)"
+        );
+        assert_eq!(
+            text_language_option("German", "Deutsch"),
+            "German (Deutsch)"
+        );
+        assert_eq!(text_language_option("Esperanto", "esperanto"), "Esperanto");
+        assert_eq!(
+            text_language_option("Serbian (Latin)", "srpski (latinica)"),
+            "Serbian (Latin)"
+        );
+    }
+
     fn hit(name: &str, kind: &str, language: Option<&str>, source: &str) -> NamedSpecies {
         NamedSpecies {
             group: "bats".into(),
@@ -1743,6 +1975,7 @@ mod tests {
             en: "Common Pipistrelle".into(),
             recording_count: 3,
             local: None,
+            local_lang: None,
             matched: xc_client::NameMatch {
                 name: name.into(),
                 kind: kind.into(),
@@ -1754,13 +1987,34 @@ mod tests {
 
     #[test]
     fn match_note_names_what_matched_unless_it_is_shown() {
-        let lang = |c: &str| if c == "de" { "German".to_string() } else { c.to_string() };
+        let lang = |c: &str| {
+            if c == "de" {
+                "German".to_string()
+            } else {
+                c.to_string()
+            }
+        };
         let note = |h: NamedSpecies| text_match_note(&h, lang);
-        assert_eq!(note(hit("Zwergfledermaus", "common", Some("de"), "col")).as_deref(), Some("Zwergfledermaus (German)"));
-        assert_eq!(note(hit("Vespertilio pipistrellus", "synonym", None, "col")).as_deref(), Some("Vespertilio pipistrellus (synonym)"));
-        assert_eq!(note(hit("Pipistrel", "common", None, "iucn")).as_deref(), Some("Pipistrel (common name)"));
-        assert_eq!(note(hit("common pipistrelle", "common", Some("en"), "iucn")), None);
-        assert_eq!(note(hit("Pipistrellus pipistrellus", "scientific", None, "iucn")), None);
+        assert_eq!(
+            note(hit("Zwergfledermaus", "common", Some("de"), "col")).as_deref(),
+            Some("Zwergfledermaus (German)")
+        );
+        assert_eq!(
+            note(hit("Vespertilio pipistrellus", "synonym", None, "col")).as_deref(),
+            Some("Vespertilio pipistrellus (synonym)")
+        );
+        assert_eq!(
+            note(hit("Pipistrel", "common", None, "iucn")).as_deref(),
+            Some("Pipistrel (common name)")
+        );
+        assert_eq!(
+            note(hit("common pipistrelle", "common", Some("en"), "iucn")),
+            None
+        );
+        assert_eq!(
+            note(hit("Pipistrellus pipistrellus", "scientific", None, "iucn")),
+            None
+        );
         assert_eq!(note(hit("Anything", "common", Some("en"), "xc")), None);
         // Not repeated when it is the name shown in the user's language.
         let mut shown_locally = hit("zwergfledermaus", "common", Some("de"), "col");
@@ -1770,11 +2024,23 @@ mod tests {
 
     #[test]
     fn name_search_headings() {
-        assert_eq!(text_name_results(1, "noctule"), "1 species matches \u{201C}noctule\u{201D}");
-        assert_eq!(text_name_results(5, "noctule"), "5 species match \u{201C}noctule\u{201D}");
-        assert_eq!(text_name_results(50, "ba"), "Best 50 matches for \u{201C}ba\u{201D}");
+        assert_eq!(
+            text_name_results(1, "noctule"),
+            "1 species matches \u{201C}noctule\u{201D}"
+        );
+        assert_eq!(
+            text_name_results(5, "noctule"),
+            "5 species match \u{201C}noctule\u{201D}"
+        );
+        assert_eq!(
+            text_name_results(50, "ba"),
+            "Best 50 matches for \u{201C}ba\u{201D}"
+        );
         assert_eq!(text_groups_indexing(&[]), None);
-        assert_eq!(text_groups_indexing(&["birds".into()]).as_deref(), Some("Birds are still being indexed, so some may be missing."));
+        assert_eq!(
+            text_groups_indexing(&["birds".into()]).as_deref(),
+            Some("Birds are still being indexed, so some may be missing.")
+        );
         assert_eq!(
             text_groups_indexing(&["birds".into(), "frogs".into()]).as_deref(),
             Some("Birds and frogs are still being indexed, so some may be missing.")

@@ -7911,3 +7911,27 @@ button.canvas-overflow-action-btn.disabled {
 .call-sketch-strip.call-sketch-floating {
     border-left: 1px dashed rgba(255, 255, 255, 0.45);
 }
+
+/* The species count line holds the names menu at its right; the menu wraps
+   under the count on narrow screens. */
+.xc-result-summary:has(.xc-names-menu) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 12px;
+}
+
+.xc-names-menu {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.xc-names-menu .xc-select {
+    max-width: 220px;
+    min-height: 24px;   /* WCAG 2.2 minimum target size */
+    padding: 2px 6px;
+    font-size: 11px;
+}
