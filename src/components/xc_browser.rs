@@ -1485,7 +1485,7 @@ pub fn XcBrowser() -> impl IntoView {
                                     </span>
                                     <button
                                         class="xc-btn xc-btn-small"
-                                        disabled=move || recordings_page.get() >= recordings_total_pages.get()
+                                        disabled=move || { recordings_page.get() >= recordings_total_pages.get() }
                                         on:click=move |_| load_recordings_page(recordings_page.get_untracked() + 1)
                                     >
                                         {"Next \u{2192}"}
