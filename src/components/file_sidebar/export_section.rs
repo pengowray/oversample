@@ -9,47 +9,21 @@ use crate::audio::export;
 use crate::audio::video_export;
 use crate::audio::webcodecs_bindings as wc;
 use crate::state::{
-    AppState, AudioCodecOption, ExportFormat, VideoCodec, VideoResolution, VideoViewMode,
+    AppState, AudioCodecOption, ExportFormat, RightSidebarTab, VideoCodec, VideoResolution,
+    VideoViewMode,
 };
 
-/// Show the export section: open the info panel on the Annotations tab, expand
-/// the section and scroll it into view.
+/// Open the info panel on the Export tab.
 pub(crate) fn open_export_panel(state: AppState) {
-    state
-        .panels
-        .right_tab()
-        .set(crate::state::RightSidebarTab::Selection);
+    state.panels.right_tab().set(RightSidebarTab::Export);
     state.panels.right_collapsed().set(false);
-    state.export.section_open().set(true);
-    leptos::task::spawn_local(async move {
-        // Let the tab render before looking for the section.
-        crate::web_util::yield_now().await;
-        let el = web_sys::window().and_then(|w| w.document()).and_then(|d| {
-            d.query_selector(".right-sidebar .export-section")
-                .ok()
-                .flatten()
-        });
-        if let Some(el) = el {
-            let opts = web_sys::ScrollIntoViewOptions::new();
-            opts.set_behavior(web_sys::ScrollBehavior::Smooth);
-            opts.set_block(web_sys::ScrollLogicalPosition::Start);
-            el.scroll_into_view_with_scroll_into_view_options(&opts);
-        }
-    });
 }
 
-/// Collapsible export section component.
-/// Expects `AppState` in context and the batm handler closures as props.
+/// The Export tab of the info panel: WAV or MP4 export of the selected
+/// regions, the selection, or the whole file.
 #[component]
-pub fn ExportSection(
-    on_export_batm: Callback<()>,
-    on_save_sidecar: Callback<()>,
-    on_import_batm: Callback<()>,
-    has_annotations: Signal<Option<bool>>,
-    has_file_path: Signal<Option<bool>>,
-) -> impl IntoView {
+pub fn ExportPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let xc_form_open = RwSignal::new(false);
 
     let webcodecs_available = wc::has_video_encoder() && wc::has_mp4_muxer();
     let audio_encoder_available = wc::has_audio_encoder();
@@ -75,18 +49,28 @@ pub fn ExportSection(
             ExportFormat::Mp4 => ".mp4",
         };
         match export::get_export_info(&state) {
-            Some(info) => {
-                let mode_suffix = info
-                    .mode_label
-                    .map(|m| format!(" ({m})"))
-                    .unwrap_or_default();
-                format!(
-                    "Export {} {} to {ext}{mode_suffix}",
-                    info.count, info.source_label
-                )
+            Some(info) if info.count > 1 => {
+                format!("Export {} {} ({ext})", info.count, info.source_label)
             }
-            None => format!("Export to {ext}"),
+            Some(info) => format!("Export {} ({ext})", info.source_label),
+            None => format!("Export ({ext})"),
         }
+    };
+
+    // Names the export will save, kept current with the settings that change them.
+    let file_names = move || {
+        let format = state.export.format().get();
+        export::get_export_info(&state)?;
+        state.playback.mode().track();
+        state.transform.te_factor().track();
+        state.transform.ps_factor().track();
+        state.transform.pv_factor().track();
+        state.transform.het_frequency().track();
+        state.transform.het_comb_count().track();
+        state.transform.zc_factor().track();
+        state.viewmode.channel_view().track();
+        let names = export::planned_file_names(&state, format);
+        (!names.is_empty()).then_some(names)
     };
 
     let export_disabled = move || {
@@ -108,26 +92,7 @@ pub fn ExportSection(
     };
 
     view! {
-        <div class="export-section">
-            <div
-                class="export-section-header"
-                on:click=move |_| state.export.section_open().update(|v| *v = !*v)
-            >
-                <span class=move || if state.export.section_open().get() {
-                    "export-toggle-arrow open"
-                } else {
-                    "export-toggle-arrow"
-                }>
-                    <Icon kind=Icon::ChevronRight />
-                </span>
-                " Export"
-            </div>
-
-            <div class=move || if state.export.section_open().get() {
-                "export-section-body open"
-            } else {
-                "export-section-body"
-            }>
+        <div class="sidebar-panel export-panel">
                 // Format radio buttons
                 <div class="setting-row export-format-row">
                     <span class="export-format-label">"Format:"</span>
@@ -311,13 +276,30 @@ pub fn ExportSection(
                     </button>
                 </div>
 
-                // Duration estimate
+                // What the export will save
+                {move || file_names().map(|names| {
+                    let label = if names.len() > 1 { "File names" } else { "File name" };
+                    const SHOWN: usize = 4;
+                    let more = names.len().saturating_sub(SHOWN);
+                    view! {
+                        <div class="export-detail">
+                            <span class="export-detail-label">{label}</span>
+                            {names.into_iter().take(SHOWN).map(|n| view! {
+                                <span class="export-file-name">{n}</span>
+                            }).collect_view()}
+                            {(more > 0).then(|| view! {
+                                <span class="export-detail-label">{format!("and {more} more")}</span>
+                            })}
+                        </div>
+                    }
+                })}
                 {move || {
                     export::get_export_info(&state)
                         .and_then(|info| info.estimated_duration_secs)
                         .map(|dur| view! {
-                            <div class="export-duration-label">
-                                {"Est. duration: "}{export::format_duration(dur)}
+                            <div class="export-detail">
+                                <span class="export-detail-label">"Length"</span>
+                                <span>{export::format_duration(dur)}</span>
                             </div>
                         })
                 }}
@@ -367,6 +349,44 @@ pub fn ExportSection(
                     }
                 }}
 
+        </div>
+    }
+}
+
+/// Collapsible "Annotation files" section of the Annotations tab: save,
+/// import, and export the annotations for Xeno-canto.
+#[component]
+pub fn AnnotationFilesSection(
+    on_export_batm: Callback<()>,
+    on_save_sidecar: Callback<()>,
+    on_import_batm: Callback<()>,
+    has_annotations: Signal<Option<bool>>,
+    has_file_path: Signal<Option<bool>>,
+) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let xc_form_open = RwSignal::new(false);
+
+    view! {
+        <div class="export-section">
+            <div
+                class="export-section-header"
+                on:click=move |_| state.export.section_open().update(|v| *v = !*v)
+            >
+                <span class=move || if state.export.section_open().get() {
+                    "export-toggle-arrow open"
+                } else {
+                    "export-toggle-arrow"
+                }>
+                    <Icon kind=Icon::ChevronRight />
+                </span>
+                " Annotation files"
+            </div>
+
+            <div class=move || if state.export.section_open().get() {
+                "export-section-body open"
+            } else {
+                "export-section-body"
+            }>
                 // .batm section
                 <div class="setting-row" style="gap: 4px; margin-top: 4px;">
                     {if state.is_tauri {

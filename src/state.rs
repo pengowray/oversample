@@ -519,6 +519,7 @@ pub enum RightSidebarTab {
     #[default]
     Metadata,
     Selection,
+    Export,
     Psd,
     Analysis,
     Harmonics,
@@ -531,6 +532,7 @@ impl RightSidebarTab {
         match self {
             Self::Metadata => "Info",
             Self::Selection => "Annotations",
+            Self::Export => "Export",
             Self::Psd => "Power spectrum",
             Self::Analysis => "Analysis",
             Self::Harmonics => "Harmonics (beta)",
@@ -542,6 +544,7 @@ impl RightSidebarTab {
     pub const ALL: &'static [RightSidebarTab] = &[
         Self::Metadata,
         Self::Selection,
+        Self::Export,
         Self::Psd,
         Self::Analysis,
         Self::Harmonics,

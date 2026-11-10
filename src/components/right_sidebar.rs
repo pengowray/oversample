@@ -8,7 +8,7 @@ use wasm_bindgen::JsCast;
 
 use crate::components::debug_panel::DebugPanel;
 use crate::components::file_sidebar::{
-    CallDetectionPanel, HarmonicsPanel, MetadataPanel, PsdPanel, SelectionPanel,
+    CallDetectionPanel, ExportPanel, HarmonicsPanel, MetadataPanel, PsdPanel, SelectionPanel,
     SidebarAnalysisPanel,
 };
 
@@ -153,6 +153,7 @@ pub fn RightSidebar() -> impl IntoView {
             </div>
             {move || match state.panels.right_tab().get() {
                 RightSidebarTab::Selection => view! { <SelectionPanel /> }.into_any(),
+                RightSidebarTab::Export => view! { <ExportPanel /> }.into_any(),
                 RightSidebarTab::Psd => view! { <PsdPanel /> }.into_any(),
                 RightSidebarTab::Analysis => view! { <SidebarAnalysisPanel /> }.into_any(),
                 RightSidebarTab::Harmonics => view! { <HarmonicsPanel /> }.into_any(),

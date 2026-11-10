@@ -39,6 +39,7 @@ pub(crate) use metadata_panel::MetadataPanel;
 use project_panel::ProjectPanel;
 pub(crate) use psd_panel::PsdPanel;
 pub(crate) use call_detection_panel::CallDetectionPanel;
+pub(crate) use export_section::ExportPanel;
 pub(crate) use settings_panel::{run_resonator_bench, SelectionPanel};
 
 fn copy_to_clipboard(text: &str) {

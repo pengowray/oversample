@@ -424,13 +424,13 @@ test.describe("export", () => {
     const showInfo = page.locator('button[title="Show info panel"]').first();
     if (await showInfo.count()) await showInfo.click();
     await page.locator(".sidebar-tab-dropdown").first().click();
-    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).first().click();
-    const header = page.locator(".export-section-header").first();
-    if (!(await page.locator(".export-section-body.open").count())) await header.click();
+    await page.locator(".sidebar-tab-option", { hasText: /^Export$/ }).first().click();
     await page.locator(".export-radio", { hasText: format }).locator("input").check();
     const downloadStarted = page.waitForEvent("download", { timeout: 60_000 });
-    await page.locator(".export-section-body button", { hasText: /^Export .* to \./ }).first().click();
+    const shownName = (await page.locator(".export-file-name").first().textContent())!;
+    await page.locator(".export-panel button", { hasText: /^Export .*\(\./ }).first().click();
     const download = await downloadStarted;
+    expect(download.suggestedFilename()).toBe(shownName);
     return { name: download.suggestedFilename(), buf: fs.readFileSync(await download.path()) };
   }
 

@@ -6969,7 +6969,10 @@ button.toolbar-overflow-btn {
     font-size: 11px;
     color: #999;
     min-width: 70px;
-    padding-left: 16px;
+}
+.export-mp4-options .sidebar-select {
+    flex: 1;
+    min-width: 0;
 }
 
 .export-tooltip {
@@ -7002,11 +7005,23 @@ button.toolbar-overflow-btn {
 .export-progress-text.export-error {
     color: #e88;
 }
-.export-duration-label {
+.export-panel {
+    padding-top: 8px;
+}
+.export-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px 16px;
+    font-size: 11px;
+    color: #ccc;
+}
+.export-detail-label {
     font-size: 10px;
     color: #888;
-    text-align: right;
-    padding: 2px 0;
+}
+.export-file-name {
+    overflow-wrap: anywhere;
 }
 
 /* ── Zoom-out button (shown when viewport is pinch-zoomed) ─────────────── */

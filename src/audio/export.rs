@@ -12,7 +12,7 @@ use crate::audio::streaming_playback::{
     apply_dsp_mode, apply_filters, te_speed_ratio, PlaybackParams, PV_MODE_BOOST_DB,
 };
 use crate::audio::wav_encoder::encode_wav_interleaved;
-use crate::state::{AppState, PlaybackMode, Selection};
+use crate::state::{AppState, ExportFormat, LoadedFile, PlaybackMode, Selection};
 
 // Chunk size + filter warmup are shared with streaming playback so the offline
 // and live DSP pipelines stay consistent. See audio::chunk_params.
@@ -670,7 +670,6 @@ fn build_export_guano(
 pub struct ExportInfo {
     pub count: usize,
     pub source_label: &'static str, // "selection" or "region" or "regions"
-    pub mode_label: Option<String>, // e.g. "TE 10x", "HF", etc.
     pub estimated_duration_secs: Option<f64>,
 }
 
@@ -727,22 +726,7 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
         return None;
     };
 
-    // Build mode label
     let mode = state.playback.mode().get();
-    let hfr = state.viewmode.hfr_enabled().get();
-    let mode_label = match mode {
-        PlaybackMode::Normal if hfr => Some("HF".to_string()),
-        PlaybackMode::TimeExpansion => {
-            let te = state.transform.te_factor().get();
-            Some(format!("TE {te}x"))
-        }
-        PlaybackMode::PitchShift => Some("pitch shift".to_string()),
-        PlaybackMode::PhaseVocoder => Some("PV".to_string()),
-        PlaybackMode::Heterodyne => Some("heterodyne".to_string()),
-        PlaybackMode::ZeroCrossing => Some("ZC".to_string()),
-        _ => None,
-    };
-
     let estimated_duration_secs = source_duration.map(|d| match mode {
         PlaybackMode::TimeExpansion => d / te_speed_ratio(state.transform.te_factor().get()),
         _ => d,
@@ -751,7 +735,6 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     Some(ExportInfo {
         count,
         source_label,
-        mode_label,
         estimated_duration_secs,
     })
 }
@@ -800,6 +783,108 @@ pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
         .collect()
 }
 
+/// One file an export writes: the name part after the base name (`_selection`,
+/// a region label, ...), the time range, and the DSP settings to apply.
+pub(crate) struct ExportJob {
+    pub name_part: String,
+    pub start: f64,
+    pub end: f64,
+    pub params: PlaybackParams,
+}
+
+/// The files a WAV export writes: one per selected region, else the current
+/// selection, else the whole file.
+pub(crate) fn export_jobs(state: &AppState, file: &LoadedFile) -> Vec<ExportJob> {
+    let sample_rate = file.audio.sample_rate;
+    let use_region_focus = state.annotations.export_use_region_focus().get_untracked();
+    let regions = get_selected_regions(state);
+    if !regions.is_empty() {
+        return regions
+            .iter()
+            .enumerate()
+            .map(|(i, (_annotation, region))| ExportJob {
+                name_part: match region.label.as_deref() {
+                    Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
+                    _ if regions.len() > 1 => format!("_{}", i + 1),
+                    _ => String::new(),
+                },
+                start: region.time_start,
+                end: region.time_end,
+                params: build_export_params(state, Some(region), use_region_focus, sample_rate),
+            })
+            .collect();
+    }
+    let params = build_export_params(state, None, false, sample_rate);
+    match state.interaction.selection().get_untracked() {
+        Some(sel) => vec![ExportJob {
+            name_part: "_selection".to_string(),
+            start: sel.time_start,
+            end: sel.time_end,
+            params,
+        }],
+        None => vec![ExportJob {
+            name_part: "_export".to_string(),
+            start: 0.0,
+            end: file.audio.source.duration_secs(),
+            params,
+        }],
+    }
+}
+
+/// File name for one WAV export job.
+fn wav_file_name(file: &LoadedFile, views: &[ChannelView], job: &ExportJob) -> String {
+    format!(
+        "{}{}{}{}.wav",
+        export_base_name(&file.name),
+        job.name_part,
+        transform_suffix(&job.params),
+        channel_suffix(file.audio.source.as_ref(), views),
+    )
+}
+
+/// File name for an MP4 export made with `params`. Video exports one range,
+/// so the name has no region part.
+pub(crate) fn video_file_name(
+    file: &LoadedFile,
+    views: &[ChannelView],
+    params: &PlaybackParams,
+) -> String {
+    format!(
+        "{}{}{}.mp4",
+        export_base_name(&file.name),
+        transform_suffix(params),
+        channel_suffix(file.audio.source.as_ref(), views),
+    )
+}
+
+/// The file names an export in `format` would save right now.
+pub(crate) fn planned_file_names(state: &AppState, format: ExportFormat) -> Vec<String> {
+    let Some(file) = state.library.files().with_untracked(|files| {
+        state
+            .library
+            .current_index()
+            .get_untracked()
+            .and_then(|i| files.get(i).cloned())
+    }) else {
+        return Vec::new();
+    };
+    let views = export_channel_views(
+        file.audio.source.as_ref(),
+        state.viewmode.channel_view().get_untracked(),
+    );
+    let jobs = export_jobs(state, &file);
+    match format {
+        ExportFormat::Wav => jobs
+            .iter()
+            .map(|job| wav_file_name(&file, &views, job))
+            .collect(),
+        ExportFormat::Mp4 => jobs
+            .first()
+            .map(|job| vec![video_file_name(&file, &views, &job.params)])
+            .unwrap_or_default(),
+    }
+}
+
 /// Export all selected regions (or current selection) as WAV files.
 pub fn export_selected(state: &AppState) {
     let file = match state.current_file() {
@@ -807,66 +892,28 @@ pub fn export_selected(state: &AppState) {
         None => return,
     };
     let source = &file.audio.source;
-    let sample_rate = file.audio.sample_rate;
-    let use_region_focus = state.annotations.export_use_region_focus().get_untracked();
-    let source_filename = &file.name;
-    let source_guano = file.audio.metadata.guano.as_ref();
     let views = export_channel_views(
         source.as_ref(),
         state.viewmode.channel_view().get_untracked(),
     );
-    let base_name = export_base_name(&file.name);
-    let channel_tag = channel_suffix(source.as_ref(), &views);
-
-    let regions = get_selected_regions(state);
-
-    // (filename part, region time range, params) for each file to write.
-    let mut jobs: Vec<(String, f64, f64, PlaybackParams)> = Vec::new();
-    if !regions.is_empty() {
-        for (i, (_annotation, region)) in regions.iter().enumerate() {
-            let params = build_export_params(state, Some(region), use_region_focus, sample_rate);
-            let suffix = match region.label.as_deref() {
-                Some(l) if !l.is_empty() => format!("_{}", l.replace(' ', "_")),
-                _ if regions.len() > 1 => format!("_{}", i + 1),
-                _ => String::new(),
-            };
-            jobs.push((suffix, region.time_start, region.time_end, params));
-        }
-    } else if let Some(sel) = state.interaction.selection().get_untracked() {
-        let params = build_export_params(state, None, false, sample_rate);
-        jobs.push((
-            "_selection".to_string(),
-            sel.time_start,
-            sel.time_end,
-            params,
-        ));
-    } else {
-        let params = build_export_params(state, None, false, sample_rate);
-        let duration = file.audio.source.duration_secs();
-        jobs.push(("_export".to_string(), 0.0, duration, params));
-    }
 
     // Collect every region's WAV bytes first, then hand them to save_exports
     // as a batch so multi-region exports are saved one-at-a-time (no stacked
     // dialogs / racing permission prompts) and reported with a single toast.
-    let exports: Vec<(String, Vec<u8>)> = jobs
-        .into_iter()
-        .map(|(suffix, start, end, params)| {
-            let filename = format!(
-                "{base_name}{suffix}{}{channel_tag}.wav",
-                transform_suffix(&params)
-            );
+    let exports: Vec<(String, Vec<u8>)> = export_jobs(state, &file)
+        .iter()
+        .map(|job| {
             let wav_data = export_one_region(
                 source.as_ref(),
                 &views,
-                sample_rate,
-                start,
-                end,
-                &params,
-                source_filename,
-                source_guano,
+                file.audio.sample_rate,
+                job.start,
+                job.end,
+                &job.params,
+                &file.name,
+                file.audio.metadata.guano.as_ref(),
             );
-            (filename, wav_data)
+            (wav_file_name(&file, &views, job), wav_data)
         })
         .collect();
 

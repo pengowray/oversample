@@ -11,8 +11,8 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 use crate::audio::export::{
-    build_export_params, channel_suffix, export_base_name, export_channel_views,
-    export_output_rate, get_selected_regions, process_region, save_export_bytes, transform_suffix,
+    build_export_params, export_channel_views, export_output_rate, get_selected_regions,
+    process_region, save_export_bytes, video_file_name,
 };
 use crate::audio::webcodecs_bindings as wc;
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, SpectDisplaySettings, TileSource};
@@ -656,12 +656,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let mp4_bytes = wc::muxer_finalize(&muxer, &target)?;
     log::info!("Video export: MP4 size = {} bytes", mp4_bytes.len());
 
-    let filename = format!(
-        "{}{}{}.mp4",
-        export_base_name(&file.name),
-        transform_suffix(&audio_params),
-        channel_suffix(source.as_ref(), &views),
-    );
+    let filename = video_file_name(&file, &views, &audio_params);
 
     save_export_bytes(state, mp4_bytes, filename, true);
     Ok(())

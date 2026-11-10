@@ -354,7 +354,7 @@ fn AnnotationsList() -> impl IntoView {
                 view! { <div></div> }.into_any()
             }
         }}
-        <super::export_section::ExportSection
+        <super::export_section::AnnotationFilesSection
             on_export_batm=Callback::new(move |()| export_annotations(state))
             on_save_sidecar=Callback::new(move |()| {
                 if let Some(idx) = state.library.current_index().get_untracked() {

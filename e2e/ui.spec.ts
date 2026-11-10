@@ -60,7 +60,7 @@ test.describe("selection overflow menu", () => {
     expect(pos.y + pos.height).toBeLessThanOrEqual(bottom);
   });
 
-  test("Export... opens the export section in the info panel", async ({ page }) => {
+  test("Export... opens the Export tab in the info panel", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
     await page
@@ -84,10 +84,13 @@ test.describe("selection overflow menu", () => {
     await page.locator(".canvas-overflow-item", { hasText: "Export" }).click();
 
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
-    await expect(page.locator(".right-sidebar .export-section-body.open")).toBeVisible();
+    await expect(page.locator(".right-sidebar .sidebar-tab-dropdown")).toContainText("Export");
     await expect(
-      page.locator(".right-sidebar .export-section-body button", { hasText: /^Export 1 selection to/ }),
+      page.locator(".right-sidebar .export-panel button", { hasText: "Export selection (.wav)" }),
     ).toBeInViewport();
+    await expect(page.locator(".right-sidebar .export-file-name")).toHaveText(
+      "stereo-alternating_selection.wav",
+    );
     await expect(page.locator(".canvas-overflow-menu")).toHaveCount(0);
   });
 
