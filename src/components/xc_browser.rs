@@ -574,6 +574,8 @@ pub fn XcBrowser() -> impl IntoView {
     // Languages the server has names in, for the names menu. Empty until
     // loaded, or if the server can't say.
     let language_choices: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
+    // The languages `species_local_names` was asked for, for the count line.
+    let species_local_langs: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
     // Counts reloads of the species list's names after a language change.
     let local_names_gen = RwSignal::new(0u64);
     // The group of the species list on screen. Set together with
@@ -848,8 +850,13 @@ pub fn XcBrowser() -> impl IntoView {
             if let Some(mut t) = taxonomy {
                 // Names in the user's language, fetched before the list is shown
                 // so it is not sorted again under the reader.
-                let langs = names_language.get_untracked().codes();
-                let local = local_names_for(&list_group, &langs).await;
+                let mut langs = names_language.get_untracked().codes();
+                let mut local = local_names_for(&list_group, &langs).await;
+                // The names menu may have changed while the names loaded.
+                while is_current() && names_language.get_untracked().codes() != langs {
+                    langs = names_language.get_untracked().codes();
+                    local = local_names_for(&list_group, &langs).await;
+                }
                 if !is_current() {
                     return;
                 }
@@ -861,6 +868,7 @@ pub fn XcBrowser() -> impl IntoView {
                 species_list_group.try_set(list_group);
                 species_list_country.try_set(list_country);
                 species_local_names.try_set(local);
+                species_local_langs.try_set(langs);
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
@@ -1065,7 +1073,8 @@ pub fn XcBrowser() -> impl IntoView {
         local_names_gen.set(my_gen);
         let list_gen = taxonomy_gen.get_untracked();
         spawn_local(async move {
-            let local = local_names_for(&list_group, &choice.codes()).await;
+            let langs = choice.codes();
+            let local = local_names_for(&list_group, &langs).await;
             if local_names_gen.try_get_untracked() != Some(my_gen)
                 || taxonomy_gen.try_get_untracked() != Some(list_gen)
             {
@@ -1079,9 +1088,37 @@ pub fn XcBrowser() -> impl IntoView {
                 None => list.sort_by_cached_key(|s| s.en.to_lowercase()),
             }
             species_local_names.set(local);
+            species_local_langs.set(langs);
             species_list.set(list);
         });
     };
+
+    // The count line of the species list on screen; `None` when no list with
+    // species is shown.
+    let count_line = Memo::new(move |_| {
+        if view.get() != BrowserView::GroupBrowse {
+            return None;
+        }
+        if let Some((query, found)) = name_results.get() {
+            return (!found.species.is_empty())
+                .then(|| text_name_results(found.species.len(), &query));
+        }
+        let count = species_list.with(Vec::len);
+        if count == 0 && !taxonomy_loading.get() {
+            return None;
+        }
+        let local_count = species_local_names.with(|m| {
+            let m = m.as_ref()?;
+            Some(species_list.with(|list| {
+                list.iter()
+                    .filter(|s| m.contains_key(&format!("{} {}", s.genus, s.sp)))
+                    .count()
+            }))
+        });
+        let langs: Vec<String> =
+            species_local_langs.with(|l| l.iter().map(|c| language_name(c)).collect());
+        Some(text_species_count(count, local_count, &langs))
+    });
 
     // The names menu, on the count line of both species lists.
     let names_menu = move || {
@@ -1094,8 +1131,8 @@ pub fn XcBrowser() -> impl IntoView {
             <label class="xc-names-menu">
                 "Names: "
                 <select class="xc-select" on:change=on_names_language>
-                    <option value="browser" selected=is("browser")>{text_browser_option(&browser)}</option>
-                    <option value="en" selected=is("en")>"English"</option>
+                    <option value="browser" prop:selected=is("browser")>{text_browser_option(&browser)}</option>
+                    <option value="en" prop:selected=is("en")>"English"</option>
                     {move || {
                         let mut codes = language_choices.get();
                         if let NamesLanguage::One(c) = names_language.get() {
@@ -1129,7 +1166,7 @@ pub fn XcBrowser() -> impl IntoView {
                                         let code = code.clone();
                                         move || names_language.get().stored() == code
                                     };
-                                    view! { <option value=code selected=selected>{label}</option> }
+                                    view! { <option value=code prop:selected=selected>{label}</option> }
                                 }).collect::<Vec<_>>()}
                             </optgroup>
                         })
@@ -1653,6 +1690,17 @@ pub fn XcBrowser() -> impl IntoView {
                     <div class="xc-loading">"Loading..."</div>
                 })}
 
+                // The count line and the names menu, above either species list.
+                // Made once, outside the lists, so the menu keeps keyboard
+                // focus while a list is drawn again.
+                <div
+                    class="xc-result-summary"
+                    style:display=move || if count_line.with(Option::is_some) { "" } else { "none" }
+                >
+                    <span>{move || count_line.get().unwrap_or_default()}</span>
+                    {names_menu()}
+                </div>
+
                 // Species found by name (group browse view, while the search
                 // box holds a name). Replaces the group's species list.
                 {move || {
@@ -1666,10 +1714,6 @@ pub fn XcBrowser() -> impl IntoView {
                         }.into_any());
                     }
                     Some(view! {
-                        <div class="xc-result-summary">
-                            <span>{text_name_results(found.species.len(), &query)}</span>
-                            {names_menu()}
-                        </div>
                         {indexing.map(|t| view! { <div class="xc-result-summary">{t}</div> })}
                         <div class="xc-species-list">
                             <div class="xc-list-header xc-named">
@@ -1717,16 +1761,7 @@ pub fn XcBrowser() -> impl IntoView {
                     let list = species_list.get();
                     if list.is_empty() && !taxonomy_loading.get() { return None; }
 
-                    let count = list.len();
-                    let local_count = species_local_names.with(|m| {
-                        m.as_ref().map(|m| list.iter().filter(|s| m.contains_key(&format!("{} {}", s.genus, s.sp))).count())
-                    });
-                    let lang_names: Vec<String> = names_language.get().codes().iter().map(|c| language_name(c)).collect();
                     Some(view! {
-                        <div class="xc-result-summary">
-                            <span>{text_species_count(count, local_count, &lang_names)}</span>
-                            {names_menu()}
-                        </div>
                         <div class="xc-species-list">
                             <div class="xc-list-header">
                                 <span class="xc-col-name">"Species"</span>
