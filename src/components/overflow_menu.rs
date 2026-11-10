@@ -240,6 +240,8 @@ pub(crate) fn chart_canvas_box() -> ChartCanvasBox {
 /// `[time_start, time_end] × freq_high` box, relative to the spectrogram canvas.
 /// Returns `None` when the box is entirely off-screen (so a valid box sitting in
 /// the top-left corner — x≈0, y≈0 — is not mistaken for "no selection").
+/// `left_edge` is where the visible spectrogram starts: past the call-sketch
+/// strip when it covers the left of the view.
 fn corner_top_left(
     time_start: f64,
     time_end: f64,
@@ -251,6 +253,7 @@ fn corner_top_left(
     canvas_height: f64,
     min_freq: f64,
     max_freq: f64,
+    left_edge: f64,
 ) -> Option<(f64, f64)> {
     let visible_time = (canvas_width / zoom) * time_resolution;
     if visible_time <= 0.0 {
@@ -259,11 +262,12 @@ fn corner_top_left(
     let px_per_sec = canvas_width / visible_time;
     let x0 = (time_start - scroll_offset) * px_per_sec;
     let x1 = (time_end - scroll_offset) * px_per_sec;
-    // Entirely off-screen: right edge left of the view, or left edge past the right.
-    if x1 <= 0.0 || x0 >= canvas_width {
+    // Entirely off-screen (or under the sketch strip): right edge left of the
+    // visible area, or left edge past the right.
+    if x1 <= left_edge || x0 >= canvas_width {
         return None;
     }
-    let x = x0.clamp(0.0, canvas_width);
+    let x = x0.clamp(left_edge, canvas_width);
     let y = match freq_high {
         Some(fh) => freq_to_y(fh, min_freq, max_freq, canvas_height).max(0.0),
         None => 0.0,
@@ -281,6 +285,7 @@ fn selection_top_left(
     canvas_height: f64,
     min_freq: f64,
     max_freq: f64,
+    left_edge: f64,
 ) -> Option<(f64, f64)> {
     corner_top_left(
         sel.time_start,
@@ -293,6 +298,7 @@ fn selection_top_left(
         canvas_height,
         min_freq,
         max_freq,
+        left_edge,
     )
 }
 
@@ -308,6 +314,7 @@ fn annotation_top_left(
     canvas_height: f64,
     min_freq: f64,
     max_freq: f64,
+    left_edge: f64,
 ) -> Option<(f64, f64)> {
     corner_top_left(
         time_start,
@@ -320,6 +327,7 @@ fn annotation_top_left(
         canvas_height,
         min_freq,
         max_freq,
+        left_edge,
     )
 }
 
@@ -482,8 +490,10 @@ fn SelectionOverflowMenu() -> impl IntoView {
 
         let canvas_h = chart_canvas_box().height;
 
+        let left_edge = state.bat_book.sketch_cover_px().get();
+
         selection_top_left(
-            &sel, scroll, time_res, zoom, canvas_w, canvas_h, min_freq, max_freq,
+            &sel, scroll, time_res, zoom, canvas_w, canvas_h, min_freq, max_freq, left_edge,
         )
     });
 
@@ -701,6 +711,7 @@ fn AnnotationOverflowMenu() -> impl IntoView {
             canvas_h,
             min_freq,
             max_freq,
+            state.bat_book.sketch_cover_px().get(),
         )
     });
 

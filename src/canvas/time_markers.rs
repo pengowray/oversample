@@ -235,18 +235,14 @@ pub fn draw_time_markers(
                 let tw = metrics.width();
                 let lx = x + 3.0;
                 if lx + tw < canvas_width - 2.0 {
+                    let label_top = label_top(canvas_height, current_tick_h);
                     // Dark background for readability
                     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-                    ctx.fill_rect(
-                        lx - 1.0,
-                        canvas_height - current_tick_h - 12.0,
-                        tw + 2.0,
-                        12.0,
-                    );
+                    ctx.fill_rect(lx - 1.0, label_top, tw + 2.0, LABEL_H);
                     // Text with emphasis for key markers
                     let text_alpha = if use_relative && is_key { "0.9" } else { "0.7" };
                     ctx.set_fill_style_str(&format!("rgba(255,255,255,{})", text_alpha));
-                    let _ = ctx.fill_text(&label, lx, canvas_height - current_tick_h - 1.0);
+                    let _ = ctx.fill_text(&label, lx, label_top + LABEL_H - 1.0);
                 }
             }
         }
@@ -266,10 +262,11 @@ pub fn draw_time_markers(
                 let tw = metrics.width();
                 let lx = 3.0;
                 if lx + tw < canvas_width - 2.0 {
+                    let label_top = label_top(canvas_height, key_tick_h);
                     ctx.set_fill_style_str("rgba(0,0,0,0.75)");
-                    ctx.fill_rect(lx - 1.0, canvas_height - key_tick_h - 12.0, tw + 2.0, 12.0);
+                    ctx.fill_rect(lx - 1.0, label_top, tw + 2.0, LABEL_H);
                     ctx.set_fill_style_str("rgba(255,255,255,0.9)");
-                    let _ = ctx.fill_text(&label, lx, canvas_height - key_tick_h - 1.0);
+                    let _ = ctx.fill_text(&label, lx, label_top + LABEL_H - 1.0);
                 }
             }
             // Draw the key tick line at left edge
@@ -284,4 +281,14 @@ pub fn draw_time_markers(
 
     ctx.set_text_baseline("alphabetic"); // reset
     ctx.set_font("10px sans-serif"); // reset
+}
+
+/// Height of a tick label's background box, px.
+const LABEL_H: f64 = 12.0;
+
+/// Top of a tick label's box: just above its tick, but never above the
+/// canvas top. The time gutter is only 24 px tall, so the label of a tall
+/// key tick would otherwise be cut off.
+fn label_top(canvas_height: f64, tick_h: f64) -> f64 {
+    (canvas_height - tick_h - LABEL_H).max(0.0)
 }

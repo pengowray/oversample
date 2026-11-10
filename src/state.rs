@@ -1663,6 +1663,11 @@ pub struct BatBookState {
     /// Draw the selected species' call sketch at the left of the spectrogram
     /// (when the species has one).
     pub sketch_shown: bool,
+    /// Width in CSS px of the call-sketch strip while it sits at the left edge
+    /// of the spectrogram, covering it. 0 when the strip is hidden or placed
+    /// after the end of the recording. Canvas overlays use it as the left edge
+    /// of the visible spectrogram.
+    pub sketch_cover_px: f64,
     /// Last-clicked bat book entry ID, used for shift-click range selection.
     pub last_clicked_id: Option<String>,
     /// When true, selecting bat book entries pushes their frequency focus override.
@@ -2657,6 +2662,7 @@ impl AppState {
                 selected_ids: Vec::new(),
                 ref_open: false,
                 sketch_shown: true,
+                sketch_cover_px: 0.0,
                 last_clicked_id: None,
                 auto_focus: true,
             }),

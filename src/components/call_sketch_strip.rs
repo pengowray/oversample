@@ -220,6 +220,20 @@ pub fn CallSketchStrip(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoVi
         }
     });
 
+    // Tell canvas overlays (the "..." menus) how much of the spectrogram's
+    // left edge the strip covers.
+    let cover = state.bat_book.sketch_cover_px();
+    Effect::new(move |_| {
+        let px = match (layout.get(), left_px.get()) {
+            (Some(lay), Some(left)) if left <= 0.0 => lay.width,
+            _ => 0.0,
+        };
+        if cover.get_untracked() != px {
+            cover.set(px);
+        }
+    });
+    on_cleanup(move || cover.set(0.0));
+
     Effect::new(move |_| {
         let (Some(s), Some(sc), Some(lay)) = (sketch.get(), scale.get(), layout.get()) else {
             return;
