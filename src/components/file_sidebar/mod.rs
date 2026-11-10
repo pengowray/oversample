@@ -1,5 +1,5 @@
 mod config_panel;
-mod export_section;
+pub(crate) mod export_section;
 pub(crate) mod file_badges;
 pub(crate) mod file_groups;
 pub(crate) mod files_panel;

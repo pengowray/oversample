@@ -12,6 +12,32 @@ use crate::state::{
     AppState, AudioCodecOption, ExportFormat, VideoCodec, VideoResolution, VideoViewMode,
 };
 
+/// Show the export section: open the info panel on the Annotations tab, expand
+/// the section and scroll it into view.
+pub(crate) fn open_export_panel(state: AppState) {
+    state
+        .panels
+        .right_tab()
+        .set(crate::state::RightSidebarTab::Selection);
+    state.panels.right_collapsed().set(false);
+    state.export.section_open().set(true);
+    leptos::task::spawn_local(async move {
+        // Let the tab render before looking for the section.
+        crate::web_util::yield_now().await;
+        let el = web_sys::window().and_then(|w| w.document()).and_then(|d| {
+            d.query_selector(".right-sidebar .export-section")
+                .ok()
+                .flatten()
+        });
+        if let Some(el) = el {
+            let opts = web_sys::ScrollIntoViewOptions::new();
+            opts.set_behavior(web_sys::ScrollBehavior::Smooth);
+            opts.set_block(web_sys::ScrollLogicalPosition::Start);
+            el.scroll_into_view_with_scroll_into_view_options(&opts);
+        }
+    });
+}
+
 /// Collapsible export section component.
 /// Expects `AppState` in context and the batm handler closures as props.
 #[component]

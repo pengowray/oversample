@@ -4,6 +4,7 @@ use crate::annotations::{
 };
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::channel_delay_row::{ChannelDelayRow, DelayRegion};
+use crate::components::file_sidebar::export_section::open_export_panel;
 use crate::components::file_sidebar::settings_panel::{delete_annotation, toggle_annotation_lock};
 use crate::components::icons::Icon;
 use crate::state::store_fields::*;
@@ -650,6 +651,15 @@ fn SelectionOverflowMenu() -> impl IntoView {
                                             >
                                                 {btn_label}
                                             </button>
+                                            <button
+                                                class="canvas-overflow-item"
+                                                on:click=move |_| {
+                                                    is_open.set(false);
+                                                    open_export_panel(state);
+                                                }
+                                            >
+                                                "Export\u{2026}"
+                                            </button>
                                         }.into_any()
                                     } else {
                                         view! { <span></span> }.into_any()
@@ -993,6 +1003,17 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                         {lock_label}
                                                     </button>
                                                 }
+                                            })}
+                                            {is_region.then(move || view! {
+                                                <button
+                                                    class="canvas-overflow-item"
+                                                    on:click=move |_| {
+                                                        is_open.set(false);
+                                                        open_export_panel(state);
+                                                    }
+                                                >
+                                                    "Export\u{2026}"
+                                                </button>
                                             })}
                                             <div class="canvas-overflow-separator"></div>
                                             <button

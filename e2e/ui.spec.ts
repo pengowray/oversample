@@ -60,6 +60,37 @@ test.describe("selection overflow menu", () => {
     expect(pos.y + pos.height).toBeLessThanOrEqual(bottom);
   });
 
+  test("Export... opens the export section in the info panel", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/stereo-alternating.wav");
+
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    await expect(canvas).toBeVisible({ timeout: 30_000 });
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.7, { steps: 5 });
+    await page.mouse.up();
+
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+    await page.locator(".canvas-overflow-btn").click();
+    await page.locator(".canvas-overflow-item", { hasText: "Export" }).click();
+
+    await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
+    await expect(page.locator(".right-sidebar .export-section-body.open")).toBeVisible();
+    await expect(
+      page.locator(".right-sidebar .export-section-body button", { hasText: /^Export 1 selection to/ }),
+    ).toBeInViewport();
+    await expect(page.locator(".canvas-overflow-menu")).toHaveCount(0);
+  });
+
   test("shows which channel the sound reached first, and by how much", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
