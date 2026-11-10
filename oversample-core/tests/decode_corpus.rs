@@ -24,53 +24,11 @@
 use oversample_core::audio::loader::load_audio;
 use std::path::{Path, PathBuf};
 
-/// Workspace root (one level above this crate).
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
-}
+mod common;
 
-/// An override for the bat-demo-sounds *repo root*, so its location isn't
-/// hardcoded. Resolution order:
-///   1. the `BAT_DEMO_SOUNDS_DIR` environment variable, then
-///   2. the same key in a `.env` file at the workspace root.
-/// Relative paths are resolved against the workspace root.
-fn corpus_root_override() -> Option<PathBuf> {
-    fn clean(v: &str) -> Option<String> {
-        let v = v.trim().trim_matches('"').trim_matches('\'').trim();
-        (!v.is_empty()).then(|| v.to_string())
-    }
-    let raw = std::env::var("BAT_DEMO_SOUNDS_DIR")
-        .ok()
-        .and_then(|v| clean(&v))
-        .or_else(|| {
-            let env_file = workspace_root().join(".env");
-            let contents = std::fs::read_to_string(env_file).ok()?;
-            contents.lines().find_map(|line| {
-                let line = line.trim();
-                if line.starts_with('#') {
-                    return None;
-                }
-                let rest = line
-                    .strip_prefix("BAT_DEMO_SOUNDS_DIR")?
-                    .trim_start()
-                    .strip_prefix('=')?;
-                clean(rest)
-            })
-        })?;
-    let p = PathBuf::from(&raw);
-    Some(if p.is_absolute() {
-        p
-    } else {
-        workspace_root().join(p)
-    })
-}
-
-/// The bat-demo-sounds `sounds/` directory. Uses the override above when set,
-/// otherwise the default sibling checkout `../batchi-extras/bat-demo-sounds`.
+/// The bat-demo-sounds `sounds/` directory (see `common`).
 fn corpus_dir() -> PathBuf {
-    corpus_root_override()
-        .unwrap_or_else(|| workspace_root().join("../batchi-extras/bat-demo-sounds"))
-        .join("sounds")
+    common::bat_demo_sounds_dir()
 }
 
 /// Small synthetic fixtures (ffmpeg-generated) covering formats the demo corpus
@@ -81,14 +39,11 @@ fn fixtures_dir() -> PathBuf {
 
 /// FNV-1a over the raw little-endian bytes of the decoded samples.
 fn fnv1a(samples: &[f32]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h = common::Fnv::new();
     for s in samples {
-        for b in s.to_le_bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
+        h.bytes(&s.to_le_bytes());
     }
-    h
+    h.0
 }
 
 fn is_audio(p: &Path) -> bool {
