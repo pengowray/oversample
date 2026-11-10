@@ -116,6 +116,15 @@ extern "C" {
     fn language_name(code: &str) -> String;
 }
 
+/// The name to show for a species: its common name in the user's language from
+/// `local` (keyed "Genus species"), else Xeno-canto's English name.
+fn display_name(sp: &XcSpecies, local: &std::collections::HashMap<String, String>) -> String {
+    local
+        .get(&format!("{} {}", sp.genus, sp.sp))
+        .cloned()
+        .unwrap_or_else(|| sp.en.clone())
+}
+
 /// The line under a found species giving the name that matched, such as
 /// "Zwergfledermaus (German)", or `None` when
 /// it matched the English or scientific name already shown in the row.
@@ -125,6 +134,7 @@ fn text_match_note(hit: &NamedSpecies, lang: impl Fn(&str) -> String) -> Option<
     let shown = |name: &str| {
         name.eq_ignore_ascii_case(&hit.en)
             || name.eq_ignore_ascii_case(&format!("{} {}", hit.genus, hit.sp))
+            || hit.local.as_deref().is_some_and(|l| l.to_lowercase() == name.to_lowercase())
     };
     if m.source == "xc" || shown(&m.name) {
         return None;
@@ -482,6 +492,10 @@ pub fn XcBrowser() -> impl IntoView {
     let selected_group = RwSignal::new("bats".to_string());
     let country_input = RwSignal::new(String::new());
     let species_list: RwSignal<Vec<XcSpecies>> = RwSignal::new(Vec::new());
+    // Common names in the user's language for `species_list`, keyed "Genus
+    // species". Empty for English, or when the server can't give them.
+    let species_local_names: RwSignal<std::collections::HashMap<String, String>> =
+        RwSignal::new(std::collections::HashMap::new());
     // The group of the species list on screen. Set together with
     // `species_list`; `taxonomy_target` names the group being loaded, which
     // can differ during a Refresh.
@@ -747,10 +761,25 @@ pub fn XcBrowser() -> impl IntoView {
                     None
                 }
             };
-            if let Some(t) = taxonomy {
+            if let Some(mut t) = taxonomy {
+                // Names in the user's language, fetched before the list is shown
+                // so it is not sorted again under the reader.
+                let local = match xc_client::user_language() {
+                    Some(lang) => xc_client::common_names(&list_group, &lang).await.unwrap_or_default(),
+                    None => Default::default(),
+                };
+                if !is_current() {
+                    return;
+                }
+                if !local.is_empty() {
+                    t.species.sort_by_cached_key(|s| {
+                        display_name(s, &local).to_lowercase()
+                    });
+                }
                 taxonomy_age.try_set(xc_client::taxonomy_age_secs(&t).map(text_age));
                 species_list_group.try_set(list_group);
                 species_list_country.try_set(list_country);
+                species_local_names.try_set(local);
                 species_list.try_set(t.species);
             }
             taxonomy_progress.try_set(None);
@@ -1470,20 +1499,24 @@ pub fn XcBrowser() -> impl IntoView {
                             {found.species.into_iter().map(|hit| {
                                 let note = text_match_note(&hit, language_name);
                                 let sci = format!("{} {}", hit.genus, hit.sp);
-                                let NamedSpecies { group, genus, sp, en, recording_count, .. } = hit;
-                                let (group_shown, en_shown) = (group.clone(), en.clone());
+                                let NamedSpecies { group, genus, sp, en, recording_count, local, .. } = hit;
+                                // The English name goes under a name in the user's language.
+                                let english = local.as_ref().map(|_| en.clone());
+                                let shown = local.unwrap_or(en);
+                                let (group_shown, name_shown) = (group.clone(), shown.clone());
                                 view! {
                                     <button
                                         class="xc-species-row xc-named"
                                         on:click=move |_| {
                                             load_species_recordings(
-                                                group.clone(), None, genus.clone(), sp.clone(), en.clone(),
+                                                group.clone(), None, genus.clone(), sp.clone(), shown.clone(),
                                             );
                                         }
                                     >
                                         <span class="xc-col-name">
-                                            {en_shown}
-                                            {note.map(|n| view! { <span class="xc-match-note">{n}</span> })}
+                                            {name_shown}
+                                            {english.map(|n| view! { <span class="xc-name-note">{n}</span> })}
+                                            {note.map(|n| view! { <span class="xc-name-note">{n}</span> })}
                                         </span>
                                         <span class="xc-col-sci">{sci}</span>
                                         <span class="xc-col-group">{group_shown}</span>
@@ -1514,7 +1547,12 @@ pub fn XcBrowser() -> impl IntoView {
                             {list.into_iter().map(|sp| {
                                 let genus = sp.genus.clone();
                                 let species = sp.sp.clone();
-                                let en = sp.en.clone();
+                                let local = species_local_names
+                                    .with_untracked(|m| m.get(&format!("{} {}", sp.genus, sp.sp)).cloned());
+                                // The English name goes under a name in the user's language.
+                                let english = local.as_ref().map(|_| sp.en.clone());
+                                let en = local.unwrap_or_else(|| sp.en.clone());
+                                let name_shown = en.clone();
                                 let load_sp = load_species_recordings;
                                 view! {
                                     <button
@@ -1529,7 +1567,10 @@ pub fn XcBrowser() -> impl IntoView {
                                             );
                                         }
                                     >
-                                        <span class="xc-col-name">{sp.en}</span>
+                                        <span class="xc-col-name">
+                                            {name_shown}
+                                            {english.map(|n| view! { <span class="xc-name-note">{n}</span> })}
+                                        </span>
                                         <span class="xc-col-sci">{format!("{} {}", sp.genus, sp.sp)}</span>
                                         <span class="xc-col-count">{sp.recording_count}</span>
                                     </button>
@@ -1701,6 +1742,7 @@ mod tests {
             sp: "pipistrellus".into(),
             en: "Common Pipistrelle".into(),
             recording_count: 3,
+            local: None,
             matched: xc_client::NameMatch {
                 name: name.into(),
                 kind: kind.into(),
@@ -1720,6 +1762,10 @@ mod tests {
         assert_eq!(note(hit("common pipistrelle", "common", Some("en"), "iucn")), None);
         assert_eq!(note(hit("Pipistrellus pipistrellus", "scientific", None, "iucn")), None);
         assert_eq!(note(hit("Anything", "common", Some("en"), "xc")), None);
+        // Not repeated when it is the name shown in the user's language.
+        let mut shown_locally = hit("zwergfledermaus", "common", Some("de"), "col");
+        shown_locally.local = Some("Zwergfledermaus".into());
+        assert_eq!(note(shown_locally), None);
     }
 
     #[test]

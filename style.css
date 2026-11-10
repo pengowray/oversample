@@ -6200,7 +6200,8 @@ button.toolbar-overflow-btn {
 }
 
 /* Species found by name: adds a Group column, since the results come from
-   every group, and a line under the name saying which name matched. */
+   every group. Under a species name (.xc-name-note): the English name when
+   the name shown is in the user's language, and the name that matched. */
 .xc-list-header.xc-named, .xc-species-row.xc-named {
     grid-template-columns: 1fr 1fr 90px 60px;
 }
@@ -6211,7 +6212,7 @@ button.toolbar-overflow-btn {
     color: #a0a0a0;
 }
 
-.xc-match-note {
+.xc-name-note {
     display: block;
     color: #a0a0a0;
     font-size: 11px;

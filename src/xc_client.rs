@@ -205,6 +205,9 @@ pub struct NamedSpecies {
     /// XC's English name.
     pub en: String,
     pub recording_count: u32,
+    /// The common name in the user's language, when asked for and known.
+    #[serde(default)]
+    pub local: Option<String>,
     /// The name that matched the query.
     #[serde(rename = "match")]
     pub matched: NameMatch,
@@ -242,11 +245,15 @@ pub fn is_xc_query(text: &str) -> bool {
 /// matches `query`, from the Oversample server. Works with any source: the
 /// server answers from its own index and never contacts Xeno-canto.
 pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
-    let url = format!(
+    let mut url = format!(
         "{}/xc/species?q={}",
         proxy_base(),
         String::from(js_sys::encode_uri_component(query))
     );
+    if let Some(lang) = user_language() {
+        url.push_str("&lang=");
+        url.push_str(&lang);
+    }
     // Not throttled: it runs as the user types, and the server rate-limits it.
     match server_get(&url, false).await? {
         ServerReply::Ready(body) => serde_json::from_str(&body)
@@ -255,6 +262,55 @@ pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
             species: Vec::new(),
             groups_indexing: Vec::new(),
         }),
+    }
+}
+
+/// The language to show common names in: the primary subtag of the browser's
+/// first preferred language ("de" for "de-AT"), or `None` for English, since
+/// Xeno-canto's names are English.
+pub fn user_language() -> Option<String> {
+    let nav = web_sys::window()?.navigator();
+    let tag = nav
+        .languages()
+        .get(0)
+        .as_string()
+        .or_else(|| nav.language())?;
+    language_code(&tag)
+}
+
+/// "de-AT" gives "de"; English, or a tag that doesn't start with a 2 or 3
+/// letter code, gives `None`.
+fn language_code(tag: &str) -> Option<String> {
+    let primary = tag.trim().split(['-', '_']).next()?.to_ascii_lowercase();
+    let valid = (2..=3).contains(&primary.len()) && primary.chars().all(|c| c.is_ascii_alphabetic());
+    (valid && primary != "en").then_some(primary)
+}
+
+#[derive(serde::Deserialize)]
+struct CommonNamesReply {
+    names: std::collections::HashMap<String, String>,
+}
+
+/// The common names in `lang` of the species of `group` (keyed "Genus
+/// species", as Xeno-canto writes them), from the Oversample server. Works
+/// with any source. `None` if the server can't give them (unreachable, an
+/// older server, or still indexing the group).
+pub async fn common_names(group: &str, lang: &str) -> Option<std::collections::HashMap<String, String>> {
+    let url = format!(
+        "{}/xc/common-names/{}?lang={lang}",
+        proxy_base(),
+        String::from(js_sys::encode_uri_component(group))
+    );
+    match server_get(&url, false).await {
+        Ok(ServerReply::Ready(body)) => serde_json::from_str::<CommonNamesReply>(&body)
+            .map(|r| r.names)
+            .map_err(|e| log::warn!("Common names from server not read: {e}"))
+            .ok(),
+        Ok(ServerReply::Indexing { .. }) => None,
+        Err(e) => {
+            log::warn!("Common names from server failed: {e:?}");
+            None
+        }
     }
 }
 
@@ -1189,6 +1245,15 @@ fn classify_http_error(status: u16, body: &str, own_key: bool) -> XcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_codes() {
+        assert_eq!(language_code("de-AT").as_deref(), Some("de"));
+        assert_eq!(language_code("pt_BR").as_deref(), Some("pt"));
+        assert_eq!(language_code("en-GB"), None);
+        assert_eq!(language_code("EN"), None);
+        assert_eq!(language_code("*"), None);
+    }
 
     #[test]
     fn species_query_adds_quoted_country() {
