@@ -35,6 +35,7 @@ pub mod right_sidebar;
 pub mod slider_row;
 pub mod spectrogram;
 pub mod spectrogram_events;
+pub mod surface_3d;
 pub mod tool_button;
 pub mod toolbar;
 pub mod view_bar;

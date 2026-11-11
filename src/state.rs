@@ -2054,6 +2054,8 @@ pub struct DialogsState {
     pub notif_perm_asked: bool,
     pub xc_browser_open: bool,
     pub wiki_browser_open: bool,
+    /// Region shown in the 3D spectrogram dialog; `None` when it is closed.
+    pub surface_3d: Option<Selection>,
 }
 
 /// Loaded-file library + load queue.
@@ -2512,6 +2514,7 @@ impl AppState {
                 ),
                 xc_browser_open: false,
                 wiki_browser_open: false,
+                surface_3d: None,
             }),
             is_tauri: detect_tauri(),
             is_mobile_platform: detect_mobile_ua(),

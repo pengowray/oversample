@@ -4,6 +4,7 @@ use crate::annotations::{
 };
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::channel_delay_row::{ChannelDelayRow, DelayRegion};
+use crate::components::surface_3d::open_surface_3d;
 use crate::components::file_sidebar::export_section::open_export_panel;
 use crate::components::file_sidebar::settings_panel::{delete_annotation, toggle_annotation_lock};
 use crate::components::icons::Icon;
@@ -660,6 +661,17 @@ fn SelectionOverflowMenu() -> impl IntoView {
                                             >
                                                 "Export\u{2026}"
                                             </button>
+                                            <button
+                                                class="canvas-overflow-item"
+                                                on:click=move |_| {
+                                                    is_open.set(false);
+                                                    if let Some(sel) = state.interaction.selection().get_untracked() {
+                                                        open_surface_3d(state, sel, get_freq_bounds(&state));
+                                                    }
+                                                }
+                                            >
+                                                "View in 3D"
+                                            </button>
                                         }.into_any()
                                     } else {
                                         view! { <span></span> }.into_any()
@@ -1013,6 +1025,23 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                     }
                                                 >
                                                     "Export\u{2026}"
+                                                </button>
+                                            })}
+                                            {move || delay_region.get().map(|r| view! {
+                                                <button
+                                                    class="canvas-overflow-item"
+                                                    on:click=move |_| {
+                                                        is_open.set(false);
+                                                        let sel = Selection {
+                                                            time_start: r.time_start,
+                                                            time_end: r.time_end,
+                                                            freq_low: r.freq_low,
+                                                            freq_high: r.freq_high,
+                                                        };
+                                                        open_surface_3d(state, sel, get_freq_bounds(&state));
+                                                    }
+                                                >
+                                                    "View in 3D"
                                                 </button>
                                             })}
                                             <div class="canvas-overflow-separator"></div>

@@ -5,4 +5,6 @@ dist = "dist"
 [watch]
 # Agent worktrees live under .claude/worktrees/; edits there are not this
 # checkout's and must not rebuild and reload it.
-ignore = [".claude", "target", "e2e", "node_modules"]
+# Playwright writes test-results/ and playwright-report/ during a run; a
+# rebuild there would reload the page under test.
+ignore = [".claude", "target", "e2e", "node_modules", "test-results", "playwright-report"]
