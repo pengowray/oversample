@@ -2213,12 +2213,13 @@ pub fn MainViewButton() -> impl IntoView {
                 }
             })}
 
-            // Reassignment checkbox (spectrogram view)
+            // Loudest-frequency line checkbox (spectrogram view), drawn with the
+            // reassignment method (canvas::reassign_line)
             {move || (state.viewmode.main_view().get() == MainView::Spectrogram).then(|| {
                 view! {
                     <hr />
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
-                        title="Draws a line over the spectrogram at the loudest frequency in each column, where it is 15 dB or more above the noise. Hidden when zoomed far out.">
+                        title="Draws a line at the loudest frequency in each column, where it is 15 dB or more above the noise, positioned with the reassignment method. Hidden when zoomed far out.">
                         <input
                             type="checkbox"
                             prop:checked=move || state.spect.reassign_enabled().get()
@@ -2228,7 +2229,7 @@ pub fn MainViewButton() -> impl IntoView {
                                 state.spect.reassign_enabled().set(input.checked());
                             }
                         />
-                        "Reassignment"
+                        "Loudest-frequency line"
                     </label>
                 }
             })}
