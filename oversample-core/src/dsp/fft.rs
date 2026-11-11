@@ -1,6 +1,8 @@
 use crate::canvas::colors::{dbfs_to_greyscale, magnitude_to_db};
 use crate::dsp::depth_range::max_display_range_db;
-use crate::dsp::spectrum_level::{auto_range_db, fft_size_for_bins, full_scale_db, noise_floor_dbfs};
+use crate::dsp::spectrum_level::{
+    auto_range_db, fft_size_for_bins, full_scale_db, noise_floor_dbfs,
+};
 use crate::types::PreRendered;
 use crate::types::{AudioData, PreviewImage, SpectrogramColumn, SpectrogramData};
 use realfft::RealFftPlanner;
@@ -155,7 +157,8 @@ pub fn reassign_noise_floor(samples: &[f32], fft_size: usize) -> Vec<f32> {
 /// A bin is moved only when its power is at least `gate_db` (absolute dB of
 /// unnormalized power) and at least [`REASSIGN_ABOVE_FLOOR_DB`] over
 /// `noise_floor[k]` (from [`reassign_noise_floor`]; empty means no floor).
-/// Other bins stay where the plain spectrogram draws them.
+/// Other bins stay where the plain spectrogram draws them. A moved bin leaves
+/// `noise_floor[k]` of its power behind and moves the rest.
 ///
 /// Returns a `PreRendered` with `db_data` in the same format as normal tiles
 /// (row 0 = highest freq, absolute dB values).
@@ -208,6 +211,14 @@ pub fn compute_reassigned_tile(
     let available_frames = (samples.len() - fft_size) / hop_size + 1;
     let frame_count = available_frames.min(lead_cols + col_count + margin);
 
+    // Add power to the nearest cell; energy that lands outside the tile is dropped.
+    let mut add = |(t, f): (f64, f64), power: f32| {
+        let (t, f) = (t.round(), f.round());
+        if t >= 0.0 && t < col_count as f64 && f >= 0.0 && f < n_bins as f64 {
+            accum[f as usize * col_count + t as usize] += power as f64;
+        }
+    };
+
     for frame_i in 0..frame_count {
         let pos = frame_i * hop_size;
         let frame = &samples[pos..pos + fft_size];
@@ -258,18 +269,18 @@ pub fn compute_reassigned_tile(
             } else {
                 None
             };
-            let (t_hat, f_hat) = moved.unwrap_or((frame_col, k as f64));
-
-            let t_round = t_hat.round();
-            let f_round = f_hat.round();
-            if !(t_round >= 0.0 && t_round < col_count as f64) {
-                continue;
+            let in_place = (frame_col, k as f64);
+            match moved {
+                Some(to) => {
+                    // The bin's noise share stays put and only the excess
+                    // moves, so a call doesn't leave a hole darker than the
+                    // noise around it.
+                    let left = noise_floor.get(k).map_or(0.0, |&n| n.min(power));
+                    add(in_place, left);
+                    add(to, power - left);
+                }
+                None => add(in_place, power),
             }
-            if !(f_round >= 0.0 && f_round < n_bins as f64) {
-                continue;
-            }
-
-            accum[f_round as usize * col_count + t_round as usize] += power as f64;
         }
     }
 
@@ -810,6 +821,39 @@ mod tests {
             "only {:.1}% of the sweep's energy is within 2.5 bins of its track",
             100.0 * share
         );
+    }
+
+    #[test]
+    fn moved_bins_leave_their_noise_share() {
+        // A tone far above the noise moves its main lobe onto one bin. The
+        // bins it moved from keep the noise floor's power instead of going
+        // darker than the noise around them.
+        let (fft, hop, cols) = (256, 64, 32);
+        let lead = reassign_margin_cols(fft, hop);
+        let floor = reassign_noise_floor(&white_noise(65_536, 0.01, 4), fft);
+        let mut samples = white_noise((lead + cols + lead) * hop + fft, 0.01, 5);
+        for (i, s) in samples.iter_mut().enumerate() {
+            *s += (2.0 * std::f64::consts::PI * 20.3 * i as f64 / fft as f64).sin() as f32;
+        }
+
+        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -200.0, &floor);
+        let cells = reassigned_power(&tile);
+        for (col, cell) in cells.iter().enumerate() {
+            for bin in [18, 19, 21, 22] {
+                assert!(
+                    cell[bin] >= 0.99 * floor[bin] as f64,
+                    "column {col}, bin {bin}: {:.2e} is under its noise floor {:.2e}",
+                    cell[bin],
+                    floor[bin]
+                );
+            }
+            let lobe: f64 = cell[18..=22].iter().sum();
+            assert!(
+                cell[20] / lobe > 0.95,
+                "column {col}: only {:.1}% of the tone is in bin 20",
+                100.0 * cell[20] / lobe
+            );
+        }
     }
 
     #[test]
