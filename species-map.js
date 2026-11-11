@@ -3,7 +3,7 @@
 // highlighted dots, hover for names. Drawn with Apache ECharts (vendor/,
 // Apache-2.0), which is loaded the first time a map opens.
 //
-// Called from src/components/file_sidebar/species_map.rs:
+// Called from src/components/file_sidebar/call_detection_panel/species_map.rs:
 //   oversampleSpeciesMap.render(el, json, onPick) -> Promise
 //   oversampleSpeciesMap.resetZoom(el)
 //   oversampleSpeciesMap.dispose(el)

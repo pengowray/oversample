@@ -1,5 +1,5 @@
 //! The Call detection tab. Its first choice is the method: the in-built call
-//! detector (this file), or BirdNET or BattyBirdNET (`classifier_section.rs`).
+//! detector (this file), or BirdNET or BattyBirdNET (`call_detection_panel/classifier_section.rs`).
 //!
 //! The in-built detector finds bat calls in the current file with the call
 //! detector (`oversample_core::dsp::call_detect`), lists every detection with
@@ -11,18 +11,21 @@
 //! `AppState::call_detection`, so they survive closing the tab and the overlay keeps
 //! showing them.
 
+mod classifier_section;
+mod species_map;
+
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::{
     build_call_annotations, count_call_annotations, count_detector_annotations, detector_tags_in,
     kind_label, remove_detector_annotations, AnnotateWhat,
 };
+use crate::classifier::BatRegion;
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
 };
-use super::classifier_section::ClassifierSection;
-use crate::classifier::BatRegion;
 use crate::state::store_fields::*;
 use crate::state::{AppState, DetectionMethod, RightSidebarTab};
+use classifier_section::ClassifierSection;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;

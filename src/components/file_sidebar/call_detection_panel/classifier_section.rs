@@ -7,8 +7,8 @@
 //! annotations, then the stored model and the attribution BirdNET's licence
 //! asks for.
 
-use super::call_detection_panel::{count, event_target_checked, event_target_value, undo_keys};
 use super::species_map::SpeciesMapDialog;
+use super::{count, event_target_checked, event_target_value, undo_keys};
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};

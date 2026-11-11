@@ -33,7 +33,7 @@ non-species classes left out.
 `birdnet-map.bin`: 6,522 x 2 little-endian int16 (x then y per class, in
 label order), 26 KB. The app ships this file (index.html copies it) and draws
 it in the Call detection tab's Species map (BirdNET results only):
-`src/components/file_sidebar/species_map.rs` and `species-map.js`, with
+`src/components/file_sidebar/call_detection_panel/species_map.rs` and `species-map.js`, with
 Apache ECharts 5.6.0 vendored in `vendor/`.
 
 Each window at or above the minimum confidence is drawn at the

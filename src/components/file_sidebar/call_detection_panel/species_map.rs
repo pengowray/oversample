@@ -25,7 +25,7 @@ async fn load_map() -> Result<Map, String> {
     if let Some(m) = MAP.with(|m| m.borrow().clone()) {
         return Ok(m);
     }
-    let bytes = super::fetch_bytes("birdnet-map.bin").await?;
+    let bytes = super::super::fetch_bytes("birdnet-map.bin").await?;
     let m = Arc::new(parse_map(&bytes));
     MAP.with(|c| *c.borrow_mut() = Some(m.clone()));
     Ok(m)
@@ -196,7 +196,7 @@ pub(super) fn SpeciesMapDialog(
         drawn_windows().map(|(n, min, _)| {
             format!(
                 "{} at {min:.2} or above, each beside its top species",
-                super::call_detection_panel::count(n, "window", "windows")
+                super::count(n, "window", "windows")
             )
         })
     };
