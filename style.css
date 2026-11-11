@@ -772,6 +772,111 @@ body.sidebar-resizing {
     cursor: default;
 }
 
+/* Method choice at the top of the tab: each option's description sits under
+   its name, so the user reads what a method does before picking it. */
+.detection-methods {
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 6px;
+}
+
+.detection-method {
+    align-items: flex-start;
+    padding: 2px 0;
+}
+
+.detection-method input {
+    margin-top: 2px;
+}
+
+.detection-method-text {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Nested under BattyBirdNET: lines up with the option's text. */
+.detection-region {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0 2px 19px;
+}
+
+.detection-region .setting-select {
+    flex: 1;
+    min-width: 0;
+}
+
+/* The one filled button in each state of the BirdNET section. */
+.detection-status .detection-primary-btn {
+    width: 100%;
+    margin: 4px 0;
+}
+
+.detection-error {
+    color: #f99;
+    margin-bottom: 4px;
+}
+
+.detection-busy-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.detection-stop-btn,
+.detection-delete-btn {
+    min-height: 24px;
+    padding: 4px 8px;
+}
+
+.detection-delete-btn {
+    margin: 0 16px 4px;
+}
+
+.detection-scientific {
+    font-style: italic;
+    color: #888;
+}
+
+.detection-top3 {
+    padding: 4px 0;
+}
+
+.detection-top3 > .detection-status-note {
+    padding: 0 16px 2px;
+}
+
+.detection-credit {
+    color: #888;
+    font-size: 11px;
+}
+
+.detection-credit a,
+.detection-link-btn {
+    color: #8ab;
+    text-decoration: none;
+}
+
+.detection-credit a:hover,
+.detection-link-btn:hover {
+    text-decoration: underline;
+}
+
+.detection-link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+}
+
+.detection-credits p {
+    margin: 4px 0;
+}
+
 .detection-list {
     max-height: 400px;
     overflow-y: auto;

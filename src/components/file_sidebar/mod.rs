@@ -13,6 +13,7 @@ pub mod mic_chooser;
 pub mod privacy_settings;
 pub mod psd_panel;
 pub mod call_detection_panel;
+mod classifier_section;
 pub mod settings_panel;
 pub(crate) mod streaming_load;
 mod suggestions;

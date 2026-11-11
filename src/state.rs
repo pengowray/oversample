@@ -1609,6 +1609,28 @@ pub struct CallDetectionState {
     pub scan_generation: u32,
     /// Share of the file searched so far, 0 to 1, while `scanning`.
     pub progress: f64,
+    /// The method picked in the tab. Picking one never downloads or runs
+    /// anything; the in-built detector runs on its own, the others on request.
+    pub method: DetectionMethod,
+    /// The BattyBirdNET region picked in the tab.
+    pub bat_region: crate::classifier::BatRegion,
+    /// BirdNET and BattyBirdNET: windows whose top class is below this are left
+    /// out of the summary, the lists, the annotations and the overlay.
+    pub min_confidence: f32,
+    /// BirdNET and BattyBirdNET: the window picked in the lists.
+    pub selected_window: Option<usize>,
+}
+
+/// The methods in the Call detection tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DetectionMethod {
+    /// The call detector (`oversample_core::dsp::call_detect`).
+    #[default]
+    Inbuilt,
+    /// BirdNET V2.4, birds and some other sounds.
+    BirdNet,
+    /// BattyBirdNET, bats for one region.
+    Bats,
 }
 
 /// BirdNET and BattyBirdNET: model downloads, the run in progress, and results.
@@ -2587,6 +2609,10 @@ impl AppState {
                 scanning: None,
                 scan_generation: 0,
                 progress: 0.0,
+                method: DetectionMethod::Inbuilt,
+                bat_region: crate::classifier::BatRegion::Uk,
+                min_confidence: 0.5,
+                selected_window: None,
             }),
 
             classifier: Store::new(ClassifierState::default()),

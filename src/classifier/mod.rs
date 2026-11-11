@@ -47,6 +47,7 @@
 //! revision, to show with results and in About.
 
 pub mod store;
+pub mod summary;
 pub mod test_hook;
 pub mod types;
 mod worker;
@@ -171,14 +172,19 @@ async fn download_file(state: AppState, file: &'static ModelFile) -> Result<(), 
 /// other (the small ones first).
 pub fn download(state: AppState, choice: ModelChoice) {
     spawn_local(async move {
-        let mut files = choice.files();
-        files.sort_by_key(|f| f.size);
-        for f in files {
-            if download_file(state, f).await.is_err() {
-                break;
-            }
-        }
+        let _ = ensure_downloaded(state, choice).await;
     });
+}
+
+/// Download every file `choice` needs that is not stored yet, and finish when
+/// all are stored or one fails.
+pub async fn ensure_downloaded(state: AppState, choice: ModelChoice) -> Result<(), ClassifierError> {
+    let mut files = choice.files();
+    files.sort_by_key(|f| f.size);
+    for f in files {
+        download_file(state, f).await?;
+    }
+    Ok(())
 }
 
 /// Delete stored files.
@@ -377,14 +383,22 @@ async fn run_task(
     let still_wanted = || is_latest(state, generation) && current_file_id(state) == Some(file_id);
     while at < total {
         let len = piece.min(total - at) as usize;
-        crate::audio::streaming_source::prefetch_streaming(&*source, at, len).await;
+        let read = crate::audio::streaming_source::read_region_ready(
+            &*source,
+            ChannelView::MonoMix,
+            at,
+            len,
+        )
+        .await;
         if !still_wanted() {
             if is_latest(state, generation) {
                 cancel(state);
             }
             return Err(Stopped::Superseded);
         }
-        let mut samples = source.read_region(ChannelView::MonoMix, at, len);
+        // A piece that could not be read becomes silence, so later windows keep
+        // their times.
+        let mut samples = read.unwrap_or_else(|| vec![0.0; len]);
         if samples.len() < len {
             if source.length_is_estimated() {
                 // The end of a file whose length was a guess.

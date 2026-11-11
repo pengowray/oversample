@@ -230,10 +230,20 @@ pub fn count_detector_annotations(annotations: &[Annotation]) -> usize {
 /// removed. An annotation without the tag whose parent is removed moves to
 /// that parent's nearest remaining ancestor, or to the top level.
 pub fn remove_detector_annotations(annotations: &mut Vec<Annotation>) -> usize {
+    remove_annotations_where(annotations, is_from_detector)
+}
+
+/// Remove every annotation `remove` picks, and return how many were removed.
+/// An annotation that is kept and whose parent is removed moves to that
+/// parent's nearest remaining ancestor, or to the top level.
+pub fn remove_annotations_where(
+    annotations: &mut Vec<Annotation>,
+    remove: impl Fn(&Annotation) -> bool,
+) -> usize {
     use std::collections::HashMap;
     let removed: HashMap<AnnotationId, Option<AnnotationId>> = annotations
         .iter()
-        .filter(|a| is_from_detector(a))
+        .filter(|a| remove(a))
         .map(|a| (a.id.clone(), a.parent_id.clone()))
         .collect();
     if removed.is_empty() {

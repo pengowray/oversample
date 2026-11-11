@@ -1,4 +1,7 @@
-//! The Call detection tab: finds bat calls in the current file with the call
+//! The Call detection tab. Its first choice is the method: the in-built call
+//! detector (this file), or BirdNET or BattyBirdNET (`classifier_section.rs`).
+//!
+//! The in-built detector finds bat calls in the current file with the call
 //! detector (`oversample_core::dsp::call_detect`), lists every detection with
 //! its kind, and adds calls or trains as annotations.
 //!
@@ -16,8 +19,10 @@ use crate::call_annotations::{
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
 };
+use super::classifier_section::ClassifierSection;
+use crate::classifier::BatRegion;
 use crate::state::store_fields::*;
-use crate::state::{AppState, RightSidebarTab};
+use crate::state::{AppState, DetectionMethod, RightSidebarTab};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
@@ -41,7 +46,7 @@ fn search_key(params: &CallScanParams) -> CallScanParams {
 }
 
 /// `1 bat call`, `2 bat calls`.
-fn count(n: usize, one: &str, many: &str) -> String {
+pub(super) fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
@@ -50,7 +55,7 @@ fn khz(hz: f32) -> String {
 }
 
 /// The undo shortcut on this platform.
-fn undo_keys() -> &'static str {
+pub(super) fn undo_keys() -> &'static str {
     let is_mac = web_sys::window()
         .and_then(|w| w.navigator().user_agent().ok())
         .is_some_and(|ua| ua.contains("Mac"));
@@ -293,7 +298,7 @@ fn add_annotations(state: AppState, what: AnnotateWhat, bat_calls_only: bool) {
 }
 
 #[component]
-pub(crate) fn CallDetectionPanel() -> impl IntoView {
+fn InbuiltDetection() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     // Settings as shown while a slider is dragged; copied to the detector's
@@ -698,7 +703,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
     };
 
     view! {
-        <div class="sidebar-panel">
+        <div>
             {status}
             <div class="setting-row detection-annotate-row">
                 <label class="setting-label">
@@ -763,7 +768,108 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
     }
 }
 
-fn event_target_value(ev: &web_sys::Event) -> String {
+/// The Call detection tab: a choice of method, then that method's panel.
+#[component]
+pub(crate) fn CallDetectionPanel() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let method = move || state.call_detection.method().get();
+
+    let option = move |value: DetectionMethod, label: &'static str, help: &'static str| {
+        view! {
+            <label class="setting-label detection-radio detection-method">
+                <input
+                    type="radio"
+                    name="detection-method"
+                    prop:checked=move || method() == value
+                    on:change=move |_| {
+                        state.call_detection.method().set(value);
+                        state.call_detection.selected_window().set(None);
+                    }
+                />
+                <span class="detection-method-text">
+                    <span>{label}</span>
+                    <span class="detection-status-note">{help}</span>
+                </span>
+            </label>
+        }
+    };
+    let region_select = move || {
+        (method() == DetectionMethod::Bats).then(|| {
+            let busy = move || state.classifier.run().with(|r| r.is_busy());
+            view! {
+                <label class="detection-region">
+                    <span class="setting-label">"Region"</span>
+                    <select
+                        class="setting-select"
+                        prop:disabled=busy
+                        on:change=move |ev| {
+                            let i: usize = event_target_select_value(&ev).parse().unwrap_or(0);
+                            if let Some(r) = BatRegion::ALL.get(i) {
+                                state.call_detection.bat_region().set(*r);
+                            }
+                        }
+                    >
+                        {BatRegion::ALL
+                            .iter()
+                            .enumerate()
+                            .map(|(i, r)| {
+                                let r = *r;
+                                view! {
+                                    <option
+                                        value=i.to_string()
+                                        prop:selected=move || state.call_detection.bat_region().get() == r
+                                    >{format!("{}: {} species", r.label(), region_species(r))}</option>
+                                }
+                            })
+                            .collect::<Vec<_>>()}
+                    </select>
+                </label>
+            }
+        })
+    };
+
+    view! {
+        <div class="sidebar-panel">
+            <div class="detection-annotate-row detection-radio-group detection-methods">
+                {option(DetectionMethod::Inbuilt, "In-built bat call detection", "Finds bat calls. Runs automatically.")}
+                {option(DetectionMethod::BirdNet, "BirdNET", "Bird species, plus some other sounds such as dog and engine")}
+                {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species for one region")}
+                {region_select}
+            </div>
+            {move || match method() {
+                DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),
+                DetectionMethod::BirdNet => view! { <ClassifierSection bats=false /> }.into_any(),
+                DetectionMethod::Bats => view! { <ClassifierSection bats=true /> }.into_any(),
+            }}
+        </div>
+    }
+}
+
+/// Bat species in each region's BattyBirdNET classifier (lines of its label
+/// file with a scientific and a common name; crickets count as one).
+fn region_species(region: BatRegion) -> usize {
+    match region {
+        BatRegion::Bavaria | BatRegion::BavariaHigh => 22,
+        BatRegion::Eu => 29,
+        BatRegion::Scotland => 10,
+        BatRegion::SouthWales => 28,
+        BatRegion::Sweden => 18,
+        BatRegion::Uk => 15,
+        BatRegion::Usa => 33,
+        BatRegion::UsaEast | BatRegion::UsaEastHigh => 17,
+        BatRegion::UsaWest => 23,
+    }
+}
+
+fn event_target_select_value(ev: &web_sys::Event) -> String {
+    use wasm_bindgen::JsCast;
+    ev.target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        .map(|el| el.value())
+        .unwrap_or_default()
+}
+
+pub(super) fn event_target_value(ev: &web_sys::Event) -> String {
     use wasm_bindgen::JsCast;
     ev.target()
         .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
@@ -771,7 +877,7 @@ fn event_target_value(ev: &web_sys::Event) -> String {
         .unwrap_or_default()
 }
 
-fn event_target_checked(ev: &web_sys::Event) -> bool {
+pub(super) fn event_target_checked(ev: &web_sys::Event) -> bool {
     use wasm_bindgen::JsCast;
     ev.target()
         .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())

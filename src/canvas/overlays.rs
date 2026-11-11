@@ -1115,6 +1115,110 @@ pub fn draw_calls(
     let _ = ctx.set_line_dash(&no_dashes);
 }
 
+/// One stretch of the BirdNET / BattyBirdNET label strip: neighbouring windows
+/// with the same top class at or above the minimum confidence.
+pub struct StripSpan {
+    pub start_s: f64,
+    pub end_s: f64,
+    /// "Song thrush 0.91"
+    pub label: String,
+    /// False for BattyBirdNET's classes that are not a species ("Noise").
+    pub is_species: bool,
+    /// Window boundaries inside the span, in seconds, drawn as ticks.
+    pub inner_bounds: Vec<f64>,
+}
+
+/// Height of the label strip along the top of the spectrogram.
+const STRIP_H: f64 = 16.0;
+
+/// Draw BirdNET or BattyBirdNET results as a strip along the top of the
+/// spectrogram: one box per stretch of windows with the same species, with
+/// ticks at the window boundaries, and the selected window shaded down the
+/// whole height so it can be found in the sound.
+pub fn draw_species_strip(
+    ctx: &CanvasRenderingContext2d,
+    spans: &[StripSpan],
+    selected: Option<(f64, f64)>,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+) {
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+    let x_of = |t: f64| (t - start_time) * px_per_sec;
+
+    if let Some((s, e)) = selected {
+        if e >= start_time && s <= end_time {
+            let x0 = x_of(s).max(0.0);
+            let x1 = x_of(e).min(canvas_width);
+            ctx.set_fill_style_str("rgba(255, 180, 50, 0.10)");
+            ctx.fill_rect(x0, 0.0, x1 - x0, canvas_height);
+        }
+    }
+
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_baseline("middle");
+    for span in spans {
+        if span.end_s < start_time || span.start_s > end_time {
+            continue;
+        }
+        let x0 = x_of(span.start_s).max(0.0);
+        let x1 = x_of(span.end_s).min(canvas_width);
+        let w = (x1 - x0).max(1.0);
+        ctx.set_fill_style_str(if span.is_species {
+            "rgba(20, 60, 40, 0.85)"
+        } else {
+            "rgba(50, 50, 50, 0.80)"
+        });
+        ctx.fill_rect(x0, 0.0, w, STRIP_H);
+        ctx.set_stroke_style_str(if span.is_species {
+            "rgba(80, 220, 150, 0.7)"
+        } else {
+            "rgba(160, 160, 160, 0.6)"
+        });
+        ctx.set_line_width(1.0);
+        ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, STRIP_H - 1.0);
+        // Window boundaries inside a merged stretch.
+        for &b in &span.inner_bounds {
+            let x = x_of(b);
+            if x > x0 && x < x1 {
+                ctx.begin_path();
+                ctx.move_to(x.round() + 0.5, STRIP_H - 4.0);
+                ctx.line_to(x.round() + 0.5, STRIP_H);
+                ctx.stroke();
+            }
+        }
+        // The label, cut to the box; too narrow for a few letters, none.
+        if w > 24.0 {
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(x0 + 1.0, 0.0, w - 2.0, STRIP_H);
+            ctx.clip();
+            ctx.set_fill_style_str(if span.is_species {
+                "rgba(220, 255, 235, 0.95)"
+            } else {
+                "rgba(200, 200, 200, 0.9)"
+            });
+            let _ = ctx.fill_text(&span.label, x0 + 4.0, STRIP_H / 2.0 + 0.5);
+            ctx.restore();
+        }
+    }
+
+    if let Some((s, e)) = selected {
+        if e >= start_time && s <= end_time {
+            let x0 = x_of(s).max(0.0);
+            let x1 = x_of(e).min(canvas_width);
+            ctx.set_stroke_style_str("rgba(255, 200, 80, 0.9)");
+            ctx.set_line_width(1.5);
+            ctx.stroke_rect(x0 + 0.75, 0.75, (x1 - x0 - 1.5).max(1.0), STRIP_H - 1.5);
+        }
+    }
+}
+
 /// Draw selection rectangle overlay on spectrogram.
 pub fn draw_selection(
     ctx: &CanvasRenderingContext2d,

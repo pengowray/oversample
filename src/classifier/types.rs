@@ -66,12 +66,17 @@ impl RunStatus {
 }
 
 /// One line of a label file: "Pipistrellus pipistrellus_Common pipistrelle".
-/// A line without an underscore (BattyBirdNET's "NOISE") has the whole line in
-/// both fields.
+/// A line without an underscore (BattyBirdNET's "noise", "background",
+/// "silence", "audiomoth", "other") has the whole line in both fields and
+/// `is_species` false.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpeciesLabel {
     pub scientific: String,
     pub common: String,
+    /// False for BattyBirdNET's classes that are not a species, such as
+    /// "noise". BirdNET's non-bird classes ("Dog_Dog") count as species here:
+    /// they are named sounds.
+    pub is_species: bool,
 }
 
 impl SpeciesLabel {
@@ -81,10 +86,12 @@ impl SpeciesLabel {
             Some((s, c)) => SpeciesLabel {
                 scientific: s.to_string(),
                 common: c.to_string(),
+                is_species: true,
             },
             None => SpeciesLabel {
                 scientific: line.to_string(),
                 common: line.to_string(),
+                is_species: false,
             },
         }
     }

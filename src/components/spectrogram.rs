@@ -45,6 +45,60 @@ pub fn take_spec_diag() -> (u32, f64) {
     })
 }
 
+/// The BirdNET / BattyBirdNET label strip for the current file, when that
+/// method is picked in the Call detection tab: stretches of neighbouring
+/// windows with the same top class at or above the minimum confidence, and the
+/// selected window's start and end. Reactive: call inside the draw effect.
+fn species_strip(
+    state: AppState,
+    method: crate::state::DetectionMethod,
+) -> Option<(Vec<spectrogram_renderer::StripSpan>, Option<(f64, f64)>)> {
+    use crate::classifier::summary::{window_kind, WindowKind};
+    use crate::classifier::Method;
+    let method = match method {
+        crate::state::DetectionMethod::Inbuilt => return None,
+        crate::state::DetectionMethod::BirdNet => Method::BirdNet,
+        crate::state::DetectionMethod::Bats => Method::Bats,
+    };
+    let file = state.current_file_id_tracked()?;
+    let min = state.call_detection.min_confidence().get();
+    let selected = state.call_detection.selected_window().get();
+    state.classifier.results().with(|m| {
+        let run = m.get(&(file, method))?;
+        let mut spans: Vec<spectrogram_renderer::StripSpan> = Vec::new();
+        let mut last: Option<(usize, u16)> = None;
+        for (i, w) in run.windows.iter().enumerate() {
+            let kind = window_kind(run, i, min);
+            if kind == WindowKind::Below {
+                continue;
+            }
+            let top = w.top[0];
+            let joins = last.is_some_and(|(j, c)| j + 1 == i && c == top.class);
+            match spans.last_mut() {
+                Some(s) if joins => {
+                    s.inner_bounds.push(w.start_s);
+                    s.end_s = w.end_s;
+                }
+                _ => {
+                    let name = run.label(&top).map_or("Unknown", |l| l.common.as_str());
+                    spans.push(spectrogram_renderer::StripSpan {
+                        start_s: w.start_s,
+                        end_s: w.end_s,
+                        label: format!("{name} {:.2}", top.confidence),
+                        is_species: kind == WindowKind::Species,
+                        inner_bounds: Vec::new(),
+                    });
+                }
+            }
+            last = Some((i, top.class));
+        }
+        let sel = selected
+            .and_then(|i| run.windows.get(i))
+            .map(|w| (w.start_s, w.end_s));
+        Some((spans, sel))
+    })
+}
+
 /// Pick the right `DebugTileKind` so the debug-tiles overlay reads from the
 /// cache that's actually being rendered — magnitude/flow for STFT-based views,
 /// resonator for the Resonators view (which uses its own FFT-mode enum).
@@ -300,6 +354,10 @@ pub fn Spectrogram() -> impl IntoView {
             state.call_detection.trains().with(|_| ());
             let detection_overlay = state.call_detection.overlay_enabled().get();
             let selected_detection = state.call_detection.selected_index().get();
+            // The method picked in the Call detection tab decides which
+            // results the overlay shows.
+            let detection_method = state.call_detection.method().get();
+            let species_strip = species_strip(state, detection_method);
             let detection_file = state
                 .call_detection
                 .scanned()
@@ -1151,6 +1209,7 @@ pub fn Spectrogram() -> impl IntoView {
 
                 // Call detection overlay, for the file the calls came from.
                 if detection_overlay
+                    && detection_method == crate::state::DetectionMethod::Inbuilt
                     && detection_file.is_some()
                     && detection_file == state.current_file_id()
                 {
@@ -1171,6 +1230,20 @@ pub fn Spectrogram() -> impl IntoView {
                             );
                         })
                     });
+                }
+                if detection_overlay {
+                    if let Some((spans, selected)) = &species_strip {
+                        spectrogram_renderer::draw_species_strip(
+                            &ctx,
+                            spans,
+                            *selected,
+                            scroll,
+                            time_res,
+                            zoom,
+                            display_w as f64,
+                            display_h as f64,
+                        );
+                    }
                 }
 
                 // Notch filter band markers
