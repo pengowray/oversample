@@ -11,6 +11,7 @@ test.use({
 });
 
 type Eye = { x: number; y: number; z: number };
+const webglWarnings: string[] = [];
 
 function cameraEye(page: Page): Promise<Eye> {
   return page.evaluate(() => {
@@ -23,9 +24,8 @@ function cameraEye(page: Page): Promise<Eye> {
 
 async function openSurface(page: Page) {
   page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning") console.log(`[${m.type()}] ${m.text()}`);
+    if (/WebGL/i.test(m.text())) webglWarnings.push(m.text());
   });
-  page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
   await page.goto("/");
   await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
   await page
@@ -80,6 +80,20 @@ test("View in 3D draws the selection and dragging rotates it", async ({ page }, 
   await page.waitForTimeout(300);
   const afterFloor = await cameraEye(page);
   expect(Math.hypot(afterFloor.x - after.x, afterFloor.y - after.y)).toBeLessThan(0.01);
+
+  // Many redraws must not use up WebGL contexts (browsers drop the oldest).
+  const slider = page.locator(".surface-3d-floor input");
+  await slider.focus();
+  for (let i = 0; i < 25; i++) await page.keyboard.press(i % 2 ? "ArrowRight" : "ArrowLeft");
+  await page.waitForTimeout(500);
+  expect(webglWarnings).toEqual([]);
+  expect(await cameraEye(page)).toBeTruthy();
+
+  // Reset appears once the floor is changed, and puts the starting value back.
+  const reset = page.locator(".surface-3d-controls button", { hasText: "Reset" });
+  await expect(reset).toBeVisible();
+  await reset.click();
+  await expect(reset).toHaveCount(0);
 
   await page.keyboard.press("Escape");
   await expect(page.locator(".surface-3d-dialog")).toHaveCount(0);

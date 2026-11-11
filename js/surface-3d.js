@@ -24,13 +24,22 @@
         return loading;
     }
 
+    // Checked once: each probe creates a WebGL context, and browsers drop the
+    // oldest live context (Plotly's) after about 16.
+    var webglOk = null;
     function hasWebGL() {
-        try {
-            var c = document.createElement('canvas');
-            return !!(c.getContext('webgl2') || c.getContext('webgl'));
-        } catch (e) {
-            return false;
+        if (webglOk === null) {
+            try {
+                var c = document.createElement('canvas');
+                var gl = c.getContext('webgl2') || c.getContext('webgl');
+                webglOk = !!gl;
+                var lose = gl && gl.getExtension('WEBGL_lose_context');
+                if (lose) lose.loseContext();
+            } catch (e) {
+                webglOk = false;
+            }
         }
+        return webglOk;
     }
 
     // Starting camera position. In a tall, narrow box (a phone held upright)
@@ -53,6 +62,8 @@
             return Promise.reject(new Error('The 3D view needs WebGL, which is turned off or unavailable in this browser'));
         }
         return loadPlotly().then(function (Plotly) {
+            // The dialog may have closed (and purged) while Plotly loaded.
+            if (!el.isConnected) return;
             var z = new Array(d.ny);
             // Hover shows the measured level (z is clamped to the floor) and
             // the time in the recording, so a peak can be found on the timeline.
@@ -64,7 +75,9 @@
                     custom[j][i] = [d.level[j * d.nx + i], d.start_s + d.times_ms[i] / 1000];
                 }
             }
-            var x = Array.prototype.slice.call(d.times_ms);
+            // Seconds for long selections, where ms ticks read "2k, 4k".
+            var inSecs = d.nx > 0 && d.times_ms[d.nx - 1] > 2000;
+            var x = Array.prototype.map.call(d.times_ms, function (t) { return inSecs ? t / 1000 : t; });
             var narrow = el.clientWidth < 600;
             var y = Array.prototype.slice.call(d.freqs_khz);
             var axis = function (title) {
@@ -81,8 +94,13 @@
             var yAxis = axis('Frequency (kHz)');
             // Fewer frequency ticks on a phone, where 5 kHz steps touch.
             if (narrow) yAxis.nticks = 5;
-            // The long title is clipped at the left edge on a phone.
-            var zAxis = axis(narrow ? 'dB' : 'Level (dB, 0 = loudest)');
+            // On a phone any title is clipped at the left edge, so the unit
+            // goes on the tick labels, and fewer ticks keep them apart.
+            var zAxis = axis(narrow ? '' : 'Level (dB, 0 = loudest)');
+            if (narrow) {
+                zAxis.ticksuffix = ' dB';
+                zAxis.nticks = 4;
+            }
             zAxis.range = [d.floor_db, 0];
             var trace = {
                 type: 'surface',
@@ -94,7 +112,8 @@
                 colorscale: d.colorscale,
                 showscale: false,
                 customdata: custom,
-                hovertemplate: '%{customdata[1]:.4f} s (+%{x:.1f} ms)<br>%{y:.1f} kHz<br>%{customdata[0]:.1f} dB<extra></extra>',
+                hovertemplate: (inSecs ? '%{customdata[1]:.4f} s (+%{x:.3f} s)' : '%{customdata[1]:.4f} s (+%{x:.1f} ms)') +
+                    '<br>%{y:.1f} kHz<br>%{customdata[0]:.1f} dB<extra></extra>',
                 contours: { z: { show: false } },
                 lighting: { ambient: 0.75, diffuse: 0.5, specular: 0.05, roughness: 0.9 },
             };
@@ -104,7 +123,7 @@
                 font: { color: '#ccc', family: getComputedStyle(document.body).fontFamily, size: 11 },
                 margin: { l: 0, r: 0, t: 0, b: 0 },
                 scene: {
-                    xaxis: axis('Time after selection start (ms)'),
+                    xaxis: axis('Time after selection start (' + (inSecs ? 's' : 'ms') + ')'),
                     yaxis: yAxis,
                     zaxis: zAxis,
                     aspectmode: 'manual',
