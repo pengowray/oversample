@@ -303,6 +303,21 @@ mod tests {
         }
     }
 
+    /// The strip finds a sketch by bat book id, so a sketch whose id is in no
+    /// book is never shown.
+    #[test]
+    fn every_sketch_id_is_in_a_bat_book() {
+        use super::super::{data::get_manifest, types::BatBookRegion};
+        let book_ids: std::collections::HashSet<&str> = BatBookRegion::ALL
+            .iter()
+            .flat_map(|&r| get_manifest(r).entries)
+            .map(|e| e.id)
+            .collect();
+        for s in all() {
+            assert!(book_ids.contains(s.id.as_str()), "sketch {} is in no bat book", s.id);
+        }
+    }
+
     #[test]
     fn shape_passes_through_its_points() {
         let shape = [[0.0, 70.0], [0.15, 55.0], [0.4, 48.0], [1.0, 45.0]];

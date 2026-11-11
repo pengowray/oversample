@@ -1,5 +1,8 @@
+use serde::Deserialize;
+
 /// How common a species is in a given region.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Commonness {
     VeryCommon,
     Common,
@@ -22,58 +25,65 @@ impl Commonness {
     }
 }
 
-/// Base bat species/family data — defined once, reused across books.
+/// Base bat species/family data, defined once and reused across books.
+/// Loaded from `src/data/bat_book.json` (see `data.rs`).
+#[derive(Debug, Deserialize)]
 pub struct BatSpecies {
     /// Unique identifier, e.g. "vespertilionidae" or "chalinolobus_gouldii"
-    pub id: &'static str,
+    pub id: String,
     /// Display name, e.g. "Vesper Bats" or "Gould's Wattled Bat"
-    pub name: &'static str,
+    pub name: String,
     /// Scientific (binomial) name, e.g. "Chalinolobus gouldii" (empty for family-level)
-    pub scientific_name: &'static str,
+    pub scientific_name: String,
     /// Taxonomic family name
-    pub family: &'static str,
+    pub family: String,
     /// Call type abbreviation (CF, FM, QCF, CF-FM, clicks, none)
-    pub call_type: &'static str,
+    pub call_type: String,
     /// Lower bound of typical echolocation frequency range (Hz)
     pub freq_lo_hz: f64,
     /// Upper bound of typical echolocation frequency range (Hz)
     pub freq_hi_hz: f64,
     /// Short description (generic / species-level)
-    pub description: &'static str,
+    pub description: String,
     /// Whether this species uses echolocation (false for flying foxes etc.)
     pub echolocates: bool,
 }
 
-/// A book entry definition — references a species with optional regional overrides.
+/// A book entry definition: a species id with optional regional overrides.
+#[derive(Debug, Deserialize)]
 pub struct BookEntryDef {
-    /// Reference to the base species data
-    pub species: &'static BatSpecies,
+    /// Species id (matches `BatSpecies::id`)
+    pub id: String,
     /// Regional commonness (None for family-level entries)
+    #[serde(default)]
     pub commonness: Option<Commonness>,
     /// Override description for this book (None = use species default)
-    pub description: Option<&'static str>,
+    #[serde(default)]
+    pub description: Option<String>,
     /// Override display name for this book (None = use species default)
-    pub name: Option<&'static str>,
+    #[serde(default)]
+    pub name: Option<String>,
     /// Override frequency range (lo, hi) in Hz for this book (None = use the
     /// species range). The species range covers every region the sources
     /// cover; a regional book may narrow it to the calls heard there.
+    #[serde(default)]
     pub freq_hz: Option<(f64, f64)>,
 }
 
 impl BookEntryDef {
     /// Materialize into a full BatBookEntry by resolving overrides.
-    pub fn materialize(&self) -> BatBookEntry {
-        let s = self.species;
+    /// Both live in the static bat book data, so the entry borrows from them.
+    pub fn materialize(&'static self, s: &'static BatSpecies) -> BatBookEntry {
         let (freq_lo_hz, freq_hi_hz) = self.freq_hz.unwrap_or((s.freq_lo_hz, s.freq_hi_hz));
         BatBookEntry {
-            id: s.id,
-            name: self.name.unwrap_or(s.name),
-            scientific_name: s.scientific_name,
-            family: s.family,
-            call_type: s.call_type,
+            id: &s.id,
+            name: self.name.as_deref().unwrap_or(&s.name),
+            scientific_name: &s.scientific_name,
+            family: &s.family,
+            call_type: &s.call_type,
             freq_lo_hz,
             freq_hi_hz,
-            description: self.description.unwrap_or(s.description),
+            description: self.description.as_deref().unwrap_or(&s.description),
             commonness: self.commonness,
             echolocates: s.echolocates,
         }
@@ -249,6 +259,12 @@ impl BatBookRegion {
         Self::VicAustralia,
         Self::Antarctica,
     ];
+
+    /// Stable snake_case key: the region's file name in the bat book data
+    /// (`book/regions/<key>.json`). Same as `storage_key`.
+    pub fn key(self) -> &'static str {
+        self.storage_key()
+    }
 
     pub fn storage_key(self) -> &'static str {
         match self {
