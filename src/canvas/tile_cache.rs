@@ -1832,6 +1832,7 @@ pub fn borrow_reassign_tile<R>(
 
 pub fn clear_reassign_cache() {
     reassign_ctx().clear_all();
+    crate::canvas::reassign_line::clear_noise_floors();
 }
 
 pub fn clear_reassign_file(file_idx: usize) {
@@ -1841,18 +1842,12 @@ pub fn clear_reassign_file(file_idx: usize) {
 /// Reassignment gate for 16-bit audio, in dB of unnormalized bin power.
 const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
 
-/// Samples a reassigned tile's noise floor is measured over: one
-/// baseline-LOD tile, about 0.34 s at 384 kHz.
-const REASSIGN_FLOOR_BLOCK: usize = TILE_COLS * BASELINE_HOP;
-
 /// Schedule a reassignment spectrogram tile for background generation.
 ///
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
 /// compute corrected time-frequency positions, producing sharper spectrograms.
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::reassign::{
-        compute_reassigned_tile, reassign_margin_cols, reassign_noise_floor,
-    };
+    use crate::dsp::reassign::{compute_reassigned_tile, reassign_margin_cols};
 
     let key = TileKey {
         file_idx,
@@ -1917,11 +1912,11 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
             }
         }
 
-        let audio = state
+        let file = state
             .library
             .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+            .with_untracked(|files| files.get(file_idx).map(|f| (f.id, f.audio.clone())));
+        let Some((file_id, audio)) = file else {
             REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
@@ -1954,35 +1949,14 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         };
         let samples = &ch_samples[..];
 
-        // The noise floor comes from a fixed block of audio around the tile,
-        // the same block at every zoom level, so a call that fills a deep-zoom
-        // tile is still measured against the quiet around it.
-        let tile_mid = (tile_col_start + TILE_COLS / 2) * config_hop;
-        let block_start = (tile_mid / REASSIGN_FLOOR_BLOCK * REASSIGN_FLOOR_BLOCK)
-            .min(total_samples.saturating_sub(REASSIGN_FLOOR_BLOCK));
-        let block_end = (block_start + REASSIGN_FLOOR_BLOCK).min(total_samples);
-        let block_in_tile_read =
-            block_start >= sample_start && block_end <= sample_start + samples.len();
-        let noise_floor = if block_in_tile_read {
-            reassign_noise_floor(
-                &samples[block_start - sample_start..block_end - sample_start],
-                actual_fft,
-            )
-        } else {
-            let block = streaming_source::read_region_ready(
-                audio.source.as_ref(),
-                cv,
-                block_start as u64,
-                block_end.saturating_sub(block_start),
-            )
-            .await;
-            if !reassign_request_still_active(&key) {
-                return;
-            }
-            block
-                .map(|b| reassign_noise_floor(&b, actual_fft))
-                .unwrap_or_default()
-        };
+        // One floor per file and FFT size, measured from frames spread across
+        // the whole file, so a call that fills a deep-zoom tile is still
+        // measured against the quiet around it.
+        let noise_floor =
+            crate::canvas::reassign_line::noise_floor(&audio, file_id, cv, actual_fft).await;
+        if !reassign_request_still_active(&key) {
+            return;
+        }
 
         yield_to_browser().await;
 

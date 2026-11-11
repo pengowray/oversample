@@ -8,6 +8,7 @@ pub mod gutter_renderer;
 pub mod hit_test;
 pub mod live_waterfall;
 pub mod overlays;
+pub mod reassign_line;
 pub mod spectrogram_renderer;
 pub mod tile_blit;
 pub mod tile_cache;

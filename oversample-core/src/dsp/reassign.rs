@@ -64,15 +64,27 @@ pub fn reassign_margin_cols(fft_size: usize, hop_size: usize) -> usize {
 /// instead of turning into speckle.
 pub const REASSIGN_ABOVE_FLOOR_DB: f32 = 10.0;
 
+/// Fewest frames of sound that give a usable noise floor.
+const MIN_FLOOR_FRAMES: usize = 4;
+
 /// Per-bin noise floor for [`compute_reassigned_tile`]: the median Hann-window
-/// power of each bin over non-overlapping frames of `samples`.
+/// power of each bin over the frames in `frames`, back to back, `fft_size`
+/// samples each.
 ///
 /// The median ignores calls as long as they are in fewer than half the frames
-/// at a given frequency. Returns an empty Vec (no floor) when `samples` holds
-/// fewer than 4 frames.
-pub fn reassign_noise_floor(samples: &[f32], fft_size: usize) -> Vec<f32> {
-    let frame_count = samples.len() / fft_size.max(1);
-    if fft_size == 0 || frame_count < 4 {
+/// at a given frequency. Frames of digital silence (padding, cut-out
+/// stretches) are skipped, or they would pull the floor to zero. Returns an
+/// empty Vec (no floor) when fewer than 4 frames have sound.
+pub fn reassign_noise_floor(frames: &[f32], fft_size: usize) -> Vec<f32> {
+    if fft_size == 0 {
+        return Vec::new();
+    }
+    let sounding: Vec<&[f32]> = frames
+        .chunks_exact(fft_size)
+        .filter(|frame| frame.iter().any(|&s| s != 0.0))
+        .collect();
+    let frame_count = sounding.len();
+    if frame_count < MIN_FLOOR_FRAMES {
         return Vec::new();
     }
     let n_bins = fft_size / 2 + 1;
@@ -83,7 +95,7 @@ pub fn reassign_noise_floor(samples: &[f32], fft_size: usize) -> Vec<f32> {
 
     // by_bin[k * frame_count + f] = power of bin k in frame f
     let mut by_bin = vec![0.0f32; n_bins * frame_count];
-    for (f, frame) in samples.chunks_exact(fft_size).enumerate() {
+    for (f, frame) in sounding.into_iter().enumerate() {
         for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(window.iter())) {
             *inp = s * w;
         }
@@ -524,6 +536,19 @@ mod tests {
             .map(|(q, c)| 10.0 * (c / q).log10())
             .fold(0.0f32, f32::max);
         assert!(worst_db < 3.0, "calls raised the floor by {worst_db:.1} dB");
+    }
+
+    #[test]
+    fn noise_floor_skips_digital_silence() {
+        // Padding in most of the frames must not pull the floor to zero.
+        let fft = 512;
+        let noise = white_noise(16 * fft, 0.01, 6);
+        let mut padded = vec![0.0f32; 48 * fft];
+        padded.extend_from_slice(&noise);
+        let floor = reassign_noise_floor(&padded, fft);
+        assert_eq!(floor, reassign_noise_floor(&noise, fft));
+        assert!(floor.iter().all(|&p| p > 0.0));
+        assert!(reassign_noise_floor(&vec![0.0f32; 64 * fft], fft).is_empty());
     }
 
     #[test]
