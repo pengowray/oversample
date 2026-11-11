@@ -105,7 +105,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             file_size: 0,
             format: "REC",
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
-            is_float: false,
+            is_float: state.mic.is_float().get_untracked(),
             guano: None,
             data_offset: None,
             data_size: None,
@@ -203,7 +203,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
             file_size: 0,
             format: "MIC",
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
-            is_float: false,
+            is_float: state.mic.is_float().get_untracked(),
             guano: None,
             data_offset: None,
             data_size: None,
@@ -451,7 +451,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
             file_size: 0,
             format: "MIC",
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
-            is_float: false,
+            is_float: state.mic.is_float().get_untracked(),
             guano: None,
             data_offset: None,
             data_size: None,
@@ -686,6 +686,7 @@ pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -
             f.is_live_listen = false;
             f.audio.metadata.format = "REC";
             f.audio.metadata.bits_per_sample = state.mic.bits_per_sample().get_untracked();
+            f.audio.metadata.is_float = state.mic.is_float().get_untracked();
         }
     });
 

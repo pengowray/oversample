@@ -1814,6 +1814,8 @@ pub struct MicState {
     pub sample_rate: u32,
     pub samples_recorded: usize,
     pub bits_per_sample: u16,
+    /// Samples are IEEE float (with `bits_per_sample` 32), not integer PCM.
+    pub is_float: bool,
     /// 0 = auto (device default).
     pub max_sample_rate: u32,
     /// Maximum seconds of listen buffer to capture on long-press record.
@@ -2426,6 +2428,7 @@ impl AppState {
                 sample_rate: 0,
                 samples_recorded: 0,
                 bits_per_sample: 16,
+                is_float: false,
                 max_sample_rate: 0,
                 preroll_buffer_secs: 10,
                 mode: if detect_tauri() {

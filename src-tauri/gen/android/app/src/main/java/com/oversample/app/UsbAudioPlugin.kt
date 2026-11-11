@@ -51,6 +51,7 @@ private const val UAC1_FORMAT_TYPE = 0x02
 private const val UAC2_CLOCK_SOURCE = 0x0A
 
 // USB descriptor types
+private const val DESC_TYPE_CONFIGURATION = 2
 private const val DESC_TYPE_INTERFACE = 4
 private const val DESC_TYPE_ENDPOINT = 5
 private const val DESC_TYPE_CS_INTERFACE = 0x24
@@ -856,6 +857,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         var currentIsFloat = false
         var currentSampleRate = 0
         var foundAudioStreaming = false
+        // Inside an audio control interface, where the class header and clock sources are.
+        var inAudioControl = false
+        var configurationsSeen = 0
         var expectingFormat = false
         var expectingEndpoint = false
         var isUac2Format = false
@@ -874,6 +878,14 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             val bDescriptorType = raw[offset + 1].toInt() and 0xFF
 
             when (bDescriptorType) {
+                DESC_TYPE_CONFIGURATION -> {
+                    // The raw descriptors list every configuration, but only the first
+                    // (the one Android selects) is used. A later one, such as a UAC3
+                    // configuration, must not change the version or add endpoints.
+                    configurationsSeen++
+                    if (configurationsSeen > 1) break
+                }
+
                 DESC_TYPE_INTERFACE -> {
                     if (bLength >= 9) {
                         val bInterfaceNumber = raw[offset + 2].toInt() and 0xFF
@@ -885,6 +897,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                         currentInterfaceNumber = bInterfaceNumber
                         currentAlternateSetting = bAlternateSetting
                         currentIsFloat = false
+                        inAudioControl = bInterfaceClass == USB_CLASS_AUDIO &&
+                                bInterfaceSubClass == USB_SUBCLASS_AUDIOCONTROL
 
                         if (bInterfaceClass == USB_CLASS_AUDIO && bInterfaceSubClass == USB_SUBCLASS_AUDIOSTREAMING && bNumEndpoints > 0) {
                             foundAudioStreaming = true
@@ -902,21 +916,22 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                     if (bLength >= 3) {
                         val bDescriptorSubtype = raw[offset + 2].toInt() and 0xFF
 
-                        // UAC Header — detect version
-                        if (bDescriptorSubtype == UAC_HEADER && bLength >= 6) {
-                            // Check which interface class this belongs to
-                            val bcdADC = (raw[offset + 4].toInt() and 0xFF) or
-                                    ((raw[offset + 3].toInt() and 0xFF) shl 8)
-                            if (bcdADC >= 0x0200) {
+                        // Class-specific AC header: bcdADC (little-endian, offsets 3-4) is
+                        // 0x0100 for UAC1 and 0x0200 for UAC2. Subtype 0x01 also means
+                        // AS_GENERAL inside a streaming interface, so check the interface.
+                        if (inAudioControl && bDescriptorSubtype == UAC_HEADER && bLength >= 6) {
+                            val bcdADC = (raw[offset + 3].toInt() and 0xFF) or
+                                    ((raw[offset + 4].toInt() and 0xFF) shl 8)
+                            if (bcdADC in 0x0200 until 0x0300) {
                                 uacVersion = 2
                             } else if (uacVersion == 0) {
                                 uacVersion = 1
                             }
-                            Log.d(TAG, "UAC header version: $bcdADC -> UAC$uacVersion")
+                            Log.d(TAG, "UAC header bcdADC=0x${bcdADC.toString(16)} -> UAC$uacVersion")
                         }
 
                         // UAC2 Clock Source (subtype 0x0A)
-                        if (bDescriptorSubtype == UAC2_CLOCK_SOURCE && bLength >= 8) {
+                        if (inAudioControl && bDescriptorSubtype == UAC2_CLOCK_SOURCE && bLength >= 8) {
                             val bClockId = raw[offset + 3].toInt() and 0xFF
                             val bmAttributes = raw[offset + 4].toInt() and 0xFF
                             val bmControls = raw[offset + 5].toInt() and 0xFF

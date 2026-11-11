@@ -284,6 +284,7 @@ impl RecoveryWriter {
 /// Encode a slice of native-format samples to little-endian PCM bytes for the
 /// WAV data chunk. Shared by both backends so the on-disk byte layout is
 /// guaranteed consistent. Cheap for typical flush sizes (<1 MB).
+#[cfg(test)]
 pub fn encode_samples_i16(samples: &[i16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * 2);
     for &s in samples {
@@ -332,36 +333,11 @@ pub fn encode_samples_f32(samples: &[f32]) -> Vec<u8> {
 /// steady state). In to-memory mode this is not called and samples
 /// accumulate as before.
 pub fn drain_buffer_bytes(buf: &mut crate::recording::RecordingBuffer) -> Vec<u8> {
-    match buf.format {
-        NativeSampleFormat::I16 => {
-            if buf.samples_i16.is_empty() {
-                return Vec::new();
-            }
-            let samples = std::mem::take(&mut buf.samples_i16);
-            encode_samples_i16(&samples)
-        }
-        NativeSampleFormat::I24 => {
-            if buf.samples_i32.is_empty() {
-                return Vec::new();
-            }
-            let samples = std::mem::take(&mut buf.samples_i32);
-            encode_samples_i24(&samples)
-        }
-        NativeSampleFormat::I32 => {
-            if buf.samples_i32.is_empty() {
-                return Vec::new();
-            }
-            let samples = std::mem::take(&mut buf.samples_i32);
-            encode_samples_i32(&samples)
-        }
-        NativeSampleFormat::F32 => {
-            if buf.samples_f32.is_empty() {
-                return Vec::new();
-            }
-            let samples = std::mem::take(&mut buf.samples_f32);
-            encode_samples_f32(&samples)
-        }
-    }
+    let bytes = buf.data_bytes();
+    buf.samples_i16.clear();
+    buf.samples_i32.clear();
+    buf.samples_f32.clear();
+    bytes
 }
 
 /// Consume the writer: append any remaining tail bytes + the GUANO chunk,

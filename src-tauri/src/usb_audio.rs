@@ -232,7 +232,12 @@ impl UsbDecoder {
     pub(crate) fn push_to(&self, buf: &mut RecordingBuffer, recording: bool) {
         match self.format {
             NativeSampleFormat::I16 => buf.push_i16(&self.i16s, recording),
-            NativeSampleFormat::I24 | NativeSampleFormat::I32 => {
+            NativeSampleFormat::I24 => buf.push_i32(&self.i32s, recording),
+            NativeSampleFormat::I32 => {
+                // A 4-byte slot often carries 24-bit audio; detection lets the
+                // recording be written at 24 bits. (A mono mix can add one low
+                // bit, which only makes detection keep more bits.)
+                buf.note_i32_bits(&self.i32s);
                 buf.push_i32(&self.i32s, recording)
             }
             NativeSampleFormat::F32 => buf.push_f32(&self.f32s, recording),

@@ -95,10 +95,11 @@ pub fn usb_start_recording(
     if !s.is_streaming.load(Ordering::Relaxed) {
         return Err("USB stream is not actively streaming — cannot start recording".into());
     }
-    let channels = {
+    let (channels, write_format) = {
         let mut buf = s.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
+        let write_format = buf.choose_write_format();
         // Seed the pre-roll ring into the recording, then flip is_recording while
         // still holding the buffer lock so the isochronous thread appends live
         // frames right after the pre-roll (gapless seam).
@@ -110,7 +111,7 @@ pub fn usb_start_recording(
                 seeded
             );
         }
-        buf.channels
+        (buf.channels, write_format)
     };
 
     let args = recovery::StartArgs {
@@ -127,9 +128,9 @@ pub fn usb_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    // The .part file is written in the stream's own format, as the final WAV is.
+    // The .part file is written in the same format as a to-memory WAV.
     if let Some(writer) =
-        recovery::start_writer(&app, &args, s.format, s.sample_rate, channels, "batcap")
+        recovery::start_writer(&app, &args, write_format, s.sample_rate, channels, "batcap")
     {
         if let Ok(mut guard) = s.recovery.writer.lock() {
             *guard = Some(writer);
@@ -157,10 +158,7 @@ pub fn usb_stop_recording(
     let s = usb.as_ref().ok_or("USB stream not open")?;
     s.is_recording.store(false, Ordering::Relaxed);
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
-    let bits_per_sample = s.format.bits_per_sample();
-    let is_float = s.format.is_float();
-
-    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded) = {
+    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded, write_format) = {
         let mut buf = s.buffer.lock().unwrap();
         (
             buf.total_samples,
@@ -168,8 +166,11 @@ pub fn usb_stop_recording(
             buf.channels,
             buf.shared_fd.take(),
             buf.preroll_seeded,
+            buf.write_format,
         )
     };
+    let bits_per_sample = write_format.bits_per_sample();
+    let is_float = write_format.is_float();
     // RAII-own the shared-storage fd so every early return below closes it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
 

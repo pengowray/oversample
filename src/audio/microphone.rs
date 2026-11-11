@@ -243,6 +243,7 @@ pub async fn query_mic_info(state: &AppState) {
                             };
                             if bits > 0 {
                                 state.mic.bits_per_sample().set(bits);
+                                state.mic.is_float().set(fmt == "F32");
                             }
                         }
                         break;
@@ -761,6 +762,7 @@ fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult) 
 /// Shared by both `do_stop_recording` and `stop_all`.
 fn handle_stop_result(result: StopResult, state: &AppState) {
     let bits_per_sample = state.mic.bits_per_sample().get_untracked();
+    let is_float = state.mic.is_float().get_untracked();
     match result {
         StopResult::Samples {
             samples,
@@ -773,7 +775,7 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
                     interleaved,
                     sample_rate,
                     bits_per_sample,
-                    is_float: false,
+                    is_float,
                     saved_path: String::new(),
                     file_size: None,
                 },
