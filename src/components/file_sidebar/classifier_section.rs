@@ -560,8 +560,12 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                         <button class="psd-btn" on:click=move |_| map_open.set(true)>"Species map"</button>
                     </div>
                 })}
+                // In a portal on <body>: the sidebar is hidden when closed on
+                // phones, and the dialog must not go with it.
                 {move || map_open.get().then(|| view! {
-                    <SpeciesMapDialog open=map_open current_file=current_file />
+                    <leptos::portal::Portal>
+                        <SpeciesMapDialog open=map_open current_file=current_file />
+                    </leptos::portal::Portal>
                 })}
             </div>
         })
