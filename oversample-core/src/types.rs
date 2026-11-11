@@ -87,13 +87,13 @@ impl FileMetadata {
     }
 
     /// The bit depth as shown to the user: "16-bit", "32-bit float", or
-    /// "None (lossy MP3)" for a file decoded from a lossy codec.
+    /// "Lossy" for a file decoded from a lossy codec. Short, because it fills
+    /// a narrow stat tile in the Analysis panel; the format is shown beside it.
     pub fn bit_depth_label(&self) -> String {
         match self.pcm_bits() {
             Some(bits) if self.is_float => format!("{bits}-bit float"),
             Some(bits) => format!("{bits}-bit"),
-            None if self.format.is_empty() => "None (lossy)".to_string(),
-            None => format!("None (lossy {})", self.format),
+            None => "Lossy".to_string(),
         }
     }
 }
@@ -329,7 +329,7 @@ mod tests {
         };
         let mp3 = meta("MP3", FileMetadata::LOSSY_BITS, false);
         assert_eq!(mp3.pcm_bits(), None);
-        assert_eq!(mp3.bit_depth_label(), "None (lossy MP3)");
+        assert_eq!(mp3.bit_depth_label(), "Lossy");
         let wav = meta("WAV", 24, false);
         assert_eq!(wav.pcm_bits(), Some(24));
         assert_eq!(wav.bit_depth_label(), "24-bit");

@@ -639,7 +639,7 @@ fn format_text(meta: &crate::types::FileMetadata) -> String {
     }
 }
 
-/// Bit depth row: "16-bit", "32-bit float", "None (lossy MP3)", or "12-bit,
+/// Bit depth row: "16-bit", "32-bit float", "Lossy", or "12-bit,
 /// stored as 16-bit" when the file declares fewer significant bits than the
 /// sample width.
 fn bit_depth_text(meta: &crate::types::FileMetadata) -> String {
