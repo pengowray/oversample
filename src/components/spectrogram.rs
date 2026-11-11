@@ -307,9 +307,8 @@ pub fn Spectrogram() -> impl IntoView {
             let main_view = state.viewmode.main_view().get();
             // Intensity is always a spectrogram setting (shared by the XForm view) —
             // the XForm toggle reuses the Spectrogram menu's intensity sliders.
-            let (spect_floor, spect_range, spect_gamma, spect_gain) = (
-                state.spect.floor_db().get(),
-                state.spect.range_db().get(),
+            let ((spect_floor, spect_range), spect_gamma, spect_gain) = (
+                state.spect_floor_range(),
                 state.spect.gamma().get(),
                 state.spect.gain_db().get(),
             );

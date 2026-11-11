@@ -1838,6 +1838,9 @@ pub fn clear_reassign_file(file_idx: usize) {
     reassign_ctx().clear_file(file_idx);
 }
 
+/// Reassignment gate for 16-bit audio, in dB of unnormalized bin power.
+const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
+
 /// Schedule a reassignment spectrogram tile for background generation.
 ///
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
@@ -1946,7 +1949,13 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
             return;
         }
 
-        let rendered = compute_reassigned_tile(samples, TILE_COLS, actual_fft, config_hop, -60.0);
+        // Bins below the gate are skipped. -60 dB (unnormalized power) suits
+        // 16-bit audio; deeper formats move it down with their noise floor so
+        // their quiet content isn't dropped.
+        let meta = &audio.metadata;
+        let gate_db = REASSIGN_GATE_16_BIT_DB
+            - oversample_core::dsp::depth_range::depth_extra_db(meta.bits_per_sample, meta.is_float);
+        let rendered = compute_reassigned_tile(samples, TILE_COLS, actual_fft, config_hop, gate_db);
 
         let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {
