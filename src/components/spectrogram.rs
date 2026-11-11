@@ -45,15 +45,22 @@ pub fn take_spec_diag() -> (u32, f64) {
     })
 }
 
+/// What the BirdNET / BattyBirdNET overlay draws for the current file.
+struct SpeciesStrip {
+    /// Stretches of neighbouring windows with the same top class.
+    spans: Vec<spectrogram_renderer::StripSpan>,
+    /// The selected window's start and end.
+    selected: Option<(f64, f64)>,
+    /// Windows whose top class is a species, for colouring call boxes.
+    windows: Vec<spectrogram_renderer::SpeciesWindow>,
+}
+
 /// The BirdNET / BattyBirdNET label strip for the current file, when that
 /// method is picked in the Call detection tab: stretches of neighbouring
-/// windows with the same top class at or above the minimum confidence, and the
-/// selected window's start and end. Reactive: call inside the draw effect.
-fn species_strip(
-    state: AppState,
-    method: crate::state::DetectionMethod,
-) -> Option<(Vec<spectrogram_renderer::StripSpan>, Option<(f64, f64)>)> {
-    use crate::classifier::summary::{window_kind, WindowKind};
+/// windows with the same top class at or above the minimum confidence, each
+/// species in its own colour. Reactive: call inside the draw effect.
+fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Option<SpeciesStrip> {
+    use crate::classifier::summary::{colour_order, window_kind, WindowKind};
     use crate::classifier::Method;
     let method = match method {
         crate::state::DetectionMethod::Inbuilt => return None,
@@ -65,7 +72,9 @@ fn species_strip(
     let selected = state.call_detection.selected_window().get();
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
+        let order = colour_order(run);
         let mut spans: Vec<spectrogram_renderer::StripSpan> = Vec::new();
+        let mut windows = Vec::new();
         let mut last: Option<(usize, u16)> = None;
         for (i, w) in run.windows.iter().enumerate() {
             let kind = window_kind(run, i, min);
@@ -73,6 +82,16 @@ fn species_strip(
                 continue;
             }
             let top = w.top[0];
+            let colour = (kind == WindowKind::Species)
+                .then(|| order.iter().position(|&c| c == top.class))
+                .flatten();
+            if let Some(slot) = colour {
+                windows.push(spectrogram_renderer::SpeciesWindow {
+                    start_s: w.start_s,
+                    end_s: w.end_s,
+                    slot,
+                });
+            }
             let joins = last.is_some_and(|(j, c)| j + 1 == i && c == top.class);
             match spans.last_mut() {
                 Some(s) if joins => {
@@ -85,17 +104,21 @@ fn species_strip(
                         start_s: w.start_s,
                         end_s: w.end_s,
                         label: format!("{name} {:.2}", top.confidence),
-                        is_species: kind == WindowKind::Species,
+                        colour,
                         inner_bounds: Vec::new(),
                     });
                 }
             }
             last = Some((i, top.class));
         }
-        let sel = selected
+        let selected = selected
             .and_then(|i| run.windows.get(i))
             .map(|w| (w.start_s, w.end_s));
-        Some((spans, sel))
+        Some(SpeciesStrip {
+            spans,
+            selected,
+            windows,
+        })
     })
 }
 
@@ -1220,6 +1243,7 @@ pub fn Spectrogram() -> impl IntoView {
                                 &ctx,
                                 calls,
                                 trains,
+                                species_strip.as_ref().map(|s| &s.windows[..]),
                                 selected_detection,
                                 min_freq,
                                 max_freq,
@@ -1233,11 +1257,11 @@ pub fn Spectrogram() -> impl IntoView {
                     });
                 }
                 if detection_overlay {
-                    if let Some((spans, selected)) = &species_strip {
+                    if let Some(strip) = &species_strip {
                         spectrogram_renderer::draw_species_strip(
                             &ctx,
-                            spans,
-                            *selected,
+                            &strip.spans,
+                            strip.selected,
                             scroll,
                             time_res,
                             zoom,

@@ -33,6 +33,27 @@ pub fn window_kind(run: &ClassifierRun, i: usize, min_confidence: f32) -> Window
     }
 }
 
+/// The species that are some window's top class, best confidence first: the
+/// order their strip colours are given out in. A window shows when its top
+/// confidence is at or above the minimum, so the species shown at any minimum
+/// are the start of this list, and raising the minimum never recolours the
+/// species that stay.
+pub fn colour_order(run: &ClassifierRun) -> Vec<u16> {
+    let mut best: Vec<(u16, f32)> = Vec::new();
+    for w in &run.windows {
+        let Some(top) = w.top.first() else { continue };
+        if !run.label(top).is_some_and(|l| l.is_species) {
+            continue;
+        }
+        match best.iter_mut().find(|(c, _)| *c == top.class) {
+            Some((_, b)) => *b = b.max(top.confidence),
+            None => best.push((top.class, top.confidence)),
+        }
+    }
+    best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    best.into_iter().map(|(c, _)| c).collect()
+}
+
 /// One species in the "By species" list.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpeciesRow {
@@ -229,6 +250,12 @@ mod tests {
                 .collect(),
             complete: true,
         }
+    }
+
+    #[test]
+    fn colour_order_is_best_confidence_first_and_skips_noise() {
+        let r = run(&[(0, 0.6), (2, 0.99), (1, 0.8), (0, 0.7)]);
+        assert_eq!(colour_order(&r), vec![1, 0]);
     }
 
     #[test]

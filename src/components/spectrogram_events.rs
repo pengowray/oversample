@@ -186,17 +186,26 @@ impl SpectInteraction {
     }
 }
 
+/// How far down from the top of the spectrogram a finger can land and still
+/// pick a strip label, in CSS pixels. The strip is 16 px tall, under a
+/// fingertip; 32 px is closer to a usable touch target.
+const STRIP_TOUCH_REACH: f64 = 32.0;
+
+/// How far a finger can slide during a tap on a strip label, in CSS pixels.
+/// Mouse clicks allow 3 px.
+const TAP_SLOP_TOUCH: f64 = 8.0;
+
 /// The BirdNET / BattyBirdNET window whose label is under the pointer on the
 /// strip along the top of the spectrogram (`px_y` in canvas pixels, `t` in
-/// seconds). Only windows the strip draws count: those at or above the
-/// minimum confidence, for the method picked in the Call detection tab.
-fn strip_window_at(state: AppState, px_y: f64, t: f64) -> Option<usize> {
+/// seconds). `reach` is how far down the hit area goes: the strip's height
+/// for a mouse, more for a finger. Only windows the strip draws count: those
+/// at or above the minimum confidence, for the method picked in the Call
+/// detection tab.
+fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<usize> {
     use crate::classifier::summary::{window_kind, WindowKind};
     use crate::classifier::Method;
     use crate::state::DetectionMethod;
-    if !(0.0..spectrogram_renderer::SPECIES_STRIP_H).contains(&px_y)
-        || !state.call_detection.overlay_enabled().get_untracked()
-    {
+    if !(0.0..reach).contains(&px_y) || !state.call_detection.overlay_enabled().get_untracked() {
         return None;
     }
     let method = match state.call_detection.method().get_untracked() {
@@ -597,7 +606,13 @@ pub fn on_pointerdown(
             canvas_ref,
             &state,
         ) {
-            ix.pending_strip_window.set(strip_window_at(state, px_y, t));
+            let reach = if ev.pointer_type() == "touch" {
+                STRIP_TOUCH_REACH
+            } else {
+                spectrogram_renderer::SPECIES_STRIP_H
+            };
+            ix.pending_strip_window
+                .set(strip_window_at(state, px_y, t, reach));
         }
         if let Some((px_x, px_y, t, freq)) = pointer_to_xtf(
             ev.client_x() as f64,
@@ -736,7 +751,8 @@ pub fn on_pointermove(
         state.interaction.mouse_freq().set(Some(f));
         state.interaction.mouse_canvas_x().set(px_x);
         state.interaction.cursor_time().set(Some(t));
-        let on_strip = strip_window_at(state, px_y, t).is_some();
+        let on_strip =
+            strip_window_at(state, px_y, t, spectrogram_renderer::SPECIES_STRIP_H).is_some();
         if ix.strip_hover.get_untracked() != on_strip {
             ix.strip_hover.set(on_strip);
         }
@@ -936,12 +952,16 @@ pub fn on_pointerup(
         let (start_x, _) = ix.hand_drag_start.get_untracked();
         let dx = (ev.client_x() as f64 - start_x).abs();
         let was_click = dx < 3.0;
+        let strip_tap = ix
+            .pending_strip_window
+            .get_untracked()
+            .filter(|_| was_click || (ev.pointer_type() == "touch" && dx < TAP_SLOP_TOUCH));
 
-        if was_click {
+        if let Some(i) = strip_tap {
             // A label on the strip is drawn over everything else, so it wins.
-            if let Some(i) = ix.pending_strip_window.get_untracked() {
-                state.call_detection.selected_window().set(Some(i));
-            } else if let Some(PendingAnnotationHit { id: hit_id, ctrl }) =
+            state.call_detection.selected_window().set(Some(i));
+        } else if was_click {
+            if let Some(PendingAnnotationHit { id: hit_id, ctrl }) =
                 ix.pending_annotation_hit.get_untracked()
             {
                 if ctrl {

@@ -1004,14 +1004,49 @@ pub fn draw_het_overlay(
     }
 }
 
+/// Strip and call-box colours for the species in BirdNET / BattyBirdNET
+/// results, as (stroke, fill). Kept clear of the selection's amber and the
+/// in-built detector's green. Checked with the dataviz palette validator on
+/// viridis' dark purple: all pairs pass the normal-vision floor; sky blue and
+/// violet are 7.1 apart for deuteranopia, which is allowed because the strip
+/// label names the species. Species past the third share `SPECIES_OTHER`.
+pub const SPECIES_COLOURS: [(&str, &str); 3] = [
+    ("rgba(255, 110, 180, 0.9)", "rgba(255, 110, 180, 0.12)"), // pink #ff6eb4
+    ("rgba(79, 195, 247, 0.9)", "rgba(79, 195, 247, 0.12)"),   // sky blue #4fc3f7
+    ("rgba(179, 136, 255, 0.9)", "rgba(179, 136, 255, 0.12)"), // violet #b388ff
+];
+pub const SPECIES_OTHER: (&str, &str) = ("rgba(220, 220, 220, 0.8)", "rgba(220, 220, 220, 0.10)");
+/// A bat call outside every species window, while species colours are shown.
+const UNLABELLED_CALL: (&str, &str) = ("rgba(170, 170, 170, 0.6)", "rgba(170, 170, 170, 0.06)");
+
+/// Stroke and fill for a species' colour slot (see `SPECIES_COLOURS`).
+pub fn species_colour(slot: usize) -> (&'static str, &'static str) {
+    SPECIES_COLOURS.get(slot).copied().unwrap_or(SPECIES_OTHER)
+}
+
+/// A BattyBirdNET window at or above the minimum confidence whose top class
+/// is a species, with that species' colour slot. Call boxes whose middle falls
+/// in one take its colour, so each box matches the strip label above it.
+pub struct SpeciesWindow {
+    pub start_s: f64,
+    pub end_s: f64,
+    pub slot: usize,
+}
+
 /// Draw the call detector's results on the spectrogram: a box around each
 /// detection (time by frequency range) and a line along the top for each
 /// train. Bat calls get a solid green box; other detections a dashed grey one,
 /// so they stay visible without competing with the bat calls.
+///
+/// With `species_windows` (BattyBirdNET picked), colour means species: a bat
+/// call whose middle falls in one of those windows is drawn in that species'
+/// colour, and other bat calls are drawn grey rather than green, since the
+/// green is too close to the sky blue species colour to tell apart.
 pub fn draw_calls(
     ctx: &CanvasRenderingContext2d,
     calls: &[crate::dsp::call_detect::DetectedCall],
     trains: &[crate::dsp::call_detect::CallTrain],
+    species_windows: Option<&[SpeciesWindow]>,
     selected_index: Option<usize>,
     min_freq: f64,
     max_freq: f64,
@@ -1078,12 +1113,24 @@ pub fn draw_calls(
         }
         let is_selected = selected_index == Some(i);
         let is_bat = call.kind == CallKind::Bat;
+        let mid = 0.5 * (call.start_s + call.end_s);
+        // Other detections stay dashed grey: likely noise, not the species.
+        let species = species_windows.filter(|_| is_bat).map(|ws| {
+            ws.iter()
+                .find(|w| w.start_s <= mid && mid < w.end_s)
+                .map_or(UNLABELLED_CALL, |w| species_colour(w.slot))
+        });
 
         if is_selected {
             ctx.set_fill_style_str("rgba(255, 180, 50, 0.20)");
             ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
             ctx.set_stroke_style_str("rgba(255, 200, 80, 0.9)");
             ctx.set_line_width(1.5);
+        } else if let Some((stroke, fill)) = species {
+            ctx.set_fill_style_str(fill);
+            ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+            ctx.set_stroke_style_str(stroke);
+            ctx.set_line_width(1.0);
         } else if is_bat {
             ctx.set_fill_style_str("rgba(50, 200, 120, 0.08)");
             ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
@@ -1093,7 +1140,7 @@ pub fn draw_calls(
             ctx.set_stroke_style_str("rgba(180, 180, 180, 0.5)");
             ctx.set_line_width(1.0);
         }
-        let _ = ctx.set_line_dash(if is_bat || is_selected {
+        let _ = ctx.set_line_dash(if is_bat || is_selected || species.is_some() {
             &no_dashes
         } else {
             &dashes
@@ -1104,6 +1151,8 @@ pub fn draw_calls(
         if x1 - x0 > 14.0 && y0 > 12.0 {
             ctx.set_fill_style_str(if is_selected {
                 "rgba(255, 200, 80, 0.9)"
+            } else if let Some((stroke, _)) = species {
+                stroke
             } else if is_bat {
                 "rgba(80, 220, 150, 0.8)"
             } else {
@@ -1122,8 +1171,9 @@ pub struct StripSpan {
     pub end_s: f64,
     /// "Song thrush 0.91"
     pub label: String,
-    /// False for BattyBirdNET's classes that are not a species ("Noise").
-    pub is_species: bool,
+    /// The species' colour slot (`species_colour`); None for BattyBirdNET's
+    /// classes that are not a species ("Noise"), drawn grey.
+    pub colour: Option<usize>,
     /// Window boundaries inside the span, in seconds, drawn as ticks.
     pub inner_bounds: Vec<f64>,
 }
@@ -1170,16 +1220,15 @@ pub fn draw_species_strip(
         let x0 = x_of(span.start_s).max(0.0);
         let x1 = x_of(span.end_s).min(canvas_width);
         let w = (x1 - x0).max(1.0);
-        ctx.set_fill_style_str(if span.is_species {
-            "rgba(20, 60, 40, 0.85)"
+        ctx.set_fill_style_str(if span.colour.is_some() {
+            "rgba(25, 25, 35, 0.88)"
         } else {
             "rgba(50, 50, 50, 0.80)"
         });
         ctx.fill_rect(x0, 0.0, w, SPECIES_STRIP_H);
-        ctx.set_stroke_style_str(if span.is_species {
-            "rgba(80, 220, 150, 0.7)"
-        } else {
-            "rgba(160, 160, 160, 0.6)"
+        ctx.set_stroke_style_str(match span.colour {
+            Some(slot) => species_colour(slot).0,
+            None => "rgba(160, 160, 160, 0.6)",
         });
         ctx.set_line_width(1.0);
         ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, SPECIES_STRIP_H - 1.0);
@@ -1199,8 +1248,8 @@ pub fn draw_species_strip(
             ctx.begin_path();
             ctx.rect(x0 + 1.0, 0.0, w - 2.0, SPECIES_STRIP_H);
             ctx.clip();
-            ctx.set_fill_style_str(if span.is_species {
-                "rgba(220, 255, 235, 0.95)"
+            ctx.set_fill_style_str(if span.colour.is_some() {
+                "rgba(240, 240, 245, 0.95)"
             } else {
                 "rgba(200, 200, 200, 0.9)"
             });
