@@ -965,7 +965,7 @@ pub(super) async fn try_streaming_mp3(
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
             format: "MP3",
-            bits_per_sample: 16,
+            bits_per_sample: crate::types::FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
             data_offset: Some(header.data_offset),
@@ -1328,7 +1328,7 @@ pub(super) async fn try_streaming_ogg(
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
             format: "OGG",
-            bits_per_sample: 16,
+            bits_per_sample: crate::types::FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
             data_offset: None,
@@ -1974,7 +1974,7 @@ pub(super) async fn try_streaming_m4a(
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
             format: "M4A",
-            bits_per_sample: 16,
+            bits_per_sample: crate::audio::loader::symphonia_pcm_bits(&audio_params),
             is_float: false,
             guano: if tags.fields.is_empty() {
                 None
