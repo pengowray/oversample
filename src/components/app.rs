@@ -2014,6 +2014,16 @@ fn resonator_quick_sample_rate(state: AppState) -> f64 {
         .unwrap_or(192_000.0)
 }
 
+/// Class for an on/off toggle beside the value it sets, such as Range's
+/// Auto. Styled by `.opt-toggle` in style.css.
+fn opt_toggle_class(on: bool) -> &'static str {
+    if on {
+        "layer-panel-opt opt-toggle sel"
+    } else {
+        "layer-panel-opt opt-toggle"
+    }
+}
+
 fn layer_opt_class(active: bool) -> &'static str {
     if active {
         "layer-panel-opt sel"
@@ -2626,11 +2636,7 @@ pub fn MainViewButton() -> impl IntoView {
                             // Beside the value it sets; range_auto_title says
                             // what Auto does.
                             <button
-                                class=move || if auto_range() {
-                                    "layer-panel-opt dsp-auto-toggle sel"
-                                } else {
-                                    "layer-panel-opt dsp-auto-toggle"
-                                }
+                                class=move || opt_toggle_class(auto_range())
                                 aria-pressed=move || auto_range().to_string()
                                 title=move || range_auto_title(
                                     auto_range(),
@@ -2674,8 +2680,7 @@ pub fn MainViewButton() -> impl IntoView {
                         </div>
                         <div style="text-align: right; padding-top: 4px;">
                             <button
-                                class="layer-panel-opt"
-                                style="display: inline; width: auto; padding: 2px 8px; font-size: 9px;"
+                                class="layer-panel-opt opt-small-action"
                                 on:click=move |_| {
                                     gain_set(0.0);
                                     floor_set(-120.0);
@@ -2692,34 +2697,22 @@ pub fn MainViewButton() -> impl IntoView {
 
             // Waveform view gain (when Waveform is active)
             {move || (state.viewmode.main_view().get() == MainView::Waveform).then(|| {
+                let wave_gain_db = move || if state.gain.wave_view_auto().get() {
+                    state.compute_auto_gain()
+                } else {
+                    state.gain.wave_view_db().get()
+                };
                 view! {
                     <hr />
                     <div class="dsp-custom-section">
                         <div class="dsp-custom-title">"Waveform Gain"</div>
-                        <div class="dsp-custom-slider-row">
-                            <button
-                                class=move || if state.gain.wave_view_auto().get() {
-                                    "layer-panel-opt selected"
-                                } else {
-                                    "layer-panel-opt"
-                                }
-                                style="font-size: 9px; padding: 2px 6px; width: auto; display: inline;"
-                                on:click=move |_| {
-                                    state.gain.wave_view_auto().set(!state.gain.wave_view_auto().get_untracked());
-                                }
-                            >"Auto"</button>
-                        </div>
                         <div class="dsp-custom-slider-row">
                             <span class="dsp-slider-label">"Gain"</span>
                             <input
                                 type="range"
                                 class="setting-range"
                                 min="-12" max="60" step="1"
-                                prop:value=move || if state.gain.wave_view_auto().get() {
-                                    state.compute_auto_gain().to_string()
-                                } else {
-                                    state.gain.wave_view_db().get().to_string()
-                                }
+                                prop:value=move || wave_gain_db().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();
                                     let input: web_sys::HtmlInputElement = target.unchecked_into();
@@ -2733,15 +2726,27 @@ pub fn MainViewButton() -> impl IntoView {
                                     state.gain.wave_view_auto().set(false);
                                 }
                             />
-                            <span class="dsp-custom-value">{move || {
-                                if state.gain.wave_view_auto().get() {
-                                    let db = state.compute_auto_gain();
-                                    if db.abs() < 0.5 { "auto".to_string() }
-                                    else { format!("a{:+.0}", db) }
+                            <span class="dsp-custom-value">{move || format!("{:+.0} dB", wave_gain_db())}</span>
+                            <button
+                                class=move || opt_toggle_class(state.gain.wave_view_auto().get())
+                                aria-pressed=move || state.gain.wave_view_auto().get().to_string()
+                                title=move || if state.gain.wave_view_auto().get() {
+                                    "Auto: Gain brings this file's peak to −3 dBFS. Click to turn off."
                                 } else {
-                                    format!("{:+.0} dB", state.gain.wave_view_db().get())
+                                    "Auto is off. Click to set Gain from this file's peak."
                                 }
-                            }}</span>
+                                on:click=move |_| {
+                                    let auto = state.gain.wave_view_auto();
+                                    if auto.get_untracked() {
+                                        // Keep the gain Auto chose, so turning Auto
+                                        // off doesn't change the waveform.
+                                        state.gain.wave_view_db().set(state.compute_auto_gain_untracked());
+                                        auto.set(false);
+                                    } else {
+                                        auto.set(true);
+                                    }
+                                }
+                            >"Auto"</button>
                         </div>
                     </div>
                 }
