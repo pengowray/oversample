@@ -199,8 +199,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         ColormapMode::Uniform(colormap_pref)
     };
 
-    let spect_floor = state.spect.floor_db().get_untracked();
-    let spect_range = state.spect.range_db().get_untracked();
+    let (spect_floor, spect_range) = untrack(|| state.spect_floor_range());
     let spect_gamma = state.spect.gamma().get_untracked();
     let spect_gain = state.spect.gain_db().get_untracked();
 

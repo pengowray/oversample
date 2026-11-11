@@ -8211,6 +8211,11 @@ button.canvas-overflow-action-btn.disabled {
     .surface-3d-file {
         display: none;
     }
+    /* Plotly's toolbar buttons are 22 px tall; touch targets need at least 24. */
+    .surface-3d-plot.js-plotly-plot .plotly .modebar-btn {
+        height: 30px;
+        padding: 7px 6px;
+    }
 }
 
 .surface-3d-range {

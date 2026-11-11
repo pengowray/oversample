@@ -258,7 +258,12 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
     // Draw, and redraw when the floor changes (Plotly keeps the camera angle).
     Effect::new(move || {
         let floor = floor_db.get();
-        let cmap = state.spect.colormap_preference().get();
+        // Same colormap as the 2D view: HFR mode has its own.
+        let cmap = if state.viewmode.hfr_enabled().get() {
+            state.spect.hfr_colormap_preference().get()
+        } else {
+            state.spect.colormap_preference().get()
+        };
         let Some(el) = plot_ref.get() else { return };
         let el: web_sys::HtmlElement = el.into();
         let Some(g) = grid.with(|g| g.clone()) else {

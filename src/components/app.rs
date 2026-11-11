@@ -2550,9 +2550,13 @@ pub fn MainViewButton() -> impl IntoView {
             {move || matches!(state.viewmode.main_view().get(), MainView::Spectrogram | MainView::Flow | MainView::Resonators).then(|| {
                 let gain_get = move || state.spect.gain_db().get();
                 let gain_set = move |v: f32| state.spect.gain_db().set(v);
-                let range_get = move || state.spect.range_db().get();
+                // The range in use for the selected file (see spect_floor_range).
+                let range_get = move || state.spect_floor_range().1;
                 let range_set = move |v: f32| state.spect.range_db().set(v);
                 let floor_set = move |v: f32| state.spect.floor_db().set(v);
+                // The Range slider reaches the selected file's noise floor: 120 dB
+                // for 16-bit audio, 170 dB for 24-bit, 32-bit and float.
+                let range_max = move || state.spect_max_range_db();
                 let gamma_get = move || state.spect.gamma().get();
                 let gamma_set = move |v: f32| state.spect.gamma().set(v);
                 view! {
@@ -2583,7 +2587,8 @@ pub fn MainViewButton() -> impl IntoView {
                             <input
                                 type="range"
                                 class="setting-range"
-                                min="20" max="120" step="5"
+                                min="20" step="5"
+                                prop:max=move || range_max().to_string()
                                 prop:value=move || range_get().to_string()
                                 on:input=move |ev: web_sys::Event| {
                                     let target = ev.target().unwrap();

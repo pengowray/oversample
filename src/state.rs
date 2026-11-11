@@ -2816,6 +2816,34 @@ impl AppState {
         }
     }
 
+    /// The selected file's `(bits_per_sample, is_float)`. Reactive.
+    pub fn current_sample_format(&self) -> Option<(u16, bool)> {
+        let idx = self.library.current_index().get()?;
+        self.library.files().with(|files| {
+            files
+                .get(idx)
+                .map(|f| (f.audio.metadata.bits_per_sample, f.audio.metadata.is_float))
+        })
+    }
+
+    /// Top of the spectrogram Range for the selected file: 120 dB for 16-bit
+    /// audio, 170 dB for 24-bit, 32-bit and float. Reactive.
+    pub fn spect_max_range_db(&self) -> f32 {
+        let (bits, is_float) = self.current_sample_format().unwrap_or((16, false));
+        oversample_core::dsp::depth_range::max_display_range_db(bits, is_float)
+    }
+
+    /// The spectrogram's display floor and range, limited to what the selected
+    /// file's format can show: a Range raised to 170 dB for a 24-bit file shows
+    /// a 16-bit file at 120 dB. Reactive.
+    pub fn spect_floor_range(&self) -> (f32, f32) {
+        let max = self.spect_max_range_db();
+        (
+            self.spect.floor_db().get().max(-max),
+            self.spect.range_db().get().min(max),
+        )
+    }
+
     pub fn current_file(&self) -> Option<LoadedFile> {
         let files = self.library.files().get();
         let idx = self.library.current_index().get()?;
