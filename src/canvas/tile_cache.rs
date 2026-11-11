@@ -1841,12 +1841,16 @@ pub fn clear_reassign_file(file_idx: usize) {
 /// Reassignment gate for 16-bit audio, in dB of unnormalized bin power.
 const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
 
+/// Samples a reassigned tile's noise floor is measured over: one
+/// baseline-LOD tile, about 0.34 s at 384 kHz.
+const REASSIGN_FLOOR_BLOCK: usize = TILE_COLS * BASELINE_HOP;
+
 /// Schedule a reassignment spectrogram tile for background generation.
 ///
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
 /// compute corrected time-frequency positions, producing sharper spectrograms.
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::fft::{compute_reassigned_tile, reassign_margin_cols};
+    use crate::dsp::fft::{compute_reassigned_tile, reassign_margin_cols, reassign_noise_floor};
 
     let key = TileKey {
         file_idx,
@@ -1948,20 +1952,59 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         };
         let samples = &ch_samples[..];
 
+        // The noise floor comes from a fixed block of audio around the tile,
+        // the same block at every zoom level, so a call that fills a deep-zoom
+        // tile is still measured against the quiet around it.
+        let tile_mid = (tile_col_start + TILE_COLS / 2) * config_hop;
+        let block_start = (tile_mid / REASSIGN_FLOOR_BLOCK * REASSIGN_FLOOR_BLOCK)
+            .min(total_samples.saturating_sub(REASSIGN_FLOOR_BLOCK));
+        let block_end = (block_start + REASSIGN_FLOOR_BLOCK).min(total_samples);
+        let block_in_tile_read =
+            block_start >= sample_start && block_end <= sample_start + samples.len();
+        let noise_floor = if block_in_tile_read {
+            reassign_noise_floor(
+                &samples[block_start - sample_start..block_end - sample_start],
+                actual_fft,
+            )
+        } else {
+            let block = streaming_source::read_region_ready(
+                audio.source.as_ref(),
+                cv,
+                block_start as u64,
+                block_end.saturating_sub(block_start),
+            )
+            .await;
+            if !reassign_request_still_active(&key) {
+                return;
+            }
+            block
+                .map(|b| reassign_noise_floor(&b, actual_fft))
+                .unwrap_or_default()
+        };
+
         yield_to_browser().await;
 
         if !reassign_request_still_active(&key) {
             return;
         }
 
-        // Bins below the gate are skipped. -60 dB (unnormalized power) suits
-        // 16-bit audio; deeper formats move it down with their noise floor so
-        // their quiet content isn't dropped.
+        // Bins below the gate stay where they are. -60 dB (unnormalized
+        // power) suits 16-bit audio; deeper formats move it down with their
+        // noise floor so their quiet content is still sharpened.
         let meta = &audio.metadata;
         let gate_db = REASSIGN_GATE_16_BIT_DB
-            - oversample_core::dsp::depth_range::depth_extra_db(meta.bits_per_sample, meta.is_float);
+            - oversample_core::dsp::depth_range::depth_extra_db(
+                meta.bits_per_sample,
+                meta.is_float,
+            );
         let rendered = compute_reassigned_tile(
-            samples, lead_cols, TILE_COLS, actual_fft, config_hop, gate_db,
+            samples,
+            lead_cols,
+            TILE_COLS,
+            actual_fft,
+            config_hop,
+            gate_db,
+            &noise_floor,
         );
 
         let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
