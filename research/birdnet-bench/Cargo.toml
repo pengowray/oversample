@@ -1,0 +1,33 @@
+[package]
+name = "birdnet-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Throwaway speed test: BirdNET V2.4 ONNX in tract (native + wasm32) and onnxruntime (native)"
+
+# Not part of the Oversample workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "native"
+path = "src/main.rs"
+
+[dependencies]
+tract-onnx = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ort = { version = "=2.0.0-rc.15", optional = true }
+
+[features]
+ort = ["dep:ort"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
