@@ -7119,11 +7119,19 @@ button.toolbar-overflow-btn {
     padding: 0;
     font-size: 9px;
     text-align: center;
+    /* A solid fill when off too, so it reads as a button and not a label. */
+    background: #262626;
+    color: #aaa;
+}
+
+.layer-panel-opt.dsp-auto-toggle:hover {
+    background: #303030;
 }
 
 .layer-panel-opt.dsp-auto-toggle.sel {
     font-weight: normal;
     background: #1f2b27;
+    color: #6da;
 }
 
 /* Rows without a toggle keep the same space and height, so the sliders in a
@@ -7136,6 +7144,22 @@ button.toolbar-overflow-btn {
     content: "";
     flex: none;
     width: 36px;
+}
+
+/* Phones: the option buttons grow to 40 px for fingers; the rows in a
+   section with a toggle grow with them so the spacing stays even. */
+@media (pointer: coarse), (max-width: 640px) {
+    .dsp-custom-section:has(.dsp-auto-toggle) .dsp-custom-slider-row {
+        min-height: 40px;
+    }
+    .layer-panel-opt.dsp-auto-toggle {
+        height: 40px;
+        width: 44px;
+        font-size: 12px;
+    }
+    .dsp-custom-section:has(.dsp-auto-toggle) .dsp-custom-slider-row:not(:has(.dsp-auto-toggle))::after {
+        width: 44px;
+    }
 }
 
 .dsp-slider-label {
