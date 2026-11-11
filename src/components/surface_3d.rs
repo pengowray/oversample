@@ -6,6 +6,7 @@ use crate::audio::source::ChannelView;
 use crate::audio::streaming_source::read_region_ready;
 use crate::canvas::spectrogram_renderer::Colormap;
 use crate::dsp::surface_grid::{surface_grid, SurfaceGrid};
+use crate::format_time::{format_offset, format_time_display, offset_axis_ticks};
 use crate::state::store_fields::*;
 use crate::state::{AppState, Selection};
 use js_sys::{Array, Float32Array, Float64Array, Object, Reflect};
@@ -79,21 +80,46 @@ async fn draw(
     el: &web_sys::HtmlElement,
     grid: &SurfaceGrid,
     start_s: f64,
+    span_s: f64,
     floor_db: f32,
     cmap: Colormap,
 ) -> Result<(), String> {
     let z: Vec<f32> = grid.level_db.iter().map(|v| v.max(floor_db)).collect();
-    let times_ms: Vec<f64> = grid.times_s.iter().map(|t| t * 1000.0).collect();
     let freqs_khz: Vec<f64> = grid.freqs_hz.iter().map(|f| f / 1000.0).collect();
     let d = Object::new();
     set(&d, "z", &Float32Array::from(z.as_slice()));
     set(&d, "nx", &JsValue::from(grid.cols as u32));
     set(&d, "ny", &JsValue::from(grid.rows as u32));
-    set(&d, "times_ms", &Float64Array::from(times_ms.as_slice()));
+    set(&d, "times_s", &Float64Array::from(grid.times_s.as_slice()));
     set(&d, "freqs_khz", &Float64Array::from(freqs_khz.as_slice()));
-    // Unclamped levels and the selection's start time, for the hover label.
+    // Unclamped levels and each column's time, for the hover label.
     set(&d, "level", &Float32Array::from(grid.level_db.as_slice()));
-    set(&d, "start_s", &JsValue::from_f64(start_s));
+    let strings = |v: Vec<String>| v.iter().map(|s| JsValue::from_str(s)).collect::<Array>();
+    set(
+        &d,
+        "time_abs",
+        &strings(
+            grid.times_s
+                .iter()
+                .map(|t| format_time_display(start_s + t, 4))
+                .collect(),
+        ),
+    );
+    set(
+        &d,
+        "time_rel",
+        &strings(
+            grid.times_s
+                .iter()
+                .map(|&t| format_offset(t, 0.0001))
+                .collect(),
+        ),
+    );
+    // About one time tick per 110 px; at least 4, so a phone shows offsets too.
+    let max_ticks = (el.client_width() / 110).clamp(4, 8) as usize;
+    let (tick_vals, tick_text) = offset_axis_ticks(start_s, span_s, max_ticks);
+    set(&d, "tick_vals", &Float64Array::from(tick_vals.as_slice()));
+    set(&d, "tick_text", &strings(tick_text));
     set(&d, "floor_db", &JsValue::from_f64(floor_db as f64));
     set(&d, "colorscale", &colorscale(cmap));
 
@@ -271,7 +297,15 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
         };
         plot_el.set_value(Some(el.clone()));
         spawn_local(async move {
-            let result = draw(&el, &g, region.time_start, floor, cmap).await;
+            let result = draw(
+                &el,
+                &g,
+                region.time_start,
+                shown_end - region.time_start,
+                floor,
+                cmap,
+            )
+            .await;
             status.try_set(match result {
                 Ok(()) => Status::Ready,
                 Err(e) => Status::Failed(e),
@@ -317,7 +351,7 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
                     </button>
                 </div>
                 <div class="surface-3d-controls">
-                    <label class="surface-3d-floor" title="Levels under this are drawn flat. 0 dB is the loudest point in the selection.">
+                    <label class="surface-3d-floor" title="Levels under this are drawn flat.">
                         <span>"Floor"</span>
                         <input
                             type="range"

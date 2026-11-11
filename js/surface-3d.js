@@ -54,8 +54,10 @@
     }
 
     // d: { z: Float32Array (rows = frequencies, row-major), nx, ny,
-    //      times_ms: Float64Array(nx), freqs_khz: Float64Array(ny),
-    //      level: Float32Array, unclamped z; start_s: selection start in seconds,
+    //      times_s: Float64Array(nx), offsets from the selection start,
+    //      freqs_khz: Float64Array(ny), level: Float32Array, unclamped z,
+    //      time_abs, time_rel: [string] per column, for the hover label,
+    //      tick_vals: Float64Array, tick_text: [string], for the time axis,
     //      floor_db, colorscale: [[0..1, 'rgb(...)'], ...] }
     function show(el, d) {
         if (!hasWebGL()) {
@@ -75,14 +77,11 @@
             var custom = new Array(d.nx);
             for (var i = 0; i < d.nx; i++) {
                 custom[i] = new Array(d.ny);
-                var t = d.start_s + d.times_ms[i] / 1000;
                 for (var j2 = 0; j2 < d.ny; j2++) {
-                    custom[i][j2] = [d.level[j2 * d.nx + i], t];
+                    custom[i][j2] = [d.level[j2 * d.nx + i], d.time_abs[i], d.time_rel[i]];
                 }
             }
-            // Seconds for long selections, where ms ticks read "2k, 4k".
-            var inSecs = d.nx > 0 && d.times_ms[d.nx - 1] > 2000;
-            var x = Array.prototype.map.call(d.times_ms, function (t) { return inSecs ? t / 1000 : t; });
+            var x = Array.prototype.slice.call(d.times_s);
             var narrow = el.clientWidth < 600;
             var y = Array.prototype.slice.call(d.freqs_khz);
             var axis = function (title) {
@@ -101,12 +100,20 @@
             if (narrow) yAxis.nticks = 5;
             // On a phone any title is clipped at the left edge, so the unit
             // goes on the tick labels, and fewer ticks keep them apart.
-            var zAxis = axis(narrow ? '' : 'Level (dB, 0 = loudest)');
-            if (narrow) {
-                zAxis.ticksuffix = ' dB';
-                zAxis.nticks = 4;
-            }
+            var zAxis = axis(narrow ? '' : 'Level (dB)');
             zAxis.range = [d.floor_db, 0];
+            // Ticks from 0 dB down, leaving out the floor itself: its label
+            // would sit on the time axis's start label at the corner, and the
+            // Floor slider already shows it.
+            var zSteps = [5, 10, 20, 25, 50, 100];
+            var zStep = zSteps.find(function (s) { return -d.floor_db / s <= (narrow ? 3 : 6); }) || 100;
+            zAxis.tickmode = 'array';
+            zAxis.tickvals = [];
+            for (var v = 0; v > d.floor_db + zStep / 2; v -= zStep) zAxis.tickvals.push(v);
+            // Plotly ignores ticksuffix on array ticks, so the phone's " dB" goes in the text.
+            zAxis.ticktext = zAxis.tickvals.map(function (v) {
+                return (v < 0 ? '−' + -v : String(v)) + (narrow ? ' dB' : '');
+            });
             var trace = {
                 type: 'surface',
                 x: x,
@@ -117,7 +124,7 @@
                 colorscale: d.colorscale,
                 showscale: false,
                 customdata: custom,
-                hovertemplate: (inSecs ? '%{customdata[1]:.4f} s (+%{x:.3f} s)' : '%{customdata[1]:.4f} s (+%{x:.1f} ms)') +
+                hovertemplate: '%{customdata[1]} (%{customdata[2]})' +
                     '<br>%{y:.1f} kHz<br>%{customdata[0]:.1f} dB<extra></extra>',
                 contours: { z: { show: false } },
                 lighting: { ambient: 0.75, diffuse: 0.5, specular: 0.05, roughness: 0.9 },
@@ -130,7 +137,13 @@
                 hoverlabel: { font: { family: getComputedStyle(document.body).fontFamily } },
                 margin: { l: 0, r: 0, t: 0, b: 0 },
                 scene: {
-                    xaxis: axis('Time after selection start (' + (inSecs ? 's' : 'ms') + ')'),
+                    // First tick: the selection start in the recording; the
+                    // rest: offsets from it ("+200 ms").
+                    xaxis: Object.assign(axis('Time'), {
+                        tickmode: 'array',
+                        tickvals: Array.prototype.slice.call(d.tick_vals),
+                        ticktext: d.tick_text,
+                    }),
                     yaxis: yAxis,
                     zaxis: zAxis,
                     aspectmode: 'manual',

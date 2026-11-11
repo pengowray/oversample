@@ -150,6 +150,61 @@ pub fn format_time_range(start: f64, end: f64, precision: u8) -> String {
     )
 }
 
+// ── Offset axis (3D view) ───────────────────────────────────────────────
+
+/// Ticks for a time axis that starts at `start` seconds in the recording and
+/// is `span` seconds long. The first tick is the time in the recording
+/// (`20m12.32s`); the rest are offsets from it (`+200 ms`, `+1.5 s`).
+/// Positions are offsets in seconds. At most `max_ticks` ticks.
+pub fn offset_axis_ticks(start: f64, span: f64, max_ticks: usize) -> (Vec<f64>, Vec<String>) {
+    let step = nice_step(span / max_ticks.saturating_sub(1).max(1) as f64);
+    let n = (span / step + 1e-9).floor().max(0.0) as usize;
+    // Milliseconds, like the selection times elsewhere; finer for tiny steps.
+    let precision = if step >= 0.01 { 3 } else { 4 };
+    let vals: Vec<f64> = (0..=n).map(|i| i as f64 * step).collect();
+    let text = vals
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            if i == 0 {
+                format_time_display(start, precision)
+            } else {
+                format_offset(v, step)
+            }
+        })
+        .collect();
+    (vals, text)
+}
+
+/// A positive offset: `+200 ms` under a second, `+1.5 s` from a second up.
+/// `step` is the tick spacing (or the precision wanted), in seconds.
+pub fn format_offset(offset: f64, step: f64) -> String {
+    if offset < 1.0 - 1e-9 {
+        let ms = offset * 1000.0;
+        if step >= 0.001 {
+            format!("+{ms:.0} ms")
+        } else {
+            format!("+{ms:.1} ms")
+        }
+    } else {
+        // Rounded to 1 ms; Display drops trailing zeros ("+1 s", "+1.5 s").
+        format!("+{} s", (offset * 1000.0).round() / 1000.0)
+    }
+}
+
+/// Smallest 1, 2 or 5 times a power of ten that is at least `raw`.
+fn nice_step(raw: f64) -> f64 {
+    if raw <= 0.0 || !raw.is_finite() {
+        return 1.0;
+    }
+    let mag = 10f64.powf(raw.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .iter()
+        .map(|m| m * mag)
+        .find(|&s| s >= raw * (1.0 - 1e-9))
+        .unwrap_or(10.0 * mag)
+}
+
 // ── GUANO timestamp helper ─────────────────────────────────────────────
 
 /// Build an ISO 8601 timestamp with local timezone offset for a recording
@@ -231,5 +286,38 @@ fn format_hours_minutes_seconds_adaptive(seconds: f64, interval: f64) -> String 
         format!("{}{}h{:02}m{:02.0}s", sign, hours, mins, secs)
     } else {
         format!("{}{}h{:02}m{:04.1}s", sign, hours, mins, secs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offset_axis_starts_with_recording_time() {
+        let (vals, text) = offset_axis_ticks(1212.32, 1.6, 6);
+        assert_eq!(vals, vec![0.0, 0.5, 1.0, 1.5]);
+        assert_eq!(text, vec!["20m12.320s", "+500 ms", "+1 s", "+1.5 s"]);
+    }
+
+    #[test]
+    fn offset_axis_short_and_long_spans() {
+        let (_, text) = offset_axis_ticks(5.0, 0.012, 6);
+        assert_eq!(text, vec!["5.0000s", "+5 ms", "+10 ms"]);
+        let (_, text) = offset_axis_ticks(0.384, 0.9, 6);
+        assert_eq!(
+            text,
+            vec!["0.384s", "+200 ms", "+400 ms", "+600 ms", "+800 ms"]
+        );
+        let (vals, text) = offset_axis_ticks(3700.0, 10.0, 6);
+        assert_eq!(vals.len(), 6);
+        assert_eq!(text[0], "1h01m40.000s");
+        assert_eq!(text[5], "+10 s");
+    }
+
+    #[test]
+    fn offset_hover_precision() {
+        assert_eq!(format_offset(0.1184, 0.0001), "+118.4 ms");
+        assert_eq!(format_offset(1.2345, 0.0001), "+1.235 s");
     }
 }

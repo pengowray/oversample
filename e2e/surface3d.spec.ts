@@ -103,9 +103,12 @@ test("View in 3D draws the selection and dragging rotates it", async ({ page }, 
   const floor = parseFloat((await page.locator(".surface-3d-floor-value").textContent())!);
   const points = await page.evaluate(async () => {
     const plot = document.querySelector(".surface-3d-plot") as HTMLElement & {
-      on(ev: string, f: (d: { points: { x: number; z: number; customdata: number[] }[] }) => void): void;
+      on(
+        ev: string,
+        f: (d: { points: { x: number; z: number; customdata: [number, string, string] }[] }) => void,
+      ): void;
     };
-    const got: { x: number; z: number; customdata: number[] }[] = [];
+    const got: { x: number; z: number; customdata: [number, string, string] }[] = [];
     plot.on("plotly_hover", (d) => got.push(d.points[0]));
     const r = plot.getBoundingClientRect();
     for (let k = 0; k < 30; k++) {
@@ -118,9 +121,23 @@ test("View in 3D draws the selection and dragging rotates it", async ({ page }, 
     return got.map((p) => ({ x: p.x, z: p.z, customdata: p.customdata }));
   });
   expect(points.length).toBeGreaterThan(1);
+
+  // The time axis starts at the selection start, as the header shows it, then
+  // counts up from it ("+200 ms").
+  const ticks = await page.evaluate(
+    () =>
+      (document.querySelector(".surface-3d-plot") as unknown as {
+        layout: { scene: { xaxis: { ticktext: string[] } } };
+      }).layout.scene.xaxis.ticktext,
+  );
+  expect(ticks[0]).toBe(`${start.toFixed(3)}s`);
+  for (const t of ticks.slice(1)) expect(t).toMatch(/^\+\d+(\.\d+)? m?s$/);
   for (const p of points) {
     // The header rounds the start to 1 ms; a wrong cell is off by far more.
-    expect(p.customdata[1]).toBeCloseTo(start + p.x / 1000, 2);
+    expect(parseFloat(p.customdata[1])).toBeCloseTo(start + p.x, 2);
+    expect(p.customdata[2]).toBe(
+      p.x < 1 ? `+${(p.x * 1000).toFixed(1)} ms` : `+${Math.round(p.x * 1000) / 1000} s`,
+    );
     expect(Math.max(p.customdata[0], floor)).toBeCloseTo(p.z, 3);
   }
 
