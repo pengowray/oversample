@@ -132,8 +132,9 @@ How to ship it:
    bird range model, so a non-bird subset would need its own species list.
 4. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
-Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
-onnxruntime-web, tphakala's INT8 file, the classifier on ARM, Perch against BirdNET on
+Tested in headless Chrome 156 and Firefox 159 in a Web Worker: 12 times real time,
+the same answers as native, and the page kept drawing (see [Browsers](#browsers)). Not
+tested: the Tauri webview, headed browsers, phones, onnxruntime-web, tphakala's INT8 file, the classifier on ARM, Perch against BirdNET on
 bird identification accuracy, and a classifier trained on Perch embeddings for bats. See
 [Not tested](#not-tested).
 
@@ -274,6 +275,41 @@ measurement (64 to 74 ms), so the comparison is fair.
   and 0.1 s for the classifier, against 2.2 s for the full model.
 - The plain wasm32-wasip1 build ran while the machine was busier, so its times (310 to
   410 ms for the embedding model, 1 s for the full model) are left out of the table.
+
+### Browsers
+
+Perch as two files (embedding model in tract, int8 classifier in Rust, 136 MB) on the
+same test page as BirdNET ([web/](perch-bench/web/)): both files cached in OPFS, run in a
+module Web Worker or on the main thread, 36 windows (3 minutes of audio). Run on
+2026-11-12 once the machine was quiet (load average 2.4 to 3.8 on 12 threads, against 20
+to 36 while other builds ran).
+
+| Browser | ms per window (median, worker) | Embedding model / classifier | 3 min of audio | Load, cold | Load, warm |
+|---|---|---|---|---|---|
+| Chrome 156 (Chrome for Testing, headless) | 391 to 392 | 186 / 204 | 14.6 s (12x) | 1.77 s | 1.43 s |
+| Firefox 159 (headless) | 409 to 415 | 199 to 203 / 207 to 210 | 15.4 s (12x) | 1.68 s | 1.31 s |
+| BirdNET V2.4 in the same page, for comparison (Chrome) | 66 to 69 per 3 s | | 4.2 to 4.4 s (41 to 43x) | 0.70 s | 0.57 s |
+
+- **Same answers:** in both browsers, in the worker and on the main thread, the top class
+  matched the native build on all 36 windows.
+- **Load:** most of it is tract optimising the embedding model (0.9 to 1.4 s). Reading
+  both files from OPFS took 28 to 77 ms in Chrome and 92 to 174 ms in Firefox; building
+  the classifier took 44 to 55 ms. Over a real connection, the 136 MB download takes
+  about 11 s at 100 Mbit/s and about 55 s at 20 Mbit/s.
+- **Page responsiveness:** in the worker, no frame took over 17 ms in Chrome, and one
+  frame took 50 ms in Firefox. On the main thread nearly every frame was over 50 ms
+  (36 of 71 in Chrome, longest 850 ms), because one window takes about 400 ms and can't
+  be split. Perch must run in a worker.
+- **Memory:** summed PSS of the browser's processes, peak over the three page loads,
+  minus the same page with no model:
+
+  | Browser | Peak with Perch | Peak without | Added by Perch |
+  |---|---|---|---|
+  | Chrome | 837 MB | 425 MB | about 410 MB |
+  | Firefox | 1,153 MB | 670 MB | about 480 MB |
+
+  The WASM memory was 231 MB in both. BirdNET added about 285 MB in Chrome and 305 MB in
+  Firefox.
 
 ### Accuracy
 
@@ -495,9 +531,11 @@ with one change: Perch has no single weight vector per class.
 
 ## Not tested
 
-- **Browsers and Tauri.** Perch ran in node only, not in Chrome, Firefox, a Web Worker
-  or the Tauri webview. The BirdNET tests showed node's numbers carry over to Chrome
-  and to the worker, so the same is likely here.
+- **Tauri and headed browsers.** Perch ran in node and in headless Chrome and Firefox,
+  not in the Tauri webview (WebKitGTK) or a browser window on screen. For BirdNET,
+  WebKitGTK was about as fast as Firefox, but it has no OPFS, so the 136 MB would be
+  downloaded again each time unless the app caches it another way. The full single-file
+  model was not run in a browser.
 - **Phones.** No Android device was connected.
 - **onnxruntime-web,** WebGPU and more than one thread.
 - **INT8 and float16.** The tphakala INT8 file (131 MB) uses MatMulInteger, which was 4
