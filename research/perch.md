@@ -7,8 +7,11 @@ BirdNET V2.4. Prototype: [perch-bench/](perch-bench/).
 ## Recommendation
 
 **Add Perch 2.0 as a second model, not as a replacement for BirdNET.** Ship it as the
-45 MB embedding model and use it for similar-call search, clustering and non-bird
-species. Keep BirdNET V2.4 as the bird and bat classifier for now.
+45 MB embedding model plus a classifier file for the species wanted, and use it for
+non-bird species and as a second embedding for similar-call search and clustering.
+Keep BirdNET V2.4 (with BattyBirdNET heads for bats) as the main bird and bat
+classifier for now. The measured reasons to add Perch are its licence and its non-bird
+classes; for bat calls its embeddings were no better than BirdNET's in this test.
 
 - **Licence:** Apache 2.0 for the weights, stated by Google on the Kaggle model page.
   This is much more permissive than BirdNET's CC BY-NC-SA 4.0. It allows a paid tier,
@@ -25,8 +28,9 @@ species. Keep BirdNET V2.4 as the bird and bat classifier for now.
 - **Slower than BirdNET.** In the same process, under the same load, the Perch
   embedding model analysed 3 minutes of audio in 7.5 to 7.9 s; BirdNET V2.4 took 4.1 to
   4.8 s. Perch is about 1.8 times slower per second of audio.
-- **Bats: no better than BirdNET.** Google removed bats from Perch's training data, and
-  only 2 of its 14,795 classes are bats (Eptesicus serotinus and E. nilssonii). On 184
+- **Bats: no better than BirdNET.** Google removed bats from Perch's training data.
+  Checked against the 87 bat genera in bat-demo-sounds, only 2 of Perch's 14,795
+  classes are bats (Eptesicus serotinus and E. nilssonii). On 184
   time-expanded bat recordings of 92 species, Perch and BirdNET embeddings found a
   recording of the same species as the nearest neighbour equally often (0.53 to 0.57).
   Both beat a plain spectrum baseline (0.33). See [Bats](#4-bats).
@@ -52,23 +56,34 @@ Why add Perch:
 
 - **Licence.** It is the only one of the two that could go in a paid tier, and the app
   can host, cut and quantise the file without ShareAlike or NonCommercial terms.
-- **Embeddings.** Google trained them to be linearly separable, for agile modelling
-  (a few labelled examples, then a linear classifier) and similarity search. Perch 2.0
-  is state of the art on the BirdSet and BEANS benchmarks. That suits the similar-call
-  search and clustering planned for the Call detection panel. A custom bat head on
-  Perch embeddings would be shippable in any tier, unlike BattyBirdNET (CC BY-NC-SA).
 - **Taxa.** Perch knows frogs, crickets, grasshoppers, some mammals (including
   whales) and 198 general sound events (vehicles, water, music). BirdNET V2.4 is
   mostly birds.
+- **Embeddings, from published results only.** Google trained them to be linearly
+  separable, for agile modelling (a few labelled examples, then a linear classifier)
+  and similarity search. Perch 2.0 is state of the art on the BirdSet and BEANS
+  benchmarks. On BEANS's bat dataset (Egyptian fruit bat calls), a probe on Perch 2.0
+  embeddings scored 0.76 to 0.82 accuracy, against 0.72 for Perch 1.0; BirdNET isn't
+  in that table. Whether this helps similar-call search for echolocation calls in the
+  Call detection panel was not shown here: on bat calls, Perch and BirdNET embeddings
+  tied.
+- **A bat classifier of Oversample's own** trained on Perch embeddings could go in any
+  tier. One trained on BirdNET embeddings, like BattyBirdNET, inherits CC BY-NC-SA.
 
 How to ship it, if added:
 
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
    It gives the 1,536-value embedding for search and clustering.
-2. The classifier as a separate data file, run in plain Rust after the embedding
-   model: one matrix multiply against the prototypes of the species that are wanted.
-   For a region of about 900 species that is about 20 MB of prototypes in float32.
-   The full 14,795-class head (364 MB float32, 182 MB float16) is too big to download.
+2. The classifier as a separate data file, run in plain Rust on the embedding model's
+   spatial output: a matrix multiply of the 64 spatial positions against the
+   prototypes of the classes that are wanted, a max, and a weighted sum. Sizes in
+   float32 (half in float16):
+   - one region of about 900 classes: about 22 MB
+   - all 5,044 non-bird classes (other species and sound events): about 124 MB
+   - all 14,795 classes: 364 MB, too big to download
+
+   tphakala's regional slices pick species with BirdNET's bird range model, so a
+   non-bird or bat-region subset would need its own species list.
 3. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
 Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
@@ -103,12 +118,15 @@ van Merriënboer et al., "Perch 2.0: The Bittern Lesson for Bioacoustics", arXiv
   with 91 million parameters. In the ONNX file the classifier is one
   1,536 x 59,180 matrix: 4 unit-length prototypes per class (see section 5).
 - **Classes:** 14,795. The paper says 14,597 are species and 198 are FSD50K sound
-  events. 9,706 classes have an eBird code (birds). The rest are frogs and other
-  amphibians, insects, mammals and sound events. Training audio came from xeno-canto,
+  events. The model card says about 10,000 are birds; 9,706 classes have an eBird
+  code. The rest are frogs and other amphibians, insects, mammals, sound events and
+  some birds without an eBird code. Training audio came from xeno-canto,
   iNaturalist, the Animal Sound Archive (Tierstimmenarchiv) and FSD50K.
 - **Bats:** the paper says bats were removed from the training data because their
-  calls "cannot be represented" with the chosen spectrogram settings. Two bat species
-  remain as classes: Eptesicus serotinus and Eptesicus nilssonii.
+  vocalizations "cannot be represented using the spectrogram parameters we selected".
+  Two bat species remain as classes: Eptesicus serotinus and Eptesicus nilssonii.
+  This was checked by matching Perch's labels against the 87 bat genera in
+  bat-demo-sounds, so a bat genus missing from that set could add a few more.
 - **Dead classes:** 53 classes have all four prototype weights at zero, so their
   logit is a constant. Examples: Agriotes lineatus, Bos bison, Ceyx gentianus.
 
@@ -143,10 +161,10 @@ Bias should be scalar or a vector with one value per output channel.
 Output channels is 40, bias is 40,1,F32
 ```
 
-With batch 2 the same file loads and runs. With a batch of 1, tract's optimiser drops
-the batch axis from each convolution, then folds the batch-norm scale and shift that
-follow it into the convolution's bias with the wrong shape. This looks like a tract
-bug; it was not reported upstream.
+With batch 2 the same file loads and runs. Judging by the error, with a batch of 1
+tract's optimiser appears to drop the batch axis from each convolution and then fold
+the batch-norm scale and shift that follow it into the convolution's bias with the
+wrong shape. This looks like a tract bug; it was not reported upstream.
 
 [fix_for_tract.py](perch-bench/fix_for_tract.py) does that fold in the ONNX file
 before tract sees it: each Conv followed by Transpose, Mul and Add gets new weights and
@@ -182,8 +200,8 @@ measurement (64 to 74 ms), so the comparison is fair.
   reports its linear memory directly.
 - The tract WASM module is 14.9 MB (3.7 MB gzipped), the same as BirdNET's, because it
   is the same tract code.
-- Loading (parse and optimise) takes 1.7 to 2.0 s in WASM for the embedding model and
-  2.4 s for the full model, against 0.5 to 0.6 s for BirdNET.
+- Loading (parse and optimise) in the same process: 1.5 to 1.8 s for the Perch
+  embedding model and 2.2 s for the full model, against 0.5 to 0.8 s for BirdNET.
 - The classifier is a large part of the time: 14,795 classes x 4 prototypes x 64
   positions x 1,536 values is 5.8 billion multiply-adds per window. A region of about
   900 classes adds 20 to 25 percent to the embedding time.
@@ -262,8 +280,9 @@ What this shows:
   user's own recordings will work better than one across other people's.
 - **Both models beat the plain spectrum,** so both embeddings carry more than the call's
   frequency band.
-- **10x is a little better than 8x for Perch.** Calls above 128 kHz (some horseshoe
-  bats) are cut off at 8x.
+- **8x or 10x for Perch:** 10x scored higher overall (0.565 against 0.533) but lower on
+  the species with two recordists (0.167 against 0.182). The test can't tell them
+  apart.
 
 ## 5. Species map
 
@@ -300,14 +319,26 @@ with one change: Perch has no single weight vector per class.
   ![Perch species map](perch-bench/perch_v2_species_map.png)
 
   On the 2D map, the nearest class shares the genus for 0.108 of species, against 0.215
-  for a BirdNET map made the same way. Squeezing 14,742 classes into 2D loses more
-  detail than squeezing 6,522 classes. Zooming will still show genus groups, but
-  neighbours on the map are not always relatives.
-- **Placing a detection:** use the window's logits (its top classes), not the nearest
-  prototype to the pooled 1,536-value embedding. The nearest prototype to the pooled
-  embedding matched the top class in only 6 of 22 bird windows, because the classifier
-  compares prototypes with each spatial position, not with the average. A detection
-  can sit at its top class's point, or at a logit-weighted average of its top few.
+  for a BirdNET map made the same way. The 2D map loses much of the grouping that the
+  1,536-value vectors have (0.439), probably more so with 14,742 classes than with
+  6,522. Neighbours on the map are often not relatives.
+- **Placing a detection:** use the window's logits (its top classes). A detection can
+  sit at its top class's point, or at a logit-weighted average of its top few. Matching
+  embeddings to the map's vectors doesn't find the right class
+  ([placement.py](perch-bench/placement.py)):
+
+  | Match | Top class found, all 22 windows | Top class found, 13 windows with top-1 probability 0.3 or more | Median rank of the matched class in the logits |
+  |---|---|---|---|
+  | Pooled embedding to nearest class vector (weighted mean) | 5 | 5 | 2 to 3 |
+  | Pooled embedding to nearest single prototype | 6 | 6 | |
+  | Best spatial position to nearest class vector | 0 | 0 | about 14,000 |
+
+  The classifier compares each prototype with each of the 64 spatial positions, not
+  with the pooled average, so only the classifier itself gives the right class.
+  With a regional classifier file, detections can only land on that region's classes.
+  Matching the pooled embedding to the class vectors (a 14,742 x 1,536 table, 45 MB in
+  float16) would place every detection, but only near the right class: the matched
+  class was typically the 2nd or 3rd in the logits.
 - **A bat map** for Perch would have only the 2 Eptesicus classes, so bats would need
   their own map, built from a bat classifier trained on Perch or BirdNET embeddings.
 

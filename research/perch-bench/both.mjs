@@ -25,9 +25,18 @@ function windows(path, win) {
   return Array.from({ length: w.length / win }, (_, i) => w.subarray(i * win, (i + 1) * win));
 }
 
+function timedLoad(name, make, path) {
+  const bytes = readFileSync(path);
+  const t = performance.now();
+  const net = make(bytes);
+  console.log(`${name}: model load (parse and optimise) ${(performance.now() - t).toFixed(0)} ms`);
+  return net;
+}
+
+const perchName = `Perch v2 (${perchModel.split('/').pop()})`;
 const models = [
-  { name: `Perch v2 (${perchModel.split('/').pop()})`, net: new Perch(readFileSync(perchModel)), wins: windows(perchWin, 160000), sec: 5 },
-  { name: 'BirdNET V2.4', net: new bn.BirdNet(readFileSync(bnModel)), wins: windows(bnWin, 144000), sec: 3 },
+  { name: perchName, net: timedLoad(perchName, (b) => new Perch(b), perchModel), wins: windows(perchWin, 160000), sec: 5 },
+  { name: 'BirdNET V2.4', net: timedLoad('BirdNET V2.4', (b) => new bn.BirdNet(b), bnModel), wins: windows(bnWin, 144000), sec: 3 },
 ];
 
 for (let r = 0; r < rounds; r++) {

@@ -47,6 +47,7 @@ python -I ref.py $M birds.f32 --save out/birds
 # 4. tract native
 cargo build --release
 $CARGO_TARGET_DIR/release/native $M/perch_v2.tract.onnx birds.f32 1 out/birds.tract
+$CARGO_TARGET_DIR/release/native $M/perch_v2_central-europe_no_dft_fp32.tract.onnx birds.f32 1 out/birds.ce
 
 # 5. tract wasm32-wasip1 + SIMD in node (reports WASM memory)
 RUSTFLAGS="-C target-feature=+simd128" cargo build --release --lib --target wasm32-wasip1
@@ -70,6 +71,9 @@ python -I bats.py $M ../../../batchi-extras/bat-demo-sounds/sounds out/bats.npz
 
 # 10. Species map (JSON + PNG) and the class-vector checks
 python -I species_map.py $M out out/birds.tf
+
+# 11. Placing detections on the map: embeddings against class vectors
+python -I placement.py $M birds.f32
 ```
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
