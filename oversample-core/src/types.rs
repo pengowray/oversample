@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(wav.pcm_bits(), Some(24));
         assert_eq!(wav.bit_depth_label(), "24-bit");
         assert_eq!(meta("WAV", 32, true).bit_depth_label(), "32-bit float");
-        assert_eq!(meta("", 0, false).bit_depth_label(), "None (lossy)");
+        assert_eq!(meta("", 0, false).bit_depth_label(), "Lossy");
     }
 
     #[test]
