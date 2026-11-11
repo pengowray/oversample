@@ -1134,17 +1134,17 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         let am_ref = audiomoth_result.get();
                         let grid_ref = float_grid_results.get();
                         let bit_clone = a.clone();
-                        let format_str: &'static str = {
+                        let file_format: crate::types::AudioFormat = {
                             let files = state.library.files().get();
                             let idx = state.library.current_index().get();
                             idx.and_then(|i| files.get(i).map(|f| f.audio.metadata.format))
-                                .unwrap_or("WAV")
+                                .unwrap_or(crate::types::AudioFormat::Wav)
                         };
                         let bdc_opt: Option<BitDepthCertainty> = lsb_ref.as_ref().map(|lsb| {
                             bit_depth_certainty::compose(
                                 bits_per_sample,
                                 is_float,
-                                format_str,
+                                file_format,
                                 &bit_clone,
                                 lsb,
                                 pip_ref.as_ref(),

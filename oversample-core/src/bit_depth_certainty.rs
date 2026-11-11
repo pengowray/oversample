@@ -29,6 +29,7 @@ use crate::dsp::bit_analysis::BitAnalysis;
 use crate::dsp::float_grid::{FloatGridResult, FloatGridVerdict};
 use crate::dsp::lsb_autocorr::{LsbAutocorrResult, LsbVerdict};
 use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
+use crate::types::AudioFormat;
 
 /// Returns `true` for lossy-compressed files whose decoded samples
 /// don't carry meaningful bit-depth information about the original
@@ -39,13 +40,13 @@ use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
 ///
 /// FLAC, WAV and ALAC (in M4A) are lossless; all bit-depth tests are
 /// meaningful.
-pub fn is_lossy_compressed(format: &str, container_bits: u16) -> bool {
-    container_bits == crate::types::FileMetadata::LOSSY_BITS || format == "W4V"
+pub fn is_lossy_compressed(format: AudioFormat, container_bits: u16) -> bool {
+    container_bits == crate::types::FileMetadata::LOSSY_BITS || format == AudioFormat::W4v
 }
 
 /// The bit-depth verdict for a lossy file: the analysis doesn't apply.
 /// `container_bits` is 0 for a file with no PCM depth.
-pub fn lossy_verdict(format: &str, container_bits: u16) -> BitDepthCertainty {
+pub fn lossy_verdict(format: AudioFormat, container_bits: u16) -> BitDepthCertainty {
     BitDepthCertainty {
         container_bits,
         upper_bound: container_bits,
@@ -128,7 +129,7 @@ pub struct BitDepthCertainty {
 pub fn compose(
     container_bits: u16,
     is_float: bool,
-    format: &str,
+    format: AudioFormat,
     bit: &BitAnalysis,
     lsb: &LsbAutocorrResult,
     pip: Option<&PipistrelleResult>,
@@ -676,7 +677,7 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(16, false, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 12);
         assert_eq!(r.best_estimate, 12);
         assert_eq!(r.certainty, CertaintyLevel::Certain);
@@ -700,7 +701,7 @@ mod tests {
             }),
         );
         let lsb = default_lsb(LsbVerdict::Inconclusive);
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(16, false, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 12);
         assert!(r.headline.contains("≤ 12"), "got: {}", r.headline);
     }
@@ -717,7 +718,7 @@ mod tests {
             }),
         );
         let lsb = default_lsb(LsbVerdict::ConsistentWithClaimedBitDepth);
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(16, false, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 16);
         assert_eq!(r.certainty, CertaintyLevel::HighConfidence);
         assert!(r.headline.contains("16"));
@@ -735,7 +736,7 @@ mod tests {
             effective_bits_in_quiet: 12,
             padding_bits: 4,
         });
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(16, false, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         // Don't downgrade upper bound (loud sections may use full bits)
         assert_eq!(r.upper_bound, 16);
         assert!(r.headline.contains("noise-gate") || r.headline.contains("loud sections"));
@@ -757,11 +758,16 @@ mod tests {
             padding_bits: 4,
         });
         // MP3, OGG and M4A files have no PCM depth (0); W4V decodes to 16-bit.
-        for (fmt, bits) in [("MP3", 0), ("OGG", 0), ("M4A", 0), ("W4V", 16)] {
+        for (fmt, name, bits) in [
+            (AudioFormat::Mp3, "MP3", 0),
+            (AudioFormat::Ogg, "OGG", 0),
+            (AudioFormat::M4a, "M4A", 0),
+            (AudioFormat::W4v, "W4V", 16),
+        ] {
             let r = compose(bits, false, fmt, &bit, &lsb, None, None, &[]);
             assert_eq!(
                 r.headline,
-                format!("Lossy {fmt}: bit-depth analysis doesn't apply"),
+                format!("Lossy {name}: bit-depth analysis doesn't apply"),
             );
             assert_eq!(r.upper_bound, bits, "lossy must NOT claim reduction");
             assert!(
@@ -804,7 +810,7 @@ mod tests {
             Some(&am),
             std::slice::from_ref(&grid),
         );
-        let r = compose(bits, false, "MP3", &bit, &lsb, Some(&pip), Some(&am), &[grid]);
+        let r = compose(bits, false, AudioFormat::Mp3, &bit, &lsb, Some(&pip), Some(&am), &[grid]);
         assert_eq!(r.headline, "Lossy MP3: bit-depth analysis doesn't apply");
     }
 
@@ -823,8 +829,8 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        // "M4A" with a depth is ALAC.
-        for fmt in ["WAV", "FLAC", "M4A"] {
+        // M4A with a depth is ALAC.
+        for fmt in [AudioFormat::Wav, AudioFormat::Flac, AudioFormat::M4a] {
             let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
             assert_eq!(r.upper_bound, 12, "format={} should claim reduction", fmt);
         }
@@ -834,7 +840,7 @@ mod tests {
     fn float_is_passthrough() {
         let bit = default_bit_analysis(32, None);
         let lsb = default_lsb(LsbVerdict::NotApplicable);
-        let r = compose(32, true, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(32, true, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         assert_eq!(r.upper_bound, 32);
         assert!(r.headline.contains("float"));
         assert!(r.facts.is_empty());
@@ -856,7 +862,7 @@ mod tests {
     fn compose_float(channels: &[FloatGridResult]) -> BitDepthCertainty {
         let bit = default_bit_analysis(32, None);
         let lsb = default_lsb(LsbVerdict::NotApplicable);
-        compose(32, true, "WAV", &bit, &lsb, None, None, channels)
+        compose(32, true, AudioFormat::Wav, &bit, &lsb, None, None, channels)
     }
 
     #[test]
@@ -949,7 +955,7 @@ mod tests {
             padding_bits: 4,
         });
         lsb.quiet_lsb_chi2 = 61440.0;
-        let r = compose(16, false, "WAV", &bit, &lsb, None, None, &[]);
+        let r = compose(16, false, AudioFormat::Wav, &bit, &lsb, None, None, &[]);
         // Both ZeroPad and ValueCoverage should be Certain; order preserved.
         let cert_ranks: Vec<u8> = r.facts.iter().map(|f| f.certainty.rank()).collect();
         let sorted: Vec<u8> = {

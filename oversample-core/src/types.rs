@@ -48,12 +48,75 @@ pub struct WavNote {
     pub detail: Option<String>,
 }
 
+/// What a loaded file is: its container or codec, or a live-microphone entry.
+/// Shown to the user by [`AudioFormat::as_str`] ("WAV", "MP3", ...).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AudioFormat {
+    /// Not set: a `FileMetadata` built with `Default::default()`. Shows as "".
+    #[default]
+    Unknown,
+    Wav,
+    /// Wildlife Acoustics W4V: a WAV container holding a lossy block codec
+    /// that decodes onto a 16-bit grid.
+    W4v,
+    Flac,
+    /// Ogg Vorbis.
+    Ogg,
+    Mp3,
+    /// MP4 audio: AAC (lossy) or ALAC (lossless). `bits_per_sample` tells
+    /// them apart.
+    M4a,
+    /// Anabat zero-crossing.
+    Zc,
+    /// A recording made in the app, once recording has started.
+    Rec,
+    /// The live microphone entry before recording starts.
+    Mic,
+}
+
+impl AudioFormat {
+    /// Every variant, in declaration order.
+    pub const ALL: [AudioFormat; 10] = [
+        Self::Unknown,
+        Self::Wav,
+        Self::W4v,
+        Self::Flac,
+        Self::Ogg,
+        Self::Mp3,
+        Self::M4a,
+        Self::Zc,
+        Self::Rec,
+        Self::Mic,
+    ];
+
+    /// The name shown to the user and written to sidecars.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "",
+            Self::Wav => "WAV",
+            Self::W4v => "W4V",
+            Self::Flac => "FLAC",
+            Self::Ogg => "OGG",
+            Self::Mp3 => "MP3",
+            Self::M4a => "M4A",
+            Self::Zc => "ZC",
+            Self::Rec => "REC",
+            Self::Mic => "MIC",
+        }
+    }
+}
+
+impl std::fmt::Display for AudioFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FileMetadata {
     pub file_size: usize,
-    /// Container format tag: WAV / FLAC / OGG / MP3 / M4A / W4V / ZC.
-    /// Empty string when constructed via `Default::default()`.
-    pub format: &'static str,
+    /// [`AudioFormat::Unknown`] when built with `Default::default()`.
+    pub format: AudioFormat,
     /// PCM bit depth of the stored samples, or [`FileMetadata::LOSSY_BITS`]
     /// (0) for a file decoded from a lossy codec (MP3, Vorbis, AAC): those
     /// codecs store no PCM samples, and the decoder produces floats. Read it
@@ -327,14 +390,36 @@ mod tests {
             is_float,
             ..FileMetadata::default()
         };
-        let mp3 = meta("MP3", FileMetadata::LOSSY_BITS, false);
+        let mp3 = meta(AudioFormat::Mp3, FileMetadata::LOSSY_BITS, false);
         assert_eq!(mp3.pcm_bits(), None);
         assert_eq!(mp3.bit_depth_label(), "Lossy");
-        let wav = meta("WAV", 24, false);
+        let wav = meta(AudioFormat::Wav, 24, false);
         assert_eq!(wav.pcm_bits(), Some(24));
         assert_eq!(wav.bit_depth_label(), "24-bit");
-        assert_eq!(meta("WAV", 32, true).bit_depth_label(), "32-bit float");
-        assert_eq!(meta("", 0, false).bit_depth_label(), "Lossy");
+        assert_eq!(
+            meta(AudioFormat::Wav, 32, true).bit_depth_label(),
+            "32-bit float"
+        );
+        assert_eq!(
+            meta(AudioFormat::Unknown, 0, false).bit_depth_label(),
+            "Lossy"
+        );
+    }
+
+    /// The names the UI shows and sidecars store. Changing one changes the
+    /// text users see and the text new sidecars store.
+    #[test]
+    fn audio_format_names() {
+        assert_eq!(
+            AudioFormat::ALL.map(AudioFormat::as_str),
+            ["", "WAV", "W4V", "FLAC", "OGG", "MP3", "M4A", "ZC", "REC", "MIC"],
+        );
+        for format in AudioFormat::ALL {
+            assert_eq!(format.to_string(), format.as_str());
+        }
+        assert_eq!(FileMetadata::default().format, AudioFormat::Unknown);
+        // Padding works as it does for a &str.
+        assert_eq!(format!("[{:>4}]", AudioFormat::Zc), "[  ZC]");
     }
 
     #[test]

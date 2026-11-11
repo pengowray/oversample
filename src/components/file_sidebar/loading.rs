@@ -3,7 +3,7 @@ use crate::canvas::spectral_store;
 use crate::dsp::fft::compute_preview;
 use crate::state::store_fields::*;
 use crate::state::{AppState, FileSettings, LoadedFile};
-use crate::types::SpectrogramData;
+use crate::types::{AudioFormat, SpectrogramData};
 use js_sys;
 use leptos::prelude::*;
 use std::sync::Arc;
@@ -178,8 +178,12 @@ pub(crate) async fn load_named_bytes(
     // symphonia only if the browser refuses the file.
     let mut audio = if is_m4a {
         let native_rate = crate::audio::loader::parse_m4a_sample_rate(bytes);
-        match crate::audio::browser_decode::decode_via_audio_context(bytes, "M4A", native_rate)
-            .await
+        match crate::audio::browser_decode::decode_via_audio_context(
+            bytes,
+            AudioFormat::M4a,
+            native_rate,
+        )
+        .await
         {
             Ok(a) => a,
             Err(browser_err) => {

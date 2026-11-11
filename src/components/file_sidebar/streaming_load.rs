@@ -360,7 +360,7 @@ pub(super) async fn try_streaming_wav(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
-            format: "WAV",
+            format: crate::types::AudioFormat::Wav,
             bits_per_sample: header.bits_per_sample,
             is_float: header.is_float,
             guano,
@@ -620,7 +620,7 @@ pub(super) async fn try_streaming_flac(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
-            format: "FLAC",
+            format: crate::types::AudioFormat::Flac,
             bits_per_sample: header.bits_per_sample,
             is_float: false,
             guano: None,
@@ -964,7 +964,7 @@ pub(super) async fn try_streaming_mp3(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
-            format: "MP3",
+            format: crate::types::AudioFormat::Mp3,
             bits_per_sample: crate::types::FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
@@ -1327,7 +1327,7 @@ pub(super) async fn try_streaming_ogg(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
-            format: "OGG",
+            format: crate::types::AudioFormat::Ogg,
             bits_per_sample: crate::types::FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
@@ -1986,7 +1986,7 @@ pub(super) async fn try_streaming_m4a(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file.size() as usize,
-            format: "M4A",
+            format: crate::types::AudioFormat::M4a,
             bits_per_sample: crate::audio::loader::symphonia_pcm_bits(&audio_params),
             is_float: false,
             guano: if tags.fields.is_empty() {

@@ -12,7 +12,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{AudioBuffer, AudioContext, AudioContextOptions};
 
 use crate::audio::source::InMemorySource;
-use crate::types::{AudioData, FileMetadata};
+use crate::types::{AudioData, AudioFormat, FileMetadata};
 
 /// Decode `bytes` using the browser's native audio decoder.
 /// `preferred_rate` (if supplied) attempts to create the AudioContext at the
@@ -20,7 +20,7 @@ use crate::types::{AudioData, FileMetadata};
 /// rate, which would otherwise discard frequencies above ~24 kHz.
 pub async fn decode_via_audio_context(
     bytes: &[u8],
-    format_label: &'static str,
+    format: AudioFormat,
     preferred_rate: Option<u32>,
 ) -> Result<AudioData, String> {
     let ctx = if let Some(rate) = preferred_rate {
@@ -85,11 +85,11 @@ pub async fn decode_via_audio_context(
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: format_label,
+            format,
             // The browser gives float samples whatever the codec, so the
             // depth comes from the file: ALAC keeps its depth, and AAC (or any
             // other format sent here) has none.
-            bits_per_sample: if format_label == "M4A" {
+            bits_per_sample: if format == AudioFormat::M4a {
                 crate::audio::loader::m4a_pcm_bits(bytes)
             } else {
                 FileMetadata::LOSSY_BITS

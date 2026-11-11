@@ -296,7 +296,7 @@ pub fn compute_overview_from_spectrogram(
 mod tests {
     use super::*;
     use crate::audio::source::InMemorySource;
-    use crate::types::{AudioData, FileMetadata};
+    use crate::types::{AudioData, AudioFormat, FileMetadata};
 
     fn test_audio(samples: Vec<f32>, sample_rate: u32) -> AudioData {
         let samples = Arc::new(samples);
@@ -314,7 +314,7 @@ mod tests {
             channels: 1,
             metadata: FileMetadata {
                 file_size: 0,
-                format: "test",
+                format: AudioFormat::Unknown,
                 bits_per_sample: 32,
                 is_float: true,
                 guano: None,

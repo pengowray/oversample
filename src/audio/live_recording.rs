@@ -9,7 +9,7 @@ use crate::dsp::resonators::{
 use crate::state::store_fields::*;
 use crate::state::MainView;
 use crate::state::{AppState, FileSettings, LoadedFile};
-use crate::types::{AudioData, FileMetadata, SpectrogramData};
+use crate::types::{AudioData, AudioFormat, FileMetadata, SpectrogramData};
 use leptos::prelude::*;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -103,7 +103,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
         duration_secs: 0.0,
         metadata: FileMetadata {
             file_size: 0,
-            format: "REC",
+            format: AudioFormat::Rec,
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: state.mic.is_float().get_untracked(),
             guano: None,
@@ -201,7 +201,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
         duration_secs: 0.0,
         metadata: FileMetadata {
             file_size: 0,
-            format: "MIC",
+            format: AudioFormat::Mic,
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: state.mic.is_float().get_untracked(),
             guano: None,
@@ -287,7 +287,9 @@ pub(crate) fn set_live_recording_zoom(state: &AppState, sample_rate: u32) {
 /// has samples / a "REC" format) and from a loaded file (real format + samples
 /// or a file handle).
 pub(crate) fn is_empty_live_placeholder(f: &crate::state::LoadedFile) -> bool {
-    f.audio.samples.is_empty() && f.file_handle.is_none() && f.audio.metadata.format == "MIC"
+    f.audio.samples.is_empty()
+        && f.file_handle.is_none()
+        && f.audio.metadata.format == AudioFormat::Mic
 }
 
 /// True when the file at `idx` is a reusable live-mic placeholder — an armed
@@ -404,7 +406,7 @@ pub(crate) fn promote_armed_to_recording(state: &AppState, idx: usize) {
             f.name = new_name;
             f.is_recording = true;
             f.is_live_listen = false;
-            f.audio.metadata.format = "REC";
+            f.audio.metadata.format = AudioFormat::Rec;
         }
     });
     state.library.current_index().set(Some(idx));
@@ -425,7 +427,7 @@ pub(crate) fn revert_recording_to_armed(state: &AppState, idx: usize) {
             f.name = armed_name;
             f.is_recording = false;
             f.is_live_listen = false;
-            f.audio.metadata.format = "MIC";
+            f.audio.metadata.format = AudioFormat::Mic;
         }
     });
 }
@@ -449,7 +451,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
         duration_secs: 0.0,
         metadata: FileMetadata {
             file_size: 0,
-            format: "MIC",
+            format: AudioFormat::Mic,
             bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: state.mic.is_float().get_untracked(),
             guano: None,
@@ -560,7 +562,7 @@ pub(crate) fn convert_listen_to_armed(state: &AppState) {
             f.audio.samples = empty;
             f.audio.source = source;
             f.audio.duration_secs = 0.0;
-            f.audio.metadata.format = "MIC";
+            f.audio.metadata.format = AudioFormat::Mic;
             f.spectrogram = SpectrogramData {
                 columns: Arc::new(Vec::new()),
                 total_columns: 0,
@@ -684,7 +686,7 @@ pub(crate) fn convert_listen_to_recording(state: &AppState, _sample_rate: u32) -
     state.library.files().update(|files| {
         if let Some(f) = files.get_mut(file_index) {
             f.is_live_listen = false;
-            f.audio.metadata.format = "REC";
+            f.audio.metadata.format = AudioFormat::Rec;
             f.audio.metadata.bits_per_sample = state.mic.bits_per_sample().get_untracked();
             f.audio.metadata.is_float = state.mic.is_float().get_untracked();
         }
@@ -1801,7 +1803,7 @@ async fn finalize_in_memory_recording(
         duration_secs,
         metadata: FileMetadata {
             file_size: exact_file_size,
-            format: "REC",
+            format: AudioFormat::Rec,
             bits_per_sample,
             is_float,
             guano: Some(meta.guano),
@@ -1994,7 +1996,7 @@ async fn finalize_streaming_tauri_recording(
         duration_secs,
         metadata: crate::types::FileMetadata {
             file_size: file_size as usize,
-            format: "REC",
+            format: AudioFormat::Rec,
             bits_per_sample: header.bits_per_sample,
             is_float: header.is_float,
             guano,

@@ -366,7 +366,7 @@ impl AudioFileMetadata {
             total_samples: audio.source.total_samples(),
             channels: audio.channels,
             duration_secs: audio.duration_secs,
-            format: audio.metadata.format.to_string(),
+            format: audio.metadata.format.as_str().to_string(),
             bits_per_sample: audio.metadata.pcm_bits(),
             data_offset: audio.metadata.data_offset,
             data_size: audio.metadata.data_size,
@@ -688,7 +688,10 @@ mod tests {
         assert_eq!(back, ids);
     }
 
-    fn audio_with(format: &'static str, bits_per_sample: u16) -> crate::types::AudioData {
+    fn audio_with(
+        format: crate::types::AudioFormat,
+        bits_per_sample: u16,
+    ) -> crate::types::AudioData {
         use std::sync::Arc;
         let samples = Arc::new(vec![0.0f32; 48]);
         crate::types::AudioData {
@@ -713,13 +716,42 @@ mod tests {
     /// A lossy file's sidecar leaves out the bit depth; a PCM file's keeps it.
     #[test]
     fn sidecar_bit_depth_is_omitted_for_lossy_files() {
-        let mp3 = AudioFileMetadata::from_audio(&audio_with("MP3", 0), None, None);
+        use crate::types::AudioFormat;
+        let mp3 = AudioFileMetadata::from_audio(&audio_with(AudioFormat::Mp3, 0), None, None);
         assert_eq!(mp3.bits_per_sample, None);
         let json = serde_json::to_value(&mp3).unwrap();
         assert!(json.get("bits_per_sample").is_none(), "{json}");
 
-        let wav = AudioFileMetadata::from_audio(&audio_with("WAV", 24), None, None);
+        let wav = AudioFileMetadata::from_audio(&audio_with(AudioFormat::Wav, 24), None, None);
         let json = serde_json::to_value(&wav).unwrap();
         assert_eq!(json["bits_per_sample"], 24);
+    }
+
+    /// The sidecar stores the format as the same text the app has always
+    /// written, and reads it back unchanged.
+    #[test]
+    fn sidecar_format_text_round_trips() {
+        use crate::types::AudioFormat;
+        let expected = [
+            (AudioFormat::Unknown, ""),
+            (AudioFormat::Wav, "WAV"),
+            (AudioFormat::W4v, "W4V"),
+            (AudioFormat::Flac, "FLAC"),
+            (AudioFormat::Ogg, "OGG"),
+            (AudioFormat::Mp3, "MP3"),
+            (AudioFormat::M4a, "M4A"),
+            (AudioFormat::Zc, "ZC"),
+            (AudioFormat::Rec, "REC"),
+            (AudioFormat::Mic, "MIC"),
+        ];
+        assert_eq!(expected.len(), AudioFormat::ALL.len());
+        for (format, text) in expected {
+            let meta = AudioFileMetadata::from_audio(&audio_with(format, 16), None, None);
+            let json = serde_json::to_string(&meta).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(value["format"], text, "{format:?}");
+            let back: AudioFileMetadata = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.format, text, "{format:?}");
+        }
     }
 }

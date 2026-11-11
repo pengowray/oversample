@@ -1,6 +1,6 @@
 use crate::audio::guano::{self, parse_guano, GuanoMetadata};
 use crate::audio::source::InMemorySource;
-use crate::types::{AudioData, FileMetadata, WavMarker};
+use crate::types::{AudioData, AudioFormat, FileMetadata, WavMarker};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -236,7 +236,7 @@ fn load_zc(bytes: &[u8]) -> Result<AudioData, String> {
     let (samples, source) = build_source(synth_samples, channels, sample_rate);
     let metadata = FileMetadata {
         file_size: bytes.len(),
-        format: "ZC",
+        format: AudioFormat::Zc,
         bits_per_sample: 16,
         is_float: false,
         guano: None,
@@ -551,7 +551,7 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "W4V",
+            format: AudioFormat::W4v,
             bits_per_sample: 16, // original uncompressed depth
             is_float: false,
             guano: header.guano,
@@ -581,7 +581,7 @@ fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "WAV",
+            format: AudioFormat::Wav,
             bits_per_sample: header.bits_per_sample,
             is_float: header.is_float,
             guano,
@@ -629,7 +629,7 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "FLAC",
+            format: AudioFormat::Flac,
             bits_per_sample: bits as u16,
             is_float: false,
             guano: None,
@@ -735,7 +735,7 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "OGG",
+            format: AudioFormat::Ogg,
             // lewton decodes only Vorbis, which is lossy. Its i16 output is
             // the decoder's choice, not a depth stored in the file.
             bits_per_sample: FileMetadata::LOSSY_BITS,
@@ -848,7 +848,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "MP3",
+            format: AudioFormat::Mp3,
             bits_per_sample: FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
@@ -1579,7 +1579,7 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
         duration_secs,
         metadata: FileMetadata {
             file_size: bytes.len(),
-            format: "M4A",
+            format: AudioFormat::M4a,
             bits_per_sample: symphonia_pcm_bits(&audio_params),
             is_float: false,
             guano: if tags.fields.is_empty() {

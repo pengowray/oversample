@@ -103,7 +103,7 @@ fn corpus_decodes_with_invariants() {
         };
         match load_audio(&bytes) {
             Ok(a) => {
-                *by_format.entry(a.metadata.format).or_insert(0) += 1;
+                *by_format.entry(a.metadata.format.as_str()).or_insert(0) += 1;
                 if a.sample_rate < 4_000 || a.sample_rate > 2_000_000 {
                     failures.push(format!("{name}: implausible sample_rate {}", a.sample_rate));
                 }

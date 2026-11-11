@@ -1,5 +1,6 @@
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView};
+use crate::types::AudioFormat;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
@@ -1369,7 +1370,8 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 view! { <span></span> }.into_any()
                             }}
                             {if has_guano {
-                                let is_guano_source = matches!(meta.format, "WAV" | "W4V");
+                                let is_guano_source =
+                                    matches!(meta.format, AudioFormat::Wav | AudioFormat::W4v);
                                 let default_section: &str = if is_guano_source {
                                     "Guano metadata"
                                 } else {

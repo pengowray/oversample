@@ -137,7 +137,7 @@ fn WavMarkersList() -> impl IntoView {
         // Heading adapts to what kind of markers these are based on the
         // file format. Same underlying field, different source semantics.
         let heading = match file.audio.metadata.format {
-            "M4A" => "Chapters",
+            crate::types::AudioFormat::M4a => "Chapters",
             _ => "Cue Points",
         };
         Some((
