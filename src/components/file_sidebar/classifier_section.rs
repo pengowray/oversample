@@ -68,12 +68,6 @@ fn window_len(secs: f64) -> String {
     }
 }
 
-fn method_name(method: Method) -> &'static str {
-    match method {
-        Method::BirdNet => "BirdNET",
-        Method::Bats => "BattyBirdNET",
-    }
-}
 
 /// A class name as shown: BattyBirdNET's lower-case classes get a capital.
 fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
@@ -436,13 +430,16 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
     // The slider is built once per set of results, so dragging it re-renders
     // only the summary and the list below it.
     let has_results = Memo::new(move |_| results_info.get().is_some_and(|(n, ..)| n > 0));
-    let results_title =
-        Memo::new(
-            move |_| match results_info.get().and_then(|(_, _, region, _)| region) {
-                Some(r) => format!("Results: BattyBirdNET, {}", r.label()),
-                None => format!("Results: {}", method_name(method)),
-            },
-        );
+    // The method and region are picked just above, so the title names the
+    // region only while the results are for another one (a relabel is going
+    // or failed).
+    let results_title = Memo::new(move |_| {
+        let picked = state.call_detection.bat_region().get();
+        match results_info.get().and_then(|(_, _, region, _)| region) {
+            Some(r) if r != picked => format!("Results for {}", r.label()),
+            _ => "Results".to_string(),
+        }
+    });
     let headline = move || {
         let s = summary.get()?;
         let min = min_conf();
