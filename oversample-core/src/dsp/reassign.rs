@@ -130,6 +130,41 @@ const JOIN_COVER: f32 = 0.8;
 /// point: the Hann window's main lobe.
 const LINE_LOBE_BINS: usize = 2;
 
+/// Each point's frequency is the median of the joined points within this
+/// many seconds either side, so the line ignores an echo or a second call
+/// that is louder for a moment. The same time at every zoom level, as a
+/// pitch tracker smooths over a fixed time.
+pub const LINE_SMOOTH_S: f64 = 0.25e-3;
+
+/// The tile grid a main-frequency line is computed on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineGrid {
+    pub fft_size: usize,
+    pub hop_size: usize,
+    /// Columns either side used for each point's median, at least 1.
+    pub smooth_cols: usize,
+}
+
+impl LineGrid {
+    /// The grid for a zoom level's FFT size and hop, with
+    /// [`LINE_SMOOTH_S`] turned into columns.
+    pub fn new(fft_size: usize, hop_size: usize, sample_rate: u32) -> Self {
+        let smooth = LINE_SMOOTH_S * sample_rate as f64 / hop_size.max(1) as f64;
+        Self {
+            fft_size,
+            hop_size,
+            smooth_cols: (smooth.round() as usize).max(1),
+        }
+    }
+
+    /// Frames to read either side of a tile: enough for the energy that
+    /// reassignment moves into the tile's edge columns, and for those
+    /// columns' medians and joins.
+    pub fn margin_cols(&self) -> usize {
+        reassign_margin_cols(self.fft_size, self.hop_size) + self.smooth_cols.max(1)
+    }
+}
+
 /// One point of the main-frequency line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LinePoint {
@@ -158,24 +193,29 @@ pub struct LinePoint {
 /// position of the strongest moved cell and its neighbours, if that cell is
 /// [`LINE_ABOVE_FLOOR_DB`] over the floor. Neighbouring points are joined when
 /// the plain spectrogram has sound across the frequencies between them, and a
-/// point's frequency is the median of itself and the points joined to it.
-/// Points joined to nothing are left out.
+/// point's frequency is the median of the joined points within
+/// `grid.smooth_cols` columns either side. Points joined to nothing are left
+/// out.
 ///
 /// Columns follow the convention of `compute_stft_columns`: column `c` holds
 /// the frame that starts at `c * hop_size`. `samples[0]` is the start of the
-/// frame for column `-lead_cols`; pass [`reassign_margin_cols`] + 1 frames
-/// either side (fewer at the start of the file) so the first and last columns
-/// get the energy their neighbours' frames move into them, and know the
-/// neighbouring points they join. Empty without a noise floor.
+/// frame for column `-lead_cols`; pass [`LineGrid::margin_cols`] frames either
+/// side (fewer at the start of the file) so the edge columns get the energy
+/// their neighbours' frames move into them, and the same medians and joins as
+/// the neighbouring tiles give them. Empty without a noise floor.
 pub fn main_frequency_line(
     samples: &[f32],
     lead_cols: usize,
     col_count: usize,
-    fft_size: usize,
-    hop_size: usize,
+    grid: LineGrid,
     gate_db: f32,
     noise_floor: &[f32],
 ) -> Vec<LinePoint> {
+    let LineGrid {
+        fft_size,
+        hop_size,
+        smooth_cols,
+    } = grid;
     let n_bins = fft_size / 2 + 1;
     if samples.len() < fft_size || col_count == 0 || hop_size == 0 || noise_floor.len() != n_bins {
         return Vec::new();
@@ -200,10 +240,11 @@ pub fn main_frequency_line(
     let hop = hop_size as f64;
     let max_shift = fft_size as f64 / 2.0;
 
-    // Columns -1 ..= col_count, so the tile's first and last columns can be
-    // joined and smoothed with their neighbours in the next tiles. Row r of
-    // these grids is column r - 1.
-    let rows = col_count + 2;
+    // Columns -edge .. col_count + edge, so the tile's first and last columns
+    // are joined and smoothed with their neighbours in the next tiles. Row r
+    // of these grids is column r - edge.
+    let edge = smooth_cols.max(1);
+    let rows = col_count + 2 * edge;
     let mut power = vec![0.0f64; rows * n_bins];
     let mut sum_t = vec![0.0f64; rows * n_bins];
     let mut sum_f = vec![0.0f64; rows * n_bins];
@@ -211,7 +252,7 @@ pub fn main_frequency_line(
 
     let margin = reassign_margin_cols(fft_size, hop_size);
     let available_frames = (samples.len() - fft_size) / hop_size + 1;
-    let frame_count = available_frames.min(lead_cols + col_count + 1 + margin);
+    let frame_count = available_frames.min(lead_cols + col_count + edge + margin);
 
     for frame_i in 0..frame_count {
         let frame = &samples[frame_i * hop_size..frame_i * hop_size + fft_size];
@@ -227,7 +268,7 @@ pub fn main_frequency_line(
             fft.process(&mut input, spec).expect("FFT failed");
         }
 
-        let row = frame_i as isize - lead_cols as isize + 1;
+        let row = frame_i as isize - lead_cols as isize + edge as isize;
         if (0..rows as isize).contains(&row) {
             plain[row as usize] = Some(spec_h.iter().map(|c| c.norm_sqr()).collect());
         }
@@ -249,7 +290,7 @@ pub fn main_frequency_line(
             }
             let t = frame_col + dt / hop;
             let f = k as f64 + fft_over_two_pi * (xdh / xh).im;
-            let (r, b) = ((t.round() + 1.0), f.round());
+            let (r, b) = ((t.round() + edge as f64), f.round());
             let in_grid = (0.0..rows as f64).contains(&r) && (0.0..n_bins as f64).contains(&b);
             if !in_grid {
                 continue;
@@ -307,22 +348,29 @@ pub fn main_frequency_line(
         })
         .collect();
 
-    (1..=col_count)
+    (edge..edge + col_count)
         .filter_map(|r| {
-            let (t, f, level_db) = points[r]?;
-            let joins_next = r + 1 < rows && joins[r + 1];
+            let (t, _, level_db) = points[r]?;
+            let joins_next = joins[r + 1];
             if !joins[r] && !joins_next {
                 return None;
             }
-            // Median of three removes one-column spikes inside a joined run.
-            let freq = if joins[r] && joins_next {
-                let (a, b) = (points[r - 1]?.1, points[r + 1]?.1);
-                a.max(b).min(f).max(a.min(b))
-            } else {
-                f
-            };
+            // Median over the joined run, within smooth_cols either side.
+            let mut first = r;
+            while first > r - edge && joins[first] {
+                first -= 1;
+            }
+            let mut last = r;
+            while last < r + edge && joins[last + 1] {
+                last += 1;
+            }
+            let mut freqs: Vec<f64> = (first..=last)
+                .filter_map(|q| points[q].map(|p| p.1))
+                .collect();
+            freqs.sort_by(f64::total_cmp);
+            let freq = freqs[freqs.len() / 2];
             Some(LinePoint {
-                col: (r - 1) as u16,
+                col: (r - edge) as u16,
                 time_col: t as f32,
                 freq_bin: freq as f32,
                 level_db,
@@ -412,10 +460,11 @@ mod tests {
         assert!(reassign_noise_floor(&vec![0.0f32; 64 * fft], fft).is_empty());
     }
 
-    /// A tile's samples with `lead` = margin + 1 frames either side, as the
-    /// line needs, filled with quiet noise; and the noise's floor.
-    fn line_tile(fft: usize, hop: usize, cols: usize, seed: u64) -> (usize, Vec<f32>, Vec<f32>) {
-        let lead = reassign_margin_cols(fft, hop) + 1;
+    /// A tile's samples with the grid's margin either side, filled with quiet
+    /// noise; and the noise's floor.
+    fn line_tile(grid: LineGrid, cols: usize, seed: u64) -> (usize, Vec<f32>, Vec<f32>) {
+        let (fft, hop) = (grid.fft_size, grid.hop_size);
+        let lead = grid.margin_cols();
         let samples = white_noise((lead + cols + lead) * hop + fft, 0.001, seed);
         let floor = reassign_noise_floor(&white_noise(131_072, 0.001, seed + 100), fft);
         (lead, samples, floor)
@@ -423,14 +472,15 @@ mod tests {
 
     #[test]
     fn line_follows_a_sweep_between_bins_and_columns() {
-        let (fft, hop, cols) = (512, 32, 96);
-        let (lead, mut samples, floor) = line_tile(fft, hop, cols, 10);
+        let grid = LineGrid::new(512, 32, 384_000);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 96);
+        let (lead, mut samples, floor) = line_tile(grid, cols, 10);
         let sweep = Sweep {
             start: (lead + 20) * hop,
         };
         sweep.add_to(&mut samples, 0.5);
 
-        let line = main_frequency_line(&samples, lead, cols, fft, hop, -200.0, &floor);
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
         let bin_hz = Sweep::SR / fft as f64;
         let centre = (fft as f64 - 1.0) / 2.0;
         let on_track = line
@@ -458,12 +508,13 @@ mod tests {
 
     #[test]
     fn line_finds_a_tone_between_bins() {
-        let (fft, hop, cols) = (256, 64, 32);
-        let (lead, mut samples, floor) = line_tile(fft, hop, cols, 11);
+        let grid = LineGrid::new(256, 64, 384_000);
+        let (fft, cols) = (grid.fft_size, 32);
+        let (lead, mut samples, floor) = line_tile(grid, cols, 11);
         for (i, s) in samples.iter_mut().enumerate() {
             *s += (2.0 * std::f64::consts::PI * 20.3 * i as f64 / fft as f64).sin() as f32;
         }
-        let line = main_frequency_line(&samples, lead, cols, fft, hop, -200.0, &floor);
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
         assert_eq!(line.len(), cols);
         for p in &line {
             assert!(
@@ -478,11 +529,12 @@ mod tests {
 
     #[test]
     fn no_line_in_white_noise() {
-        let (fft, hop, cols) = (512, 32, 256);
-        let lead = reassign_margin_cols(fft, hop) + 1;
+        let grid = LineGrid::new(512, 32, 384_000);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 256);
+        let lead = grid.margin_cols();
         let samples = white_noise((lead + cols + lead) * hop + fft, 0.01, 12);
         let floor = reassign_noise_floor(&white_noise(131_072, 0.01, 13), fft);
-        let line = main_frequency_line(&samples, lead, cols, fft, hop, -200.0, &floor);
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
         assert!(line.is_empty(), "{} points in noise", line.len());
     }
 
@@ -490,8 +542,9 @@ mod tests {
     fn line_does_not_join_unrelated_sounds() {
         // One tone hands over to another far above it, with nothing between
         // them: the line breaks at the handover instead of drawing a jump.
-        let (fft, hop, cols) = (256, 64, 64);
-        let (lead, mut samples, floor) = line_tile(fft, hop, cols, 14);
+        let grid = LineGrid::new(256, 64, 384_000);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 64);
+        let (lead, mut samples, floor) = line_tile(grid, cols, 14);
         let switch = (lead + 32) * hop;
         let fade = fft;
         for (i, s) in samples.iter_mut().enumerate() {
@@ -499,7 +552,7 @@ mod tests {
             let ph = 2.0 * std::f64::consts::PI * i as f64 / fft as f64;
             *s += ((1.0 - b) * (20.3 * ph).sin() + b * (80.3 * ph).sin()) as f32;
         }
-        let line = main_frequency_line(&samples, lead, cols, fft, hop, -200.0, &floor);
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
         let jumps: Vec<_> = line
             .windows(2)
             .filter(|w| w[1].col == w[0].col + 1 && w[1].joins_previous)
@@ -513,8 +566,9 @@ mod tests {
     #[test]
     fn line_tiles_join_without_a_seam() {
         // Two adjacent tiles give the same points as one tile twice as wide.
-        let (fft, hop, cols) = (512, 32, 48);
-        let lead = reassign_margin_cols(fft, hop) + 1;
+        let grid = LineGrid::new(512, 32, 384_000);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 48);
+        let lead = grid.margin_cols();
         let mut samples = white_noise((lead + 2 * cols + lead) * hop + fft, 0.001, 15);
         Sweep {
             start: (lead + cols - 20) * hop,
@@ -522,10 +576,9 @@ mod tests {
         .add_to(&mut samples, 0.5);
         let floor = reassign_noise_floor(&white_noise(131_072, 0.001, 16), fft);
 
-        let wide = main_frequency_line(&samples, lead, 2 * cols, fft, hop, -200.0, &floor);
-        let mut joined = main_frequency_line(&samples, lead, cols, fft, hop, -200.0, &floor);
-        let right =
-            main_frequency_line(&samples[cols * hop..], lead, cols, fft, hop, -200.0, &floor);
+        let wide = main_frequency_line(&samples, lead, 2 * cols, grid, -200.0, &floor);
+        let mut joined = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
+        let right = main_frequency_line(&samples[cols * hop..], lead, cols, grid, -200.0, &floor);
         joined.extend(right.into_iter().map(|p| LinePoint {
             col: p.col + cols as u16,
             time_col: p.time_col + cols as f32,
@@ -539,5 +592,46 @@ mod tests {
                 (a.time_col - b.time_col).abs() < 1e-3 && (a.freq_bin - b.freq_bin).abs() < 1e-3
             );
         }
+    }
+
+    #[test]
+    fn line_ignores_a_brief_louder_sound() {
+        // A tone with a louder blip 6 bins above it for about 10 columns. The
+        // median over LINE_SMOOTH_S keeps the line on the tone; a median of
+        // one column either side does not.
+        let grid = LineGrid::new(256, 8, 384_000);
+        assert!(grid.smooth_cols >= 8);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 96);
+        let (lead, mut samples, floor) = line_tile(grid, cols, 17);
+        let (blip, blip_len) = ((lead + 40) * hop, 10 * hop);
+        for (i, s) in samples.iter_mut().enumerate() {
+            let ph = 2.0 * std::f64::consts::PI * i as f64 / fft as f64;
+            let mut v = 0.2 * (20.3 * ph).sin();
+            if (blip..blip + blip_len).contains(&i) {
+                let w = 0.5
+                    - 0.5
+                        * (2.0 * std::f64::consts::PI * (i - blip) as f64 / blip_len as f64).cos();
+                v += 2.0 * w * (26.3 * ph).sin();
+            }
+            *s += v as f32;
+        }
+        let off_tone = |line: &[LinePoint]| {
+            line.iter()
+                .filter(|p| (p.freq_bin - 20.3).abs() > 1.0)
+                .count()
+        };
+
+        let unsmoothed = LineGrid {
+            smooth_cols: 1,
+            ..grid
+        };
+        let spiky = main_frequency_line(&samples, lead, cols, unsmoothed, -200.0, &floor);
+        assert!(
+            off_tone(&spiky) > 0,
+            "the blip did not reach the line, so this test checks nothing"
+        );
+
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
+        assert_eq!(off_tone(&line), 0, "the line follows the blip: {line:?}");
     }
 }

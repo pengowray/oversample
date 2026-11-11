@@ -1833,7 +1833,7 @@ const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
 /// find where each column's loudest sound is (`main_frequency_line`).
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
     use crate::canvas::reassign_line::{has_line_tile, insert_line_tile, LineTile};
-    use crate::dsp::reassign::{main_frequency_line, reassign_margin_cols};
+    use crate::dsp::reassign::{main_frequency_line, LineGrid};
 
     let key = TileKey {
         file_idx,
@@ -1908,11 +1908,11 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         };
 
         let cv = state.viewmode.channel_view().get_untracked();
-        // Read extra frames either side: reassignment moves energy up to
-        // `reassign_margin_cols` columns, so neighbouring frames add to this
-        // tile's edges, and one column more lets the edge columns be joined
-        // to the next tiles' points.
-        let margin = reassign_margin_cols(actual_fft, config_hop) + 1;
+        // Read extra frames either side: neighbouring frames move energy
+        // into this tile's edge columns, and the edge columns are joined and
+        // smoothed with the next tiles' points.
+        let grid = LineGrid::new(actual_fft, config_hop, audio.sample_rate);
+        let margin = grid.margin_cols();
         let tile_col_start = tile_idx * TILE_COLS;
         let lead_cols = margin.min(tile_col_start);
         let sample_start = (tile_col_start - lead_cols) * config_hop;
@@ -1961,15 +1961,8 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
                 meta.bits_per_sample,
                 meta.is_float,
             );
-        let points = main_frequency_line(
-            samples,
-            lead_cols,
-            TILE_COLS,
-            actual_fft,
-            config_hop,
-            gate_db,
-            &noise_floor,
-        );
+        let points =
+            main_frequency_line(samples, lead_cols, TILE_COLS, grid, gate_db, &noise_floor);
 
         let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {

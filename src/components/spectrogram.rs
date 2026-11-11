@@ -802,6 +802,38 @@ pub fn Spectrogram() -> impl IntoView {
                             tile_source,
                         );
 
+                        // Reassignment line for this segment, as in single-file view.
+                        if reassign_on && !resonators_on && !xform_on && decim_effective == 0 {
+                            if let Some(vg) = crate::canvas::tile_blit::ViewportGeometry::new(
+                                clip_right - clip_left,
+                                display_h as f64,
+                                seg_total_cols,
+                                file_scroll_col,
+                                seg_zoom,
+                                freq_crop_lo,
+                                freq_crop_hi,
+                            )
+                            .filter(|vg| vg.ideal_lod > 1)
+                            {
+                                let nyquist = seg_file.spectrogram.sample_rate as f64 / 2.0;
+                                crate::canvas::reassign_line::draw_main_frequency_line(
+                                    &ctx,
+                                    &crate::canvas::reassign_line::LineView {
+                                        file_idx: seg.file_index,
+                                        lod: vg.ideal_lod,
+                                        first_tile: vg.first_tile,
+                                        last_tile: vg.last_tile,
+                                        scroll_s: file_scroll,
+                                        px_per_sec: seg_px_per_sec,
+                                        min_freq: freq_crop_lo * nyquist,
+                                        max_freq: freq_crop_hi * nyquist,
+                                        width: clip_right - clip_left,
+                                        height: display_h as f64,
+                                    },
+                                );
+                            }
+                        }
+
                         // Schedule missing tiles for this segment
                         if resonators_on {
                             crate::canvas::tile_scheduler::schedule_resonator_tiles(
@@ -822,7 +854,8 @@ pub fn Spectrogram() -> impl IntoView {
                                 clip_right - clip_left,
                                 seg_time_res,
                                 is_playing,
-                                reassign_on,
+                                // The line is left off with XForm or decimation.
+                                reassign_on && !xform_on && decim_effective == 0,
                                 &disposed,
                             );
                         }
@@ -1018,7 +1051,8 @@ pub fn Spectrogram() -> impl IntoView {
                             display_w as f64,
                             time_res,
                             is_playing,
-                            reassign_on,
+                            // The line is left off with XForm or decimation.
+                            reassign_on && !xform_on && decim_effective == 0,
                             &disposed,
                         );
                     }
