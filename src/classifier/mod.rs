@@ -47,6 +47,7 @@
 //! revision, to show with results and in About.
 
 pub mod store;
+pub mod test_hook;
 pub mod types;
 mod worker;
 

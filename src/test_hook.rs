@@ -26,6 +26,7 @@ fn opt_f64(v: Option<f64>) -> JsValue {
 /// Install `window.__oversample_test`, a zero-arg function returning a snapshot
 /// of view + live-capture state used by the e2e specs.
 pub fn install(state: AppState) {
+    crate::classifier::test_hook::install(state);
     let Some(window) = web_sys::window() else {
         return;
     };
