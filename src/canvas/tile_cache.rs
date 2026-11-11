@@ -60,7 +60,7 @@ const CHROMA_MAX_BYTES: usize = 64 * 1024 * 1024;
 const RESONATOR_MAX_BYTES: usize = 256 * 1024 * 1024;
 
 /// Maximum time (ms) a tile can be in-flight before being considered stuck.
-const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
+pub(crate) const IN_FLIGHT_TIMEOUT_MS: f64 = 10_000.0;
 
 /// Maximum number of concurrent spawn_local tile tasks across all categories.
 /// Prevents wasm-bindgen-futures RefCell reentrant borrow panics when many
@@ -169,7 +169,7 @@ fn full_tile_order(n_tiles: usize, center_tile: usize) -> Vec<usize> {
 }
 
 /// Check if a file is currently visible and should be prioritised.
-fn is_current_file(state: &AppState, file_idx: usize) -> bool {
+pub(crate) fn is_current_file(state: &AppState, file_idx: usize) -> bool {
     visible_window_for_file(state, file_idx).is_some()
 }
 
@@ -353,11 +353,6 @@ thread_local! {
         RefCell::new(HashMap::new());
     static FLOW_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
-    /// Main-frequency line tiles being computed; the tiles themselves are in
-    /// `reassign_line`.
-    static REASSIGN_IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
-        RefCell::new(HashMap::new());
-    static REASSIGN_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
     /// Chromagram tile cache (baseline-LOD only). 512 LRU-compaction floor
     /// matches the original ChromaTileCache (vs 1024 for the multi-LOD caches).
@@ -382,13 +377,12 @@ thread_local! {
 
 /// Returns true if the total number of active in-flight tasks across all
 /// categories has reached `MAX_CONCURRENT_SPAWNS`.
-fn at_spawn_limit() -> bool {
+pub(crate) fn at_spawn_limit() -> bool {
     let now = js_sys::Date::now();
     let mag = IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
     let flow =
         FLOW_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
-    let reassign =
-        REASSIGN_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
+    let reassign = crate::canvas::reassign_line::in_flight_count(now);
     let chroma =
         CHROMA_IN_FLIGHT.with(|s| in_flight_active_count(&s.borrow(), now, IN_FLIGHT_TIMEOUT_MS));
     let reson = RESONATOR_IN_FLIGHT
@@ -396,7 +390,10 @@ fn at_spawn_limit() -> bool {
     mag + flow + reassign + chroma + reson >= MAX_CONCURRENT_SPAWNS
 }
 
-fn has_active_in_flight<K: Eq + std::hash::Hash>(map: &mut HashMap<K, f64>, key: &K) -> bool {
+pub(crate) fn has_active_in_flight<K: Eq + std::hash::Hash>(
+    map: &mut HashMap<K, f64>,
+    key: &K,
+) -> bool {
     in_flight_is_active(map, key, js_sys::Date::now(), IN_FLIGHT_TIMEOUT_MS)
 }
 
@@ -565,7 +562,7 @@ pub fn clear_all_tiles() {
 pub fn clear_all_caches() {
     clear_all_tiles();
     clear_flow_cache();
-    clear_reassign_cache();
+    crate::canvas::reassign_line::clear_all();
     clear_chroma_cache();
     clear_resonator_cache();
 }
@@ -742,10 +739,6 @@ fn magnitude_request_still_active(key: &TileKey) -> bool {
 
 fn flow_request_still_active(key: &TileKey) -> bool {
     flow_ctx().request_still_active(key)
-}
-
-fn reassign_request_still_active(key: &TileKey) -> bool {
-    REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
 }
 
 fn resonator_request_still_active(key: &TileKey) -> bool {
@@ -1428,7 +1421,7 @@ pub fn schedule_prefetch_tiles(
         }
 
         if reassign && lod > 1 {
-            schedule_reassign_tile(state, file_idx, lod, t);
+            crate::canvas::reassign_line::schedule_line_tile(state, file_idx, lod, t);
         }
     }
 }
@@ -1800,190 +1793,6 @@ pub fn schedule_flow_tile(
 
         FLOW_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
         FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-        state
-            .viewmode
-            .tile_ready_signal()
-            .update(|n| *n = n.wrapping_add(1));
-    });
-}
-
-// ── Reassignment: main-frequency line tiles ──────────────────────────────────
-
-/// Forget every line tile and noise floor, and make line tiles still being
-/// computed discard their result.
-pub fn clear_reassign_cache() {
-    crate::canvas::reassign_line::clear_line_tiles();
-    crate::canvas::reassign_line::clear_noise_floors();
-    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().clear());
-    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
-}
-
-pub fn clear_reassign_file(file_idx: usize) {
-    crate::canvas::reassign_line::clear_line_tiles_for_file(file_idx);
-    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.file_idx != file_idx));
-    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
-}
-
-/// Reassignment gate for 16-bit audio, in dB of unnormalized bin power.
-const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
-
-/// Schedule one tile of the main-frequency line for background computation.
-///
-/// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
-/// find where each column's loudest sound is (`main_frequency_line`).
-pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::canvas::reassign_line::{has_line_tile, insert_line_tile, LineTile};
-    use crate::dsp::reassign::{main_frequency_line, LineGrid};
-
-    let key = TileKey {
-        file_idx,
-        lod,
-        tile_idx,
-    };
-    if has_line_tile(&key) {
-        return;
-    }
-    if REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) {
-        return;
-    }
-    if at_spawn_limit() {
-        return;
-    }
-
-    let total_samples = state.library.files().with_untracked(|files| {
-        files
-            .get(file_idx)
-            .map(|f| f.audio.source.total_samples() as usize)
-            .unwrap_or(0)
-    });
-    let max_tiles = tile_count_for_samples(total_samples, lod);
-    if tile_idx >= max_tiles {
-        return;
-    }
-
-    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().insert(key, js_sys::Date::now()));
-
-    let gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
-
-    let config_hop = LOD_CONFIGS[lod as usize].hop_size;
-    let actual_fft = state.spect.fft_mode().get_untracked().fft_for_lod(lod);
-
-    spawn_local(async move {
-        yield_to_browser().await;
-
-        if !reassign_request_still_active(&key) {
-            return;
-        }
-
-        // Extra yields: 3x FFT cost + expensive LODs (LOD3+)
-        if lod >= 3 {
-            yield_to_browser().await;
-            if !reassign_request_still_active(&key) {
-                return;
-            }
-        }
-        yield_to_browser().await;
-
-        if !reassign_request_still_active(&key) {
-            return;
-        }
-
-        let is_current = is_current_file(&state, file_idx);
-        if !is_current {
-            for _ in 0..3 {
-                yield_to_browser().await;
-                if !reassign_request_still_active(&key) {
-                    return;
-                }
-            }
-        }
-
-        let file = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| (f.id, f.audio.clone())));
-        let Some((file_id, audio)) = file else {
-            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            return;
-        };
-
-        let cv = state.viewmode.channel_view().get_untracked();
-        // Read extra frames either side: neighbouring frames move energy
-        // into this tile's edge columns, and the edge columns are joined and
-        // smoothed with the next tiles' points.
-        let grid = LineGrid::new(actual_fft, config_hop, audio.sample_rate);
-        let margin = grid.margin_cols();
-        let tile_col_start = tile_idx * TILE_COLS;
-        let lead_cols = margin.min(tile_col_start);
-        let sample_start = (tile_col_start - lead_cols) * config_hop;
-        let sample_len = (lead_cols + TILE_COLS + margin - 1) * config_hop + actual_fft;
-
-        let read = streaming_source::read_region_ready(
-            audio.source.as_ref(),
-            cv,
-            sample_start as u64,
-            sample_len,
-        )
-        .await;
-
-        if !reassign_request_still_active(&key) {
-            return;
-        }
-
-        // Reads stop at the end of the file, so a tile starting past it reads empty.
-        let Some(ch_samples) = read.filter(|v| !v.is_empty()) else {
-            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            return;
-        };
-        let samples = &ch_samples[..];
-
-        // One floor per file and FFT size, measured from frames spread across
-        // the whole file, so a call that fills a deep-zoom tile is still
-        // measured against the quiet around it.
-        let noise_floor =
-            crate::canvas::reassign_line::noise_floor(&audio, file_id, cv, actual_fft).await;
-        if !reassign_request_still_active(&key) {
-            return;
-        }
-
-        yield_to_browser().await;
-
-        if !reassign_request_still_active(&key) {
-            return;
-        }
-
-        // Bins below the gate are not moved. -60 dB (unnormalized power)
-        // suits 16-bit audio; deeper formats move it down with their noise
-        // floor so their quiet calls still get a line.
-        let meta = &audio.metadata;
-        let gate_db = REASSIGN_GATE_16_BIT_DB
-            - oversample_core::dsp::depth_range::depth_extra_db(
-                meta.bits_per_sample,
-                meta.is_float,
-            );
-        let points =
-            main_frequency_line(samples, lead_cols, TILE_COLS, grid, gate_db, &noise_floor);
-
-        let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
-        if current_gen != gen {
-            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            state
-                .viewmode
-                .tile_ready_signal()
-                .update(|n| *n = n.wrapping_add(1));
-            return;
-        }
-
-        insert_line_tile(
-            key,
-            LineTile {
-                points,
-                fft_size: actual_fft,
-                hop_size: config_hop,
-                sample_rate: audio.sample_rate,
-            },
-        );
-        REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
         state
             .viewmode
             .tile_ready_signal()

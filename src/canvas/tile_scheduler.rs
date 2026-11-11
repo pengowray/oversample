@@ -109,7 +109,7 @@ pub fn schedule_normal_tiles(
             tile_idx: t,
         };
         if use_reassign && !crate::canvas::reassign_line::has_line_tile(&line_key) {
-            tile_cache::schedule_reassign_tile(state, file_idx, ideal_lod, t);
+            crate::canvas::reassign_line::schedule_line_tile(state, file_idx, ideal_lod, t);
             any_missing = true;
         }
 
@@ -300,7 +300,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let _fft = state.spect.fft_mode().get();
         crate::canvas::tile_cache::clear_all_tiles();
         crate::canvas::tile_cache::clear_flow_cache();
-        crate::canvas::tile_cache::clear_reassign_cache();
+        crate::canvas::reassign_line::clear_all();
         state
             .viewmode
             .tile_ready_signal()
@@ -337,7 +337,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
     // Clear reassignment tile cache when toggle changes
     Effect::new(move || {
         let _reassign = state.spect.reassign_enabled().get();
-        crate::canvas::tile_cache::clear_reassign_cache();
+        crate::canvas::reassign_line::clear_all();
     });
 
     // Clear resonator tile cache when bandwidth, alpha schedule, Q, bin-count
