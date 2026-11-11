@@ -904,14 +904,23 @@ body.sidebar-resizing {
     min-height: 24px;
 }
 
+/* The map takes what the header and notes leave, up to 640 px: on a phone
+   the notes wrap to several lines and the dialog is capped at 94vh, so the
+   map shrinks rather than pushing the notes off the bottom. */
+.species-map-dialog .modal-header,
+.species-map-notes {
+    flex: none;
+}
+
 .species-map-body {
     position: relative;
+    flex: 0 1 min(70vh, 640px);
+    min-height: 200px;
 }
 
 .species-map-chart {
     width: 100%;
-    height: min(70vh, 640px);
-    min-height: 260px;
+    height: 100%;
 }
 
 .species-map-status {
@@ -933,6 +942,56 @@ body.sidebar-resizing {
 
 .species-map-notes p {
     margin: 2px 0;
+}
+
+/* Legend swatches use the same colours and outlines as the map's dots
+   (species-map.js), so each key reads as the dot it names. */
+.species-map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    margin: 0 0 4px;
+    padding: 0;
+    list-style: none;
+}
+
+.species-map-legend li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.map-key {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+}
+
+.map-key-species {
+    width: 5px;
+    height: 5px;
+    margin: 0 1.5px;
+    background: rgba(170, 170, 170, 0.6);
+}
+
+.map-key-found {
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid #dddddd;
+}
+
+.map-key-window {
+    background: #50dc96;
+}
+
+.map-key-selected {
+    width: 11px;
+    height: 11px;
+    margin: 0 -1.5px;
+    background: #ffc850;
+    border: 2px solid #ffffff;
 }
 
 .detection-list {

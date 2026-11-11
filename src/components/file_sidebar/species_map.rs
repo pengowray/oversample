@@ -174,22 +174,33 @@ pub(super) fn SpeciesMapDialog(
     });
     on_cleanup(move || keys.remove());
 
-    // What the green dots are, with the numbers from this run.
-    let caption = move || {
+    // Legend numbers from this run: how many windows are drawn, and whether
+    // the selected window is one of them (only then is an amber dot shown).
+    let drawn_windows = move || {
         let file = current_file.get()?;
         let min = state.call_detection.min_confidence().get();
-        let n = state.classifier.results().with(|r| {
+        let selected = state.call_detection.selected_window().get();
+        state.classifier.results().with(|r| {
             r.get(&(file, Method::BirdNet)).map(|run| {
-                (0..run.windows.len())
-                    .filter(|&i| window_kind(run, i, min) == WindowKind::Species)
-                    .count()
+                let shown = |i: usize| window_kind(run, i, min) == WindowKind::Species;
+                let n = (0..run.windows.len()).filter(|&i| shown(i)).count();
+                (
+                    n,
+                    min,
+                    selected.is_some_and(|i| i < run.windows.len() && shown(i)),
+                )
             })
-        })?;
-        Some(format!(
-            "Green dots: {} at confidence {min:.2} or above, each placed among the species it scored highest. Click one to select it.",
-            super::call_detection_panel::count(n, "window", "windows")
-        ))
+        })
     };
+    let windows_label = move || {
+        drawn_windows().map(|(n, min, _)| {
+            format!(
+                "{} at {min:.2} or above, each beside its top species",
+                super::call_detection_panel::count(n, "window", "windows")
+            )
+        })
+    };
+    let selected_shown = move || drawn_windows().is_some_and(|(_, _, s)| s);
     let status = move || match (map.get(), error.get()) {
         (_, Some(e)) | (Some(Err(e)), _) => Some(format!("Could not load the map: {e}")),
         (None, _) => Some("Loading the map\u{2026}".to_string()),
@@ -225,8 +236,15 @@ pub(super) fn SpeciesMapDialog(
                     {move || status().map(|s| view! { <div class="species-map-status">{s}</div> })}
                 </div>
                 <div class="species-map-notes">
-                    <p>"Grey dots are BirdNET's 6,522 species and sounds. Species that BirdNET hears as alike sit close together. Scroll or pinch to zoom."</p>
-                    <p>{caption}</p>
+                    <ul class="species-map-legend">
+                        <li><span class="map-key map-key-species"></span>"BirdNET's 6,522 species and sounds"</li>
+                        <li><span class="map-key map-key-found"></span>"Species in the results"</li>
+                        <li><span class="map-key map-key-window"></span>{windows_label}</li>
+                        <Show when=selected_shown>
+                            <li><span class="map-key map-key-selected"></span>"Selected window"</li>
+                        </Show>
+                    </ul>
+                    <p>"Species that BirdNET hears as alike sit close together. Scroll or pinch to zoom. Click a window to select it."</p>
                     <p class="detection-status-note">"Positions from BirdNET V2.4's classifier weights. CC BY-NC-SA 4.0."</p>
                 </div>
             </div>
