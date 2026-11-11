@@ -22,7 +22,8 @@
 //! Four independent caches with separate LRU eviction budgets:
 //! - Magnitude (512 MB) — standard STFT spectrogram tiles
 //! - Flow (120 MB) — optical-flow tiles
-//! - Reassignment (120 MB) — reassigned spectrogram tiles (LOD 2+ only)
+//! - Reassignment: main-frequency line points (LOD 2+ only), kept in
+//!   `reassign_line`
 //! - Chromagram (64 MB) — chromagram tiles
 //!
 //! Tiles are computed asynchronously via `spawn_local` with `setTimeout(0)`
@@ -52,8 +53,6 @@ pub const TILE_COLS: usize = 256;
 const MAGNITUDE_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// Flow cache budget.
 const FLOW_MAX_BYTES: usize = 120 * 1024 * 1024;
-/// Reassignment cache budget.
-const REASSIGN_MAX_BYTES: usize = 120 * 1024 * 1024;
 /// Chromagram cache budget.
 const CHROMA_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Resonator cache budget. Resonator tiles have the same layout as magnitude
@@ -354,8 +353,8 @@ thread_local! {
         RefCell::new(HashMap::new());
     static FLOW_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
 
-    /// Reassignment spectrogram tile cache — multi-LOD, same TileKey as magnitude tiles.
-    static REASSIGN_CACHE: RefCell<TileCache> = RefCell::new(TileCache::new(REASSIGN_MAX_BYTES));
+    /// Main-frequency line tiles being computed; the tiles themselves are in
+    /// `reassign_line`.
     static REASSIGN_IN_FLIGHT: RefCell<HashMap<TileKey, f64>> =
         RefCell::new(HashMap::new());
     static REASSIGN_CACHE_GENERATION: RefCell<u64> = const { RefCell::new(0) };
@@ -525,13 +524,6 @@ fn flow_ctx() -> CacheCtx {
         cache: &FLOW_CACHE,
         in_flight: &FLOW_IN_FLIGHT,
         generation: &FLOW_CACHE_GENERATION,
-    }
-}
-fn reassign_ctx() -> CacheCtx {
-    CacheCtx {
-        cache: &REASSIGN_CACHE,
-        in_flight: &REASSIGN_IN_FLIGHT,
-        generation: &REASSIGN_CACHE_GENERATION,
     }
 }
 fn resonator_ctx() -> CacheCtx {
@@ -753,7 +745,7 @@ fn flow_request_still_active(key: &TileKey) -> bool {
 }
 
 fn reassign_request_still_active(key: &TileKey) -> bool {
-    reassign_ctx().request_still_active(key)
+    REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), key))
 }
 
 fn resonator_request_still_active(key: &TileKey) -> bool {
@@ -1815,46 +1807,40 @@ pub fn schedule_flow_tile(
     });
 }
 
-// ── Reassignment spectrogram tile cache ──────────────────────────────────────
+// ── Reassignment: main-frequency line tiles ──────────────────────────────────
 
-pub fn get_reassign_tile(file_idx: usize, lod: u8, tile_idx: usize) -> Option<()> {
-    reassign_ctx().get(file_idx, lod, tile_idx)
-}
-
-pub fn borrow_reassign_tile<R>(
-    file_idx: usize,
-    lod: u8,
-    tile_idx: usize,
-    f: impl FnOnce(&Tile) -> R,
-) -> Option<R> {
-    reassign_ctx().borrow_tile(file_idx, lod, tile_idx, f)
-}
-
+/// Forget every line tile and noise floor, and make line tiles still being
+/// computed discard their result.
 pub fn clear_reassign_cache() {
-    reassign_ctx().clear_all();
+    crate::canvas::reassign_line::clear_line_tiles();
     crate::canvas::reassign_line::clear_noise_floors();
+    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().clear());
+    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
 }
 
 pub fn clear_reassign_file(file_idx: usize) {
-    reassign_ctx().clear_file(file_idx);
+    crate::canvas::reassign_line::clear_line_tiles_for_file(file_idx);
+    REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().retain(|k, _| k.file_idx != file_idx));
+    REASSIGN_CACHE_GENERATION.with(|g| *g.borrow_mut() += 1);
 }
 
 /// Reassignment gate for 16-bit audio, in dB of unnormalized bin power.
 const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
 
-/// Schedule a reassignment spectrogram tile for background generation.
+/// Schedule one tile of the main-frequency line for background computation.
 ///
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
-/// compute corrected time-frequency positions, producing sharper spectrograms.
+/// find where each column's loudest sound is (`main_frequency_line`).
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::reassign::{compute_reassigned_tile, reassign_margin_cols};
+    use crate::canvas::reassign_line::{has_line_tile, insert_line_tile, LineTile};
+    use crate::dsp::reassign::{main_frequency_line, reassign_margin_cols};
 
     let key = TileKey {
         file_idx,
         lod,
         tile_idx,
     };
-    if REASSIGN_CACHE.with(|c| c.borrow().contains_key(&key)) {
+    if has_line_tile(&key) {
         return;
     }
     if REASSIGN_IN_FLIGHT.with(|s| has_active_in_flight(&mut s.borrow_mut(), &key)) {
@@ -1923,8 +1909,10 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
 
         let cv = state.viewmode.channel_view().get_untracked();
         // Read extra frames either side: reassignment moves energy up to
-        // `margin` columns, so neighbouring frames add to this tile's edges.
-        let margin = reassign_margin_cols(actual_fft, config_hop);
+        // `reassign_margin_cols` columns, so neighbouring frames add to this
+        // tile's edges, and one column more lets the edge columns be joined
+        // to the next tiles' points.
+        let margin = reassign_margin_cols(actual_fft, config_hop) + 1;
         let tile_col_start = tile_idx * TILE_COLS;
         let lead_cols = margin.min(tile_col_start);
         let sample_start = (tile_col_start - lead_cols) * config_hop;
@@ -1964,16 +1952,16 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
             return;
         }
 
-        // Bins below the gate stay where they are. -60 dB (unnormalized
-        // power) suits 16-bit audio; deeper formats move it down with their
-        // noise floor so their quiet content is still sharpened.
+        // Bins below the gate are not moved. -60 dB (unnormalized power)
+        // suits 16-bit audio; deeper formats move it down with their noise
+        // floor so their quiet calls still get a line.
         let meta = &audio.metadata;
         let gate_db = REASSIGN_GATE_16_BIT_DB
             - oversample_core::dsp::depth_range::depth_extra_db(
                 meta.bits_per_sample,
                 meta.is_float,
             );
-        let rendered = compute_reassigned_tile(
+        let points = main_frequency_line(
             samples,
             lead_cols,
             TILE_COLS,
@@ -1993,7 +1981,15 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
             return;
         }
 
-        REASSIGN_CACHE.with(|c| c.borrow_mut().insert(file_idx, lod, tile_idx, rendered));
+        insert_line_tile(
+            key,
+            LineTile {
+                points,
+                fft_size: actual_fft,
+                hop_size: config_hop,
+                sample_rate: audio.sample_rate,
+            },
+        );
         REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
         state
             .viewmode

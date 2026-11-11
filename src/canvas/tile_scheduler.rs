@@ -103,7 +103,12 @@ pub fn schedule_normal_tiles(
 
     for &t in &tile_order {
         // Schedule reassignment tiles when enabled (skip coarse overview LODs 0-1)
-        if use_reassign && tile_cache::get_reassign_tile(file_idx, ideal_lod, t).is_none() {
+        let line_key = tile_cache::TileKey {
+            file_idx,
+            lod: ideal_lod,
+            tile_idx: t,
+        };
+        if use_reassign && !crate::canvas::reassign_line::has_line_tile(&line_key) {
             tile_cache::schedule_reassign_tile(state, file_idx, ideal_lod, t);
             any_missing = true;
         }

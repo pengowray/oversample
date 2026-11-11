@@ -2199,7 +2199,7 @@ pub fn MainViewButton() -> impl IntoView {
                 view! {
                     <hr />
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
-                        title="Sharpen time-frequency localization using the reassignment method (3x FFT cost)">
+                        title="Draws a line over the spectrogram at the loudest frequency in each column, where it is 15 dB or more above the noise. Hidden when zoomed far out.">
                         <input
                             type="checkbox"
                             prop:checked=move || state.spect.reassign_enabled().get()

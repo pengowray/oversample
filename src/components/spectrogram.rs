@@ -770,11 +770,8 @@ pub fn Spectrogram() -> impl IntoView {
                         let seg_zoom = seg_px_per_sec * seg_time_res;
 
                         let resonators_on = main_view == MainView::Resonators;
-                        let ideal_lod_for_source = crate::canvas::tile_cache::select_lod(seg_zoom);
                         let tile_source = if resonators_on {
                             spectrogram_renderer::TileSource::Resonators
-                        } else if reassign_on && ideal_lod_for_source > 1 {
-                            spectrogram_renderer::TileSource::Reassigned
                         } else {
                             spectrogram_renderer::TileSource::Normal
                         };
@@ -926,8 +923,6 @@ pub fn Spectrogram() -> impl IntoView {
                     let ideal_lod_for_source = crate::canvas::tile_cache::select_lod(zoom);
                     let tile_source = if resonators_on {
                         spectrogram_renderer::TileSource::Resonators
-                    } else if reassign_on && ideal_lod_for_source > 1 {
-                        spectrogram_renderer::TileSource::Reassigned
                     } else {
                         spectrogram_renderer::TileSource::Normal
                     };
@@ -966,6 +961,42 @@ pub fn Spectrogram() -> impl IntoView {
                         duration,
                         tile_source,
                     );
+
+                    // Reassignment: the main-frequency line over the plain
+                    // tiles. It is measured on the original audio, so it is
+                    // left off when XForm or decimation changes the tiles.
+                    if reassign_on
+                        && !resonators_on
+                        && !xform_on
+                        && decim_effective == 0
+                        && ideal_lod_for_source > 1
+                    {
+                        if let Some(vg) = crate::canvas::tile_blit::ViewportGeometry::new(
+                            display_w as f64,
+                            display_h as f64,
+                            total_cols,
+                            scroll_col,
+                            zoom,
+                            freq_crop_lo,
+                            freq_crop_hi,
+                        ) {
+                            crate::canvas::reassign_line::draw_main_frequency_line(
+                                &ctx,
+                                &crate::canvas::reassign_line::LineView {
+                                    file_idx: file_idx_val,
+                                    lod: vg.ideal_lod,
+                                    first_tile: vg.first_tile,
+                                    last_tile: vg.last_tile,
+                                    scroll_s: scroll,
+                                    px_per_sec: zoom / time_res,
+                                    min_freq,
+                                    max_freq,
+                                    width: display_w as f64,
+                                    height: display_h as f64,
+                                },
+                            );
+                        }
+                    }
 
                     // Schedule missing tiles for the active source.
                     if resonators_on {

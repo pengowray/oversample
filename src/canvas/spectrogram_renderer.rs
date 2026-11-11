@@ -137,7 +137,6 @@ pub fn global_max_magnitude(data: &SpectrogramData) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TileSource {
     Normal,
-    Reassigned,
     Flow,
     Resonators,
 }
@@ -928,7 +927,6 @@ pub fn blit_tiles_viewport(
         let check_fn = |fi: usize, lod: u8, ti: usize| -> bool {
             match tile_source {
                 TileSource::Normal => tile_cache::get_tile(fi, lod, ti).is_some(),
-                TileSource::Reassigned => tile_cache::get_reassign_tile(fi, lod, ti).is_some(),
                 TileSource::Flow => tile_cache::get_flow_tile(fi, lod, ti).is_some(),
                 TileSource::Resonators => tile_cache::get_resonator_tile(fi, lod, ti).is_some(),
             }
@@ -1156,9 +1154,6 @@ pub fn blit_tiles_viewport(
                 |fi: usize, lod: u8, ti: usize, f: &dyn Fn(&tile_cache::Tile)| -> Option<()> {
                     match tile_source {
                         TileSource::Normal => tile_cache::borrow_tile(fi, lod, ti, |t| f(t)),
-                        TileSource::Reassigned => {
-                            tile_cache::borrow_reassign_tile(fi, lod, ti, |t| f(t))
-                        }
                         TileSource::Flow => tile_cache::borrow_flow_tile(fi, lod, ti, |t| f(t)),
                         TileSource::Resonators => {
                             tile_cache::borrow_resonator_tile(fi, lod, ti, |t| f(t))
