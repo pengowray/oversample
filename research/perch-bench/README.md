@@ -1,0 +1,76 @@
+# perch-bench
+
+Throwaway speed, accuracy, bat and species-map tests for Perch 2.0 (Google's
+`perch_v2`) in Oversample. Findings are in [../perch.md](../perch.md). Copied from
+[../birdnet-bench](../birdnet-bench) and changed for Perch. Nothing here is part of the
+app build: this folder has its own `[workspace]`.
+
+No model files are committed. Download them into a folder of your own (for example
+`~/perch-models`; Apache 2.0 unless noted):
+
+| File | Source |
+|---|---|
+| `perch_v2.onnx`, `perch_v2_no_dft.onnx`, `perch_v2.tflite` | `huggingface.co/justinchuby/Perch-onnx` |
+| `labels.csv`, `perch_v2_ebird_classes.csv` | `huggingface.co/cgeorgiaw/Perch` (`assets/`), same as the Kaggle files |
+| `perch_v2_central-europe_no_dft_fp32.onnx`, `central-europe_indices.txt` | `huggingface.co/tphakala/Perch-v2-Models` (`regional/central-europe/`) |
+| `BirdNET_v2.4_fp32_foldconv.onnx`, `birdnet_labels.txt` (renamed from `labels.txt`) | `huggingface.co/tphakala/BirdNET-v2.4` (CC BY-NC-SA 4.0) |
+| `birdnet-v2.4-embeddings-fp32.onnx` | `huggingface.co/tphakala/BattyBirdNET-onnx` (CC BY-NC-SA 4.0) |
+
+`ref_tf.py` downloads Google's `perch_v2_cpu` SavedModel itself, through kagglehub.
+
+## Steps
+
+Python 3.12: `pip install onnx onnxruntime numpy ai-edge-litert soundfile scipy
+scikit-learn umap-learn matplotlib`. For `ref_tf.py`, a separate environment with
+`pip install "tensorflow-cpu~=2.20.0" kagglehub`.
+
+Keep `CARGO_TARGET_DIR` outside this folder, since it is synced; the targets below
+take several GB.
+
+```bash
+M=~/perch-models
+# 1. Embedding model + classifier prototypes, and tract-loadable copies
+python -I split.py $M/perch_v2.onnx $M          # perch_v2_embed.onnx, perch_v2_head.npz
+for m in perch_v2 perch_v2_embed perch_v2_central-europe_no_dft_fp32; do
+  python -I fix_for_tract.py $M/$m.onnx $M/$m.tract.onnx
+done
+
+# 2. Audio to 5 s windows of 32 kHz float32
+python -I prep.py birds.f32 bird1.wav bird2.wav
+python -I prep.py --repeat 36 long.f32 bird1.wav                       # 3 minutes
+python -I prep.py --rate 48000 --win 144000 --repeat 60 long48.f32 bird1.wav   # same, for BirdNET
+
+# 3. References: Google's SavedModel (TF), TFLite, onnxruntime, numpy classifier
+python -I ref_tf.py birds.f32 out/birds.tf
+python -I ref.py $M birds.f32 --save out/birds
+
+# 4. tract native
+cargo build --release
+$CARGO_TARGET_DIR/release/native $M/perch_v2.tract.onnx birds.f32 1 out/birds.tract
+
+# 5. tract wasm32-wasip1 + SIMD in node (reports WASM memory)
+RUSTFLAGS="-C target-feature=+simd128" cargo build --release --lib --target wasm32-wasip1
+node bench.mjs $CARGO_TARGET_DIR/wasm32-wasip1/release/perch_bench.wasm $M/perch_v2.tract.onnx birds.f32 out/birds.wasm
+
+# 6. tract wasm32-unknown-unknown + wasm-bindgen (the app's target)
+CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true RUSTFLAGS="-C target-feature=+simd128" \
+  wasm-pack build --release --target nodejs --out-dir $CARGO_TARGET_DIR/pkg-node --no-typescript
+node bench-bindgen.mjs $CARGO_TARGET_DIR/pkg-node $M/perch_v2.tract.onnx birds.f32 out/birds.bindgen
+
+# 7. Perch and BirdNET taking turns in one process (same machine load)
+node both.mjs $CARGO_TARGET_DIR/pkg-node $M/perch_v2_embed.tract.onnx long.f32 \
+  ../birdnet-bench/web/pkg $M/BirdNET_v2.4_fp32_foldconv.onnx long48.f32 3
+
+# 8. Compare any run with the TF reference
+python -I compare.py out/birds.tf out/birds.tract out/birds.wasm out/birds.bindgen
+python -I compare.py out/birds.tf out/birds.ce --indices $M/central-europe_indices.txt
+
+# 9. Bats: Perch vs BirdNET embeddings on bat-demo-sounds
+python -I bats.py $M ../../../batchi-extras/bat-demo-sounds/sounds out/bats.npz
+
+# 10. Species map (JSON + PNG) and the class-vector checks
+python -I species_map.py $M out out/birds.tf
+```
+
+Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
+folder is missing, build it as described in `../birdnet-bench/README.md`.
