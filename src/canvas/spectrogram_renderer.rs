@@ -19,13 +19,14 @@ pub use crate::canvas::flow::{
 pub use crate::canvas::overlays::{
     draw_annotations, draw_band_ff_overlay, draw_calls, draw_filter_overlay, draw_freq_markers,
     draw_harmonic_shadows, draw_het_overlay, draw_notch_bands, draw_selection, draw_species_strip,
-    SpeciesWindow, StripSpan, SPECIES_STRIP_H,
     draw_tile_debug_overlay, draw_time_marker_lines, draw_time_markers, pixel_to_time_freq,
-    DebugTileKind, FreqMarkerState, FreqShiftMode, TimeMarkerStyle,
+    DebugTileKind, FreqMarkerState, FreqShiftMode, SpeciesWindow, StripSpan, TimeMarkerStyle,
+    SPECIES_STRIP_H,
 };
 
 // PreRendered and SpectDisplaySettings are defined in oversample-core::types.
 pub use crate::types::{PreRendered, SpectDisplaySettings};
+use oversample_core::dsp::spectrum_level::TileKind;
 
 /// Pre-render the entire spectrogram to an RGBA pixel buffer.
 /// Width = number of columns, Height = number of frequency bins.
@@ -703,18 +704,20 @@ fn apply_hfr_colormap_to_tile(
 /// and the display EQ / noise filter adjustment for the row's frequency.
 ///
 /// Tiles hold `20·log10(magnitude)` from whatever FFT size made them (smaller
-/// at deep zoom in the Adaptive modes), and an FFT of N points reads a
-/// full-scale tone at `full_scale_db(N)`. Subtracting that per tile puts every
-/// zoom level on the same dBFS scale. `freq_adjustments` has one entry per row
+/// at deep zoom in the Adaptive modes), and a tile of `kind` made with N
+/// points reads a full-scale tone at `tile_full_scale_db(kind, N)`.
+/// Subtracting that per tile puts every zoom level and view on the same dBFS
+/// scale. `freq_adjustments` has one entry per row
 /// of the largest tile, so smaller tiles pick the entry at the same frequency.
 fn tile_row_gains(
     rendered: &PreRendered,
+    kind: TileKind,
     settings: &SpectDisplaySettings,
     freq_adjustments: Option<&[f32]>,
 ) -> Vec<f32> {
-    use oversample_core::dsp::spectrum_level::{fft_size_for_bins, full_scale_db};
+    use oversample_core::dsp::spectrum_level::{fft_size_for_bins, tile_full_scale_db};
     let h = rendered.height as usize;
-    let base = settings.gain_db - full_scale_db(fft_size_for_bins(h));
+    let base = settings.gain_db - tile_full_scale_db(kind, fft_size_for_bins(h));
     (0..h)
         .map(|row| {
             let extra = freq_adjustments
@@ -737,6 +740,7 @@ fn tile_row_gains(
 /// Dispatches on `TileRenderMode` to apply either colormap or flow-specific coloring.
 fn tile_to_rgba(
     rendered: &PreRendered,
+    kind: TileKind,
     settings: &SpectDisplaySettings,
     render_mode: &TileRenderMode,
     freq_adjustments: Option<&[f32]>,
@@ -745,7 +749,7 @@ fn tile_to_rgba(
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
     let w = rendered.width as usize;
-    let row_gain = tile_row_gains(rendered, settings, freq_adjustments);
+    let row_gain = tile_row_gains(rendered, kind, settings, freq_adjustments);
 
     match render_mode {
         TileRenderMode::Spectrogram(colormap) => match colormap {
@@ -993,6 +997,7 @@ pub fn blit_tiles_viewport(
     // Uses a per-tile offscreen canvas cache to avoid re-running tile_to_rgba
     // + ImageData + put_image_data when only the scroll position changes.
     let blit_any_tile = |tile: &tile_cache::Tile,
+                         kind: TileKind,
                          tile_lod: u8,
                          tile_idx: usize,
                          clip_start: f64,
@@ -1025,6 +1030,7 @@ pub fn blit_tiles_viewport(
             let pixels = if !tile.rendered.db_data.is_empty() {
                 tile_to_rgba(
                     &tile.rendered,
+                    kind,
                     display_settings,
                     &render_mode,
                     freq_adjustments,
@@ -1159,8 +1165,13 @@ pub fn blit_tiles_viewport(
                         }
                     }
                 };
+            let kind = match tile_source {
+                TileSource::Normal | TileSource::Flow => TileKind::Stft,
+                TileSource::Reassigned => TileKind::Reassigned,
+                TileSource::Resonators => TileKind::Resonator,
+            };
             borrow_fn(file_idx, vg.ideal_lod, tile_idx, &|tile| {
-                blit_any_tile(tile, vg.ideal_lod, tile_idx, clip_start, clip_end);
+                blit_any_tile(tile, kind, vg.ideal_lod, tile_idx, clip_start, clip_end);
             })
             .is_some()
         },
@@ -1170,18 +1181,26 @@ pub fn blit_tiles_viewport(
             match tile_source {
                 TileSource::Flow => {
                     tile_cache::borrow_flow_tile(file_idx, fb_lod, fb_tile, |tile| {
-                        blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                        blit_any_tile(tile, TileKind::Stft, fb_lod, fb_tile, clip_start, clip_end);
                     })
                     .is_some()
                 }
                 TileSource::Resonators => {
                     tile_cache::borrow_resonator_tile(file_idx, fb_lod, fb_tile, |tile| {
-                        blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                        blit_any_tile(
+                            tile,
+                            TileKind::Resonator,
+                            fb_lod,
+                            fb_tile,
+                            clip_start,
+                            clip_end,
+                        );
                     })
                     .is_some()
                 }
+                // Reassigned falls back to plain magnitude tiles.
                 _ => tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
-                    blit_any_tile(tile, fb_lod, fb_tile, clip_start, clip_end);
+                    blit_any_tile(tile, TileKind::Stft, fb_lod, fb_tile, clip_start, clip_end);
                 })
                 .is_some(),
             }

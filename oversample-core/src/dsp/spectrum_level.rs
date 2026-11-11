@@ -18,6 +18,32 @@ pub fn full_scale_db(fft_size: usize) -> f32 {
     20.0 * ((fft_size.max(5) - 1) as f32 / 4.0).log10()
 }
 
+/// How a tile's magnitudes were made. The kinds read a full-scale tone at
+/// different levels, so each has its own reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileKind {
+    /// Hann-windowed STFT magnitudes: the plain spectrogram and Flow.
+    Stft,
+    /// Reassigned power. A bin-centred tone's main lobe (three bins at
+    /// amplitude 1, ½, ½) is gathered into one bin: 10·log10(1.5) = 1.76 dB
+    /// above the STFT peak.
+    Reassigned,
+    /// Resonator bank, scaled in `resonators` to read like the STFT.
+    Resonator,
+}
+
+/// dB of a full-scale sine's peak in a tile of `kind` made with `fft_size`
+/// points. Subtract it from a tile's dB to get dBFS.
+pub fn tile_full_scale_db(kind: TileKind, fft_size: usize) -> f32 {
+    /// 10·log10(1.5), see [`TileKind::Reassigned`].
+    const REASSIGN_TONE_GAIN_DB: f32 = 1.760_913;
+    full_scale_db(fft_size)
+        + match kind {
+            TileKind::Stft | TileKind::Resonator => 0.0,
+            TileKind::Reassigned => REASSIGN_TONE_GAIN_DB,
+        }
+}
+
 /// FFT size that produced a one-sided spectrum of `bins` bins.
 pub fn fft_size_for_bins(bins: usize) -> usize {
     bins.saturating_sub(1) * 2
@@ -50,13 +76,22 @@ const MAX_NOISE_COLUMNS: usize = 1000;
 pub fn noise_floor_dbfs<C: Borrow<SpectrogramColumn>>(columns: &[C]) -> Option<f32> {
     let bins = columns.first()?.borrow().magnitudes.len();
     noise_floor_dbfs_by(columns.len(), bins, |col, bin| {
-        columns[col].borrow().magnitudes.get(bin).copied().unwrap_or(0.0)
+        columns[col]
+            .borrow()
+            .magnitudes
+            .get(bin)
+            .copied()
+            .unwrap_or(0.0)
     })
 }
 
 /// [`noise_floor_dbfs`] for magnitudes stored some other way: `mag(col, bin)`
 /// for `cols` columns of `bins` one-sided FFT bins each.
-pub fn noise_floor_dbfs_by(cols: usize, bins: usize, mag: impl Fn(usize, usize) -> f32) -> Option<f32> {
+pub fn noise_floor_dbfs_by(
+    cols: usize,
+    bins: usize,
+    mag: impl Fn(usize, usize) -> f32,
+) -> Option<f32> {
     if cols < MIN_NOISE_COLUMNS || bins < 3 {
         return None;
     }
@@ -89,7 +124,11 @@ pub fn noise_floor_dbfs_by(cols: usize, bins: usize, mag: impl Fn(usize, usize) 
 
 /// Noise floor of `samples` in dBFS per bin at `fft_size`, from up to
 /// `max_frames` frames spread evenly across them.
-pub fn estimate_noise_floor_dbfs(samples: &[f32], fft_size: usize, max_frames: usize) -> Option<f32> {
+pub fn estimate_noise_floor_dbfs(
+    samples: &[f32],
+    fft_size: usize,
+    max_frames: usize,
+) -> Option<f32> {
     if fft_size < 4 || samples.len() < fft_size || max_frames == 0 {
         return None;
     }
@@ -144,6 +183,55 @@ mod tests {
     }
 
     #[test]
+    fn full_scale_tone_reads_zero_dbfs_in_every_tile_kind() {
+        use crate::dsp::resonators::{
+            compute_resonator_columns, warmup_samples, ResonatorAlphaMode, ResonatorLayout,
+        };
+        let (n, sr, bin) = (1024, 384_000u32, 100);
+        let samples = sine(sr as usize, bin as f64 / n as f64, 1.0);
+
+        let tile = crate::dsp::fft::compute_reassigned_tile(
+            &samples[..n * 40],
+            0,
+            30,
+            n,
+            256,
+            -400.0,
+            &[],
+        );
+        let peak = tile
+            .db_data
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let dbfs = peak - tile_full_scale_db(TileKind::Reassigned, n);
+        assert!(dbfs.abs() < 0.1, "reassigned: {dbfs} dBFS");
+
+        for bw in [5.0, 20.0, 100.0] {
+            let warm_cols = warmup_samples(sr, bw) / 256 + 1;
+            let cols = compute_resonator_columns(
+                &samples,
+                sr,
+                n,
+                256,
+                warm_cols,
+                10,
+                bw,
+                ResonatorAlphaMode::ConstBandwidth,
+                8.0,
+                ResonatorLayout::Linear,
+                None,
+            );
+            let peak = cols
+                .iter()
+                .flat_map(|c| c.magnitudes.iter().copied())
+                .fold(0.0, f32::max);
+            let dbfs = magnitude_to_db(peak) - tile_full_scale_db(TileKind::Resonator, n);
+            assert!(dbfs.abs() < 0.1, "resonator {bw} Hz: {dbfs} dBFS");
+        }
+    }
+
+    #[test]
     fn white_noise_floor_drops_3_db_per_fft_doubling() {
         // Deterministic white noise, uniform in ±0.01.
         let mut x: u32 = 12345;
@@ -156,7 +244,10 @@ mod tests {
         let at_256 = estimate_noise_floor_dbfs(&samples, 256, 400).unwrap();
         let at_1024 = estimate_noise_floor_dbfs(&samples, 1024, 400).unwrap();
         let moved = noise_at_fft_size(at_256, 256, 1024);
-        assert!((moved - at_1024).abs() < 1.0, "{at_256} → {moved} vs {at_1024}");
+        assert!(
+            (moved - at_1024).abs() < 1.0,
+            "{at_256} → {moved} vs {at_1024}"
+        );
         // σ² = 0.02²/12, so per-bin noise power is σ²·6/N relative to full
         // scale: about −67 dB at N=1024. The 20th percentile sits ~6.5 dB
         // below the mean power.
@@ -188,7 +279,10 @@ mod tests {
 
     #[test]
     fn digital_silence_has_no_noise_floor() {
-        assert_eq!(estimate_noise_floor_dbfs(&vec![0.0; 50_000], 512, 100), None);
+        assert_eq!(
+            estimate_noise_floor_dbfs(&vec![0.0; 50_000], 512, 100),
+            None
+        );
     }
 
     #[test]

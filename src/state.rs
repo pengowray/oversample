@@ -2855,18 +2855,18 @@ impl AppState {
     /// sound to measure. Reactive.
     pub fn current_noise_floor_dbfs(&self) -> Option<f32> {
         let idx = self.library.current_index().get()?;
-        let id = self.library.files().with(|files| files.get(idx).map(|f| f.id))?;
+        let id = self
+            .library
+            .files()
+            .with(|files| files.get(idx).map(|f| f.id))?;
         let est = self.spect.noise_floors().with(|m| m.get(&id).copied())?;
         let fft = self
             .spect
             .fft_mode()
             .get()
             .fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
-        let dbfs = oversample_core::dsp::spectrum_level::noise_at_fft_size(
-            est.dbfs,
-            est.fft_size,
-            fft,
-        );
+        let dbfs =
+            oversample_core::dsp::spectrum_level::noise_at_fft_size(est.dbfs, est.fft_size, fft);
         dbfs.is_finite().then_some(dbfs)
     }
 
@@ -2908,7 +2908,11 @@ impl AppState {
             if (f.is_recording || f.is_live_listen) && mic_live {
                 return None;
             }
-            if self.spect.noise_floors().with_untracked(|m| m.contains_key(&f.id)) {
+            if self
+                .spect
+                .noise_floors()
+                .with_untracked(|m| m.contains_key(&f.id))
+            {
                 return None;
             }
             Some((f.id, f.audio.samples.clone(), f.loading_id.is_some()))
@@ -2928,11 +2932,9 @@ impl AppState {
             None if loading => return,
             None => f32::NAN,
         };
-        self.spect
-            .noise_floors()
-            .update(|m| {
-                m.insert(id, NoiseFloorEstimate { fft_size, dbfs });
-            });
+        self.spect.noise_floors().update(|m| {
+            m.insert(id, NoiseFloorEstimate { fft_size, dbfs });
+        });
     }
 
     pub fn current_file(&self) -> Option<LoadedFile> {
