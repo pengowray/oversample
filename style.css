@@ -7115,7 +7115,8 @@ button.toolbar-overflow-btn {
     display: inline-block;
     flex: none;
     width: 36px;
-    padding: 2px 0;
+    height: 24px;
+    padding: 0;
     font-size: 9px;
     text-align: center;
 }
@@ -7125,8 +7126,12 @@ button.toolbar-overflow-btn {
     background: #1f2b27;
 }
 
-/* Rows without a toggle keep the same space at the end, so the sliders in a
-   section line up. */
+/* Rows without a toggle keep the same space and height, so the sliders in a
+   section line up and the rows stay evenly spaced. */
+.dsp-custom-section:has(.dsp-auto-toggle) .dsp-custom-slider-row {
+    min-height: 24px;
+}
+
 .dsp-custom-section:has(.dsp-auto-toggle) .dsp-custom-slider-row:not(:has(.dsp-auto-toggle))::after {
     content: "";
     flex: none;
