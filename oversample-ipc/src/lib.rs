@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod annota;
+pub mod classifier;
 pub mod mic;
 pub mod plugins;
 pub mod xc;

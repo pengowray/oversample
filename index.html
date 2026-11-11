@@ -19,6 +19,16 @@
     <link data-trunk rel="copy-file" href="about-icon.png"/>
     <link data-trunk rel="copy-file" href="world-map.png"/>
     <link data-trunk rel="css" href="style.css"/>
+    <!-- The app. Named here because a second rust link (the worker below) stops
+         Trunk from adding it on its own. An explicit link also turns on
+         wasm-opt, which the implicit one never ran; data-wasm-opt="0" keeps the
+         build as it was. -->
+    <link data-trunk rel="rust" href="Cargo.toml" data-type="main" data-wasm-opt="0"/>
+    <!-- BirdNET and BattyBirdNET engine, run in a Web Worker. Trunk writes
+         birdnet-worker_loader.js, birdnet-worker.js and birdnet-worker_bg.wasm
+         (names not hashed); the app starts the worker only when someone runs a
+         model (src/classifier/). -->
+    <link data-trunk rel="rust" href="birdnet-worker/Cargo.toml" data-type="worker" data-loader-shim data-wasm-opt="0"/>
     <link data-trunk rel="copy-file" href="mp4-muxer.js"/>
     <script src="mp4-muxer.js"></script>
     <script>
