@@ -24,12 +24,6 @@ pub fn full_scale_db(fft_size: usize) -> f32 {
 pub enum TileKind {
     /// Hann-windowed STFT magnitudes: the plain spectrogram and Flow.
     Stft,
-    /// Reassigned power. Bins that aren't moved keep their plain STFT level,
-    /// so these tiles use the STFT reference and their background matches the
-    /// plain tiles drawn beside them while they compute. A bin-centred tone's
-    /// main lobe (three bins at amplitude 1, ½, ½) is gathered into one bin,
-    /// so its peak reads 10·log10(1.5) = 1.76 dB above the STFT peak.
-    Reassigned,
     /// Resonator bank, scaled in `resonators` to read like the STFT.
     Resonator,
 }
@@ -38,14 +32,10 @@ pub enum TileKind {
 /// points. Subtract it from a tile's dB to get dBFS.
 pub fn tile_full_scale_db(kind: TileKind, fft_size: usize) -> f32 {
     match kind {
-        // All three share the STFT reference; see each variant for why.
-        TileKind::Stft | TileKind::Reassigned | TileKind::Resonator => full_scale_db(fft_size),
+        // Both share the STFT reference; see each variant for why.
+        TileKind::Stft | TileKind::Resonator => full_scale_db(fft_size),
     }
 }
-
-/// How far above the reference a bin-centred tone's peak reads in a
-/// reassigned tile: 10·log10(1.5), see [`TileKind::Reassigned`].
-pub const REASSIGNED_TONE_GAIN_DB: f32 = 1.760_913;
 
 /// FFT size that produced a one-sided spectrum of `bins` bins.
 pub fn fft_size_for_bins(bins: usize) -> usize {
@@ -192,26 +182,6 @@ mod tests {
         };
         let (n, sr, bin) = (1024, 384_000u32, 100);
         let samples = sine(sr as usize, bin as f64 / n as f64, 1.0);
-
-        let tile = crate::dsp::reassign::compute_reassigned_tile(
-            &samples[..n * 40],
-            0,
-            30,
-            n,
-            256,
-            -400.0,
-            &[],
-        );
-        let peak = tile
-            .db_data
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let dbfs = peak - tile_full_scale_db(TileKind::Reassigned, n);
-        assert!(
-            (dbfs - REASSIGNED_TONE_GAIN_DB).abs() < 0.1,
-            "reassigned: {dbfs} dBFS"
-        );
 
         for bw in [5.0, 20.0, 100.0] {
             let warm_cols = warmup_samples(sr, bw) / 256 + 1;

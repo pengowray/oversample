@@ -1162,7 +1162,6 @@ pub fn blit_tiles_viewport(
                 };
             let kind = match tile_source {
                 TileSource::Normal | TileSource::Flow => TileKind::Stft,
-                TileSource::Reassigned => TileKind::Reassigned,
                 TileSource::Resonators => TileKind::Resonator,
             };
             borrow_fn(file_idx, vg.ideal_lod, tile_idx, &|tile| {
@@ -1193,7 +1192,6 @@ pub fn blit_tiles_viewport(
                     })
                     .is_some()
                 }
-                // Reassigned falls back to plain magnitude tiles.
                 _ => tile_cache::borrow_tile(file_idx, fb_lod, fb_tile, |tile| {
                     blit_any_tile(tile, TileKind::Stft, fb_lod, fb_tile, clip_start, clip_end);
                 })

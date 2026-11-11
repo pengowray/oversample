@@ -1,9 +1,9 @@
-//! Reassigned spectrograms: each bin's energy moved to the time and
-//! frequency where it actually is, from two extra FFTs per frame (a
-//! time-ramped and a derivative Hann window).
+//! The reassignment method: each bin's energy moved to the time and frequency
+//! where it actually is, from two extra FFTs per frame (a time-ramped and a
+//! derivative Hann window). Used to draw a line along the loudest frequency
+//! in each spectrogram column ([`main_frequency_line`]).
 
 use crate::dsp::fft::{hann_window, plan_fft_forward};
-use crate::types::PreRendered;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -51,23 +51,22 @@ fn dh_window(size: usize) -> Vec<f32> {
 /// How many columns a frame's energy can move in time under reassignment.
 ///
 /// Reassignment keeps energy inside its own window, so it moves at most
-/// `fft_size / 2` samples from the frame centre. A reassigned tile needs this
-/// many extra frames on each side to collect the energy that its neighbours'
-/// frames move into it.
+/// `fft_size / 2` samples from the frame centre. A tile needs this many extra
+/// frames on each side to collect the energy that its neighbours' frames move
+/// into it.
 pub fn reassign_margin_cols(fft_size: usize, hop_size: usize) -> usize {
     (fft_size / 2).div_ceil(hop_size.max(1))
 }
 
 /// Reassignment moves a bin only when its power is at least this far above
 /// the bin's noise floor. Noise power goes 10 dB over its median in about
-/// 1 frame in 1000, so noise stays where the plain spectrogram draws it
-/// instead of turning into speckle.
+/// 1 frame in 1000, so noise is left out of the line.
 pub const REASSIGN_ABOVE_FLOOR_DB: f32 = 10.0;
 
 /// Fewest frames of sound that give a usable noise floor.
 const MIN_FLOOR_FRAMES: usize = 4;
 
-/// Per-bin noise floor for [`compute_reassigned_tile`]: the median Hann-window
+/// Per-bin noise floor for [`main_frequency_line`]: the median Hann-window
 /// power of each bin over the frames in `frames`, back to back, `fft_size`
 /// samples each.
 ///
@@ -112,176 +111,6 @@ pub fn reassign_noise_floor(frames: &[f32], fft_size: usize) -> Vec<f32> {
                 .1
         })
         .collect()
-}
-
-/// Compute a reassigned spectrogram tile from raw audio samples.
-///
-/// Performs 3 FFTs per frame (standard Hann, time-ramped, derivative-windowed),
-/// then accumulates |X|² at corrected (time, frequency) positions using
-/// nearest-neighbor assignment.
-///
-/// Columns follow the same convention as `compute_stft_columns`: column `c`
-/// holds the frame that starts at `c * hop_size`, so a click at sample `s`
-/// lands in column `(s - (fft_size - 1) / 2) / hop_size`.
-///
-/// `samples[0]` is the start of the frame for column `-lead_cols`. Pass up to
-/// [`reassign_margin_cols`] frames before the tile (fewer at the start of the
-/// file) and as many after it, so energy moved across the tile edges arrives.
-/// Energy that lands outside the tile, or outside the frequency range, is
-/// dropped.
-///
-/// A bin is moved only when its power is at least `gate_db` (absolute dB of
-/// unnormalized power) and at least [`REASSIGN_ABOVE_FLOOR_DB`] over
-/// `noise_floor[k]` (from [`reassign_noise_floor`]; empty means no floor).
-/// Other bins stay where the plain spectrogram draws them. A moved bin leaves
-/// `noise_floor[k]` of its power behind and moves the rest.
-///
-/// Returns a `PreRendered` with `db_data` in the same format as normal tiles
-/// (row 0 = highest freq, absolute dB values).
-pub fn compute_reassigned_tile(
-    samples: &[f32],
-    lead_cols: usize,
-    col_count: usize,
-    fft_size: usize,
-    hop_size: usize,
-    gate_db: f32,
-    noise_floor: &[f32],
-) -> PreRendered {
-    let n_bins = fft_size / 2 + 1;
-
-    if samples.len() < fft_size || col_count == 0 || hop_size == 0 {
-        return PreRendered {
-            width: 0,
-            height: 0,
-            pixels: Vec::new(),
-            db_data: Vec::new(),
-            flow_shifts: Vec::new(),
-        };
-    }
-
-    let fft = plan_fft_forward(fft_size);
-    let win_h = hann_window(fft_size);
-    let win_th = t_hann_window(fft_size);
-    let win_dh = dh_window(fft_size);
-
-    // Reusable FFT buffers
-    let mut input = fft.make_input_vec();
-    let mut spec_h = fft.make_output_vec();
-    let mut spec_th = fft.make_output_vec();
-    let mut spec_dh = fft.make_output_vec();
-
-    // Accumulation grid (f64 for precision)
-    let grid_size = col_count * n_bins;
-    let mut accum = vec![0.0f64; grid_size];
-
-    let gate_power = 10.0f32.powf(gate_db / 10.0);
-    let above_floor = 10.0f32.powf(REASSIGN_ABOVE_FLOOR_DB / 10.0);
-    let floor_gate: Vec<f32> = noise_floor.iter().map(|&p| p * above_floor).collect();
-    let two_pi = 2.0 * std::f64::consts::PI;
-    let fft_over_two_pi = fft_size as f64 / two_pi;
-    let hop = hop_size as f64;
-    let max_shift = fft_size as f64 / 2.0;
-
-    // Frames whose energy can reach the tile: `margin` either side of it.
-    let margin = reassign_margin_cols(fft_size, hop_size);
-    let available_frames = (samples.len() - fft_size) / hop_size + 1;
-    let frame_count = available_frames.min(lead_cols + col_count + margin);
-
-    // Add power to the nearest cell; energy that lands outside the tile is dropped.
-    let mut add = |(t, f): (f64, f64), power: f32| {
-        let (t, f) = (t.round(), f.round());
-        if t >= 0.0 && t < col_count as f64 && f >= 0.0 && f < n_bins as f64 {
-            accum[f as usize * col_count + t as usize] += power as f64;
-        }
-    };
-
-    for frame_i in 0..frame_count {
-        let pos = frame_i * hop_size;
-        let frame = &samples[pos..pos + fft_size];
-        // This frame's column within the tile (negative in the lead).
-        let frame_col = frame_i as f64 - lead_cols as f64;
-
-        // FFT with standard Hann window
-        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_h.iter())) {
-            *inp = s * w;
-        }
-        fft.process(&mut input, &mut spec_h).expect("FFT failed");
-
-        // FFT with time-ramped Hann window
-        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_th.iter())) {
-            *inp = s * w;
-        }
-        fft.process(&mut input, &mut spec_th).expect("FFT failed");
-
-        // FFT with derivative Hann window
-        for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_dh.iter())) {
-            *inp = s * w;
-        }
-        fft.process(&mut input, &mut spec_dh).expect("FFT failed");
-
-        for k in 0..n_bins {
-            let xh = spec_h[k];
-            let power = xh.norm_sqr();
-
-            let strong = power >= gate_power && floor_gate.get(k).is_none_or(|&gate| power >= gate);
-            let moved = if strong {
-                use realfft::num_complex::Complex;
-                let xh64 = Complex::<f64>::new(xh.re as f64, xh.im as f64);
-                let xth64 = Complex::<f64>::new(spec_th[k].re as f64, spec_th[k].im as f64);
-                let xdh64 = Complex::<f64>::new(spec_dh[k].re as f64, spec_dh[k].im as f64);
-
-                // Time offset from the frame centre, in samples. The ramp is
-                // `(m - centre) * h[m]`, so a click at `m0` gives exactly
-                // `m0 - centre`. Larger offsets come from near-zero X_h and
-                // point outside the window, so those bins are not moved.
-                let dt = (xth64 / xh64).re;
-
-                // Corrected frequency bin. `win_dh` is the negated derivative
-                // of the Hann window, so this adds:
-                // f_hat = k + (N / 2π) Im(X_dh / X_h).
-                let f_hat = k as f64 + fft_over_two_pi * (xdh64 / xh64).im;
-
-                (dt.abs() <= max_shift).then_some((frame_col + dt / hop, f_hat))
-            } else {
-                None
-            };
-            let in_place = (frame_col, k as f64);
-            match moved {
-                Some(to) => {
-                    // The bin's noise share stays put and only the excess
-                    // moves, so a call doesn't leave a hole darker than the
-                    // noise around it.
-                    let left = noise_floor.get(k).map_or(0.0, |&n| n.min(power));
-                    add(in_place, left);
-                    add(to, power - left);
-                }
-                None => add(in_place, power),
-            }
-        }
-    }
-
-    // Convert accumulation grid to dB, flipped vertically (row 0 = highest freq)
-    let width = col_count as u32;
-    let height = n_bins as u32;
-    let mut db_data = vec![f32::NEG_INFINITY; grid_size];
-
-    for bin in 0..n_bins {
-        let y = n_bins - 1 - bin; // flip: row 0 = highest freq
-        for col in 0..col_count {
-            let val = accum[bin * col_count + col];
-            if val > 0.0 {
-                db_data[y * col_count + col] = (10.0 * val.log10()) as f32;
-            }
-        }
-    }
-
-    PreRendered {
-        width,
-        height,
-        pixels: Vec::new(),
-        db_data,
-        flow_shifts: Vec::new(),
-    }
 }
 
 /// A column gets a point on the main-frequency line only when its strongest
@@ -332,10 +161,12 @@ pub struct LinePoint {
 /// point's frequency is the median of itself and the points joined to it.
 /// Points joined to nothing are left out.
 ///
-/// `samples` starts at the frame for column `-lead_cols`, as for
-/// [`compute_reassigned_tile`]; pass [`reassign_margin_cols`] + 1 frames
-/// either side so the first and last columns know their neighbours. Empty
-/// without a noise floor.
+/// Columns follow the convention of `compute_stft_columns`: column `c` holds
+/// the frame that starts at `c * hop_size`. `samples[0]` is the start of the
+/// frame for column `-lead_cols`; pass [`reassign_margin_cols`] + 1 frames
+/// either side (fewer at the start of the file) so the first and last columns
+/// get the energy their neighbours' frames move into them, and know the
+/// neighbouring points they join. Empty without a noise floor.
 pub fn main_frequency_line(
     samples: &[f32],
     lead_cols: usize,
@@ -504,72 +335,6 @@ pub fn main_frequency_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::fft::compute_stft_columns;
-
-    /// Power per (column, bin) from a reassigned tile, as `cells[col][bin]`.
-    fn reassigned_power(tile: &PreRendered) -> Vec<Vec<f64>> {
-        let (w, h) = (tile.width as usize, tile.height as usize);
-        let mut cells = vec![vec![0.0f64; h]; w];
-        for y in 0..h {
-            let bin = h - 1 - y;
-            for (col, cell) in cells.iter_mut().enumerate() {
-                let db = tile.db_data[y * w + col];
-                if db.is_finite() {
-                    cell[bin] = 10f64.powf(db as f64 / 10.0);
-                }
-            }
-        }
-        cells
-    }
-
-    #[test]
-    fn reassigned_click_lands_in_its_column() {
-        // fft much larger than hop, as in a deep zoom: the click is in 32
-        // frames, and every one of them should move it to the same column.
-        let (fft, hop, cols) = (1024, 32, 64);
-        let lead = reassign_margin_cols(fft, hop);
-        // Column c holds the frame starting at c * hop, so a click at sample
-        // s belongs in column (s - 511.5) / 32 (counting from samples[0]).
-        let expected_col = 30;
-        let click_at = 511 + (lead + expected_col) * hop;
-        let mut samples = vec![0.0f32; (lead + cols + lead) * hop + fft];
-        samples[click_at] = 1.0;
-
-        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -100.0, &[]);
-        let cells = reassigned_power(&tile);
-        let col_energy: Vec<f64> = cells.iter().map(|c| c.iter().sum()).collect();
-        let total: f64 = col_energy.iter().sum();
-        assert!(total > 0.0, "click produced no energy");
-        let near: f64 = col_energy[expected_col - 1..=expected_col + 1].iter().sum();
-        assert!(
-            near / total > 0.99,
-            "only {:.1}% of the click's energy is within 1 column of column {expected_col}",
-            100.0 * near / total
-        );
-    }
-
-    #[test]
-    fn reassigned_tone_lands_in_its_bin() {
-        // A steady tone between bins (20.3) should collapse onto bin 20.
-        let (fft, hop, cols) = (256, 64, 32);
-        let lead = reassign_margin_cols(fft, hop);
-        let bin = 20.3f64;
-        let n = (lead + cols + lead) * hop + fft;
-        let samples: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f64::consts::PI * bin * i as f64 / fft as f64).sin() as f32)
-            .collect();
-
-        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -100.0, &[]);
-        let cells = reassigned_power(&tile);
-        for (col, cell) in cells.iter().enumerate() {
-            let total: f64 = cell.iter().sum();
-            assert!(
-                cell[20] / total > 0.95,
-                "column {col}: only {:.1}% of the tone's energy is in bin 20",
-                100.0 * cell[20] / total
-            );
-        }
-    }
 
     /// A bat-like downward sweep, 80 kHz to 20 kHz in 4 ms at 384 kHz, with a
     /// Hann envelope. It crosses 20 bins in one 512-sample window, so the
@@ -601,32 +366,6 @@ mod tests {
                 samples[self.start + i] += (amp * env * phase.sin()) as f32;
             }
         }
-
-        /// Share of the tile's energy, within the sweep's columns, that lies
-        /// within 2.5 bins of its frequency at each column's time. One column
-        /// at hop 32 is 1.3 bins of sweep.
-        fn share_on_track(&self, cells: &[Vec<f64>], lead: usize, fft: usize, hop: usize) -> f64 {
-            let bin_hz = Self::SR / fft as f64;
-            let centre = (fft as f64 - 1.0) / 2.0;
-            let (mut total, mut on_track) = (0.0f64, 0.0f64);
-            for (col, cell) in cells.iter().enumerate() {
-                // The sample this column stands for, counted from samples[0].
-                let s = (col + lead) as f64 * hop as f64 + centre;
-                let into_call = s - self.start as f64;
-                if into_call < 0.0 || into_call > self.len() as f64 {
-                    continue;
-                }
-                let track_bin = (Self::F0 + self.rate() * into_call / Self::SR) / bin_hz;
-                for (bin, &p) in cell.iter().enumerate() {
-                    total += p;
-                    if (bin as f64 - track_bin).abs() <= 2.5 {
-                        on_track += p;
-                    }
-                }
-            }
-            assert!(total > 0.0, "the sweep produced no energy");
-            on_track / total
-        }
     }
 
     /// Repeatable white noise, uniform in [-amp, amp).
@@ -640,101 +379,6 @@ mod tests {
                 amp * ((s >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0)
             })
             .collect()
-    }
-
-    #[test]
-    fn reassigned_chirp_follows_its_frequency_track() {
-        let (fft, hop, cols) = (512, 32, 96);
-        let lead = reassign_margin_cols(fft, hop);
-        let sweep = Sweep {
-            start: (lead + 20) * hop,
-        };
-        let mut samples = vec![0.0f32; (lead + cols + lead) * hop + fft];
-        sweep.add_to(&mut samples, 1.0);
-
-        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -60.0, &[]);
-        let share = sweep.share_on_track(&reassigned_power(&tile), lead, fft, hop);
-        assert!(
-            share > 0.9,
-            "only {:.1}% of the sweep's energy is within 2.5 bins of its track",
-            100.0 * share
-        );
-    }
-
-    #[test]
-    fn reassigned_noise_stays_put_and_calls_still_sharpen() {
-        // Noise under the floor gate keeps the plain spectrogram's place, so
-        // it looks the same as with reassignment off instead of speckled. A
-        // sweep far above the noise is still moved onto its track.
-        let (fft, hop, cols) = (512, 32, 96);
-        let lead = reassign_margin_cols(fft, hop);
-        let floor = reassign_noise_floor(&white_noise(131_072, 0.01, 1), fft);
-        let mut samples = white_noise((lead + cols + lead) * hop + fft, 0.01, 2);
-        // Starts in column 60. Columns 0-39 hold only noise: their frames end
-        // before it, and its energy moves to where it is, never earlier.
-        let sweep = Sweep {
-            start: (lead + 60) * hop,
-        };
-        sweep.add_to(&mut samples, 0.5);
-
-        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -200.0, &floor);
-        let cells = reassigned_power(&tile);
-        let plain = compute_stft_columns(&samples[lead * hop..], 384_000, fft, hop, 0, cols);
-        let (mut same, mut checked) = (0usize, 0usize);
-        for col in 0..40 {
-            for (bin, &mag) in plain[col].magnitudes.iter().enumerate() {
-                let plain_db = 20.0 * (mag as f64).log10();
-                let reassigned_db = 10.0 * cells[col][bin].log10();
-                checked += 1;
-                if (plain_db - reassigned_db).abs() < 0.01 {
-                    same += 1;
-                }
-            }
-        }
-        assert!(
-            same as f64 / checked as f64 > 0.99,
-            "only {same} of {checked} noise cells match the plain spectrogram"
-        );
-
-        let share = sweep.share_on_track(&cells, lead, fft, hop);
-        assert!(
-            share > 0.9,
-            "only {:.1}% of the sweep's energy is within 2.5 bins of its track",
-            100.0 * share
-        );
-    }
-
-    #[test]
-    fn moved_bins_leave_their_noise_share() {
-        // A tone far above the noise moves its main lobe onto one bin. The
-        // bins it moved from keep the noise floor's power instead of going
-        // darker than the noise around them.
-        let (fft, hop, cols) = (256, 64, 32);
-        let lead = reassign_margin_cols(fft, hop);
-        let floor = reassign_noise_floor(&white_noise(65_536, 0.01, 4), fft);
-        let mut samples = white_noise((lead + cols + lead) * hop + fft, 0.01, 5);
-        for (i, s) in samples.iter_mut().enumerate() {
-            *s += (2.0 * std::f64::consts::PI * 20.3 * i as f64 / fft as f64).sin() as f32;
-        }
-
-        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -200.0, &floor);
-        let cells = reassigned_power(&tile);
-        for (col, cell) in cells.iter().enumerate() {
-            for bin in [18, 19, 21, 22] {
-                assert!(
-                    cell[bin] >= 0.99 * floor[bin] as f64,
-                    "column {col}, bin {bin}: {:.2e} is under its noise floor {:.2e}",
-                    cell[bin],
-                    floor[bin]
-                );
-            }
-            let lobe: f64 = cell[18..=22].iter().sum();
-            assert!(
-                cell[20] / lobe > 0.95,
-                "column {col}: only {:.1}% of the tone is in bin 20",
-                100.0 * cell[20] / lobe
-            );
-        }
     }
 
     #[test]
@@ -766,46 +410,6 @@ mod tests {
         assert_eq!(floor, reassign_noise_floor(&noise, fft));
         assert!(floor.iter().all(|&p| p > 0.0));
         assert!(reassign_noise_floor(&vec![0.0f32; 64 * fft], fft).is_empty());
-    }
-
-    #[test]
-    fn reassigned_tiles_join_without_a_seam() {
-        // Two adjacent tiles, each with its own margins, must match one tile
-        // twice as wide: energy moved across the join is kept, not lost or
-        // piled onto the edge columns.
-        let (fft, hop, cols) = (1024, 32, 48);
-        let margin = reassign_margin_cols(fft, hop);
-        let n = (margin + 2 * cols + margin) * hop + fft;
-        let mut samples: Vec<f32> = (0..n)
-            .map(|i| {
-                let t = i as f64 / 384_000.0;
-                let f = 30_000.0 + 2.0e7 * t; // slow upward sweep
-                (0.3 * (2.0 * std::f64::consts::PI * f * t).sin()) as f32
-            })
-            .collect();
-        // A click right on the join.
-        samples[(margin + cols) * hop + 511] += 1.0;
-
-        let wide = compute_reassigned_tile(&samples, margin, 2 * cols, fft, hop, -80.0, &[]);
-        let left = compute_reassigned_tile(&samples, margin, cols, fft, hop, -80.0, &[]);
-        let right =
-            compute_reassigned_tile(&samples[cols * hop..], margin, cols, fft, hop, -80.0, &[]);
-
-        let height = wide.height as usize;
-        for y in 0..height {
-            for col in 0..2 * cols {
-                let joined = if col < cols {
-                    left.db_data[y * cols + col]
-                } else {
-                    right.db_data[y * cols + col - cols]
-                };
-                let whole = wide.db_data[y * 2 * cols + col];
-                assert!(
-                    joined == whole || (joined - whole).abs() < 1e-3,
-                    "row {y}, column {col}: two tiles give {joined} dB, one wide tile gives {whole} dB"
-                );
-            }
-        }
     }
 
     /// A tile's samples with `lead` = margin + 1 frames either side, as the
