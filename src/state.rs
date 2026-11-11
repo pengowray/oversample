@@ -2890,8 +2890,8 @@ impl AppState {
     }
 
     /// Measure the selected file's noise floor for the Auto range, once per
-    /// file. Skips live recordings, and waits while a file is still loading
-    /// if too little of it is in memory to measure.
+    /// file. Waits while the file is still being recorded or listened to, and
+    /// while a file is still loading if too little of it is in memory.
     pub fn measure_current_noise_floor(&self) {
         /// Frames sampled across the file: enough for a stable percentile,
         /// few enough to run in a few milliseconds.
@@ -2899,9 +2899,13 @@ impl AppState {
         let Some(idx) = self.library.current_index().get() else {
             return;
         };
+        // `is_recording` stays set on an unsaved web recording after it stops,
+        // so a file counts as live only while the mic is recording or
+        // listening. Reading these here re-runs the measurement when it stops.
+        let mic_live = self.mic.recording().get() || self.mic.listening().get();
         let job = self.library.files().with(|files| {
             let f = files.get(idx)?;
-            if f.is_recording || f.is_live_listen {
+            if (f.is_recording || f.is_live_listen) && mic_live {
                 return None;
             }
             if self.spect.noise_floors().with_untracked(|m| m.contains_key(&f.id)) {

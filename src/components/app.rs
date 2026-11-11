@@ -2637,7 +2637,18 @@ pub fn MainViewButton() -> impl IntoView {
                                     state.current_noise_floor_dbfs(),
                                     range_get(),
                                 )
-                                on:click=move |_| auto_range_set(!auto_range())
+                                on:click=move |_| {
+                                    if auto_range() {
+                                        // Keep the range Auto chose, so turning
+                                        // Auto off doesn't change the picture.
+                                        let r = range_get();
+                                        range_set(r);
+                                        floor_set(-r);
+                                        auto_range_set(false);
+                                    } else {
+                                        auto_range_set(true);
+                                    }
+                                }
                             >"Auto"</button>
                         </div>
                         <div class="dsp-custom-slider-row">
