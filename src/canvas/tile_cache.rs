@@ -1846,7 +1846,7 @@ const REASSIGN_GATE_16_BIT_DB: f32 = -60.0;
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
 /// compute corrected time-frequency positions, producing sharper spectrograms.
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::fft::compute_reassigned_tile;
+    use crate::dsp::fft::{compute_reassigned_tile, reassign_margin_cols};
 
     let key = TileKey {
         file_idx,
@@ -1921,8 +1921,13 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         };
 
         let cv = state.viewmode.channel_view().get_untracked();
-        let sample_start = tile_idx * TILE_COLS * config_hop;
-        let sample_len = TILE_COLS * config_hop + actual_fft;
+        // Read extra frames either side: reassignment moves energy up to
+        // `margin` columns, so neighbouring frames add to this tile's edges.
+        let margin = reassign_margin_cols(actual_fft, config_hop);
+        let tile_col_start = tile_idx * TILE_COLS;
+        let lead_cols = margin.min(tile_col_start);
+        let sample_start = (tile_col_start - lead_cols) * config_hop;
+        let sample_len = (lead_cols + TILE_COLS + margin - 1) * config_hop + actual_fft;
 
         let read = streaming_source::read_region_ready(
             audio.source.as_ref(),
@@ -1955,7 +1960,9 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         let meta = &audio.metadata;
         let gate_db = REASSIGN_GATE_16_BIT_DB
             - oversample_core::dsp::depth_range::depth_extra_db(meta.bits_per_sample, meta.is_float);
-        let rendered = compute_reassigned_tile(samples, TILE_COLS, actual_fft, config_hop, gate_db);
+        let rendered = compute_reassigned_tile(
+            samples, lead_cols, TILE_COLS, actual_fft, config_hop, gate_db,
+        );
 
         let current_gen = REASSIGN_CACHE_GENERATION.with(|g| *g.borrow());
         if current_gen != gen {

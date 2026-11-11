@@ -82,18 +82,37 @@ fn dh_window(size: usize) -> Vec<f32> {
     })
 }
 
+/// How many columns a frame's energy can move in time under reassignment.
+///
+/// Reassignment keeps energy inside its own window, so it moves at most
+/// `fft_size / 2` samples from the frame centre. A reassigned tile needs this
+/// many extra frames on each side to collect the energy that its neighbours'
+/// frames move into it.
+pub fn reassign_margin_cols(fft_size: usize, hop_size: usize) -> usize {
+    (fft_size / 2).div_ceil(hop_size.max(1))
+}
+
 /// Compute a reassigned spectrogram tile from raw audio samples.
 ///
 /// Performs 3 FFTs per frame (standard Hann, time-ramped, derivative-windowed),
 /// then accumulates |X|² at corrected (time, frequency) positions using
 /// nearest-neighbor assignment.
 ///
+/// Columns follow the same convention as `compute_stft_columns`: column `c`
+/// holds the frame that starts at `c * hop_size`, so a click at sample `s`
+/// lands in column `(s - (fft_size - 1) / 2) / hop_size`.
+///
+/// `samples[0]` is the start of the frame for column `-lead_cols`. Pass up to
+/// [`reassign_margin_cols`] frames before the tile (fewer at the start of the
+/// file) and as many after it, so energy moved across the tile edges arrives.
+/// Energy that lands outside the tile, or outside the frequency range, is
+/// dropped.
+///
 /// Returns a `PreRendered` with `db_data` in the same format as normal tiles
 /// (row 0 = highest freq, absolute dB values).
-///
-/// `samples` must cover at least `col_count * hop_size + fft_size` samples.
 pub fn compute_reassigned_tile(
     samples: &[f32],
+    lead_cols: usize,
     col_count: usize,
     fft_size: usize,
     hop_size: usize,
@@ -101,7 +120,7 @@ pub fn compute_reassigned_tile(
 ) -> PreRendered {
     let n_bins = fft_size / 2 + 1;
 
-    if samples.len() < fft_size || col_count == 0 {
+    if samples.len() < fft_size || col_count == 0 || hop_size == 0 {
         return PreRendered {
             width: 0,
             height: 0,
@@ -129,21 +148,19 @@ pub fn compute_reassigned_tile(
     let threshold_power = 10.0f32.powf(threshold_db / 10.0); // power threshold
     let two_pi = 2.0 * std::f64::consts::PI;
     let fft_over_two_pi = fft_size as f64 / two_pi;
+    let hop = hop_size as f64;
+    let max_shift = fft_size as f64 / 2.0;
 
-    let total_cols = if samples.len() >= fft_size {
-        (samples.len() - fft_size) / hop_size + 1
-    } else {
-        0
-    };
-    let actual_cols = col_count.min(total_cols);
+    // Frames whose energy can reach the tile: `margin` either side of it.
+    let margin = reassign_margin_cols(fft_size, hop_size);
+    let available_frames = (samples.len() - fft_size) / hop_size + 1;
+    let frame_count = available_frames.min(lead_cols + col_count + margin);
 
-    for col_i in 0..actual_cols {
-        let pos = col_i * hop_size;
-        if pos + fft_size > samples.len() {
-            break;
-        }
-
+    for frame_i in 0..frame_count {
+        let pos = frame_i * hop_size;
         let frame = &samples[pos..pos + fft_size];
+        // This frame's column within the tile (negative in the lead).
+        let frame_col = frame_i as f64 - lead_cols as f64;
 
         // FFT with standard Hann window
         for (inp, (&s, &w)) in input.iter_mut().zip(frame.iter().zip(win_h.iter())) {
@@ -177,17 +194,30 @@ pub fn compute_reassigned_tile(
             let xth64 = Complex::<f64>::new(spec_th[k].re as f64, spec_th[k].im as f64);
             let xdh64 = Complex::<f64>::new(spec_dh[k].re as f64, spec_dh[k].im as f64);
 
-            // Corrected time: t_hat = n - Re(X_th / X_h)
-            let t_hat = col_i as f64 - (xth64 / xh64).re;
+            // Time offset from the frame centre, in samples. The ramp is
+            // `(m - centre) * h[m]`, so a click at `m0` gives exactly
+            // `m0 - centre`. Larger offsets come from near-zero X_h and
+            // point outside the window, so they are dropped.
+            let dt = (xth64 / xh64).re;
+            if !(dt.abs() <= max_shift) {
+                continue;
+            }
+            let t_hat = frame_col + dt / hop;
 
-            // Corrected frequency bin: f_hat = k + (N / 2π) * Im(X_dh / X_h)
+            // Corrected frequency bin. `win_dh` is the negated derivative of
+            // the Hann window, so this adds: f_hat = k + (N / 2π) Im(X_dh / X_h).
             let f_hat = k as f64 + fft_over_two_pi * (xdh64 / xh64).im;
 
-            // Clamp and round to nearest grid point
-            let t_idx = t_hat.round().clamp(0.0, (col_count - 1) as f64) as usize;
-            let f_idx = f_hat.round().clamp(0.0, (n_bins - 1) as f64) as usize;
+            let t_round = t_hat.round();
+            let f_round = f_hat.round();
+            if !(t_round >= 0.0 && t_round < col_count as f64) {
+                continue;
+            }
+            if !(f_round >= 0.0 && f_round < n_bins as f64) {
+                continue;
+            }
 
-            accum[f_idx * col_count + t_idx] += power as f64;
+            accum[f_round as usize * col_count + t_round as usize] += power as f64;
         }
     }
 
@@ -530,5 +560,158 @@ mod tests {
             error < result.freq_resolution * 2.0,
             "Peak at {peak_freq} Hz, expected ~{freq} Hz"
         );
+    }
+
+    /// Power per (column, bin) from a reassigned tile, as `cells[col][bin]`.
+    fn reassigned_power(tile: &PreRendered) -> Vec<Vec<f64>> {
+        let (w, h) = (tile.width as usize, tile.height as usize);
+        let mut cells = vec![vec![0.0f64; h]; w];
+        for y in 0..h {
+            let bin = h - 1 - y;
+            for (col, cell) in cells.iter_mut().enumerate() {
+                let db = tile.db_data[y * w + col];
+                if db.is_finite() {
+                    cell[bin] = 10f64.powf(db as f64 / 10.0);
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn reassigned_click_lands_in_its_column() {
+        // fft much larger than hop, as in a deep zoom: the click is in 32
+        // frames, and every one of them should move it to the same column.
+        let (fft, hop, cols) = (1024, 32, 64);
+        let lead = reassign_margin_cols(fft, hop);
+        // Column c holds the frame starting at c * hop, so a click at sample
+        // s belongs in column (s - 511.5) / 32 (counting from samples[0]).
+        let expected_col = 30;
+        let click_at = 511 + (lead + expected_col) * hop;
+        let mut samples = vec![0.0f32; (lead + cols + lead) * hop + fft];
+        samples[click_at] = 1.0;
+
+        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -100.0);
+        let cells = reassigned_power(&tile);
+        let col_energy: Vec<f64> = cells.iter().map(|c| c.iter().sum()).collect();
+        let total: f64 = col_energy.iter().sum();
+        assert!(total > 0.0, "click produced no energy");
+        let near: f64 = col_energy[expected_col - 1..=expected_col + 1].iter().sum();
+        assert!(
+            near / total > 0.99,
+            "only {:.1}% of the click's energy is within 1 column of column {expected_col}",
+            100.0 * near / total
+        );
+    }
+
+    #[test]
+    fn reassigned_tone_lands_in_its_bin() {
+        // A steady tone between bins (20.3) should collapse onto bin 20.
+        let (fft, hop, cols) = (256, 64, 32);
+        let lead = reassign_margin_cols(fft, hop);
+        let bin = 20.3f64;
+        let n = (lead + cols + lead) * hop + fft;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f64::consts::PI * bin * i as f64 / fft as f64).sin() as f32)
+            .collect();
+
+        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -100.0);
+        let cells = reassigned_power(&tile);
+        for (col, cell) in cells.iter().enumerate() {
+            let total: f64 = cell.iter().sum();
+            assert!(
+                cell[20] / total > 0.95,
+                "column {col}: only {:.1}% of the tone's energy is in bin 20",
+                100.0 * cell[20] / total
+            );
+        }
+    }
+
+    #[test]
+    fn reassigned_chirp_follows_its_frequency_track() {
+        // A bat-like downward sweep, 80 kHz to 20 kHz in 4 ms at 384 kHz.
+        // It crosses 20 bins in one 512-sample window, so the plain
+        // spectrogram smears it; reassignment should put it back on the line.
+        let (sr, fft, hop, cols) = (384_000.0f64, 512, 32, 96);
+        let lead = reassign_margin_cols(fft, hop);
+        let (f0, f1, dur) = (80_000.0f64, 20_000.0f64, 0.004f64);
+        let start = (lead + 20) * hop; // call starts in column ~12
+        let len = (dur * sr) as usize;
+        let rate = (f1 - f0) / dur;
+        let freq_at = |s: f64| f0 + rate * (s - start as f64) / sr;
+        let mut samples = vec![0.0f32; (lead + cols + lead) * hop + fft];
+        for i in 0..len {
+            let t = i as f64 / sr;
+            let phase = 2.0 * std::f64::consts::PI * (f0 * t + 0.5 * rate * t * t);
+            let env = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / len as f64).cos());
+            samples[start + i] = (env * phase.sin()) as f32;
+        }
+
+        let tile = compute_reassigned_tile(&samples, lead, cols, fft, hop, -60.0);
+        let cells = reassigned_power(&tile);
+        let bin_hz = sr / fft as f64;
+        let centre = (fft as f64 - 1.0) / 2.0;
+        let (mut total, mut on_track) = (0.0f64, 0.0f64);
+        for (col, cell) in cells.iter().enumerate() {
+            // The sample this column stands for, counted from samples[0].
+            let s = (col + lead) as f64 * hop as f64 + centre;
+            if s < start as f64 || s > (start + len) as f64 {
+                total += cell.iter().sum::<f64>();
+                continue;
+            }
+            let track_bin = freq_at(s) / bin_hz;
+            for (bin, &p) in cell.iter().enumerate() {
+                total += p;
+                // One column is 1.3 bins of sweep, so allow 2.5 bins.
+                if (bin as f64 - track_bin).abs() <= 2.5 {
+                    on_track += p;
+                }
+            }
+        }
+        assert!(total > 0.0, "chirp produced no energy");
+        assert!(
+            on_track / total > 0.9,
+            "only {:.1}% of the chirp's energy is within 2.5 bins of its track",
+            100.0 * on_track / total
+        );
+    }
+
+    #[test]
+    fn reassigned_tiles_join_without_a_seam() {
+        // Two adjacent tiles, each with its own margins, must match one tile
+        // twice as wide: energy moved across the join is kept, not lost or
+        // piled onto the edge columns.
+        let (fft, hop, cols) = (1024, 32, 48);
+        let margin = reassign_margin_cols(fft, hop);
+        let n = (margin + 2 * cols + margin) * hop + fft;
+        let mut samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / 384_000.0;
+                let f = 30_000.0 + 2.0e7 * t; // slow upward sweep
+                (0.3 * (2.0 * std::f64::consts::PI * f * t).sin()) as f32
+            })
+            .collect();
+        // A click right on the join.
+        samples[(margin + cols) * hop + 511] += 1.0;
+
+        let wide = compute_reassigned_tile(&samples, margin, 2 * cols, fft, hop, -80.0);
+        let left = compute_reassigned_tile(&samples, margin, cols, fft, hop, -80.0);
+        let right = compute_reassigned_tile(&samples[cols * hop..], margin, cols, fft, hop, -80.0);
+
+        let height = wide.height as usize;
+        for y in 0..height {
+            for col in 0..2 * cols {
+                let joined = if col < cols {
+                    left.db_data[y * cols + col]
+                } else {
+                    right.db_data[y * cols + col - cols]
+                };
+                let whole = wide.db_data[y * 2 * cols + col];
+                assert!(
+                    joined == whole || (joined - whole).abs() < 1e-3,
+                    "row {y}, column {col}: two tiles give {joined} dB, one wide tile gives {whole} dB"
+                );
+            }
+        }
     }
 }
