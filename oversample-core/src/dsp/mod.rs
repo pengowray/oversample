@@ -19,6 +19,7 @@ pub mod pitch_shift;
 pub mod psd;
 pub mod resonators;
 pub mod spectral_sub;
+pub mod surface_grid;
 pub mod wsnr;
 pub mod zc_divide;
 pub mod zero_crossing;

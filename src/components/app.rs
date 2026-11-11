@@ -1624,6 +1624,7 @@ pub fn App() -> impl IntoView {
             <RightSidebar />
             {move || state.dialogs.xc_browser_open().get().then(|| view! { <XcBrowser /> })}
             {move || state.dialogs.wiki_browser_open().get().then(|| view! { <WikiBrowser /> })}
+            <crate::components::surface_3d::Surface3dDialog />
             {cfg!(debug_assertions).then(|| view! {
                 <div class="debug-build-banner"
                     title="This is an unoptimised WASM build. It runs slower and can hit spurious panics that don't happen in release builds. Rebuild with `trunk serve --release`."

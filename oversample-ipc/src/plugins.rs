@@ -105,6 +105,12 @@ pub struct UsbOpenResult {
     pub sample_rate: i32,
     pub num_channels: i32,
     pub bit_resolution: i32,
+    /// Bytes per sample in a packet (2, 3 or 4). 0 from a plugin that does not report it.
+    #[serde(default)]
+    pub subslot_size: i32,
+    /// IEEE float samples rather than PCM. False from a plugin that does not report it.
+    #[serde(default)]
+    pub is_float: bool,
     pub interface_number: i32,
     pub alternate_setting: i32,
     pub device_name: String,
@@ -149,6 +155,10 @@ pub struct UsbStartStreamArgs {
     pub interface_number: u32,
     pub alternate_setting: u32,
     pub uac_version: u32,
+    /// Bytes per sample in a packet: 2, 3 or 4. Recordings keep the same bit depth.
+    pub subslot_size: u32,
+    /// 4-byte samples are IEEE float, recorded as float WAV.
+    pub is_float: bool,
 }
 
 /// Generic `{ granted }` result, e.g. `plugin:usb-audio|requestAudioPermission`.

@@ -104,36 +104,43 @@ pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 /// Encode f32 samples as a 16-bit PCM WAV file. `samples` is interleaved when
 /// `channels` is more than 1.
 pub fn encode_wav_interleaved(samples: &[f32], channels: u16, sample_rate: u32) -> Vec<u8> {
-    use crate::audio::wav::{header_bytes, WavWriteFormat};
-    let fmt = WavWriteFormat {
-        sample_rate,
-        channels,
-        bits_per_sample: 16,
-        is_float: false,
-    };
-    let data_size = samples.len() as u64 * 2;
-    let mut buf = header_bytes(&fmt, data_size, 0);
-    buf.reserve(data_size as usize);
-    for &sample in samples {
-        let clamped = sample.clamp(-1.0, 1.0);
-        let val = (clamped * 32767.0) as i16;
-        buf.extend_from_slice(&val.to_le_bytes());
-    }
+    encode_wav_at(samples, channels, sample_rate, 16, false)
+}
+
+/// Encode f32 samples as a WAV file of `bits_per_sample` bits: 24 or 32 (32-bit
+/// float when `is_float`), or 16 for any other depth, as
+/// [`WavWriteFormat::for_f32_samples`](crate::audio::wav::WavWriteFormat::for_f32_samples)
+/// decides. `samples` is interleaved when `channels` is more than 1.
+pub fn encode_wav_at(
+    samples: &[f32],
+    channels: u16,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    is_float: bool,
+) -> Vec<u8> {
+    use crate::audio::wav::{encode_f32_samples, header_bytes, WavWriteFormat};
+    let fmt = WavWriteFormat::for_f32_samples(sample_rate, channels, bits_per_sample, is_float);
+    let data = encode_f32_samples(samples, &fmt);
+    let mut buf = header_bytes(&fmt, data.len() as u64, 0);
+    buf.extend_from_slice(&data);
     buf
 }
 
 /// Encode a complete WAV file from samples, GUANO metadata, and WAV markers.
 /// This is the single source of truth for building recording WAVs — ensures
 /// the downloaded/saved file matches the metadata shown in the UI. `samples` is
-/// interleaved when `channels` is more than 1.
+/// interleaved when `channels` is more than 1. The bit depth is chosen as in
+/// [`encode_wav_at`].
 pub fn encode_wav_complete(
     samples: &[f32],
     channels: u16,
     sample_rate: u32,
+    bits_per_sample: u16,
+    is_float: bool,
     guano: Option<&crate::audio::guano::GuanoMetadata>,
     markers: &[WavMarker],
 ) -> Vec<u8> {
-    let mut wav_data = encode_wav_interleaved(samples, channels, sample_rate);
+    let mut wav_data = encode_wav_at(samples, channels, sample_rate, bits_per_sample, is_float);
 
     // Insert cue markers (before GUANO)
     if !markers.is_empty() {
@@ -208,6 +215,8 @@ pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavM
         &samples,
         channels,
         audio.sample_rate,
+        audio.metadata.bits_per_sample,
+        audio.metadata.is_float,
         audio.metadata.guano.as_ref(),
         markers,
     );

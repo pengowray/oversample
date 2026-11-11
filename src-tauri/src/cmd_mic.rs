@@ -154,11 +154,12 @@ pub fn mic_start_recording(
 ) -> Result<(), String> {
     let mic = state.lock().map_err(|e| e.to_string())?;
     let m = mic.as_ref().ok_or("Microphone not open")?;
-    {
+    let write_format = {
         let mut buf = m.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
         buf.force_bits = force_bits;
+        let write_format = buf.choose_write_format();
         // Seed the just-cleared buffer with the listening pre-roll ring, then
         // flip is_recording while still holding the buffer lock so the next
         // audio callback appends live frames immediately after the pre-roll —
@@ -173,7 +174,8 @@ pub fn mic_start_recording(
                 seeded
             );
         }
-    }
+        write_format
+    };
 
     let args = recovery::StartArgs {
         filename,
@@ -190,7 +192,7 @@ pub fn mic_start_recording(
         enable_recovery,
     };
     if let Some(writer) =
-        recovery::start_writer(&app, &args, m.format, m.sample_rate, m.channels, "batcap")
+        recovery::start_writer(&app, &args, write_format, m.sample_rate, m.channels, "batcap")
     {
         if let Ok(mut guard) = m.recovery.writer.lock() {
             *guard = Some(writer);
@@ -220,20 +222,22 @@ pub fn mic_stop_recording(
 
     // Snapshot totals before we drain the tail — we want the sample count as
     // captured, not the remainder-in-memory count.
-    let (num_samples, sample_rate, shared_fd, preroll_seeded) = {
+    let (num_samples, sample_rate, shared_fd, preroll_seeded, write_format) = {
         let mut buf = m.buffer.lock().unwrap();
         (
             buf.total_samples,
             buf.sample_rate,
             buf.shared_fd.take(),
             buf.preroll_seeded,
+            buf.write_format,
         )
     };
     // RAII-own the shared-storage fd so every early return below (no-samples,
     // skip-save, finalize error) closes it instead of leaking it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
-    let bits_per_sample = m.format.bits_per_sample();
-    let is_float = m.format.is_float();
+    // Both the streamed file and the to-memory WAV are written in this format.
+    let bits_per_sample = write_format.bits_per_sample();
+    let is_float = write_format.is_float();
     let channels = m.channels;
     let duration_secs = num_samples as f64 / sample_rate as f64;
     let skip_save = skip_native_save.unwrap_or(false);
@@ -308,7 +312,7 @@ pub fn mic_stop_recording(
         let writer = recovery_writer.expect("streaming_mode implies writer");
         let final_bytes = {
             let mut buf = m.buffer.lock().unwrap();
-            recovery::drain_cpal_bytes(&mut buf)
+            recovery::drain_buffer_bytes(&mut buf)
         };
         // Everything below operates on the owned writer / paths, not the mic
         // state. Release the MicMutex before the (potentially large) in-place

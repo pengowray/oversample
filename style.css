@@ -8113,3 +8113,117 @@ button.canvas-overflow-action-btn.disabled {
     padding: 2px 6px;
     font-size: 11px;
 }
+
+/* ── 3D spectrogram dialog ("View in 3D" in the selection menu) ───── */
+
+/* Wide and tall: the surface needs room to rotate, and the default
+   .modal-dialog width (420px) is sized for forms. */
+.modal-dialog.surface-3d-dialog {
+    max-width: min(96vw, 1100px);
+    height: min(88vh, 760px);
+    max-height: 88vh;
+}
+
+.surface-3d-dialog .modal-header {
+    gap: 12px;
+}
+
+.surface-3d-summary {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+    color: #999;
+    overflow: hidden;
+}
+
+.surface-3d-file {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* On a phone the file name would be cut to a few letters; the main view's
+   title bar already shows it. */
+@media (max-width: 600px) {
+    .surface-3d-file {
+        display: none;
+    }
+}
+
+.surface-3d-range {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: #ccc;
+}
+
+.surface-3d-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 8px 18px;
+    border-bottom: 1px solid #333;
+    font-size: 12px;
+    color: #bbb;
+}
+
+.surface-3d-floor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.surface-3d-floor input {
+    width: 140px;
+    accent-color: #4a8;
+}
+
+/* Fixed width so the slider doesn't shift as the value changes length. */
+.surface-3d-floor-value {
+    min-width: 4.5em;
+    font-variant-numeric: tabular-nums;
+}
+
+.surface-3d-note {
+    color: #e0b060;
+}
+
+.surface-3d-hint {
+    margin-left: auto;
+    color: #888;
+}
+
+.surface-3d-plot-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+/* touch-action: none lets a finger drag rotate the surface instead of
+   scrolling the page on phones. */
+.surface-3d-plot {
+    position: absolute;
+    inset: 0;
+    touch-action: none;
+}
+
+.surface-3d-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 13px;
+    padding: 16px;
+    text-align: center;
+    pointer-events: none;
+}
+
+.surface-3d-status.error {
+    color: #e88;
+}

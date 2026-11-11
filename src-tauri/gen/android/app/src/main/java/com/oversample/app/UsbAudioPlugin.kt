@@ -51,6 +51,7 @@ private const val UAC1_FORMAT_TYPE = 0x02
 private const val UAC2_CLOCK_SOURCE = 0x0A
 
 // USB descriptor types
+private const val DESC_TYPE_CONFIGURATION = 2
 private const val DESC_TYPE_INTERFACE = 4
 private const val DESC_TYPE_ENDPOINT = 5
 private const val DESC_TYPE_CS_INTERFACE = 0x24
@@ -62,6 +63,7 @@ private const val HOST_TO_DEVICE_CLASS_INTERFACE = 0x21
 private const val HOST_TO_DEVICE_CLASS_ENDPOINT = 0x22
 private const val GET_CUR = 0x01
 private const val SET_CUR = 0x01
+private const val GET_RANGE = 0x02
 private const val USB_DIR_OUT_STANDARD_INTERFACE = 0x01
 private const val USB_REQUEST_SET_INTERFACE = 11
 private const val DEVICE_TO_HOST_CLASS_ENDPOINT = 0xA2
@@ -384,6 +386,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 epObj.put("maxPacketSize", ep.maxPacketSize)
                 epObj.put("channels", ep.channels)
                 epObj.put("bitResolution", ep.bitResolution)
+                epObj.put("subslotSize", ep.subslotSize)
+                epObj.put("isFloat", ep.isFloat)
                 epObj.put("sampleRate", ep.sampleRate)
                 epObj.put("sampleRateSettable", ep.sampleRateSettable)
                 epObj.put("interfaceNumber", ep.interfaceNumber)
@@ -471,10 +475,23 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             }
 
             // Select the best endpoint for the requested sample rate
-            val desiredRate = if (args.sampleRate > 0) args.sampleRate else 384000
+            val requestedRate = if (args.sampleRate > 0) args.sampleRate else 384000
+            // A UAC2 device lists its rates in the clock's GET RANGE answer: take the requested
+            // rate if it is listed, or else the highest listed rate below it. A device that
+            // answers with no rates is left as before.
+            val desiredRate = if (audioInfo.uacVersion == 2 && audioInfo.sampleRates.isNotEmpty()) {
+                audioInfo.sampleRates.filter { it <= requestedRate }.maxOrNull()
+                    ?: audioInfo.sampleRates.first()
+            } else {
+                requestedRate
+            }
+            // A device with several input alternate settings (the Portacapture X8 has 8 channels
+            // of 3 or 4 bytes, and 2 channels of 3 bytes) streams the stereo one: Oversample uses
+            // one or two channels.
             val endpoint = audioInfo.endpoints
                 .filter { it.address and 0x80 != 0 } // input endpoints only
-                .maxByOrNull { it.sampleRate }
+                .sortedWith(compareBy<AudioEndpointInfo>({ channelRank(it.channels) }, { -it.sampleRate }))
+                .firstOrNull()
                 ?: audioInfo.endpoints.first()
 
             Log.i(TAG, "Selected endpoint: addr=0x${endpoint.address.toString(16)} " +
@@ -557,6 +574,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             result.put("sampleRate", actualRate)
             result.put("numChannels", endpoint.channels)
             result.put("bitResolution", endpoint.bitResolution)
+            result.put("subslotSize", endpoint.subslotSize)
+            result.put("isFloat", endpoint.isFloat)
             result.put("interfaceNumber", endpoint.interfaceNumber)
             result.put("alternateSetting", endpoint.alternateSetting)
             result.put("deviceName", device.deviceName)
@@ -636,6 +655,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             // We need the clock ID — try to read it again from descriptors
             val rawDesc = connection.rawDescriptors
             val clockId = findUac2ClockId(rawDesc)
+            val control = findAudioControlInterface(rawDesc)
             if (clockId >= 0) {
                 val buffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
                 buffer.putInt(desiredRate)
@@ -644,14 +664,14 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                     HOST_TO_DEVICE_CLASS_INTERFACE,  // 0x21
                     SET_CUR,                          // 0x01
                     0x0100,                           // CS_SAM_FREQ_CONTROL << 8
-                    clockId shl 8,                    // clock ID in high byte
+                    (clockId shl 8) or control,       // clock ID, audio control interface
                     data, data.size, 1000
                 )
                 Log.i(TAG, "UAC2 SET_CUR rate=$desiredRate clockId=$clockId result=$result")
                 if (result >= 0) {
                     // Verify the rate was set
                     try {
-                        val actual = getUac2SampleRate(connection, clockId)
+                        val actual = getUac2SampleRate(connection, clockId, control)
                         if (actual > 0) return actual
                     } catch (_: Exception) {}
                     return desiredRate
@@ -723,6 +743,73 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         return -1
     }
 
+    /**
+     * Interface number of the audio control interface, which UAC2 requests to the clock source
+     * name in wIndex's low byte. 0 when there is none (most single-function bat mics use 0).
+     */
+    private fun findAudioControlInterface(raw: ByteArray): Int {
+        var offset = 0
+        while (offset < raw.size) {
+            val bLength = raw[offset].toInt() and 0xFF
+            if (bLength < 2 || offset + bLength > raw.size) break
+            if ((raw[offset + 1].toInt() and 0xFF) == DESC_TYPE_INTERFACE && bLength >= 9 &&
+                (raw[offset + 5].toInt() and 0xFF) == USB_CLASS_AUDIO &&
+                (raw[offset + 6].toInt() and 0xFF) == USB_SUBCLASS_AUDIOCONTROL
+            ) {
+                return raw[offset + 2].toInt() and 0xFF
+            }
+            offset += bLength
+        }
+        return 0
+    }
+
+    /** Order for choosing among input alternate settings: 2 channels, then 1, then more. */
+    private fun channelRank(channels: Int): Int = when (channels) {
+        2 -> 0
+        1 -> 1
+        else -> 2 + channels
+    }
+
+    /**
+     * The rates in a UAC2 clock's GET RANGE answer: a 2-byte count, then {min, max, res} as
+     * 4-byte little-endian words. A sub-range with a resolution steps from min to max.
+     */
+    private fun getUac2SampleRates(connection: UsbDeviceConnection, clockId: Int, control: Int): List<Int> {
+        val buffer = ByteArray(2 + 12 * 32)
+        val n = connection.controlTransfer(
+            DEVICE_TO_HOST_CLASS_INTERFACE,  // 0xA1
+            GET_RANGE,                       // 0x02
+            0x0100,                          // CS_SAM_FREQ_CONTROL << 8
+            (clockId shl 8) or control,
+            buffer, buffer.size, 1000
+        )
+        if (n < 14) return emptyList()
+        val bb = ByteBuffer.wrap(buffer, 0, n).order(ByteOrder.LITTLE_ENDIAN)
+        val count = bb.short.toInt() and 0xFFFF
+        val rates = mutableSetOf<Int>()
+        for (i in 0 until count) {
+            if (bb.remaining() < 12) break
+            val min = bb.int
+            val max = bb.int
+            val res = bb.int
+            if (min <= 0 || max < min) continue
+            if (res <= 0) {
+                rates.add(min)
+                rates.add(max)
+            } else {
+                var r = min
+                var steps = 0
+                while (r <= max && steps < 64) {
+                    rates.add(r)
+                    r += res
+                    steps++
+                }
+            }
+        }
+        Log.i(TAG, "UAC2 GET_RANGE rates: ${rates.sorted()}")
+        return rates.sorted()
+    }
+
     // ── Raw descriptor parsing ───────────────────────────────────────────
 
     data class AudioEndpointInfo(
@@ -730,6 +817,10 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         val maxPacketSize: Int,
         val channels: Int,
         val bitResolution: Int,
+        /** Bytes per sample in a packet (UAC1 bSubframeSize, UAC2 bSubSlotSize). */
+        val subslotSize: Int,
+        /** IEEE float samples (UAC1 wFormatTag 3, UAC2 bmFormats bit 2), not PCM. */
+        val isFloat: Boolean,
         val sampleRate: Int,
         val sampleRateSettable: Boolean,
         val interfaceNumber: Int,
@@ -752,6 +843,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     ): AudioDeviceInfo {
         var uacVersion = 0
         var uac2ClockId = -1
+        var uac2ClockProgrammable = false
+        val control = findAudioControlInterface(raw)
         val sampleRates = mutableSetOf<Int>()
         val endpoints = mutableListOf<AudioEndpointInfo>()
 
@@ -760,14 +853,22 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         var currentAlternateSetting = 0
         var currentChannels = 1
         var currentBitResolution = 16
+        var currentSubslotSize = 2
+        var currentIsFloat = false
         var currentSampleRate = 0
         var foundAudioStreaming = false
+        // Inside an audio control interface, where the class header and clock sources are.
+        var inAudioControl = false
+        var configurationsSeen = 0
         var expectingFormat = false
         var expectingEndpoint = false
         var isUac2Format = false
         var sampleRateSettable = false
         var lastEndpointAddress = 0
         var lastMaxPacketSize = 0
+        // Set by an input data endpoint, cleared once its class-specific descriptor records it, so
+        // an output or feedback endpoint's class-specific descriptor records nothing.
+        var inputEndpointPending = false
 
         var offset = 0
         while (offset < raw.size) {
@@ -777,6 +878,14 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             val bDescriptorType = raw[offset + 1].toInt() and 0xFF
 
             when (bDescriptorType) {
+                DESC_TYPE_CONFIGURATION -> {
+                    // The raw descriptors list every configuration, but only the first
+                    // (the one Android selects) is used. A later one, such as a UAC3
+                    // configuration, must not change the version or add endpoints.
+                    configurationsSeen++
+                    if (configurationsSeen > 1) break
+                }
+
                 DESC_TYPE_INTERFACE -> {
                     if (bLength >= 9) {
                         val bInterfaceNumber = raw[offset + 2].toInt() and 0xFF
@@ -787,6 +896,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
                         currentInterfaceNumber = bInterfaceNumber
                         currentAlternateSetting = bAlternateSetting
+                        currentIsFloat = false
+                        inAudioControl = bInterfaceClass == USB_CLASS_AUDIO &&
+                                bInterfaceSubClass == USB_SUBCLASS_AUDIOCONTROL
 
                         if (bInterfaceClass == USB_CLASS_AUDIO && bInterfaceSubClass == USB_SUBCLASS_AUDIOSTREAMING && bNumEndpoints > 0) {
                             foundAudioStreaming = true
@@ -804,27 +916,30 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                     if (bLength >= 3) {
                         val bDescriptorSubtype = raw[offset + 2].toInt() and 0xFF
 
-                        // UAC Header — detect version
-                        if (bDescriptorSubtype == UAC_HEADER && bLength >= 6) {
-                            // Check which interface class this belongs to
-                            val bcdADC = (raw[offset + 4].toInt() and 0xFF) or
-                                    ((raw[offset + 3].toInt() and 0xFF) shl 8)
-                            if (bcdADC >= 0x0200) {
+                        // Class-specific AC header: bcdADC (little-endian, offsets 3-4) is
+                        // 0x0100 for UAC1 and 0x0200 for UAC2. Subtype 0x01 also means
+                        // AS_GENERAL inside a streaming interface, so check the interface.
+                        if (inAudioControl && bDescriptorSubtype == UAC_HEADER && bLength >= 6) {
+                            val bcdADC = (raw[offset + 3].toInt() and 0xFF) or
+                                    ((raw[offset + 4].toInt() and 0xFF) shl 8)
+                            if (bcdADC in 0x0200 until 0x0300) {
                                 uacVersion = 2
                             } else if (uacVersion == 0) {
                                 uacVersion = 1
                             }
-                            Log.d(TAG, "UAC header version: $bcdADC -> UAC$uacVersion")
+                            Log.d(TAG, "UAC header bcdADC=0x${bcdADC.toString(16)} -> UAC$uacVersion")
                         }
 
                         // UAC2 Clock Source (subtype 0x0A)
-                        if (bDescriptorSubtype == UAC2_CLOCK_SOURCE && bLength >= 8) {
+                        if (inAudioControl && bDescriptorSubtype == UAC2_CLOCK_SOURCE && bLength >= 8) {
                             val bClockId = raw[offset + 3].toInt() and 0xFF
                             val bmAttributes = raw[offset + 4].toInt() and 0xFF
                             val bmControls = raw[offset + 5].toInt() and 0xFF
                             // bmAttributes==1: internal fixed clock, bmControls bit 0: freq readable
                             if (bmAttributes and 0x03 != 0 && bmControls and 0x01 != 0) {
                                 uac2ClockId = bClockId
+                                // bmControls bits 0-1: 3 when the host can set the frequency.
+                                uac2ClockProgrammable = bmControls and 0x03 == 0x03
                                 Log.d(TAG, "UAC2 clock source found: id=$bClockId")
                             }
                         }
@@ -839,6 +954,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                     // PCM format — continue to format type descriptor
                                     Log.d(TAG, "Audio streaming PCM format found")
                                 }
+                                // UAC1 wFormatTag 3: IEEE_FLOAT. (A UAC2 AS_GENERAL also
+                                // matches here; its block below sets the flag instead.)
+                                if (uacVersion != 2) currentIsFloat = wFormatTag == 3
                             }
                         }
 
@@ -848,7 +966,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 val bFormatType = raw[offset + 3].toInt() and 0xFF
                                 if (bFormatType == 1) {  // FORMAT_TYPE_I
                                     currentChannels = raw[offset + 4].toInt() and 0xFF
-                                    // bSubframeSize at offset+5
+                                    currentSubslotSize = raw[offset + 5].toInt() and 0xFF
                                     currentBitResolution = raw[offset + 6].toInt() and 0xFF
                                     val bSamFreqType = raw[offset + 7].toInt() and 0xFF
 
@@ -888,6 +1006,10 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                         if (foundAudioStreaming && uacVersion == 2 && bDescriptorSubtype == 0x01 && expectingFormat) {
                             // For UAC2, format type descriptor follows
                             isUac2Format = true
+                            // UAC2 AS_GENERAL: bNrChannels at offset 10.
+                            currentChannels = if (bLength >= 11) raw[offset + 10].toInt() and 0xFF else 1
+                            // bmFormats (4 bytes from offset 6), bit 2: IEEE_FLOAT.
+                            currentIsFloat = bLength >= 10 && (raw[offset + 6].toInt() and 0x04) != 0
                         }
 
                         // UAC2 Format Type I (subtype 0x02 under audio streaming, UAC2)
@@ -897,13 +1019,13 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 if (bFormatType == 1) {
                                     // UAC2 format type I: bSubSlotSize at offset+4, bBitResolution at offset+5
                                     currentBitResolution = raw[offset + 5].toInt() and 0xFF
-                                    val subSlotSize = raw[offset + 4].toInt() and 0xFF
-                                    currentChannels = 1  // typically mono for bat mics
+                                    currentSubslotSize = raw[offset + 4].toInt() and 0xFF
+                                    // The channel count came from AS_GENERAL above.
 
                                     // UAC2: sample rate comes from clock source, not format descriptor
                                     if (uac2ClockId >= 0) {
                                         try {
-                                            val rate = getUac2SampleRate(connection, uac2ClockId)
+                                            val rate = getUac2SampleRate(connection, uac2ClockId, control)
                                             if (rate > 0) {
                                                 currentSampleRate = rate
                                                 sampleRates.add(rate)
@@ -929,24 +1051,30 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                         val wMaxPacketSize = (raw[offset + 4].toInt() and 0xFF) or
                                 ((raw[offset + 5].toInt() and 0xFF) shl 8)
 
-                        // Check: input direction (bit 7 set) + isochronous transfer (bits 0-1 == 1)
+                        // Check: input direction (bit 7 set) + isochronous transfer (bits 0-1 == 1),
+                        // and a data endpoint (usage bits 4-5 == 0), not a feedback endpoint.
                         val isInput = (bEndpointAddress and 0x80) != 0
                         val isIsochronous = (bmAttributes and 0x03) == 1
+                        val isData = (bmAttributes and 0x30) == 0
 
-                        if (isInput && isIsochronous) {
+                        if (isInput && isIsochronous && isData) {
                             Log.d(TAG, "Audio endpoint: addr=0x${bEndpointAddress.toString(16)} maxPkt=$wMaxPacketSize")
                             lastEndpointAddress = bEndpointAddress
                             lastMaxPacketSize = wMaxPacketSize
                             expectingEndpoint = false
+                            inputEndpointPending = true
                         }
                     }
                 }
 
                 DESC_TYPE_CS_ENDPOINT -> {
                     // Audio class endpoint descriptor — check if sample rate is settable
-                    if (bLength >= 4) {
+                    if (bLength >= 4 && inputEndpointPending) {
+                        inputEndpointPending = false
                         val bmAttr = raw[offset + 3].toInt() and 0xFF
-                        sampleRateSettable = (bmAttr and 0x01) != 0
+                        // UAC1: bit 0 is the sampling frequency control. UAC2 has no such bit
+                        // here: the clock source's controls say whether the rate can be set.
+                        sampleRateSettable = if (uacVersion == 2) uac2ClockProgrammable else (bmAttr and 0x01) != 0
 
                         // This completes an endpoint discovery — record it
                         if (currentSampleRate > 0) {
@@ -955,6 +1083,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 maxPacketSize = lastMaxPacketSize,
                                 channels = currentChannels,
                                 bitResolution = currentBitResolution,
+                                subslotSize = currentSubslotSize,
+                                isFloat = currentIsFloat,
                                 sampleRate = currentSampleRate,
                                 sampleRateSettable = sampleRateSettable,
                                 interfaceNumber = currentInterfaceNumber,
@@ -968,10 +1098,23 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             offset += bLength
         }
 
+        // A UAC2 clock lists its rates in its GET RANGE answer.
+        if (uac2ClockId >= 0) {
+            try {
+                val listed = getUac2SampleRates(connection, uac2ClockId, control)
+                if (listed.isNotEmpty()) {
+                    sampleRates.clear()
+                    sampleRates.addAll(listed)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read UAC2 sample rates: ${e.message}")
+            }
+        }
+
         // If we found a UAC2 clock source but haven't read its rate yet, try now
         if (uac2ClockId >= 0 && sampleRates.isEmpty()) {
             try {
-                val rate = getUac2SampleRate(connection, uac2ClockId)
+                val rate = getUac2SampleRate(connection, uac2ClockId, control)
                 if (rate > 0) sampleRates.add(rate)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read UAC2 sample rate: ${e.message}")
@@ -988,7 +1131,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Read UAC2 sample rate via GET_CUR control transfer to clock source.
      */
-    private fun getUac2SampleRate(connection: UsbDeviceConnection, clockId: Int): Int {
+    private fun getUac2SampleRate(connection: UsbDeviceConnection, clockId: Int, control: Int = 0): Int {
         val buffer = ByteArray(4)
         val csSamFreqControl = 1
 
@@ -996,7 +1139,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             DEVICE_TO_HOST_CLASS_INTERFACE,  // 0xA1
             GET_CUR,                         // 0x01
             csSamFreqControl shl 8,          // 0x0100
-            clockId shl 8,                   // clock ID in high byte
+            (clockId shl 8) or control,      // clock ID, audio control interface
             buffer,
             buffer.size,
             1000

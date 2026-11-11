@@ -13,15 +13,10 @@
 //!
 //! Architecture modeled after batgizmo's nativeusb.cpp.
 
+use crate::recording::{NativeSampleFormat, RecordingBuffer};
 use serde::Serialize;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-
-/// Seconds of audio the listening pre-roll ring retains (USB is 16-bit, so
-/// ~11.5 MB per channel at 384 kHz). A long-press record seeds up to this much
-/// preceding audio into the recording.
-const PREROLL_RING_SECS: usize = 15;
 
 // ── Shared types (all platforms) ────────────────────────────────────────
 
@@ -30,7 +25,10 @@ pub struct UsbStreamState {
     pub cancel_flag: Arc<AtomicBool>,
     pub is_recording: Arc<AtomicBool>,
     pub is_streaming: Arc<AtomicBool>,
-    pub buffer: Arc<Mutex<UsbRecordingBuffer>>,
+    /// Samples in the stream's own format (see [`usb_sample_format`]), with the
+    /// same pre-roll ring, recovery flushing and WAV encoding as the cpal mic.
+    pub buffer: Arc<Mutex<RecordingBuffer>>,
+    pub format: NativeSampleFormat,
     pub sample_rate: u32,
     pub device_name: String,
     pub uac_version: u32, // 1 or 2, from USB Audio Class descriptor
@@ -38,95 +36,6 @@ pub struct UsbStreamState {
     /// `usb_stop_recording`; shared with the emitter thread for streaming
     /// flushes.
     pub recovery: crate::recovery::RecoveryHandle,
-}
-
-/// `samples_i16`, `preroll_i16` and `pending_f32` hold interleaved L/R when
-/// `channels` is 2. `total_samples` and `preroll_seeded` count frames.
-pub struct UsbRecordingBuffer {
-    pub samples_i16: Vec<i16>,
-    /// f32 samples for the frontend.
-    pending_f32: Vec<f32>,
-    pub total_samples: usize,
-    pub sample_rate: u32,
-    /// 2 when a 2-channel stream was started with `stereo`, otherwise 1.
-    pub channels: u16,
-    /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
-    pub shared_fd: Option<i32>,
-    /// Rolling pre-roll ring (16-bit), filled only while listening (not
-    /// recording) and capped to [`PREROLL_RING_SECS`]. Seeded into the recording
-    /// at record start so a long-press capture includes the preceding audio.
-    preroll_i16: VecDeque<i16>,
-    /// Pre-roll frames seeded at the last record start (for GUANO). Reset on `clear()`.
-    pub preroll_seeded: usize,
-}
-
-#[allow(dead_code)]
-impl UsbRecordingBuffer {
-    fn new(sample_rate: u32, channels: u16) -> Self {
-        Self {
-            samples_i16: Vec::new(),
-            pending_f32: Vec::new(),
-            total_samples: 0,
-            sample_rate,
-            channels,
-            shared_fd: None,
-            preroll_i16: VecDeque::new(),
-            preroll_seeded: 0,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.samples_i16.clear();
-        self.pending_f32.clear();
-        self.total_samples = 0;
-        self.preroll_seeded = 0;
-        // The pre-roll ring is NOT cleared here — clear() runs at record start,
-        // immediately before `seed_preroll` reads it; seed clears it.
-    }
-
-    /// Store `data` (whole frames) in the recording or the pre-roll ring, and
-    /// queue it for the frontend.
-    fn push_samples(&mut self, data: &[i16], recording: bool) {
-        if recording {
-            self.total_samples += data.len() / self.channels as usize;
-            self.samples_i16.extend_from_slice(data);
-        } else {
-            // Listening: keep a rolling pre-roll ring, capped to bound memory.
-            let cap = (self.sample_rate as usize)
-                .saturating_mul(PREROLL_RING_SECS)
-                .saturating_mul(self.channels as usize)
-                .max(1);
-            crate::recording::push_to_ring(&mut self.preroll_i16, data, cap);
-        }
-        // Always push to pending for streaming/live display
-        self.pending_f32
-            .extend(data.iter().map(|&s| s as f32 / 32768.0));
-    }
-
-    /// Seed the just-cleared recording buffer with the last `frames` pre-roll
-    /// frames (clamped to the ring), bump `total_samples`, record `preroll_seeded`,
-    /// and clear the ring. Call right after `clear()` at record start.
-    pub fn seed_preroll(&mut self, frames: usize) -> usize {
-        // memcpy the tail (runs under the buffer lock the iso thread takes).
-        let seeded = crate::recording::seed_from_ring(
-            &mut self.preroll_i16,
-            &mut self.samples_i16,
-            frames,
-            self.channels as usize,
-        );
-        self.total_samples += seeded;
-        self.preroll_seeded = seeded;
-        self.preroll_i16.clear();
-        seeded
-    }
-
-    pub fn clear_preroll_ring(&mut self) {
-        self.preroll_i16.clear();
-    }
-
-    pub fn drain_pending(&mut self) -> Vec<f32> {
-        std::mem::take(&mut self.pending_f32)
-    }
 }
 
 #[derive(Serialize)]
@@ -149,68 +58,23 @@ pub fn stop_usb_stream(state: &UsbStreamState) {
     state.cancel_flag.store(true, Ordering::Relaxed);
 }
 
-/// Take everything in the USB tail buffer as little-endian i16 PCM bytes and
-/// leave the buffer empty. Mirrors `recovery::drain_cpal_bytes`. Caller
-/// releases the buffer lock before writing to disk so the isochronous thread
-/// is not blocked by I/O.
-pub fn drain_usb_recovery_bytes(buf: &mut UsbRecordingBuffer) -> Vec<u8> {
-    if buf.samples_i16.is_empty() {
-        return Vec::new();
+/// The format a USB stream is stored and recorded in, from the bytes per sample
+/// in a packet (UAC1 bSubframeSize, UAC2 bSubSlotSize) and whether the
+/// descriptor says IEEE float. Any size other than 3 or 4 is taken as 2 bytes,
+/// as before. Float counts only with 4-byte samples.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn usb_sample_format(sample_bytes: u32, is_float: bool) -> NativeSampleFormat {
+    match sample_bytes {
+        4 if is_float => NativeSampleFormat::F32,
+        4 => NativeSampleFormat::I32,
+        3 => NativeSampleFormat::I24,
+        _ => NativeSampleFormat::I16,
     }
-    let samples = std::mem::take(&mut buf.samples_i16);
-    crate::recovery::encode_samples_i16(&samples)
-}
-
-#[allow(dead_code)]
-pub fn start_usb_emitter(
-    buffer: Arc<Mutex<UsbRecordingBuffer>>,
-    stop_flag: Arc<AtomicBool>,
-    recovery: crate::recovery::RecoveryHandle,
-) {
-    std::thread::spawn(move || {
-        let mut tick: u32 = 0;
-        while !stop_flag.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            // Streamed samples are pulled by the frontend via `mic_pull_audio`
-            // (raw f32 bytes) instead of a JSON "mic-audio-chunk" event;
-            // `pending_f32` accumulates until the frontend drains it. This
-            // thread only does crash-recovery disk flushing below.
-
-            // Disk flush every ~240 ms. We hold the writer lock across the
-            // drain+write so the stop path can't consume the writer
-            // mid-flush (which would silently drop the drained bytes).
-            tick = tick.wrapping_add(1);
-            if tick % 3 == 0 {
-                if let Ok(mut wg) = recovery.writer.lock() {
-                    if wg.is_some() {
-                        let bytes = {
-                            let mut buf = match buffer.lock() {
-                                Ok(b) => b,
-                                Err(_) => continue,
-                            };
-                            drain_usb_recovery_bytes(&mut buf)
-                        };
-                        if !bytes.is_empty() {
-                            if let Some(writer) = wg.as_mut() {
-                                if let Err(e) = writer.append_bytes(&bytes) {
-                                    eprintln!("usb recovery flush failed: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
 }
 
 /// All recorded samples as f32, interleaved L/R when the stream is stereo.
 pub fn get_usb_samples_f32(state: &UsbStreamState) -> Vec<f32> {
-    let buf = state.buffer.lock().unwrap();
-    buf.samples_i16
-        .iter()
-        .map(|&s| s as f32 / 32768.0)
-        .collect()
+    crate::recording::get_samples_f32(&state.buffer.lock().unwrap())
 }
 
 pub fn get_usb_status(state: &UsbStreamState) -> UsbStreamStatus {
@@ -223,19 +87,162 @@ pub fn get_usb_status(state: &UsbStreamState) -> UsbStreamStatus {
     }
 }
 
+/// The recording as a WAV file in the stream's own format.
 pub fn encode_usb_wav(state: &UsbStreamState) -> Result<Vec<u8>, String> {
-    use oversample_core::audio::wav::{header_bytes, WavWriteFormat};
-    let buf = state.buffer.lock().unwrap();
-    let format = WavWriteFormat {
-        sample_rate: buf.sample_rate,
-        channels: buf.channels,
-        bits_per_sample: 16,
-        is_float: false,
-    };
-    let data = crate::recovery::encode_samples_i16(&buf.samples_i16);
-    let mut wav = header_bytes(&format, data.len() as u64, 0);
-    wav.extend_from_slice(&data);
-    Ok(wav)
+    crate::recording::encode_native_wav(&state.buffer.lock().unwrap())
+}
+
+/// The mean of one frame's samples, for a mono mix.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+trait MixSample: Copy {
+    fn mean(samples: impl Iterator<Item = Self>, count: usize) -> Self;
+}
+
+impl MixSample for i16 {
+    // Rounds down, so a 16-bit stereo device mixed to mono gives the same
+    // samples as before full-resolution decoding.
+    fn mean(samples: impl Iterator<Item = Self>, count: usize) -> Self {
+        samples.map(i64::from).sum::<i64>().div_euclid(count as i64) as i16
+    }
+}
+
+impl MixSample for i32 {
+    fn mean(samples: impl Iterator<Item = Self>, count: usize) -> Self {
+        samples.map(i64::from).sum::<i64>().div_euclid(count as i64) as i32
+    }
+}
+
+impl MixSample for f32 {
+    fn mean(samples: impl Iterator<Item = Self>, count: usize) -> Self {
+        samples.sum::<f32>() / count as f32
+    }
+}
+
+/// Appends the whole frames in `bytes` to `out`: every sample when `keep_channels`
+/// is true, otherwise one mono mix per frame. A partial frame at the end is
+/// dropped.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn decode_frames<T: MixSample>(
+    bytes: &[u8],
+    sample_bytes: usize,
+    channels: usize,
+    keep_channels: bool,
+    read: fn(&[u8]) -> T,
+    out: &mut Vec<T>,
+) {
+    for frame in bytes.chunks_exact(sample_bytes * channels) {
+        let samples = frame.chunks_exact(sample_bytes).map(read);
+        if keep_channels {
+            out.extend(samples);
+        } else {
+            out.push(T::mean(samples, channels));
+        }
+    }
+}
+
+/// Turns the packets of one USB stream into samples in its own format, without
+/// losing resolution. 3-byte samples go in the top 24 bits of an i32, as cpal
+/// gives 24-bit audio, so they are written as 24-bit WAV and shown at the right
+/// level.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) struct UsbDecoder {
+    format: NativeSampleFormat,
+    channels: usize,
+    /// Keep every channel: the device has one, or two with `stereo` asked for.
+    keep_channels: bool,
+    i16s: Vec<i16>,
+    i32s: Vec<i32>,
+    f32s: Vec<f32>,
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+impl UsbDecoder {
+    pub(crate) fn new(format: NativeSampleFormat, channels: usize, stereo: bool) -> Self {
+        let channels = channels.max(1);
+        Self {
+            format,
+            channels,
+            keep_channels: channels == 1 || (stereo && channels == 2),
+            i16s: Vec::new(),
+            i32s: Vec::new(),
+            f32s: Vec::new(),
+        }
+    }
+
+    /// Channels stored per frame: 1, or 2 for a stereo stream.
+    pub(crate) fn stored_channels(&self) -> u16 {
+        if self.keep_channels {
+            self.channels as u16
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.i16s.clear();
+        self.i32s.clear();
+        self.f32s.clear();
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.i16s.is_empty() && self.i32s.is_empty() && self.f32s.is_empty()
+    }
+
+    /// Decode one packet (little-endian samples, channels interleaved).
+    pub(crate) fn decode(&mut self, bytes: &[u8]) {
+        let (ch, keep) = (self.channels, self.keep_channels);
+        match self.format {
+            NativeSampleFormat::I16 => decode_frames(
+                bytes,
+                2,
+                ch,
+                keep,
+                |b| i16::from_le_bytes([b[0], b[1]]),
+                &mut self.i16s,
+            ),
+            NativeSampleFormat::I24 => decode_frames(
+                bytes,
+                3,
+                ch,
+                keep,
+                |b| i32::from_le_bytes([0, b[0], b[1], b[2]]),
+                &mut self.i32s,
+            ),
+            NativeSampleFormat::I32 => decode_frames(
+                bytes,
+                4,
+                ch,
+                keep,
+                |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                &mut self.i32s,
+            ),
+            NativeSampleFormat::F32 => decode_frames(
+                bytes,
+                4,
+                ch,
+                keep,
+                |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                &mut self.f32s,
+            ),
+        }
+    }
+
+    /// Hand the decoded samples to the recording (or the pre-roll ring) and the
+    /// live display.
+    pub(crate) fn push_to(&self, buf: &mut RecordingBuffer, recording: bool) {
+        match self.format {
+            NativeSampleFormat::I16 => buf.push_i16(&self.i16s, recording),
+            NativeSampleFormat::I24 => buf.push_i32(&self.i32s, recording),
+            NativeSampleFormat::I32 => {
+                // A 4-byte slot often carries 24-bit audio; detection lets the
+                // recording be written at 24 bits. (A mono mix can add one low
+                // bit, which only makes detection keep more bits.)
+                buf.note_i32_bits(&self.i32s);
+                buf.push_i32(&self.i32s, recording)
+            }
+            NativeSampleFormat::F32 => buf.push_f32(&self.f32s, recording),
+        }
+    }
 }
 
 // ── Android isochronous streaming ───────────────────────────────────────
@@ -253,21 +260,28 @@ pub fn start_usb_stream(
     interface_number: u32,
     alternate_setting: u32,
     uac_version: u32,
+    sample_bytes: u32,
+    is_float: bool,
 ) -> Result<UsbStreamState, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
     let is_recording = Arc::new(AtomicBool::new(false));
-    let stereo = stereo && num_channels == 2;
-    let buffer = Arc::new(Mutex::new(UsbRecordingBuffer::new(
+    let format = usb_sample_format(sample_bytes, is_float);
+    let decoder = UsbDecoder::new(format, num_channels as usize, stereo);
+    let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        format,
         sample_rate,
-        if stereo { 2 } else { 1 },
+        decoder.stored_channels(),
     )));
+    eprintln!(
+        "USB stream: {} ch, {} bytes per sample, stored as {:?}",
+        num_channels, sample_bytes, format
+    );
 
     let cancel = cancel_flag.clone();
     let streaming = is_streaming.clone();
     let recording = is_recording.clone();
     let buf = buffer.clone();
-    let channels = num_channels as usize;
 
     // Channel to wait for the isochronous thread to confirm streaming has started
     let (startup_tx, startup_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
@@ -279,8 +293,7 @@ pub fn start_usb_stream(
             fd,
             endpoint_address,
             max_packet_size,
-            channels,
-            stereo,
+            decoder,
             interface_number,
             alternate_setting,
             &cancel,
@@ -322,12 +335,13 @@ pub fn start_usb_stream(
     // Start emitter for streaming audio chunks to the frontend (also does
     // best-effort crash-recovery flushes when a writer is installed).
     let recovery = crate::recovery::RecoveryHandle::default();
-    start_usb_emitter(buffer.clone(), cancel_flag.clone(), recovery.clone());
+    crate::recording::start_emitter(buffer.clone(), cancel_flag.clone(), recovery.clone());
 
     Ok(UsbStreamState {
         cancel_flag,
         is_recording,
         buffer,
+        format,
         sample_rate,
         is_streaming,
         device_name,
@@ -350,6 +364,8 @@ pub fn start_usb_stream(
     _interface_number: u32,
     _alternate_setting: u32,
     _uac_version: u32,
+    _sample_bytes: u32,
+    _is_float: bool,
 ) -> Result<UsbStreamState, String> {
     Err("USB audio streaming is only supported on Android".into())
 }
@@ -358,7 +374,7 @@ pub fn start_usb_stream(
 
 #[cfg(target_os = "android")]
 mod isochronous {
-    use super::UsbRecordingBuffer;
+    use super::{RecordingBuffer, UsbDecoder};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -463,14 +479,13 @@ mod isochronous {
         fd: i32,
         endpoint_address: u32,
         max_packet_size: u32,
-        num_channels: usize,
-        stereo: bool,
+        mut decoder: UsbDecoder,
         interface_number: u32,
         alternate_setting: u32,
         cancel: &AtomicBool,
         is_streaming: &AtomicBool,
         is_recording: &AtomicBool,
-        buffer: &Arc<Mutex<UsbRecordingBuffer>>,
+        buffer: &Arc<Mutex<RecordingBuffer>>,
         startup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
     ) -> Result<(), String> {
         // Ensure the interface is claimed and alternate setting is active from the
@@ -526,9 +541,13 @@ mod isochronous {
         }
 
         let requested_bytes_per_frame = max_packet_size as usize;
+        // Room for every packet at its requested size: 3- and 4-byte samples
+        // need more than the 2 bytes per data point the minimum allows for.
+        let urb_buffer_bytes =
+            (MAX_DATA_POINTS_PER_URB * 2).max(PACKETS_PER_URB * requested_bytes_per_frame);
 
         let mut audio_buffers: Vec<Vec<u8>> = (0..URBS_TO_JUGGLE)
-            .map(|_| vec![0u8; MAX_DATA_POINTS_PER_URB * 2])
+            .map(|_| vec![0u8; urb_buffer_bytes])
             .collect();
 
         let mut urbs: Vec<Box<UrbWithPackets>> = (0..URBS_TO_JUGGLE)
@@ -540,7 +559,7 @@ mod isochronous {
                         status: 0,
                         flags: USBDEVFS_URB_ISO_ASAP,
                         buffer: audio_buffers[i].as_mut_ptr(),
-                        buffer_length: (MAX_DATA_POINTS_PER_URB * 2) as i32,
+                        buffer_length: urb_buffer_bytes as i32,
                         actual_length: 0,
                         start_frame: 0,
                         number_of_packets: PACKETS_PER_URB as i32,
@@ -582,7 +601,6 @@ mod isochronous {
         }
 
         let mut balls_in_air = URBS_TO_JUGGLE;
-        let mut capture_buf: Vec<i16> = Vec::with_capacity(MAX_DATA_POINTS_PER_URB);
         let mut startup_signaled = false;
 
         // EMT2 workaround: retry on poll timeout instead of failing immediately.
@@ -705,39 +723,26 @@ mod isochronous {
                 let reaped = unsafe { &*urb_reaped };
                 let urb_with_packets = unsafe { &*(reaped.usercontext as *const UrbWithPackets) };
 
-                capture_buf.clear();
+                decoder.clear();
 
                 let mut src_byte_offset: usize = 0;
                 for packet in &urb_with_packets.packet_desc {
                     let actual_bytes = packet.actual_length as usize;
-                    let actual_samples = actual_bytes / 2;
 
-                    if actual_samples > 0 {
+                    if actual_bytes > 0 {
                         let src = unsafe {
                             std::slice::from_raw_parts(
-                                (reaped.buffer as *const u8).add(src_byte_offset) as *const i16,
-                                actual_samples,
+                                (reaped.buffer as *const u8).add(src_byte_offset),
+                                actual_bytes,
                             )
                         };
-
-                        if num_channels == 2 {
-                            for frame in src.chunks_exact(2) {
-                                if stereo {
-                                    capture_buf.extend_from_slice(frame);
-                                } else {
-                                    capture_buf
-                                        .push(((frame[0] as i32 + frame[1] as i32) >> 1) as i16);
-                                }
-                            }
-                        } else {
-                            capture_buf.extend_from_slice(src);
-                        }
+                        decoder.decode(src);
                     }
 
                     src_byte_offset += packet.length as usize;
                 }
 
-                if !capture_buf.is_empty() {
+                if !decoder.is_empty() {
                     // Signal startup success on first URB with actual audio data
                     if !startup_signaled {
                         is_streaming.store(true, Ordering::Relaxed);
@@ -747,7 +752,7 @@ mod isochronous {
 
                     let recording = is_recording.load(Ordering::Relaxed);
                     if let Ok(mut buf) = buffer.lock() {
-                        buf.push_samples(&capture_buf, recording);
+                        decoder.push_to(&mut buf, recording);
                     }
                 }
             }
@@ -814,37 +819,152 @@ mod isochronous {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oversample_core::audio::wav::parse_wav_header;
+
+    fn le_bytes(samples: &[i32], bytes: usize) -> Vec<u8> {
+        samples
+            .iter()
+            .flat_map(|s| s.to_le_bytes()[..bytes].to_vec())
+            .collect()
+    }
+
+    /// Decode `packet` and return what reaches the recording.
+    fn decode(
+        format: NativeSampleFormat,
+        channels: usize,
+        stereo: bool,
+        packet: &[u8],
+    ) -> RecordingBuffer {
+        let mut decoder = UsbDecoder::new(format, channels, stereo);
+        let mut buf = RecordingBuffer::new(format, 48_000, decoder.stored_channels());
+        decoder.decode(packet);
+        decoder.push_to(&mut buf, true);
+        buf
+    }
+
+    /// The header and data of a WAV file.
+    fn wav_data(wav: &[u8]) -> (oversample_core::audio::wav::WavHeader, &[u8]) {
+        let h = parse_wav_header(wav).unwrap();
+        let start = h.data_offset as usize;
+        let data = &wav[start..start + h.data_size as usize];
+        (h, data)
+    }
 
     #[test]
-    fn stereo_recording_counts_frames_and_keeps_left_and_right() {
-        let mut buf = UsbRecordingBuffer::new(48_000, 2);
-        buf.push_samples(&[1, 2, 3, 4], true);
+    fn picks_the_format_from_the_sample_size() {
+        use NativeSampleFormat::*;
+        assert_eq!(usb_sample_format(2, false), I16);
+        assert_eq!(usb_sample_format(0, false), I16);
+        assert_eq!(usb_sample_format(2, true), I16);
+        assert_eq!(usb_sample_format(3, false), I24);
+        assert_eq!(usb_sample_format(4, false), I32);
+        assert_eq!(usb_sample_format(4, true), F32);
+    }
+
+    #[test]
+    fn decodes_16_bit_packets_as_before() {
+        let bytes = le_bytes(&[100, -200, 300, -400], 2);
+        let stereo = decode(NativeSampleFormat::I16, 2, true, &bytes);
+        assert_eq!(stereo.samples_i16, vec![100, -200, 300, -400]);
+        assert_eq!(stereo.total_samples, 2);
+        let mixed = decode(NativeSampleFormat::I16, 2, false, &bytes);
+        assert_eq!(mixed.samples_i16, vec![-50, -50]);
+        let mono = decode(NativeSampleFormat::I16, 1, false, &bytes);
+        assert_eq!(mono.samples_i16, vec![100, -200, 300, -400]);
+        // A mono mix rounds down, as the 16-bit decoder always did.
+        let odd = decode(NativeSampleFormat::I16, 2, false, &le_bytes(&[-2, -1], 2));
+        assert_eq!(odd.samples_i16, vec![-2]);
+    }
+
+    /// The Portacapture X8's 2-channel alternate setting: 3-byte samples, left then right.
+    #[test]
+    fn keeps_all_24_bits_of_24_bit_stereo() {
+        let (left, right) = (0x12_3456, -0x12_3457);
+        let (max, min) = (0x7f_ffff, -0x80_0000);
+        let bytes = le_bytes(&[left, right, max, min], 3);
+        let buf = decode(NativeSampleFormat::I24, 2, true, &bytes);
         assert_eq!(buf.total_samples, 2);
-        assert_eq!(buf.samples_i16, vec![1, 2, 3, 4]);
-        assert_eq!(buf.drain_pending().len(), 4);
+        assert_eq!(
+            buf.samples_i32,
+            vec![left << 8, right << 8, max << 8, min << 8]
+        );
+        // Full scale reads as full scale.
+        let mut buf = buf;
+        let live = buf.drain_pending();
+        assert!((live[2] - 1.0).abs() < 1e-6 && live[3] == -1.0);
+        assert!((live[0] - left as f32 / 8_388_608.0).abs() < 1e-7);
+
+        // The WAV holds the same 3 bytes per sample the device sent.
+        let wav = crate::recording::encode_native_wav(&buf).unwrap();
+        let (h, data) = wav_data(&wav);
+        assert_eq!((h.channels, h.bits_per_sample, h.total_frames), (2, 24, 2));
+        assert_eq!(data, &bytes[..]);
+    }
+
+    #[test]
+    fn mixes_24_bit_stereo_to_mono_at_full_resolution() {
+        let bytes = le_bytes(&[0x00_0001, 0x00_0002, -3, -4], 3);
+        let buf = decode(NativeSampleFormat::I24, 2, false, &bytes);
+        // The means, 1.5 and -3.5, keep their half step in the spare low byte.
+        assert_eq!(buf.samples_i32, vec![0x180, -0x380]);
+        assert_eq!(buf.channels, 1);
+    }
+
+    #[test]
+    fn keeps_all_32_bits_and_drops_a_partial_frame() {
+        let samples = [0x7fff_0001, i32::MIN, 5];
+        let buf = decode(NativeSampleFormat::I32, 2, true, &le_bytes(&samples, 4));
+        assert_eq!(buf.samples_i32, vec![0x7fff_0001, i32::MIN]);
+        let wav = crate::recording::encode_native_wav(&buf).unwrap();
+        let (h, data) = wav_data(&wav);
+        assert_eq!(
+            (h.bits_per_sample, h.is_float, h.total_frames),
+            (32, false, 1)
+        );
+        assert_eq!(data, &le_bytes(&samples[..2], 4)[..]);
+    }
+
+    #[test]
+    fn writes_32_bit_float_as_float_wav() {
+        let samples = [0.5f32, -0.25, 1.0, -1.0];
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut buf = decode(NativeSampleFormat::F32, 1, false, &bytes);
+        assert_eq!(buf.samples_f32, samples);
+        assert_eq!(buf.drain_pending(), samples);
+        let wav = crate::recording::encode_native_wav(&buf).unwrap();
+        let (h, data) = wav_data(&wav);
+        assert_eq!((h.bits_per_sample, h.is_float, h.channels), (32, true, 1));
+        assert_eq!(data, &bytes[..]);
+
+        let stereo = decode(NativeSampleFormat::F32, 2, false, &bytes);
+        assert_eq!(stereo.samples_f32, vec![0.125, 0.0]);
     }
 
     #[test]
     fn stereo_preroll_ring_keeps_whole_recent_frames_and_seeds_them() {
         // Cap: 1 Hz x 15 s = 15 frames.
-        let mut buf = UsbRecordingBuffer::new(1, 2);
-        let frames: Vec<i16> = (0..20).flat_map(|i| [i, 100 + i]).collect();
-        buf.push_samples(&frames, false);
+        let mut decoder = UsbDecoder::new(NativeSampleFormat::I24, 2, true);
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I24, 1, 2);
+        let frames: Vec<i32> = (0..20).flat_map(|i| [i, 100 + i]).collect();
+        decoder.decode(&le_bytes(&frames, 3));
+        decoder.push_to(&mut buf, false);
         assert_eq!(buf.total_samples, 0);
-        assert_eq!(buf.preroll_i16.len(), 30);
-        assert_eq!(buf.preroll_i16.front(), Some(&5));
+        assert_eq!(buf.preroll_i32.len(), 30);
+        assert_eq!(buf.preroll_i32.front(), Some(&(5 << 8)));
 
         buf.clear();
         assert_eq!(buf.seed_preroll(2), 2);
         assert_eq!(buf.total_samples, 2);
-        assert_eq!(buf.samples_i16, vec![18, 118, 19, 119]);
+        assert_eq!(buf.samples_i32, vec![18 << 8, 118 << 8, 19 << 8, 119 << 8]);
     }
 
     #[test]
-    fn mono_stream_is_unchanged() {
-        let mut buf = UsbRecordingBuffer::new(48_000, 1);
-        buf.push_samples(&[1, 2, 3], true);
-        assert_eq!(buf.total_samples, 3);
-        assert_eq!(buf.seed_preroll(0), 0);
+    fn decoder_clears_between_urbs() {
+        let mut decoder = UsbDecoder::new(NativeSampleFormat::I16, 1, false);
+        assert!(decoder.is_empty());
+        decoder.decode(&le_bytes(&[1, 2], 2));
+        assert!(!decoder.is_empty());
+        decoder.clear();
+        assert!(decoder.is_empty());
     }
 }

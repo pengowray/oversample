@@ -1,4 +1,4 @@
-use crate::recording::{self, NativeSampleFormat, RecordingResult};
+use crate::recording::{self, RecordingResult};
 use crate::recovery;
 use crate::usb_audio::{self, UsbStreamInfo, UsbStreamStatus};
 use crate::UsbStreamMutex;
@@ -19,6 +19,8 @@ pub fn usb_start_stream(
     interface_number: Option<u32>,
     alternate_setting: Option<u32>,
     uac_version: Option<u32>,
+    subslot_size: Option<u32>,
+    is_float: Option<bool>,
 ) -> Result<UsbStreamInfo, String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     // Stop existing stream if any
@@ -39,6 +41,8 @@ pub fn usb_start_stream(
         interface_number.unwrap_or(0),
         alternate_setting.unwrap_or(0),
         uac_version.unwrap_or(0),
+        subslot_size.unwrap_or(2),
+        is_float.unwrap_or(false),
     )?;
 
     let info = UsbStreamInfo {
@@ -91,10 +95,11 @@ pub fn usb_start_recording(
     if !s.is_streaming.load(Ordering::Relaxed) {
         return Err("USB stream is not actively streaming — cannot start recording".into());
     }
-    let channels = {
+    let (channels, write_format) = {
         let mut buf = s.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
+        let write_format = buf.choose_write_format();
         // Seed the pre-roll ring into the recording, then flip is_recording while
         // still holding the buffer lock so the isochronous thread appends live
         // frames right after the pre-roll (gapless seam).
@@ -106,7 +111,7 @@ pub fn usb_start_recording(
                 seeded
             );
         }
-        buf.channels
+        (buf.channels, write_format)
     };
 
     let args = recovery::StartArgs {
@@ -123,15 +128,10 @@ pub fn usb_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    // USB streams are always 16-bit in this implementation.
-    if let Some(writer) = recovery::start_writer(
-        &app,
-        &args,
-        NativeSampleFormat::I16,
-        s.sample_rate,
-        channels,
-        "batcap",
-    ) {
+    // The .part file is written in the same format as a to-memory WAV.
+    if let Some(writer) =
+        recovery::start_writer(&app, &args, write_format, s.sample_rate, channels, "batcap")
+    {
         if let Ok(mut guard) = s.recovery.writer.lock() {
             *guard = Some(writer);
         }
@@ -158,8 +158,7 @@ pub fn usb_stop_recording(
     let s = usb.as_ref().ok_or("USB stream not open")?;
     s.is_recording.store(false, Ordering::Relaxed);
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
-
-    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded) = {
+    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded, write_format) = {
         let mut buf = s.buffer.lock().unwrap();
         (
             buf.total_samples,
@@ -167,8 +166,11 @@ pub fn usb_stop_recording(
             buf.channels,
             buf.shared_fd.take(),
             buf.preroll_seeded,
+            buf.write_format,
         )
     };
+    let bits_per_sample = write_format.bits_per_sample();
+    let is_float = write_format.is_float();
     // RAII-own the shared-storage fd so every early return below closes it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
 
@@ -200,8 +202,8 @@ pub fn usb_stop_recording(
             filename: String::new(),
             saved_path: String::new(),
             sample_rate,
-            bits_per_sample: 16,
-            is_float: false,
+            bits_per_sample,
+            is_float,
             duration_secs,
             num_samples,
             channels,
@@ -254,7 +256,7 @@ pub fn usb_stop_recording(
         let writer = recovery_writer.expect("streaming_mode implies writer");
         let final_bytes = {
             let mut buf = s.buffer.lock().unwrap();
-            usb_audio::drain_usb_recovery_bytes(&mut buf)
+            recovery::drain_buffer_bytes(&mut buf)
         };
         // Everything below operates on the owned writer / bytes / paths, not the
         // USB state. Release the UsbStreamMutex before the (possibly multi-GB)
@@ -284,7 +286,7 @@ pub fn usb_stop_recording(
         };
         (saved_path, final_size, false)
     } else {
-        // To-memory mode: encode the accumulated i16 buffer; stash the samples
+        // To-memory mode: encode the accumulated samples; stash them
         // for the WASM finalizer to pull as raw bytes (mic_take_recorded_samples).
         let samples_f32 = usb_audio::get_usb_samples_f32(s);
         let mut wav_data = usb_audio::encode_usb_wav(s)?;
@@ -320,8 +322,8 @@ pub fn usb_stop_recording(
         filename,
         saved_path,
         sample_rate,
-        bits_per_sample: 16,
-        is_float: false,
+        bits_per_sample,
+        is_float,
         duration_secs,
         num_samples,
         channels,

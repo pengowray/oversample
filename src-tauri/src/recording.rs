@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 /// stereo).
 const PREROLL_RING_SECS: usize = 15;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[allow(dead_code)]
 pub enum NativeSampleFormat {
     I16,
@@ -57,6 +57,34 @@ pub(crate) fn seed_from_ring<T: Copy>(
     seeded
 }
 
+/// cpal's I24 holds the value in the low 24 bits of an i32; I24 storage uses
+/// the top 24 bits, as I32 does.
+fn i24_to_top_aligned(s: cpal::I24) -> i32 {
+    s.inner() << 8
+}
+
+/// The I24/I32 capture callback: add the raw samples to the bit-depth detection
+/// whenever the stream runs, then store them while listening or recording.
+fn store_i32_callback(
+    buf: &Mutex<RecordingBuffer>,
+    rec: &AtomicBool,
+    strm: &AtomicBool,
+    data: &[i32],
+    channels: usize,
+    stereo: bool,
+) {
+    let mut buf = buf.lock().unwrap();
+    buf.note_i32_bits(data);
+    let recording = rec.load(Ordering::Relaxed);
+    if !recording && !strm.load(Ordering::Relaxed) {
+        return;
+    }
+    let stored = samples_to_store(data, channels, stereo, |frame| {
+        (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32
+    });
+    buf.push_i32(&stored, recording);
+}
+
 /// The samples a capture callback stores: `data` as delivered when it is mono or
 /// when stereo is being kept, otherwise a mono mix made by `mix` from each frame.
 fn samples_to_store<T: Clone>(
@@ -98,14 +126,19 @@ pub struct RecordingBuffer {
     /// of low bits that are ALWAYS zero across all samples (its trailing zeros)
     /// is the number of unused LSBs, so `container_bits - trailing_zeros` is the
     /// effective depth — e.g. a 24-bit interface delivering 24-bit data in a
-    /// 32-bit container leaves the low 8 bits zero (effective 24). Reset when a
-    /// new stream opens. `detect_samples` gates on having enough data.
+    /// 32-bit container leaves the low 8 bits zero (effective 24). It covers
+    /// everything since the stream opened (listening included), so the depth is
+    /// known when a recording starts. `detect_samples` gates on having enough data.
     pub detect_or: i32,
     pub detect_samples: u64,
     /// Per-device user override of the output bit depth (12/16/24/32). When set,
     /// the recording is written at this effective depth instead of the
     /// auto-detected one. `None` = Auto (use detection).
     pub force_bits: Option<u16>,
+    /// The format written to the WAV and the `.part` file. Set at record start by
+    /// [`Self::choose_write_format`], so a recording streamed to disk and one kept
+    /// in memory get the same depth.
+    pub write_format: NativeSampleFormat,
     /// Rolling pre-roll ring (native format), filled only while listening
     /// (`is_streaming && !is_recording`) and capped to [`PREROLL_RING_SECS`].
     /// Seeded into the recording buffer at record start so a long-press capture
@@ -134,6 +167,7 @@ impl RecordingBuffer {
             detect_or: 0,
             detect_samples: 0,
             force_bits: None,
+            write_format: format,
             preroll_i16: VecDeque::new(),
             preroll_i32: VecDeque::new(),
             preroll_f32: VecDeque::new(),
@@ -164,6 +198,40 @@ impl RecordingBuffer {
     pub fn push_preroll_f32(&mut self, data: &[f32]) {
         let cap = self.preroll_cap();
         push_to_ring(&mut self.preroll_f32, data, cap);
+    }
+
+    /// Store whole frames in the recording when `recording` is true, otherwise in
+    /// the pre-roll ring, and queue them as f32 for the live display. There is one
+    /// method per storage type: `push_i32` takes I24 and I32 samples, which use the
+    /// top bits of the i32 (full scale is +-2^31).
+    pub fn push_i16(&mut self, data: &[i16], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_i16.extend_from_slice(data);
+        } else {
+            self.push_preroll_i16(data);
+        }
+        self.pending_f32
+            .extend(data.iter().map(|&s| s as f32 / 32768.0));
+    }
+    pub fn push_i32(&mut self, data: &[i32], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_i32.extend_from_slice(data);
+        } else {
+            self.push_preroll_i32(data);
+        }
+        self.pending_f32
+            .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
+    }
+    pub fn push_f32(&mut self, data: &[f32], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_f32.extend_from_slice(data);
+        } else {
+            self.push_preroll_f32(data);
+        }
+        self.pending_f32.extend_from_slice(data);
     }
 
     /// Drop all pre-roll rings (e.g. when a fresh listen session starts).
@@ -229,13 +297,63 @@ impl RecordingBuffer {
         self.samples_f32.clear();
         self.pending_f32.clear();
         self.total_samples = 0;
-        self.detect_or = 0;
-        self.detect_samples = 0;
         self.preroll_seeded = 0;
         // Note: shared_fd is NOT cleared here — it persists across clear()
         // because it's set before recording starts and consumed on stop.
         // Note: the pre-roll rings are NOT cleared here — clear() runs at record
         // start, immediately before `seed_preroll` reads them; seed clears them.
+    }
+
+    /// Add raw I24/I32 samples (before any mono mix) to the bit-depth detection.
+    pub fn note_i32_bits(&mut self, data: &[i32]) {
+        self.detect_or = data.iter().fold(self.detect_or, |or, &s| or | s);
+        self.detect_samples += data.len() as u64;
+    }
+
+    /// Choose the WAV format for the recording about to start, and keep it in
+    /// `write_format`. A per-device override (`force_bits`) wins. Otherwise an
+    /// I24/I32 stream is narrowed to 16 or 24 bits when detection shows its low
+    /// bits are always zero; until detection has seen enough audio, the stream's
+    /// own format is used.
+    pub fn choose_write_format(&mut self) -> NativeSampleFormat {
+        let target = self.force_bits.or_else(|| self.effective_bits(32));
+        self.write_format = match (self.format, target) {
+            (NativeSampleFormat::I24 | NativeSampleFormat::I32, Some(b)) if b <= 16 => {
+                NativeSampleFormat::I16
+            }
+            (NativeSampleFormat::I32, Some(b)) if b <= 24 => NativeSampleFormat::I24,
+            (other, _) => other,
+        };
+        self.write_format
+    }
+
+    /// The stored samples as WAV data bytes in `write_format`. Narrowing drops
+    /// only the low bits detection found always zero (or that `force_bits` asks
+    /// to drop). A forced depth below 16 bits also zeroes the surplus low bits of
+    /// the 16-bit samples, so the file is honestly N-bit.
+    pub fn data_bytes(&self) -> Vec<u8> {
+        use crate::recovery::{encode_samples_f32, encode_samples_i24, encode_samples_i32};
+        let mask16: i16 = match (self.write_format, self.force_bits) {
+            (NativeSampleFormat::I16, Some(b)) if b < 16 => !((1i16 << (16 - b)) - 1),
+            _ => -1,
+        };
+        match self.format {
+            NativeSampleFormat::I16 => self
+                .samples_i16
+                .iter()
+                .flat_map(|&s| (s & mask16).to_le_bytes())
+                .collect(),
+            NativeSampleFormat::I24 | NativeSampleFormat::I32 => match self.write_format {
+                NativeSampleFormat::I16 => self
+                    .samples_i32
+                    .iter()
+                    .flat_map(|&s| (((s >> 16) as i16) & mask16).to_le_bytes())
+                    .collect(),
+                NativeSampleFormat::I24 => encode_samples_i24(&self.samples_i32),
+                _ => encode_samples_i32(&self.samples_i32),
+            },
+            NativeSampleFormat::F32 => encode_samples_f32(&self.samples_f32),
+        }
     }
 
     /// Drain pending f32 samples for streaming to frontend.
@@ -321,6 +439,7 @@ fn detect_format(config: &cpal::SupportedStreamConfig) -> NativeSampleFormat {
             // 24-bit samples fit in i32.
             NativeSampleFormat::I32
         }
+        cpal::SampleFormat::I24 => NativeSampleFormat::I24,
         cpal::SampleFormat::F32 => NativeSampleFormat::F32,
         _ => NativeSampleFormat::F32, // fallback for other formats
     }
@@ -413,6 +532,7 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                 for cfg in configs {
                     let fmt = match cfg.sample_format() {
                         cpal::SampleFormat::I16 => "I16",
+                        cpal::SampleFormat::I24 => "I24",
                         cpal::SampleFormat::I32 => "I32",
                         cpal::SampleFormat::F32 => "F32",
                         _ => "Other",
@@ -452,14 +572,16 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
     devices
 }
 
-/// Map a user's max_bit_depth value to a preferred cpal SampleFormat.
-/// Returns None for auto (0) — accept any format.
-fn preferred_format_for_bit_depth(max_bit_depth: u16) -> Option<cpal::SampleFormat> {
+/// The cpal sample formats to look for, best first, for a user's max bit depth.
+/// Empty for auto (0): accept any format. Above 16 bits, F32 is a fallback (and
+/// the only deeper format Android's AAudio backend opens).
+fn preferred_formats_for_bit_depth(max_bit_depth: u16) -> &'static [cpal::SampleFormat] {
+    use cpal::SampleFormat::{F32, I16, I24, I32};
     match max_bit_depth {
-        0 => None, // auto
-        1..=16 => Some(cpal::SampleFormat::I16),
-        17..=32 => Some(cpal::SampleFormat::I32),
-        _ => None,
+        1..=16 => &[I16],
+        17..=24 => &[I24, I32, F32],
+        25..=32 => &[I32, F32, I24],
+        _ => &[],
     }
 }
 
@@ -507,9 +629,9 @@ pub fn open_mic(
         .unwrap_or_else(|_| "Unknown".into());
     let supported_rates = collect_supported_rates(&device);
 
-    let pref_fmt = preferred_format_for_bit_depth(max_bit_depth);
+    let pref_fmts = preferred_formats_for_bit_depth(max_bit_depth);
 
-    let config = if requested_max_rate == 0 && pref_fmt.is_none() && requested_channels == 0 {
+    let config = if requested_max_rate == 0 && pref_fmts.is_empty() && requested_channels == 0 {
         // Full auto mode: use the device's preferred/native config.
         // This avoids Android's Oboe backend reporting inflated max rates
         // (e.g. 192kHz for built-in mic) that trigger silent resampling.
@@ -531,23 +653,26 @@ pub fn open_mic(
             .collect();
 
         // Filter by preferred format if set
-        let format_filtered: Vec<_> = if let Some(fmt) = pref_fmt {
+        // Keep the configs of the first preferred format the device offers.
+        let preferred = pref_fmts.iter().find_map(|&fmt| {
             let filtered: Vec<_> = all_configs
                 .iter()
                 .filter(|c| c.sample_format() == fmt)
                 .cloned()
                 .collect();
-            if filtered.is_empty() {
-                eprintln!(
-                    "Mic config: no configs with format {:?}, ignoring bit depth preference",
-                    fmt
-                );
+            (!filtered.is_empty()).then_some(filtered)
+        });
+        let format_filtered: Vec<_> = match preferred {
+            Some(filtered) => filtered,
+            None => {
+                if !pref_fmts.is_empty() {
+                    eprintln!(
+                        "Mic config: no configs with formats {:?}, ignoring bit depth preference",
+                        pref_fmts
+                    );
+                }
                 all_configs.clone()
-            } else {
-                filtered
             }
-        } else {
-            all_configs.clone()
         };
 
         // Filter by channel count if set
@@ -638,47 +763,26 @@ pub fn open_mic(
                 let stored = samples_to_store(data, channels, stereo, |frame| {
                     (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32) as i16
                 });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_i16.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_i16(&stored);
-                }
-                buf.pending_f32
-                    .extend(stored.iter().map(|&s| s as f32 / 32768.0));
+                buf.push_i16(&stored, recording);
             },
             err_callback,
             None,
         ),
-        NativeSampleFormat::I24 | NativeSampleFormat::I32 => device.build_input_stream(
+        NativeSampleFormat::I24 => device.build_input_stream(
+            stream_config,
+            move |data: &[cpal::I24], _: &cpal::InputCallbackInfo| {
+                // cpal's I24 holds the value in the low 24 bits; I24 storage uses
+                // the top 24 bits of the i32, as I32 does.
+                let data: Vec<i32> = data.iter().map(|&s| i24_to_top_aligned(s)).collect();
+                store_i32_callback(&buf, &rec, &strm, &data, channels, stereo);
+            },
+            err_callback,
+            None,
+        ),
+        NativeSampleFormat::I32 => device.build_input_stream(
             stream_config,
             move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                let mut buf = buf.lock().unwrap();
-                let recording = rec.load(Ordering::Relaxed);
-                if !recording && !strm.load(Ordering::Relaxed) {
-                    return;
-                }
-                // Accumulate effective-bit-depth detection over the raw i32
-                // samples (cheap: one OR per sample) whenever the stream is
-                // active: covers both live listen and recording.
-                let mut or = buf.detect_or;
-                for &s in data {
-                    or |= s;
-                }
-                buf.detect_or = or;
-                buf.detect_samples += data.len() as u64;
-
-                let stored = samples_to_store(data, channels, stereo, |frame| {
-                    (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32
-                });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_i32.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_i32(&stored);
-                }
-                buf.pending_f32
-                    .extend(stored.iter().map(|&s| s as f32 / 2147483648.0));
+                store_i32_callback(&buf, &rec, &strm, data, channels, stereo);
             },
             err_callback,
             None,
@@ -694,13 +798,7 @@ pub fn open_mic(
                 let stored = samples_to_store(data, channels, stereo, |frame| {
                     frame.iter().sum::<f32>() / channels as f32
                 });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_f32.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_f32(&stored);
-                }
-                buf.pending_f32.extend_from_slice(&stored);
+                buf.push_f32(&stored, recording);
             },
             err_callback,
             None,
@@ -732,66 +830,15 @@ pub fn open_mic(
     })
 }
 
-/// Encode the recording buffer to WAV at native bit depth.
-/// The WAV format to actually write. Auto-detect down-converts a 32-bit
-/// container to the smallest format that holds the detected effective bit depth:
-/// 16-bit for <=16-bit data (which zero-pads a 12-bit recorder cleanly — the low
-/// bits drop out in the shift), 24-bit for <=24-bit (e.g. DUO-CAPTURE EX). It's
-/// lossless for a device that genuinely delivers that depth, a half/third
-/// smaller, and labels the header correctly. Falls back to the container until
-/// detection settles or for genuine 32-bit input. (A per-device override can
-/// force a specific depth — wired separately.)
-fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
-    // A per-device override (force_bits) wins; otherwise the auto-detected depth.
-    let target = buffer.force_bits.or_else(|| buffer.effective_bits(32));
-    match buffer.format {
-        NativeSampleFormat::I32 => match target {
-            Some(b) if b <= 16 => NativeSampleFormat::I16,
-            Some(b) if b <= 24 => NativeSampleFormat::I24,
-            _ => NativeSampleFormat::I32,
-        },
-        other => other,
-    }
-}
-
+/// The whole recording as a WAV file (no GUANO), in `write_format`.
 pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     use oversample_core::audio::wav::{header_bytes, WavWriteFormat};
-    let out_format = output_format(buffer);
-
-    // For a target depth that doesn't match the 16-bit WAV size (e.g. a forced or
-    // detected 12-bit), zero the surplus low bits so the file is honestly N-bit
-    // (12-bit zero-padded). No-op (mask = all ones) for native 16-bit output.
-    let target = buffer.force_bits.or_else(|| buffer.effective_bits(32));
-    let mask16: i16 = match (out_format, target) {
-        (NativeSampleFormat::I16, Some(b)) if b < 16 => !((1i16 << (16 - b)) - 1),
-        _ => -1,
-    };
-    let data: Vec<u8> = match buffer.format {
-        NativeSampleFormat::I16 => buffer
-            .samples_i16
-            .iter()
-            .flat_map(|&s| (s & mask16).to_le_bytes())
-            .collect(),
-        // i32 container source: write at the (possibly down-converted) out depth.
-        // The shifts drop only the always-zero low bits, so this is lossless for a
-        // device that genuinely delivers `out_format` bits.
-        NativeSampleFormat::I24 | NativeSampleFormat::I32 => match out_format {
-            NativeSampleFormat::I16 => buffer
-                .samples_i32
-                .iter()
-                .flat_map(|&s| (((s >> 16) as i16) & mask16).to_le_bytes())
-                .collect(),
-            NativeSampleFormat::I24 => crate::recovery::encode_samples_i24(&buffer.samples_i32),
-            _ => crate::recovery::encode_samples_i32(&buffer.samples_i32),
-        },
-        NativeSampleFormat::F32 => crate::recovery::encode_samples_f32(&buffer.samples_f32),
-    };
-
+    let data = buffer.data_bytes();
     let format = WavWriteFormat {
         sample_rate: buffer.sample_rate,
         channels: buffer.channels,
-        bits_per_sample: out_format.bits_per_sample(),
-        is_float: out_format.is_float(),
+        bits_per_sample: buffer.write_format.bits_per_sample(),
+        is_float: buffer.write_format.is_float(),
     };
     let mut wav = header_bytes(&format, data.len() as u64, 0);
     wav.extend_from_slice(&data);
@@ -962,7 +1009,7 @@ pub fn start_emitter(
                                 Ok(b) => b,
                                 Err(_) => continue,
                             };
-                            crate::recovery::drain_cpal_bytes(&mut buf)
+                            crate::recovery::drain_buffer_bytes(&mut buf)
                         };
                         if !bytes.is_empty() {
                             if let Some(writer) = wg.as_mut() {
@@ -1052,9 +1099,71 @@ mod tests {
     fn stereo_i32_recording_stays_interleaved_when_written_at_a_lower_depth() {
         let mut buf = RecordingBuffer::new(NativeSampleFormat::I32, 48_000, 2);
         buf.force_bits = Some(16);
+        buf.choose_write_format();
         buf.samples_i32 = vec![1 << 16, 2 << 16, 3 << 16, 4 << 16];
         let wav = encode_native_wav(&buf).unwrap();
         let h = parse_wav_header(&wav).unwrap();
         assert_eq!((h.channels, h.total_frames, h.bits_per_sample), (2, 2, 16));
+    }
+
+    /// An I32 stream whose low byte is always zero, with enough audio seen for
+    /// detection to settle.
+    fn i32_stream_with_24_bit_audio() -> RecordingBuffer {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I32, 48_000, 2);
+        let listened: Vec<i32> = (0..60_000_i32).map(|i| i.wrapping_mul(0x1234_5671) & !0xFF).collect();
+        buf.note_i32_bits(&listened);
+        buf
+    }
+
+    #[test]
+    fn detection_from_listening_survives_record_start() {
+        let mut buf = i32_stream_with_24_bit_audio();
+        buf.clear();
+        assert_eq!(buf.choose_write_format(), NativeSampleFormat::I24);
+    }
+
+    #[test]
+    fn write_format_is_the_container_until_detection_settles() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I32, 48_000, 2);
+        buf.note_i32_bits(&[0x100, -0x200]);
+        assert_eq!(buf.choose_write_format(), NativeSampleFormat::I32);
+        let mut forced = RecordingBuffer::new(NativeSampleFormat::I24, 48_000, 1);
+        forced.force_bits = Some(16);
+        assert_eq!(forced.choose_write_format(), NativeSampleFormat::I16);
+        let mut float = RecordingBuffer::new(NativeSampleFormat::F32, 48_000, 1);
+        float.force_bits = Some(16);
+        assert_eq!(float.choose_write_format(), NativeSampleFormat::F32);
+    }
+
+    #[test]
+    fn streamed_and_to_memory_recordings_get_the_same_bytes() {
+        let samples = vec![0x7FFF_FF00_u32 as i32, -0x1234_5600, 0x0000_0100, -0x100];
+        let mut buf = i32_stream_with_24_bit_audio();
+        buf.clear();
+        let format = buf.choose_write_format();
+        buf.samples_i32 = samples.clone();
+
+        // To memory: the whole WAV at stop.
+        let wav = encode_native_wav(&buf).unwrap();
+        let h = parse_wav_header(&wav).unwrap();
+        assert_eq!((h.bits_per_sample, h.is_float, h.channels), (24, false, 2));
+        let memory_data = &wav[h.data_offset as usize..];
+
+        // Streamed: the .part header uses the format chosen at start, and the
+        // flushes carry the same data bytes.
+        assert_eq!((format.bits_per_sample(), format.is_float()), (24, false));
+        let streamed_data = crate::recovery::drain_buffer_bytes(&mut buf);
+        assert_eq!(streamed_data, memory_data);
+        assert_eq!(&streamed_data[..3], &[0xFF, 0xFF, 0x7F]);
+        assert!(buf.samples_i32.is_empty());
+    }
+
+    #[test]
+    fn cpal_i24_lands_in_the_top_24_bits() {
+        let top = i24_to_top_aligned(cpal::I24::new(0x12_3456).unwrap());
+        assert_eq!(top, 0x1234_5600);
+        assert_eq!(crate::recovery::encode_samples_i24(&[top]), [0x56, 0x34, 0x12]);
+        let min = i24_to_top_aligned(cpal::I24::new(-(1 << 23)).unwrap());
+        assert_eq!(min, i32::MIN);
     }
 }

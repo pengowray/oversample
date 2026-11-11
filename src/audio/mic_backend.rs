@@ -1322,7 +1322,7 @@ async fn open_web(state: &AppState) -> bool {
         }
     };
 
-    let ctx = match AudioContext::new() {
+    let ctx = match mic_audio_context(&stream) {
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to create AudioContext: {:?}", e);
@@ -1340,6 +1340,9 @@ async fn open_web(state: &AppState) -> bool {
 
     let sample_rate = ctx.sample_rate() as u32;
     state.mic.sample_rate().set(sample_rate);
+    // Web Audio delivers 32-bit float samples; recordings keep them as float.
+    state.mic.bits_per_sample().set(32);
+    state.mic.is_float().set(true);
     // Only report a device name when the user explicitly selected a specific
     // device via the mic chooser (mic_selected_device is Some with a non-empty id).
     // "Browser default" and direct browser mode leave mic_device_name as None.
@@ -1480,7 +1483,8 @@ async fn open_web(state: &AppState) -> bool {
 }
 
 /// The channel count the browser reports for a capture stream's audio track.
-fn track_channel_count(stream: &web_sys::MediaStream) -> Option<u32> {
+/// A numeric field of the first audio track's `getSettings()`, if the browser reports it.
+fn track_setting(stream: &web_sys::MediaStream, key: &str) -> Option<f64> {
     let track = stream.get_audio_tracks().get(0);
     let get_settings = js_sys::Reflect::get(&track, &"getSettings".into()).ok()?;
     let settings = get_settings
@@ -1488,10 +1492,27 @@ fn track_channel_count(stream: &web_sys::MediaStream) -> Option<u32> {
         .ok()?
         .call0(&track)
         .ok()?;
-    js_sys::Reflect::get(&settings, &"channelCount".into())
-        .ok()?
-        .as_f64()
-        .map(|n| n as u32)
+    js_sys::Reflect::get(&settings, &key.into()).ok()?.as_f64()
+}
+
+fn track_channel_count(stream: &web_sys::MediaStream) -> Option<u32> {
+    track_setting(stream, "channelCount").map(|n| n as u32)
+}
+
+/// An AudioContext running at the mic's own sample rate, so the browser doesn't
+/// resample it (a default context runs at the output device's rate, often
+/// 48 kHz, which would cut a bat mic's ultrasound). Falls back to the default
+/// rate when the browser doesn't report the mic's rate or rejects it.
+fn mic_audio_context(stream: &web_sys::MediaStream) -> Result<AudioContext, JsValue> {
+    if let Some(rate) = track_setting(stream, "sampleRate").filter(|r| *r > 0.0) {
+        let opts = web_sys::AudioContextOptions::new();
+        opts.set_sample_rate(rate as f32);
+        match AudioContext::new_with_context_options(&opts) {
+            Ok(ctx) => return Ok(ctx),
+            Err(e) => log::warn!("AudioContext at the mic's {rate} Hz failed: {e:?}"),
+        }
+    }
+    AudioContext::new()
 }
 
 fn close_web(state: &AppState) {
@@ -1590,6 +1611,7 @@ async fn open_cpal(state: &AppState) -> bool {
 
     state.mic.sample_rate().set(sample_rate);
     state.mic.bits_per_sample().set(bits_per_sample);
+    state.mic.is_float().set(info.is_float);
     state.mic.device_name().set(Some(device_name.clone()));
     state.mic.manufacturer().set(None);
     // Determine mic interface from the cpal host backend.
@@ -1756,6 +1778,12 @@ async fn open_usb(state: &AppState) -> bool {
         interface_number: info.interface_number as u32,
         alternate_setting: info.alternate_setting as u32,
         uac_version: info.uac_version as u32,
+        subslot_size: if info.subslot_size > 0 {
+            info.subslot_size as u32
+        } else {
+            2
+        },
+        is_float: info.is_float,
     };
     if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
         state
@@ -1768,14 +1796,15 @@ async fn open_usb(state: &AppState) -> bool {
 
     NATIVE_CHANNELS.with(|c| c.set(if stereo { 2 } else { 1 }));
     state.mic.sample_rate().set(sample_rate);
-    // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
-    // (never present) so usb_bits was always stuck at the 16 default.
-    let usb_bits = if info.bit_resolution > 0 {
-        info.bit_resolution as u16
-    } else {
-        16
+    // Recordings are written with the bytes per sample the device sends (the
+    // Portacapture X8 sends 3), whatever its bitResolution says.
+    let usb_bits = match info.subslot_size {
+        3 => 24,
+        4 => 32,
+        _ => 16,
     };
-    state.mic.bits_per_sample().set(usb_bits);
+    state.mic.bits_per_sample().set(if info.is_float { 32 } else { usb_bits });
+    state.mic.is_float().set(info.is_float);
 
     // Setup HET playback AudioContext and chunk handler (same as cpal)
     if !setup_het_context(state).await {
@@ -1822,7 +1851,7 @@ async fn open_usb(state: &AppState) -> bool {
                         interleaved: None,
                         sample_rate: sr,
                         bits_per_sample: state_err.mic.bits_per_sample().get_untracked(),
-                        is_float: false,
+                        is_float: state_err.mic.is_float().get_untracked(),
                         saved_path: String::new(),
                         file_size: None,
                     },

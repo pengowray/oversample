@@ -1858,6 +1858,8 @@ pub struct MicState {
     pub sample_rate: u32,
     pub samples_recorded: usize,
     pub bits_per_sample: u16,
+    /// Samples are IEEE float (with `bits_per_sample` 32), not integer PCM.
+    pub is_float: bool,
     /// 0 = auto (device default).
     pub max_sample_rate: u32,
     /// Maximum seconds of listen buffer to capture on long-press record.
@@ -2098,6 +2100,8 @@ pub struct DialogsState {
     pub notif_perm_asked: bool,
     pub xc_browser_open: bool,
     pub wiki_browser_open: bool,
+    /// Region shown in the 3D spectrogram dialog; `None` when it is closed.
+    pub surface_3d: Option<Selection>,
 }
 
 /// Loaded-file library + load queue.
@@ -2470,6 +2474,7 @@ impl AppState {
                 sample_rate: 0,
                 samples_recorded: 0,
                 bits_per_sample: 16,
+                is_float: false,
                 max_sample_rate: 0,
                 preroll_buffer_secs: 10,
                 mode: if detect_tauri() {
@@ -2558,6 +2563,7 @@ impl AppState {
                 ),
                 xc_browser_open: false,
                 wiki_browser_open: false,
+                surface_3d: None,
             }),
             is_tauri: detect_tauri(),
             is_mobile_platform: detect_mobile_ua(),
