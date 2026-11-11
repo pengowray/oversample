@@ -88,6 +88,11 @@ web-sys = { version = "0.3", features = [
     "ResizeObserver",
     "ResizeObserverEntry",
     "ResizeObserverSize",
+    "Worker",
+    "MessageEvent",
+    "ErrorEvent",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
 ] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
@@ -106,7 +111,43 @@ serde-wasm-bindgen = "0.6"
 yaml_serde = "0.10"
 sha2 = "0.11"
 blake3 = { version = "1", default-features = false }
+futures-channel = "0.3"
 
 [profile.release]
 opt-level = "s"
 lto = true
+
+# The BirdNET worker: tract runs 1.8 times slower at opt-level "s" than at 3.
+# Only crates the app's own bundle does not use are listed, so the app's WASM is
+# unchanged. Generic code (ndarray, num-traits) is compiled in the crate that
+# instantiates it, so the tract crates carry most of it. With fat LTO, the final
+# optimisation runs at the opt-level of the crate being linked, which for the
+# worker is birdnet-worker's 3.
+[profile.release.package.birdnet-worker]
+opt-level = 3
+[profile.release.package.rubato]
+opt-level = 3
+[profile.release.package.tract-core]
+opt-level = 3
+[profile.release.package.tract-data]
+opt-level = 3
+[profile.release.package.tract-linalg]
+opt-level = 3
+[profile.release.package.tract-hir]
+opt-level = 3
+[profile.release.package.tract-nnef]
+opt-level = 3
+[profile.release.package.tract-onnx]
+opt-level = 3
+[profile.release.package.tract-onnx-opl]
+opt-level = 3
+[profile.release.package.tract-extra]
+opt-level = 3
+[profile.release.package.tract-transformers]
+opt-level = 3
+[profile.release.package.ndarray]
+opt-level = 3
+[profile.release.package.matrixmultiply]
+opt-level = 3
+[profile.release.package.half]
+opt-level = 3

@@ -1,6 +1,7 @@
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_mic;
+mod cmd_models;
 mod cmd_noise_presets;
 mod cmd_playback;
 mod cmd_usb;
@@ -96,6 +97,11 @@ pub fn run() {
             cmd_annotations::export_annotations_file,
             cmd_annotations::save_export_file,
             cmd_annotations::open_file_dialog,
+            cmd_models::models_sizes,
+            cmd_models::models_write_part,
+            cmd_models::models_commit,
+            cmd_models::models_read,
+            cmd_models::models_delete,
             device_info,
         ])
         .run(tauri::generate_context!())

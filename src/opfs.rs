@@ -13,7 +13,7 @@ async fn get_opfs_dir() -> Result<FileSystemDirectoryHandle, String> {
 }
 
 /// Get (creating if needed) a top-level OPFS directory by name.
-async fn get_opfs_subdir(name: &str) -> Result<FileSystemDirectoryHandle, String> {
+pub(crate) async fn get_opfs_subdir(name: &str) -> Result<FileSystemDirectoryHandle, String> {
     let window = web_sys::window().ok_or("no window")?;
     let navigator = window.navigator();
     let storage = navigator.storage();

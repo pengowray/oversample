@@ -4,6 +4,7 @@ pub mod audio;
 pub mod bat_book;
 pub mod call_annotations;
 pub mod canvas;
+pub mod classifier;
 pub mod components;
 pub mod dsp;
 pub mod file_identity;

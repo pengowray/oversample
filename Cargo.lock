@@ -3456,6 +3456,7 @@ dependencies = [
  "claxon",
  "console_error_panic_hook",
  "console_log",
+ "futures-channel",
  "js-sys",
  "leptos",
  "lewton",

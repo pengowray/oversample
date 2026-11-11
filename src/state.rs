@@ -1611,6 +1611,26 @@ pub struct CallDetectionState {
     pub progress: f64,
 }
 
+/// BirdNET and BattyBirdNET: model downloads, the run in progress, and results.
+/// See `crate::classifier` for the calls that change it.
+#[derive(Clone, Debug, Default, Store)]
+pub struct ClassifierState {
+    /// Download status per model file, keyed by `ModelFile::id`.
+    pub downloads: std::collections::HashMap<&'static str, crate::classifier::DownloadStatus>,
+    /// What the classifier is doing.
+    pub run: crate::classifier::RunStatus,
+    /// Results per (file id, method). Read with `.with(..)`: runs are large.
+    pub results: std::collections::HashMap<
+        (u64, crate::classifier::Method),
+        crate::classifier::ClassifierRun,
+    >,
+    /// Embeddings per (file id, method): `EMBEDDING_LEN` floats per window, in
+    /// window order.
+    pub embeddings: std::collections::HashMap<(u64, crate::classifier::Method), Vec<f32>>,
+    /// Bumped by each run, rescore and cancel; older tasks stop when it changes.
+    pub generation: u32,
+}
+
 /// Power-spectral-density panel settings.
 #[derive(Clone, Debug, Store)]
 pub struct PsdState {
@@ -1804,6 +1824,8 @@ pub mod store_fields {
         StatusStateStoreFields, TimelineStateStoreFields, TransformStateStoreFields,
         ViewModeStateStoreFields, ViewStateStoreFields,
     };
+    // Its own line, so adding it did not reflow the list above.
+    pub use super::ClassifierStateStoreFields;
 }
 
 /// Microphone capture + recording lifecycle (independent listen + record).
@@ -2203,6 +2225,8 @@ pub struct AppState {
     pub noise_reduce: Store<NoiseReduceState>,
     /// Bat call detection results and settings.
     pub call_detection: Store<CallDetectionState>,
+    /// BirdNET / BattyBirdNET downloads, runs and results (`crate::classifier`).
+    pub classifier: Store<ClassifierState>,
     /// PSD (Power Spectral Density) panel settings.
     pub psd: Store<PsdState>,
     /// Mic capture + recording lifecycle.
@@ -2564,6 +2588,8 @@ impl AppState {
                 scan_generation: 0,
                 progress: 0.0,
             }),
+
+            classifier: Store::new(ClassifierState::default()),
 
             annotations: Store::new(AnnotationsState {
                 store: AnnotationStore::default(),

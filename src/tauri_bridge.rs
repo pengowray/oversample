@@ -33,6 +33,35 @@ pub async fn tauri_invoke(cmd: &str, args: &JsValue) -> Result<JsValue, String> 
         .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
 }
 
+/// Invoke a Tauri command with `body` as the raw request body (no JSON), and
+/// `headers` as request headers. The command reads them from its
+/// `tauri::ipc::Request` (`InvokeBody::Raw` and `headers()`).
+pub async fn tauri_invoke_raw(
+    cmd: &str,
+    body: &js_sys::Uint8Array,
+    headers: &[(&str, String)],
+) -> Result<JsValue, String> {
+    let tauri = get_tauri_internals().ok_or("Not running in Tauri")?;
+    let invoke = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke"))
+        .map_err(|_| "No invoke function")?;
+    let invoke_fn = js_sys::Function::from(invoke);
+    let hdrs = js_sys::Object::new();
+    for (k, v) in headers {
+        let _ = js_sys::Reflect::set(&hdrs, &JsValue::from_str(k), &JsValue::from_str(v));
+    }
+    let options = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&options, &JsValue::from_str("headers"), &hdrs);
+    let promise_val = invoke_fn
+        .call3(&tauri, &JsValue::from_str(cmd), body, &options)
+        .map_err(|e| format!("Invoke call failed: {:?}", e))?;
+    let promise: js_sys::Promise = promise_val
+        .dyn_into()
+        .map_err(|_| "Result is not a Promise")?;
+    JsFuture::from(promise)
+        .await
+        .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
+}
+
 /// Invoke a Tauri command with no arguments.
 pub async fn tauri_invoke_no_args(cmd: &str) -> Result<JsValue, String> {
     tauri_invoke(cmd, &js_sys::Object::new().into()).await
