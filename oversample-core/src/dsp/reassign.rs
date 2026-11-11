@@ -355,16 +355,20 @@ pub fn main_frequency_line(
             if !joins[r] && !joins_next {
                 return None;
             }
-            // Median over the joined run, within smooth_cols either side.
-            let mut first = r;
-            while first > r - edge && joins[first] {
-                first -= 1;
+            // Median over a window centred on the point, inside its joined
+            // run, up to smooth_cols either side. Near the ends of a run the
+            // window narrows, so a sweep's first and last points stay where
+            // they were measured.
+            let mut before = 0;
+            while before < edge && joins[r - before] {
+                before += 1;
             }
-            let mut last = r;
-            while last < r + edge && joins[last + 1] {
-                last += 1;
+            let mut after = 0;
+            while after < edge && joins[r + after + 1] {
+                after += 1;
             }
-            let mut freqs: Vec<f64> = (first..=last)
+            let radius = before.min(after);
+            let mut freqs: Vec<f64> = (r - radius..=r + radius)
                 .filter_map(|q| points[q].map(|p| p.1))
                 .collect();
             freqs.sort_by(f64::total_cmp);
@@ -633,5 +637,37 @@ mod tests {
 
         let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
         assert_eq!(off_tone(&line), 0, "the line follows the blip: {line:?}");
+    }
+
+    #[test]
+    fn smoothing_keeps_the_start_of_a_sweep() {
+        // The first points of a sweep are not pulled towards the later ones.
+        let grid = LineGrid::new(512, 8, 384_000);
+        let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 256);
+        let (lead, mut samples, floor) = line_tile(grid, cols, 18);
+        let sweep = Sweep {
+            start: (lead + 40) * hop,
+        };
+        sweep.add_to(&mut samples, 0.5);
+        let line = main_frequency_line(&samples, lead, cols, grid, -200.0, &floor);
+        let unsmoothed = main_frequency_line(
+            &samples,
+            lead,
+            cols,
+            LineGrid {
+                smooth_cols: 1,
+                ..grid
+            },
+            -200.0,
+            &floor,
+        );
+        let top = |l: &[LinePoint]| l.iter().map(|p| p.freq_bin).fold(f32::MIN, f32::max);
+        assert!(
+            top(&line) >= top(&unsmoothed) - 1.0,
+            "smoothing lowered the sweep's top from {} to {} bins ({} Hz per bin)",
+            top(&unsmoothed),
+            top(&line),
+            384_000 / fft
+        );
     }
 }
