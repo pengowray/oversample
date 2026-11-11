@@ -35,6 +35,15 @@ pub fn all_species() -> &'static [BatSpecies] {
     &data().species
 }
 
+/// The species with this id.
+pub fn species(id: &str) -> Option<&'static BatSpecies> {
+    static BY_ID: OnceLock<HashMap<&'static str, &'static BatSpecies>> = OnceLock::new();
+    BY_ID
+        .get_or_init(|| all_species().iter().map(|s| (s.id.as_str(), s)).collect())
+        .get(id)
+        .copied()
+}
+
 /// Materialized entries for each region key, with non-echolocating species
 /// sorted to the end. Built once.
 fn books() -> &'static HashMap<&'static str, Vec<BatBookEntry>> {

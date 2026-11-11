@@ -1,5 +1,5 @@
 use super::country_map::country_to_region;
-use super::data::get_manifest;
+use super::data::{get_manifest, species};
 use super::types::{AutoResolved, BatBookRegion};
 use crate::state::LoadedFile;
 
@@ -34,8 +34,12 @@ fn find_species_across_books(
         }
         let manifest = get_manifest(region);
         for entry in &manifest.entries {
-            let sci = entry.scientific_name.to_lowercase();
-            if sci == query || binomial.as_deref() == Some(&sci) {
+            let synonyms = species(entry.id).map_or(&[][..], |s| s.synonyms.as_slice());
+            let matches = std::iter::once(entry.scientific_name)
+                .chain(synonyms.iter().map(String::as_str))
+                .map(str::to_lowercase)
+                .any(|sci| sci == query || binomial.as_deref() == Some(sci.as_str()));
+            if matches {
                 // Exact match in this region
                 if preferred_region == Some(region) {
                     // Best possible: species is in the country's own region
@@ -204,4 +208,25 @@ pub fn find_entry_any_book(species_id: &str) -> Option<super::types::BatBookEntr
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Metadata (Xeno-canto included) often uses an older genus; it should
+    /// still find the merged species.
+    #[test]
+    fn synonyms_find_the_merged_species() {
+        for (name, id) in [
+            ("Lasiurus cinereus", "aeorestes_cinereus"),
+            ("Chaerephon pumilus", "mops_pumilus"),
+            ("Lasiurus ega", "dasypterus_ega"),
+            ("Lophostoma silvicolum", "lophostoma_silvicola"),
+            ("Lasiurus cinereus semotus", "aeorestes_cinereus"),
+        ] {
+            let found = find_species_across_books(name, None).map(|(_, id)| id);
+            assert_eq!(found.as_deref(), Some(id), "{name}");
+        }
+    }
 }

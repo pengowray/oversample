@@ -47,6 +47,10 @@ pub struct BatSpecies {
     pub description: String,
     /// Whether this species uses echolocation (false for flying foxes etc.)
     pub echolocates: bool,
+    /// Other scientific names for this species, such as an older genus
+    /// (`Lasiurus cinereus` for `Aeorestes cinereus`). Metadata often uses them.
+    #[serde(default)]
+    pub synonyms: Vec<String>,
 }
 
 /// A book entry definition: a species id with optional regional overrides.
