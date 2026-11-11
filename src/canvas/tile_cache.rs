@@ -760,6 +760,15 @@ fn resonator_request_still_active(key: &TileKey) -> bool {
     resonator_ctx().request_still_active(key)
 }
 
+/// Toast when a streaming MP3 read jumped to an estimated position.
+fn toast_mp3_seek(state: AppState, mp3_seek: Option<bool>) {
+    match mp3_seek {
+        Some(true) => state.show_info_toast("VBR MP3: seek position may be approximate"),
+        Some(false) => state.show_info_toast("Seeking in streaming MP3"),
+        None => {}
+    }
+}
+
 fn active_baseline_fft(state: AppState) -> usize {
     state
         .spect
@@ -898,33 +907,23 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let pre_pad_used = sample_start - padded_start;
         let padded_len = pre_pad_used + sample_len;
 
-        // Prefetch for streaming sources
-        let (did_seek, is_vbr) = streaming_source::prefetch_streaming(
+        let read = streaming_source::read_views_ready(
             audio.source.as_ref(),
+            &[cv],
             padded_start as u64,
             padded_len,
         )
         .await;
-        if did_seek {
-            if is_vbr {
-                state.show_info_toast("VBR MP3: seek position may be approximate");
-            } else {
-                state.show_info_toast("Seeking in streaming MP3");
-            }
-        }
+        toast_mp3_seek(state, read.mp3_seek);
 
         if !magnitude_request_still_active(&key) {
             return;
         }
 
-        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
+        let Some(raw_samples) = read.into_first() else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
-
-        let raw_samples = audio
-            .source
-            .read_region(cv, padded_start as u64, padded_len);
+        };
 
         // Apply DSP transform (heterodyne, pitch shift, etc.) when display_transform is active
         let samples = if xform_on {
@@ -1523,33 +1522,23 @@ pub fn schedule_tile_on_demand(state: AppState, file_idx: usize, tile_idx: usize
         let sample_start = col_start * hop_size;
         let sample_len = TILE_COLS * hop_size + fft_size;
 
-        // Prefetch for streaming sources
-        let (did_seek, is_vbr) = streaming_source::prefetch_streaming(
+        let read = streaming_source::read_views_ready(
             audio.source.as_ref(),
+            &[cv],
             sample_start as u64,
             sample_len,
         )
         .await;
-        if did_seek {
-            if is_vbr {
-                state.show_info_toast("VBR MP3: seek position may be approximate");
-            } else {
-                state.show_info_toast("Seeking in streaming MP3");
-            }
-        }
+        toast_mp3_seek(state, read.mp3_seek);
 
         if !magnitude_request_still_active(&key) {
             return;
         }
 
-        if !streaming_source::region_ready(audio.source.as_ref(), sample_start as u64, sample_len) {
+        let Some(samples) = read.into_first() else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
-
-        let samples = audio
-            .source
-            .read_region(cv, sample_start as u64, sample_len);
+        };
         let cols = compute_stft_columns(
             &samples,
             audio.sample_rate,
@@ -1712,9 +1701,9 @@ pub fn schedule_flow_tile(
                 };
                 let sample_len = extra * config_hop + actual_fft;
 
-                // Prefetch for streaming sources
-                streaming_source::prefetch_streaming(
+                let read = streaming_source::read_region_ready(
                     audio.source.as_ref(),
+                    cv,
                     sample_start as u64,
                     sample_len,
                 )
@@ -1724,26 +1713,11 @@ pub fn schedule_flow_tile(
                     return;
                 }
 
-                if !streaming_source::region_ready(
-                    audio.source.as_ref(),
-                    sample_start as u64,
-                    sample_len,
-                ) {
+                // Reads stop at the end of the file, so a tile starting past it reads empty.
+                let Some(ch_samples) = read.filter(|v| !v.is_empty()) else {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
-                }
-
-                let total = audio.source.total_samples() as usize;
-                let sample_end = (sample_start + sample_len).min(total);
-                if sample_start >= total || sample_start >= sample_end {
-                    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-                    return;
-                }
-
-                let ch_samples =
-                    audio
-                        .source
-                        .read_region(cv, sample_start as u64, sample_end - sample_start);
+                };
                 let samples = &ch_samples[..];
 
                 yield_to_browser().await;
@@ -1768,8 +1742,9 @@ pub fn schedule_flow_tile(
                 let region_cols = TILE_COLS + extra_cols;
                 let region_sample_len = region_cols * config_hop + actual_fft;
 
-                streaming_source::prefetch_streaming(
+                let read = streaming_source::read_region_ready(
                     audio.source.as_ref(),
+                    cv,
                     region_sample_start as u64,
                     region_sample_len,
                 )
@@ -1779,19 +1754,10 @@ pub fn schedule_flow_tile(
                     return;
                 }
 
-                if !streaming_source::region_ready(
-                    audio.source.as_ref(),
-                    region_sample_start as u64,
-                    region_sample_len,
-                ) {
+                let Some(region_samples) = read else {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
-                }
-
-                let region_samples =
-                    audio
-                        .source
-                        .read_region(cv, region_sample_start as u64, region_sample_len);
+                };
 
                 let prev_col = if extra_cols > 0 {
                     let prev_cols = compute_stft_columns(
@@ -1955,9 +1921,9 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         let sample_start = tile_idx * TILE_COLS * config_hop;
         let sample_len = TILE_COLS * config_hop + actual_fft;
 
-        // Prefetch for streaming sources
-        streaming_source::prefetch_streaming(
+        let read = streaming_source::read_region_ready(
             audio.source.as_ref(),
+            cv,
             sample_start as u64,
             sample_len,
         )
@@ -1967,22 +1933,11 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
             return;
         }
 
-        if !streaming_source::region_ready(audio.source.as_ref(), sample_start as u64, sample_len) {
+        // Reads stop at the end of the file, so a tile starting past it reads empty.
+        let Some(ch_samples) = read.filter(|v| !v.is_empty()) else {
             REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
-
-        let total = audio.source.total_samples() as usize;
-        let sample_end = (sample_start + sample_len).min(total);
-        if sample_start >= total || sample_start >= sample_end {
-            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
-            return;
-        }
-
-        let ch_samples =
-            audio
-                .source
-                .read_region(cv, sample_start as u64, sample_end - sample_start);
+        };
         let samples = &ch_samples[..];
 
         yield_to_browser().await;
@@ -2168,25 +2123,17 @@ fn schedule_chroma_tile_fft(state: AppState, file_idx: usize, tile_idx: usize, k
             let sample_start = col_start * hop_size;
             let sample_len = TILE_COLS * hop_size + fft_size;
 
-            streaming_source::prefetch_streaming(
+            let Some(samples) = streaming_source::read_region_ready(
                 audio.source.as_ref(),
+                cv,
                 sample_start as u64,
                 sample_len,
             )
-            .await;
-
-            if !streaming_source::region_ready(
-                audio.source.as_ref(),
-                sample_start as u64,
-                sample_len,
-            ) {
+            .await
+            else {
                 CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                 return;
-            }
-
-            let samples = audio
-                .source
-                .read_region(cv, sample_start as u64, sample_len);
+            };
             let cols = compute_stft_columns(
                 &samples,
                 audio.sample_rate,
@@ -2318,8 +2265,9 @@ fn schedule_chroma_tile_resonator(
         let pre_pad_cols = (tile_sample_start - padded_start) / hop_size;
         let padded_len = (pre_pad_cols + TILE_COLS) * hop_size;
 
-        streaming_source::prefetch_streaming(
+        let read = streaming_source::read_region_ready(
             audio.source.as_ref(),
+            cv,
             padded_start as u64,
             padded_len,
         )
@@ -2334,14 +2282,10 @@ fn schedule_chroma_tile_resonator(
             return;
         }
 
-        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
+        let Some(samples) = read else {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
-
-        let samples = audio
-            .source
-            .read_region(cv, padded_start as u64, padded_len);
+        };
         if samples.is_empty() {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
@@ -2784,8 +2728,9 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
         let pre_pad_cols = (tile_sample_start - padded_start) / config_hop;
         let padded_len = (pre_pad_cols + TILE_COLS) * config_hop;
 
-        streaming_source::prefetch_streaming(
+        let read = streaming_source::read_region_ready(
             audio.source.as_ref(),
+            cv,
             padded_start as u64,
             padded_len,
         )
@@ -2795,14 +2740,10 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             return;
         }
 
-        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
+        let Some(samples) = read else {
             RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
-        }
-
-        let samples = audio
-            .source
-            .read_region(cv, padded_start as u64, padded_len);
+        };
         if samples.is_empty() {
             RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;

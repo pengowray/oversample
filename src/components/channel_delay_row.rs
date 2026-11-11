@@ -1,5 +1,5 @@
 use crate::audio::source::ChannelView;
-use crate::audio::streaming_source::prefetch_streaming;
+use crate::audio::streaming_source::read_views_ready;
 use crate::dsp::channel_delay::{
     right_leads_by_secs, MAX_ANALYSIS_SECS, MAX_DELAY_SECS, SPEED_OF_SOUND_M_S,
 };
@@ -21,6 +21,8 @@ pub struct DelayRegion {
 enum Reading {
     Measuring,
     Finished(Option<f64>),
+    /// Part of the selection's audio could not be loaded.
+    Unreadable,
 }
 
 /// Rounds to the two decimals shown, so a delay shown as 0.00 ms never names a
@@ -93,12 +95,16 @@ pub fn ChannelDelayRow(#[prop(into)] region: Signal<Option<DelayRegion>>) -> imp
             let wanted_secs = (region.time_end - region.time_start).min(MAX_ANALYSIS_SECS);
             let len = (wanted_secs * sr) as usize;
 
-            prefetch_streaming(&*source, start, len).await;
+            let views = [ChannelView::Channel(0), ChannelView::Channel(1)];
+            let read = read_views_ready(&*source, &views, start, len).await;
             if !is_latest() {
                 return;
             }
-            let left = source.read_region(ChannelView::Channel(0), start, len);
-            let right = source.read_region(ChannelView::Channel(1), start, len);
+            let Some([left, right]) = read.views.and_then(|v| <[Vec<f32>; 2]>::try_from(v).ok())
+            else {
+                reading.set(Reading::Unreadable);
+                return;
+            };
             let band = region.freq_low.zip(region.freq_high);
             let result = right_leads_by_secs(&left, &right, sample_rate, band);
             reading.set(Reading::Finished(result));
@@ -124,6 +130,7 @@ pub fn ChannelDelayRow(#[prop(into)] region: Signal<Option<DelayRegion>>) -> imp
         let (headline, detail) = match reading.get() {
             Reading::Measuring => ("L/R delay: measuring\u{2026}".to_string(), None),
             Reading::Finished(Some(right_leads_by)) => delay_text(right_leads_by),
+            Reading::Unreadable => ("L/R delay: couldn't read the audio".to_string(), None),
             Reading::Finished(None) => (
                 "L/R delay: no clear match".to_string(),
                 Some("Select one call and its frequency range".to_string()),

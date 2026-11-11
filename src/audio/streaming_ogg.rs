@@ -89,7 +89,6 @@ impl StreamingOggSource {
         }
     }
 
-    /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     /// True when `[start_frame, start_frame + len)` can be read without
     /// returning silence for missing chunks.
     pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
@@ -99,6 +98,7 @@ impl StreamingOggSource {
             .covers(self.head_frames as u64, start_frame, end)
     }
 
+    /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     pub async fn prefetch_region(&self, start_frame: u64, len: usize) {
         // Cap at `total_frames` only once the length is exact (reached_eof);
         // while it's an estimate, don't cap, or an under-estimate would stop

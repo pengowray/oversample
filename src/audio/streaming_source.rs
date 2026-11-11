@@ -8,10 +8,9 @@
 //! - `StreamingWavSource`: random-access PCM via `File.slice()` byte ranges
 //! - `StreamingFlacSource`: progressive sequential FLAC decode in 4 MB windows
 //!
-//! Consumers call `prefetch_region()` (async) before `read_samples()` (sync).
-//! If a region is not cached, `read_samples()` returns silence for those frames,
-//! so anything that keeps its result (spectrogram tiles) should check
-//! [`region_ready`] before reading.
+//! `read_samples()` is sync and returns silence for frames that aren't cached,
+//! so callers read through [`read_region_ready`] / [`read_views_ready`], which
+//! load the region and return `None` if any of it is still missing.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -1018,7 +1017,6 @@ impl StreamingFlacSource {
         n
     }
 
-    /// Check if background decode has finished the entire file.
     /// True when `[start_frame, start_frame + len)` can be read without
     /// returning silence for missing chunks.
     pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
@@ -1028,6 +1026,7 @@ impl StreamingFlacSource {
             .covers(self.head_frames as u64, start_frame, end)
     }
 
+    /// Check if background decode has finished the entire file.
     pub fn is_fully_decoded(&self) -> bool {
         *self.decode_frame_cursor.borrow() >= self.total_frames
     }
@@ -1125,33 +1124,54 @@ impl AudioSource for StreamingFlacSource {
 
 // ─── Streaming helpers (format-agnostic) ────────────────────────────────────
 
+/// Load `[start, start + len)` into a streaming source's cache. No-op for
+/// in-memory sources. The MP3 seek flag is left for the caller to take.
+async fn load_region(source: &dyn AudioSource, start: u64, len: usize) {
+    let any = source.as_any();
+    if let Some(s) = any.downcast_ref::<StreamingWavSource>() {
+        s.prefetch_region(start, len).await;
+    } else if let Some(s) = any.downcast_ref::<StreamingFlacSource>() {
+        s.prefetch_region(start, len).await;
+    } else if let Some(s) = any.downcast_ref::<StreamingMp3Source>() {
+        s.prefetch_region(start, len).await;
+    } else if let Some(s) = any.downcast_ref::<StreamingOggSource>() {
+        s.prefetch_region(start, len).await;
+    } else if let Some(s) = any.downcast_ref::<StreamingM4aSource>() {
+        s.prefetch_region(start, len).await;
+    }
+}
+
+/// MP3 only: `Some(is_vbr)` when the last load jumped to an estimated byte
+/// position instead of decoding up to it. Clears the flag.
+fn take_mp3_seek(source: &dyn AudioSource) -> Option<bool> {
+    let s = source.as_any().downcast_ref::<StreamingMp3Source>()?;
+    if s.did_seek_skip.get() {
+        s.did_seek_skip.set(false);
+        Some(s.is_vbr.get())
+    } else {
+        None
+    }
+}
+
 /// Prefetch a sample region from a streaming source (WAV, FLAC, MP3, or OGG).
 /// No-op for in-memory sources.
 /// Returns `(did_seek_skip, is_vbr)` for MP3 sources; `(false, false)` otherwise.
+///
+/// This only warms the cache: chunks can be evicted again before a later
+/// `read_region`, which then returns silence for them. To read samples, use
+/// [`read_region_ready`] or [`read_views_ready`] instead.
 pub async fn prefetch_streaming(source: &dyn AudioSource, start: u64, len: usize) -> (bool, bool) {
-    if let Some(s) = source.as_any().downcast_ref::<StreamingWavSource>() {
-        s.prefetch_region(start, len).await;
-    } else if let Some(s) = source.as_any().downcast_ref::<StreamingFlacSource>() {
-        s.prefetch_region(start, len).await;
-    } else if let Some(s) = source.as_any().downcast_ref::<StreamingMp3Source>() {
-        s.prefetch_region(start, len).await;
-        if s.did_seek_skip.get() {
-            s.did_seek_skip.set(false);
-            return (true, s.is_vbr.get());
-        }
-    } else if let Some(s) = source.as_any().downcast_ref::<StreamingOggSource>() {
-        s.prefetch_region(start, len).await;
-    } else if let Some(s) = source.as_any().downcast_ref::<StreamingM4aSource>() {
-        s.prefetch_region(start, len).await;
+    load_region(source, start, len).await;
+    match take_mp3_seek(source) {
+        Some(is_vbr) => (true, is_vbr),
+        None => (false, false),
     }
-    (false, false)
 }
 
-/// True when a later `read_region` of `[start, start + len)` returns real
+/// True when a `read_region` of `[start, start + len)` made now returns real
 /// samples. Streaming sources read uncached chunks as silence, and a prefetch
 /// can come up short (a failed read, or a chunk evicted that the source can't
-/// decode again), so check this before keeping anything built from the
-/// samples. Always true for in-memory sources.
+/// decode again). Always true for in-memory sources.
 pub fn region_ready(source: &dyn AudioSource, start: u64, len: usize) -> bool {
     let any = source.as_any();
     if let Some(s) = any.downcast_ref::<StreamingWavSource>() {
@@ -1167,6 +1187,60 @@ pub fn region_ready(source: &dyn AudioSource, start: u64, len: usize) -> bool {
     } else {
         true
     }
+}
+
+/// Result of [`read_views_ready`].
+pub struct RegionRead {
+    /// One vector per requested view, in request order. `None` when some
+    /// frames inside the file could not be loaded. A region running past the
+    /// end of the file still reads, with shorter vectors.
+    pub views: Option<Vec<Vec<f32>>>,
+    /// MP3 only: `Some(is_vbr)` when the load jumped to an estimated position
+    /// instead of decoding up to it, so the samples may be slightly off in time.
+    pub mp3_seek: Option<bool>,
+}
+
+impl RegionRead {
+    /// The first view's samples, for a single-view read.
+    pub fn into_first(self) -> Option<Vec<f32>> {
+        self.views.and_then(|v| v.into_iter().next())
+    }
+}
+
+/// Load `[start, start + len)` and read it for each of `views`.
+///
+/// The check and the reads run straight after the load with no await between
+/// them, so other tasks can't evict chunks in the gap. Use this (or
+/// [`read_region_ready`]) for any read of a streaming source: a plain
+/// `read_region` returns silence for chunks that aren't cached.
+pub async fn read_views_ready(
+    source: &dyn AudioSource,
+    views: &[ChannelView],
+    start: u64,
+    len: usize,
+) -> RegionRead {
+    load_region(source, start, len).await;
+    let mp3_seek = take_mp3_seek(source);
+    let views = region_ready(source, start, len).then(|| {
+        views
+            .iter()
+            .map(|&cv| source.read_region(cv, start, len))
+            .collect()
+    });
+    RegionRead { views, mp3_seek }
+}
+
+/// Load and read `[start, start + len)` for one channel view. `None` when
+/// some frames inside the file could not be loaded. See [`read_views_ready`].
+pub async fn read_region_ready(
+    source: &dyn AudioSource,
+    view: ChannelView,
+    start: u64,
+    len: usize,
+) -> Option<Vec<f32>> {
+    read_views_ready(source, &[view], start, len)
+        .await
+        .into_first()
 }
 
 /// Check if a source is a streaming (non-in-memory) source.

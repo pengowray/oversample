@@ -124,9 +124,6 @@ impl StreamingM4aSource {
         self.decode_frame_cursor.get()
     }
 
-    /// Ensure all chunks covering `[start_frame, start_frame + len)` are cached.
-    /// For M4A we can seek directly to the target region via the sample table —
-    /// no need to decode everything in between.
     /// True when `[start_frame, start_frame + len)` can be read without
     /// returning silence for missing chunks.
     pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
@@ -136,6 +133,9 @@ impl StreamingM4aSource {
             .covers(self.head_frames as u64, start_frame, end)
     }
 
+    /// Ensure all chunks covering `[start_frame, start_frame + len)` are cached.
+    /// For M4A we can seek directly to the target region via the sample table —
+    /// no need to decode everything in between.
     pub async fn prefetch_region(&self, start_frame: u64, len: usize) {
         let end_frame = (start_frame + len as u64).min(self.total_frames);
         if end_frame <= self.head_frames as u64 {

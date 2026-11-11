@@ -114,7 +114,6 @@ impl StreamingMp3Source {
         self.data_offset + (audio_bytes as f64 * ratio) as u64
     }
 
-    /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     /// True when `[start_frame, start_frame + len)` can be read without
     /// returning silence for missing chunks.
     pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
@@ -124,6 +123,7 @@ impl StreamingMp3Source {
             .covers(self.head_frames as u64, start_frame, end)
     }
 
+    /// Async: ensure all chunks covering `[start_frame, start_frame + len)` are cached.
     pub async fn prefetch_region(&self, start_frame: u64, len: usize) {
         // Cap the decode target at `total_frames` ONLY once the length is exact
         // (reached_eof). While it's still an estimate, do NOT cap: an

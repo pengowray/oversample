@@ -1,0 +1,36 @@
+[package]
+name = "perch-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Throwaway speed test: Perch v2 ONNX in tract (native + wasm32)"
+
+# Not part of the Oversample workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "native"
+path = "src/main.rs"
+
+[dependencies]
+tract-onnx = "0.23"
+
+# The browser target. tract-onnx's default features pull in getrandom 0.4, which needs
+# its wasm_js backend on wasm32-unknown-unknown.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
