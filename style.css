@@ -4998,7 +4998,9 @@ body.sidebar-resizing {
 .layer-panel-title {
     font-size: 10px;
     font-weight: 600;
-    color: #555;
+    /* #808080 on the panel's #101010 is 4.8:1, above the 4.5:1 minimum; the
+       caps, size and spacing keep headings quieter than the values. */
+    color: #808080;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     padding: 2px 8px 5px;
@@ -7075,7 +7077,8 @@ button.toolbar-overflow-btn {
 .dsp-custom-title {
     font-size: 9px;
     text-transform: uppercase;
-    color: #666;
+    /* 4.8:1 on the panel background, like .layer-panel-title. */
+    color: #808080;
     margin-bottom: 4px;
     letter-spacing: 0.5px;
 }

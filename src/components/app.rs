@@ -1956,6 +1956,25 @@ fn MainArea() -> impl IntoView {
     }
 }
 
+/// Tooltip for the Waveform Gain row's Auto toggle. Auto gain follows the
+/// peak source picked in the Hearing bar's Gain menu (`compute_auto_gain`).
+fn wave_auto_title(auto_on: bool, source: crate::state::PeakSource) -> String {
+    use crate::state::PeakSource;
+    let peak_of = match source {
+        PeakSource::FullWave => "the whole file",
+        PeakSource::Selection => "the selection",
+        // The processed peak isn't measured yet; Auto uses the first 30 s.
+        PeakSource::First30s | PeakSource::Processed => "the first 30 s",
+    };
+    if auto_on {
+        format!(
+            "Auto: Gain brings the peak of {peak_of} to \u{2212}3 dBFS, by up to +60 dB. Click to turn off."
+        )
+    } else {
+        format!("Auto is off. Click to set Gain from the peak of {peak_of}.")
+    }
+}
+
 /// Tooltip for the Range row's Auto toggle. `noise_floor_dbfs` is the
 /// selected file's noise floor, when measured; `range_db` is the range shown.
 fn range_auto_title(auto_on: bool, noise_floor_dbfs: Option<f32>, range_db: f32) -> String {
@@ -2730,11 +2749,10 @@ pub fn MainViewButton() -> impl IntoView {
                             <button
                                 class=move || opt_toggle_class(state.gain.wave_view_auto().get())
                                 aria-pressed=move || state.gain.wave_view_auto().get().to_string()
-                                title=move || if state.gain.wave_view_auto().get() {
-                                    "Auto: Gain brings this file's peak to −3 dBFS. Click to turn off."
-                                } else {
-                                    "Auto is off. Click to set Gain from this file's peak."
-                                }
+                                title=move || wave_auto_title(
+                                    state.gain.wave_view_auto().get(),
+                                    state.gain.peak_source().get(),
+                                )
                                 on:click=move |_| {
                                     let auto = state.gain.wave_view_auto();
                                     if auto.get_untracked() {
