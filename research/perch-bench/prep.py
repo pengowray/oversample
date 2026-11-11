@@ -22,6 +22,8 @@ ap.add_argument("inputs", nargs="+")
 ap.add_argument("--rate", type=int, default=32000, help="resample to this rate before windowing")
 ap.add_argument("--win", type=int, default=160000, help="samples per window")
 ap.add_argument("--repeat", type=int, default=0, help="repeat the windows until there are this many")
+ap.add_argument("--max-windows", type=int, default=0, help="keep at most this many windows per file")
+ap.add_argument("--list", default=None, help="write each window's source file, one per line")
 a = ap.parse_args()
 WIN = a.win
 
@@ -34,8 +36,15 @@ for path in a.inputs:
         x = resample_poly(x, a.rate // g, sr // g).astype(np.float32)
     n = int(np.ceil(len(x) / WIN))
     x = np.pad(x, (0, n * WIN - len(x)))
-    windows.append(x.reshape(n, WIN))
+    if a.max_windows:
+        n = min(n, a.max_windows)
+    windows.append(x[: n * WIN].reshape(n, WIN))
     print(f"{path}: {sr} Hz -> {a.rate} Hz, {n} windows")
+
+if a.list:
+    with open(a.list, "w", encoding="utf-8") as f:
+        for path, ws in zip(a.inputs, windows):
+            f.write(f"{path}\n" * len(ws))
 
 w = np.concatenate(windows)
 if a.repeat:

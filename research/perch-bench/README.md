@@ -83,6 +83,12 @@ python -I export_head.py $M                     # perch_v2_head.int8.bin, 91 MB
 $CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx birds.f32 1 out/birds.head $M/perch_v2_head.int8.bin
 node bench-head.mjs $CARGO_TARGET_DIR/pkg-node $M/perch_v2_embed.tract.onnx $M/perch_v2_head.int8.bin birds.f32 out/birds.bindgen.head
 python -I compare.py out/birds.tf out/birds.head out/birds.bindgen.head
+
+# 14. The same on frogs, grasshoppers and mammals, by group (reference: onnxruntime)
+python -I prep.py --max-windows 6 --list nobat.list nobat.f32 ../../../batchi-extras/no-bat-sounds/sounds/*.wav
+python -I ref.py $M nobat.f32 --only ort_full --save out/nobat
+$CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx nobat.f32 1 out/nobat.head $M/perch_v2_head.int8.bin
+python -I recheck.py $M nobat.list out/nobat.ort_full out/nobat.head
 ```
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that

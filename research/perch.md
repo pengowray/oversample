@@ -37,8 +37,10 @@ The embedding part plus the classifier gives exactly the full model's results
 - **Less memory and faster.** Built and measured: the embedding part in tract plus the
   int8 classifier in plain Rust ([head.rs](perch-bench/src/head.rs)) uses 231 MB of
   WASM memory, against 1,231 MB for the full file in tract, and runs at 10 to 11 times
-  real time in the browser build, against 7 times. It gives the same top 5 species, in
-  the same order, as Google's model on 22 of 22 windows. See [Speed](#speed).
+  real time in the browser build, against 7 times. It gives the same top species as the
+  full model on 278 of 278 windows (birds, frogs, grasshoppers and crickets, land
+  mammals), and the same top 5 on 277; see [Speed](#speed) and
+  [Int8 classifier on other animals](#int8-classifier-on-other-animals).
 - **Embeddings without the classifier.** Similarity features can download only the
   45 MB part.
 
@@ -125,8 +127,8 @@ How to ship it:
 4. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
 Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
-onnxruntime-web, tphakala's INT8 file, the int8 classifier on more than 22 windows
-(including frogs and insects), the classifier on ARM, Perch against BirdNET on
+onnxruntime-web, tphakala's INT8 file, sound-event recordings (vehicles, water and so
+on) for the int8 classifier, the classifier on ARM, Perch against BirdNET on
 bird identification accuracy, and a classifier trained on Perch embeddings for bats. See
 [Not tested](#not-tested).
 
@@ -292,6 +294,49 @@ Scoter, Alpine Swift and Asian Palm Swift were found, with softmax probabilities
 0.3 to 0.9. The 3 Cave Swiftlet windows came out as other species (Green Kingfisher,
 Great Spotted Woodpecker, California Quail) with probabilities under 0.1.
 
+### Int8 classifier on other animals
+
+Test audio: all 69 recordings in `batchi-extras/no-bat-sounds` (xeno-canto: 15 birds,
+6 frogs, 29 grasshoppers and crickets, 19 land mammals), up to 6 windows of 5 s each,
+256 windows in all. Reference: the full model in onnxruntime, which matched Google's
+TensorFlow model to 0.00013 above. The TensorFlow environment was gone by then. Script:
+[recheck.py](perch-bench/recheck.py).
+
+| Group | Windows | Same top 1 | Same top 5 (as a set) | Same top 5, same order |
+|---|---|---|---|---|
+| Birds | 54 | 54 | 53 | 49 |
+| Frogs | 16 | 16 | 16 | 16 |
+| Grasshoppers and crickets | 121 | 121 | 121 | 120 |
+| Land mammals | 65 | 65 | 65 | 62 |
+| All | 256 | 256 | 255 | 247 |
+
+Native and wasm-bindgen gave identical results; the largest logit difference was
+0.031. In each of the 9 windows whose top 5 differs, the two swapped classes were
+within 0.0002 to 0.0103 of each other in the reference, which is less than the int8
+rounding error. In the one window where the set differs, the 5th and 6th classes swap
+(0.008 apart).
+
+The same run also shows how well Perch names these animals, from the reference's
+logits (the species' best rank over a recording's windows; the 6 recordings with no
+species name are left out):
+
+| Group | Recordings | Species is the top class | Species in the top 5 |
+|---|---|---|---|
+| Birds | 15 | 11 | 13 |
+| Frogs | 6 | 2 | 3 |
+| Grasshoppers and crickets | 29 | 18 | 21 |
+| Land mammals | 13 | 0 | 1 |
+
+- The species of all 63 named recordings are Perch classes, including the shrews,
+  squirrels, badger, otter and deer.
+- These are likely optimistic: Perch was trained on xeno-canto and iNaturalist, so
+  these recordings, or others by the same recordists, may be in its training data.
+- The recordings were made at 192 to 500 kHz, and Perch only hears up to 16 kHz. Shrews
+  call mostly above that, which may be why the land mammals do badly.
+- A sound-event class (198 of them, such as Wind, Engine, Cricket) was the top class in
+  3 of 256 windows, and in the top 5 in 11. None of these recordings is mainly a sound
+  event, so the sound-event classes are still untested.
+
 ## 4. Bats
 
 Method ([bats.py](perch-bench/bats.py)):
@@ -412,9 +457,9 @@ with one change: Perch has no single weight vector per class.
 - **onnxruntime-web,** WebGPU and more than one thread.
 - **INT8 and float16.** The tphakala INT8 file (131 MB) uses MatMulInteger, which was 4
   times slower than float32 in tract for BirdNET, so it wasn't run. The int8
-  classifier in Rust was checked on 22 windows of 6 bird recordings only; it needs
-  more recordings, including frogs, insects and sound events, before shipping. The
-  float16 classifier was checked in numpy only.
+  classifier in Rust was checked on 278 windows of birds, frogs, grasshoppers and
+  crickets and land mammals, but not on recordings of sound events. The float16
+  classifier was checked in numpy only.
 - **The Rust classifier on ARM** (Apple silicon, Android when not in the browser): only
   a plain fallback loop exists for it, and the x86 version of that loop was 24 times
   slower than the SIMD one.
