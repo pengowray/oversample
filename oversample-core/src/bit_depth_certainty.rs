@@ -30,15 +30,41 @@ use crate::dsp::float_grid::{FloatGridResult, FloatGridVerdict};
 use crate::dsp::lsb_autocorr::{LsbAutocorrResult, LsbVerdict};
 use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
 
-/// Returns `true` for lossy-compressed formats whose decoded samples
+/// Returns `true` for lossy-compressed files whose decoded samples
 /// don't carry meaningful bit-depth information about the original
-/// recording. Lossy codecs (MP3, AAC, Vorbis, ADPCM) decode to f32 /
-/// re-quantise to 16-bit container; the LSB stride / autocorrelation /
-/// inverse-filter tests are all destroyed by the codec.
+/// recording: a file with no PCM depth (`container_bits` is
+/// `FileMetadata::LOSSY_BITS`: MP3, Vorbis, AAC), or W4V, whose block
+/// codec is lossy but decodes onto a 16-bit grid. The LSB stride /
+/// autocorrelation / inverse-filter tests are all destroyed by the codec.
 ///
-/// FLAC and WAV are lossless; all bit-depth tests are meaningful.
-pub fn is_lossy_compressed(format: &str) -> bool {
-    matches!(format, "MP3" | "OGG" | "M4A" | "W4V")
+/// FLAC, WAV and ALAC (in M4A) are lossless; all bit-depth tests are
+/// meaningful.
+pub fn is_lossy_compressed(format: &str, container_bits: u16) -> bool {
+    container_bits == crate::types::FileMetadata::LOSSY_BITS || format == "W4V"
+}
+
+/// The bit-depth verdict for a lossy file: the analysis doesn't apply.
+/// `container_bits` is 0 for a file with no PCM depth.
+pub fn lossy_verdict(format: &str, container_bits: u16) -> BitDepthCertainty {
+    BitDepthCertainty {
+        container_bits,
+        upper_bound: container_bits,
+        best_estimate: container_bits,
+        certainty: CertaintyLevel::Suggestive,
+        headline: format!("Lossy {format}: bit-depth analysis doesn't apply"),
+        facts: vec![Fact {
+            certainty: CertaintyLevel::Certain,
+            statement: format!(
+                "{} is a lossy compressed format. Decoded samples come from \
+                 re-synthesised audio (the codec discards original LSBs, \
+                 applies its own dither, and may add quantisation noise). \
+                 LSB stride / autocorrelation / inverse-filter tests run on \
+                 these samples are not meaningful as a probe of the original \
+                 recorder's bit depth.",
+                format,
+            ),
+        }],
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,32 +136,9 @@ pub fn compose(
     float_grid: &[FloatGridResult],
 ) -> BitDepthCertainty {
     // Lossy-compressed audio: all bit-depth signatures are destroyed by
-    // the codec. We can still report the container depth but should
-    // flag clearly that the analysis isn't measuring the original ADC.
-    if is_lossy_compressed(format) {
-        return BitDepthCertainty {
-            container_bits,
-            upper_bound: container_bits,
-            best_estimate: container_bits,
-            certainty: CertaintyLevel::Suggestive,
-            headline: format!(
-                "Lossy {} \u{2014} bit-depth analysis doesn't apply (codec re-quantises \
-                 to {}-bit, destroying any original ADC signature)",
-                format, container_bits,
-            ),
-            facts: vec![Fact {
-                certainty: CertaintyLevel::Certain,
-                statement: format!(
-                    "{} is a lossy compressed format. Decoded samples come from \
-                     re-synthesised audio (the codec discards original LSBs, \
-                     applies its own dither, and may add quantisation noise). \
-                     LSB stride / autocorrelation / inverse-filter tests run on \
-                     these samples are not meaningful as a probe of the original \
-                     recorder's bit depth.",
-                    format,
-                ),
-            }],
-        };
+    // the codec, so the analysis isn't measuring the original ADC.
+    if is_lossy_compressed(format, container_bits) {
+        return lossy_verdict(format, container_bits);
     }
 
     // Float files are a different beast — we don't reduce their depth via these tests.
@@ -753,15 +756,14 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        for fmt in ["MP3", "OGG", "M4A", "W4V"] {
-            let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
-            assert!(
-                r.headline.starts_with(&format!("Lossy {}", fmt)),
-                "format={} headline={}",
-                fmt,
-                r.headline
+        // MP3, OGG and M4A files have no PCM depth (0); W4V decodes to 16-bit.
+        for (fmt, bits) in [("MP3", 0), ("OGG", 0), ("M4A", 0), ("W4V", 16)] {
+            let r = compose(bits, false, fmt, &bit, &lsb, None, None, &[]);
+            assert_eq!(
+                r.headline,
+                format!("Lossy {fmt}: bit-depth analysis doesn't apply"),
             );
-            assert_eq!(r.upper_bound, 16, "lossy must NOT claim reduction");
+            assert_eq!(r.upper_bound, bits, "lossy must NOT claim reduction");
             assert!(
                 r.facts
                     .iter()
@@ -770,6 +772,40 @@ mod tests {
                 fmt
             );
         }
+    }
+
+    /// Every analysis the Analysis panel runs, given a lossy file's depth of
+    /// 0 and real audio: none panics (debug builds check u16 overflow), and
+    /// the verdict is the lossy one.
+    #[test]
+    fn analyses_accept_a_lossy_file() {
+        use crate::device_hint::infer_device_hints;
+        use crate::dsp::{audiomoth, effective_nyquist, float_grid, lsb_autocorr, pipistrelle};
+        let rate = 48_000;
+        let samples: Vec<f32> = (0..rate)
+            .map(|i| (i as f32 * 0.05).sin() * 0.3 + ((i * 7919) % 101) as f32 * 1e-4)
+            .collect();
+        let bits = crate::types::FileMetadata::LOSSY_BITS;
+        let bit = crate::dsp::bit_analysis::analyze_bits(&samples, bits, false, 1.0);
+        let lsb = lsb_autocorr::analyze_lsb_autocorr(&samples, bits, false);
+        assert_eq!(lsb.verdict, LsbVerdict::NotApplicable);
+        let pip = pipistrelle::detect(&samples, rate, bits, false);
+        let am = audiomoth::detect(&samples, rate, bits, false, false);
+        let grid = float_grid::detect(&samples, bits, false);
+        let nyq = effective_nyquist::detect(&samples, rate);
+        let _ = infer_device_hints(
+            rate,
+            bits,
+            false,
+            &bit,
+            &lsb,
+            &pip,
+            Some(&nyq),
+            Some(&am),
+            std::slice::from_ref(&grid),
+        );
+        let r = compose(bits, false, "MP3", &bit, &lsb, Some(&pip), Some(&am), &[grid]);
+        assert_eq!(r.headline, "Lossy MP3: bit-depth analysis doesn't apply");
     }
 
     #[test]
@@ -787,7 +823,8 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        for fmt in ["WAV", "FLAC"] {
+        // "M4A" with a depth is ALAC.
+        for fmt in ["WAV", "FLAC", "M4A"] {
             let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
             assert_eq!(r.upper_bound, 12, "format={} should claim reduction", fmt);
         }

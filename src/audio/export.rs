@@ -254,8 +254,9 @@ pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
 }
 
 /// Process one region and encode it as a WAV file with GUANO metadata, at the
-/// source's depth (`bits_per_sample`, `is_float`) so a 24-bit or float file
-/// exports without being cut to 16 bits.
+/// source's depth (`pcm_bits`, `is_float`) so a 24-bit or float file
+/// exports without being cut to 16 bits. A lossy source (`pcm_bits` `None`)
+/// is written as 16-bit PCM: its codec noise is far above the 16-bit floor.
 /// Stereo when `views` has two entries (see [`export_channel_views`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn export_one_region(
@@ -267,7 +268,7 @@ pub(crate) fn export_one_region(
     params: &PlaybackParams,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
-    bits_per_sample: u16,
+    pcm_bits: Option<u16>,
     is_float: bool,
 ) -> Vec<u8> {
     let channels = process_region(source, views, sample_rate, start_time, end_time, params);
@@ -278,7 +279,7 @@ pub(crate) fn export_one_region(
         &interleave(&channels),
         channels.len().max(1) as u16,
         output_rate,
-        bits_per_sample,
+        pcm_bits.unwrap_or(16),
         is_float,
     );
 
@@ -918,7 +919,7 @@ pub fn export_selected(state: &AppState) {
                 &job.params,
                 &file.name,
                 file.audio.metadata.guano.as_ref(),
-                file.audio.metadata.bits_per_sample,
+                file.audio.metadata.pcm_bits(),
                 file.audio.metadata.is_float,
             );
             (wav_file_name(&file, &views, job), wav_data)

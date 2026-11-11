@@ -639,14 +639,14 @@ fn format_text(meta: &crate::types::FileMetadata) -> String {
     }
 }
 
-/// Bit depth row: "16-bit", "32-bit float", or "12-bit, stored as 16-bit" when
-/// the file declares fewer significant bits than the sample width.
+/// Bit depth row: "16-bit", "32-bit float", "None (lossy MP3)", or "12-bit,
+/// stored as 16-bit" when the file declares fewer significant bits than the
+/// sample width.
 fn bit_depth_text(meta: &crate::types::FileMetadata) -> String {
-    let width = meta.bits_per_sample;
     let float = if meta.is_float { " float" } else { "" };
-    match meta.wav.as_ref().and_then(|w| w.valid_bits) {
-        Some(valid) => format!("{valid}-bit{float}, stored as {width}-bit"),
-        None => format!("{width}-bit{float}"),
+    match (meta.pcm_bits(), meta.wav.as_ref().and_then(|w| w.valid_bits)) {
+        (Some(width), Some(valid)) => format!("{valid}-bit{float}, stored as {width}-bit"),
+        _ => meta.bit_depth_label(),
     }
 }
 

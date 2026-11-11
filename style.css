@@ -7109,6 +7109,30 @@ button.toolbar-overflow-btn {
     font-variant-numeric: tabular-nums;
 }
 
+/* Range's Auto toggle sits beside the value it sets. Fixed width and normal
+   weight when selected, so toggling it doesn't move the slider. */
+.layer-panel-opt.dsp-auto-toggle {
+    display: inline-block;
+    flex: none;
+    width: 36px;
+    padding: 2px 0;
+    font-size: 9px;
+    text-align: center;
+}
+
+.layer-panel-opt.dsp-auto-toggle.sel {
+    font-weight: normal;
+    background: #1f2b27;
+}
+
+/* Rows without a toggle keep the same space at the end, so the sliders in a
+   section line up. */
+.dsp-custom-section:has(.dsp-auto-toggle) .dsp-custom-slider-row:not(:has(.dsp-auto-toggle))::after {
+    content: "";
+    flex: none;
+    width: 36px;
+}
+
 .dsp-slider-label {
     font-size: 9px;
     color: #888;

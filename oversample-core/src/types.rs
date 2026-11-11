@@ -54,7 +54,12 @@ pub struct FileMetadata {
     /// Container format tag: WAV / FLAC / OGG / MP3 / M4A / W4V / ZC.
     /// Empty string when constructed via `Default::default()`.
     pub format: &'static str,
+    /// PCM bit depth of the stored samples, or [`FileMetadata::LOSSY_BITS`]
+    /// (0) for a file decoded from a lossy codec (MP3, Vorbis, AAC): those
+    /// codecs store no PCM samples, and the decoder produces floats. Read it
+    /// with [`FileMetadata::pcm_bits`], which gives `None` for those files.
     pub bits_per_sample: u16,
+    /// The stored samples are IEEE float. False for lossy files.
     pub is_float: bool,
     pub guano: Option<GuanoMetadata>,
     /// Byte offset of audio data within the file (WAV: data chunk start). None for non-WAV.
@@ -69,6 +74,28 @@ pub struct FileMetadata {
     pub zc_data: Option<Arc<ZcData>>,
     /// WAV-only details. None for other formats.
     pub wav: Option<WavDetails>,
+}
+
+impl FileMetadata {
+    /// `bits_per_sample` of a file decoded from a lossy codec.
+    pub const LOSSY_BITS: u16 = 0;
+
+    /// The file's PCM bit depth, or `None` for a file decoded from a lossy
+    /// codec.
+    pub fn pcm_bits(&self) -> Option<u16> {
+        (self.bits_per_sample != Self::LOSSY_BITS).then_some(self.bits_per_sample)
+    }
+
+    /// The bit depth as shown to the user: "16-bit", "32-bit float", or
+    /// "None (lossy MP3)" for a file decoded from a lossy codec.
+    pub fn bit_depth_label(&self) -> String {
+        match self.pcm_bits() {
+            Some(bits) if self.is_float => format!("{bits}-bit float"),
+            Some(bits) => format!("{bits}-bit"),
+            None if self.format.is_empty() => "None (lossy)".to_string(),
+            None => format!("None (lossy {})", self.format),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -290,6 +317,24 @@ mod tests {
             duration_secs: 1.0,
             metadata: FileMetadata::default(),
         }
+    }
+
+    #[test]
+    fn lossy_files_have_no_pcm_bits() {
+        let meta = |format, bits_per_sample, is_float| FileMetadata {
+            format,
+            bits_per_sample,
+            is_float,
+            ..FileMetadata::default()
+        };
+        let mp3 = meta("MP3", FileMetadata::LOSSY_BITS, false);
+        assert_eq!(mp3.pcm_bits(), None);
+        assert_eq!(mp3.bit_depth_label(), "None (lossy MP3)");
+        let wav = meta("WAV", 24, false);
+        assert_eq!(wav.pcm_bits(), Some(24));
+        assert_eq!(wav.bit_depth_label(), "24-bit");
+        assert_eq!(meta("WAV", 32, true).bit_depth_label(), "32-bit float");
+        assert_eq!(meta("", 0, false).bit_depth_label(), "None (lossy)");
     }
 
     #[test]

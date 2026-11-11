@@ -13,18 +13,7 @@ use wasm_bindgen::JsCast;
 
 /// Helper: build AudioFileMetadata from a LoadedFile.
 fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
-    AudioFileMetadata {
-        sample_rate: f.audio.sample_rate,
-        total_samples: f.audio.source.total_samples(),
-        channels: f.audio.channels,
-        duration_secs: f.audio.duration_secs,
-        format: f.audio.metadata.format.to_string(),
-        bits_per_sample: Some(f.audio.metadata.bits_per_sample),
-        data_offset: f.audio.metadata.data_offset,
-        data_size: f.audio.metadata.data_size,
-        peak_db_30s: f.cached_peak_db,
-        peak_db_full: f.cached_full_peak_db,
-    }
+    AudioFileMetadata::from_audio(&f.audio, f.cached_peak_db, f.cached_full_peak_db)
 }
 
 /// Save the current project to OPFS (fire-and-forget).

@@ -65,14 +65,19 @@
             // The dialog may have closed (and purged) while Plotly loaded.
             if (!el.isConnected) return;
             var z = new Array(d.ny);
-            // Hover shows the measured level (z is clamped to the floor) and
-            // the time in the recording, so a peak can be found on the timeline.
-            var custom = new Array(d.ny);
             for (var j = 0; j < d.ny; j++) {
                 z[j] = Array.prototype.slice.call(d.z, j * d.nx, (j + 1) * d.nx);
-                custom[j] = new Array(d.nx);
-                for (var i = 0; i < d.nx; i++) {
-                    custom[j][i] = [d.level[j * d.nx + i], d.start_s + d.times_ms[i] / 1000];
+            }
+            // Hover shows the measured level (z is clamped to the floor) and
+            // the time in the recording, so a peak can be found on the timeline.
+            // Plotly's surface hover reads customdata[x index][y index], the
+            // transpose of z's layout.
+            var custom = new Array(d.nx);
+            for (var i = 0; i < d.nx; i++) {
+                custom[i] = new Array(d.ny);
+                var t = d.start_s + d.times_ms[i] / 1000;
+                for (var j2 = 0; j2 < d.ny; j2++) {
+                    custom[i][j2] = [d.level[j2 * d.nx + i], t];
                 }
             }
             // Seconds for long selections, where ms ticks read "2k, 4k".
@@ -121,6 +126,8 @@
                 paper_bgcolor: '#1e1e1e',
                 // Plotly draws 3D axis text on a canvas, where 'inherit' is not a font.
                 font: { color: '#ccc', family: getComputedStyle(document.body).fontFamily, size: 11 },
+                // Hover labels have their own font setting (Arial by default).
+                hoverlabel: { font: { family: getComputedStyle(document.body).fontFamily } },
                 margin: { l: 0, r: 0, t: 0, b: 0 },
                 scene: {
                     xaxis: axis('Time after selection start (' + (inSecs ? 's' : 'ms') + ')'),

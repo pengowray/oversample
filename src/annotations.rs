@@ -336,6 +336,8 @@ pub struct AudioFileMetadata {
     pub channels: u32,
     pub duration_secs: f64,
     pub format: String,
+    /// PCM bit depth. None for a file decoded from a lossy codec (MP3,
+    /// Vorbis, AAC). Sidecars written before that change hold 16 for those.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub bits_per_sample: Option<u16>,
     /// Byte offset of audio data within the file (WAV: data chunk start).
@@ -350,6 +352,28 @@ pub struct AudioFileMetadata {
     /// Peak level (dBFS) of entire unmodified audio file.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub peak_db_full: Option<f64>,
+}
+
+impl AudioFileMetadata {
+    /// The sidecar record of a loaded file's audio format and peak levels.
+    pub fn from_audio(
+        audio: &crate::types::AudioData,
+        peak_db_30s: Option<f64>,
+        peak_db_full: Option<f64>,
+    ) -> Self {
+        Self {
+            sample_rate: audio.sample_rate,
+            total_samples: audio.source.total_samples(),
+            channels: audio.channels,
+            duration_secs: audio.duration_secs,
+            format: audio.metadata.format.to_string(),
+            bits_per_sample: audio.metadata.pcm_bits(),
+            data_offset: audio.metadata.data_offset,
+            data_size: audio.metadata.data_size,
+            peak_db_30s,
+            peak_db_full,
+        }
+    }
 }
 
 /// Current `.batm` sidecar on-disk format version. A file whose `version`
@@ -428,18 +452,11 @@ impl AnnotationSet {
         peak_db_full: Option<f64>,
     ) -> Self {
         let mut set = Self::new(file_identity);
-        set.audio_metadata = Some(AudioFileMetadata {
-            sample_rate: audio.sample_rate,
-            total_samples: audio.source.total_samples(),
-            channels: audio.channels,
-            duration_secs: audio.duration_secs,
-            format: audio.metadata.format.to_string(),
-            bits_per_sample: Some(audio.metadata.bits_per_sample),
-            data_offset: audio.metadata.data_offset,
-            data_size: audio.metadata.data_size,
+        set.audio_metadata = Some(AudioFileMetadata::from_audio(
+            audio,
             peak_db_30s,
             peak_db_full,
-        });
+        ));
         set
     }
 
@@ -669,5 +686,40 @@ mod tests {
         assert_eq!(serde_json::to_string(&ids).unwrap(), "[\"a\",\"b\"]");
         let back: Vec<AnnotationId> = serde_json::from_str("[\"a\",\"b\"]").unwrap();
         assert_eq!(back, ids);
+    }
+
+    fn audio_with(format: &'static str, bits_per_sample: u16) -> crate::types::AudioData {
+        use std::sync::Arc;
+        let samples = Arc::new(vec![0.0f32; 48]);
+        crate::types::AudioData {
+            samples: samples.clone(),
+            source: Arc::new(oversample_core::audio::source::InMemorySource {
+                samples,
+                raw_samples: None,
+                sample_rate: 48_000,
+                channels: 1,
+            }),
+            sample_rate: 48_000,
+            channels: 1,
+            duration_secs: 0.001,
+            metadata: crate::types::FileMetadata {
+                format,
+                bits_per_sample,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// A lossy file's sidecar leaves out the bit depth; a PCM file's keeps it.
+    #[test]
+    fn sidecar_bit_depth_is_omitted_for_lossy_files() {
+        let mp3 = AudioFileMetadata::from_audio(&audio_with("MP3", 0), None, None);
+        assert_eq!(mp3.bits_per_sample, None);
+        let json = serde_json::to_value(&mp3).unwrap();
+        assert!(json.get("bits_per_sample").is_none(), "{json}");
+
+        let wav = AudioFileMetadata::from_audio(&audio_with("WAV", 24), None, None);
+        let json = serde_json::to_value(&wav).unwrap();
+        assert_eq!(json["bits_per_sample"], 24);
     }
 }

@@ -363,11 +363,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 2 => "Stereo".to_string(),
                 n => format!("{} ch", n),
             };
-            let bit_text = if meta.is_float {
-                format!("{}-bit float", meta.bits_per_sample)
-            } else {
-                format!("{}-bit", meta.bits_per_sample)
-            };
+            let bit_text = meta.bit_depth_label();
             let total_samples = f.audio.source.total_samples() as usize;
             let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
             report.push_str(&format!(
@@ -471,8 +467,12 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             }
         }
 
-        // Bit analysis (detailed per-bit breakdown)
-        if let Some(ref a) = analysis.get() {
+        // Bit analysis (detailed per-bit breakdown). A lossy file has no bits
+        // to break down; the Bit Depth verdict above covers it.
+        if let Some(ref a) = analysis
+            .get()
+            .filter(|a| a.bits_per_sample != crate::types::FileMetadata::LOSSY_BITS)
+        {
             let total = a.total_samples;
             let pos_total = a.positive_total;
             let neg_total = a.negative_total;
@@ -792,11 +792,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                             2 => "Stereo".to_string(),
                             n => format!("{} ch", n),
                         };
-                        let bit_text = if meta.is_float {
-                            format!("{}-bit float", meta.bits_per_sample)
-                        } else {
-                            format!("{}-bit", meta.bits_per_sample)
-                        };
+                        let bit_text = meta.bit_depth_label();
                         let total_samples = f.audio.source.total_samples() as usize;
                         let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
                         let samples_text = format!("{}", total_samples);
@@ -990,6 +986,27 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             {move || {
                 match analysis.get().as_ref() {
                     None => view! { <span></span> }.into_any(),
+                    // A lossy file has no bits to count: show the verdict only.
+                    Some(a) if a.bits_per_sample == crate::types::FileMetadata::LOSSY_BITS => {
+                        let idx = state.library.current_index().get();
+                        let format = state.library.files().with(|files| {
+                            idx.and_then(|i| files.get(i)).map(|f| f.audio.metadata.format)
+                        });
+                        let verdict = bit_depth_certainty::lossy_verdict(
+                            format.unwrap_or_default(),
+                            a.bits_per_sample,
+                        );
+                        let facts: Vec<_> = verdict.facts.into_iter().map(|f| view! {
+                            <div class="bit-depth-stat">{format!("\u{2713} {}", f.statement)}</div>
+                        }).collect();
+                        view! {
+                            <div class="setting-group">
+                                <div class="setting-group-title">"Bit depth"</div>
+                                <div class="bit-depth-stat">{verdict.headline}</div>
+                                {facts}
+                            </div>
+                        }.into_any()
+                    }
                     Some(a) => {
                         let bits = a.bits_per_sample as usize;
                         let cols = 4usize;
