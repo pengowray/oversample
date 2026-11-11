@@ -232,8 +232,8 @@ pub fn mic_stop_recording(
     // RAII-own the shared-storage fd so every early return below (no-samples,
     // skip-save, finalize error) closes it instead of leaking it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
-    let bits_per_sample = m.format.bits_per_sample();
-    let is_float = m.format.is_float();
+    let mut bits_per_sample = m.format.bits_per_sample();
+    let mut is_float = m.format.is_float();
     let channels = m.channels;
     let duration_secs = num_samples as f64 / sample_rate as f64;
     let skip_save = skip_native_save.unwrap_or(false);
@@ -308,7 +308,7 @@ pub fn mic_stop_recording(
         let writer = recovery_writer.expect("streaming_mode implies writer");
         let final_bytes = {
             let mut buf = m.buffer.lock().unwrap();
-            recovery::drain_cpal_bytes(&mut buf)
+            recovery::drain_buffer_bytes(&mut buf)
         };
         // Everything below operates on the owned writer / paths, not the mic
         // state. Release the MicMutex before the (potentially large) in-place
@@ -350,6 +350,9 @@ pub fn mic_stop_recording(
         let buf = m.buffer.lock().unwrap();
         let samples_f32 = recording::get_samples_f32(&buf);
         let mut wav_data = recording::encode_native_wav(&buf)?;
+        // The WAV may be smaller than the 32-bit container: report what it holds.
+        let written = recording::output_format(&buf);
+        (bits_per_sample, is_float) = (written.bits_per_sample(), written.is_float());
         drop(buf);
         // All mic-state reads are done; release the MicMutex before the GUANO
         // append + (possibly large) shared-storage write, mirroring the

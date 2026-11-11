@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 /// stereo).
 const PREROLL_RING_SECS: usize = 15;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[allow(dead_code)]
 pub enum NativeSampleFormat {
     I16,
@@ -164,6 +164,40 @@ impl RecordingBuffer {
     pub fn push_preroll_f32(&mut self, data: &[f32]) {
         let cap = self.preroll_cap();
         push_to_ring(&mut self.preroll_f32, data, cap);
+    }
+
+    /// Store whole frames in the recording when `recording` is true, otherwise in
+    /// the pre-roll ring, and queue them as f32 for the live display. There is one
+    /// method per storage type: `push_i32` takes I24 and I32 samples, which use the
+    /// top bits of the i32 (full scale is +-2^31).
+    pub fn push_i16(&mut self, data: &[i16], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_i16.extend_from_slice(data);
+        } else {
+            self.push_preroll_i16(data);
+        }
+        self.pending_f32
+            .extend(data.iter().map(|&s| s as f32 / 32768.0));
+    }
+    pub fn push_i32(&mut self, data: &[i32], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_i32.extend_from_slice(data);
+        } else {
+            self.push_preroll_i32(data);
+        }
+        self.pending_f32
+            .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
+    }
+    pub fn push_f32(&mut self, data: &[f32], recording: bool) {
+        if recording {
+            self.total_samples += data.len() / self.channels as usize;
+            self.samples_f32.extend_from_slice(data);
+        } else {
+            self.push_preroll_f32(data);
+        }
+        self.pending_f32.extend_from_slice(data);
     }
 
     /// Drop all pre-roll rings (e.g. when a fresh listen session starts).
@@ -638,14 +672,7 @@ pub fn open_mic(
                 let stored = samples_to_store(data, channels, stereo, |frame| {
                     (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32) as i16
                 });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_i16.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_i16(&stored);
-                }
-                buf.pending_f32
-                    .extend(stored.iter().map(|&s| s as f32 / 32768.0));
+                buf.push_i16(&stored, recording);
             },
             err_callback,
             None,
@@ -671,14 +698,7 @@ pub fn open_mic(
                 let stored = samples_to_store(data, channels, stereo, |frame| {
                     (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32
                 });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_i32.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_i32(&stored);
-                }
-                buf.pending_f32
-                    .extend(stored.iter().map(|&s| s as f32 / 2147483648.0));
+                buf.push_i32(&stored, recording);
             },
             err_callback,
             None,
@@ -694,13 +714,7 @@ pub fn open_mic(
                 let stored = samples_to_store(data, channels, stereo, |frame| {
                     frame.iter().sum::<f32>() / channels as f32
                 });
-                if recording {
-                    buf.total_samples += stored.len() / stored_channels;
-                    buf.samples_f32.extend_from_slice(&stored);
-                } else {
-                    buf.push_preroll_f32(&stored);
-                }
-                buf.pending_f32.extend_from_slice(&stored);
+                buf.push_f32(&stored, recording);
             },
             err_callback,
             None,
@@ -732,7 +746,6 @@ pub fn open_mic(
     })
 }
 
-/// Encode the recording buffer to WAV at native bit depth.
 /// The WAV format to actually write. Auto-detect down-converts a 32-bit
 /// container to the smallest format that holds the detected effective bit depth:
 /// 16-bit for <=16-bit data (which zero-pads a 12-bit recorder cleanly — the low
@@ -741,7 +754,7 @@ pub fn open_mic(
 /// smaller, and labels the header correctly. Falls back to the container until
 /// detection settles or for genuine 32-bit input. (A per-device override can
 /// force a specific depth — wired separately.)
-fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
+pub fn output_format(buffer: &RecordingBuffer) -> NativeSampleFormat {
     // A per-device override (force_bits) wins; otherwise the auto-detected depth.
     let target = buffer.force_bits.or_else(|| buffer.effective_bits(32));
     match buffer.format {
@@ -962,7 +975,7 @@ pub fn start_emitter(
                                 Ok(b) => b,
                                 Err(_) => continue,
                             };
-                            crate::recovery::drain_cpal_bytes(&mut buf)
+                            crate::recovery::drain_buffer_bytes(&mut buf)
                         };
                         if !bytes.is_empty() {
                             if let Some(writer) = wg.as_mut() {

@@ -1340,6 +1340,9 @@ async fn open_web(state: &AppState) -> bool {
 
     let sample_rate = ctx.sample_rate() as u32;
     state.mic.sample_rate().set(sample_rate);
+    // Browser recordings are written as 16-bit (a native mic may have left a
+    // different depth here).
+    state.mic.bits_per_sample().set(16);
     // Only report a device name when the user explicitly selected a specific
     // device via the mic chooser (mic_selected_device is Some with a non-empty id).
     // "Browser default" and direct browser mode leave mic_device_name as None.
@@ -1761,6 +1764,7 @@ async fn open_usb(state: &AppState) -> bool {
         } else {
             2
         },
+        is_float: info.is_float,
     };
     if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
         state
@@ -1773,16 +1777,12 @@ async fn open_usb(state: &AppState) -> bool {
 
     NATIVE_CHANNELS.with(|c| c.set(if stereo { 2 } else { 1 }));
     state.mic.sample_rate().set(sample_rate);
-    // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
-    // (never present) so usb_bits was always stuck at the 16 default.
-    // The stream keeps the top 16 bits of 3- and 4-byte samples (the Portacapture X8 sends
-    // 24-bit), and USB recordings are written as 16-bit, so report 16 for those.
-    let usb_bits = if info.subslot_size > 2 {
-        16
-    } else if info.bit_resolution > 0 {
-        info.bit_resolution as u16
-    } else {
-        16
+    // Recordings are written with the bytes per sample the device sends (the
+    // Portacapture X8 sends 3), whatever its bitResolution says.
+    let usb_bits = match info.subslot_size {
+        3 => 24,
+        4 => 32,
+        _ => 16,
     };
     state.mic.bits_per_sample().set(usb_bits);
 

@@ -320,7 +320,8 @@ pub fn encode_samples_f32(samples: &[f32]) -> Vec<u8> {
     out
 }
 
-/// Format-aware helper for cpal's multi-format `RecordingBuffer`. Takes
+/// Format-aware helper for the `RecordingBuffer` that the cpal mic and USB
+/// streams share. Takes
 /// everything in the native-format tail buffer, encodes it as little-endian
 /// WAV PCM bytes, and leaves the buffer empty. Caller holds the buffer lock
 /// during this call and is expected to drop the lock before writing the
@@ -330,7 +331,7 @@ pub fn encode_samples_f32(samples: &[f32]) -> Vec<u8> {
 /// buffer only holds whatever arrived since the last tick (~240 ms worth at
 /// steady state). In to-memory mode this is not called and samples
 /// accumulate as before.
-pub fn drain_cpal_bytes(buf: &mut crate::recording::RecordingBuffer) -> Vec<u8> {
+pub fn drain_buffer_bytes(buf: &mut crate::recording::RecordingBuffer) -> Vec<u8> {
     match buf.format {
         NativeSampleFormat::I16 => {
             if buf.samples_i16.is_empty() {
@@ -775,6 +776,72 @@ mod tests {
             .collect();
         assert_eq!(decoded, samples);
         let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    /// Each format a mic or USB stream can be stored in: the samples pushed to the
+    /// buffer, flushed in two parts, then a crash part way through a frame.
+    #[test]
+    fn crashed_recording_is_recovered_in_each_format() {
+        use crate::recording::RecordingBuffer;
+        let cases: [(NativeSampleFormat, u16, bool, &str); 4] = [
+            (NativeSampleFormat::I16, 16, false, "i16"),
+            (NativeSampleFormat::I24, 24, false, "i24"),
+            (NativeSampleFormat::I32, 32, false, "i32"),
+            (NativeSampleFormat::F32, 32, true, "f32"),
+        ];
+        for (format, bits, is_float, name) in cases {
+            let app_data = temp_app_data(&format!("formats-{name}"));
+            let file = format!("{name}.wav");
+            let meta = build_meta(&args(), &file, format, 192_000, 2);
+            let mut w = create(&app_data, &file, format, 192_000, 2, &meta).unwrap();
+
+            let mut buf = RecordingBuffer::new(format, 192_000, 2);
+            let push = |buf: &mut RecordingBuffer, first: i32| match format {
+                NativeSampleFormat::I16 => {
+                    buf.push_i16(&[first as i16, -(first as i16), 7, -7], true)
+                }
+                // 24-bit samples sit in the top 3 bytes of the i32.
+                NativeSampleFormat::I24 => {
+                    buf.push_i32(&[first << 8, -first << 8, 7 << 8, -7 << 8], true)
+                }
+                NativeSampleFormat::I32 => buf.push_i32(&[first, -first, i32::MAX, i32::MIN], true),
+                NativeSampleFormat::F32 => {
+                    buf.push_f32(&[first as f32 / 1e6, -0.5, 1.0, -1.0], true)
+                }
+            };
+            push(&mut buf, 1000);
+            let first_flush = drain_buffer_bytes(&mut buf);
+            w.append_bytes(&first_flush).unwrap();
+            push(&mut buf, 2000);
+            let second_flush = drain_buffer_bytes(&mut buf);
+            w.append_bytes(&second_flush).unwrap();
+            assert!(drain_buffer_bytes(&mut buf).is_empty());
+            // One byte of the next frame, then the app "crashes".
+            w.append_bytes(&[0x55]).unwrap();
+            drop(w);
+
+            let out = recover_leftover_recordings(&app_data);
+            assert_eq!(out.len(), 1, "{name}");
+            assert_eq!(out[0].sample_count, 4, "{name}");
+            let bytes = std::fs::read(&out[0].path).unwrap();
+            let h = parse_wav_header(&bytes).unwrap();
+            assert_eq!(
+                (h.bits_per_sample, h.is_float, h.channels, h.total_frames),
+                (bits, is_float, 2, 4),
+                "{name}"
+            );
+            assert!(h.guano.is_some(), "{name}");
+            assert!(h.details.notes.is_empty(), "{name}: {:?}", h.details.notes);
+            let start = h.data_offset as usize;
+            let expected = [first_flush, second_flush].concat();
+            assert_eq!(expected.len(), 8 * bits as usize / 8, "{name}");
+            assert_eq!(
+                &bytes[start..start + expected.len()],
+                &expected[..],
+                "{name}"
+            );
+            let _ = std::fs::remove_dir_all(&app_data);
+        }
     }
 
     #[test]

@@ -386,6 +386,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 epObj.put("channels", ep.channels)
                 epObj.put("bitResolution", ep.bitResolution)
                 epObj.put("subslotSize", ep.subslotSize)
+                epObj.put("isFloat", ep.isFloat)
                 epObj.put("sampleRate", ep.sampleRate)
                 epObj.put("sampleRateSettable", ep.sampleRateSettable)
                 epObj.put("interfaceNumber", ep.interfaceNumber)
@@ -573,6 +574,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             result.put("numChannels", endpoint.channels)
             result.put("bitResolution", endpoint.bitResolution)
             result.put("subslotSize", endpoint.subslotSize)
+            result.put("isFloat", endpoint.isFloat)
             result.put("interfaceNumber", endpoint.interfaceNumber)
             result.put("alternateSetting", endpoint.alternateSetting)
             result.put("deviceName", device.deviceName)
@@ -816,6 +818,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         val bitResolution: Int,
         /** Bytes per sample in a packet (UAC1 bSubframeSize, UAC2 bSubSlotSize). */
         val subslotSize: Int,
+        /** IEEE float samples (UAC1 wFormatTag 3, UAC2 bmFormats bit 2), not PCM. */
+        val isFloat: Boolean,
         val sampleRate: Int,
         val sampleRateSettable: Boolean,
         val interfaceNumber: Int,
@@ -849,6 +853,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         var currentChannels = 1
         var currentBitResolution = 16
         var currentSubslotSize = 2
+        var currentIsFloat = false
         var currentSampleRate = 0
         var foundAudioStreaming = false
         var expectingFormat = false
@@ -879,6 +884,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
                         currentInterfaceNumber = bInterfaceNumber
                         currentAlternateSetting = bAlternateSetting
+                        currentIsFloat = false
 
                         if (bInterfaceClass == USB_CLASS_AUDIO && bInterfaceSubClass == USB_SUBCLASS_AUDIOSTREAMING && bNumEndpoints > 0) {
                             foundAudioStreaming = true
@@ -933,6 +939,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                     // PCM format — continue to format type descriptor
                                     Log.d(TAG, "Audio streaming PCM format found")
                                 }
+                                // UAC1 wFormatTag 3: IEEE_FLOAT. (A UAC2 AS_GENERAL also
+                                // matches here; its block below sets the flag instead.)
+                                if (uacVersion != 2) currentIsFloat = wFormatTag == 3
                             }
                         }
 
@@ -984,6 +993,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                             isUac2Format = true
                             // UAC2 AS_GENERAL: bNrChannels at offset 10.
                             currentChannels = if (bLength >= 11) raw[offset + 10].toInt() and 0xFF else 1
+                            // bmFormats (4 bytes from offset 6), bit 2: IEEE_FLOAT.
+                            currentIsFloat = bLength >= 10 && (raw[offset + 6].toInt() and 0x04) != 0
                         }
 
                         // UAC2 Format Type I (subtype 0x02 under audio streaming, UAC2)
@@ -1058,6 +1069,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 channels = currentChannels,
                                 bitResolution = currentBitResolution,
                                 subslotSize = currentSubslotSize,
+                                isFloat = currentIsFloat,
                                 sampleRate = currentSampleRate,
                                 sampleRateSettable = sampleRateSettable,
                                 interfaceNumber = currentInterfaceNumber,

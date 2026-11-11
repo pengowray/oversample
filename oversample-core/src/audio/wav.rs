@@ -718,6 +718,56 @@ impl WavWriteFormat {
     pub fn block_align(&self) -> u16 {
         self.channels * self.bits_per_sample.div_ceil(8)
     }
+
+    /// The format [`encode_f32_samples`] writes for a recording of
+    /// `bits_per_sample` bits: 24-bit PCM, 32-bit PCM or 32-bit float as asked,
+    /// and 16-bit PCM for any other depth.
+    pub fn for_f32_samples(
+        sample_rate: u32,
+        channels: u16,
+        bits_per_sample: u16,
+        is_float: bool,
+    ) -> Self {
+        let (bits_per_sample, is_float) = match (bits_per_sample, is_float) {
+            (32, true) => (32, true),
+            (24 | 32, _) => (bits_per_sample, false),
+            _ => (16, false),
+        };
+        Self {
+            sample_rate,
+            channels,
+            bits_per_sample,
+            is_float,
+        }
+    }
+}
+
+/// `samples` (full scale is +-1.0) as the little-endian `data` bytes of `fmt`,
+/// which should come from [`WavWriteFormat::for_f32_samples`]. PCM samples are
+/// clamped to full scale. 24- and 32-bit PCM use the scale [`decode_pcm`]
+/// reads with, so samples read from a 24-bit file are written back unchanged.
+/// 16-bit PCM keeps the 32767 scale the app has always written.
+pub fn encode_f32_samples(samples: &[f32], fmt: &WavWriteFormat) -> Vec<u8> {
+    let scaled = |s: f32, full_scale: f64| -> i64 {
+        let max = full_scale as i64 - 1;
+        ((s as f64 * full_scale).round() as i64).clamp(-max - 1, max)
+    };
+    let mut out = Vec::with_capacity(samples.len() * fmt.bits_per_sample.div_ceil(8) as usize);
+    match (fmt.bits_per_sample, fmt.is_float) {
+        (32, true) => samples
+            .iter()
+            .for_each(|s| out.extend_from_slice(&s.to_le_bytes())),
+        (24, _) => samples.iter().for_each(|&s| {
+            out.extend_from_slice(&(scaled(s, 8_388_608.0) as i32).to_le_bytes()[..3])
+        }),
+        (32, _) => samples.iter().for_each(|&s| {
+            out.extend_from_slice(&(scaled(s, 2_147_483_648.0) as i32).to_le_bytes())
+        }),
+        _ => samples.iter().for_each(|&s| {
+            out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+        }),
+    }
+    out
 }
 
 /// Length of the header [`header_bytes`] writes. The samples start here.

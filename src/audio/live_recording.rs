@@ -450,7 +450,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
         metadata: FileMetadata {
             file_size: 0,
             format: "MIC",
-            bits_per_sample: 16,
+            bits_per_sample: state.mic.bits_per_sample().get_untracked(),
             is_float: false,
             guano: None,
             data_offset: None,
@@ -1762,6 +1762,15 @@ async fn finalize_in_memory_recording(
         sample_rate,
         channels,
     });
+    // The depth the file is written at (or was, by the native side): a depth the
+    // encoder doesn't write, such as 12, is written as 16-bit.
+    let write_format = crate::audio::wav::WavWriteFormat::for_f32_samples(
+        sample_rate,
+        channels as u16,
+        bits_per_sample,
+        is_float,
+    );
+    let (bits_per_sample, is_float) = (write_format.bits_per_sample, write_format.is_float);
     let wav_bytes: Option<Vec<u8>> = if has_disk_file {
         None
     } else {
@@ -1771,6 +1780,8 @@ async fn finalize_in_memory_recording(
             raw_samples.as_deref().unwrap_or(&samples),
             channels as u16,
             sample_rate,
+            bits_per_sample,
+            is_float,
             Some(&meta.guano),
             &meta.wav_markers,
         ))
@@ -1908,7 +1919,7 @@ async fn finalize_streaming_tauri_recording(
     name: String,
     file_size: u64,
     expected_sample_rate: u32,
-    expected_bits_per_sample: u16,
+    _expected_bits_per_sample: u16,
     _expected_is_float: bool,
     state: AppState,
     live_idx: Option<usize>,
@@ -2039,7 +2050,8 @@ async fn finalize_streaming_tauri_recording(
             f.name = name.clone();
             f.file_handle = Some(handle.clone());
             f.is_recording = false;
-            f.audio.metadata.bits_per_sample = expected_bits_per_sample;
+            f.audio.metadata.bits_per_sample = header.bits_per_sample;
+            f.audio.metadata.is_float = header.is_float;
             f.spectrogram = SpectrogramData {
                 columns: Arc::new(Vec::new()),
                 total_columns: total_cols,
