@@ -302,7 +302,12 @@ async fn run_task(
     }
     for f in choice.files() {
         if !store::is_downloaded(f).await {
-            set_download(state, f, DownloadStatus::NotDownloaded);
+            let downloading = state.classifier.downloads().with_untracked(|m| {
+                matches!(m.get(f.id), Some(DownloadStatus::Downloading { .. }))
+            });
+            if !downloading {
+                set_download(state, f, DownloadStatus::NotDownloaded);
+            }
             return Err(ClassifierError::NotDownloaded {
                 file: f.id.to_string(),
             }

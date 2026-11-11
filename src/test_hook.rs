@@ -5,6 +5,10 @@
 //! build), but it is harmless in production: it only *reads* signals via
 //! `get_untracked` and returns a plain JS object — there are no setters and no
 //! reactive subscriptions, so it can't affect app behavior.
+//!
+//! `install` also installs `window.__oversample_classifier`
+//! (`crate::classifier::test_hook`), which is not read-only: it can start model
+//! downloads and runs through the classifier API.
 
 use crate::state::store_fields::*;
 use crate::state::AppState;

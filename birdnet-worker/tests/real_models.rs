@@ -207,8 +207,23 @@ fn bats_eu_finds_common_pipistrelle_and_rescore_matches_uk_run() {
     );
     assert_eq!(eu[top.class as usize], "Pipistrellus pipistrellus");
 
-    // Scoring the stored embeddings with the UK head gives what a fresh UK run
-    // gives.
+    // Scoring stored embeddings with the UK head gives what a fresh UK run
+    // gives, on a recording long enough for many windows.
+    let (samples, rate) = load(
+        &sounds_dir().join(
+            "bat-demo-sounds/sounds/XC1060750 - Soprano Pipistrelle - Pipistrellus pygmaeus.wav",
+        ),
+        12.0,
+    );
+    let out = analyse(&mut s, Method::Bats, &samples, rate);
+    let top = best(&out.windows);
+    eprintln!(
+        "{} windows at {rate} Hz; best {} {:.3}",
+        out.windows.len(),
+        eu[top.class as usize],
+        top.confidence
+    );
+    assert!(out.windows.len() > 10);
     load_model(
         &mut s,
         true,
@@ -254,4 +269,31 @@ fn bats_refuse_low_sample_rate() {
         out.errors,
         vec!["Bat analysis needs a sample rate of at least 96 kHz. This file is 48 kHz."]
     );
+}
+
+/// Every regional head in the catalog that is in `BIRDNET_MODELS_DIR` gives one
+/// output per line of its label file.
+#[test]
+fn heads_match_their_labels() {
+    use birdnet_worker::engine::Head;
+    use oversample_ipc::classifier::{catalog, BatRegion};
+    let Some(models) = models_dir() else {
+        eprintln!("BIRDNET_MODELS_DIR not set; skipped");
+        return;
+    };
+    let mut checked = 0;
+    for r in BatRegion::ALL {
+        let head = models.join("fp32").join(catalog::bat_head(r).id);
+        let lab = models.join("labels").join(catalog::bat_labels(r).id);
+        if !head.exists() || !lab.exists() {
+            eprintln!("{r:?}: not in BIRDNET_MODELS_DIR; skipped");
+            continue;
+        }
+        let h = Head::load(&std::fs::read(&head).unwrap()).unwrap();
+        let n = h.run(&[0.0; EMBEDDING_LEN]).unwrap().len();
+        let names = labels(&lab);
+        assert_eq!(n, names.len(), "{r:?}");
+        checked += 1;
+    }
+    eprintln!("{checked} heads checked");
 }
