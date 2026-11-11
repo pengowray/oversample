@@ -327,6 +327,23 @@ impl RecordingBuffer {
         self.write_format
     }
 
+    /// Log when the depth chosen at record start dropped bits that detection
+    /// has since seen in use (the device's low bits stopped being zero). Only
+    /// an auto-chosen depth is checked; a forced depth drops bits on purpose.
+    pub fn warn_if_write_format_dropped_bits(&self, context: &str) {
+        if self.force_bits.is_some() || self.write_format == self.format {
+            return;
+        }
+        if let Some(seen) = self.effective_bits(32) {
+            if seen > self.write_format.bits_per_sample() {
+                eprintln!(
+                    "{context}: wrote {:?} but the stream now uses {seen} bits; the low bits were dropped",
+                    self.write_format
+                );
+            }
+        }
+    }
+
     /// The stored samples as WAV data bytes in `write_format`. Narrowing drops
     /// only the low bits detection found always zero (or that `force_bits` asks
     /// to drop). A forced depth below 16 bits also zeroes the surplus low bits of

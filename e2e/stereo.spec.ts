@@ -231,9 +231,11 @@ test.describe("live listen", () => {
 test.describe("recording", () => {
   type Wav = { channels: number; frames: number; left: Float32Array; right: Float32Array };
 
-  /** Reads a 16-bit PCM WAV by walking its RIFF chunks. */
+  /** Reads a browser recording, which is 32-bit float (the format Web Audio
+   * delivers), by walking its RIFF chunks. */
   function parseWav(buf: Buffer): Wav {
     expect(buf.toString("latin1", 0, 4)).toBe("RIFF");
+    let format = 0;
     let channels = 0;
     let bits = 0;
     let dataStart = -1;
@@ -243,6 +245,7 @@ test.describe("recording", () => {
       const id = buf.toString("latin1", pos, pos + 4);
       const size = buf.readUInt32LE(pos + 4);
       if (id === "fmt ") {
+        format = buf.readUInt16LE(pos + 8);
         channels = buf.readUInt16LE(pos + 10);
         bits = buf.readUInt16LE(pos + 22);
       } else if (id === "data") {
@@ -251,15 +254,17 @@ test.describe("recording", () => {
       }
       pos += 8 + size + (size % 2);
     }
-    expect(bits).toBe(16);
+    // WAVE_FORMAT_IEEE_FLOAT (3), or WAVE_FORMAT_EXTENSIBLE (0xFFFE) for 3+ channels.
+    expect([3, 0xfffe]).toContain(format);
+    expect(bits).toBe(32);
     expect(dataStart).toBeGreaterThan(0);
-    const frames = dataSize / (2 * channels);
+    const frames = dataSize / (4 * channels);
     expect(Number.isInteger(frames)).toBe(true);
     const left = new Float32Array(frames);
     const right = new Float32Array(frames);
     for (let i = 0; i < frames; i++) {
-      left[i] = buf.readInt16LE(dataStart + i * 2 * channels) / 32768;
-      right[i] = channels > 1 ? buf.readInt16LE(dataStart + i * 2 * channels + 2) / 32768 : left[i];
+      left[i] = buf.readFloatLE(dataStart + i * 4 * channels);
+      right[i] = channels > 1 ? buf.readFloatLE(dataStart + i * 4 * channels + 4) : left[i];
     }
     return { channels, frames, left, right };
   }

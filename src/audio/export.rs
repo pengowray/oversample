@@ -11,7 +11,7 @@ use crate::audio::source::{AudioSource, ChannelView};
 use crate::audio::streaming_playback::{
     apply_dsp_mode, apply_filters, te_speed_ratio, PlaybackParams, PV_MODE_BOOST_DB,
 };
-use crate::audio::wav_encoder::encode_wav_interleaved;
+use crate::audio::wav_encoder::encode_wav_at;
 use crate::state::{AppState, ExportFormat, LoadedFile, PlaybackMode, Selection};
 
 // Chunk size + filter warmup are shared with streaming playback so the offline
@@ -253,7 +253,9 @@ pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Process one region and encode it as a WAV file with GUANO metadata.
+/// Process one region and encode it as a WAV file with GUANO metadata, at the
+/// source's depth (`bits_per_sample`, `is_float`) so a 24-bit or float file
+/// exports without being cut to 16 bits.
 /// Stereo when `views` has two entries (see [`export_channel_views`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn export_one_region(
@@ -265,15 +267,19 @@ pub(crate) fn export_one_region(
     params: &PlaybackParams,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
+    bits_per_sample: u16,
+    is_float: bool,
 ) -> Vec<u8> {
     let channels = process_region(source, views, sample_rate, start_time, end_time, params);
     let frames = channels.first().map_or(0, Vec::len);
     let output_rate = export_output_rate(sample_rate, params);
 
-    let mut wav_data = encode_wav_interleaved(
+    let mut wav_data = encode_wav_at(
         &interleave(&channels),
         channels.len().max(1) as u16,
         output_rate,
+        bits_per_sample,
+        is_float,
     );
 
     let guano = build_export_guano(output_rate, frames, params, source_filename, source_guano);
@@ -912,6 +918,8 @@ pub fn export_selected(state: &AppState) {
                 &job.params,
                 &file.name,
                 file.audio.metadata.guano.as_ref(),
+                file.audio.metadata.bits_per_sample,
+                file.audio.metadata.is_float,
             );
             (wav_file_name(&file, &views, job), wav_data)
         })

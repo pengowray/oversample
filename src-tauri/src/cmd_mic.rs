@@ -224,6 +224,7 @@ pub fn mic_stop_recording(
     // captured, not the remainder-in-memory count.
     let (num_samples, sample_rate, shared_fd, preroll_seeded, write_format) = {
         let mut buf = m.buffer.lock().unwrap();
+        buf.warn_if_write_format_dropped_bits("mic_stop_recording");
         (
             buf.total_samples,
             buf.sample_rate,

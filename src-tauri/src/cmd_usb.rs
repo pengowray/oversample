@@ -160,6 +160,7 @@ pub fn usb_stop_recording(
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
     let (num_samples, sample_rate, channels, shared_fd, preroll_seeded, write_format) = {
         let mut buf = s.buffer.lock().unwrap();
+        buf.warn_if_write_format_dropped_bits("usb_stop_recording");
         (
             buf.total_samples,
             buf.sample_rate,
