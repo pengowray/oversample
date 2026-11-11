@@ -1,0 +1,3 @@
+5 nearest neighbours with the same genus, on the map: 0.332
+5 nearest neighbours with the same genus, 1,024-d weights: 0.317
+Random pairs with the same genus: 0.0016
