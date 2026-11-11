@@ -86,7 +86,14 @@ pub async fn decode_via_audio_context(
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: format_label,
-            bits_per_sample: 16,
+            // The browser gives float samples whatever the codec, so the
+            // depth comes from the file: ALAC keeps its depth, and AAC (or any
+            // other format sent here) has none.
+            bits_per_sample: if format_label == "M4A" {
+                crate::audio::loader::m4a_pcm_bits(bytes)
+            } else {
+                FileMetadata::LOSSY_BITS
+            },
             is_float: false,
             guano: None,
             data_offset: None,

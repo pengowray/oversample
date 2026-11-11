@@ -736,7 +736,9 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: "OGG",
-            bits_per_sample: 16,
+            // lewton decodes only Vorbis, which is lossy. Its i16 output is
+            // the decoder's choice, not a depth stored in the file.
+            bits_per_sample: FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
             data_offset: ogg_page_region(bytes).0,
@@ -847,7 +849,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: "MP3",
-            bits_per_sample: 16,
+            bits_per_sample: FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
             data_offset: Some(mp3_data_offset),
@@ -1032,6 +1034,58 @@ pub fn estimate_m4a_decoded_bytes(bytes: &[u8]) -> Option<u64> {
 /// AudioSpecificConfig which leaves symphonia's `codec_params.channels` as
 /// `None`; this walker reads the values straight from the sample description.
 pub fn parse_m4a_audio_entry(bytes: &[u8]) -> Option<(u16, u32)> {
+    find_m4a_audio_sample_entries(bytes, parse_first_audio_sample_entry)
+}
+
+/// `FileMetadata::bits_per_sample` for an M4A file, read from its audio
+/// sample description: the stored depth of an ALAC track, and
+/// [`FileMetadata::LOSSY_BITS`] for AAC and every other codec. For decoders
+/// that give float samples whatever the codec, such as the browser's.
+pub fn m4a_pcm_bits(bytes: &[u8]) -> u16 {
+    find_m4a_audio_sample_entries(bytes, alac_sample_entry_bits)
+        .unwrap_or(FileMetadata::LOSSY_BITS)
+}
+
+/// The bit depth of an `alac` first sample entry in a stsd body: the depth
+/// in its magic cookie (which the decoder uses), else its sample size field,
+/// else 16. `None` when the entry isn't ALAC.
+fn alac_sample_entry_bits(entries_body: &[u8]) -> Option<u16> {
+    if entries_body.len() < 8 || &entries_body[4..8] != b"alac" {
+        return None;
+    }
+    let size = u32::from_be_bytes(entries_body[0..4].try_into().ok()?) as u64;
+    let (body_start, body_end) = mp4_box_body_range(entries_body, 0, size)?;
+    let body = &entries_body[body_start..body_end];
+    if body.len() < 28 {
+        return Some(16);
+    }
+    // Child boxes follow the AudioSampleEntry fields: 28 bytes, plus 16 or 36
+    // more in QuickTime sound description versions 1 and 2.
+    let children_start = match u16::from_be_bytes([body[8], body[9]]) {
+        1 => 44,
+        2 => 64,
+        _ => 28,
+    };
+    let from_cookie = body
+        .get(children_start..)
+        .and_then(|children| find_child_atom(children, *b"alac"))
+        // The `alac` child box: 4 bytes of version and flags, then the cookie.
+        .and_then(|alac| alac_cookie_bits(alac.get(4..)?));
+    let sample_size = u16::from_be_bytes([body[18], body[19]]);
+    Some(from_cookie.unwrap_or(if (1..=32).contains(&sample_size) {
+        sample_size
+    } else {
+        16
+    }))
+}
+
+/// Call `parse` on the stsd entries of each audio track in an MP4 (the stsd
+/// body after its version, flags and entry count) and return the first
+/// `Some`.
+fn find_m4a_audio_sample_entries<T>(
+    bytes: &[u8],
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> Option<T> {
     let moov = find_top_level_atom(bytes, *b"moov")?;
     let mut pos = 0usize;
     while pos + 8 <= moov.len() {
@@ -1051,8 +1105,7 @@ pub fn parse_m4a_audio_entry(bytes: &[u8]) -> Option<(u16, u32)> {
                             if let Some(stsd) = find_child_atom(stbl, *b"stsd") {
                                 // stsd: 1B version + 3B flags + 4B entry_count, then entries
                                 if stsd.len() >= 8 {
-                                    if let Some(entry) = parse_first_audio_sample_entry(&stsd[8..])
-                                    {
+                                    if let Some(entry) = parse(&stsd[8..]) {
                                         return Some(entry);
                                     }
                                 }
@@ -1527,7 +1580,7 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: "M4A",
-            bits_per_sample: 16,
+            bits_per_sample: symphonia_pcm_bits(&audio_params),
             is_float: false,
             guano: if tags.fields.is_empty() {
                 None

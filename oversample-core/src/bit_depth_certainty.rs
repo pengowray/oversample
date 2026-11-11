@@ -33,15 +33,14 @@ use crate::dsp::pipistrelle::{PipistrelleResult, PipistrelleVerdict};
 /// Returns `true` for lossy-compressed files whose decoded samples
 /// don't carry meaningful bit-depth information about the original
 /// recording: a file with no PCM depth (`container_bits` is
-/// `FileMetadata::LOSSY_BITS`), or a lossy format. Lossy codecs (MP3, AAC,
-/// Vorbis, ADPCM) decode to f32 or re-quantise to a 16-bit grid; the LSB
-/// stride / autocorrelation / inverse-filter tests are all destroyed by the
-/// codec.
+/// `FileMetadata::LOSSY_BITS`: MP3, Vorbis, AAC), or W4V, whose block
+/// codec is lossy but decodes onto a 16-bit grid. The LSB stride /
+/// autocorrelation / inverse-filter tests are all destroyed by the codec.
 ///
-/// FLAC and WAV are lossless; all bit-depth tests are meaningful.
+/// FLAC, WAV and ALAC (in M4A) are lossless; all bit-depth tests are
+/// meaningful.
 pub fn is_lossy_compressed(format: &str, container_bits: u16) -> bool {
-    container_bits == crate::types::FileMetadata::LOSSY_BITS
-        || matches!(format, "MP3" | "OGG" | "M4A" | "W4V")
+    container_bits == crate::types::FileMetadata::LOSSY_BITS || format == "W4V"
 }
 
 /// The bit-depth verdict for a lossy file: the analysis doesn't apply.
@@ -824,7 +823,8 @@ mod tests {
             effective_bits: 12,
             padding_bits: 4,
         });
-        for fmt in ["WAV", "FLAC"] {
+        // "M4A" with a depth is ALAC.
+        for fmt in ["WAV", "FLAC", "M4A"] {
             let r = compose(16, false, fmt, &bit, &lsb, None, None, &[]);
             assert_eq!(r.upper_bound, 12, "format={} should claim reduction", fmt);
         }
