@@ -1128,8 +1128,9 @@ pub struct StripSpan {
     pub inner_bounds: Vec<f64>,
 }
 
-/// Height of the label strip along the top of the spectrogram.
-const STRIP_H: f64 = 16.0;
+/// Height of the label strip along the top of the spectrogram, in canvas
+/// pixels. Clicks in this band select a window (spectrogram_events).
+pub const SPECIES_STRIP_H: f64 = 16.0;
 
 /// Draw BirdNET or BattyBirdNET results as a strip along the top of the
 /// spectrogram: one box per stretch of windows with the same species, with
@@ -1174,21 +1175,21 @@ pub fn draw_species_strip(
         } else {
             "rgba(50, 50, 50, 0.80)"
         });
-        ctx.fill_rect(x0, 0.0, w, STRIP_H);
+        ctx.fill_rect(x0, 0.0, w, SPECIES_STRIP_H);
         ctx.set_stroke_style_str(if span.is_species {
             "rgba(80, 220, 150, 0.7)"
         } else {
             "rgba(160, 160, 160, 0.6)"
         });
         ctx.set_line_width(1.0);
-        ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, STRIP_H - 1.0);
+        ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, SPECIES_STRIP_H - 1.0);
         // Window boundaries inside a merged stretch.
         for &b in &span.inner_bounds {
             let x = x_of(b);
             if x > x0 && x < x1 {
                 ctx.begin_path();
-                ctx.move_to(x.round() + 0.5, STRIP_H - 4.0);
-                ctx.line_to(x.round() + 0.5, STRIP_H);
+                ctx.move_to(x.round() + 0.5, SPECIES_STRIP_H - 4.0);
+                ctx.line_to(x.round() + 0.5, SPECIES_STRIP_H);
                 ctx.stroke();
             }
         }
@@ -1196,14 +1197,14 @@ pub fn draw_species_strip(
         if w > 24.0 {
             ctx.save();
             ctx.begin_path();
-            ctx.rect(x0 + 1.0, 0.0, w - 2.0, STRIP_H);
+            ctx.rect(x0 + 1.0, 0.0, w - 2.0, SPECIES_STRIP_H);
             ctx.clip();
             ctx.set_fill_style_str(if span.is_species {
                 "rgba(220, 255, 235, 0.95)"
             } else {
                 "rgba(200, 200, 200, 0.9)"
             });
-            let _ = ctx.fill_text(&span.label, x0 + 4.0, STRIP_H / 2.0 + 0.5);
+            let _ = ctx.fill_text(&span.label, x0 + 4.0, SPECIES_STRIP_H / 2.0 + 0.5);
             ctx.restore();
         }
     }
@@ -1214,7 +1215,12 @@ pub fn draw_species_strip(
             let x1 = x_of(e).min(canvas_width);
             ctx.set_stroke_style_str("rgba(255, 200, 80, 0.9)");
             ctx.set_line_width(1.5);
-            ctx.stroke_rect(x0 + 0.75, 0.75, (x1 - x0 - 1.5).max(1.0), STRIP_H - 1.5);
+            ctx.stroke_rect(
+                x0 + 0.75,
+                0.75,
+                (x1 - x0 - 1.5).max(1.0),
+                SPECIES_STRIP_H - 1.5,
+            );
         }
     }
 }

@@ -1208,8 +1208,10 @@ pub fn Spectrogram() -> impl IntoView {
                 // the spectrogram readable for low frequencies.
 
                 // Call detection overlay, for the file the calls came from.
+                // Also under BattyBirdNET, so each call box sits under the
+                // species label of its window; BirdNET (birds) hides them.
                 if detection_overlay
-                    && detection_method == crate::state::DetectionMethod::Inbuilt
+                    && detection_method != crate::state::DetectionMethod::BirdNet
                     && detection_file.is_some()
                     && detection_file == state.current_file_id()
                 {
@@ -1837,6 +1839,10 @@ pub fn Spectrogram() -> impl IntoView {
                     return format!("cursor: move; touch-action: {ta};");
                 }
                 match state.interaction.canvas_tool().get() {
+                    // A label on the BirdNET / BattyBirdNET strip: a click selects its window.
+                    CanvasTool::Hand if ix.strip_hover.get() && !state.interaction.is_dragging().get() => {
+                        format!("cursor: pointer; touch-action: {ta};")
+                    }
                     CanvasTool::Hand => if state.interaction.is_dragging().get() {
                         format!("cursor: grabbing; touch-action: {ta};")
                     } else {

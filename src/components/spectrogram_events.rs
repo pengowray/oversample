@@ -151,6 +151,11 @@ pub struct SpectInteraction {
     pub pending_band_ff_hit: RwSignal<bool>,
     /// Pending transient selection body click — deferred to mouseup so panning takes priority
     pub pending_selection_hit: RwSignal<bool>,
+    /// BirdNET / BattyBirdNET window under a press on the label strip,
+    /// selected on mouseup if the press was a click (panning takes priority)
+    pub pending_strip_window: RwSignal<Option<usize>>,
+    /// Pointer is over a window's label on the strip: shows a pointer cursor
+    pub strip_hover: RwSignal<bool>,
 }
 
 impl Default for SpectInteraction {
@@ -175,8 +180,38 @@ impl SpectInteraction {
             pending_annotation_hit: RwSignal::new(None),
             pending_band_ff_hit: RwSignal::new(false),
             pending_selection_hit: RwSignal::new(false),
+            pending_strip_window: RwSignal::new(None),
+            strip_hover: RwSignal::new(false),
         }
     }
+}
+
+/// The BirdNET / BattyBirdNET window whose label is under the pointer on the
+/// strip along the top of the spectrogram (`px_y` in canvas pixels, `t` in
+/// seconds). Only windows the strip draws count: those at or above the
+/// minimum confidence, for the method picked in the Call detection tab.
+fn strip_window_at(state: AppState, px_y: f64, t: f64) -> Option<usize> {
+    use crate::classifier::summary::{window_kind, WindowKind};
+    use crate::classifier::Method;
+    use crate::state::DetectionMethod;
+    if !(0.0..spectrogram_renderer::SPECIES_STRIP_H).contains(&px_y)
+        || !state.call_detection.overlay_enabled().get_untracked()
+    {
+        return None;
+    }
+    let method = match state.call_detection.method().get_untracked() {
+        DetectionMethod::Inbuilt => return None,
+        DetectionMethod::BirdNet => Method::BirdNet,
+        DetectionMethod::Bats => Method::Bats,
+    };
+    let file = state.current_file_id()?;
+    let min = state.call_detection.min_confidence().get_untracked();
+    state.classifier.results().with_untracked(|m| {
+        let run = m.get(&(file, method))?;
+        run.windows.iter().enumerate().position(|(i, w)| {
+            w.start_s <= t && t < w.end_s && window_kind(run, i, min) != WindowKind::Below
+        })
+    })
 }
 
 /// Read the file's Nyquist / max frequency — the ceiling for the freq
@@ -554,7 +589,16 @@ pub fn on_pointerdown(
     // Priority: annotation > selection > BandFF. All deferred to pointer-up so panning takes priority.
     ix.pending_band_ff_hit.set(false);
     ix.pending_selection_hit.set(false);
+    ix.pending_strip_window.set(None);
     if state.interaction.canvas_tool().get_untracked() == CanvasTool::Hand {
+        if let Some((_, px_y, t, _)) = pointer_to_xtf(
+            ev.client_x() as f64,
+            ev.client_y() as f64,
+            canvas_ref,
+            &state,
+        ) {
+            ix.pending_strip_window.set(strip_window_at(state, px_y, t));
+        }
         if let Some((px_x, px_y, t, freq)) = pointer_to_xtf(
             ev.client_x() as f64,
             ev.client_y() as f64,
@@ -692,6 +736,10 @@ pub fn on_pointermove(
         state.interaction.mouse_freq().set(Some(f));
         state.interaction.mouse_canvas_x().set(px_x);
         state.interaction.cursor_time().set(Some(t));
+        let on_strip = strip_window_at(state, px_y, t).is_some();
+        if ix.strip_hover.get_untracked() != on_strip {
+            ix.strip_hover.set(on_strip);
+        }
 
         // Update label hover target + in-label-area state. (Time-axis
         // interactions live on the sibling <TimeGutter/> now.)
@@ -820,6 +868,7 @@ pub fn on_pointermove(
 }
 
 pub fn on_pointerleave(_ev: PointerEvent, ix: SpectInteraction, state: AppState) {
+    ix.strip_hover.set(false);
     // When pointer is captured (during a drag), pointerleave won't normally fire.
     // But if it does somehow, preserve drag state so the gesture isn't interrupted.
     if state.interaction.is_dragging().get_untracked() {
@@ -889,8 +938,10 @@ pub fn on_pointerup(
         let was_click = dx < 3.0;
 
         if was_click {
-            // Handle deferred annotation selection on click
-            if let Some(PendingAnnotationHit { id: hit_id, ctrl }) =
+            // A label on the strip is drawn over everything else, so it wins.
+            if let Some(i) = ix.pending_strip_window.get_untracked() {
+                state.call_detection.selected_window().set(Some(i));
+            } else if let Some(PendingAnnotationHit { id: hit_id, ctrl }) =
                 ix.pending_annotation_hit.get_untracked()
             {
                 if ctrl {
@@ -944,6 +995,7 @@ pub fn on_pointerup(
         ix.pending_annotation_hit.set(None);
         ix.pending_band_ff_hit.set(false);
         ix.pending_selection_hit.set(false);
+        ix.pending_strip_window.set(None);
         return;
     }
     if state.interaction.canvas_tool().get_untracked() != CanvasTool::Selection {
