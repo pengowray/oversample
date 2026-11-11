@@ -238,6 +238,39 @@ pub fn encode_usb_wav(state: &UsbStreamState) -> Result<Vec<u8>, String> {
     Ok(wav)
 }
 
+/// Appends one packet's samples to `out` as 16-bit: 2-byte samples as they are, 3- and 4-byte
+/// samples (little-endian, as USB audio sends them) by their top 16 bits. With 2 channels and
+/// `stereo` false, each frame becomes the mean of left and right. A partial frame at the end is
+/// dropped.
+pub(crate) fn decode_packet(
+    bytes: &[u8],
+    sample_bytes: usize,
+    num_channels: usize,
+    stereo: bool,
+    out: &mut Vec<i16>,
+) {
+    let sample_bytes = if matches!(sample_bytes, 3 | 4) {
+        sample_bytes
+    } else {
+        2
+    };
+    let top = |s: &[u8]| i16::from_le_bytes([s[sample_bytes - 2], s[sample_bytes - 1]]);
+    let frame_bytes = sample_bytes * num_channels.max(1);
+    for frame in bytes.chunks_exact(frame_bytes) {
+        if num_channels == 2 {
+            let (l, r) = (top(&frame[..sample_bytes]), top(&frame[sample_bytes..]));
+            if stereo {
+                out.push(l);
+                out.push(r);
+            } else {
+                out.push(((l as i32 + r as i32) >> 1) as i16);
+            }
+        } else {
+            out.extend(frame.chunks_exact(sample_bytes).map(top));
+        }
+    }
+}
+
 // ── Android isochronous streaming ───────────────────────────────────────
 
 #[cfg(target_os = "android")]
@@ -253,6 +286,7 @@ pub fn start_usb_stream(
     interface_number: u32,
     alternate_setting: u32,
     uac_version: u32,
+    sample_bytes: u32,
 ) -> Result<UsbStreamState, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
@@ -280,6 +314,7 @@ pub fn start_usb_stream(
             endpoint_address,
             max_packet_size,
             channels,
+            sample_bytes as usize,
             stereo,
             interface_number,
             alternate_setting,
@@ -350,6 +385,7 @@ pub fn start_usb_stream(
     _interface_number: u32,
     _alternate_setting: u32,
     _uac_version: u32,
+    _sample_bytes: u32,
 ) -> Result<UsbStreamState, String> {
     Err("USB audio streaming is only supported on Android".into())
 }
@@ -464,6 +500,7 @@ mod isochronous {
         endpoint_address: u32,
         max_packet_size: u32,
         num_channels: usize,
+        sample_bytes: usize,
         stereo: bool,
         interface_number: u32,
         alternate_setting: u32,
@@ -710,28 +747,21 @@ mod isochronous {
                 let mut src_byte_offset: usize = 0;
                 for packet in &urb_with_packets.packet_desc {
                     let actual_bytes = packet.actual_length as usize;
-                    let actual_samples = actual_bytes / 2;
 
-                    if actual_samples > 0 {
+                    if actual_bytes > 0 {
                         let src = unsafe {
                             std::slice::from_raw_parts(
-                                (reaped.buffer as *const u8).add(src_byte_offset) as *const i16,
-                                actual_samples,
+                                (reaped.buffer as *const u8).add(src_byte_offset),
+                                actual_bytes,
                             )
                         };
-
-                        if num_channels == 2 {
-                            for frame in src.chunks_exact(2) {
-                                if stereo {
-                                    capture_buf.extend_from_slice(frame);
-                                } else {
-                                    capture_buf
-                                        .push(((frame[0] as i32 + frame[1] as i32) >> 1) as i16);
-                                }
-                            }
-                        } else {
-                            capture_buf.extend_from_slice(src);
-                        }
+                        super::decode_packet(
+                            src,
+                            sample_bytes,
+                            num_channels,
+                            stereo,
+                            &mut capture_buf,
+                        );
                     }
 
                     src_byte_offset += packet.length as usize;
@@ -814,6 +844,48 @@ mod isochronous {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_16_bit_packets_as_before() {
+        let bytes: Vec<u8> = [100i16, -200, 300, -400]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let mut out = Vec::new();
+        decode_packet(&bytes, 2, 2, true, &mut out);
+        assert_eq!(out, vec![100, -200, 300, -400]);
+        out.clear();
+        decode_packet(&bytes, 2, 2, false, &mut out);
+        assert_eq!(out, vec![-50, -50]);
+        out.clear();
+        decode_packet(&bytes, 2, 1, false, &mut out);
+        assert_eq!(out, vec![100, -200, 300, -400]);
+    }
+
+    /// The Portacapture X8's 2-channel alternate setting: 3-byte samples, left then right.
+    #[test]
+    fn keeps_the_top_16_bits_of_24_bit_stereo() {
+        let left = 0x12_3456i32; // 24-bit
+        let right = -0x12_3456i32;
+        let bytes: Vec<u8> = [left, right]
+            .iter()
+            .flat_map(|s| s.to_le_bytes()[..3].to_vec())
+            .collect();
+        let mut out = Vec::new();
+        decode_packet(&bytes, 3, 2, true, &mut out);
+        assert_eq!(out, vec![(left >> 8) as i16, (right >> 8) as i16]);
+    }
+
+    #[test]
+    fn keeps_the_top_16_bits_of_32_bit_samples_and_drops_a_partial_frame() {
+        let bytes: Vec<u8> = [0x7fff_0000i32, -0x8000_0000, 5]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let mut out = Vec::new();
+        decode_packet(&bytes, 4, 2, true, &mut out);
+        assert_eq!(out, vec![0x7fff, -0x8000]);
+    }
 
     #[test]
     fn stereo_recording_counts_frames_and_keeps_left_and_right() {

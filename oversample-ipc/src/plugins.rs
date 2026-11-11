@@ -105,6 +105,9 @@ pub struct UsbOpenResult {
     pub sample_rate: i32,
     pub num_channels: i32,
     pub bit_resolution: i32,
+    /// Bytes per sample in a packet (2, 3 or 4). 0 from a plugin that does not report it.
+    #[serde(default)]
+    pub subslot_size: i32,
     pub interface_number: i32,
     pub alternate_setting: i32,
     pub device_name: String,
@@ -149,6 +152,8 @@ pub struct UsbStartStreamArgs {
     pub interface_number: u32,
     pub alternate_setting: u32,
     pub uac_version: u32,
+    /// Bytes per sample in a packet: 2, 3 or 4. The stream keeps the top 16 bits.
+    pub subslot_size: u32,
 }
 
 /// Generic `{ granted }` result, e.g. `plugin:usb-audio|requestAudioPermission`.

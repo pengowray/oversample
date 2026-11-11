@@ -19,6 +19,7 @@ pub fn usb_start_stream(
     interface_number: Option<u32>,
     alternate_setting: Option<u32>,
     uac_version: Option<u32>,
+    subslot_size: Option<u32>,
 ) -> Result<UsbStreamInfo, String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     // Stop existing stream if any
@@ -39,6 +40,7 @@ pub fn usb_start_stream(
         interface_number.unwrap_or(0),
         alternate_setting.unwrap_or(0),
         uac_version.unwrap_or(0),
+        subslot_size.unwrap_or(2),
     )?;
 
     let info = UsbStreamInfo {

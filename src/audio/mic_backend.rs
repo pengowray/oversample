@@ -1756,6 +1756,11 @@ async fn open_usb(state: &AppState) -> bool {
         interface_number: info.interface_number as u32,
         alternate_setting: info.alternate_setting as u32,
         uac_version: info.uac_version as u32,
+        subslot_size: if info.subslot_size > 0 {
+            info.subslot_size as u32
+        } else {
+            2
+        },
     };
     if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
         state
@@ -1770,7 +1775,11 @@ async fn open_usb(state: &AppState) -> bool {
     state.mic.sample_rate().set(sample_rate);
     // Fix: openUsbDevice emits `bitResolution`; the old code read `bitDepth`
     // (never present) so usb_bits was always stuck at the 16 default.
-    let usb_bits = if info.bit_resolution > 0 {
+    // The stream keeps the top 16 bits of 3- and 4-byte samples (the Portacapture X8 sends
+    // 24-bit), and USB recordings are written as 16-bit, so report 16 for those.
+    let usb_bits = if info.subslot_size > 2 {
+        16
+    } else if info.bit_resolution > 0 {
         info.bit_resolution as u16
     } else {
         16
