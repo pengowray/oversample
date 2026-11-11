@@ -245,14 +245,19 @@ pub fn is_xc_query(text: &str) -> bool {
 }
 
 /// Species whose scientific name, synonym or common name in any language
-/// matches `query`, from the Oversample server. Works with any source: the
-/// server answers from its own index and never contacts Xeno-canto.
-pub async fn find_species(query: &str) -> Result<SpeciesSearch, XcError> {
+/// matches `query`, in `group` or in all groups, from the Oversample server.
+/// Works with any source: the server answers from its own index and never
+/// contacts Xeno-canto.
+pub async fn find_species(query: &str, group: Option<&str>) -> Result<SpeciesSearch, XcError> {
     let mut url = format!(
         "{}/xc/species?q={}",
         proxy_base(),
         String::from(js_sys::encode_uri_component(query))
     );
+    if let Some(g) = group {
+        url.push_str("&group=");
+        url.push_str(&String::from(js_sys::encode_uri_component(g)));
+    }
     let langs = names_language().codes();
     if !langs.is_empty() {
         url.push_str("&lang=");

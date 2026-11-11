@@ -1,5 +1,6 @@
 pub mod api;
 pub mod cache;
+pub mod group_words;
 pub mod key_store;
 pub mod metadata;
 pub mod taxonomy;

@@ -77,20 +77,79 @@ const SEARCH_PLACEHOLDER: &str =
 /// sends one request rather than one per letter.
 const NAME_SEARCH_DEBOUNCE_MS: i32 = 250;
 
-/// Heading over the species a name search found. The server sends at most 50.
-fn text_name_results(count: usize, query: &str) -> String {
-    match count {
+/// Heading over the species a name search found, with the group searched
+/// ("in bats") when not all groups. The server sends at most 50.
+fn text_name_results(count: usize, query: &str, group: Option<&str>) -> String {
+    let heading = match count {
         1 => format!("1 species matches \u{201C}{query}\u{201D}"),
         50.. => format!("Best {count} matches for \u{201C}{query}\u{201D}"),
         n => format!("{n} species match \u{201C}{query}\u{201D}"),
+    };
+    match group {
+        Some(g) => format!("{heading} in {g}"),
+        None => heading,
     }
 }
 
-fn text_no_name_results(query: &str) -> String {
+fn text_no_name_results(query: &str, group: Option<&str>) -> String {
+    let within = group.map(|g| format!(" in {g}")).unwrap_or_default();
     format!(
-        "No species match \u{201C}{query}\u{201D}. Press Search to look for recordings on \
-         Xeno-canto."
+        "No species match \u{201C}{query}\u{201D}{within}. Press Search to look for recordings \
+         on Xeno-canto."
     )
+}
+
+/// Name search option for every group.
+const NAME_GROUP_ALL: &str = "All groups";
+
+/// Species found by name for the text in the search box.
+#[derive(Clone, Debug, PartialEq)]
+struct NameResults {
+    /// The name searched for: the search box text, less a group's name
+    /// ("gould" for "gould bat").
+    query: String,
+    /// The group searched; `None` for all groups.
+    group: Option<String>,
+    found: SpeciesSearch,
+}
+
+/// The name search for the text in the search box and the group menu.
+#[derive(Debug, PartialEq)]
+struct NameSearch {
+    query: String,
+    group: Option<String>,
+    /// The group came from the text: if the group has no match, search the
+    /// whole text in all groups ("bat falcon" is a bird).
+    retry_all_groups: bool,
+}
+
+/// A group chosen in the menu applies as it is, and its name is taken out of
+/// the text ("gould bat" with Bats searches "gould"). With All groups, a
+/// group named in the text is searched ("gould bat" searches "gould" in bats).
+fn plan_name_search(text: &str, menu_group: Option<&str>) -> NameSearch {
+    let split = xc_lib::group_words::split_group(text);
+    match (menu_group, split) {
+        (Some(g), Some(s)) if s.group == g => NameSearch {
+            query: s.rest,
+            group: Some(g.to_string()),
+            retry_all_groups: false,
+        },
+        (Some(g), _) => NameSearch {
+            query: text.to_string(),
+            group: Some(g.to_string()),
+            retry_all_groups: false,
+        },
+        (None, Some(s)) => NameSearch {
+            query: s.rest,
+            group: Some(s.group.to_string()),
+            retry_all_groups: true,
+        },
+        (None, None) => NameSearch {
+            query: text.to_string(),
+            group: None,
+            retry_all_groups: false,
+        },
+    }
 }
 
 /// "Birds are still being indexed, so some may be missing."
@@ -614,7 +673,13 @@ pub fn XcBrowser() -> impl IntoView {
     // `None` while the box is empty, too short, or holds an XC query, and when
     // the name search failed (a server without `/xc/species`, or offline):
     // then the dialog works as it did before name search.
-    let name_results: RwSignal<Option<(String, SpeciesSearch)>> = RwSignal::new(None);
+    let name_results: RwSignal<Option<NameResults>> = RwSignal::new(None);
+    // True while name results replace the group's species list. A memo, so
+    // the filter row is drawn again only when this changes and the group
+    // menu keeps keyboard focus.
+    let showing_name_results = Memo::new(move |_| name_results.with(Option::is_some));
+    // The group menu of the name search; `None` for all groups.
+    let name_group: RwSignal<Option<String>> = RwSignal::new(None);
     // Bumped on each key press in the search box, so only the last one searches.
     let name_search_gen = RwSignal::new(0u64);
     let recordings_page = RwSignal::new(1u32);
@@ -1017,14 +1082,33 @@ pub fn XcBrowser() -> impl IntoView {
             name_results.set(None);
             return;
         }
+        let plan = plan_name_search(&query, name_group.get_untracked().as_deref());
         spawn_local(async move {
             crate::web_util::sleep_ms(NAME_SEARCH_DEBOUNCE_MS).await;
             if name_search_gen.try_get_untracked() != Some(my_gen) {
                 return;
             }
-            let result = xc_client::find_species(&query).await;
+            let mut result = xc_client::find_species(&plan.query, plan.group.as_deref())
+                .await
+                .map(|found| NameResults {
+                    query: plan.query.clone(),
+                    group: plan.group.clone(),
+                    found,
+                });
             if name_search_gen.try_get_untracked() != Some(my_gen) {
                 return;
+            }
+            if plan.retry_all_groups && matches!(&result, Ok(r) if r.found.species.is_empty()) {
+                result = xc_client::find_species(&query, None)
+                    .await
+                    .map(|found| NameResults {
+                        query: query.clone(),
+                        group: None,
+                        found,
+                    });
+                if name_search_gen.try_get_untracked() != Some(my_gen) {
+                    return;
+                }
             }
             match result {
                 Ok(found) => {
@@ -1039,7 +1123,7 @@ pub fn XcBrowser() -> impl IntoView {
                         recordings.set(Vec::new());
                         view.set(BrowserView::GroupBrowse);
                     }
-                    name_results.try_set(Some((query, found)));
+                    name_results.try_set(Some(found));
                 }
                 Err(e) => {
                     log::warn!("Species name search failed: {e:?}");
@@ -1047,6 +1131,32 @@ pub fn XcBrowser() -> impl IntoView {
                 }
             }
         });
+    };
+
+    // The group the name results on screen were searched in, which the group
+    // menu shows: the menu's choice, a group named in the search box, or all
+    // groups.
+    let name_group_shown =
+        Memo::new(
+            move |_| match name_results.with(|r| r.as_ref().map(|r| r.group.clone())) {
+                Some(g) => g,
+                None => name_group.get(),
+            },
+        );
+
+    // A new choice in the group menu of the name search: search again. All
+    // groups also takes a group's name out of the search box ("gould bat"
+    // becomes "gould"), since that name was what limited the search.
+    let on_name_group = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        let choice = (!value.is_empty()).then_some(value);
+        if choice.is_none() && name_group.get_untracked().is_none() {
+            if let Some(split) = xc_lib::group_words::split_group(&search_input.get_untracked()) {
+                search_input.set(split.rest);
+            }
+        }
+        name_group.set(choice);
+        on_search_input(search_input.get_untracked());
     };
 
     // The languages the server has names in, for the names menu.
@@ -1099,9 +1209,9 @@ pub fn XcBrowser() -> impl IntoView {
         if view.get() != BrowserView::GroupBrowse {
             return None;
         }
-        if let Some((query, found)) = name_results.get() {
-            return (!found.species.is_empty())
-                .then(|| text_name_results(found.species.len(), &query));
+        if let Some(r) = name_results.get() {
+            return (!r.found.species.is_empty())
+                .then(|| text_name_results(r.found.species.len(), &r.query, r.group.as_deref()));
         }
         let count = species_list.with(Vec::len);
         if count == 0 && !taxonomy_loading.get() {
@@ -1505,11 +1615,34 @@ pub fn XcBrowser() -> impl IntoView {
                             // Group/country filters
                             {move || {
                                 // Group, Country and Refresh apply to the group's
-                                // species list, so they are hidden while name
-                                // results from all groups replace it.
+                                // species list. While name results replace it,
+                                // the row has the name search's own group menu,
+                                // which has All groups.
                                 if matches!(current_view, BrowserView::GroupBrowse)
-                                    && name_results.with(Option::is_none)
+                                    && showing_name_results.get()
                                 {
+                                    return Some(view! {
+                                        <div class="xc-filters">
+                                            <label>"Group: "</label>
+                                            <select class="xc-select" on:change=on_name_group>
+                                                <option
+                                                    value=""
+                                                    prop:selected=move || name_group_shown.with(Option::is_none)
+                                                >{NAME_GROUP_ALL}</option>
+                                                {XC_GROUPS.iter().map(|g| {
+                                                    let g: &'static str = g;
+                                                    view! {
+                                                        <option
+                                                            value=g
+                                                            prop:selected=move || name_group_shown.with(|n| n.as_deref() == Some(g))
+                                                        >{g}</option>
+                                                    }
+                                                }).collect::<Vec<_>>()}
+                                            </select>
+                                        </div>
+                                    }.into_any());
+                                }
+                                if matches!(current_view, BrowserView::GroupBrowse) {
                                     Some(view! {
                                         <div class="xc-filters">
                                             <label>"Group: "</label>
@@ -1647,7 +1780,7 @@ pub fn XcBrowser() -> impl IntoView {
                                                 on:click=on_refresh
                                             >"Refresh"</button>
                                         </div>
-                                    })
+                                    }.into_any())
                                 } else {
                                     None
                                 }
@@ -1705,11 +1838,11 @@ pub fn XcBrowser() -> impl IntoView {
                 // box holds a name). Replaces the group's species list.
                 {move || {
                     if view.get() != BrowserView::GroupBrowse { return None; }
-                    let (query, found) = name_results.get()?;
+                    let NameResults { query, group, found } = name_results.get()?;
                     let indexing = text_groups_indexing(&found.groups_indexing);
                     if found.species.is_empty() {
                         return Some(view! {
-                            <div class="xc-result-summary">{text_no_name_results(&query)}</div>
+                            <div class="xc-result-summary">{text_no_name_results(&query, group.as_deref())}</div>
                             {indexing.map(|t| view! { <div class="xc-result-summary">{t}</div> })}
                         }.into_any());
                     }
@@ -2058,18 +2191,49 @@ mod tests {
     }
 
     #[test]
+    fn name_search_group_from_menu_or_text() {
+        let plan = |text, menu| {
+            let p = plan_name_search(text, menu);
+            (p.query, p.group, p.retry_all_groups)
+        };
+        let s = |v: &str| v.to_string();
+        let bats = Some(s("bats"));
+        assert_eq!(plan("gould bat", None), (s("gould"), bats.clone(), true));
+        assert_eq!(plan("gould", None), (s("gould"), None, false));
+        assert_eq!(
+            plan("gould", Some("bats")),
+            (s("gould"), bats.clone(), false)
+        );
+        assert_eq!(plan("gould bat", Some("bats")), (s("gould"), bats, false));
+        // The menu wins; the text's group word stays part of the name.
+        assert_eq!(
+            plan("bat falcon", Some("birds")),
+            (s("bat falcon"), Some(s("birds")), false)
+        );
+    }
+
+    #[test]
     fn name_search_headings() {
         assert_eq!(
-            text_name_results(1, "noctule"),
+            text_name_results(1, "noctule", None),
             "1 species matches \u{201C}noctule\u{201D}"
         );
         assert_eq!(
-            text_name_results(5, "noctule"),
+            text_name_results(5, "noctule", None),
             "5 species match \u{201C}noctule\u{201D}"
         );
         assert_eq!(
-            text_name_results(50, "ba"),
+            text_name_results(50, "ba", None),
             "Best 50 matches for \u{201C}ba\u{201D}"
+        );
+        assert_eq!(
+            text_name_results(3, "gould", Some("bats")),
+            "3 species match \u{201C}gould\u{201D} in bats"
+        );
+        assert_eq!(
+            text_no_name_results("falcon", Some("bats")),
+            "No species match \u{201C}falcon\u{201D} in bats. Press Search to look for \
+             recordings on Xeno-canto."
         );
         assert_eq!(text_groups_indexing(&[]), None);
         assert_eq!(
