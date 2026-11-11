@@ -39,9 +39,11 @@ mod wasm {
     }
 
     fn post(msg: FromWorker, embedding: Option<&[f32]>) {
-        let Ok(obj) = serde_wasm_bindgen::to_value(&msg) else {
+        let Ok(inner) = serde_wasm_bindgen::to_value(&msg) else {
             return;
         };
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &attach::MSG.into(), &inner);
         let scope = scope();
         match embedding {
             Some(e) => {
@@ -64,7 +66,8 @@ mod wasm {
 
     fn on_message(ev: MessageEvent) {
         let data = ev.data();
-        let msg: ToWorker = match serde_wasm_bindgen::from_value(data.clone()) {
+        let inner = get(&data, attach::MSG).unwrap_or(JsValue::UNDEFINED);
+        let msg: ToWorker = match serde_wasm_bindgen::from_value(inner) {
             Ok(m) => m,
             Err(e) => {
                 web_sys::console::error_1(&format!("birdnet-worker: bad message: {e}").into());

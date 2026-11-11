@@ -1,9 +1,10 @@
 //! Types shared by the app and the BirdNET worker (`birdnet-worker`).
 //!
 //! The app (`src/classifier/`) and the worker exchange these messages with
-//! `postMessage`. Control fields go through `serde_wasm_bindgen`; large arrays
-//! (model bytes, audio, embeddings) travel next to them as transferred typed
-//! arrays, under the property names in [`attach`].
+//! `postMessage`. Each posted object holds the message (through
+//! `serde_wasm_bindgen`) under [`attach::MSG`]; large arrays (model bytes,
+//! audio, embeddings) travel beside it as transferred typed arrays, under the
+//! other names in [`attach`].
 //!
 //! Both methods use the same model, BirdNET V2.4 with an embeddings output:
 //!
@@ -213,8 +214,13 @@ fn fmt_khz(rate: u32) -> String {
     }
 }
 
-/// Property names of the typed arrays sent next to the serde fields.
+/// Property names in each posted object. The serde message sits under
+/// [`attach::MSG`] and the typed arrays beside it, because
+/// `serde_wasm_bindgen` fails on an object that holds a typed array, even in a
+/// field it would skip.
 pub mod attach {
+    /// The [`super::ToWorker`] or [`super::FromWorker`] message.
+    pub const MSG: &str = "msg";
     /// `ArrayBuffer` of model bytes, on [`super::ToWorker::LoadBackbone`] and
     /// [`super::ToWorker::LoadHead`].
     pub const BYTES: &str = "bytes";

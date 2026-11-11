@@ -176,9 +176,11 @@ impl Client {
     }
 
     fn post(&self, msg: &ToWorker, extra: Option<(&str, &JsValue)>, transfer: Option<&JsValue>) {
-        let Ok(obj) = serde_wasm_bindgen::to_value(msg) else {
+        let Ok(inner) = serde_wasm_bindgen::to_value(msg) else {
             return;
         };
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &attach::MSG.into(), &inner);
         if let Some((name, value)) = extra {
             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(name), value);
         }
@@ -221,7 +223,8 @@ fn flush_into_state(state: AppState, flush: Option<((u64, Method), Vec<WindowSco
 
 fn on_message(ev: MessageEvent) {
     let data = ev.data();
-    let msg: FromWorker = match serde_wasm_bindgen::from_value(data.clone()) {
+    let inner = js_sys::Reflect::get(&data, &attach::MSG.into()).unwrap_or(JsValue::UNDEFINED);
+    let msg: FromWorker = match serde_wasm_bindgen::from_value(inner) {
         Ok(m) => m,
         Err(e) => {
             log::warn!("birdnet worker: unreadable message: {e}");
