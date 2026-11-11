@@ -34,15 +34,17 @@ The embedding part plus the classifier gives exactly the full model's results
   as float32; the largest logit difference was 0.0005 for float16 and 0.028 for int8
   ([head_precision.py](perch-bench/head_precision.py)). The full model is then 227 MB
   (float16) or 136 MB (int8), against 409 MB.
-- **Less memory.** The full 409 MB file in tract needs 1.2 GB of WASM memory, which is
-  too much for many phones. The embedding part needs 140 MB; the classifier in plain
-  Rust needs about its own file size on top. Not built or measured.
+- **Less memory and faster.** Built and measured: the embedding part in tract plus the
+  int8 classifier in plain Rust ([head.rs](perch-bench/src/head.rs)) uses 231 MB of
+  WASM memory, against 1,231 MB for the full file in tract, and runs at 10 to 11 times
+  real time in the browser build, against 7 times. It gives the same top species as Google's
+  model on 22 of 22 windows. See [Speed](#speed).
 - **Embeddings without the classifier.** Similarity features can download only the
   45 MB part.
 
-Speed with all classes: 7 times real time in tract WASM (3 minutes of audio in about
-25 s), against 23 times for the embedding part alone. Most of the difference is the
-classifier, which compares 59,180 prototypes with 64 positions per window.
+Speed with all classes, as two files: 10 to 11 times real time in the WASM build
+(3 minutes of audio in 16 to 17 s), against 23 times for the embedding part alone. The classifier
+takes half the time: it compares 59,180 prototypes with 64 positions per window.
 
 - **Licence:** Apache 2.0 for the weights, stated by Google on the Kaggle model page.
   This is much more permissive than BirdNET's CC BY-NC-SA 4.0. It allows a paid tier,
@@ -55,7 +57,9 @@ classifier, which compares 59,180 prototypes with 64 positions per window.
 - **Size is the problem with the full model.** The ONNX file is 409 MB. 364 MB of that
   is the classifier for 14,795 classes; the embedding part is 45 MB. In the app's
   WASM target, the full model needs 1.2 GB of WASM memory and runs at 7 times real
-  time. The embedding part alone needs 140 MB and runs at 23 to 24 times real time.
+  time. Split into the embedding part (tract) and an int8 classifier (plain Rust), it
+  is 136 MB, needs 231 MB of WASM memory and runs at 10 to 11 times real time. The embedding
+  part alone needs 140 MB and runs at 23 to 24 times real time.
 - **Slower than BirdNET.** In the same process, under the same load, the Perch
   embedding model analysed 3 minutes of audio in 7.5 to 7.9 s; BirdNET V2.4 took 4.1 to
   4.8 s. Perch is about 1.8 times slower per second of audio.
@@ -105,11 +109,12 @@ Why add Perch:
 How to ship it:
 
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
-2. The classifier for all 14,795 classes as a separate file in float16 (182 MB) or int8
-   (91 MB), run in plain Rust on the embedding model's spatial output: a matrix
-   multiply of the 64 spatial positions against the prototypes, a max over positions,
-   and a weighted sum. Download it the first time someone runs Perch with species
-   names.
+2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
+   gzipped), run in plain Rust on the embedding model's spatial output
+   ([export_head.py](perch-bench/export_head.py) writes it,
+   [head.rs](perch-bench/src/head.rs) runs it: integer dot products of the 64 spatial
+   positions against the prototypes, a max over positions, and a weighted sum).
+   Download it the first time someone runs Perch with species names.
 3. Later, if wanted: smaller classifier files for a subset of classes, for example a
    region of about 900 classes (about 22 MB in float32) or the 5,044 non-bird classes
    (about 124 MB in float32). tphakala's regional slices pick species with BirdNET's
@@ -117,8 +122,8 @@ How to ship it:
 4. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
 Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
-onnxruntime-web, tphakala's INT8 file, the classifier in plain Rust (speed and
-memory), float16 and int8 classifiers on more than 22 windows, Perch against BirdNET on
+onnxruntime-web, tphakala's INT8 file, the int8 classifier on more than 22 windows
+(including frogs and insects), the classifier on ARM, Perch against BirdNET on
 bird identification accuracy, and a classifier trained on Perch embeddings for bats. See
 [Not tested](#not-tested).
 
@@ -215,11 +220,13 @@ measurement (64 to 74 ms), so the comparison is fair.
 | Runtime | Model | ms per window | 3 min of audio | Real time | Memory |
 |---|---|---|---|---|---|
 | tract, `wasm32-unknown-unknown` + wasm-bindgen + SIMD, opt-level 3 | Perch, full (14,795 classes) | 686 to 703 per 5 s | 24.8 to 25.8 s | 7x | 1,231 MB WASM memory (1.8 GB node RSS) |
+| same | Perch, embedding part + int8 classifier in plain Rust (14,795 classes) | 413 to 428 per 5 s (classifier 208 to 214) | 15.8 to 17.3 s | 10 to 11x | 231 MB WASM memory |
 | same | Perch, embedding only | 206 to 219 per 5 s | 7.5 to 7.9 s | 23 to 24x | 140 MB WASM memory |
 | same | Perch, embedding only, no DFT | 228 per 5 s | 8.3 s | 22x | 152 MB WASM memory |
 | same | Perch, central Europe slice (873 classes) | 260 to 262 per 5 s | 9.4 s | 19x | 217 MB WASM memory |
 | same | BirdNET V2.4 (for comparison) | 68 to 73 per 3 s | 4.1 to 4.8 s | 38 to 44x | 160 MB WASM memory |
 | tract, native | Perch, full | 281 per 5 s | 10.3 s | 18x | 1,223 MB RSS |
+| tract, native | Perch, embedding part + int8 classifier in plain Rust (AVX2) | 272 per 5 s (classifier 157) | about 9.8 s | 18x | 264 MB RSS |
 | tract, native | Perch, embedding only | 118 per 5 s | 4.3 s | 42x | 186 MB RSS |
 | onnxruntime 1.31, Python, under load | Perch, full | 194 per 5 s | about 7 s | 26x | |
 | onnxruntime 1.31, Python, under load | Perch, embedding only | 122 per 5 s | about 4.4 s | 41x | |
@@ -228,7 +235,8 @@ measurement (64 to 74 ms), so the comparison is fair.
 
 - The memory column isn't comparable across runtimes; see the BirdNET page for why.
   The WASM memory figures come from the wasm32-wasip1 build of the same code, which
-  reports its linear memory directly.
+  reports its linear memory directly; the two-file row's figure comes from the
+  wasm-bindgen build itself.
 - The tract WASM module is 14.9 MB (3.7 MB gzipped), the same as BirdNET's, because it
   is the same tract code.
 - Loading (parse and optimise) in the same process: 1.5 to 1.8 s for the Perch
@@ -236,6 +244,19 @@ measurement (64 to 74 ms), so the comparison is fair.
 - The classifier is a large part of the time: 14,795 classes x 4 prototypes x 64
   positions x 1,536 values is 5.8 billion multiply-adds per window. A region of about
   900 classes adds 20 to 25 percent to the embedding time.
+- The plain-Rust classifier ([head.rs](perch-bench/src/head.rs)) keeps the prototypes
+  as int8 and each spatial position as int16 with its own scale, and sums the products
+  as integers: WASM SIMD's `i32x4.dot_i16x8_s` does 8 multiply-adds per instruction,
+  where float32 needs two instructions for 4. In WASM it takes 208 to 214 ms per window,
+  against about 480 ms for the same classifier inside tract's full model. Natively it
+  has SSE2 and AVX2 versions (chosen at run time); with AVX2 it takes 157 ms. A plain
+  loop that the compiler didn't vectorise took 3.8 s natively, so other CPUs (ARM)
+  need their own version before this is used outside the browser.
+- The two-file rows were measured in separate node runs (alternating with the full
+  model, which again took 686 to 690 ms), not in the BirdNET process. Their embedding
+  times (205 to 216 ms) match the table's other rows, so the machine load was similar.
+- Loading the two files: 1.2 to 1.3 s for the embedding model and 0.1 s for the
+  classifier, against 2.2 s for the full model.
 - The plain wasm32-wasip1 build ran while the machine was busier, so its times (310 to
   410 ms for the embedding model, 1 s for the full model) are left out of the table.
 
@@ -254,6 +275,7 @@ in TensorFlow 2.20 ([ref_tf.py](perch-bench/ref_tf.py)).
 | tract native and wasm, embedding only (with or without DFT) | | | 0.9999999 |
 | tract native and wasm, central Europe slice (its 873 classes) | 22 of 22 | 0.00094 | 0.9999999 |
 | embedding model + classifier in numpy ([ref.py](perch-bench/ref.py)) | 22 of 22 | 0.00013 | 0.9999999 |
+| tract embedding model + int8 classifier in Rust, native and wasm-bindgen | 22 of 22 | 0.028 | 0.9999999 |
 | onnxruntime, full | 22 of 22 | 0.00013 | 0.9999999 |
 | LiteRT, justinchuby's TFLite file | 22 of 22 | 0.00133 | 0.9999999 |
 
@@ -381,8 +403,13 @@ with one change: Perch has no single weight vector per class.
 - **Phones.** No Android device was connected.
 - **onnxruntime-web,** WebGPU and more than one thread.
 - **INT8 and float16.** The tphakala INT8 file (131 MB) uses MatMulInteger, which was 4
-  times slower than float32 in tract for BirdNET, so it wasn't run. A float16 or int8
-  classifier was only checked in numpy on 22 windows, not built in Rust or timed.
+  times slower than float32 in tract for BirdNET, so it wasn't run. The int8
+  classifier in Rust was checked on 22 windows of 6 bird recordings only; it needs
+  more recordings, including frogs, insects and sound events, before shipping. The
+  float16 classifier was checked in numpy only.
+- **The Rust classifier on ARM** (Apple silicon, Android when not in the browser): only
+  a plain fallback loop exists for it, and the x86 version of that loop was 24 times
+  slower than the SIMD one.
 - **Bird identification quality.** Perch against BirdNET on the same bird recordings
   was not compared; the 22 test windows only checked that tract matches TensorFlow.
 - **A trained bat classifier.** The bat test only used nearest neighbours on raw

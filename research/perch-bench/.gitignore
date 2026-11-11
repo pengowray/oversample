@@ -3,3 +3,4 @@ target/
 *.npz
 out/
 *.onnx
+*.bin
