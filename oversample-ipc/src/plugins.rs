@@ -138,8 +138,8 @@ pub struct UsbOpenArgs {
     pub sample_rate: i32,
 }
 
-/// Args for the native `usb_start_stream` command (Rust, not a plugin). Tauri
-/// maps these camelCase keys onto the snake_case command parameters.
+/// Args for the native `usb_start_stream` command (Rust, not a plugin), sent
+/// as its `args` parameter: `{ "args": { "fd": …, "endpointAddress": … } }`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsbStartStreamArgs {
@@ -159,6 +159,13 @@ pub struct UsbStartStreamArgs {
     pub subslot_size: u32,
     /// 4-byte samples are IEEE float, recorded as float WAV.
     pub is_float: bool,
+}
+
+/// The `usb_start_stream` invoke payload: the args under the command's
+/// `args` parameter name.
+#[derive(Clone, Debug, Serialize)]
+pub struct UsbStartStreamPayload<'a> {
+    pub args: &'a UsbStartStreamArgs,
 }
 
 /// Generic `{ granted }` result, e.g. `plugin:usb-audio|requestAudioPermission`.
@@ -223,4 +230,35 @@ pub struct ReadRecordingRangeArgs {
 pub struct ReadRecordingRangeResult {
     #[serde(default)]
     pub data: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usb_start_stream_payload_nests_camel_case_args() {
+        let args = UsbStartStreamArgs {
+            fd: 7,
+            endpoint_address: 0x81,
+            max_packet_size: 576,
+            sample_rate: 192_000,
+            num_channels: 2,
+            stereo: true,
+            device_name: "X8".into(),
+            interface_number: 1,
+            alternate_setting: 2,
+            uac_version: 2,
+            subslot_size: 3,
+            is_float: false,
+        };
+        let json = serde_json::to_value(UsbStartStreamPayload { args: &args }).unwrap();
+        // Tauri passes the "args" object to the command's `args` parameter.
+        assert_eq!(json["args"]["endpointAddress"], 0x81);
+        assert_eq!(json["args"]["subslotSize"], 3);
+        let back: UsbStartStreamArgs = serde_json::from_value(json["args"].clone()).unwrap();
+        assert_eq!(back.max_packet_size, 576);
+        assert_eq!(back.device_name, "X8");
+        assert!(back.stereo && !back.is_float);
+    }
 }

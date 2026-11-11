@@ -699,6 +699,40 @@ fn apply_hfr_colormap_to_tile(
     }
 }
 
+/// Gain for each row of a tile: the display gain, the tile's shift to dBFS,
+/// and the display EQ / noise filter adjustment for the row's frequency.
+///
+/// Tiles hold `20·log10(magnitude)` from whatever FFT size made them (smaller
+/// at deep zoom in the Adaptive modes), and an FFT of N points reads a
+/// full-scale tone at `full_scale_db(N)`. Subtracting that per tile puts every
+/// zoom level on the same dBFS scale. `freq_adjustments` has one entry per row
+/// of the largest tile, so smaller tiles pick the entry at the same frequency.
+fn tile_row_gains(
+    rendered: &PreRendered,
+    settings: &SpectDisplaySettings,
+    freq_adjustments: Option<&[f32]>,
+) -> Vec<f32> {
+    use oversample_core::dsp::spectrum_level::{fft_size_for_bins, full_scale_db};
+    let h = rendered.height as usize;
+    let base = settings.gain_db - full_scale_db(fft_size_for_bins(h));
+    (0..h)
+        .map(|row| {
+            let extra = freq_adjustments
+                .and_then(|a| {
+                    if a.len() == h || h < 2 {
+                        a.get(row)
+                    } else {
+                        let idx = (row * (a.len() - 1) + (h - 1) / 2) / (h - 1);
+                        a.get(idx)
+                    }
+                })
+                .copied()
+                .unwrap_or(0.0);
+            base + extra
+        })
+        .collect()
+}
+
 /// Convert tile dB data (and optional flow shifts) to RGBA pixels.
 /// Dispatches on `TileRenderMode` to apply either colormap or flow-specific coloring.
 fn tile_to_rgba(
@@ -711,21 +745,19 @@ fn tile_to_rgba(
     let total = db_data.len();
     let mut rgba = vec![0u8; total * 4];
     let w = rendered.width as usize;
+    let row_gain = tile_row_gains(rendered, settings, freq_adjustments);
 
     match render_mode {
         TileRenderMode::Spectrogram(colormap) => match colormap {
             ColormapMode::Uniform(cm) => {
                 for (i, &db) in db_data.iter().enumerate() {
                     let row = if w > 0 { i / w } else { 0 };
-                    let extra = freq_adjustments
-                        .and_then(|a| a.get(row).copied())
-                        .unwrap_or(0.0);
                     let grey = db_to_greyscale(
                         db,
                         settings.floor_db,
                         settings.range_db,
                         settings.gamma,
-                        settings.gain_db + extra,
+                        row_gain[row],
                     );
                     let [r, g, b] = cm.apply(grey);
                     let pi = i * 4;
@@ -745,15 +777,12 @@ fn tile_to_rgba(
                 let focus_bot = (h * (1.0 - band_ff_lo_frac)).round() as usize;
                 for (i, &db) in db_data.iter().enumerate() {
                     let row = if w > 0 { i / w } else { 0 };
-                    let extra = freq_adjustments
-                        .and_then(|a| a.get(row).copied())
-                        .unwrap_or(0.0);
                     let grey = db_to_greyscale(
                         db,
                         settings.floor_db,
                         settings.range_db,
                         settings.gamma,
-                        settings.gain_db + extra,
+                        row_gain[row],
                     );
                     let [r, g, b] = if row >= focus_top && row < focus_bot {
                         cm.apply(grey)
@@ -780,15 +809,12 @@ fn tile_to_rgba(
             let flow_shifts = &rendered.flow_shifts;
             for (i, &db) in db_data.iter().enumerate() {
                 let row = if w > 0 { i / w } else { 0 };
-                let extra = freq_adjustments
-                    .and_then(|a| a.get(row).copied())
-                    .unwrap_or(0.0);
                 let grey = db_to_greyscale(
                     db,
                     settings.floor_db,
                     settings.range_db,
                     settings.gamma,
-                    settings.gain_db + extra,
+                    row_gain[row],
                 );
                 let shift = if i < flow_shifts.len() {
                     flow_shifts[i]

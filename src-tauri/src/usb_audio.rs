@@ -14,6 +14,7 @@
 //! Architecture modeled after batgizmo's nativeusb.cpp.
 
 use crate::recording::{NativeSampleFormat, RecordingBuffer};
+pub use oversample_ipc::plugins::UsbStartStreamArgs;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -249,20 +250,23 @@ impl UsbDecoder {
 
 #[cfg(target_os = "android")]
 pub fn start_usb_stream(
-    fd: i32,
-    endpoint_address: u32,
-    max_packet_size: u32,
-    sample_rate: u32,
-    num_channels: u32,
-    stereo: bool,
-    device_name: String,
+    args: UsbStartStreamArgs,
     app: tauri::AppHandle,
-    interface_number: u32,
-    alternate_setting: u32,
-    uac_version: u32,
-    sample_bytes: u32,
-    is_float: bool,
 ) -> Result<UsbStreamState, String> {
+    let UsbStartStreamArgs {
+        fd,
+        endpoint_address,
+        max_packet_size,
+        sample_rate,
+        num_channels,
+        stereo,
+        device_name,
+        interface_number,
+        alternate_setting,
+        uac_version,
+        subslot_size: sample_bytes,
+        is_float,
+    } = args;
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let is_streaming = Arc::new(AtomicBool::new(false));
     let is_recording = Arc::new(AtomicBool::new(false));
@@ -351,21 +355,9 @@ pub fn start_usb_stream(
 }
 
 #[cfg(not(target_os = "android"))]
-#[allow(clippy::too_many_arguments)]
 pub fn start_usb_stream(
-    _fd: i32,
-    _endpoint_address: u32,
-    _max_packet_size: u32,
-    _sample_rate: u32,
-    _num_channels: u32,
-    _stereo: bool,
-    _device_name: String,
+    _args: UsbStartStreamArgs,
     _app: tauri::AppHandle,
-    _interface_number: u32,
-    _alternate_setting: u32,
-    _uac_version: u32,
-    _sample_bytes: u32,
-    _is_float: bool,
 ) -> Result<UsbStreamState, String> {
     Err("USB audio streaming is only supported on Android".into())
 }

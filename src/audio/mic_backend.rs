@@ -1785,7 +1785,8 @@ async fn open_usb(state: &AppState) -> bool {
         },
         is_float: info.is_float,
     };
-    if let Err(e) = tauri_invoke_args("usb_start_stream", &stream_args).await {
+    let payload = oversample_ipc::plugins::UsbStartStreamPayload { args: &stream_args };
+    if let Err(e) = tauri_invoke_args("usb_start_stream", &payload).await {
         state
             .status
             .message()

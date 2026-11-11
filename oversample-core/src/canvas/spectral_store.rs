@@ -224,6 +224,19 @@ pub fn get_max_magnitude(file_idx: usize) -> f32 {
     })
 }
 
+/// The running max magnitude in dBFS (0 dB = a full-scale tone), using the
+/// FFT size the stored columns were computed at. `None` before any columns.
+pub fn get_max_magnitude_dbfs(file_idx: usize) -> Option<f32> {
+    STORES.with(|s| {
+        let stores = s.borrow();
+        let st = stores.get(&file_idx)?;
+        (st.max_magnitude > 0.0).then(|| {
+            20.0 * st.max_magnitude.log10()
+                - crate::dsp::spectrum_level::full_scale_db(st.fft_size)
+        })
+    })
+}
+
 /// Compute the global chromagram normalisation maxima (max_class, max_note)
 /// by iterating all present columns in the store **by reference** (no cloning).
 /// Returns `None` if the store doesn't exist or has no data.

@@ -1,4 +1,6 @@
-use crate::canvas::colors::magnitude_to_greyscale;
+use crate::canvas::colors::{dbfs_to_greyscale, magnitude_to_db};
+use crate::dsp::depth_range::max_display_range_db;
+use crate::dsp::spectrum_level::{auto_range_db, fft_size_for_bins, full_scale_db, noise_floor_dbfs};
 use crate::types::PreRendered;
 use crate::types::{AudioData, PreviewImage, SpectrogramColumn, SpectrogramData};
 use realfft::RealFftPlanner;
@@ -377,13 +379,11 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
     let out_w = (src_w as u32).min(target_width);
     let out_h = (src_h as u32).min(target_height);
 
-    // Find global max magnitude for normalization
-    let max_mag = spec
-        .columns
-        .iter()
-        .flat_map(|c| c.magnitudes.iter())
-        .copied()
-        .fold(0.0f32, f32::max);
+    // Same mapping as the main view at its default settings: dBFS, down to
+    // the Auto range for this image's noise floor and the file's bit depth.
+    let full_scale = full_scale_db(fft_size);
+    let max_range = max_display_range_db(audio.metadata.bits_per_sample, audio.metadata.is_float);
+    let range = auto_range_db(noise_floor_dbfs(&spec.columns), max_range);
 
     let mut pixels = vec![0u8; (out_w * out_h * 4) as usize];
 
@@ -394,7 +394,7 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
             // Map output row to source bin (row 0 = highest freq)
             let src_bin = src_h - 1 - ((y as usize * src_h) / out_h as usize).min(src_h - 1);
             let mag = col.magnitudes[src_bin];
-            let grey = magnitude_to_greyscale(mag, max_mag);
+            let grey = dbfs_to_greyscale(magnitude_to_db(mag) - full_scale, range);
             let idx = (y * out_w + x) as usize * 4;
             pixels[idx] = grey;
             pixels[idx + 1] = grey;
@@ -411,8 +411,13 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
 }
 
 /// Compute a higher-resolution overview image by downsampling existing SpectrogramData.
-/// Produces a ~1024×256 greyscale RGBA image (same format as PreviewImage).
-pub fn compute_overview_from_spectrogram(data: &SpectrogramData) -> Option<PreviewImage> {
+/// Produces a ~1024×256 greyscale RGBA image (same format as PreviewImage),
+/// mapped like [`compute_preview`]. `max_range_db` is the file's bit-depth
+/// limit (`depth_range::max_display_range_db`).
+pub fn compute_overview_from_spectrogram(
+    data: &SpectrogramData,
+    max_range_db: f32,
+) -> Option<PreviewImage> {
     if data.columns.is_empty() {
         return None;
     }
@@ -426,15 +431,8 @@ pub fn compute_overview_from_spectrogram(data: &SpectrogramData) -> Option<Previ
     let out_w = (src_w as u32).min(1024);
     let out_h = (src_h as u32).min(256);
 
-    let max_mag = data
-        .columns
-        .iter()
-        .flat_map(|c| c.magnitudes.iter())
-        .copied()
-        .fold(0.0f32, f32::max);
-    if max_mag <= 0.0 {
-        return None;
-    }
+    let full_scale = full_scale_db(fft_size_for_bins(src_h));
+    let range = auto_range_db(noise_floor_dbfs(&data.columns), max_range_db);
 
     let mut pixels = vec![0u8; (out_w * out_h * 4) as usize];
 
@@ -448,7 +446,7 @@ pub fn compute_overview_from_spectrogram(data: &SpectrogramData) -> Option<Previ
         for y in 0..out_h {
             let src_bin = src_h - 1 - ((y as usize * src_h) / out_h as usize).min(src_h - 1);
             let mag = col.magnitudes[src_bin.min(col_len - 1)];
-            let grey = magnitude_to_greyscale(mag, max_mag);
+            let grey = dbfs_to_greyscale(magnitude_to_db(mag) - full_scale, range);
             let idx = (y * out_w + x) as usize * 4;
             pixels[idx] = grey;
             pixels[idx + 1] = grey;

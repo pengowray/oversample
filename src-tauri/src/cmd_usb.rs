@@ -1,6 +1,6 @@
 use crate::recording::{self, RecordingResult};
 use crate::recovery;
-use crate::usb_audio::{self, UsbStreamInfo, UsbStreamStatus};
+use crate::usb_audio::{self, UsbStartStreamArgs, UsbStreamInfo, UsbStreamStatus};
 use crate::UsbStreamMutex;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
@@ -9,18 +9,7 @@ use tauri::Manager;
 pub fn usb_start_stream(
     app: tauri::AppHandle,
     state: tauri::State<UsbStreamMutex>,
-    fd: i32,
-    endpoint_address: u32,
-    max_packet_size: u32,
-    sample_rate: u32,
-    num_channels: u32,
-    stereo: bool,
-    device_name: String,
-    interface_number: Option<u32>,
-    alternate_setting: Option<u32>,
-    uac_version: Option<u32>,
-    subslot_size: Option<u32>,
-    is_float: Option<bool>,
+    args: UsbStartStreamArgs,
 ) -> Result<UsbStreamInfo, String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
     // Stop existing stream if any
@@ -29,26 +18,11 @@ pub fn usb_start_stream(
     }
     drop(usb);
 
-    let stream_state = usb_audio::start_usb_stream(
-        fd,
-        endpoint_address,
-        max_packet_size,
-        sample_rate,
-        num_channels,
-        stereo,
-        device_name.clone(),
-        app,
-        interface_number.unwrap_or(0),
-        alternate_setting.unwrap_or(0),
-        uac_version.unwrap_or(0),
-        subslot_size.unwrap_or(2),
-        is_float.unwrap_or(false),
-    )?;
-
     let info = UsbStreamInfo {
-        sample_rate,
-        device_name,
+        sample_rate: args.sample_rate,
+        device_name: args.device_name.clone(),
     };
+    let stream_state = usb_audio::start_usb_stream(args, app)?;
 
     let mut usb = state.lock().map_err(|e| e.to_string())?;
     *usb = Some(stream_state);
