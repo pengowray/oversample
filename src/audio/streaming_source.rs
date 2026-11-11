@@ -9,10 +9,13 @@
 //! - `StreamingFlacSource`: progressive sequential FLAC decode in 4 MB windows
 //!
 //! Consumers call `prefetch_region()` (async) before `read_samples()` (sync).
-//! If a region is not cached, `read_samples()` returns silence for those frames.
+//! If a region is not cached, `read_samples()` returns silence for those frames,
+//! so anything that keeps its result (spectrogram tiles) should check
+//! [`region_ready`] before reading.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::audio::loader::{FlacHeader, WavHeader};
@@ -56,8 +59,10 @@ impl CachedChunk {
 
 /// LRU chunk cache for decoded audio regions.
 pub(crate) struct ChunkCache {
-    /// Decoded chunks keyed by chunk index (frame / CHUNK_FRAMES).
-    chunks: HashMap<u64, CachedChunk>,
+    /// Decoded chunks keyed by chunk index (frame / CHUNK_FRAMES). `Rc` so a
+    /// prefetch can hold its chunks while it awaits further reads, and put
+    /// back any that were evicted in the meantime.
+    chunks: HashMap<u64, Rc<CachedChunk>>,
     /// LRU order: least recently used at the front, most recent at the back.
     /// `VecDeque` keeps eviction (`pop_front`) O(1); the bounded budget means
     /// the deque never grows large enough to make the linear `iter().position`
@@ -88,14 +93,27 @@ impl ChunkCache {
     pub(crate) fn get(&mut self, chunk_idx: u64) -> Option<&CachedChunk> {
         if self.chunks.contains_key(&chunk_idx) {
             self.lru_move_to_back(chunk_idx);
-            self.chunks.get(&chunk_idx)
+            self.chunks.get(&chunk_idx).map(|c| &**c)
         } else {
             None
         }
     }
 
+    /// Get a shared handle to a cached chunk, updating LRU order.
+    pub(crate) fn get_rc(&mut self, chunk_idx: u64) -> Option<Rc<CachedChunk>> {
+        if self.chunks.contains_key(&chunk_idx) {
+            self.lru_move_to_back(chunk_idx);
+        }
+        self.chunks.get(&chunk_idx).cloned()
+    }
+
     /// Insert a chunk, evicting oldest entries if over budget.
     pub(crate) fn insert(&mut self, chunk_idx: u64, chunk: CachedChunk) {
+        self.insert_rc(chunk_idx, Rc::new(chunk));
+    }
+
+    /// Insert a shared chunk, evicting oldest entries if over budget.
+    pub(crate) fn insert_rc(&mut self, chunk_idx: u64, chunk: Rc<CachedChunk>) {
         let size = chunk.byte_size();
 
         // Remove existing entry first to fix memory accounting on duplicate inserts
@@ -131,6 +149,18 @@ impl ChunkCache {
     /// Check if a chunk is cached (without updating LRU).
     pub(crate) fn contains(&self, chunk_idx: u64) -> bool {
         self.chunks.contains_key(&chunk_idx)
+    }
+
+    /// True when every chunk holding frames `[start, end)` is cached. Frames
+    /// before `head_frames` live in the source's head buffer and always count.
+    pub(crate) fn covers(&self, head_frames: u64, start: u64, end: u64) -> bool {
+        let start = start.max(head_frames);
+        if end <= start {
+            return true;
+        }
+        let first = start / CHUNK_FRAMES as u64;
+        let last = (end - 1) / CHUNK_FRAMES as u64;
+        (first..=last).all(|ci| self.chunks.contains_key(&ci))
     }
 }
 
@@ -337,15 +367,18 @@ impl StreamingWavSource {
         let first_chunk = fetch_start / CHUNK_FRAMES as u64;
         let last_chunk = end_frame.saturating_sub(1) / CHUNK_FRAMES as u64;
 
+        // Other prefetches (more tiles, background scans, playback) insert
+        // chunks while this one awaits its reads, and can evict the chunks it
+        // already has: eight coarse tiles at once need more than the cache
+        // holds for a long stereo file. Hold every chunk until the end and put
+        // back any that were evicted, so the caller's read right after this
+        // returns gets real samples rather than silence.
+        let mut held: Vec<(u64, Rc<CachedChunk>)> = Vec::new();
+
         for chunk_idx in first_chunk..=last_chunk {
-            // Skip chunks already cached, but touch LRU to protect from eviction
-            // while we await fetching subsequent chunks
-            {
-                let mut cache = self.cache.borrow_mut();
-                if cache.contains(chunk_idx) {
-                    cache.touch(chunk_idx);
-                    continue;
-                }
+            if let Some(chunk) = self.cache.borrow_mut().get_rc(chunk_idx) {
+                held.push((chunk_idx, chunk));
+                continue;
             }
             // Compute byte range for this chunk
             let chunk_start_frame = chunk_idx * CHUNK_FRAMES as u64;
@@ -381,10 +414,29 @@ impl StreamingWavSource {
                 (mono, Some(interleaved))
             };
 
-            self.cache
-                .borrow_mut()
-                .insert(chunk_idx, CachedChunk { mono, raw });
+            let chunk = Rc::new(CachedChunk { mono, raw });
+            self.cache.borrow_mut().insert_rc(chunk_idx, chunk.clone());
+            held.push((chunk_idx, chunk));
         }
+
+        // No await from here on.
+        let mut cache = self.cache.borrow_mut();
+        for (chunk_idx, chunk) in held {
+            if cache.contains(chunk_idx) {
+                cache.touch(chunk_idx);
+            } else {
+                cache.insert_rc(chunk_idx, chunk);
+            }
+        }
+    }
+
+    /// True when `[start_frame, start_frame + len)` can be read without
+    /// returning silence for missing chunks.
+    pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
+        let end = (start_frame + len as u64).min(self.total_frames);
+        self.cache
+            .borrow()
+            .covers(self.head_frames as u64, start_frame, end)
     }
 
     /// Read mono samples from the head buffer.
@@ -967,6 +1019,15 @@ impl StreamingFlacSource {
     }
 
     /// Check if background decode has finished the entire file.
+    /// True when `[start_frame, start_frame + len)` can be read without
+    /// returning silence for missing chunks.
+    pub fn region_ready(&self, start_frame: u64, len: usize) -> bool {
+        let end = (start_frame + len as u64).min(self.total_frames);
+        self.cache
+            .borrow()
+            .covers(self.head_frames as u64, start_frame, end)
+    }
+
     pub fn is_fully_decoded(&self) -> bool {
         *self.decode_frame_cursor.borrow() >= self.total_frames
     }
@@ -1086,6 +1147,28 @@ pub async fn prefetch_streaming(source: &dyn AudioSource, start: u64, len: usize
     (false, false)
 }
 
+/// True when a later `read_region` of `[start, start + len)` returns real
+/// samples. Streaming sources read uncached chunks as silence, and a prefetch
+/// can come up short (a failed read, or a chunk evicted that the source can't
+/// decode again), so check this before keeping anything built from the
+/// samples. Always true for in-memory sources.
+pub fn region_ready(source: &dyn AudioSource, start: u64, len: usize) -> bool {
+    let any = source.as_any();
+    if let Some(s) = any.downcast_ref::<StreamingWavSource>() {
+        s.region_ready(start, len)
+    } else if let Some(s) = any.downcast_ref::<StreamingFlacSource>() {
+        s.region_ready(start, len)
+    } else if let Some(s) = any.downcast_ref::<StreamingMp3Source>() {
+        s.region_ready(start, len)
+    } else if let Some(s) = any.downcast_ref::<StreamingOggSource>() {
+        s.region_ready(start, len)
+    } else if let Some(s) = any.downcast_ref::<StreamingM4aSource>() {
+        s.region_ready(start, len)
+    } else {
+        true
+    }
+}
+
 /// Check if a source is a streaming (non-in-memory) source.
 pub fn is_streaming(source: &dyn AudioSource) -> bool {
     source
@@ -1163,4 +1246,44 @@ pub async fn read_blob_range(
         .map_err(|_| "Expected ArrayBuffer from FileReader".to_string())?;
     let uint8 = js_sys::Uint8Array::new(&array_buffer);
     Ok(uint8.to_vec())
+}
+
+#[cfg(test)]
+mod chunk_cache_tests {
+    use super::*;
+
+    fn chunk() -> CachedChunk {
+        CachedChunk {
+            mono: vec![0.5; CHUNK_FRAMES],
+            raw: None,
+        }
+    }
+
+    #[test]
+    fn covers_counts_head_and_cached_chunks() {
+        let mut cache = ChunkCache::new();
+        let cf = CHUNK_FRAMES as u64;
+        cache.insert(1, chunk());
+        // Head covers chunk 0; chunk 1 cached; chunk 2 missing.
+        assert!(cache.covers(cf, 0, 2 * cf));
+        assert!(!cache.covers(cf, 0, 2 * cf + 1));
+        assert!(!cache.covers(0, 0, cf));
+        assert!(cache.covers(0, 5, 5));
+    }
+
+    #[test]
+    fn held_chunk_survives_eviction_and_can_be_put_back() {
+        let mut cache = ChunkCache::new();
+        let held = Rc::new(chunk());
+        cache.insert_rc(0, held.clone());
+        // Fill past the budget so chunk 0 is evicted.
+        let n = CACHE_MAX_BYTES / held.byte_size() + 1;
+        for i in 1..=n as u64 {
+            cache.insert(i, chunk());
+        }
+        assert!(!cache.contains(0));
+        cache.insert_rc(0, held);
+        assert!(cache.contains(0));
+        assert_eq!(cache.get(0).unwrap().mono[0], 0.5);
+    }
 }

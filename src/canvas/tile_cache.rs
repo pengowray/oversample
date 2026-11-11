@@ -917,6 +917,11 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             return;
         }
 
+        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
         let raw_samples = audio
             .source
             .read_region(cv, padded_start as u64, padded_len);
@@ -1537,6 +1542,11 @@ pub fn schedule_tile_on_demand(state: AppState, file_idx: usize, tile_idx: usize
             return;
         }
 
+        if !streaming_source::region_ready(audio.source.as_ref(), sample_start as u64, sample_len) {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
         let samples = audio
             .source
             .read_region(cv, sample_start as u64, sample_len);
@@ -1714,6 +1724,15 @@ pub fn schedule_flow_tile(
                     return;
                 }
 
+                if !streaming_source::region_ready(
+                    audio.source.as_ref(),
+                    sample_start as u64,
+                    sample_len,
+                ) {
+                    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                    return;
+                }
+
                 let total = audio.source.total_samples() as usize;
                 let sample_end = (sample_start + sample_len).min(total);
                 if sample_start >= total || sample_start >= sample_end {
@@ -1757,6 +1776,15 @@ pub fn schedule_flow_tile(
                 .await;
 
                 if !flow_request_still_active(&key) {
+                    return;
+                }
+
+                if !streaming_source::region_ready(
+                    audio.source.as_ref(),
+                    region_sample_start as u64,
+                    region_sample_len,
+                ) {
+                    FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
                 }
 
@@ -1936,6 +1964,11 @@ pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_id
         .await;
 
         if !reassign_request_still_active(&key) {
+            return;
+        }
+
+        if !streaming_source::region_ready(audio.source.as_ref(), sample_start as u64, sample_len) {
+            REASSIGN_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
 
@@ -2142,6 +2175,15 @@ fn schedule_chroma_tile_fft(state: AppState, file_idx: usize, tile_idx: usize, k
             )
             .await;
 
+            if !streaming_source::region_ready(
+                audio.source.as_ref(),
+                sample_start as u64,
+                sample_len,
+            ) {
+                CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                return;
+            }
+
             let samples = audio
                 .source
                 .read_region(cv, sample_start as u64, sample_len);
@@ -2288,6 +2330,11 @@ fn schedule_chroma_tile_resonator(
             .files()
             .with_untracked(|files| file_idx < files.len());
         if !still_loaded {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        }
+
+        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
@@ -2745,6 +2792,11 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
         .await;
 
         if !resonator_request_still_active(&key) {
+            return;
+        }
+
+        if !streaming_source::region_ready(audio.source.as_ref(), padded_start as u64, padded_len) {
+            RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
 
