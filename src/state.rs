@@ -1988,6 +1988,21 @@ pub struct SpectState {
     pub colormap_preference: Colormap,
     /// Colormap preference used when HFR mode is active.
     pub hfr_colormap_preference: Colormap,
+    /// Range follows the selected file's noise floor (see
+    /// `AppState::spect_floor_range`). Moving the Range slider turns it off.
+    pub auto_range: bool,
+    /// Each file's measured noise floor, by `LoadedFile::id`. Measured once
+    /// per file, so the Auto range doesn't move while tiles load.
+    pub noise_floors: std::collections::HashMap<u64, NoiseFloorEstimate>,
+}
+
+/// A file's noise floor in dBFS per FFT bin, at the FFT size it was measured
+/// with (per-bin noise moves 3 dB per doubling of FFT size). `dbfs` is NaN
+/// when the file had no sound to measure.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NoiseFloorEstimate {
+    pub fft_size: usize,
+    pub dbfs: f32,
 }
 
 /// Annotation subsystem: store, selection, drag/drop, resize, undo, editing.
@@ -2354,6 +2369,8 @@ impl AppState {
                 reassign_enabled: false,
                 colormap_preference: Colormap::Viridis,
                 hfr_colormap_preference: Colormap::Inferno,
+                auto_range: true,
+                noise_floors: std::collections::HashMap::new(),
             }),
 
             transform: Store::new(TransformState {
@@ -2833,15 +2850,85 @@ impl AppState {
         oversample_core::dsp::depth_range::max_display_range_db(bits, is_float)
     }
 
-    /// The spectrogram's display floor and range, limited to what the selected
-    /// file's format can show: a Range raised to 170 dB for a 24-bit file shows
-    /// a 16-bit file at 120 dB. Reactive.
+    /// The selected file's noise floor in dBFS per bin at the current
+    /// baseline FFT size. `None` until it is measured, or when the file had no
+    /// sound to measure. Reactive.
+    pub fn current_noise_floor_dbfs(&self) -> Option<f32> {
+        let idx = self.library.current_index().get()?;
+        let id = self.library.files().with(|files| files.get(idx).map(|f| f.id))?;
+        let est = self.spect.noise_floors().with(|m| m.get(&id).copied())?;
+        let fft = self
+            .spect
+            .fft_mode()
+            .get()
+            .fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
+        let dbfs = oversample_core::dsp::spectrum_level::noise_at_fft_size(
+            est.dbfs,
+            est.fft_size,
+            fft,
+        );
+        dbfs.is_finite().then_some(dbfs)
+    }
+
+    /// The spectrogram's display floor and range. With Auto on, the range
+    /// reaches 10 dB below the selected file's noise floor. Either way it is
+    /// limited to what the file's format can show: a Range raised to 170 dB for
+    /// a 24-bit file shows a 16-bit file at 120 dB. Reactive.
     pub fn spect_floor_range(&self) -> (f32, f32) {
         let max = self.spect_max_range_db();
+        if self.spect.auto_range().get() {
+            let range = oversample_core::dsp::spectrum_level::auto_range_db(
+                self.current_noise_floor_dbfs(),
+                max,
+            );
+            return (-range, range);
+        }
         (
             self.spect.floor_db().get().max(-max),
             self.spect.range_db().get().min(max),
         )
+    }
+
+    /// Measure the selected file's noise floor for the Auto range, once per
+    /// file. Skips live recordings, and waits while a file is still loading
+    /// if too little of it is in memory to measure.
+    pub fn measure_current_noise_floor(&self) {
+        /// Frames sampled across the file: enough for a stable percentile,
+        /// few enough to run in a few milliseconds.
+        const FRAMES: usize = 400;
+        let Some(idx) = self.library.current_index().get() else {
+            return;
+        };
+        let job = self.library.files().with(|files| {
+            let f = files.get(idx)?;
+            if f.is_recording || f.is_live_listen {
+                return None;
+            }
+            if self.spect.noise_floors().with_untracked(|m| m.contains_key(&f.id)) {
+                return None;
+            }
+            Some((f.id, f.audio.samples.clone(), f.loading_id.is_some()))
+        });
+        let Some((id, samples, loading)) = job else {
+            return;
+        };
+        let fft_size = self
+            .spect
+            .fft_mode()
+            .get_untracked()
+            .fft_for_lod(crate::canvas::tile_cache::LOD_BASELINE);
+        let dbfs = match oversample_core::dsp::spectrum_level::estimate_noise_floor_dbfs(
+            &samples, fft_size, FRAMES,
+        ) {
+            Some(db) => db,
+            None if loading => return,
+            None => f32::NAN,
+        };
+        self.spect
+            .noise_floors()
+            .update(|m| {
+                m.insert(id, NoiseFloorEstimate { fft_size, dbfs });
+            });
     }
 
     pub fn current_file(&self) -> Option<LoadedFile> {

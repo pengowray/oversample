@@ -571,6 +571,9 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    // Measure each selected file's noise floor once, for the Auto range.
+    Effect::new(move |_| state.measure_current_noise_floor());
+
     // Resolve display filter modes → effective display_* booleans.
     // When the DSP panel is enabled, the per-stage modes drive the existing
     // display_auto_gain / display_eq / display_noise_filter signals.
@@ -1953,6 +1956,22 @@ fn MainArea() -> impl IntoView {
     }
 }
 
+/// Tooltip for the Range row's Auto toggle. `noise_floor_dbfs` is the
+/// selected file's noise floor, when measured; `range_db` is the range shown.
+fn range_auto_title(auto_on: bool, noise_floor_dbfs: Option<f32>, range_db: f32) -> String {
+    match (auto_on, noise_floor_dbfs) {
+        (true, Some(nf)) => format!(
+            "Auto: Range reaches 10 dB below the noise floor ({} dBFS). Click to turn off.",
+            format!("{:.0}", nf).replace('-', "\u{2212}")
+        ),
+        (true, None) => format!(
+            "No measured noise floor, so Auto uses {:.0} dB. Click to turn Auto off.",
+            range_db
+        ),
+        (false, _) => "Auto is off. Click to set Range from the file's noise floor.".to_string(),
+    }
+}
+
 fn toggle_panel(state: &AppState, panel: LayerPanel) {
     state.panels.layer_panel_open().update(|p| {
         *p = if *p == Some(panel) { None } else { Some(panel) };
@@ -2554,8 +2573,10 @@ pub fn MainViewButton() -> impl IntoView {
                 let range_get = move || state.spect_floor_range().1;
                 let range_set = move |v: f32| state.spect.range_db().set(v);
                 let floor_set = move |v: f32| state.spect.floor_db().set(v);
-                // The Range slider reaches the selected file's noise floor: 120 dB
-                // for 16-bit audio, 170 dB for 24-bit, 32-bit and float.
+                let auto_range = move || state.spect.auto_range().get();
+                let auto_range_set = move |on: bool| state.spect.auto_range().set(on);
+                // The Range slider reaches the selected file's bit-depth limit:
+                // 120 dB for 16-bit audio, 170 dB for 24-bit, 32-bit and float.
                 let range_max = move || state.spect_max_range_db();
                 let gamma_get = move || state.spect.gamma().get();
                 let gamma_set = move |v: f32| state.spect.gamma().set(v);
@@ -2596,14 +2617,28 @@ pub fn MainViewButton() -> impl IntoView {
                                     if let Ok(v) = input.value().parse::<f32>() {
                                         range_set(v);
                                         floor_set(-v);
+                                        auto_range_set(false);
                                     }
                                 }
-                                on:dblclick=move |_| {
-                                    range_set(120.0);
-                                    floor_set(-120.0);
-                                }
+                                on:dblclick=move |_| auto_range_set(true)
                             />
                             <span class="dsp-custom-value">{move || format!("{:.0} dB", range_get())}</span>
+                            // Beside the value it sets; range_auto_title says
+                            // what Auto does.
+                            <button
+                                class=move || if auto_range() {
+                                    "layer-panel-opt dsp-auto-toggle sel"
+                                } else {
+                                    "layer-panel-opt dsp-auto-toggle"
+                                }
+                                aria-pressed=move || auto_range().to_string()
+                                title=move || range_auto_title(
+                                    auto_range(),
+                                    state.current_noise_floor_dbfs(),
+                                    range_get(),
+                                )
+                                on:click=move |_| auto_range_set(!auto_range())
+                            >"Auto"</button>
                         </div>
                         <div class="dsp-custom-slider-row">
                             <span class="dsp-slider-label">"Contrast"</span>
@@ -2634,6 +2669,7 @@ pub fn MainViewButton() -> impl IntoView {
                                     gain_set(0.0);
                                     floor_set(-120.0);
                                     range_set(120.0);
+                                    auto_range_set(true);
                                     gamma_set(1.0);
                                     state.display.auto_gain().set(false);
                                 }
