@@ -351,24 +351,11 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         }
 
         if let Some(ref f) = file {
-            let meta = &f.audio.metadata;
-            let sr = f.audio.sample_rate;
-            let sr_text = if sr % 1000 == 0 {
-                format!("{} kHz", sr / 1000)
-            } else {
-                format!("{:.1} kHz", sr as f64 / 1000.0)
-            };
-            let ch_text = match f.audio.channels {
-                1 => "Mono".to_string(),
-                2 => "Stereo".to_string(),
-                n => format!("{} ch", n),
-            };
-            let bit_text = meta.bit_depth_label();
-            let total_samples = f.audio.source.total_samples() as usize;
-            let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
+            let sum = FileSummary::of(f);
+            let total_samples = sum.samples;
             report.push_str(&format!(
                 "\nFile\n  Sample rate: {}\n  Channels: {}\n  Bit depth: {}\n  Duration: {}\n  Samples: {}\n",
-                sr_text, ch_text, bit_text, dur_text, total_samples
+                sum.sample_rate, sum.channels, sum.bit_depth, sum.duration, sum.samples
             ));
 
             // Signal stats — scan first 30s only for large files
@@ -780,21 +767,13 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         render_zc_file_info(f).into_any()
                     }
                     Some(f) => {
-                        let meta = &f.audio.metadata;
-                        let sr = f.audio.sample_rate;
-                        let sr_text = if sr % 1000 == 0 {
-                            format!("{} kHz", sr / 1000)
-                        } else {
-                            format!("{:.1} kHz", sr as f64 / 1000.0)
-                        };
-                        let ch_text = match f.audio.channels {
-                            1 => "Mono".to_string(),
-                            2 => "Stereo".to_string(),
-                            n => format!("{} ch", n),
-                        };
-                        let bit_text = meta.bit_depth_label();
-                        let total_samples = f.audio.source.total_samples() as usize;
-                        let dur_text = crate::format_time::format_duration(f.audio.duration_secs, 3);
+                        let FileSummary {
+                            sample_rate: sr_text,
+                            channels: ch_text,
+                            bit_depth: bit_text,
+                            duration: dur_text,
+                            samples: total_samples,
+                        } = FileSummary::of(&f);
                         let samples_text = format!("{}", total_samples);
 
                         // Signal stats — scan first 30s only for large files
@@ -1344,6 +1323,36 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 // Pulled out of the main view so each can be edited without grappling with
 // the giant `view! { ... }` block.
 // ============================================================================
+
+/// The File section's values, as shown in the panel and in Copy report.
+struct FileSummary {
+    sample_rate: String,
+    channels: String,
+    bit_depth: String,
+    duration: String,
+    samples: usize,
+}
+
+impl FileSummary {
+    fn of(f: &crate::state::LoadedFile) -> Self {
+        let sr = f.audio.sample_rate;
+        Self {
+            sample_rate: if sr % 1000 == 0 {
+                format!("{} kHz", sr / 1000)
+            } else {
+                format!("{:.1} kHz", sr as f64 / 1000.0)
+            },
+            channels: match f.audio.channels {
+                1 => "Mono".to_string(),
+                2 => "Stereo".to_string(),
+                n => format!("{} ch", n),
+            },
+            bit_depth: f.audio.metadata.bit_depth_label(),
+            duration: crate::format_time::format_duration(f.audio.duration_secs, 3),
+            samples: f.audio.source.total_samples() as usize,
+        }
+    }
+}
 
 /// Render the analysis panel's File-info area for an Anabat .zc file.
 /// The audio side of these recordings is a silent placeholder, so the
