@@ -66,9 +66,12 @@ pub struct BitAnalysis {
     pub value_coverage: Option<ValueCoverage>,
 }
 
-/// Bit label for display in the grid.
+/// Bit label for display in the grid. Empty for a `bit_index` outside the
+/// sample, which is any index for a lossy file (`bits_per_sample` 0).
 pub fn bit_label(bit_index: usize, bits_per_sample: u16, is_float: bool) -> String {
-    let bit_pos = bits_per_sample as usize - 1 - bit_index;
+    let Some(bit_pos) = (bits_per_sample as usize).checked_sub(bit_index + 1) else {
+        return String::new();
+    };
     if is_float && bits_per_sample == 32 {
         match bit_pos {
             31 => "S".into(),
@@ -91,28 +94,33 @@ pub fn analyze_bits(
 ) -> BitAnalysis {
     let n_bits = bits_per_sample as usize;
     let total = samples.len();
+    let empty = |total_samples, summary: &str, warnings: Vec<String>| BitAnalysis {
+        bits_per_sample,
+        is_float,
+        total_samples,
+        duration_secs,
+        bit_stats: Vec::new(),
+        bit_cautions: Vec::new(),
+        effective_bits: 0,
+        effective_bits_f64: 0.0,
+        summary: summary.into(),
+        warnings,
+        positive_counts: Vec::new(),
+        negative_counts: Vec::new(),
+        positive_total: 0,
+        negative_total: 0,
+        zero_total: 0,
+        pair_counts: Vec::new(),
+        headroom_bits: 0,
+        noise_floor_db: -120.0,
+        value_coverage: None,
+    };
     if total == 0 {
-        return BitAnalysis {
-            bits_per_sample,
-            is_float,
-            total_samples: 0,
-            duration_secs,
-            bit_stats: Vec::new(),
-            bit_cautions: Vec::new(),
-            effective_bits: 0,
-            effective_bits_f64: 0.0,
-            summary: "No samples".into(),
-            warnings: vec!["File contains no audio samples".into()],
-            positive_counts: Vec::new(),
-            negative_counts: Vec::new(),
-            positive_total: 0,
-            negative_total: 0,
-            zero_total: 0,
-            pair_counts: Vec::new(),
-            headroom_bits: 0,
-            noise_floor_db: -120.0,
-            value_coverage: None,
-        };
+        return empty(0, "No samples", vec!["File contains no audio samples".into()]);
+    }
+    // A lossy file (FileMetadata::LOSSY_BITS) has no stored bits to count.
+    if bits_per_sample == 0 {
+        return empty(total, "No PCM bit depth (lossy codec)", Vec::new());
     }
     let n_pairs = n_bits / 2;
 
@@ -606,14 +614,28 @@ pub fn is_expected_used(
     } else {
         // Integer: bits from sign down to effective_bits boundary are expected
         // bit_index 0 = MSB (sign), bit_index n-1 = LSB
-        let bit_pos = bits_per_sample as usize - 1 - bit_index;
-        bit_pos >= (bits_per_sample - effective_bits) as usize
+        let Some(bit_pos) = (bits_per_sample as usize).checked_sub(bit_index + 1) else {
+            return false;
+        };
+        bit_pos >= bits_per_sample.saturating_sub(effective_bits) as usize
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lossy_file_has_no_bits_to_analyse() {
+        let samples: Vec<f32> = (0..4096).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
+        let a = analyze_bits(&samples, 0, false, 0.1);
+        assert_eq!(a.bits_per_sample, 0);
+        assert_eq!(a.total_samples, 4096);
+        assert!(a.bit_stats.is_empty() && a.positive_counts.is_empty());
+        assert!(a.warnings.is_empty());
+        assert_eq!(bit_label(0, 0, false), "");
+        assert!(!is_expected_used(0, 0, false, 0));
+    }
 
     #[test]
     fn float32_labels() {

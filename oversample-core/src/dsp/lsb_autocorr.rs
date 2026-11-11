@@ -154,6 +154,8 @@ pub fn analyze_lsb_autocorr_opts(
         return LsbAutocorrResult {
             explanation: if is_float {
                 "Float format — LSB tests only meaningful for integer audio".into()
+            } else if bits_per_sample == 0 {
+                "Lossy format: LSB tests only apply to PCM audio".into()
             } else if bits_per_sample < n_low + 4 {
                 format!(
                     "Bit depth {} too low for {}-bit LSB analysis",

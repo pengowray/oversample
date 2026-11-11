@@ -12,7 +12,8 @@ const DB_PER_BIT: f32 = 6.0206;
 pub const RANGE_16_BIT_DB: f32 = 120.0;
 
 /// Bits the spectrogram can resolve: the integer depth capped at 24, or 24 for
-/// float. An unknown depth (0) counts as 16.
+/// float. A file decoded from a lossy codec (depth 0,
+/// `FileMetadata::LOSSY_BITS`) counts as 16, so it gets the 16-bit range.
 pub fn spectrogram_bits(bits_per_sample: u16, is_float: bool) -> u16 {
     match (is_float, bits_per_sample) {
         (true, _) => 24,
@@ -54,5 +55,12 @@ mod tests {
         assert_eq!(max_display_range_db(32, false), 170.0);
         assert_eq!(max_display_range_db(32, true), 170.0);
         assert_eq!(spectrogram_bits(64, true), 24);
+    }
+
+    #[test]
+    fn lossy_files_get_the_16_bit_range() {
+        let bits = crate::types::FileMetadata::LOSSY_BITS;
+        assert_eq!(spectrogram_bits(bits, false), 16);
+        assert_eq!(max_display_range_db(bits, false), RANGE_16_BIT_DB);
     }
 }

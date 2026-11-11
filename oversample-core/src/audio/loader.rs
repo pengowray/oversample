@@ -862,6 +862,50 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
     })
 }
 
+/// `FileMetadata::bits_per_sample` for a track symphonia decodes: the stored
+/// depth for a lossless codec (FLAC, ALAC), and [`FileMetadata::LOSSY_BITS`]
+/// for every other codec. The enabled decoders for those (MP3, AAC, Vorbis)
+/// are all lossy.
+pub fn symphonia_pcm_bits(
+    params: &symphonia::core::codecs::audio::AudioCodecParameters,
+) -> u16 {
+    use symphonia::core::codecs::audio::well_known::{CODEC_ID_ALAC, CODEC_ID_FLAC};
+    let declared = params
+        .bits_per_sample
+        .and_then(|b| u16::try_from(b).ok())
+        .filter(|&b| b > 0);
+    if params.codec == CODEC_ID_ALAC {
+        // The MP4 reader leaves `bits_per_sample` unset for ALAC; the depth
+        // is in the magic cookie. 16 if neither has it (the decoder then
+        // fails anyway, as it needs the cookie).
+        params
+            .extra_data
+            .as_deref()
+            .and_then(alac_cookie_bits)
+            .or(declared)
+            .unwrap_or(16)
+    } else if params.codec == CODEC_ID_FLAC {
+        declared.unwrap_or(16)
+    } else {
+        FileMetadata::LOSSY_BITS
+    }
+}
+
+/// Bit depth from an ALAC magic cookie (`ALACSpecificConfig`: frame length
+/// u32, version u8, bit depth u8, ...), which may follow 12-byte `frma` and
+/// `alac` atom headers.
+fn alac_cookie_bits(mut cookie: &[u8]) -> Option<u16> {
+    for tag in [b"frma", b"alac"] {
+        if cookie.len() >= 12 && &cookie[4..8] == tag {
+            cookie = &cookie[12..];
+        }
+    }
+    if cookie.len() < 24 {
+        return None;
+    }
+    Some(cookie[5] as u16).filter(|bits| (1..=32).contains(bits))
+}
+
 /// Build mono-mixed samples and an InMemorySource from decoded interleaved samples.
 /// For mono files, raw_samples is None (saves memory by sharing the Arc).
 fn build_source(
@@ -1496,4 +1540,59 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
             wav: None,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia::core::codecs::audio::well_known::{
+        CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_VORBIS,
+    };
+    use symphonia::core::codecs::audio::AudioCodecParameters;
+
+    /// A 24-byte ALAC magic cookie with the given bit depth.
+    fn alac_cookie(bits: u8) -> Vec<u8> {
+        let mut c = vec![0u8; 24];
+        c[0..4].copy_from_slice(&4096u32.to_be_bytes());
+        c[5] = bits;
+        c[9] = 2; // channels
+        c[20..24].copy_from_slice(&48_000u32.to_be_bytes());
+        c
+    }
+
+    #[test]
+    fn lossy_codecs_have_no_pcm_bits() {
+        for codec in [CODEC_ID_MP3, CODEC_ID_AAC, CODEC_ID_VORBIS] {
+            let mut p = AudioCodecParameters::new();
+            p.for_codec(codec).with_bits_per_sample(16);
+            assert_eq!(symphonia_pcm_bits(&p), FileMetadata::LOSSY_BITS, "{codec:?}");
+        }
+    }
+
+    #[test]
+    fn lossless_codecs_keep_their_depth() {
+        let mut flac = AudioCodecParameters::new();
+        flac.for_codec(CODEC_ID_FLAC).with_bits_per_sample(24);
+        assert_eq!(symphonia_pcm_bits(&flac), 24);
+
+        let mut alac = AudioCodecParameters::new();
+        alac.for_codec(CODEC_ID_ALAC)
+            .with_extra_data(alac_cookie(24).into_boxed_slice());
+        assert_eq!(symphonia_pcm_bits(&alac), 24);
+    }
+
+    #[test]
+    fn alac_cookie_after_atom_headers() {
+        let mut wrapped = Vec::new();
+        for tag in [b"frma", b"alac"] {
+            wrapped.extend_from_slice(&12u32.to_be_bytes());
+            wrapped.extend_from_slice(tag);
+            wrapped.extend_from_slice(&[0; 4]);
+        }
+        wrapped.extend_from_slice(&alac_cookie(20));
+        assert_eq!(alac_cookie_bits(&wrapped), Some(20));
+        assert_eq!(alac_cookie_bits(&alac_cookie(16)), Some(16));
+        assert_eq!(alac_cookie_bits(&alac_cookie(0)), None);
+        assert_eq!(alac_cookie_bits(&[0; 10]), None);
+    }
 }

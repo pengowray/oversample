@@ -215,7 +215,8 @@ pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavM
         &samples,
         channels,
         audio.sample_rate,
-        audio.metadata.bits_per_sample,
+        // A lossy file has no PCM depth; it is saved as 16-bit.
+        audio.metadata.pcm_bits().unwrap_or(16),
         audio.metadata.is_float,
         audio.metadata.guano.as_ref(),
         markers,
