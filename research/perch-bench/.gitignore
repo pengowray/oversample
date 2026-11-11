@@ -4,6 +4,6 @@ target/
 out/
 *.onnx
 *.bin
-web/pkg/
-web/data/
+web/pkg
+web/data
 web/results-*.jsonl
