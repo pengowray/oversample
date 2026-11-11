@@ -1,2 +1,5 @@
 target/
 *.f32
+web/pkg/
+web/data/
+web/results-*.jsonl

@@ -16,10 +16,11 @@ server cost.
   wasm-bindgen, the target the web build uses, and gives the same results there.
 - **Accuracy:** tract's output matches the official TFLite model. Top-1 was the same on
   all 19 test windows, and the largest confidence difference was 0.0005.
-- **One code path (expected, not yet tested in an app):** the Tauri app runs the same
-  WASM frontend, so a worker built for the web build should serve Tauri unchanged. A
-  native Tauri command could later use the same Rust code (tract native: 26.5 ms per
-  window) or onnxruntime (17.5 ms).
+- **One code path:** the same worker ran unchanged in Chrome, Firefox and the Tauri
+  desktop app on Linux. Only the model cache differs: WebKitGTK has no OPFS, so the
+  Tauri build needs to cache the model file through Tauri. A native Tauri command could
+  later use the same Rust code (tract native: 26.5 ms per window) or onnxruntime
+  (17.5 ms).
 - **Model file:** download the 52 MB ONNX file at runtime and cache it (in the browser's
   Origin Private File System, OPFS, which the app already uses for annotations; in the
   app data folder in Tauri). Don't commit it to this repository or bundle it in the app.
@@ -29,8 +30,11 @@ server cost.
   run the weights with attribution, and the BirdNET feature must never sit behind a paid
   tier. See [Licence](#5-licence).
 
-These numbers come from node (V8, the engine in Chrome), one thread, no Web Worker. No
-browser, Tauri webview or phone was tested.
+A second test ran the model in a Web Worker in Chrome 156, Firefox 159 and the Tauri
+desktop app on Linux (WebKitGTK 2.52): 66 to 76 ms per window, 38 to 43 times real time,
+the same top species as TFLite on all 60 windows, and no dropped frames on the page while
+the worker ran. See [Browser and Tauri test](#browser-and-tauri-test). Not tested:
+phones, Safari, Windows and macOS webviews, WebGPU.
 
 Bats need a different model, because BirdNET V2.4 has no bat classes. BattyBirdNET (small bat
 classifier layers, called heads, on BirdNET V2.4 embeddings) looks promising. The BattyBirdNET backbone is a 67 MB
@@ -91,6 +95,86 @@ Not measured: WebGPU, TF.js (WebGL), Safari or WebKitGTK, phones, and the locati
 model. Slower laptops and phones were not tested. At about 40 times real time there is a
 wide margin: a device 10 times slower would still analyse audio 4 times faster than real
 time.
+
+## Browser and Tauri test
+
+Test page: [birdnet-bench/web/](birdnet-bench/web/). The tract code from the node test,
+built with wasm-pack for `wasm32-unknown-unknown` (`--target web`, SIMD, opt-level 3,
+14.9 MB WASM file), runs in a module Web Worker. The page downloads the 52 MB ONNX file,
+stores it in OPFS, and runs 60 windows (3 minutes of the Common Pauraque recording,
+repeated). [birdnet-bench/web/run.py](birdnet-bench/web/run.py) starts the page's server,
+opens one browser, samples the browser's memory, and stops both when the page posts its
+results. Each browser ran three page loads in a row:
+
+- **cold:** OPFS cleared, model downloaded from the local server, run in the worker.
+- **warm:** model read from OPFS, run in the worker.
+- **main:** model read from OPFS, run on the page's main thread, with a `setTimeout`
+  yield between windows (how Oversample runs long jobs today).
+
+Same machine as above (Ryzen 5 3600, 12 threads, Linux, Wayland), 2026-11-11.
+
+| Browser | ms per window (median, worker) | 3 min of audio | Model load, cold | Model load, warm |
+|---|---|---|---|---|
+| Chrome 156 (Chrome for Testing, headless) | 66 to 69 | 4.2 to 4.4 s | 0.70 s | 0.57 s |
+| Firefox 159 (headless) | 73 to 76 | 4.6 s | 0.91 s | 0.58 s |
+| Tauri desktop app, WebKitGTK 2.52.6 (a window on screen) | 74 | 4.6 to 4.8 s | 0.98 s | 1.0 s (no OPFS; downloaded again) |
+
+- **Load time:** the warm load is reading the model (33 ms from OPFS in Chrome, 90 to
+  100 ms in Firefox), starting the WASM module (40 to 200 ms) and parsing and optimising
+  the model in tract (360 to 590 ms). The cold download took 70 to 240 ms only because
+  the server was on the same machine; over a real connection, 52 MB takes about 4 s at
+  100 Mbit/s and about 21 s at 20 Mbit/s. Writing the model to OPFS took 60 to 70 ms.
+- **First window:** 83 to 173 ms, about twice the median, in every browser.
+- **Accuracy:** in all three browsers, top-1 matched TFLite on all 60 windows, and the
+  confidence of the top species matched to 3 decimal places.
+- **Page responsiveness:** a square on the page rotated every animation frame, and the
+  page recorded the gaps between frames.
+
+  | Where the model ran | Chrome | Firefox | Tauri (WebKitGTK) |
+  |---|---|---|---|
+  | Web Worker, during load and run | No frame over 17 ms | One frame of 50 ms during the cold load, otherwise none over 17 ms | No frame over 24 ms |
+  | Main thread, yielding between windows | 31 of 129 frames over 50 ms, longest 633 ms | 60 of 78 frames over 50 ms, longest 449 ms | 55 of 61 frames over 50 ms, longest 830 ms |
+
+  On the main thread the page drew at about 13 to 30 frames a second while BirdNET ran.
+  The longest gap includes building the model (0.4 to 0.6 s), which can't be split up.
+  In a worker the page kept 60 frames a second.
+- **Memory:** summed proportional set size (PSS) of the browser's processes, peak during
+  the three page loads, minus the peak for the same page held open with no model:
+
+  | Browser | Peak with BirdNET | Peak without | Added by BirdNET |
+  |---|---|---|---|
+  | Chrome | 720 MB | 435 MB | about 285 MB |
+  | Firefox | 983 MB | 678 MB | about 305 MB |
+  | Tauri (WebKitGTK) | 730 MB | 407 MB | about 323 MB |
+
+  The WASM memory alone was 160 MB in every browser. The rest is probably the 52 MB model
+  held as JS bytes during loading, the worker itself, and the 14.9 MB WASM module.
+
+Findings for the app:
+
+- **WebKitGTK has no OPFS.** In the Tauri app on Linux, `navigator.storage` is
+  undefined, so the model can't be cached in OPFS there. Cache it through Tauri instead
+  (download in Rust to the app data folder, then read it from the webview). Oversample's
+  annotations already use Tauri files when `is_tauri` is set, but `src/xc_client.rs`
+  calls OPFS for the XC species list cache without that check.
+- **Use a worker, and build the model in it.** Running on the main thread, even with a
+  yield after every window, made the page stutter for the whole run, and building the
+  model blocked it for about half a second.
+- **Hold memory in mind for phones.** About 300 MB extra while BirdNET runs is fine on a
+  desktop, but may be too much for a low-memory Android phone. Freeing the model when the
+  run ends gives the memory back.
+
+Not tested:
+
+- **Phones:** no Android device was connected (`adb devices` listed none), so there are
+  no phone numbers. The Android build uses the system WebView (Chrome-based), so the
+  worker code should run there, but its speed and memory are unknown.
+- **Safari and the Tauri webviews on macOS (WKWebView) and Windows (WebView2).** WebView2
+  is Chrome-based. WKWebView is WebKit, like WebKitGTK; OPFS support there was not
+  checked.
+- **Headed Chrome and Firefox, and the app's in-app browser pane.** Chrome and Firefox
+  ran headless; the Tauri window ran on screen.
+- **WebGPU, onnxruntime-web in a browser, and more than one worker thread.**
 
 ## 1. Model files
 
@@ -286,10 +370,11 @@ This is a reading of the licences, not legal advice.
 
 ## Next steps
 
-- A small in-app test: a worker that loads the ONNX file from OPFS, a "Find bird
-  species" action on the current file, and results as annotations.
-- Measure in real browsers (Chrome, Firefox, Safari), in Tauri on Android, and with
-  WebGPU through onnxruntime-web.
+- A small in-app test: a worker that loads the ONNX file from OPFS (or from the app
+  data folder in Tauri), a "Find bird species" action on the current file, and results
+  as annotations.
+- Measure on an Android phone (in Chrome and in the Tauri Android app), in Safari, and
+  with WebGPU through onnxruntime-web.
 - Try the location model in tract.
 - Ask the BirdNET team which licence applies to the V2.4 weights in their PWA.
 

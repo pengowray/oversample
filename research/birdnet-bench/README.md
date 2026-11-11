@@ -57,5 +57,26 @@ RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-bindgen \
 node bench-bindgen.mjs target/pkg-node ~/birdnet-models/BirdNET_v2.4_fp32_foldconv.onnx birds.f32 birds.bindgen.f32
 ```
 
+## Browser and Tauri test page (`web/`)
+
+```bash
+CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true \
+  RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-bindgen \
+  wasm-pack build --release --target web --out-dir web/pkg --no-typescript
+mkdir -p web/data
+ln -s ~/birdnet-models web/data/models      # BirdNET_v2.4_fp32_foldconv.onnx
+ln -s ~/birdnet-windows web/data/audio      # long.f32 from prep.py --repeat 60
+
+cd web
+python3 -I run.py chrome -- /path/to/chrome --headless=new --user-data-dir=/tmp/p1 "{url}"
+python3 -I run.py firefox -- firefox --headless --no-remote --profile /tmp/p2 "{url}"
+# Tauri: the debug app opens http://localhost:21259, so serve the page there
+cargo build -p oversample-desktop        # in the repository root
+BENCH_PORT=21259 python3 -I run.py tauri -- ../../../target/debug/oversample-desktop
+```
+
+`run.py` starts `serve.py`, opens the browser, samples memory, and writes
+`web/results-LABEL.jsonl`. `BENCH_PHASES=idle` gives the memory baseline with no model.
+
 Build output under `target/` is large (several GB with five target directories). Delete
 it when done, since this folder may be synced.
