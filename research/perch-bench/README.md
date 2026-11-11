@@ -107,3 +107,21 @@ the portable one.
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
 folder is missing, build it as described in `../birdnet-bench/README.md`.
+
+## Browser test page (`web/`)
+
+The same page as `../birdnet-bench/web`, for Perch's two files: both are cached in OPFS,
+and the page runs them in a Web Worker (phases `cold` and `warm`) and on the main thread
+(`main`), timing the embedding model and the classifier apart. `run.py` records peak
+browser memory. Keep `web/pkg` and `web/data` as links to folders outside this synced
+folder.
+
+```bash
+CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true RUSTFLAGS="-C target-feature=+simd128" \
+  wasm-pack build --release --target web --out-dir $CARGO_TARGET_DIR/pkg-web --no-typescript
+ln -s $CARGO_TARGET_DIR/pkg-web web/pkg
+mkdir -p web/data && ln -s $M web/data/models && ln -s ~/perch-windows web/data/audio   # long.f32
+cd web
+python3 -I run.py chrome -- /path/to/chrome --headless=new --user-data-dir=/tmp/p1 "{url}"
+python3 -I run.py firefox -- firefox --headless --no-remote --profile /tmp/p2 "{url}"
+```
