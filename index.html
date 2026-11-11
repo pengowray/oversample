@@ -29,6 +29,13 @@
          (names not hashed); the app starts the worker only when someone runs a
          model (src/classifier/). -->
     <link data-trunk rel="rust" href="birdnet-worker/Cargo.toml" data-type="worker" data-loader-shim data-wasm-opt="0"/>
+    <!-- Species map (src/components/file_sidebar/species_map.rs): BirdNET's
+         class positions (research/species-map, 26 KB), the glue, and Apache
+         ECharts, which species-map.js loads only when a map opens. -->
+    <link data-trunk rel="copy-file" href="research/species-map/birdnet-map.bin"/>
+    <link data-trunk rel="copy-file" href="vendor/echarts.min.js"/>
+    <link data-trunk rel="copy-file" href="species-map.js"/>
+    <script src="species-map.js"></script>
     <link data-trunk rel="copy-file" href="mp4-muxer.js"/>
     <script src="mp4-muxer.js"></script>
     <script>

@@ -31,6 +31,15 @@ non-species classes left out.
 ## Output
 
 `birdnet-map.bin`: 6,522 x 2 little-endian int16 (x then y per class, in
-label order), 26 KB. Names come from the label file the app downloads with
+label order), 26 KB. The app ships this file (index.html copies it) and draws
+it in the Call detection tab's Species map (BirdNET results only):
+`src/components/file_sidebar/species_map.rs` and `species-map.js`, with
+Apache ECharts 5.6.0 vendored in `vendor/`.
+
+Each window at or above the minimum confidence is drawn at the
+confidence-weighted mean of its top 3 classes' positions, counting only
+classes within 0.15 map units of the top class
+(`src/classifier/species_map.rs`), so an uncertain window sits between
+related species and never in the gap between unrelated groups. Names come from the label file the app downloads with
 the model. The map is derived from the model's weights, so it carries the
 model's licence, CC BY-NC-SA 4.0.

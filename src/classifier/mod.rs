@@ -46,6 +46,7 @@
 //! the "Powered by BirdNET" line and link, credits, citation, source URL and
 //! revision, to show with results and in About.
 
+pub mod species_map;
 pub mod store;
 pub mod summary;
 pub mod test_hook;

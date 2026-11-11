@@ -8,6 +8,7 @@
 //! asks for.
 
 use super::call_detection_panel::{count, event_target_checked, event_target_value, undo_keys};
+use super::species_map::SpeciesMapDialog;
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};
@@ -68,7 +69,6 @@ fn window_len(secs: f64) -> String {
     }
 }
 
-
 /// A class name as shown: BattyBirdNET's lower-case classes get a capital.
 fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
     let Some(l) = label else {
@@ -82,7 +82,7 @@ fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
 }
 
 /// Scroll the spectrogram so window `i`'s middle is in the centre, and pick it.
-fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
+pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
     state.call_detection.selected_window().set(Some(i));
     let mid = 0.5 * (start_s + end_s);
     let files = state.library.files().get_untracked();
@@ -206,6 +206,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
     // Merging neighbouring windows suits bats: one pass is many 0.56 s windows.
     let merge = RwSignal::new(bats);
     let show_credits = RwSignal::new(false);
+    let map_open = RwSignal::new(false);
 
     let current_file = Memo::new(move |_| state.current_file_id_tracked());
     let source_rate = Memo::new(move |_| {
@@ -552,6 +553,16 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 </div>
                 {lists}
                 {move || top_three(state, method, current_file)}
+                // BirdNET only: BattyBirdNET's regional classifiers give no
+                // usable map (research/species-map/README.md).
+                {(!bats).then(|| view! {
+                    <div class="detection-annotate-row">
+                        <button class="psd-btn" on:click=move |_| map_open.set(true)>"Species map"</button>
+                    </div>
+                })}
+                {move || map_open.get().then(|| view! {
+                    <SpeciesMapDialog open=map_open current_file=current_file />
+                })}
             </div>
         })
     };
@@ -612,7 +623,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 <div class="setting-group-title">"Add as annotations"</div>
                 <div class="detection-annotate-row detection-radio-group">
                     {option(false, "One per window")}
-                    {option(true, "Merge neighbouring windows with the same species")}
+                    {option(true, "Merge neighbours")}
                 </div>
                 {note.map(|t| view! { <div class="detection-status-note detection-annotate-row">{t}</div> })}
                 <button
