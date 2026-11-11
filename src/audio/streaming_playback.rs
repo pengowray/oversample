@@ -549,13 +549,30 @@ async fn process_one_chunk(
     };
     let trailing_len = trailing_end - chunk_end;
 
-    // Prefetch for streaming sources
-    streaming_source::prefetch_streaming(
+    // One read per channel view: L and R in stereo, otherwise the chosen view.
+    let views: &[ChannelView] = if stereo_out {
+        &[ChannelView::Channel(0), ChannelView::Channel(1)]
+    } else {
+        std::slice::from_ref(&channel_view)
+    };
+    let read_len = trailing_end - warmup_start;
+    let raw_views = streaming_source::read_views_ready(
         source.as_ref(),
+        views,
         warmup_start as u64,
-        trailing_end - warmup_start,
+        read_len,
     )
-    .await;
+    .await
+    .views
+    // If part of the region couldn't be loaded, play what is there (missing
+    // chunks are silent) rather than stalling the chunk schedule.
+    .unwrap_or_else(|| {
+        views
+            .iter()
+            .map(|&cv| source.read_region(cv, warmup_start as u64, read_len))
+            .collect()
+    });
+    let mut raw_views = raw_views.into_iter();
 
     // Hann fades for the PV HQ overlap, applied after the warmup is trimmed.
     let core_len = chunk_end - pos; // nominal chunk length (without overlap)
@@ -582,8 +599,7 @@ async fn process_one_chunk(
     };
 
     // Read one channel view and run it through filters, DSP, trim and gain.
-    let process_view = |cv: ChannelView| -> Vec<f32> {
-        let raw = source.read_region(cv, warmup_start as u64, trailing_end - warmup_start);
+    let process_view = |raw: Vec<f32>| -> Vec<f32> {
         let filtered = apply_filters(&raw, source_rate, params);
         let processed = apply_dsp_mode(&filtered, source_rate, params);
         let mut out = if pv_hq_mode {
@@ -609,14 +625,14 @@ async fn process_one_chunk(
     };
 
     let chunk = if stereo_out {
-        let mut left = process_view(ChannelView::Channel(0));
-        let mut right = process_view(ChannelView::Channel(1));
+        let mut left = process_view(raw_views.next().unwrap_or_default());
+        let mut right = process_view(raw_views.next().unwrap_or_default());
         if let Some(agc_cell) = agc {
             agc_cell.borrow_mut().process_stereo(&mut left, &mut right);
         }
         ChunkAudio::Stereo { left, right }
     } else {
-        let mut samples = process_view(channel_view);
+        let mut samples = process_view(raw_views.next().unwrap_or_default());
         if let Some(agc_cell) = agc {
             agc_cell.borrow_mut().process(&mut samples);
         }

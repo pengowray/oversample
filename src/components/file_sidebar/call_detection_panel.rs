@@ -166,19 +166,29 @@ fn start_search(state: AppState, file_id: u64, params: CallScanParams) {
             let mut at = 0u64;
             while at < total {
                 let len = piece.min(total - at) as usize;
-                crate::audio::streaming_source::prefetch_streaming(&*source, at, len).await;
+                let read = crate::audio::streaming_source::read_region_ready(
+                    &*source,
+                    ChannelView::MonoMix,
+                    at,
+                    len,
+                )
+                .await;
                 if !is_latest() {
                     return;
                 }
-                let samples = source.read_region(ChannelView::MonoMix, at, len);
-                scanner.push(&samples);
-                if samples.len() < len {
-                    if source.length_is_estimated() {
-                        // The end of a file whose length was a guess.
-                        break;
-                    }
+                match read {
                     // A piece that could not be read: later calls keep their times.
-                    scanner.gap((len - samples.len()) as u64);
+                    None => scanner.gap(len as u64),
+                    Some(samples) => {
+                        scanner.push(&samples);
+                        if samples.len() < len {
+                            if source.length_is_estimated() {
+                                // The end of a file whose length was a guess.
+                                break;
+                            }
+                            scanner.gap((len - samples.len()) as u64);
+                        }
+                    }
                 }
                 at += len as u64;
                 state
