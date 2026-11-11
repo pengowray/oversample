@@ -6,12 +6,43 @@ BirdNET V2.4. Prototype: [perch-bench/](perch-bench/).
 
 ## Recommendation
 
-**Add Perch 2.0 as a second model, not as a replacement for BirdNET.** Ship it as the
-45 MB embedding model plus a classifier file for the species wanted, and use it for
-non-bird species and as a second embedding for similar-call search and clustering.
-Keep BirdNET V2.4 (with BattyBirdNET heads for bats) as the main bird and bat
-classifier for now. The measured reasons to add Perch are its licence and its non-bird
-classes; for bat calls its embeddings were no better than BirdNET's in this test.
+**Add Perch 2.0 as a second model alongside BirdNET, free like BirdNET.** Decided
+2026-11-11: the first step is to let people run each model as it is, with all its
+classes, on birds and other animal calls as well as bats. Evaluating and mixing the
+models, finding any animal, comparing recordings by similarity and training bat
+classifiers come after that. Upstreaming the tract fix waits until later.
+
+The measured reasons to add Perch are its non-bird classes and its licence. For bat
+calls its embeddings were no better than BirdNET's in this test.
+
+### What the full model gives, and what the embedding part lacks
+
+| Part | Size | Gives |
+|---|---|---|
+| Embedding part | 45 MB | A 1,536-value embedding per 5 s window (and a 16 x 4 grid of them). Good for similarity search, clustering, and training classifiers of your own. No species names. |
+| Classifier | 364 MB float32, 182 MB float16, 91 MB int8 | A score for each of 14,795 classes per window: about 10,000 birds, frogs, insects, some mammals, 2 bats and 198 sound events (vehicle, water, music and so on). This is what names the animal. |
+| Full model file | 409 MB | Both of the above, plus the spectrogram the model computed (the app doesn't need it). |
+
+So with only the embedding part, Oversample can say "these calls sound alike" but not
+"this is a Common Swift". Running Perch as it is needs the classifier.
+
+The embedding part plus the classifier gives exactly the full model's results
+(logits within 0.00013 of Google's TensorFlow model). Splitting them means:
+
+- **A smaller download.** The classifier can be stored in float16 (182 MB) or int8
+  (91 MB). On the 22 test windows both gave the same top species and the same top 5
+  as float32; the largest logit difference was 0.0005 for float16 and 0.028 for int8
+  ([head_precision.py](perch-bench/head_precision.py)). The full model is then 227 MB
+  (float16) or 136 MB (int8), against 409 MB.
+- **Less memory.** The full 409 MB file in tract needs 1.2 GB of WASM memory, which is
+  too much for many phones. The embedding part needs 140 MB; the classifier in plain
+  Rust needs about its own file size on top. Not built or measured.
+- **Embeddings without the classifier.** Similarity features can download only the
+  45 MB part.
+
+Speed with all classes: 7 times real time in tract WASM (3 minutes of audio in about
+25 s), against 23 times for the embedding part alone. Most of the difference is the
+classifier, which compares 59,180 prototypes with 64 positions per window.
 
 - **Licence:** Apache 2.0 for the weights, stated by Google on the Kaggle model page.
   This is much more permissive than BirdNET's CC BY-NC-SA 4.0. It allows a paid tier,
@@ -54,8 +85,9 @@ Why not replace BirdNET:
 
 Why add Perch:
 
-- **Licence.** It is the only one of the two that could go in a paid tier, and the app
-  can host, cut and quantise the file without ShareAlike or NonCommercial terms.
+- **Licence.** The app can host, cut and quantise the file without ShareAlike or
+  NonCommercial terms. (Perch stays free in Oversample anyway, by decision; the
+  licence would also allow a paid tier.)
 - **Taxa.** Perch knows frogs, crickets, grasshoppers, some mammals (including
   whales) and 198 general sound events (vehicles, water, music). BirdNET V2.4 is
   mostly birds.
@@ -70,25 +102,24 @@ Why add Perch:
 - **A bat classifier of Oversample's own** trained on Perch embeddings could go in any
   tier. One trained on BirdNET embeddings, like BattyBirdNET, inherits CC BY-NC-SA.
 
-How to ship it, if added:
+How to ship it:
 
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
-   It gives the 1,536-value embedding for search and clustering.
-2. The classifier as a separate data file, run in plain Rust on the embedding model's
-   spatial output: a matrix multiply of the 64 spatial positions against the
-   prototypes of the classes that are wanted, a max, and a weighted sum. Sizes in
-   float32 (half in float16):
-   - one region of about 900 classes: about 22 MB
-   - all 5,044 non-bird classes (other species and sound events): about 124 MB
-   - all 14,795 classes: 364 MB, too big to download
-
-   tphakala's regional slices pick species with BirdNET's bird range model, so a
-   non-bird or bat-region subset would need its own species list.
-3. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
+2. The classifier for all 14,795 classes as a separate file in float16 (182 MB) or int8
+   (91 MB), run in plain Rust on the embedding model's spatial output: a matrix
+   multiply of the 64 spatial positions against the prototypes, a max over positions,
+   and a weighted sum. Download it the first time someone runs Perch with species
+   names.
+3. Later, if wanted: smaller classifier files for a subset of classes, for example a
+   region of about 900 classes (about 22 MB in float32) or the 5,044 non-bird classes
+   (about 124 MB in float32). tphakala's regional slices pick species with BirdNET's
+   bird range model, so a non-bird subset would need its own species list.
+4. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
 Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
-onnxruntime-web, the INT8 file, a float16 head, Perch against BirdNET on bird
-identification accuracy, and a classifier trained on Perch embeddings for bats. See
+onnxruntime-web, tphakala's INT8 file, the classifier in plain Rust (speed and
+memory), float16 and int8 classifiers on more than 22 windows, Perch against BirdNET on
+bird identification accuracy, and a classifier trained on Perch embeddings for bats. See
 [Not tested](#not-tested).
 
 ## 1. Model files
@@ -350,7 +381,8 @@ with one change: Perch has no single weight vector per class.
 - **Phones.** No Android device was connected.
 - **onnxruntime-web,** WebGPU and more than one thread.
 - **INT8 and float16.** The tphakala INT8 file (131 MB) uses MatMulInteger, which was 4
-  times slower than float32 in tract for BirdNET. A float16 head was not tried.
+  times slower than float32 in tract for BirdNET, so it wasn't run. A float16 or int8
+  classifier was only checked in numpy on 22 windows, not built in Rust or timed.
 - **Bird identification quality.** Perch against BirdNET on the same bird recordings
   was not compared; the 22 test windows only checked that tract matches TensorFlow.
 - **A trained bat classifier.** The bat test only used nearest neighbours on raw

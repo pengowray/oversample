@@ -74,6 +74,9 @@ python -I species_map.py $M out out/birds.tf
 
 # 11. Placing detections on the map: embeddings against class vectors
 python -I placement.py $M birds.f32
+
+# 12. The classifier stored in float16 and int8: same answers?
+python -I head_precision.py $M birds.f32
 ```
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
