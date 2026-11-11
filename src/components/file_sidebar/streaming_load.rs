@@ -1492,7 +1492,9 @@ pub(crate) async fn build_streaming_overview(
     expected_name: String,
 ) {
     use crate::audio::source::ChannelView;
-    use crate::canvas::colors::magnitude_to_greyscale;
+    use crate::canvas::colors::{dbfs_to_greyscale, magnitude_to_db};
+    use crate::dsp::depth_range::max_display_range_db;
+    use crate::dsp::spectrum_level::{auto_range_db, full_scale_db, noise_floor_dbfs_by};
     use crate::types::PreviewImage;
 
     // Pin to the file's stable id before any await: the index shifts if another
@@ -1639,9 +1641,20 @@ pub(crate) async fn build_streaming_overview(
         return;
     }
 
-    // Build the overview image
+    // Build the overview image, mapped like the other previews and overviews:
+    // dBFS, down to the Auto range for its own noise floor and the file's
+    // bit depth.
     let src_w = all_mags.len();
     let src_h = all_mags[0].len();
+    let full_scale = full_scale_db(FFT_SIZE);
+    let noise_floor = noise_floor_dbfs_by(src_w, src_h, |c, b| {
+        all_mags[c].get(b).copied().unwrap_or(0.0)
+    });
+    let meta = &file.audio.metadata;
+    let range = auto_range_db(
+        noise_floor,
+        max_display_range_db(meta.bits_per_sample, meta.is_float),
+    );
     let mut pixels = vec![0u8; (out_w * out_h * 4) as usize];
 
     for x in 0..out_w {
@@ -1654,7 +1667,7 @@ pub(crate) async fn build_streaming_overview(
             } else {
                 0.0
             };
-            let grey = magnitude_to_greyscale(mag, global_max);
+            let grey = dbfs_to_greyscale(magnitude_to_db(mag) - full_scale, range);
             let idx = (y * out_w + x) as usize * 4;
             pixels[idx] = grey;
             pixels[idx + 1] = grey;
