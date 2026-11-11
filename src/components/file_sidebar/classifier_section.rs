@@ -50,6 +50,15 @@ fn thousands(n: usize) -> String {
     out
 }
 
+/// Windows a run of a `duration`-second recording gives. The worker drops a
+/// last window holding less than a third of a window of audio, unless it is
+/// the only one (`birdnet-worker/src/windows.rs`).
+fn expected_windows(duration: f64, window: f64) -> usize {
+    let full = (duration / window).floor() as usize;
+    let tail = duration - full as f64 * window;
+    full + usize::from(full == 0 || tail >= window / 3.0)
+}
+
 /// `3 s`, `0.56 s`
 fn window_len(secs: f64) -> String {
     if secs >= 1.0 {
@@ -359,7 +368,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                         .unwrap_or((0, method.window_secs()));
                     let total = source_rate
                         .get()
-                        .map(|(_, dur)| (dur / len).ceil() as usize)
+                        .map(|(_, dur)| expected_windows(dur, len))
                         .unwrap_or(0)
                         .max(done);
                     (
@@ -424,18 +433,20 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
     };
 
     // Minimum confidence, summary, overlay, list, and the selected window.
-    let results = move || {
+    // The slider is built once per set of results, so dragging it re-renders
+    // only the summary and the list below it.
+    let has_results = Memo::new(move |_| results_info.get().is_some_and(|(n, ..)| n > 0));
+    let results_title =
+        Memo::new(
+            move |_| match results_info.get().and_then(|(_, _, region, _)| region) {
+                Some(r) => format!("Results: BattyBirdNET, {}", r.label()),
+                None => format!("Results: {}", method_name(method)),
+            },
+        );
+    let headline = move || {
         let s = summary.get()?;
-        let (n, _, region, _) = results_info.get()?;
-        if n == 0 {
-            return None;
-        }
         let min = min_conf();
-        let title = match region {
-            Some(r) => format!("Results: BattyBirdNET, {}", r.label()),
-            None => format!("Results: {}", method_name(method)),
-        };
-        let headline = if s.species.is_empty() {
+        let main = if s.species.is_empty() {
             match s.highest {
                 Some((class, conf)) => {
                     let name = state.classifier.results().with(|m| {
@@ -458,15 +469,31 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 count(s.species_windows, "window", "windows")
             )
         };
-        let mut notes = vec![format!(
-            "Below {min:.2}: {}",
-            count(s.below_windows, "window", "windows")
-        )];
+        let mut notes = Vec::new();
+        if s.below_windows > 0 {
+            notes.push(format!(
+                "Below {min:.2}: {}",
+                count(s.below_windows, "window", "windows")
+            ));
+        }
         if s.not_species_windows > 0 {
             notes.push(format!(
                 "Noise and other sounds: {}",
                 count(s.not_species_windows, "window", "windows")
             ));
+        }
+        Some(view! {
+            <div class="detection-status">
+                <div class="detection-summary">{main}</div>
+                {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
+            </div>
+        })
+    };
+    // The lists, when any window reaches the minimum confidence.
+    let lists = move || {
+        let s = summary.get()?;
+        if s.species_windows + s.not_species_windows == 0 {
+            return None;
         }
         let view_button = move |value: ListView, label: &'static str| {
             view! {
@@ -477,8 +504,25 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
             }
         };
         Some(view! {
+            <div class="detection-annotate-row">
+                <div class="psd-btn-group">
+                    {view_button(ListView::BySpecies, "By species")}
+                    {view_button(ListView::ByWindow, "By window")}
+                </div>
+            </div>
+            {move || match list_view.get() {
+                ListView::BySpecies => species_table(state, method, current_file).into_any(),
+                ListView::ByWindow => window_table(state, method, current_file).into_any(),
+            }}
+        })
+    };
+    let results = move || {
+        if !has_results.get() {
+            return None;
+        }
+        Some(view! {
             <div class="setting-group">
-                <div class="setting-group-title">{title}</div>
+                <div class="setting-group-title">{move || results_title.get()}</div>
                 <div class="setting-row" title="Shows only windows whose top species has at least this confidence. Applies to the summary, the list, the annotations and the overlay.">
                     <span class="setting-label">"Minimum confidence"</span>
                     <span class="setting-value">{move || format!("{:.2}", min_conf())}</span>
@@ -498,10 +542,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                         }
                     />
                 </div>
-                <div class="detection-status">
-                    <div class="detection-summary">{headline}</div>
-                    {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
-                </div>
+                {headline}
                 <div class="setting-row detection-annotate-row">
                     <label class="setting-label">
                         <input
@@ -512,16 +553,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                         " Show overlay"
                     </label>
                 </div>
-                <div class="detection-annotate-row">
-                    <div class="psd-btn-group">
-                        {view_button(ListView::BySpecies, "By species")}
-                        {view_button(ListView::ByWindow, "By window")}
-                    </div>
-                </div>
-                {move || match list_view.get() {
-                    ListView::BySpecies => species_table(state, method, current_file).into_any(),
-                    ListView::ByWindow => window_table(state, method, current_file).into_any(),
-                }}
+                {lists}
                 {move || top_three(state, method, current_file)}
             </div>
         })
@@ -531,7 +563,8 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
     let annotate = move || {
         let file_id = current_file.get()?;
         let (n, _, _, _) = results_info.get()?;
-        if n == 0 || busy_here() {
+        let any_species = summary.with(|s| s.as_ref().is_some_and(|s| s.species_windows > 0));
+        if n == 0 || !any_species || busy_here() {
             return None;
         }
         let min = min_conf();

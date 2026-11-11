@@ -794,17 +794,19 @@ body.sidebar-resizing {
     flex-direction: column;
 }
 
-/* Nested under BattyBirdNET: lines up with the option's text. */
+/* Nested under BattyBirdNET: lines up with the option's text. The label sits
+   above the drop-down so the options ("Europe: 29 species") fit the sidebar. */
 .detection-region {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    flex-direction: column;
+    gap: 2px;
     padding: 2px 0 2px 19px;
 }
 
 .detection-region .setting-select {
-    flex: 1;
-    min-width: 0;
+    width: 100%;
+    max-width: none;
+    min-height: 24px;
 }
 
 /* The one filled button in each state of the BirdNET section. */
@@ -865,10 +867,13 @@ body.sidebar-resizing {
     text-decoration: underline;
 }
 
+/* 24 px tall click target inside an 11 px line of text. */
 .detection-link-btn {
     background: none;
     border: none;
-    padding: 0;
+    padding: 0 2px;
+    min-height: 24px;
+    min-width: 24px;
     font: inherit;
     cursor: pointer;
 }
