@@ -117,12 +117,13 @@ futures-channel = "0.3"
 opt-level = "s"
 lto = true
 
-# The BirdNET worker: tract runs 1.8 times slower at opt-level "s" than at 3.
-# Only crates the app's own bundle does not use are listed, so the app's WASM is
-# unchanged. Generic code (ndarray, num-traits) is compiled in the crate that
-# instantiates it, so the tract crates carry most of it. With fat LTO, the final
-# optimisation runs at the opt-level of the crate being linked, which for the
-# worker is birdnet-worker's 3.
+# The BirdNET worker: tract is much slower at opt-level "s" than at 3. Only
+# crates the app's own bundle does not use are listed, so the app's code is not
+# affected. Generic code (ndarray, num-traits) is compiled in the crate that
+# instantiates it, so the tract crates carry most of it.
+# Checked with LTO on (2026-11-11, headless Chrome, a busy machine): the worker
+# built this way took 175 ms per BirdNET window; with these packages set back to
+# "s" it took 250 ms. So the overrides do take effect through LTO.
 [profile.release.package.birdnet-worker]
 opt-level = 3
 [profile.release.package.rubato]
