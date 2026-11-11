@@ -47,6 +47,15 @@ python -I compare.py birds.tflite.f32 birds.tract.f32 birds.wasm.f32 birds.ortwe
 python -I batty.py ~/birdnet-models EU bat1.wav bat2.wav
 ```
 
-The wasm build uses `wasm32-wasip1` only so that node can load it without
-wasm-bindgen. The tract code is the same on `wasm32-unknown-unknown`, which also needs
-`getrandom` with the `wasm_js` feature (pulled in by tract-onnx's default features).
+Step 4 uses `wasm32-wasip1` and a raw C ABI so that node can load the module without
+wasm-bindgen. To time the app's own target, `wasm32-unknown-unknown` with wasm-bindgen
+(`getrandom`'s `wasm_js` feature is set in `Cargo.toml` for that target):
+
+```bash
+RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-bindgen \
+  wasm-pack build --release --target nodejs --out-dir target/pkg-node --no-typescript
+node bench-bindgen.mjs target/pkg-node ~/birdnet-models/BirdNET_v2.4_fp32_foldconv.onnx birds.f32 birds.bindgen.f32
+```
+
+Build output under `target/` is large (several GB with five target directories). Delete
+it when done, since this folder may be synced.

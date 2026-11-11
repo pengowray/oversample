@@ -30,6 +30,32 @@ pub fn run_windows(plan: &Plan, batch: usize, samples: &[f32]) -> TractResult<Ve
     Ok(out[0].to_plain_array_view::<f32>()?.iter().copied().collect())
 }
 
+/// wasm32-unknown-unknown (the app's browser target), through wasm-bindgen.
+/// `bench-bindgen.mjs` calls these after `wasm-pack build --target nodejs`.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod bindgen {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    pub struct BirdNet(Plan);
+
+    #[wasm_bindgen]
+    impl BirdNet {
+        #[wasm_bindgen(constructor)]
+        pub fn new(model: &[u8]) -> Result<BirdNet, JsError> {
+            load_model(model, 1)
+                .map(BirdNet)
+                .map_err(|e| JsError::new(&format!("{e:#}")))
+        }
+
+        /// One 3 s window (144000 samples) in, 6522 logits out.
+        pub fn run(&self, window: &[f32]) -> Result<Vec<f32>, JsError> {
+            run_windows(&self.0, 1, window).map_err(|e| JsError::new(&format!("{e:#}")))
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::*;

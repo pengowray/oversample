@@ -22,6 +22,15 @@ tract-onnx = "0.23"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ort = { version = "=2.0.0-rc.15", optional = true }
 
+# The browser target. tract-onnx's default features pull in getrandom 0.4, which needs
+# its wasm_js backend on wasm32-unknown-unknown.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [features]
 ort = ["dep:ort"]
 
