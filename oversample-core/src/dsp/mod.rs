@@ -18,6 +18,7 @@ pub mod phase_vocoder;
 pub mod pipistrelle;
 pub mod pitch_shift;
 pub mod psd;
+pub mod reassign;
 pub mod resonators;
 pub mod spectral_sub;
 pub mod spectrum_level;

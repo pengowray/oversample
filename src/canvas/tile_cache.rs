@@ -1850,7 +1850,9 @@ const REASSIGN_FLOOR_BLOCK: usize = TILE_COLS * BASELINE_HOP;
 /// Performs 3 FFTs per frame (standard, time-ramped, derivative-windowed) to
 /// compute corrected time-frequency positions, producing sharper spectrograms.
 pub fn schedule_reassign_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: usize) {
-    use crate::dsp::fft::{compute_reassigned_tile, reassign_margin_cols, reassign_noise_floor};
+    use crate::dsp::reassign::{
+        compute_reassigned_tile, reassign_margin_cols, reassign_noise_floor,
+    };
 
     let key = TileKey {
         file_idx,
