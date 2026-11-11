@@ -89,7 +89,21 @@ python -I prep.py --max-windows 6 --list nobat.list nobat.f32 ../../../batchi-ex
 python -I ref.py $M nobat.f32 --only ort_full --save out/nobat
 $CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx nobat.f32 1 out/nobat.head $M/perch_v2_head.int8.bin
 python -I recheck.py $M nobat.list out/nobat.ort_full out/nobat.head
+
+# 15. Sound events: rain, traffic, wind, voices from Wikimedia Commons (kept in
+#     batchi-extras/sound-event-sounds), converted with ffmpeg since libsndfile can't
+#     read some of the Ogg files
+E=../../../batchi-extras/sound-event-sounds
+python -I fetch_commons.py $E
+mkdir -p events && for f in $E/sounds/*; do ffmpeg -nostdin -i "$f" -ac 1 -ar 32000 "events/$(basename "${f%.*}").wav"; done
+python -I prep.py --max-windows 6 --list events.list events.f32 events/*.wav
+python -I ref.py $M events.f32 --only ort_full --save out/events
+$CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx events.f32 1 out/events.head $M/perch_v2_head.int8.bin
+python -I recheck.py $M events.list out/events.ort_full out/events.head
 ```
+
+`cargo test --release --lib` checks every classifier kernel this CPU can run against
+the portable one.
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
 folder is missing, build it as described in `../birdnet-bench/README.md`.

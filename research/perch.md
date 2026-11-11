@@ -35,11 +35,12 @@ The embedding part plus the classifier gives exactly the full model's results
   ([head_precision.py](perch-bench/head_precision.py)). The full model is then 227 MB
   (float16) or 136 MB (int8), against 409 MB.
 - **Less memory and faster.** Built and measured: the embedding part in tract plus the
-  int8 classifier in plain Rust ([head.rs](perch-bench/src/head.rs)) uses 231 MB of
+  int8 classifier in plain Rust ([head/](perch-bench/src/head/mod.rs)) uses 231 MB of
   WASM memory, against 1,231 MB for the full file in tract, and runs at 10 to 11 times
-  real time in the browser build, against 7 times. It gives the same top species as the
-  full model on 278 of 278 windows (birds, frogs, grasshoppers and crickets, land
-  mammals), and the same top 5 on 277; see [Speed](#speed) and
+  real time in the browser build, against 7 times. It gives the same top class as the
+  full model on 383 of 384 windows (birds, frogs, grasshoppers and crickets, land
+  mammals, sound effects, rain, traffic, wind, voices; the other was a tie within
+  0.002), and the same top 5 on 382; see [Speed](#speed) and
   [Int8 classifier on other animals](#int8-classifier-on-other-animals).
 - **Embeddings without the classifier.** Similarity features can download only the
   45 MB part.
@@ -117,9 +118,14 @@ How to ship it:
 2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
    gzipped), run in plain Rust on the embedding model's spatial output
    ([export_head.py](perch-bench/export_head.py) writes it,
-   [head.rs](perch-bench/src/head.rs) runs it: integer dot products of the 64 spatial
-   positions against the prototypes, a max over positions, and a weighted sum).
+   [head/](perch-bench/src/head/mod.rs) runs it: integer dot products of the 64 spatial
+   positions against the prototypes, a max over positions, and a weighted sum; the
+   inner loop has one file per CPU in [head/kernel/](perch-bench/src/head/kernel/mod.rs),
+   so the app copies the reader plus the kernel for each of its targets).
    Download it the first time someone runs Perch with species names.
+   Hide species results below a softmax probability of about 0.3: rain, wind and
+   traffic alone put a bird, frog or coyote on top in 25 of 69 windows, always below
+   0.27 (see [Sound events](#sound-events)).
 3. Later, if wanted: smaller classifier files for a subset of classes, for example a
    region of about 900 classes (about 22 MB in float32) or the 5,044 non-bird classes
    (about 124 MB in float32). tphakala's regional slices pick species with BirdNET's
@@ -127,8 +133,7 @@ How to ship it:
 4. The species map JSON, built offline by [species_map.py](perch-bench/species_map.py).
 
 Not tested: real browsers and the Tauri webview (only node), a Web Worker, phones,
-onnxruntime-web, tphakala's INT8 file, sound-event recordings (vehicles, water and so
-on) for the int8 classifier, the classifier on ARM, Perch against BirdNET on
+onnxruntime-web, tphakala's INT8 file, the classifier on ARM, Perch against BirdNET on
 bird identification accuracy, and a classifier trained on Perch embeddings for bats. See
 [Not tested](#not-tested).
 
@@ -249,7 +254,7 @@ measurement (64 to 74 ms), so the comparison is fair.
 - The classifier is a large part of the time: 14,795 classes x 4 prototypes x 64
   positions x 1,536 values is 5.8 billion multiply-adds per window. A region of about
   900 classes adds 20 to 25 percent to the embedding time.
-- The plain-Rust classifier ([head.rs](perch-bench/src/head.rs)) keeps the prototypes
+- The plain-Rust classifier ([head/](perch-bench/src/head/mod.rs)) keeps the prototypes
   as int8 and each spatial position as int16 with its own scale, and sums the products
   as integers: WASM SIMD's `i32x4.dot_i16x8_s` does 8 multiply-adds per instruction,
   where float32 needs two instructions for 4. In WASM it takes 208 to 214 ms per window,
@@ -334,8 +339,48 @@ species name are left out):
 - The recordings were made at 192 to 500 kHz, and Perch only hears up to 16 kHz. Shrews
   call mostly above that, which may be why the land mammals do badly.
 - A sound-event class (198 of them, such as Wind, Engine, Cricket) was the top class in
-  3 of 256 windows, and in the top 5 in 11. None of these recordings is mainly a sound
-  event, so the sound-event classes are still untested.
+  3 of 256 windows, and in the top 5 in 11.
+- Set against the sound recordings below: when the right species was on top, its
+  softmax probability was at least 0.03 (median 0.72 for birds, 0.47 for grasshoppers
+  and crickets, 0.27 for the 2 frog windows). A cutoff of 0.3 keeps 61 of those 81 windows.
+
+### Sound events
+
+Test audio, in `batchi-extras/sound-event-sounds` (with an `index.json` of sources and
+licences; [fetch_commons.py](perch-bench/fetch_commons.py) downloads it): 12 Wikimedia
+Commons recordings of rain (4), thunder, road traffic (2), wind, voices (2), a river and
+one music track, converted to 32 kHz and cut into 69 windows. Also 19 local Freesound
+sound effects (37 windows): footsteps, splashes, bells, glass, a coffee machine, a
+pressure cooker.
+
+The int8 classifier against the full model in onnxruntime:
+
+| Recordings | Windows | Same top 1 | Same top 5 (as a set) | Same top 5, same order |
+|---|---|---|---|---|
+| Commons recordings | 69 | 68 | 68 | 64 |
+| Freesound effects | 37 | 37 | 37 | 34 |
+
+The one different top 1 is a tie in the reference: Musical_instrument 8.8946 and
+Music 8.8924. The largest logit difference was 0.027.
+
+What Perch called them (its top classes over each recording):
+
+- **Named well:** thunder (Thunder, Thunderstorm, Rain), street traffic (Vehicle, Car
+  horn, Motor vehicle), a group discussion (Human voice), the river (Water, Ocean),
+  footsteps (Walk and footsteps), a splash (Splash and splatter, Liquid), a ship's bell
+  (Bell), finger clicks (Hands, Finger snapping), a light switch (Glass, Chink and
+  clink). "Fall Rain" on Commons is a music track by Antti Luode, and Perch called it
+  Music and Keyboard; it was relabelled as music.
+- **Animals that weren't there:** steady rain is the weak spot. In 15 of 23 rain windows
+  the top class was a bird or insect (mostly Tawny Owl and Barred Owl, once a
+  cicada); the other 8 were Water, and Rain itself was never the top class. Howling wind
+  came out as Coyote (Canis latrans) in 3 of 6 windows, with Wind second. Traffic and
+  thunder put a bird or frog on top in 7 of 18 windows.
+- **Their scores were low:** every one of these 25 false animal windows had a softmax
+  probability of 0.27 or less (median 0.02 for rain, 0.07 for traffic, 0.20 for wind).
+  On the xeno-canto recordings above, 61 of 81 windows with the right species on top
+  scored 0.3 or more. So a cutoff of about 0.3 hides all of these false animals and
+  keeps most real detections, on this small set.
 
 ## 4. Bats
 
@@ -457,9 +502,10 @@ with one change: Perch has no single weight vector per class.
 - **onnxruntime-web,** WebGPU and more than one thread.
 - **INT8 and float16.** The tphakala INT8 file (131 MB) uses MatMulInteger, which was 4
   times slower than float32 in tract for BirdNET, so it wasn't run. The int8
-  classifier in Rust was checked on 278 windows of birds, frogs, grasshoppers and
-  crickets and land mammals, but not on recordings of sound events. The float16
-  classifier was checked in numpy only.
+  classifier in Rust was checked on 384 windows of animals and sound events. The
+  float16 classifier was checked in numpy only.
+- **The 0.3 cutoff** comes from 81 correct windows and 25 false ones. It needs more
+  recordings, and a look at the second and third classes, which the app may also show.
 - **The Rust classifier on ARM** (Apple silicon, Android when not in the browser): only
   a plain fallback loop exists for it, and the x86 version of that loop was 24 times
   slower than the SIMD one.

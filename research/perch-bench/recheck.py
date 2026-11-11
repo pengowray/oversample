@@ -30,7 +30,11 @@ index = {l: i for i, l in enumerate(labels)}
 files = [l.rstrip("\n") for l in open(listing, encoding="utf-8")]
 meta = {}
 for f in set(files):
-    d = json.load(open(f[: -len(".wav")] + ".xc.json", encoding="utf-8"))
+    xc = os.path.splitext(f)[0] + ".xc.json"
+    if not os.path.exists(xc):
+        meta[f] = ("other sounds", "Mystery mystery")
+        continue
+    d = json.load(open(xc, encoding="utf-8"))
     meta[f] = (d.get("group") or d["grp"], f"{d['gen']} {d['sp']}")
 groups = np.array([meta[f][0] for f in files])
 load = lambda p: np.fromfile(p + ".label.f32", dtype="<f4").reshape(len(files), C)
@@ -75,3 +79,11 @@ for g in sorted(set(groups)):
     t5 = event[r5[m]].any(1).sum()
     common = collections.Counter(labels[i] for i in r5[m].ravel() if event[i]).most_common(4)
     print(f"  {g:13s} top 1 {t1}/{m.sum()}, in top 5 {t5}/{m.sum()}; most often {common}")
+
+others_files = sorted(f for f in set(files) if meta[f][0] == "other sounds")
+if others_files:
+    print("\n4. Recordings without a species: top 3 classes (best logit over the windows)")
+    for f in others_files:
+        best = rl[[i for i, x in enumerate(files) if x == f]].max(0)
+        top = ", ".join(f"{labels[i]} {best[i]:.1f}" for i in np.argsort(-best)[:3])
+        print(f"  {os.path.basename(f)}: {top}")
