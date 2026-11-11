@@ -203,9 +203,8 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let spect_gamma = state.spect.gamma().get_untracked();
     let spect_gain = state.spect.gain_db().get_untracked();
 
-    // Compute ref_db the same way the spectrogram component does
-    let fft_size = state.spect.fft_mode().get_untracked().max_fft_size() as f32;
-    let fixed_ref_db = 20.0 * (fft_size / 4.0).log10();
+    // Reference level, the same way the spectrogram component does it: tiles
+    // are drawn in dBFS, so 0 dB unless display auto-gain is on.
     let display_auto_gain = state.display.auto_gain().get_untracked();
     let total_cols = {
         let tc = file.spectrogram.total_columns;
@@ -216,14 +215,9 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         }
     };
     let ref_db = if display_auto_gain && total_cols > 0 {
-        let max_mag = crate::canvas::spectral_store::get_max_magnitude(file_idx);
-        if max_mag > 0.0 {
-            20.0 * max_mag.log10()
-        } else {
-            fixed_ref_db
-        }
+        crate::canvas::spectral_store::get_max_magnitude_dbfs(file_idx).unwrap_or(0.0)
     } else {
-        fixed_ref_db
+        0.0
     };
     let display_boost = state.display.gain_boost().get_untracked();
 

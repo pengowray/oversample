@@ -195,7 +195,7 @@ pub fn oldest_time() -> f64 {
 }
 
 /// Render a downsampled greyscale overview image — matching the file-overview
-/// look. `recent_cols` caps the window to the most-recent N columns (so the
+/// look: dBFS from 0 down to `range_db`. `recent_cols` caps the window to the most-recent N columns (so the
 /// overview can match the raw-sample ring the waveform shows); `None` renders
 /// the full retained window `[oldest .. now]`. Either way it spans only what we
 /// actually hold, so the live overview isn't "a 10-minute file with a sliver at
@@ -204,8 +204,9 @@ pub fn render_overview(
     out_w: u32,
     out_h: u32,
     recent_cols: Option<usize>,
+    range_db: f32,
 ) -> Option<crate::types::PreviewImage> {
-    use crate::canvas::colors::magnitude_to_greyscale;
+    use crate::canvas::colors::dbfs_to_greyscale;
     if out_w == 0 || out_h == 0 {
         return None;
     }
@@ -227,6 +228,7 @@ pub fn render_overview(
             return None;
         }
         let freq_bins = wf.freq_bins;
+        let full_scale = oversample_core::dsp::spectrum_level::full_scale_db(wf.fft_size);
         let ow = out_w as usize;
         let oh = out_h as usize;
         let mut pixels = vec![0u8; ow * oh * 4];
@@ -236,7 +238,8 @@ pub fn render_overview(
             for y in 0..oh {
                 // y=0 = top = high freq; y=h-1 = bottom = low freq.
                 let bin = freq_bins - 1 - ((y * freq_bins) / oh).min(freq_bins - 1);
-                let grey = magnitude_to_greyscale(wf.magnitudes[base + bin], wf.max_magnitude);
+                let dbfs = magnitude_to_db(wf.magnitudes[base + bin]) - full_scale;
+                let grey = dbfs_to_greyscale(dbfs, range_db);
                 let idx = (y * ow + x) * 4;
                 pixels[idx] = grey;
                 pixels[idx + 1] = grey;
@@ -286,6 +289,11 @@ pub fn max_freq() -> f64 {
 /// Capture sample rate (Hz), or 0 when no waterfall is active.
 pub fn sample_rate() -> u32 {
     WATERFALL.with(|w| w.borrow().as_ref().map(|wf| wf.sample_rate).unwrap_or(0))
+}
+
+/// FFT size of the live waterfall's columns (0 before it is created).
+pub fn fft_size() -> usize {
+    WATERFALL.with(|w| w.borrow().as_ref().map(|wf| wf.fft_size).unwrap_or(0))
 }
 
 /// Get the running max magnitude (for auto-gain / ref_db).

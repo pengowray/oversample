@@ -602,26 +602,15 @@ pub fn Spectrogram() -> impl IntoView {
                 .unwrap_or(0);
             let file_idx_val = effective_idx.unwrap_or(0);
 
-            // Compute reference dB level for mapping absolute-dB tile data to display.
-            // When display_auto_gain is ON: peak-normalize using the file's running
-            // max magnitude (ref_db shifts 0 dB to the file's loudest point).
-            // When OFF: use a fixed reference based on FFT size so brightness is
-            // independent of file content and stable during progressive loading.
-            // Fixed ref ≈ 20*log10(fft_size/4) accounts for the Hann window's
-            // coherent gain (~0.5) on the one-sided spectrum, giving ~dBFS values.
-            let fft_size = state.spect.fft_mode().get_untracked().max_fft_size() as f32;
-            let fixed_ref_db = 20.0 * (fft_size / 4.0).log10();
-
+            // Reference level for the display. Tiles are converted to dBFS as
+            // they are drawn (0 dB = a full-scale tone at any FFT size), so the
+            // fixed reference is 0 dB and brightness doesn't depend on the file's
+            // content or on how much has loaded. With display auto-gain on, 0 dB
+            // moves to the file's loudest point instead.
             let ref_db = if display_auto_gain && total_cols > 0 {
-                use crate::canvas::spectral_store;
-                let max_mag = spectral_store::get_max_magnitude(file_idx_val);
-                if max_mag > 0.0 {
-                    20.0 * max_mag.log10()
-                } else {
-                    fixed_ref_db
-                }
+                crate::canvas::spectral_store::get_max_magnitude_dbfs(file_idx_val).unwrap_or(0.0)
             } else {
-                fixed_ref_db
+                0.0
             };
 
             // Extra dB boost from Auto/Same gain modes (computed in app.rs Effect)
@@ -649,16 +638,21 @@ pub fn Spectrogram() -> impl IntoView {
                     / wf_max_freq)
                     .min(1.0);
 
-                // Auto-gain from waterfall's running max magnitude
+                // The waterfall draws raw FFT magnitudes, so its reference is in
+                // the same raw dB: a full-scale tone at its FFT size, or its
+                // running max with auto-gain on.
+                let wf_fixed_ref_db = oversample_core::dsp::spectrum_level::full_scale_db(
+                    crate::canvas::live_waterfall::fft_size(),
+                );
                 let wf_ref_db = if display_auto_gain {
                     let max_mag = crate::canvas::live_waterfall::get_max_magnitude();
                     if max_mag > 0.0 {
                         20.0 * max_mag.log10()
                     } else {
-                        fixed_ref_db
+                        wf_fixed_ref_db
                     }
                 } else {
-                    fixed_ref_db
+                    wf_fixed_ref_db
                 };
                 let wf_display_settings = SpectDisplaySettings {
                     floor_db: spect_floor,

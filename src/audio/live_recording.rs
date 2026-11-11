@@ -2289,7 +2289,12 @@ pub(crate) fn spawn_spectrogram_computation(
         );
 
         // Compute overview image for the recording
-        let overview_img = crate::dsp::fft::compute_overview_from_spectrogram(&spectrogram);
+        let max_range = crate::dsp::depth_range::max_display_range_db(
+            audio.metadata.bits_per_sample,
+            audio.metadata.is_float,
+        );
+        let overview_img =
+            crate::dsp::fft::compute_overview_from_spectrogram(&spectrogram, max_range);
 
         state.library.files().update(|files| {
             if let Some(f) = files.get_mut(file_index) {

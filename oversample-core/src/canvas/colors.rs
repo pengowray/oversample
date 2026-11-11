@@ -25,6 +25,13 @@ pub fn magnitude_to_greyscale(mag: f32, max_mag: f32) -> u8 {
     db_to_greyscale(abs_db, -80.0, 80.0, 1.0, -ref_db)
 }
 
+/// Map a dBFS value to a greyscale pixel: 0 dBFS is white and `-range_db`
+/// black, the main spectrogram's mapping at default gain and contrast.
+#[inline]
+pub fn dbfs_to_greyscale(dbfs: f32, range_db: f32) -> u8 {
+    db_to_greyscale(dbfs, -range_db, range_db, 1.0, 0.0)
+}
+
 /// Convert a dB value to a greyscale pixel value (0-255) using display settings.
 #[inline]
 pub fn db_to_greyscale(db: f32, floor_db: f32, range_db: f32, gamma: f32, gain_db: f32) -> u8 {

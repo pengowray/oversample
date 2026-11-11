@@ -1040,6 +1040,7 @@ pub fn OverviewPanel() -> impl IntoView {
                                 data_w,
                                 h,
                                 Some(recent_cols),
+                                untrack(|| state.spect_floor_range().1),
                             )
                         } else {
                             None
