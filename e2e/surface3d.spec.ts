@@ -55,6 +55,8 @@ async function openSurface(page: Page) {
 }
 
 test("View in 3D draws the selection and dragging rotates it", async ({ page }, testInfo) => {
+  // SwiftShader renders slowly: opening plus the redraws below take about a minute.
+  test.setTimeout(150_000);
   await openSurface(page);
   await page.screenshot({ path: testInfo.outputPath("surface3d-open.png") });
 
@@ -94,6 +96,33 @@ test("View in 3D draws the selection and dragging rotates it", async ({ page }, 
   await expect(reset).toBeVisible();
   await reset.click();
   await expect(reset).toHaveCount(0);
+
+  // Hover reports the cell under the pointer: its time in the recording is the
+  // selection start plus x, and its level matches the drawn height.
+  const start = parseFloat((await page.locator(".surface-3d-range").textContent())!);
+  const floor = parseFloat((await page.locator(".surface-3d-floor-value").textContent())!);
+  const points = await page.evaluate(async () => {
+    const plot = document.querySelector(".surface-3d-plot") as HTMLElement & {
+      on(ev: string, f: (d: { points: { x: number; z: number; customdata: number[] }[] }) => void): void;
+    };
+    const got: { x: number; z: number; customdata: number[] }[] = [];
+    plot.on("plotly_hover", (d) => got.push(d.points[0]));
+    const r = plot.getBoundingClientRect();
+    for (let k = 0; k < 30; k++) {
+      const x = r.left + r.width * (0.3 + k * 0.015);
+      const y = r.top + r.height * 0.6;
+      const t = document.elementFromPoint(x, y)!;
+      t.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y, view: window }));
+      await new Promise((res) => setTimeout(res, 120));
+    }
+    return got.map((p) => ({ x: p.x, z: p.z, customdata: p.customdata }));
+  });
+  expect(points.length).toBeGreaterThan(1);
+  for (const p of points) {
+    // The header rounds the start to 1 ms; a wrong cell is off by far more.
+    expect(p.customdata[1]).toBeCloseTo(start + p.x / 1000, 2);
+    expect(Math.max(p.customdata[0], floor)).toBeCloseTo(p.z, 3);
+  }
 
   await page.keyboard.press("Escape");
   await expect(page.locator(".surface-3d-dialog")).toHaveCount(0);
