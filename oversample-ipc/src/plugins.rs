@@ -138,8 +138,8 @@ pub struct UsbOpenArgs {
     pub sample_rate: i32,
 }
 
-/// Args for the native `usb_start_stream` command (Rust, not a plugin). Tauri
-/// maps these camelCase keys onto the snake_case command parameters.
+/// Args for the native `usb_start_stream` command (Rust, not a plugin), sent
+/// as its `args` parameter: `{ "args": { "fd": …, "endpointAddress": … } }`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsbStartStreamArgs {
@@ -159,6 +159,13 @@ pub struct UsbStartStreamArgs {
     pub subslot_size: u32,
     /// 4-byte samples are IEEE float, recorded as float WAV.
     pub is_float: bool,
+}
+
+/// The `usb_start_stream` invoke payload: the args under the command's
+/// `args` parameter name.
+#[derive(Clone, Debug, Serialize)]
+pub struct UsbStartStreamPayload<'a> {
+    pub args: &'a UsbStartStreamArgs,
 }
 
 /// Generic `{ granted }` result, e.g. `plugin:usb-audio|requestAudioPermission`.
