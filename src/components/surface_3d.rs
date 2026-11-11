@@ -78,7 +78,7 @@ fn set(obj: &Object, key: &str, value: &JsValue) {
 async fn draw(
     el: &web_sys::HtmlElement,
     grid: &SurfaceGrid,
-    time_origin: &str,
+    start_s: f64,
     floor_db: f32,
     cmap: Colormap,
 ) -> Result<(), String> {
@@ -91,7 +91,9 @@ async fn draw(
     set(&d, "ny", &JsValue::from(grid.rows as u32));
     set(&d, "times_ms", &Float64Array::from(times_ms.as_slice()));
     set(&d, "freqs_khz", &Float64Array::from(freqs_khz.as_slice()));
-    set(&d, "time_origin", &JsValue::from_str(time_origin));
+    // Unclamped levels and the selection's start time, for the hover label.
+    set(&d, "level", &Float32Array::from(grid.level_db.as_slice()));
+    set(&d, "start_s", &JsValue::from_f64(start_s));
     set(&d, "floor_db", &JsValue::from_f64(floor_db as f64));
     set(&d, "colorscale", &colorscale(cmap));
 
@@ -245,7 +247,8 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
             }
             None => {
                 status.try_set(Status::Failed(format!(
-                    "Selection is too short: the 3D view needs at least {:.1} ms",
+                    "Selection is too short: {:.1} ms. The 3D view needs at least {:.1} ms.",
+                    samples.len() as f64 / sr as f64 * 1000.0,
                     fft as f64 / sr as f64 * 1000.0
                 )));
             }
@@ -262,9 +265,8 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
             return;
         };
         plot_el.set_value(Some(el.clone()));
-        let time_origin = crate::format_time::format_time_display(region.time_start, 3);
         spawn_local(async move {
-            let result = draw(&el, &g, &time_origin, floor, cmap).await;
+            let result = draw(&el, &g, region.time_start, floor, cmap).await;
             status.try_set(match result {
                 Ok(()) => Status::Ready,
                 Err(e) => Status::Failed(e),
@@ -310,7 +312,7 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
                     </button>
                 </div>
                 <div class="surface-3d-controls">
-                    <label class="surface-3d-floor" title="Levels quieter than this, relative to the loudest point, are drawn flat. Double-click to reset.">
+                    <label class="surface-3d-floor" title="Levels under this are drawn flat. 0 dB is the loudest point in the selection.">
                         <span>"Floor"</span>
                         <input
                             type="range"
@@ -330,8 +332,19 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
                             {move || format!("{:.0} dB", floor_db.get())}
                         </span>
                     </label>
+                    {move || (floor_db.get() != start_floor.get_value()).then(|| view! {
+                        <button
+                            class="setting-button"
+                            title="Back to the selection's median level"
+                            on:click=move |_| floor_db.set(start_floor.get_value())
+                        >
+                            "Reset"
+                        </button>
+                    })}
                     {truncated.then(|| view! {
-                        <span class="surface-3d-note">{format!("Showing the first {MAX_SECS:.0} s")}</span>
+                        <span class="surface-3d-note">
+                            {format!("Showing the first {MAX_SECS:.0} s of {duration:.1} s")}
+                        </span>
                     })}
                     <span class="surface-3d-hint">{hint}</span>
                 </div>

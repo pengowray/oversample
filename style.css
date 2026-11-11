@@ -7983,6 +7983,14 @@ button.canvas-overflow-action-btn.disabled {
     min-width: 0;
 }
 
+/* On a phone the file name would be cut to a few letters; the main view's
+   title bar already shows it. */
+@media (max-width: 600px) {
+    .surface-3d-file {
+        display: none;
+    }
+}
+
 .surface-3d-range {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -8008,6 +8016,7 @@ button.canvas-overflow-action-btn.disabled {
 
 .surface-3d-floor input {
     width: 140px;
+    accent-color: #4a8;
 }
 
 /* Fixed width so the slider doesn't shift as the value changes length. */

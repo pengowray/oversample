@@ -38,13 +38,15 @@
     function startEye(el) {
         var w = el.clientWidth || 1;
         var h = el.clientHeight || 1;
-        var k = Math.max(1, (h / w) * 1.2);
+        // 0.9 on a wide screen: Plotly's default distance leaves wide empty
+        // margins around the surface.
+        var k = Math.max(0.9, (h / w) * 1.2);
         return { x: 1.5 * k, y: -1.6 * k, z: 1.1 * k };
     }
 
     // d: { z: Float32Array (rows = frequencies, row-major), nx, ny,
     //      times_ms: Float64Array(nx), freqs_khz: Float64Array(ny),
-    //      time_origin: label for times_ms = 0, e.g. '0.523s',
+    //      level: Float32Array, unclamped z; start_s: selection start in seconds,
     //      floor_db, colorscale: [[0..1, 'rgb(...)'], ...] }
     function show(el, d) {
         if (!hasWebGL()) {
@@ -52,10 +54,18 @@
         }
         return loadPlotly().then(function (Plotly) {
             var z = new Array(d.ny);
+            // Hover shows the measured level (z is clamped to the floor) and
+            // the time in the recording, so a peak can be found on the timeline.
+            var custom = new Array(d.ny);
             for (var j = 0; j < d.ny; j++) {
                 z[j] = Array.prototype.slice.call(d.z, j * d.nx, (j + 1) * d.nx);
+                custom[j] = new Array(d.nx);
+                for (var i = 0; i < d.nx; i++) {
+                    custom[j][i] = [d.level[j * d.nx + i], d.start_s + d.times_ms[i] / 1000];
+                }
             }
             var x = Array.prototype.slice.call(d.times_ms);
+            var narrow = el.clientWidth < 600;
             var y = Array.prototype.slice.call(d.freqs_khz);
             var axis = function (title) {
                 return {
@@ -68,7 +78,11 @@
                     showspikes: false,
                 };
             };
-            var zAxis = axis('Level (dB)');
+            var yAxis = axis('Frequency (kHz)');
+            // Fewer frequency ticks on a phone, where 5 kHz steps touch.
+            if (narrow) yAxis.nticks = 5;
+            // The long title is clipped at the left edge on a phone.
+            var zAxis = axis(narrow ? 'dB' : 'Level (dB, 0 = loudest)');
             zAxis.range = [d.floor_db, 0];
             var trace = {
                 type: 'surface',
@@ -79,7 +93,8 @@
                 cmax: 0,
                 colorscale: d.colorscale,
                 showscale: false,
-                hovertemplate: '%{x:.1f} ms<br>%{y:.1f} kHz<br>%{z:.1f} dB<extra></extra>',
+                customdata: custom,
+                hovertemplate: '%{customdata[1]:.4f} s (+%{x:.1f} ms)<br>%{y:.1f} kHz<br>%{customdata[0]:.1f} dB<extra></extra>',
                 contours: { z: { show: false } },
                 lighting: { ambient: 0.75, diffuse: 0.5, specular: 0.05, roughness: 0.9 },
             };
@@ -89,19 +104,23 @@
                 font: { color: '#ccc', family: getComputedStyle(document.body).fontFamily, size: 11 },
                 margin: { l: 0, r: 0, t: 0, b: 0 },
                 scene: {
-                    xaxis: axis('Time from ' + d.time_origin + ' (ms)'),
-                    yaxis: axis('Frequency (kHz)'),
+                    xaxis: axis('Time after selection start (ms)'),
+                    yaxis: yAxis,
                     zaxis: zAxis,
                     aspectmode: 'manual',
                     aspectratio: { x: 1.6, y: 1, z: 0.6 },
-                    camera: { eye: startEye(el) },
+                    // Aim slightly below the middle: the peaks rise above the
+                    // box, so a centred view leaves the top empty.
+                    camera: { eye: startEye(el), center: { x: 0, y: 0, z: -0.15 } },
                     dragmode: 'turntable',
                 },
             };
             var config = {
                 displaylogo: false,
                 responsive: true,
-                modeBarButtonsToRemove: ['orbitRotation', 'tableRotation', 'zoom3d', 'pan3d', 'resetCameraLastSave3d'],
+                modeBarButtonsToRemove: ['orbitRotation', 'tableRotation', 'zoom3d', 'pan3d', 'resetCameraLastSave3d', 'hoverClosest3d', 'sendChartToCloud'],
+                // The "Share chart..." button uploads the data to Plotly Cloud.
+                showSendToCloud: false,
                 toImageButtonOptions: { filename: 'spectrogram-3d' },
             };
             // Keep the user's rotation and zoom when the floor changes: react()
