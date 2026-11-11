@@ -190,7 +190,7 @@ mod tests {
         let (n, sr, bin) = (1024, 384_000u32, 100);
         let samples = sine(sr as usize, bin as f64 / n as f64, 1.0);
 
-        let tile = crate::dsp::fft::compute_reassigned_tile(
+        let tile = crate::dsp::reassign::compute_reassigned_tile(
             &samples[..n * 40],
             0,
             30,
