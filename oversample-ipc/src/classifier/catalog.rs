@@ -324,9 +324,13 @@ pub struct Attribution {
     pub revision: &'static str,
 }
 
+/// The location list ("unlikely here") for BirdNET's and Perch's results.
+const GEOMODEL_CREDIT: &str = "\"Unlikely here\" uses the BirdNET+ Geomodel v3.0.4 by the BirdNET team (github.com/birdnet-team/geomodel, Apache 2.0), converted to ONNX by tphakala.";
+
 const BIRDNET_CREDITS: &[&str] = &[
     "BirdNET was developed by the K. Lisa Yang Center for Conservation Bioacoustics at the Cornell Lab of Ornithology and Chemnitz University of Technology.",
     "ONNX conversion by tphakala (huggingface.co/tphakala).",
+    GEOMODEL_CREDIT,
 ];
 
 const BATTY_CREDITS: &[&str] = &[
@@ -340,6 +344,8 @@ const CITATION: &str = "Kahl, S., Wood, C. M., Eibl, M., & Klinck, H. (2021). Bi
 const PERCH_CREDITS: &[&str] = &[
     "Perch 2.0 was developed by Google DeepMind.",
     "Split into two smaller files for this app by Oversample (huggingface.co/pengowray/perch-v2-tract).",
+    "English names from Xeno-Canto's species lists, the Oversample names list (IUCN Red List, Catalogue of Life, Wikidata and others) and the BirdNET+ Geomodel's labels.",
+    GEOMODEL_CREDIT,
 ];
 
 const PERCH_CITATION: &str =
