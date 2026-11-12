@@ -108,6 +108,11 @@ impl RealtimeHet {
 /// ultrasonic range without retuning, at the cost of overlapping difference
 /// images when the carrier spacing is tighter than 2× cutoff. Spacing equal
 /// to roughly 2× cutoff gives near-seamless coverage with minimal overlap.
+///
+/// The bands are summed without scaling: a call heard through one carrier
+/// plays as loud as with a single carrier. (Dividing by N made it N times
+/// quieter, -14 dB with 5 carriers.) Noise rises with the bandwidth covered,
+/// as it would on a detector tuned to more of the spectrum.
 pub fn heterodyne_comb_mix(
     samples: &[f32],
     sample_rate: u32,
@@ -124,18 +129,12 @@ pub fn heterodyne_comb_mix(
             *a += *b;
         }
     }
-    // Normalize by carrier count so the perceived loudness doesn't scale
-    // with N (and so flipping count up/down isn't a volume jump).
-    let scale = 1.0 / carrier_freqs.len() as f32;
-    for s in acc.iter_mut() {
-        *s *= scale;
-    }
     acc
 }
 
 /// Stateful real-time comb heterodyne processor. Tracks a phase and low-pass
-/// state per carrier and sums the resulting difference tones. Output is
-/// scaled by 1/N so the level is comparable to single-carrier heterodyne.
+/// state per carrier and sums the resulting difference tones, unscaled like
+/// [`heterodyne_comb_mix`].
 pub struct RealtimeCombHet {
     /// Per-carrier oscillator phase and cascaded LP state.
     voices: Vec<RealtimeHet>,
@@ -189,10 +188,6 @@ impl RealtimeCombHet {
             for (o, s) in output.iter_mut().zip(scratch.iter()) {
                 *o += *s;
             }
-        }
-        let scale = 1.0 / n as f32;
-        for s in output.iter_mut() {
-            *s *= scale;
         }
     }
 
@@ -335,6 +330,22 @@ mod tests {
             error < 400.0,
             "Expected ~3000 Hz difference tone from the 50 kHz carrier, got {} Hz",
             zc.estimated_frequency_hz
+        );
+    }
+
+    #[test]
+    fn comb_keeps_a_tone_at_its_single_carrier_level() {
+        // A 53 kHz tone with carriers at 30/50/70 kHz: only the 50 kHz band
+        // hears it, and it plays as loud as with that carrier alone.
+        let sr = 192_000;
+        let n = sr as usize / 4;
+        let x = tone(53_000.0, sr, n);
+        let single = peak_db(&heterodyne_mix(&x, sr, 50_000.0, 6_000.0)[n / 4..]);
+        let comb_out = heterodyne_comb_mix(&x, sr, &[30_000.0, 50_000.0, 70_000.0], 6_000.0);
+        let comb = peak_db(&comb_out[n / 4..]);
+        assert!(
+            (comb - single).abs() < 0.5,
+            "comb {comb:.2} dB vs single {single:.2} dB"
         );
     }
 
