@@ -21,13 +21,22 @@ fn unsupported_depths_are_written_as_16_bit() {
 }
 
 #[test]
-fn sixteen_bit_output_is_unchanged() {
+fn sixteen_bit_output_rounds_and_clamps() {
     let data = encode_f32_samples(&[0.5, -0.5, 1.5, -1.5], &format(16, false));
     let samples: Vec<i16> = data
         .chunks_exact(2)
         .map(|b| i16::from_le_bytes([b[0], b[1]]))
         .collect();
-    assert_eq!(samples, vec![16383, -16383, 32767, -32767]);
+    assert_eq!(samples, vec![16384, -16384, 32767, -32768]);
+}
+
+#[test]
+fn every_16_bit_sample_is_written_back_exactly() {
+    // An export of a 16-bit file must keep its low bits: a 12-bit recorder's
+    // zero-padded LSBs, or a 1-step noise floor, are how its source is told.
+    let original: Vec<u8> = (i16::MIN..=i16::MAX).flat_map(i16::to_le_bytes).collect();
+    let samples = decode_pcm(&original, SampleEncoding::I16);
+    assert!(encode_f32_samples(&samples, &format(16, false)) == original);
 }
 
 #[test]

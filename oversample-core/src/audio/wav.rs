@@ -744,9 +744,8 @@ impl WavWriteFormat {
 
 /// `samples` (full scale is +-1.0) as the little-endian `data` bytes of `fmt`,
 /// which should come from [`WavWriteFormat::for_f32_samples`]. PCM samples are
-/// clamped to full scale. 24- and 32-bit PCM use the scale [`decode_pcm`]
-/// reads with, so samples read from a 24-bit file are written back unchanged.
-/// 16-bit PCM keeps the 32767 scale the app has always written.
+/// clamped to full scale. PCM uses the scale [`decode_pcm`] reads with and
+/// rounds, so samples read from a 16- or 24-bit file are written back unchanged.
 pub fn encode_f32_samples(samples: &[f32], fmt: &WavWriteFormat) -> Vec<u8> {
     let scaled = |s: f32, full_scale: f64| -> i64 {
         let max = full_scale as i64 - 1;
@@ -764,7 +763,7 @@ pub fn encode_f32_samples(samples: &[f32], fmt: &WavWriteFormat) -> Vec<u8> {
             out.extend_from_slice(&(scaled(s, 2_147_483_648.0) as i32).to_le_bytes())
         }),
         _ => samples.iter().for_each(|&s| {
-            out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+            out.extend_from_slice(&(scaled(s, 32_768.0) as i16).to_le_bytes())
         }),
     }
     out
