@@ -51,7 +51,8 @@ pub fn bat_demo_sounds_dir() -> PathBuf {
 
 /// Recordings with no bats (other animals from xeno-canto, and sound effects),
 /// for counting false bat calls (`NO_BAT_SOUNDS_DIR`, default
-/// `../batchi-extras/no-bat-sounds`, its own git repository; see its README).
+/// `../batchi-extras/no-bat-sounds`, a clone of
+/// https://github.com/pengowray/no-bat-sounds; see its README).
 pub fn no_bat_sounds_dir() -> PathBuf {
     corpus_root("NO_BAT_SOUNDS_DIR", "../batchi-extras/no-bat-sounds").join("sounds")
 }
