@@ -912,24 +912,24 @@ fn place_rows(
             .flatten()
             .map(|msg| view! { <div class="setting-row setting-error" role="alert">{msg}</div> })
     };
+    // Asks for this device's position: "Use my location", or "Update" once
+    // it is known.
+    let on_locate = move |_| {
+        if locating.get_untracked() == Some(None) {
+            return;
+        }
+        locating.set(Some(None));
+        spawn_local(async move {
+            use crate::device_location::{ask, LocationError};
+            let msg = match ask(state).await {
+                Ok(_) => None,
+                Err(LocationError::Denied) => Some("Location permission denied".to_string()),
+                Err(LocationError::Unavailable(m)) => Some(format!("Location unavailable: {m}")),
+            };
+            locating.set(msg.map(Some));
+        });
+    };
     let Some(place) = place else {
-        let on_locate = move |_| {
-            if locating.get_untracked() == Some(None) {
-                return;
-            }
-            locating.set(Some(None));
-            spawn_local(async move {
-                use crate::device_location::{ask, LocationError};
-                let msg = match ask(state).await {
-                    Ok(_) => None,
-                    Err(LocationError::Denied) => Some("Location permission denied".to_string()),
-                    Err(LocationError::Unavailable(m)) => {
-                        Some(format!("Location unavailable: {m}"))
-                    }
-                };
-                locating.set(msg.map(Some));
-            });
-        };
         return Some(
             view! {
                 <div class="setting-row">
@@ -978,10 +978,27 @@ fn place_rows(
             >
                 <span class="setting-label">"Place"</span>
                 <span class="setting-value">
-                    {from_device.then(|| view! { <span class="place-source">"Your location"</span> })}
+                    {from_device.then(|| view! {
+                        <span class="place-source">
+                            "Your location "
+                            <button
+                                class="detection-link-btn"
+                                title="Get this device's location again"
+                                disabled=move || locating.get() == Some(None)
+                                on:click=on_locate
+                            >
+                                {move || if locating.get() == Some(None) {
+                                    "Getting location\u{2026}"
+                                } else {
+                                    "Update"
+                                }}
+                            </button>
+                        </span>
+                    })}
                     {value}
                 </span>
             </div>
+            {error}
             <div class="setting-row detection-annotate-row">
                 <label class="setting-label">
                     <input

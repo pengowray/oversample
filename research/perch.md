@@ -585,6 +585,23 @@ occurrence score for 14,082 species out (11,127 birds, 1,936 amphibians, 1,728 i
   first expected species was ranked lower than that, so a filter applied to stored
   results needs more classes kept, or the filtering done in the worker.
 
+## 7. Classifier panel: UI points for later
+
+A fresh review of the classifier panel's screenshots (2026-11-12) found these. They
+concern the panel's existing BirdNET styles as much as Perch, and are left for later.
+
+- **"windows":** the panel counts results in windows ("1 species, 9 windows") without
+  saying a window is a 3 s (BirdNET) or 5 s (Perch) stretch of the recording.
+- **"Merge neighbours":** the option's name doesn't say what is merged, or when.
+- **Species names wrap:** in the "By species" table a name and its "· unlikely here" tag
+  wrap over three lines at the sidebar's usual width ("Common / Pauraque · unlikely /
+  here"), while the number columns have room.
+- **Button colours:** primary and secondary actions don't follow one style across the
+  panel ("Analyse with BirdNET", "Add annotations", "Species map").
+- **Two location buttons:** "Use my location" (Place row) and "Set region from my
+  location" (Bat book menu) fill the same device position with different words. One
+  shared control could set both.
+
 ## Not tested
 
 - **Tauri and headed browsers.** Perch ran in node and in headless Chrome and Firefox,
