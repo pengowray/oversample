@@ -8,7 +8,6 @@
 //! products decides whether a symbol gets one sample more. The test file
 //! `tests/generator.rs` checks the result against a render from the JavaScript.
 
-
 use std::f64::consts::PI;
 use std::vec;
 use std::vec::Vec;
@@ -53,8 +52,15 @@ pub type Note = (&'static str, u32);
 pub const TUNE_TIME: &[Note] = &[("C5", 1), ("D5", 1), ("E5", 1), ("C5", 3)];
 
 /// Tune for a payload of time and location (13 bytes).
-pub const TUNE_TIME_LOCATION: &[Note] =
-    &[("C5", 1), ("D5", 1), ("E5", 1), ("C5", 3), ("D5", 1), ("E5", 1), ("C5", 3)];
+pub const TUNE_TIME_LOCATION: &[Note] = &[
+    ("C5", 1),
+    ("D5", 1),
+    ("E5", 1),
+    ("C5", 3),
+    ("D5", 1),
+    ("E5", 1),
+    ("C5", 3),
+];
 
 /// Tune for a payload of time and deployment ID (14 bytes).
 pub const TUNE_DEPLOYMENT: &[Note] = &[
@@ -111,7 +117,11 @@ impl Render {
     /// The waveform the encoder plays: carrier / 4 + melody / 2 over the length
     /// of the shorter part.
     pub fn mix(&self) -> Vec<f64> {
-        self.carrier.iter().zip(&self.melody).map(|(c, m)| c / 4.0 + m / 2.0).collect()
+        self.carrier
+            .iter()
+            .zip(&self.melody)
+            .map(|(c, m)| c / 4.0 + m / 2.0)
+            .collect()
     }
 
     /// The same mix with other gains, for changing the balance of carrier and
@@ -137,7 +147,11 @@ struct OscillatorState {
 
 impl OscillatorState {
     fn new() -> Self {
-        Self { amplitude_phase: 0.0, x: 1.0, y: 0.0 }
+        Self {
+            amplitude_phase: 0.0,
+            x: 1.0,
+            y: 0.0,
+        }
     }
 }
 
@@ -184,13 +198,22 @@ fn create_waveform_component(
 /// The frequency of a note such as "F#5", from `generateFrequencyLookup`. The
 /// JavaScript rounds it to a whole number of Hz.
 fn note_frequency(note: &str) -> f64 {
-    const NOTE_PREFIXES: [&str; 17] =
-        ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"];
-    const NOTE_DISTANCES: [i32; 17] = [-9, -8, -8, -7, -6, -6, -5, -4, -3, -3, -2, -1, -1, 0, 1, 1, 2];
+    const NOTE_PREFIXES: [&str; 17] = [
+        "C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb",
+        "B",
+    ];
+    const NOTE_DISTANCES: [i32; 17] = [
+        -9, -8, -8, -7, -6, -6, -5, -4, -3, -3, -2, -1, -1, 0, 1, 1, 2,
+    ];
 
     let (prefix, octave) = note.split_at(note.len() - 1);
-    let octave: i32 = octave.parse().expect("a note name ends with an octave digit");
-    let index = NOTE_PREFIXES.iter().position(|p| *p == prefix).expect("known note name");
+    let octave: i32 = octave
+        .parse()
+        .expect("a note name ends with an octave digit");
+    let index = NOTE_PREFIXES
+        .iter()
+        .position(|p| *p == prefix)
+        .expect("known note name");
     let exponent = (octave - 4) as f64 + NOTE_DISTANCES[index] as f64 / 12.0;
     (440.0 * 2.0f64.powf(exponent) + 0.5).floor()
 }
@@ -243,7 +266,10 @@ pub fn render(sample_rate: u32, bytes: &[u8], notes: &[Note]) -> Render {
     let (frequencies, note_durations): (Vec<f64>, Vec<f64>) = if notes.is_empty() {
         (vec![523.0], vec![1.0])
     } else {
-        notes.iter().map(|(name, length)| (note_frequency(name), *length as f64)).unzip()
+        notes
+            .iter()
+            .map(|(name, length)| (note_frequency(name), *length as f64))
+            .unzip()
     };
 
     let mut carrier = Vec::new();
@@ -273,7 +299,11 @@ pub fn render(sample_rate: u32, bytes: &[u8], notes: &[Note]) -> Render {
     let mut message = bytes.to_vec();
     message.extend_from_slice(&crc16(bytes));
     for bit in encode(&message) {
-        let sustain = if bit == 1 { HIGH_BIT_SUSTAIN } else { LOW_BIT_SUSTAIN };
+        let sustain = if bit == 1 {
+            HIGH_BIT_SUSTAIN
+        } else {
+            LOW_BIT_SUSTAIN
+        };
         carrier_symbol(sustain, &mut carrier, &mut state);
     }
 
@@ -309,7 +339,11 @@ pub fn render(sample_rate: u32, bytes: &[u8], notes: &[Note]) -> Render {
         );
     }
 
-    Render { carrier, melody, symbol_starts }
+    Render {
+        carrier,
+        melody,
+        symbol_starts,
+    }
 }
 
 /// Port of the connector's `encodeTime`. The connector clamps the time zone to

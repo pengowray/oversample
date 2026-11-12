@@ -63,8 +63,9 @@ pub const MELODY_AMPLITUDE: f32 = 0.5;
 
 /// Hamming codeword for each nibble, as a 7-bit word. Bit j of the word is
 /// `HAMMING_CODES[nibble][j]` in the JavaScript encoder, and bit 0 is sent first.
-pub const HAMMING_CODEWORDS: [u8; 16] =
-    [0, 7, 25, 30, 42, 45, 51, 52, 75, 76, 82, 85, 97, 102, 120, 127];
+pub const HAMMING_CODEWORDS: [u8; 16] = [
+    0, 7, 25, 30, 42, 45, 51, 52, 75, 76, 82, 85, 97, 102, 120, 127,
+];
 
 const CRC_POLYNOMIAL: u16 = 0x1021;
 
@@ -94,7 +95,11 @@ pub const fn is_payload_len(len: usize) -> bool {
 
 fn crc_shift(crc: u16, input_bit: bool) -> u16 {
     let shifted = (crc << 1) | input_bit as u16;
-    if crc & 0x8000 != 0 { shifted ^ CRC_POLYNOMIAL } else { shifted }
+    if crc & 0x8000 != 0 {
+        shifted ^ CRC_POLYNOMIAL
+    } else {
+        shifted
+    }
 }
 
 /// Decodes a 7-bit Hamming codeword, using the low 7 bits of `word`. Returns the
@@ -155,7 +160,11 @@ impl RemoteMessage {
         if id[..4] != REMOTE_MAGIC {
             return None;
         }
-        Some(Self { version: id[4], command: id[5], argument: u16::from_le_bytes([id[6], id[7]]) })
+        Some(Self {
+            version: id[4],
+            command: id[5],
+            argument: u16::from_le_bytes([id[6], id[7]]),
+        })
     }
 
     /// The whole deployment ID, as the decoder gives it.
@@ -170,7 +179,9 @@ impl RemoteMessage {
         if self.version != REMOTE_VERSION {
             return None;
         }
-        RemoteCommand::ALL.into_iter().find(|command| command.message() == self)
+        RemoteCommand::ALL
+            .into_iter()
+            .find(|command| command.message() == self)
     }
 }
 
@@ -222,7 +233,11 @@ impl RemoteCommand {
 
     /// The message that sends this command.
     pub const fn message(self) -> RemoteMessage {
-        RemoteMessage { version: REMOTE_VERSION, command: self.code(), argument: self.argument() }
+        RemoteMessage {
+            version: REMOTE_VERSION,
+            command: self.code(),
+            argument: self.argument(),
+        }
     }
 
     /// The command in a deployment ID, if it holds one this crate knows.
@@ -323,7 +338,12 @@ impl TimeMessage {
             deployment_id = Some(field);
         }
 
-        Some(TimeMessage { unix_time, timezone_minutes, location, deployment_id })
+        Some(TimeMessage {
+            unix_time,
+            timezone_minutes,
+            location,
+            deployment_id,
+        })
     }
 
     /// The X8 bat patch's phone remote message in the deployment ID, known or not.
@@ -343,7 +363,10 @@ impl TimeMessage {
         // Move each 28-bit field to the top of an i32, so that shifting back extends its sign.
         let latitude = ((b[0] | b[1] << 8 | b[2] << 16 | (b[3] & 0x0f) << 24) << 4) as i32 >> 4;
         let longitude = ((b[3] >> 4 | b[4] << 4 | b[5] << 12 | b[6] << 20) << 4) as i32 >> 4;
-        Some((latitude as f64 / LATITUDE_UNITS_PER_DEGREE, longitude as f64 / LONGITUDE_UNITS_PER_DEGREE))
+        Some((
+            latitude as f64 / LATITUDE_UNITS_PER_DEGREE,
+            longitude as f64 / LONGITUDE_UNITS_PER_DEGREE,
+        ))
     }
 
     /// The phone's local time at the start of the chime.
@@ -417,7 +440,11 @@ fn civil_from_days(days_since_1970: i64) -> (i32, u8, u8) {
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let shifted_month = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 { shifted_month + 3 } else { shifted_month - 9 };
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
     let year = year_of_era + era * 400 + if month <= 2 { 1 } else { 0 };
     (year as i32, month as u8, day as u8)
 }
@@ -450,13 +477,27 @@ mod location_tests {
             (lon >> 12) as u8,
             (lon >> 20) as u8,
         ];
-        TimeMessage { unix_time: 0, timezone_minutes: 0, location: Some(location), deployment_id: None }
+        TimeMessage {
+            unix_time: 0,
+            timezone_minutes: 0,
+            location: Some(location),
+            deployment_id: None,
+        }
     }
 
     #[test]
     fn location_comes_back_in_all_four_quarters_of_the_world() {
-        for (latitude, longitude) in [(-33.87, 151.21), (51.5, -0.12), (-54.8, -68.3), (90.0, 180.0), (-90.0, -180.0), (0.0, 0.0)] {
-            let (lat, lon) = message_at(latitude, longitude).latitude_longitude().unwrap();
+        for (latitude, longitude) in [
+            (-33.87, 151.21),
+            (51.5, -0.12),
+            (-54.8, -68.3),
+            (90.0, 180.0),
+            (-90.0, -180.0),
+            (0.0, 0.0),
+        ] {
+            let (lat, lon) = message_at(latitude, longitude)
+                .latitude_longitude()
+                .unwrap();
             assert!((lat - latitude).abs() < 1e-6, "{lat} {latitude}");
             assert!((lon - longitude).abs() < 3e-6, "{lon} {longitude}");
         }
@@ -464,7 +505,12 @@ mod location_tests {
 
     #[test]
     fn no_location_field_gives_none() {
-        let message = TimeMessage { unix_time: 0, timezone_minutes: 0, location: None, deployment_id: None };
+        let message = TimeMessage {
+            unix_time: 0,
+            timezone_minutes: 0,
+            location: None,
+            deployment_id: None,
+        };
         assert_eq!(message.latitude_longitude(), None);
     }
 }
@@ -552,7 +598,11 @@ mod tests {
     #[test]
     fn hamming_decode_matches_the_firmware_table() {
         for word in 0..128u8 {
-            assert_eq!(hamming_decode(word).0, FIRMWARE_HAMMING_TABLE[word as usize], "word {word}");
+            assert_eq!(
+                hamming_decode(word).0,
+                FIRMWARE_HAMMING_TABLE[word as usize],
+                "word {word}"
+            );
         }
     }
 
@@ -587,16 +637,28 @@ mod tests {
         payload[5] = 0;
 
         let with_location = TimeMessage::parse(&payload[..13]).unwrap();
-        assert_eq!(with_location.location, Some([106, 107, 108, 109, 110, 111, 112]));
+        assert_eq!(
+            with_location.location,
+            Some([106, 107, 108, 109, 110, 111, 112])
+        );
         assert_eq!(with_location.deployment_id, None);
 
         let with_deployment = TimeMessage::parse(&payload[..14]).unwrap();
         assert_eq!(with_deployment.location, None);
-        assert_eq!(with_deployment.deployment_id, Some([106, 107, 108, 109, 110, 111, 112, 113]));
+        assert_eq!(
+            with_deployment.deployment_id,
+            Some([106, 107, 108, 109, 110, 111, 112, 113])
+        );
 
         let with_both = TimeMessage::parse(&payload).unwrap();
-        assert_eq!(with_both.location, Some([106, 107, 108, 109, 110, 111, 112]));
-        assert_eq!(with_both.deployment_id, Some([113, 114, 115, 116, 117, 118, 119, 120]));
+        assert_eq!(
+            with_both.location,
+            Some([106, 107, 108, 109, 110, 111, 112])
+        );
+        assert_eq!(
+            with_both.deployment_id,
+            Some([113, 114, 115, 116, 117, 118, 119, 120])
+        );
     }
 
     #[test]
@@ -604,7 +666,11 @@ mod tests {
         let payload = [0u8; 40];
         for length in 0..=40 {
             let expected_valid = matches!(length, 6 | 13 | 14 | 21);
-            assert_eq!(TimeMessage::parse(&payload[..length]).is_some(), expected_valid, "{length}");
+            assert_eq!(
+                TimeMessage::parse(&payload[..length]).is_some(),
+                expected_valid,
+                "{length}"
+            );
         }
     }
 
@@ -623,7 +689,11 @@ mod tests {
         for (minutes, expected_valid) in cases {
             let bytes = minutes.to_le_bytes();
             let payload = [1, 2, 3, 4, bytes[0], bytes[1]];
-            assert_eq!(TimeMessage::parse(&payload).is_some(), expected_valid, "{minutes}");
+            assert_eq!(
+                TimeMessage::parse(&payload).is_some(),
+                expected_valid,
+                "{minutes}"
+            );
         }
     }
 
@@ -640,7 +710,10 @@ mod tests {
         ];
         for (minutes, bytes) in cases {
             let payload = [0, 0, 0, 0, bytes[0], bytes[1]];
-            assert_eq!(TimeMessage::parse(&payload).unwrap().timezone_minutes, minutes);
+            assert_eq!(
+                TimeMessage::parse(&payload).unwrap().timezone_minutes,
+                minutes
+            );
         }
     }
 
@@ -677,13 +750,24 @@ mod tests {
     #[test]
     fn local_time_matches_python_datetime() {
         for (unix_time, timezone_minutes, expected) in LOCAL_TIME_CASES {
-            let message =
-                TimeMessage { unix_time, timezone_minutes, location: None, deployment_id: None };
+            let message = TimeMessage {
+                unix_time,
+                timezone_minutes,
+                location: None,
+                deployment_id: None,
+            };
             let local = message.local();
             let (year, month, day, hour, minute, second) = expected;
             assert_eq!(
                 local,
-                LocalTime { year, month, day, hour, minute, second },
+                LocalTime {
+                    year,
+                    month,
+                    day,
+                    hour,
+                    minute,
+                    second
+                },
                 "unix {unix_time}, time zone {timezone_minutes}"
             );
         }
@@ -693,24 +777,46 @@ mod tests {
     fn epoch_seconds_round_trip() {
         for (unix_time, timezone_minutes, _) in LOCAL_TIME_CASES {
             let seconds = unix_time as i64 + timezone_minutes as i64 * 60;
-            assert_eq!(LocalTime::from_epoch_seconds(seconds).to_epoch_seconds(), seconds);
+            assert_eq!(
+                LocalTime::from_epoch_seconds(seconds).to_epoch_seconds(),
+                seconds
+            );
         }
     }
 
     #[test]
     fn local_time_display() {
-        let time = LocalTime { year: 2026, month: 3, day: 5, hour: 7, minute: 8, second: 9 };
+        let time = LocalTime {
+            year: 2026,
+            month: 3,
+            day: 5,
+            hour: 7,
+            minute: 8,
+            second: 9,
+        };
         assert_eq!(format!("{time}"), "2026-03-05 07:08:09");
     }
 
     #[test]
     fn remote_commands_round_trip() {
         for command in RemoteCommand::ALL {
-            assert_eq!(RemoteCommand::from_deployment_id(&command.deployment_id()), Some(command));
+            assert_eq!(
+                RemoteCommand::from_deployment_id(&command.deployment_id()),
+                Some(command)
+            );
         }
-        assert_eq!(&RemoteCommand::Stop.deployment_id(), b"BATX\x01\x02\x00\x00");
-        assert_eq!(&RemoteCommand::SetClock.deployment_id(), b"BATX\x01\x03\x00\x00");
-        assert_eq!(&RemoteCommand::Listen(ListeningMode::Thru).deployment_id(), b"BATX\x01\x04\x06\x00");
+        assert_eq!(
+            &RemoteCommand::Stop.deployment_id(),
+            b"BATX\x01\x02\x00\x00"
+        );
+        assert_eq!(
+            &RemoteCommand::SetClock.deployment_id(),
+            b"BATX\x01\x03\x00\x00"
+        );
+        assert_eq!(
+            &RemoteCommand::Listen(ListeningMode::Thru).deployment_id(),
+            b"BATX\x01\x04\x06\x00"
+        );
         assert_eq!(RemoteCommand::from_deployment_id(b"AUDIOMTH"), None);
     }
 
@@ -729,7 +835,15 @@ mod tests {
             assert_eq!(message.deployment_id(), *id);
             assert_eq!(message.known(), None, "{id:?}");
         }
-        assert_eq!(RemoteMessage::from_deployment_id(b"BATX\x01\x01\x34\x12").unwrap().argument, 0x1234);
-        assert_eq!(RemoteMessage::from_deployment_id(b"BATY\x01\x01\x00\x00"), None);
+        assert_eq!(
+            RemoteMessage::from_deployment_id(b"BATX\x01\x01\x34\x12")
+                .unwrap()
+                .argument,
+            0x1234
+        );
+        assert_eq!(
+            RemoteMessage::from_deployment_id(b"BATY\x01\x01\x00\x00"),
+            None
+        );
     }
 }

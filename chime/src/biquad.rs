@@ -24,25 +24,54 @@ pub struct Biquad {
 impl Biquad {
     /// Pass-through section.
     pub const fn identity() -> Self {
-        Self { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0, z1: 0.0, z2: 0.0 }
+        Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     pub fn lowpass(sample_rate: f32, cutoff_hz: f32, q: f32) -> Self {
         let (cos_w, alpha) = Self::prewarp(sample_rate, cutoff_hz, q);
         let b1 = 1.0 - cos_w;
-        Self::normalised(b1 / 2.0, b1, b1 / 2.0, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
+        Self::normalised(
+            b1 / 2.0,
+            b1,
+            b1 / 2.0,
+            1.0 + alpha,
+            -2.0 * cos_w,
+            1.0 - alpha,
+        )
     }
 
     pub fn highpass(sample_rate: f32, cutoff_hz: f32, q: f32) -> Self {
         let (cos_w, alpha) = Self::prewarp(sample_rate, cutoff_hz, q);
         let b1 = -(1.0 + cos_w);
-        Self::normalised(-b1 / 2.0, b1, -b1 / 2.0, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
+        Self::normalised(
+            -b1 / 2.0,
+            b1,
+            -b1 / 2.0,
+            1.0 + alpha,
+            -2.0 * cos_w,
+            1.0 - alpha,
+        )
     }
 
     /// Band-stop around `centre_hz`, for removing a steady tone.
     pub fn notch(sample_rate: f32, centre_hz: f32, q: f32) -> Self {
         let (cos_w, alpha) = Self::prewarp(sample_rate, centre_hz, q);
-        Self::normalised(1.0, -2.0 * cos_w, 1.0, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
+        Self::normalised(
+            1.0,
+            -2.0 * cos_w,
+            1.0,
+            1.0 + alpha,
+            -2.0 * cos_w,
+            1.0 - alpha,
+        )
     }
 
     fn prewarp(sample_rate: f32, freq_hz: f32, q: f32) -> (f32, f32) {
@@ -52,7 +81,15 @@ impl Biquad {
     }
 
     fn normalised(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
-        Self { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: 0.0, z2: 0.0 }
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     /// Take another section's coefficients and keep this one's state, so a
@@ -102,15 +139,21 @@ impl Butterworth4 {
     /// Pass-through filter, for building a processor in a `static` before its
     /// sample rate is known.
     pub const fn identity() -> Self {
-        Self { sections: [Biquad::identity(); 2] }
+        Self {
+            sections: [Biquad::identity(); 2],
+        }
     }
 
     pub fn lowpass(sample_rate: f32, cutoff_hz: f32) -> Self {
-        Self { sections: BUTTERWORTH4_Q.map(|q| Biquad::lowpass(sample_rate, cutoff_hz, q)) }
+        Self {
+            sections: BUTTERWORTH4_Q.map(|q| Biquad::lowpass(sample_rate, cutoff_hz, q)),
+        }
     }
 
     pub fn highpass(sample_rate: f32, cutoff_hz: f32) -> Self {
-        Self { sections: BUTTERWORTH4_Q.map(|q| Biquad::highpass(sample_rate, cutoff_hz, q)) }
+        Self {
+            sections: BUTTERWORTH4_Q.map(|q| Biquad::highpass(sample_rate, cutoff_hz, q)),
+        }
     }
 
     /// Retune to another filter's coefficients, keeping the state.
@@ -145,4 +188,3 @@ impl Butterworth4 {
         }
     }
 }
-

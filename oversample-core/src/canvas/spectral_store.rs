@@ -231,8 +231,7 @@ pub fn get_max_magnitude_dbfs(file_idx: usize) -> Option<f32> {
         let stores = s.borrow();
         let st = stores.get(&file_idx)?;
         (st.max_magnitude > 0.0).then(|| {
-            20.0 * st.max_magnitude.log10()
-                - crate::dsp::spectrum_level::full_scale_db(st.fft_size)
+            20.0 * st.max_magnitude.log10() - crate::dsp::spectrum_level::full_scale_db(st.fft_size)
         })
     })
 }

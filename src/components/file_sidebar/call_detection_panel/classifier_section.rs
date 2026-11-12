@@ -1008,7 +1008,11 @@ fn place_rows(
         if checking {
             "Checking\u{2026}".to_string()
         } else {
-            count(unlikely_species_count(state, file, method), "species", "species")
+            count(
+                unlikely_species_count(state, file, method),
+                "species",
+                "species",
+            )
         }
     };
     Some(

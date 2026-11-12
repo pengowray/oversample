@@ -61,7 +61,12 @@ fn press(gain: f64) -> Vec<f64> {
 fn main() {
     let dir = PathBuf::from(std::env::args().nth(1).expect("usage: chime_wavs OUT_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
-    let spec = hound::WavSpec { channels: 2, sample_rate: RATE, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: RATE,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
     for carrier in CARRIER_PEAK_DBFS {
         let clean = press(10f64.powf(carrier / 20.0) / PAGE_CARRIER_PEAK);
         for noise in NOISE_RMS_DBFS {

@@ -48,7 +48,11 @@ fn command_chime() -> Vec<f64> {
 fn noise_only(name: &'static str, rms: f64, seed: u64) -> Signal {
     let n = 10 * RATE as usize;
     let samples = channel::to_f32(&channel::add_white_noise_rms(vec![0.0; n], rms, seed));
-    Signal { name, samples, parts: vec![(0, n, false)] }
+    Signal {
+        name,
+        samples,
+        parts: vec![(0, n, false)],
+    }
 }
 
 /// Eight command chimes with their melody at the page's level less `gain_db`, 0.5 s apart, in
@@ -67,7 +71,11 @@ fn chimes_in_noise(name: &'static str, gain_db: f64, noise_rms: f64) -> Signal {
     parts.push((stream.len(), stream.len() + gap, false));
     stream.extend(std::iter::repeat_n(0.0, gap));
     let samples = channel::to_f32(&channel::add_white_noise_rms(stream, noise_rms, 5));
-    Signal { name, samples, parts }
+    Signal {
+        name,
+        samples,
+        parts,
+    }
 }
 
 /// Seconds of CPU spent in the chime parts and in the others, in one run, and the number of
@@ -86,7 +94,9 @@ fn time(signal: &Signal, stage: Stage, per_sample: bool) -> (f64, f64, usize) {
                     }
                 }
             } else {
-                decoder.push_block(black_box(chunk), |_, event| chimes += matches!(event, Event::Chime(_)) as usize);
+                decoder.push_block(black_box(chunk), |_, event| {
+                    chimes += matches!(event, Event::Chime(_)) as usize
+                });
             }
         }
         let t = started.elapsed().as_secs_f64();
@@ -120,12 +130,20 @@ fn main() {
     ];
     let stages = [Stage::FrontEnd, Stage::Search, Stage::Walk];
     for (per_sample, heading) in [
-        (false, "with push_block, in chunks of 1024 samples, as the app feeds it"),
+        (
+            false,
+            "with push_block, in chunks of 1024 samples, as the app feeds it",
+        ),
         (true, "with push, one sample at a time"),
     ] {
-        println!("One decoder {heading}, ms of CPU per second of 192 kHz audio, smallest of {RUNS} runs:");
+        println!(
+            "One decoder {heading}, ms of CPU per second of 192 kHz audio, smallest of {RUNS} runs:"
+        );
         println!();
-        println!("{:<42}{:>11}{:>11}{:>9}{:>9}{:>7}", "", "front end", "detection", "walk", "total", "read");
+        println!(
+            "{:<42}{:>11}{:>11}{:>9}{:>9}{:>7}",
+            "", "front end", "detection", "walk", "total", "read"
+        );
         for signal in &signals {
             print_rows(signal, &time_stages(signal, &stages, per_sample));
         }
@@ -134,7 +152,14 @@ fn main() {
 }
 
 fn print_rows(signal: &Signal, times: &[(f64, f64, usize)]) {
-    let samples = |chime: bool| -> usize { signal.parts.iter().filter(|p| p.2 == chime).map(|p| p.1 - p.0).sum() };
+    let samples = |chime: bool| -> usize {
+        signal
+            .parts
+            .iter()
+            .filter(|p| p.2 == chime)
+            .map(|p| p.1 - p.0)
+            .sum()
+    };
     for chime in [false, true] {
         let n = samples(chime);
         if n == 0 {
@@ -147,7 +172,17 @@ fn print_rows(signal: &Signal, times: &[(f64, f64, usize)]) {
             (false, _) => format!("{}: gaps", signal.name),
             (true, _) => format!("{}: chimes", signal.name),
         };
-        let read = if chime { format!("{}/8", times[2].2) } else { String::new() };
-        println!("{label:<42}{:>11.2}{:>11.2}{:>9.2}{:>9.2}{read:>7}", at(0), at(1) - at(0), at(2) - at(1), at(2));
+        let read = if chime {
+            format!("{}/8", times[2].2)
+        } else {
+            String::new()
+        };
+        println!(
+            "{label:<42}{:>11.2}{:>11.2}{:>9.2}{:>9.2}{read:>7}",
+            at(0),
+            at(1) - at(0),
+            at(2) - at(1),
+            at(2)
+        );
     }
 }

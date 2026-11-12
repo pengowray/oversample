@@ -134,12 +134,18 @@ fn carrier_rms_measures_only_the_carrier_during_the_chime() {
 
     let mix = render.mix();
     let measured = carrier_rms(&mix, FS);
-    assert!((db(measured) - db(truth)).abs() < 0.25, "truth {truth}, measured {measured}");
+    assert!(
+        (db(measured) - db(truth)).abs() < 0.25,
+        "truth {truth}, measured {measured}"
+    );
 
     // One second of silence on each side must not change the measurement.
     let padded = pad(mix, FS as usize, FS as usize);
     let measured_padded = carrier_rms(&padded, FS);
-    assert!((db(measured_padded) - db(truth)).abs() < 0.25, "padded: {measured_padded}");
+    assert!(
+        (db(measured_padded) - db(truth)).abs() < 0.25,
+        "padded: {measured_padded}"
+    );
 }
 
 fn energy_after(response: &[f64], start: usize) -> f64 {
@@ -175,16 +181,28 @@ fn small_profile_has_reflections_at_the_right_times_and_levels() {
         let response = impulse_response(sample_rate, ReverbProfile::Small);
         assert_eq!(response[0], 1.0);
         let duration = response.len() as f64 / sample_rate as f64;
-        assert!(duration < 0.010, "small profile has no tail, length {duration} s");
+        assert!(
+            duration < 0.010,
+            "small profile has no tail, length {duration} s"
+        );
 
         // The energy near each reflection, in a window a little wider than the sinc
         // kernel, must match its gain. The kernel's energy is 1 at any delay.
-        for (delay_ms, gain_db) in [(1.07, -6.0), (2.33, -10.0), (3.71, -13.0), (5.29, -16.0), (7.93, -20.0)] {
+        for (delay_ms, gain_db) in [
+            (1.07, -6.0),
+            (2.33, -10.0),
+            (3.71, -13.0),
+            (5.29, -16.0),
+            (7.93, -20.0),
+        ] {
             let centre = delay_ms / 1000.0 * sample_rate as f64;
             let half_width = 0.0002 * sample_rate as f64;
             let window_start = (centre - half_width) as usize;
             let window_end = ((centre + half_width) as usize).min(response.len());
-            let energy: f64 = response[window_start..window_end].iter().map(|s| s * s).sum();
+            let energy: f64 = response[window_start..window_end]
+                .iter()
+                .map(|s| s * s)
+                .sum();
             let level = 10.0 * energy.log10();
             assert!(
                 (level - gain_db).abs() < 0.6,
@@ -201,7 +219,10 @@ fn medium_profile_tail_has_an_rt60_of_about_150_ms() {
         // Start after the last reflection, which is at about 30 ms.
         let start = (0.031 * sample_rate as f64) as usize;
         let rt60 = schroeder_rt60(&response, start, sample_rate);
-        assert!((rt60 - 0.150).abs() < 0.015, "{sample_rate} Hz: RT60 {rt60} s");
+        assert!(
+            (rt60 - 0.150).abs() < 0.015,
+            "{sample_rate} Hz: RT60 {rt60} s"
+        );
 
         let tail_end = response.len() as f64 / sample_rate as f64;
         assert!(tail_end > 0.150, "response length {tail_end} s");
@@ -214,7 +235,10 @@ fn large_profile_tail_has_an_rt60_of_about_500_ms() {
         let response = impulse_response(sample_rate, ReverbProfile::Large);
         let start = (0.013 * sample_rate as f64) as usize;
         let rt60 = schroeder_rt60(&response, start, sample_rate);
-        assert!((rt60 - 0.500).abs() < 0.05, "{sample_rate} Hz: RT60 {rt60} s");
+        assert!(
+            (rt60 - 0.500).abs() < 0.05,
+            "{sample_rate} Hz: RT60 {rt60} s"
+        );
     }
 }
 
@@ -226,15 +250,24 @@ fn tail_energy_is_as_documented_at_every_sample_rate() {
         let response = impulse_response(sample_rate, profile);
         energy_after(&response, (after_seconds * sample_rate as f64) as usize)
     };
-    for (profile, after) in [(ReverbProfile::Medium, 0.040), (ReverbProfile::Large, 0.020)] {
+    for (profile, after) in [
+        (ReverbProfile::Medium, 0.040),
+        (ReverbProfile::Large, 0.020),
+    ] {
         let at_48 = 10.0 * tail_energy(48_000, profile, after).log10();
         let at_192 = 10.0 * tail_energy(192_000, profile, after).log10();
-        assert!((at_48 - at_192).abs() < 0.5, "{profile:?}: {at_48} dB and {at_192} dB");
+        assert!(
+            (at_48 - at_192).abs() < 0.5,
+            "{profile:?}: {at_48} dB and {at_192} dB"
+        );
     }
     // The medium tail is -9 dB from 10 ms onwards. From 40 ms onwards it has lost
     // 60 dB * (30 ms / 150 ms) = 12 dB more.
     let medium = 10.0 * tail_energy(48_000, ReverbProfile::Medium, 0.040).log10();
-    assert!((medium - (-21.0)).abs() < 1.0, "medium tail after 40 ms: {medium} dB");
+    assert!(
+        (medium - (-21.0)).abs() < 1.0,
+        "medium tail after 40 ms: {medium} dB"
+    );
 }
 
 #[test]
@@ -255,7 +288,10 @@ fn reverb_of_a_short_burst_decays_at_the_profile_rate() {
     };
     let early = level_at(0.050);
     let late = level_at(0.250);
-    assert!((early - late - 24.0).abs() < 6.0, "levels {early} dB and {late} dB");
+    assert!(
+        (early - late - 24.0).abs() < 6.0,
+        "levels {early} dB and {late} dB"
+    );
 }
 
 #[test]
@@ -318,12 +354,20 @@ fn upsampled_carrier_has_images_only_with_zero_order_hold() {
     // Repeating each sample 4 times is a 4-point moving average at 192 kHz, with the
     // magnitude response |sin(4 pi f / 192000) / (4 sin(pi f / 192000))|. That gives
     // 0.7957 at 18 kHz and 0.4900 at 30 kHz, which is a difference of -4.21 dB.
-    assert!((db(image / carrier) - (-4.21)).abs() < 0.05, "image {} dB", db(image / carrier));
+    assert!(
+        (db(image / carrier) - (-4.21)).abs() < 0.05,
+        "image {} dB",
+        db(image / carrier)
+    );
 
     let smooth = upsample_sinc(input, 4);
     let carrier = fft_band_rms(&smooth, 192_000, 17_000.0, 19_000.0);
     let image = fft_band_rms(&smooth, 192_000, 29_000.0, 31_000.0);
-    assert!(db(image / carrier) < -60.0, "image {} dB", db(image / carrier));
+    assert!(
+        db(image / carrier) < -60.0,
+        "image {} dB",
+        db(image / carrier)
+    );
 }
 
 #[test]
@@ -345,14 +389,23 @@ fn speaker_nonlinearity_adds_the_expected_harmonics() {
     // For A sin(x): a2 A^2 / 2 at twice the frequency, a3 A^3 / 4 at three times.
     let second = fft_band_rms(&output, FS, 5900.0, 6100.0) * 2f64.sqrt();
     let third = fft_band_rms(&output, FS, 8900.0, 9100.0) * 2f64.sqrt();
-    assert!((second - 0.1 * 0.25 / 2.0).abs() < 1e-4, "second harmonic {second}");
-    assert!((third - 0.2 * 0.125 / 4.0).abs() < 1e-4, "third harmonic {third}");
+    assert!(
+        (second - 0.1 * 0.25 / 2.0).abs() < 1e-4,
+        "second harmonic {second}"
+    );
+    assert!(
+        (third - 0.2 * 0.125 / 4.0).abs() < 1e-4,
+        "third harmonic {third}"
+    );
 }
 
 #[test]
 fn simple_effects_do_what_they_say() {
     assert_eq!(invert(vec![0.5, -0.25]), [-0.5, 0.25]);
-    assert_eq!(clip(gain_db(vec![1.0, -1.0, 0.1], 20.0), 1.0), [1.0, -1.0, 1.0]);
+    assert_eq!(
+        clip(gain_db(vec![1.0, -1.0, 0.1], 20.0), 1.0),
+        [1.0, -1.0, 1.0]
+    );
     assert_eq!(dc_offset(vec![0.5], 0.25), [0.75]);
     assert_eq!(pad(vec![1.0], 2, 1), [0.0, 0.0, 1.0, 0.0]);
     let halved = gain_db(vec![1.0], -6.0206);
@@ -369,8 +422,15 @@ fn hum_has_the_right_fundamental_and_harmonics() {
     let output = hum(vec![0.0; size], FS, frequency, -40.0);
     let fundamental = fft_band_rms(&output, FS, 45.0, 55.0) * 2f64.sqrt();
     let second = fft_band_rms(&output, FS, 95.0, 105.0) * 2f64.sqrt();
-    assert!((db(fundamental) - (-40.0)).abs() < 0.2, "fundamental {} dB", db(fundamental));
-    assert!((second / fundamental - 0.5).abs() < 0.02, "second harmonic ratio");
+    assert!(
+        (db(fundamental) - (-40.0)).abs() < 0.2,
+        "fundamental {} dB",
+        db(fundamental)
+    );
+    assert!(
+        (second / fundamental - 0.5).abs() < 0.02,
+        "second harmonic ratio"
+    );
     let above_harmonics = fft_band_rms(&output, FS, 300.0, 20_000.0);
     assert!(above_harmonics < 1e-5, "{above_harmonics}");
 }
@@ -381,10 +441,17 @@ fn clicks_arrive_at_about_the_requested_rate() {
     let output = clicks(vec![0.0; FS as usize * seconds], FS, 50.0, -6.0, 3);
     let hits: Vec<f64> = output.iter().cloned().filter(|s| *s != 0.0).collect();
     let expected = 50 * seconds;
-    assert!(hits.len().abs_diff(expected) < 100, "{} clicks, expected {expected}", hits.len());
+    assert!(
+        hits.len().abs_diff(expected) < 100,
+        "{} clicks, expected {expected}",
+        hits.len()
+    );
     assert!(hits.iter().all(|s| (s.abs() - 0.5012).abs() < 0.001));
     assert!(hits.iter().any(|s| *s > 0.0) && hits.iter().any(|s| *s < 0.0));
-    assert_eq!(output, clicks(vec![0.0; FS as usize * seconds], FS, 50.0, -6.0, 3));
+    assert_eq!(
+        output,
+        clicks(vec![0.0; FS as usize * seconds], FS, 50.0, -6.0, 3)
+    );
 }
 
 #[test]
@@ -397,5 +464,9 @@ fn bat_calls_stay_between_40_and_80_khz() {
     let in_band = fft_band_rms(&output, rate, 40_000.0, 80_000.0);
     let carrier_band = fft_band_rms(&output, rate, 17_000.0, 19_000.0);
     assert!((db(in_band) - db(rms(&output))).abs() < 0.2);
-    assert!(db(carrier_band / in_band) < -40.0, "{} dB at 18 kHz", db(carrier_band / in_band));
+    assert!(
+        db(carrier_band / in_band) < -40.0,
+        "{} dB at 18 kHz",
+        db(carrier_band / in_band)
+    );
 }

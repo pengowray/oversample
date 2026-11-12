@@ -82,13 +82,19 @@ fn exit_code(any_error: bool, any_chime: bool) -> u8 {
 fn decode_file(path: &Path, out: &mut impl Write) -> Result<usize, Box<dyn Error>> {
     let mut file = BufReader::new(File::open(path)?);
     let chunks = read_chunks(&mut file)?;
-    let spec = chunks.format.ok_or("the file is not a WAV file with a fmt chunk")??;
+    let spec = chunks
+        .format
+        .ok_or("the file is not a WAV file with a fmt chunk")??;
     let (data_start, data_size) = chunks.data.ok_or("the file has no data chunk")?;
     // An empty recording can have other chunks after its data chunk, and those end at the
     // end of the file. Samples read as chunks end anywhere else.
     let file_size = file.seek(SeekFrom::End(0))?;
     if data_size == 0 && chunks.end.abs_diff(file_size) > 1 {
-        return Err(format!("the data chunk declares a size of 0, but {} bytes follow it", file_size - data_start).into());
+        return Err(format!(
+            "the data chunk declares a size of 0, but {} bytes follow it",
+            file_size - data_start
+        )
+        .into());
     }
     let bext = chunks.bext;
     let frames = data_size / (spec.bytes_per_sample() * spec.channels as u64);
@@ -99,11 +105,17 @@ fn decode_file(path: &Path, out: &mut impl Write) -> Result<usize, Box<dyn Error
         )
         .into());
     }
-    writeln!(out, "{}: {}", path.display(), describe_format(&spec, frames))?;
+    writeln!(
+        out,
+        "{}: {}",
+        path.display(),
+        describe_format(&spec, frames)
+    )?;
 
     let channels = spec.channels as usize;
-    let mut decoders: Vec<Decoder> =
-        (0..channels).map(|_| Decoder::new(spec.sample_rate).expect("rate was checked")).collect();
+    let mut decoders: Vec<Decoder> = (0..channels)
+        .map(|_| Decoder::new(spec.sample_rate).expect("rate was checked"))
+        .collect();
     let mut report = EventReport::new(spec.sample_rate, channels, bext.as_ref(), frames);
 
     let mut read_error = None;
@@ -161,10 +173,23 @@ struct EventReport {
 
 impl EventReport {
     fn new(sample_rate: u32, channels: usize, bext: Option<&Bext>, frames: u64) -> Self {
-        let (clock_start, clock_note) = match bext.map(|fields| clock_at_sample_zero(fields, sample_rate, frames)) {
-            None => (None, Some("The file has no bext chunk, so the X8 clock reading is unknown.".to_string())),
-            Some(Err(problem)) => (None, Some(format!("{problem}, so the X8 clock reading is unknown."))),
-            Some(Ok(clock)) => (Some(clock.start), clock.time_reference_lead.and_then(describe_time_reference_lead)),
+        let (clock_start, clock_note) = match bext
+            .map(|fields| clock_at_sample_zero(fields, sample_rate, frames))
+        {
+            None => (
+                None,
+                Some("The file has no bext chunk, so the X8 clock reading is unknown.".to_string()),
+            ),
+            Some(Err(problem)) => (
+                None,
+                Some(format!("{problem}, so the X8 clock reading is unknown.")),
+            ),
+            Some(Ok(clock)) => (
+                Some(clock.start),
+                clock
+                    .time_reference_lead
+                    .and_then(describe_time_reference_lead),
+            ),
         };
         Self {
             sample_rate,
@@ -175,7 +200,12 @@ impl EventReport {
         }
     }
 
-    fn write_event(&mut self, out: &mut impl Write, channel: usize, event: Event) -> io::Result<()> {
+    fn write_event(
+        &mut self,
+        out: &mut impl Write,
+        channel: usize,
+        event: Event,
+    ) -> io::Result<()> {
         self.event_seen[channel] = true;
         match event {
             Event::Chime(chime) => {
@@ -185,7 +215,8 @@ impl EventReport {
                     return Ok(());
                 };
                 if let Some(start) = self.clock_start {
-                    let line = describe_clock(&message, chime.start_sample, self.sample_rate, start);
+                    let line =
+                        describe_clock(&message, chime.start_sample, self.sample_rate, start);
                     writeln!(out, "{line}")?;
                 }
                 if let Some(note) = self.clock_note.take() {
@@ -193,7 +224,11 @@ impl EventReport {
                 }
             }
             Event::Unreadable(unreadable) => {
-                writeln!(out, "{}", describe_unreadable(channel, self.sample_rate, &unreadable))?;
+                writeln!(
+                    out,
+                    "{}",
+                    describe_unreadable(channel, self.sample_rate, &unreadable)
+                )?;
             }
         }
         Ok(())
@@ -202,7 +237,11 @@ impl EventReport {
 
 /// Returns `count` samples from `reader`, with PCM scaled to +-1.0. The reader must be at
 /// the first sample.
-fn samples_as_f32<R: Read>(mut reader: R, spec: &WavSpec, count: u64) -> impl Iterator<Item = io::Result<f32>> {
+fn samples_as_f32<R: Read>(
+    mut reader: R,
+    spec: &WavSpec,
+    count: u64,
+) -> impl Iterator<Item = io::Result<f32>> {
     let (format, size) = (spec.sample_format, spec.bytes_per_sample() as usize);
     let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
     (0..count).map(move |_| {
@@ -242,7 +281,11 @@ impl WavSpec {
 // -- Report lines ------------------------------------------------------------
 
 fn plural(count: u64, singular: &str) -> String {
-    if count == 1 { format!("1 {singular}") } else { format!("{count} {singular}s") }
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {singular}s")
+    }
 }
 
 /// For example "192000 Hz, 2 channels, 32-bit float, 27.7 s".
@@ -308,11 +351,20 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
         let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
         contents += &match message.remote() {
             Some(remote) => match remote.known() {
-                Some(RemoteCommand::Start) => format!("Phone remote: start recording (deployment ID {hex}). "),
-                Some(RemoteCommand::Stop) => format!("Phone remote: stop recording (deployment ID {hex}). "),
-                Some(RemoteCommand::SetClock) => format!("Phone remote: set the clock (deployment ID {hex}). "),
+                Some(RemoteCommand::Start) => {
+                    format!("Phone remote: start recording (deployment ID {hex}). ")
+                }
+                Some(RemoteCommand::Stop) => {
+                    format!("Phone remote: stop recording (deployment ID {hex}). ")
+                }
+                Some(RemoteCommand::SetClock) => {
+                    format!("Phone remote: set the clock (deployment ID {hex}). ")
+                }
                 Some(RemoteCommand::Listen(mode)) => {
-                    format!("Phone remote: listening mode {} (deployment ID {hex}). ", mode.name())
+                    format!(
+                        "Phone remote: listening mode {} (deployment ID {hex}). ",
+                        mode.name()
+                    )
                 }
                 None => format!(
                     "Phone remote: unknown command (version {}, command {}, argument {}, deployment ID {hex}). ",
@@ -340,7 +392,12 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
 /// the X8 clock only to about 1 s: OriginationTime is in whole seconds, and the X8 writes it
 /// up to about 0.4 s after the last sample. Several takes of chimes from one phone would
 /// show how far the difference moves between takes.
-fn describe_clock(message: &TimeMessage, start_sample: i64, sample_rate: u32, clock_start: f64) -> String {
+fn describe_clock(
+    message: &TimeMessage,
+    start_sample: i64,
+    sample_rate: u32,
+    clock_start: f64,
+) -> String {
     let clock = (clock_start + start_sample as f64 / sample_rate as f64).round() as i64;
     let phone = message.unix_time as i64 + message.timezone_minutes as i64 * 60;
     let difference = clock - phone;
@@ -355,7 +412,10 @@ fn describe_clock(message: &TimeMessage, start_sample: i64, sample_rate: u32, cl
             describe_long_duration(magnitude)
         )
     };
-    format!("X8 clock at that moment: {}. {comparison}", LocalTime::from_epoch_seconds(clock))
+    format!(
+        "X8 clock at that moment: {}. {comparison}",
+        LocalTime::from_epoch_seconds(clock)
+    )
 }
 
 /// A note on TimeReference when it is far enough from the start that OriginationTime gives
@@ -384,7 +444,11 @@ fn describe_long_duration(seconds: u64) -> String {
         return String::new();
     }
     let total_minutes = (seconds + 30) / 60;
-    let (days, hours, minutes) = (total_minutes / 1440, total_minutes / 60 % 24, total_minutes % 60);
+    let (days, hours, minutes) = (
+        total_minutes / 1440,
+        total_minutes / 60 % 24,
+        total_minutes % 60,
+    );
     if days > 0 {
         format!(" ({}, {hours} h {minutes} min)", plural(days, "day"))
     } else {
@@ -399,7 +463,9 @@ fn describe_unreadable(channel: usize, sample_rate: u32, unreadable: &Unreadable
         UnreadableReason::BadCrc => format!("CRC check failed after {bytes}"),
         UnreadableReason::SignalLost => format!("signal lost after {bytes}"),
         UnreadableReason::TooManyBytes if unreadable.bytes_received > MAX_MESSAGE_BYTES => {
-            format!("no stop symbols after {bytes}, and the longest message is {MAX_MESSAGE_BYTES} bytes")
+            format!(
+                "no stop symbols after {bytes}, and the longest message is {MAX_MESSAGE_BYTES} bytes"
+            )
         }
         UnreadableReason::TooManyBytes => {
             format!("no stop symbols after {bytes}, and the longest chime lasts about 3.4 s")
@@ -474,7 +540,12 @@ fn read_chunks<R: Read + Seek>(reader: &mut R) -> io::Result<Chunks> {
     let mut position = 12u64;
     let mut chunk_header = [0u8; 8];
     while read_or_eof(reader, &mut chunk_header)? {
-        let size = u32::from_le_bytes([chunk_header[4], chunk_header[5], chunk_header[6], chunk_header[7]]) as u64;
+        let size = u32::from_le_bytes([
+            chunk_header[4],
+            chunk_header[5],
+            chunk_header[6],
+            chunk_header[7],
+        ]) as u64;
         let id = &chunk_header[0..4];
         if id == b"fmt " {
             let mut fields = [0u8; 40];
@@ -532,7 +603,10 @@ fn parse_fmt(fields: &[u8]) -> Result<WavSpec, String> {
                 ))
             }
         }
-        (format, bits) => Err(format!("{bits}-bit {format:?} samples in {} channels are not supported", spec.channels)),
+        (format, bits) => Err(format!(
+            "{bits}-bit {format:?} samples in {} channels are not supported",
+            spec.channels
+        )),
     }
 }
 
@@ -543,7 +617,11 @@ fn parse_bext(fields: &[u8; BEXT_FIELDS_END]) -> Bext {
     origination_time.copy_from_slice(&fields[BEXT_TIME_OFFSET..BEXT_TIME_OFFSET + 8]);
     let mut time_reference = [0u8; 8];
     time_reference.copy_from_slice(&fields[BEXT_TIME_REFERENCE_OFFSET..BEXT_FIELDS_END]);
-    Bext { origination_date, origination_time, time_reference: u64::from_le_bytes(time_reference) }
+    Bext {
+        origination_date,
+        origination_time,
+        time_reference: u64::from_le_bytes(time_reference),
+    }
 }
 
 /// Fills `buffer`, or returns `Ok(false)` if the input ends first.
@@ -560,7 +638,10 @@ fn parse_digits(text: &[u8]) -> Option<u32> {
     if text.is_empty() || !text.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    Some(text.iter().fold(0, |value, digit| value * 10 + (digit - b'0') as u32))
+    Some(
+        text.iter()
+            .fold(0, |value, digit| value * 10 + (digit - b'0') as u32),
+    )
 }
 
 /// Reads OriginationDate and OriginationTime. The separators can be any character,
@@ -603,10 +684,19 @@ struct ClockStart {
 /// at a split the next file gets the old one's plus its length. In the split take
 /// 260306_0061 to 0063, TimeReference was about 4 s early in all three files, while the end
 /// times less the lengths ran on from one file to the next to within 0.4 s.
-fn clock_at_sample_zero(bext: &Bext, sample_rate: u32, frames: u64) -> Result<ClockStart, &'static str> {
-    let end = parse_origination(bext).ok_or("The bext chunk has no usable date and time")?.to_epoch_seconds() as f64;
+fn clock_at_sample_zero(
+    bext: &Bext,
+    sample_rate: u32,
+    frames: u64,
+) -> Result<ClockStart, &'static str> {
+    let end = parse_origination(bext)
+        .ok_or("The bext chunk has no usable date and time")?
+        .to_epoch_seconds() as f64;
     let start = end - frames as f64 / sample_rate as f64;
-    Ok(ClockStart { start, time_reference_lead: time_reference_lead(bext, sample_rate, start) })
+    Ok(ClockStart {
+        start,
+        time_reference_lead: time_reference_lead(bext, sample_rate, start),
+    })
 }
 
 /// How many seconds TimeReference is before `start`, taking it on whichever day is nearest.
@@ -618,7 +708,11 @@ fn time_reference_lead(bext: &Bext, sample_rate: u32, start: f64) -> Option<f64>
         return None;
     }
     let lead = (start - seconds).rem_euclid(SECONDS_IN_DAY);
-    Some(if lead > SECONDS_IN_DAY / 2.0 { lead - SECONDS_IN_DAY } else { lead })
+    Some(if lead > SECONDS_IN_DAY / 2.0 {
+        lead - SECONDS_IN_DAY
+    } else {
+        lead
+    })
 }
 
 #[cfg(test)]
@@ -682,15 +776,27 @@ mod tests {
     /// fmt, data.
     fn x8_style_file(bext: &[u8], channels: u16, frames: usize) -> Vec<u8> {
         let data = vec![0u8; frames * channels as usize * 4];
-        riff(&[chunk(b"bext", bext), chunk(b"JUNK", &[0u8; 4372]), float_fmt(channels, RATE), chunk(b"data", &data)])
+        riff(&[
+            chunk(b"bext", bext),
+            chunk(b"JUNK", &[0u8; 4372]),
+            float_fmt(channels, RATE),
+            chunk(b"data", &data),
+        ])
     }
 
     fn temp_path(name: &str) -> PathBuf {
-        env::temp_dir().join(format!("chime_decode_wav_test_{}_{name}", std::process::id()))
+        env::temp_dir().join(format!(
+            "chime_decode_wav_test_{}_{name}",
+            std::process::id()
+        ))
     }
 
     fn bext(date: &[u8; 10], time: &[u8; 8], time_reference: u64) -> Bext {
-        Bext { origination_date: *date, origination_time: *time, time_reference }
+        Bext {
+            origination_date: *date,
+            origination_time: *time,
+            time_reference,
+        }
     }
 
     fn local_from_clock(seconds: f64) -> LocalTime {
@@ -698,7 +804,12 @@ mod tests {
     }
 
     fn message(unix_time: u32, timezone_minutes: i16) -> TimeMessage {
-        TimeMessage { unix_time, timezone_minutes, location: None, deployment_id: None }
+        TimeMessage {
+            unix_time,
+            timezone_minutes,
+            location: None,
+            deployment_id: None,
+        }
     }
 
     fn chime_with_payload(payload: &[u8]) -> Chime {
@@ -717,7 +828,11 @@ mod tests {
 
     #[test]
     fn read_bext_finds_the_fields_in_x8_layout() {
-        let bytes = x8_style_file(&bext_payload(b"2026-03-15", b"09:00:40", 6_223_101_696), 2, 10);
+        let bytes = x8_style_file(
+            &bext_payload(b"2026-03-15", b"09:00:40", 6_223_101_696),
+            2,
+            10,
+        );
         let parsed = read_bext(&mut Cursor::new(&bytes)).unwrap().unwrap();
         assert_eq!(parsed, bext(b"2026-03-15", b"09:00:40", 6_223_101_696));
     }
@@ -741,7 +856,13 @@ mod tests {
             chunk(b"data", &[0u8; 8]),
             chunk(b"bext", &bext_payload(b"2026-11-06", b"16:40:02", 42)),
         ]);
-        assert_eq!(read_bext(&mut Cursor::new(&bytes)).unwrap().unwrap().time_reference, 42);
+        assert_eq!(
+            read_bext(&mut Cursor::new(&bytes))
+                .unwrap()
+                .unwrap()
+                .time_reference,
+            42
+        );
     }
 
     #[test]
@@ -752,10 +873,16 @@ mod tests {
         let short_bext = riff(&[chunk(b"bext", &[0u8; 100]), float_fmt(1, RATE)]);
         assert_eq!(read_bext(&mut Cursor::new(&short_bext)).unwrap(), None);
 
-        let cut_off = &riff(&[chunk(b"bext", &bext_payload(b"2026-11-06", b"16:40:02", 42))])[..200];
+        let cut_off = &riff(&[chunk(
+            b"bext",
+            &bext_payload(b"2026-11-06", b"16:40:02", 42),
+        )])[..200];
         assert_eq!(read_bext(&mut Cursor::new(cut_off)).unwrap(), None);
 
-        assert_eq!(read_bext(&mut Cursor::new(b"not a wav file".as_slice())).unwrap(), None);
+        assert_eq!(
+            read_bext(&mut Cursor::new(b"not a wav file".as_slice())).unwrap(),
+            None
+        );
         assert_eq!(read_bext(&mut Cursor::new(b"".as_slice())).unwrap(), None);
     }
 
@@ -773,22 +900,35 @@ mod tests {
 
     #[test]
     fn a_chunk_of_odd_size_before_the_data_is_stepped_over() {
-        let samples: Vec<u8> = [0.5f32, -0.25].iter().flat_map(|s| s.to_le_bytes()).collect();
-        let bytes = riff(&[float_fmt(1, RATE), chunk(b"bext", &[0u8; 603]), chunk(b"data", &samples)]);
+        let samples: Vec<u8> = [0.5f32, -0.25]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let bytes = riff(&[
+            float_fmt(1, RATE),
+            chunk(b"bext", &[0u8; 603]),
+            chunk(b"data", &samples),
+        ]);
         let path = temp_path("odd_chunk.wav");
         std::fs::write(&path, &bytes).unwrap();
         let mut output = Vec::new();
         let result = decode_file(&path, &mut output);
         std::fs::remove_file(&path).unwrap();
         result.unwrap();
-        assert!(String::from_utf8(output).unwrap().contains("192000 Hz, 1 channel, 32-bit float"));
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("192000 Hz, 1 channel, 32-bit float")
+        );
 
         let chunks = read_chunks(&mut Cursor::new(&bytes)).unwrap();
         let (start, size) = chunks.data.unwrap();
         let mut reader = Cursor::new(&bytes);
         reader.seek(SeekFrom::Start(start)).unwrap();
         let spec = chunks.format.unwrap().unwrap();
-        let values: Vec<f32> = samples_as_f32(reader, &spec, size / 4).map(|s| s.unwrap()).collect();
+        let values: Vec<f32> = samples_as_f32(reader, &spec, size / 4)
+            .map(|s| s.unwrap())
+            .collect();
         assert_eq!(values, [0.5, -0.25]);
     }
 
@@ -807,7 +947,11 @@ mod tests {
         fmt.extend_from_slice(&3u16.to_le_bytes());
         fmt.extend_from_slice(&[0u8; 14]);
         let bytes = riff(&[chunk(b"fmt ", &fmt), chunk(b"data", &[0u8; 32])]);
-        let spec = read_chunks(&mut Cursor::new(&bytes)).unwrap().format.unwrap().unwrap();
+        let spec = read_chunks(&mut Cursor::new(&bytes))
+            .unwrap()
+            .format
+            .unwrap()
+            .unwrap();
         assert_eq!(spec.sample_format, SampleFormat::Float);
         assert_eq!(spec.channels, 8);
         assert_eq!(spec.bits_per_sample, 32);
@@ -830,9 +974,19 @@ mod tests {
         // is 0.27 s before it.
         assert_eq!(
             local_from_clock(clock.start),
-            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 12 }
+            LocalTime {
+                year: 2026,
+                month: 3,
+                day: 15,
+                hour: 9,
+                minute: 0,
+                second: 12
+            }
         );
-        assert!((clock.time_reference_lead.unwrap() - 0.268).abs() < 0.001, "{clock:?}");
+        assert!(
+            (clock.time_reference_lead.unwrap() - 0.268).abs() < 0.001,
+            "{clock:?}"
+        );
     }
 
     #[test]
@@ -844,7 +998,14 @@ mod tests {
         let clock = clock_at_sample_zero(&fields, RATE, 20 * RATE as u64).unwrap();
         assert_eq!(
             local_from_clock(clock.start),
-            LocalTime { year: 2026, month: 12, day: 31, hour: 23, minute: 59, second: 50 }
+            LocalTime {
+                year: 2026,
+                month: 12,
+                day: 31,
+                hour: 23,
+                minute: 59,
+                second: 50
+            }
         );
         assert_eq!(clock.time_reference_lead, Some(0.0));
     }
@@ -860,7 +1021,9 @@ mod tests {
 
     #[test]
     fn time_reference_is_left_out_when_it_is_not_set() {
-        let clock = |time_reference| clock_at_sample_zero(&bext(b"2026-03-15", b"09:00:40", time_reference), RATE, 100);
+        let clock = |time_reference| {
+            clock_at_sample_zero(&bext(b"2026-03-15", b"09:00:40", time_reference), RATE, 100)
+        };
         assert_eq!(clock(0).unwrap().time_reference_lead, None);
         assert_eq!(clock((1 << 63) + 12_345).unwrap().time_reference_lead, None);
     }
@@ -869,9 +1032,23 @@ mod tests {
     fn a_time_reference_above_one_day_wraps() {
         // TimeReference adds up over split files, so it can pass midnight.
         let time_reference = (86_400 + 60) * RATE as u64;
-        let clock = clock_at_sample_zero(&bext(b"2026-03-16", b"00:01:30", time_reference), RATE, 30 * RATE as u64);
+        let clock = clock_at_sample_zero(
+            &bext(b"2026-03-16", b"00:01:30", time_reference),
+            RATE,
+            30 * RATE as u64,
+        );
         let clock = clock.unwrap();
-        assert_eq!(local_from_clock(clock.start), LocalTime { year: 2026, month: 3, day: 16, hour: 0, minute: 1, second: 0 });
+        assert_eq!(
+            local_from_clock(clock.start),
+            LocalTime {
+                year: 2026,
+                month: 3,
+                day: 16,
+                hour: 0,
+                minute: 1,
+                second: 0
+            }
+        );
         assert_eq!(clock.time_reference_lead, Some(0.0));
     }
 
@@ -884,8 +1061,12 @@ mod tests {
             let fields = bext(b"2026-10-26", time, time_reference);
             let mut report = EventReport::new(RATE, 1, Some(&fields), 30 * RATE as u64);
             let mut output = Vec::new();
-            report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
-            report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+            report
+                .write_event(&mut output, 0, Event::Chime(chime))
+                .unwrap();
+            report
+                .write_event(&mut output, 0, Event::Chime(chime))
+                .unwrap();
             String::from_utf8(output).unwrap()
         };
 
@@ -911,7 +1092,14 @@ mod tests {
         let fields = bext(b"2026:03:15", b"09.00.40", 6_223_101_696);
         assert_eq!(
             parse_origination(&fields).unwrap(),
-            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 40 }
+            LocalTime {
+                year: 2026,
+                month: 3,
+                day: 15,
+                hour: 9,
+                minute: 0,
+                second: 40
+            }
         );
     }
 
@@ -932,17 +1120,31 @@ mod tests {
         // -33.87, 151.21, packed as the connector packs them.
         payload.extend_from_slice(&[0x50, 0x2F, 0xFB, 0x8D, 0x40, 0x1A, 0x48]);
         let line = describe_chime(1, RATE, &chime_with_payload(&payload));
-        assert!(line.starts_with("Channel 2 at 3.512 s: phone time 2026-10-26 04:01:20 UTC-03:32"), "{line}");
-        assert!(line.contains("Location -33.870000, 151.210000. Signal"), "{line}");
+        assert!(
+            line.starts_with("Channel 2 at 3.512 s: phone time 2026-10-26 04:01:20 UTC-03:32"),
+            "{line}"
+        );
+        assert!(
+            line.contains("Location -33.870000, 151.210000. Signal"),
+            "{line}"
+        );
 
         let mut with_id = payload[..6].to_vec();
         with_id.extend_from_slice(&RemoteCommand::Stop.deployment_id());
         let line = describe_chime(0, RATE, &chime_with_payload(&with_id));
-        assert!(line.contains("Phone remote: stop recording (deployment ID 4241545801020000). Signal"), "{line}");
+        assert!(
+            line.contains("Phone remote: stop recording (deployment ID 4241545801020000). Signal"),
+            "{line}"
+        );
 
         payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]);
         let line = describe_chime(0, RATE, &chime_with_payload(&payload));
-        assert!(line.contains("Location -33.870000, 151.210000. Deployment ID 123456789abcdef0. Signal"), "{line}");
+        assert!(
+            line.contains(
+                "Location -33.870000, 151.210000. Deployment ID 123456789abcdef0. Signal"
+            ),
+            "{line}"
+        );
     }
 
     #[test]
@@ -961,7 +1163,8 @@ mod tests {
         // Phone local time: 1793000000 + 660 minutes = 1793039600 seconds.
         let phone = message(1_793_000_000, 660);
         let phone_local = 1_793_039_600.0;
-        let at_start = |offset: f64| describe_clock(&phone, RATE as i64, RATE, phone_local - 1.0 + offset);
+        let at_start =
+            |offset: f64| describe_clock(&phone, RATE as i64, RATE, phone_local - 1.0 + offset);
 
         assert_eq!(
             at_start(-7.0),
@@ -993,9 +1196,15 @@ mod tests {
     fn clock_report_spells_out_long_differences() {
         let phone = message(1_793_000_000, 0);
         let behind = describe_clock(&phone, 0, RATE, 1_793_000_000.0 - 90_000.0);
-        assert!(behind.ends_with("90000 s (1 day, 1 h 0 min) behind the phone, accurate to about 1 s."), "{behind}");
+        assert!(
+            behind.ends_with("90000 s (1 day, 1 h 0 min) behind the phone, accurate to about 1 s."),
+            "{behind}"
+        );
         let ahead = describe_clock(&phone, 0, RATE, 1_793_000_000.0 + 7_260.0);
-        assert!(ahead.ends_with("7260 s (2 h 1 min) ahead of the phone, accurate to about 1 s."), "{ahead}");
+        assert!(
+            ahead.ends_with("7260 s (2 h 1 min) ahead of the phone, accurate to about 1 s."),
+            "{ahead}"
+        );
     }
 
     #[test]
@@ -1003,12 +1212,33 @@ mod tests {
         let phone = message(1_793_000_000, 0);
         // The X8's TimeReference is a whole second minus 12 ms.
         let hours = |sign: f64, count: f64| {
-            describe_clock(&phone, 0, RATE, 1_793_000_000.0 + sign * count * 3600.0 - 0.012)
+            describe_clock(
+                &phone,
+                0,
+                RATE,
+                1_793_000_000.0 + sign * count * 3600.0 - 0.012,
+            )
         };
-        assert!(hours(1.0, 1.0).contains("3600 s (1 h 0 min) ahead of"), "{}", hours(1.0, 1.0));
-        assert!(hours(-1.0, 1.0).contains("3600 s (1 h 0 min) behind"), "{}", hours(-1.0, 1.0));
-        assert!(hours(1.0, 2.0).contains("7200 s (2 h 0 min) ahead of"), "{}", hours(1.0, 2.0));
-        assert!(hours(1.0, 237.0 * 24.0).contains("20476800 s (237 days, 0 h 0 min)"), "{}", hours(1.0, 5688.0));
+        assert!(
+            hours(1.0, 1.0).contains("3600 s (1 h 0 min) ahead of"),
+            "{}",
+            hours(1.0, 1.0)
+        );
+        assert!(
+            hours(-1.0, 1.0).contains("3600 s (1 h 0 min) behind"),
+            "{}",
+            hours(-1.0, 1.0)
+        );
+        assert!(
+            hours(1.0, 2.0).contains("7200 s (2 h 0 min) ahead of"),
+            "{}",
+            hours(1.0, 2.0)
+        );
+        assert!(
+            hours(1.0, 237.0 * 24.0).contains("20476800 s (237 days, 0 h 0 min)"),
+            "{}",
+            hours(1.0, 5688.0)
+        );
     }
 
     #[test]
@@ -1025,7 +1255,10 @@ mod tests {
         let mut chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
         chime.snr_db = f32::NAN;
         let line = describe_chime(0, RATE, &chime);
-        assert!(line.ends_with("Signal -41.2 dBFS, SNR not measured, 2 bits corrected."), "{line}");
+        assert!(
+            line.ends_with("Signal -41.2 dBFS, SNR not measured, 2 bits corrected."),
+            "{line}"
+        );
         chime.snr_db = -0.3;
         let line = describe_chime(0, RATE, &chime);
         assert!(line.contains(", SNR 0 dB,"), "{line}");
@@ -1049,18 +1282,28 @@ mod tests {
         assert!(describe_unreadable(0, RATE, &unreadable).contains("signal lost after 1 byte."));
         unreadable.reason = UnreadableReason::TooManyBytes;
         unreadable.bytes_received = 24;
-        assert!(describe_unreadable(0, RATE, &unreadable).contains(
-            "no stop symbols after 24 bytes, and the longest message is 23 bytes."
-        ));
+        assert!(
+            describe_unreadable(0, RATE, &unreadable)
+                .contains("no stop symbols after 24 bytes, and the longest message is 23 bytes.")
+        );
         unreadable.bytes_received = 1;
         unreadable.reason = UnreadableReason::BadSymbol;
-        assert!(describe_unreadable(0, RATE, &unreadable).contains("a symbol had an invalid length after 1 byte."));
+        assert!(
+            describe_unreadable(0, RATE, &unreadable)
+                .contains("a symbol had an invalid length after 1 byte.")
+        );
         unreadable.reason = UnreadableReason::TooManyBytes;
         unreadable.bytes_received = 20;
-        assert!(describe_unreadable(0, RATE, &unreadable).contains("no stop symbols after 20 bytes, and the longest chime lasts"));
+        assert!(
+            describe_unreadable(0, RATE, &unreadable)
+                .contains("no stop symbols after 20 bytes, and the longest chime lasts")
+        );
         unreadable.reason = UnreadableReason::MessageRefused;
         unreadable.bytes_received = 8;
-        assert!(describe_unreadable(0, RATE, &unreadable).contains("the message passed the CRC check after 8 bytes, but"));
+        assert!(
+            describe_unreadable(0, RATE, &unreadable)
+                .contains("the message passed the CRC check after 8 bytes, but")
+        );
     }
 
     #[test]
@@ -1073,10 +1316,26 @@ mod tests {
 
     #[test]
     fn format_line_and_time_zones() {
-        let spec = WavSpec { channels: 2, sample_rate: RATE, bits_per_sample: 32, sample_format: SampleFormat::Float };
-        assert_eq!(describe_format(&spec, 5_326_848), "192000 Hz, 2 channels, 32-bit float, 27.7 s");
-        let spec = WavSpec { channels: 1, sample_rate: 48_000, bits_per_sample: 16, sample_format: SampleFormat::Int };
-        assert_eq!(describe_format(&spec, 47_520), "48000 Hz, 1 channel, 16-bit PCM, 1.0 s");
+        let spec = WavSpec {
+            channels: 2,
+            sample_rate: RATE,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        assert_eq!(
+            describe_format(&spec, 5_326_848),
+            "192000 Hz, 2 channels, 32-bit float, 27.7 s"
+        );
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        assert_eq!(
+            describe_format(&spec, 47_520),
+            "48000 Hz, 1 channel, 16-bit PCM, 1.0 s"
+        );
 
         assert_eq!(format_time_zone(660), "UTC+11:00");
         assert_eq!(format_time_zone(-300), "UTC-05:00");
@@ -1091,17 +1350,30 @@ mod tests {
         let chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
 
         let mut output = Vec::new();
-        report.write_event(&mut output, 1, Event::Chime(chime)).unwrap();
-        report.write_event(&mut output, 1, Event::Chime(chime)).unwrap();
+        report
+            .write_event(&mut output, 1, Event::Chime(chime))
+            .unwrap();
+        report
+            .write_event(&mut output, 1, Event::Chime(chime))
+            .unwrap();
 
         let text = String::from_utf8(output).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "{text}");
-        assert!(lines[0].starts_with("Channel 2 at 3.512 s: phone time "), "{text}");
+        assert!(
+            lines[0].starts_with("Channel 2 at 3.512 s: phone time "),
+            "{text}"
+        );
         // The first sample is at 09:00:13 (09:00:43 less 30 s), so the chime at 3.512 s is at
         // 09:00:16.512: hours behind the phone's 18:33:20 local time.
-        assert!(lines[1].starts_with("X8 clock at that moment: 2026-10-26 09:00:17. The X8 clock is "), "{text}");
-        assert!(lines[1].ends_with(" behind the phone, accurate to about 1 s."), "{text}");
+        assert!(
+            lines[1].starts_with("X8 clock at that moment: 2026-10-26 09:00:17. The X8 clock is "),
+            "{text}"
+        );
+        assert!(
+            lines[1].ends_with(" behind the phone, accurate to about 1 s."),
+            "{text}"
+        );
         assert_eq!(report.chimes_read, 2);
         assert_eq!(report.event_seen, [false, true]);
     }
@@ -1112,10 +1384,15 @@ mod tests {
         let fields = bext(b"2026-10-26", b"00:00:30", 0);
         let mut report = EventReport::new(RATE, 1, Some(&fields), 192_000);
         let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+        report
+            .write_event(&mut output, 0, Event::Chime(chime))
+            .unwrap();
         let text = String::from_utf8(output).unwrap();
         // 00:00:30 less 1 s, plus 3.512 s.
-        assert!(text.contains("X8 clock at that moment: 2026-10-26 00:00:33."), "{text}");
+        assert!(
+            text.contains("X8 clock at that moment: 2026-10-26 00:00:33."),
+            "{text}"
+        );
         assert_eq!(text.lines().count(), 2, "{text}");
     }
 
@@ -1124,18 +1401,31 @@ mod tests {
         let mut report = EventReport::new(RATE, 1, None, 192_000);
         let chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
         let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+        report
+            .write_event(&mut output, 0, Event::Chime(chime))
+            .unwrap();
+        report
+            .write_event(&mut output, 0, Event::Chime(chime))
+            .unwrap();
         let text = String::from_utf8(output).unwrap();
-        assert_eq!(text.matches("The file has no bext chunk").count(), 1, "{text}");
+        assert_eq!(
+            text.matches("The file has no bext chunk").count(),
+            1,
+            "{text}"
+        );
         assert_eq!(text.lines().count(), 3, "{text}");
 
         let unusable = bext(&[0; 10], &[0; 8], 42);
         let mut report = EventReport::new(RATE, 1, Some(&unusable), 192_000);
         let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+        report
+            .write_event(&mut output, 0, Event::Chime(chime))
+            .unwrap();
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("The bext chunk has no usable date and time"), "{text}");
+        assert!(
+            text.contains("The bext chunk has no usable date and time"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1143,7 +1433,9 @@ mod tests {
         let fields = bext(b"2026-10-26", b"18:33:40", 6_223_101_696);
         let mut report = EventReport::new(RATE, 1, Some(&fields), 192_000 * 30);
         let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime_with_payload(&[1, 2, 3]))).unwrap();
+        report
+            .write_event(&mut output, 0, Event::Chime(chime_with_payload(&[1, 2, 3])))
+            .unwrap();
         let unreadable = Unreadable {
             start_sample: 0,
             end_sample: 1,
@@ -1151,7 +1443,9 @@ mod tests {
             bytes_received: 0,
             level_dbfs: -60.0,
         };
-        report.write_event(&mut output, 0, Event::Unreadable(unreadable)).unwrap();
+        report
+            .write_event(&mut output, 0, Event::Unreadable(unreadable))
+            .unwrap();
         let text = String::from_utf8(output).unwrap();
         assert_eq!(text.lines().count(), 2, "{text}");
         assert!(!text.contains("X8 clock"), "{text}");
@@ -1164,7 +1458,9 @@ mod tests {
     #[ignore = "needs web/samples/0066.wav, which is not in the repository"]
     fn real_x8_recording() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/samples/0066.wav");
-        let fields = read_bext(&mut BufReader::new(File::open(path).unwrap())).unwrap().unwrap();
+        let fields = read_bext(&mut BufReader::new(File::open(path).unwrap()))
+            .unwrap()
+            .unwrap();
         assert_eq!(fields, bext(b"2026-03-15", b"09:00:40", 6_223_101_696));
 
         let chunks = read_chunks(&mut BufReader::new(File::open(path).unwrap())).unwrap();
@@ -1178,9 +1474,19 @@ mod tests {
         let clock = clock_at_sample_zero(&fields, RATE, frames).unwrap();
         assert_eq!(
             local_from_clock(clock.start),
-            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 12 }
+            LocalTime {
+                year: 2026,
+                month: 3,
+                day: 15,
+                hour: 9,
+                minute: 0,
+                second: 12
+            }
         );
-        assert!(describe_time_reference_lead(clock.time_reference_lead.unwrap()).is_none(), "{clock:?}");
+        assert!(
+            describe_time_reference_lead(clock.time_reference_lead.unwrap()).is_none(),
+            "{clock:?}"
+        );
     }
 
     #[test]
@@ -1195,7 +1501,11 @@ mod tests {
     fn decode_file_reports_a_silent_x8_style_file() {
         let path = temp_path("silent.wav");
         let frames = RATE as usize / 4;
-        std::fs::write(&path, x8_style_file(&bext_payload(b"2026-03-15", b"09:00:40", 1), 2, frames)).unwrap();
+        std::fs::write(
+            &path,
+            x8_style_file(&bext_payload(b"2026-03-15", b"09:00:40", 1), 2, frames),
+        )
+        .unwrap();
 
         let mut output = Vec::new();
         let result = decode_file(&path, &mut output);
@@ -1205,9 +1515,18 @@ mod tests {
         let text = String::from_utf8(output).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "{text}");
-        assert!(lines[0].ends_with(": 192000 Hz, 2 channels, 32-bit float, 0.2 s"), "{text}");
-        assert!(lines[1].starts_with("Channel 1: no chime found. 18 kHz band level "), "{text}");
-        assert!(lines[2].starts_with("Channel 2: no chime found. 18 kHz band level "), "{text}");
+        assert!(
+            lines[0].ends_with(": 192000 Hz, 2 channels, 32-bit float, 0.2 s"),
+            "{text}"
+        );
+        assert!(
+            lines[1].starts_with("Channel 1: no chime found. 18 kHz band level "),
+            "{text}"
+        );
+        assert!(
+            lines[2].starts_with("Channel 2: no chime found. 18 kHz band level "),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1223,7 +1542,11 @@ mod tests {
 
     #[test]
     fn the_first_data_chunk_holds_the_samples() {
-        let bytes = riff(&[float_fmt(1, RATE), chunk(b"data", &[0u8; 16]), chunk(b"data", &[0u8; 8])]);
+        let bytes = riff(&[
+            float_fmt(1, RATE),
+            chunk(b"data", &[0u8; 16]),
+            chunk(b"data", &[0u8; 8]),
+        ]);
         let (start, size) = read_chunks(&mut Cursor::new(&bytes)).unwrap().data.unwrap();
         assert_eq!(size, 16);
         assert_eq!(start as usize, bytes.len() - 16 - 8 - 8);
@@ -1249,11 +1572,20 @@ mod tests {
         let with_samples = decode_file(&path, &mut Vec::new());
 
         // An empty recording with another chunk after its data chunk is not an error.
-        let bytes = riff(&[float_fmt(1, RATE), chunk(b"data", &[]), chunk(b"LIST", &[0u8; 354])]);
+        let bytes = riff(&[
+            float_fmt(1, RATE),
+            chunk(b"data", &[]),
+            chunk(b"LIST", &[0u8; 354]),
+        ]);
         std::fs::write(&path, &bytes).unwrap();
         let with_a_chunk_after = decode_file(&path, &mut Vec::new());
         std::fs::remove_file(&path).unwrap();
-        assert!(with_samples.unwrap_err().to_string().contains("size of 0, but 400 bytes follow"));
+        assert!(
+            with_samples
+                .unwrap_err()
+                .to_string()
+                .contains("size of 0, but 400 bytes follow")
+        );
         assert_eq!(with_a_chunk_after.unwrap(), 0);
     }
 
@@ -1265,7 +1597,11 @@ mod tests {
         fields.extend_from_slice(&192_000u32.to_le_bytes());
         fields.extend_from_slice(&4u16.to_le_bytes());
         fields.extend_from_slice(&24u16.to_le_bytes());
-        assert!(parse_fmt(&fields).unwrap_err().contains("block align of 4 bytes"));
+        assert!(
+            parse_fmt(&fields)
+                .unwrap_err()
+                .contains("block align of 4 bytes")
+        );
         fields[12] = 3;
         assert_eq!(parse_fmt(&fields).unwrap().bits_per_sample, 24);
     }
@@ -1273,11 +1609,21 @@ mod tests {
     #[test]
     fn decode_file_fails_below_the_lowest_sample_rate() {
         let path = temp_path("low_rate.wav");
-        let spec = hound::WavSpec { channels: 1, sample_rate: 8_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 8_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
         WavWriter::create(&path, spec).unwrap().finalize().unwrap();
         let result = decode_file(&path, &mut Vec::new());
         std::fs::remove_file(&path).unwrap();
-        assert!(result.unwrap_err().to_string().contains("below the 40000 Hz"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("below the 40000 Hz")
+        );
     }
 
     #[test]
@@ -1289,8 +1635,17 @@ mod tests {
         let mut output = Vec::new();
         let result = decode_file(&path, &mut output);
         std::fs::remove_file(&path).unwrap();
-        assert!(result.unwrap_err().to_string().contains("could not be read to the end"));
-        assert!(String::from_utf8(output).unwrap().contains("Channel 1: no chime found."));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("could not be read to the end")
+        );
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("Channel 1: no chime found.")
+        );
     }
 
     #[test]
@@ -1302,7 +1657,12 @@ mod tests {
             (32, hound::SampleFormat::Float, 0.5),
         ];
         for (bits, sample_format, half_scale) in cases {
-            let hound_spec = hound::WavSpec { channels: 2, sample_rate: 48_000, bits_per_sample: bits, sample_format };
+            let hound_spec = hound::WavSpec {
+                channels: 2,
+                sample_rate: 48_000,
+                bits_per_sample: bits,
+                sample_format,
+            };
             let path = temp_path(&format!("scale_{bits}_{sample_format:?}.wav"));
             let mut writer = WavWriter::create(&path, hound_spec).unwrap();
             for value in [half_scale, -half_scale] {
@@ -1319,7 +1679,9 @@ mod tests {
             let (start, size) = chunks.data.unwrap();
             file.seek(SeekFrom::Start(start)).unwrap();
             let count = size / spec.bytes_per_sample();
-            let samples: Vec<f32> = samples_as_f32(file, &spec, count).map(|s| s.unwrap()).collect();
+            let samples: Vec<f32> = samples_as_f32(file, &spec, count)
+                .map(|s| s.unwrap())
+                .collect();
             std::fs::remove_file(&path).unwrap();
             assert_eq!(samples, [0.5, -0.5], "{bits}-bit {sample_format:?}");
         }
@@ -1328,7 +1690,12 @@ mod tests {
     #[test]
     fn eight_bit_samples_are_an_error() {
         let path = temp_path("eight_bit.wav");
-        let spec = hound::WavSpec { channels: 1, sample_rate: 48_000, bits_per_sample: 8, sample_format: hound::SampleFormat::Int };
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 8,
+            sample_format: hound::SampleFormat::Int,
+        };
         let mut writer = WavWriter::create(&path, spec).unwrap();
         writer.write_sample(1i8).unwrap();
         writer.finalize().unwrap();

@@ -28,18 +28,26 @@ const UNIX: u32 = 1_793_000_000;
 const TZ: i16 = 660;
 
 fn read_fixture() -> Vec<f32> {
-    let path =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/js_48000_u1793000000_tz660.wav");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/js_48000_u1793000000_tz660.wav"
+    );
     let mut reader = hound::WavReader::open(path).expect("fixture opens");
     assert_eq!(reader.spec().sample_rate, 48_000);
     // Dividing by a power of two keeps the exact value, so the port's multiplication
     // by 32768 gives the Costas loop the same numbers an AudioMoth would see.
-    reader.samples::<i16>().map(|s| s.expect("fixture sample") as f32 / 32768.0).collect()
+    reader
+        .samples::<i16>()
+        .map(|s| s.expect("fixture sample") as f32 / 32768.0)
+        .collect()
 }
 
 fn run(sample_rate: u32, samples: &[f32]) -> Vec<Event> {
     let mut port = AudioMothPort::new(sample_rate);
-    samples.iter().filter_map(|&sample| port.push(sample)).collect()
+    samples
+        .iter()
+        .filter_map(|&sample| port.push(sample))
+        .collect()
 }
 
 /// Asserts that the events are exactly one chime with this payload, and returns it.
@@ -82,7 +90,10 @@ fn decodes_the_javascript_fixture() {
 
     let chime = expect_one_chime(&run(48_000, &samples), &FIXTURE_PAYLOAD, "fixture");
 
-    assert_eq!(calculate_crc(&chime.payload[..chime.payload_len]), FIXTURE_CRC);
+    assert_eq!(
+        calculate_crc(&chime.payload[..chime.payload_len]),
+        FIXTURE_CRC
+    );
     assert_eq!(chime.corrected_bits, 0);
 
     let message = TimeMessage::parse(&chime.payload[..chime.payload_len]).expect("6 bytes");
@@ -107,7 +118,11 @@ fn decodes_at_other_sample_rates() {
     let payload = generator::time_payload(UNIX, TZ);
     for sample_rate in [44_100, 96_000] {
         let (samples, _) = render_padded(sample_rate, &payload);
-        expect_one_chime(&run(sample_rate, &samples), &payload, &format!("{sample_rate} Hz"));
+        expect_one_chime(
+            &run(sample_rate, &samples),
+            &payload,
+            &format!("{sample_rate} Hz"),
+        );
     }
 }
 
@@ -117,7 +132,11 @@ fn decodes_inverted_polarity() {
     for sample_rate in [48_000, 192_000] {
         let (samples, _) = render_padded(sample_rate, &payload);
         let inverted: Vec<f32> = samples.iter().map(|s| -s).collect();
-        expect_one_chime(&run(sample_rate, &inverted), &payload, &format!("{sample_rate} Hz"));
+        expect_one_chime(
+            &run(sample_rate, &inverted),
+            &payload,
+            &format!("{sample_rate} Hz"),
+        );
     }
 }
 
@@ -132,7 +151,11 @@ fn decodes_at_every_carrier_phase_on_the_sample_grid() {
         for offset in 0..phases {
             let padded = channel::pad(render.mix(), 1000 + offset, sample_rate as usize / 5);
             let context = format!("{sample_rate} Hz, offset {offset}");
-            expect_one_chime(&run(sample_rate, &channel::to_f32(&padded)), &payload, &context);
+            expect_one_chime(
+                &run(sample_rate, &channel::to_f32(&padded)),
+                &payload,
+                &context,
+            );
         }
     }
 }
@@ -144,11 +167,19 @@ fn decodes_with_white_noise_at_both_rates() {
     let payload = generator::time_payload(UNIX, TZ);
     for sample_rate in [48_000, 192_000] {
         let render = generator::render(sample_rate, &payload, tune_for_payload(payload.len()));
-        let padded = channel::pad(render.mix(), sample_rate as usize / 5, sample_rate as usize / 5);
+        let padded = channel::pad(
+            render.mix(),
+            sample_rate as usize / 5,
+            sample_rate as usize / 5,
+        );
         for seed in 0..5 {
             let noisy = channel::add_white_noise(padded.clone(), sample_rate, 10.0, 100 + seed);
             let context = format!("{sample_rate} Hz, seed {seed}");
-            expect_one_chime(&run(sample_rate, &channel::to_f32(&noisy)), &payload, &context);
+            expect_one_chime(
+                &run(sample_rate, &channel::to_f32(&noisy)),
+                &payload,
+                &context,
+            );
         }
     }
 }
@@ -161,10 +192,13 @@ fn start_sample_is_close_to_the_first_start_symbol() {
             let context = format!("{sample_rate} Hz, {} bytes", payload.len());
             let chime = expect_one_chime(&run(sample_rate, &samples), &payload, &context);
 
-            let error_ms = (chime.start_sample as f64 - true_start as f64) * 1000.0
-                / sample_rate as f64;
+            let error_ms =
+                (chime.start_sample as f64 - true_start as f64) * 1000.0 / sample_rate as f64;
             println!("{context}: start_sample error {error_ms:+.2} ms");
-            assert!(error_ms.abs() < 15.0, "{context}: start_sample error {error_ms} ms");
+            assert!(
+                error_ms.abs() < 15.0,
+                "{context}: start_sample error {error_ms} ms"
+            );
         }
     }
 }
@@ -206,7 +240,10 @@ fn agc_floor_applies_in_int16_units() {
         }
 
         let unscaled = locked_in_phase_peak(sample_rate, 0.25);
-        assert!(unscaled < 0.002, "{sample_rate} Hz: in-phase peak {unscaled}");
+        assert!(
+            unscaled < 0.002,
+            "{sample_rate} Hz: in-phase peak {unscaled}"
+        );
     }
 }
 
@@ -219,12 +256,20 @@ fn clock_error_is_tracked_above_the_agc_floor_and_not_far_below_it() {
     let payload = generator::time_payload(UNIX, TZ);
     for sample_rate in [48_000, 192_000] {
         let render = generator::render(sample_rate, &payload, tune_for_payload(payload.len()));
-        let padded = channel::pad(render.mix(), sample_rate as usize / 5, sample_rate as usize / 5);
+        let padded = channel::pad(
+            render.mix(),
+            sample_rate as usize / 5,
+            sample_rate as usize / 5,
+        );
         let shifted = channel::rate_error_ppm(padded, 50.0);
 
         let loud = channel::gain_db(shifted.clone(), -34.0);
         let context = format!("{sample_rate} Hz, loud");
-        expect_one_chime(&run(sample_rate, &channel::to_f32(&loud)), &payload, &context);
+        expect_one_chime(
+            &run(sample_rate, &channel::to_f32(&loud)),
+            &payload,
+            &context,
+        );
 
         let quiet = channel::gain_db(shifted, -58.0);
         let events = run(sample_rate, &channel::to_f32(&quiet));
@@ -241,8 +286,9 @@ fn hamming_decode_agrees_with_the_c_table_on_every_input() {
         let (nibble, corrected) = format::hamming_decode(word);
         assert_eq!(nibble, HAMMING_CONVERSION[word as usize], "word {word}");
 
-        let is_codeword = (0..7)
-            .all(|bit| HAMMING_CONVERSION[(word ^ (1 << bit)) as usize] == HAMMING_CONVERSION[word as usize]);
+        let is_codeword = (0..7).all(|bit| {
+            HAMMING_CONVERSION[(word ^ (1 << bit)) as usize] == HAMMING_CONVERSION[word as usize]
+        });
         assert_eq!(corrected, !is_codeword, "word {word}");
     }
 }
@@ -262,7 +308,11 @@ fn crc16_agrees_with_the_c_on_random_data() {
     for trial in 0..20_000 {
         let length = (random.next_u64() % 41) as usize;
         let bytes: Vec<u8> = (0..length).map(|_| random.next_u64() as u8).collect();
-        assert_eq!(format::crc16(&bytes), calculate_crc(&bytes), "trial {trial}: {bytes:02x?}");
+        assert_eq!(
+            format::crc16(&bytes),
+            calculate_crc(&bytes),
+            "trial {trial}: {bytes:02x?}"
+        );
     }
 }
 
@@ -331,7 +381,11 @@ fn sine_table_has_the_values_the_c_lists() {
 /// Output amplitude for a steady tone through a filter given as a closure, measured
 /// by RMS over the last half of 1 second. A peak would be too low at 48 kHz, where the
 /// samples of an 18 kHz tone fall on only 8 points of its cycle.
-fn steady_state_amplitude(sample_rate: u32, frequency: f64, mut filter: impl FnMut(f32) -> f32) -> f64 {
+fn steady_state_amplitude(
+    sample_rate: u32,
+    frequency: f64,
+    mut filter: impl FnMut(f32) -> f32,
+) -> f64 {
     let samples = sample_rate as usize;
     let mut sum_of_squares = 0.0f64;
     for n in 0..samples {
@@ -361,12 +415,18 @@ fn band_pass_gain(sample_rate: u32, frequency: f64) -> f64 {
 fn carrier_filter_has_unit_gain_at_18_khz_and_half_power_at_its_edges() {
     for sample_rate in [48_000, 96_000, 192_000] {
         let centre = band_pass_gain(sample_rate, 18_000.0);
-        assert!((centre - 1.0).abs() < 0.001, "{sample_rate} Hz: gain {centre}");
+        assert!(
+            (centre - 1.0).abs() < 0.001,
+            "{sample_rate} Hz: gain {centre}"
+        );
 
         for edge in [17_000.0, 19_000.0] {
             let gain = band_pass_gain(sample_rate, edge);
             let half_power = std::f64::consts::FRAC_1_SQRT_2;
-            assert!((gain - half_power).abs() < 0.01, "{sample_rate} Hz, {edge} Hz: gain {gain}");
+            assert!(
+                (gain - half_power).abs() < 0.01,
+                "{sample_rate} Hz, {edge} Hz: gain {gain}"
+            );
         }
     }
 }
@@ -389,11 +449,17 @@ fn agc_filter_has_unit_gain_at_dc_and_half_power_at_1_khz() {
         for _ in 0..sample_rate {
             output = filter(1.0);
         }
-        assert!((output - 1.0).abs() < 0.001, "{sample_rate} Hz: DC gain {output}");
+        assert!(
+            (output - 1.0).abs() < 0.001,
+            "{sample_rate} Hz: DC gain {output}"
+        );
 
         let gain = steady_state_amplitude(sample_rate, 1_000.0, &mut filter);
         let half_power = std::f64::consts::FRAC_1_SQRT_2;
-        assert!((gain - half_power).abs() < 0.005, "{sample_rate} Hz: gain at 1 kHz {gain}");
+        assert!(
+            (gain - half_power).abs() < 0.005,
+            "{sample_rate} Hz: gain at 1 kHz {gain}"
+        );
     }
 }
 
@@ -411,7 +477,10 @@ fn channel_filter_has_gain_q_at_its_cutoff() {
             y0
         });
         println!("channel filter gain at 100 Hz, {sample_rate} Hz: {gain:.4}");
-        assert!((gain - 2.0 / 3.0).abs() < allowed_error, "{sample_rate} Hz: gain {gain}");
+        assert!(
+            (gain - 2.0 / 3.0).abs() < allowed_error,
+            "{sample_rate} Hz: gain {gain}"
+        );
     }
 }
 
@@ -424,7 +493,10 @@ fn channel_filter_has_near_unit_gain_at_dc() {
         let gain = (c.b0_a0 as f64 + c.b1_a0 as f64 + c.b2_a0 as f64)
             / (1.0 + c.a1_a0 as f64 + c.a2_a0 as f64);
         println!("channel filter DC gain at {sample_rate} Hz: {gain:.5}");
-        assert!((gain - 1.0).abs() < allowed_error, "{sample_rate} Hz: gain {gain}");
+        assert!(
+            (gain - 1.0).abs() < allowed_error,
+            "{sample_rate} Hz: gain {gain}"
+        );
     }
 }
 
@@ -451,7 +523,10 @@ fn feed_periods(periods: &[u64]) -> Vec<Event> {
 }
 
 fn data_periods(message: &[u8]) -> Vec<u64> {
-    generator::encode(message).iter().map(|&bit| if bit == 1 { HIGH } else { LOW }).collect()
+    generator::encode(message)
+        .iter()
+        .map(|&bit| if bit == 1 { HIGH } else { LOW })
+        .collect()
 }
 
 /// The periods of a whole chime: start, payload, CRC, stop.
@@ -466,7 +541,10 @@ fn chime_periods(payload: &[u8], start_periods: usize, stop_periods: usize) -> V
 fn expect_unreadable(events: &[Event], context: &str) -> Unreadable {
     assert_eq!(events.len(), 1, "{context}: events {events:?}");
     let Event::Unreadable(unreadable) = events[0] else {
-        panic!("{context}: expected an unreadable chime, got {:?}", events[0]);
+        panic!(
+            "{context}: expected an unreadable chime, got {:?}",
+            events[0]
+        );
     };
     unreadable
 }
@@ -487,7 +565,11 @@ fn start_run_must_have_6_to_24_periods() {
         let events = feed_periods(&chime_periods(&FIXTURE_PAYLOAD, start_periods, 8));
         let decoded = events.iter().any(|event| matches!(event, Event::Chime(_)));
         // The stop periods of the chime can start a new run, but no data follows it.
-        assert_eq!(decoded, (6..=24).contains(&start_periods), "{start_periods} start periods");
+        assert_eq!(
+            decoded,
+            (6..=24).contains(&start_periods),
+            "{start_periods} start periods"
+        );
     }
 }
 
@@ -516,7 +598,8 @@ fn message_of_23_bytes_ends_without_stop_periods() {
 #[test]
 fn message_over_the_limit_is_a_crc_error_at_byte_23() {
     let payload = [0x5Au8; 30];
-    let unreadable = expect_unreadable(&feed_periods(&chime_periods(&payload, 16, 8)), "over limit");
+    let unreadable =
+        expect_unreadable(&feed_periods(&chime_periods(&payload, 16, 8)), "over limit");
     assert_eq!(unreadable.reason, UnreadableReason::BadCrc);
     assert_eq!(unreadable.bytes_received, 23);
 }
@@ -534,7 +617,11 @@ fn hamming_corrects_one_wrong_symbol() {
     let symbol = 16 + 3 * 14 + 5;
     periods[symbol] = if periods[symbol] == LOW { HIGH } else { LOW };
 
-    let chime = expect_one_chime(&feed_periods(&periods), &FIXTURE_PAYLOAD, "one wrong symbol");
+    let chime = expect_one_chime(
+        &feed_periods(&periods),
+        &FIXTURE_PAYLOAD,
+        "one wrong symbol",
+    );
     assert_eq!(chime.corrected_bits, 1);
 }
 
@@ -579,7 +666,10 @@ fn periods_just_inside_the_range_are_data() {
 
         let chime = expect_one_chime(&feed_periods(&periods), &FIXTURE_PAYLOAD, "in range");
         let expected_corrections = if was_high == (period > 360) { 0 } else { 1 };
-        assert_eq!(chime.corrected_bits, expected_corrections, "period {period}");
+        assert_eq!(
+            chime.corrected_bits, expected_corrections,
+            "period {period}"
+        );
     }
 }
 
@@ -591,7 +681,9 @@ fn start_run_ends_at_the_exact_period_limits() {
     for (period, decodes) in [(300, false), (301, true), (419, true), (420, false)] {
         let mut periods = chime_periods(&FIXTURE_PAYLOAD, 16, 8);
         periods[13] = period;
-        let decoded = feed_periods(&periods).iter().any(|event| matches!(event, Event::Chime(_)));
+        let decoded = feed_periods(&periods)
+            .iter()
+            .any(|event| matches!(event, Event::Chime(_)));
         assert_eq!(decoded, decodes, "period {period}");
     }
 }
@@ -637,7 +729,10 @@ fn one_lost_crossing_loses_the_message() {
     periods.push(50_000);
 
     let events = feed_periods(&periods);
-    assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "events {events:?}");
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Chime(_))),
+        "events {events:?}"
+    );
 }
 
 /// The channel filter rings after a click at about 7.5 ms per half cycle, because its
@@ -652,7 +747,8 @@ fn a_click_in_digital_silence_rings_at_the_start_symbol_period() {
     for sample_rate in [48_000, 192_000] {
         let mut costas_loop = CostasLoop::new(sample_rate);
         let timing = Timing::new(sample_rate);
-        let window = (timing.start_stop_bit - timing.tolerance)..=(timing.start_stop_bit + timing.tolerance);
+        let window =
+            (timing.start_stop_bit - timing.tolerance)..=(timing.start_stop_bit + timing.tolerance);
 
         let (mut last_output, mut last_crossing) = (0.0f32, 0usize);
         let mut periods = Vec::new();
@@ -665,7 +761,10 @@ fn a_click_in_digital_silence_rings_at_the_start_symbol_period() {
             last_output = output;
         }
 
-        let in_window = periods.iter().filter(|period| window.contains(period)).count();
+        let in_window = periods
+            .iter()
+            .filter(|period| window.contains(period))
+            .count();
         assert!(in_window >= 6, "{sample_rate} Hz: periods {periods:?}");
     }
 }

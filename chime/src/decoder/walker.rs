@@ -75,7 +75,10 @@ pub(super) struct Tracking {
 /// For a still phone, in a room or at low SNR. A critically damped loop lets the least
 /// noise into the frequency estimate, and the echo filter's output is used whenever it
 /// helps a little.
-pub(super) const STEADY: Tracking = Tracking { frequency_gain_fraction: 0.25, echo_useful_fraction: 0.8 };
+pub(super) const STEADY: Tracking = Tracking {
+    frequency_gain_fraction: 0.25,
+    echo_useful_fraction: 0.8,
+};
 
 /// For a moving phone, and for an overloaded input. A phone that moves 2 cm at 2 Hz
 /// changes the carrier by up to 13 Hz in a quarter of a second, and four times the loop
@@ -84,7 +87,10 @@ pub(super) const STEADY: Tracking = Tracking { frequency_gain_fraction: 0.25, ec
 /// in that which are not echoes. With these settings alone, a chime in the large reverb
 /// profile at +20 dB SNR reads about half the time, against nearly always with the steady
 /// settings, which is why the steady trellis runs beside this one.
-pub(super) const MOVING: Tracking = Tracking { frequency_gain_fraction: 1.0, echo_useful_fraction: 0.5 };
+pub(super) const MOVING: Tracking = Tracking {
+    frequency_gain_fraction: 1.0,
+    echo_useful_fraction: 0.5,
+};
 
 /// How a walk ended. The states say which path holds the result.
 #[derive(Clone, Copy)]
@@ -155,9 +161,10 @@ impl Walker {
 
     /// Starts a walk at a position in baseband samples.
     pub(super) fn begin(&mut self, start: f64, carrier_frequency: f32, coherence: f32) {
-        let clean = (coherence - COHERENCE_FOR_LONG_MEMORY) / (COHERENCE_FOR_SHORT_MEMORY - COHERENCE_FOR_LONG_MEMORY);
-        self.reference_memory =
-            LONG_REFERENCE_MEMORY + (SHORT_REFERENCE_MEMORY - LONG_REFERENCE_MEMORY) * clean.clamp(0.0, 1.0);
+        let clean = (coherence - COHERENCE_FOR_LONG_MEMORY)
+            / (COHERENCE_FOR_SHORT_MEMORY - COHERENCE_FOR_LONG_MEMORY);
+        self.reference_memory = LONG_REFERENCE_MEMORY
+            + (SHORT_REFERENCE_MEMORY - LONG_REFERENCE_MEMORY) * clean.clamp(0.0, 1.0);
         self.grid.begin(start);
         self.walk_start = start;
         self.bucket_index = 0;
@@ -268,7 +275,11 @@ impl Walker {
     }
 
     /// Processes one bucket. Returns how the walk ended, if it did.
-    fn step(&mut self, (first_half, second_half): (Cplx, Cplx), noise_bucket: f32) -> Option<WalkEnd> {
+    fn step(
+        &mut self,
+        (first_half, second_half): (Cplx, Cplx),
+        noise_bucket: f32,
+    ) -> Option<WalkEnd> {
         let first_half = self.carrier.remove_from(first_half);
         let second_half = self.carrier.remove_from(second_half);
         let bucket = first_half + second_half;
@@ -281,11 +292,24 @@ impl Walker {
         let half_echo = echo_of(&echo_taps, best_path.history >> 1) * 0.5;
 
         let frequency_gain = self.tracking.frequency_gain_fraction * (1.0 - memory);
-        self.carrier.update(bucket - half_echo * 2.0, best_path.reference, frequency_gain);
-        self.echoes.update(bucket, best_path.history, self.bucket_index, self.tracking.echo_useful_fraction);
+        self.carrier.update(
+            bucket - half_echo * 2.0,
+            best_path.reference,
+            frequency_gain,
+        );
+        self.echoes.update(
+            bucket,
+            best_path.history,
+            self.bucket_index,
+            self.tracking.echo_useful_fraction,
+        );
 
         if self.bucket_index > 0 {
-            self.grid.advance(self.previous_half, first_half - half_echo, starts_a_symbol(best_state));
+            self.grid.advance(
+                self.previous_half,
+                first_half - half_echo,
+                starts_a_symbol(best_state),
+            );
         } else {
             self.grid.advance(Cplx::ZERO, Cplx::ZERO, false);
         }
@@ -315,7 +339,8 @@ impl Walker {
 
         // Noise alone can reach the limit in one bucket, but it rarely does so twice in a row.
         self.peak_average = self.peak_average.max(self.power_average);
-        let received = power >= noise_bucket + RECEIVED_FRACTION * (self.peak_average - noise_bucket);
+        let received =
+            power >= noise_bucket + RECEIVED_FRACTION * (self.peak_average - noise_bucket);
         if received && self.previous_bucket_received {
             self.received_sum = self.level_sum;
             self.received_count = self.level_count;
@@ -344,7 +369,11 @@ impl Walker {
             && (self.power_average > STOP_POWER_FRACTION * self.level_reference
                 || best.stop_symbols >= 2 * STOP_SYMBOLS as u8)
         {
-            let reason = if best.crc_matches() { UnreadableReason::MessageRefused } else { UnreadableReason::BadCrc };
+            let reason = if best.crc_matches() {
+                UnreadableReason::MessageRefused
+            } else {
+                UnreadableReason::BadCrc
+            };
             return Some(WalkEnd::Failed(reason, best_state));
         }
         if in_start_symbol(best_state) && best.start_symbols > MAX_START_SYMBOLS {

@@ -169,9 +169,9 @@ pub(super) fn SpeciesMapDialog(
         let json = state.classifier.results().with(|r| {
             let run = r.get(&(file, Method::BirdNet))?;
             let unlikely = |class: u16| {
-                run.labels.get(class as usize).is_some_and(|l| {
-                    location::unlikely_here(state, file, Method::BirdNet, l)
-                })
+                run.labels
+                    .get(class as usize)
+                    .is_some_and(|l| location::unlikely_here(state, file, Method::BirdNet, l))
             };
             let mut d = windows_json(run, &m, min, selected, &unlikely);
             let any = d["unlikely"].as_array().is_some_and(|a| !a.is_empty());

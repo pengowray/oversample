@@ -22,7 +22,10 @@ const PAD_SECONDS: f64 = 0.5;
 
 fn run(rate: u32, samples: &[f32]) -> Vec<Event> {
     let mut decoder = Decoder::new(rate).unwrap();
-    samples.iter().filter_map(|&sample| decoder.push(sample)).collect()
+    samples
+        .iter()
+        .filter_map(|&sample| decoder.push(sample))
+        .collect()
 }
 
 fn time_payload() -> Vec<u8> {
@@ -65,14 +68,23 @@ fn the_chime(events: &[Event]) -> Chime {
 
 fn assert_start_within_2_ms(chime: &Chime, rate: u32, true_start: usize) {
     let error_ms = (chime.start_sample as f64 - true_start as f64) * 1000.0 / rate as f64;
-    assert!(error_ms.abs() <= 2.0, "start_sample is {error_ms:.2} ms from the true start at {rate} Hz");
+    assert!(
+        error_ms.abs() <= 2.0,
+        "start_sample is {error_ms:.2} ms from the true start at {rate} Hz"
+    );
 }
 
 fn read_fixture_as_f32() -> (u32, Vec<f32>) {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/js_48000_u1793000000_tz660.wav");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/js_48000_u1793000000_tz660.wav"
+    );
     let mut reader = hound::WavReader::open(path).expect("fixture opens");
     let rate = reader.spec().sample_rate;
-    let samples = reader.samples::<i16>().map(|s| s.expect("fixture sample") as f32 / 32768.0).collect();
+    let samples = reader
+        .samples::<i16>()
+        .map(|s| s.expect("fixture sample") as f32 / 32768.0)
+        .collect();
     (rate, samples)
 }
 
@@ -100,7 +112,11 @@ fn carrier_with_symbol_lengths(rate: u32, lengths_ms: &[f64]) -> Vec<f64> {
 /// The symbol lengths in ms for the given message bytes, CRC included.
 fn message_lengths_ms(message: &[u8], stop_symbols: usize) -> Vec<f64> {
     let mut lengths = vec![7.5; 16];
-    lengths.extend(generator::encode(message).iter().map(|&bit| if bit == 1 { 10.0 } else { 5.0 }));
+    lengths.extend(
+        generator::encode(message)
+            .iter()
+            .map(|&bit| if bit == 1 { 10.0 } else { 5.0 }),
+    );
     lengths.extend(std::iter::repeat_n(7.5, stop_symbols));
     lengths
 }
@@ -117,7 +133,10 @@ fn with_crc(payload: &[u8]) -> Vec<u8> {
 fn js_fixture_decodes_to_the_exact_bytes() {
     let (rate, samples) = read_fixture_as_f32();
     let chime = the_chime(&run(rate, &samples));
-    assert_eq!(&chime.payload[..chime.payload_len], &[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
+    assert_eq!(
+        &chime.payload[..chime.payload_len],
+        &[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]
+    );
     assert_eq!(chime.corrected_bits, 0);
     assert_start_within_2_ms(&chime, rate, 0);
     let message = TimeMessage::parse(&chime.payload[..chime.payload_len]).unwrap();
@@ -134,7 +153,11 @@ fn renders_decode_at_all_common_rates() {
         let pad = pad_samples(rate);
         let x = channel::pad(mix(rate, &payload), pad, pad);
         let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-        assert_eq!(&chime.payload[..chime.payload_len], &payload[..], "{rate} Hz");
+        assert_eq!(
+            &chime.payload[..chime.payload_len],
+            &payload[..],
+            "{rate} Hz"
+        );
         assert_eq!(chime.corrected_bits, 0, "{rate} Hz");
         assert_start_within_2_ms(&chime, rate, pad);
     }
@@ -147,7 +170,11 @@ fn renders_decode_at_rates_that_are_not_multiples_of_8_khz() {
         let pad = pad_samples(rate);
         let x = channel::pad(mix(rate, &payload), pad, pad);
         let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-        assert_eq!(&chime.payload[..chime.payload_len], &payload[..], "{rate} Hz");
+        assert_eq!(
+            &chime.payload[..chime.payload_len],
+            &payload[..],
+            "{rate} Hz"
+        );
         assert_start_within_2_ms(&chime, rate, pad);
     }
 }
@@ -186,7 +213,11 @@ fn start_sample_is_within_2_ms_with_noise_at_every_rate() {
         let x = channel::pad(mix(rate, &payload), pad, pad);
         let x = channel::add_white_noise(x, rate, 3.0, 11);
         let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-        assert_eq!(&chime.payload[..chime.payload_len], &payload[..], "{rate} Hz");
+        assert_eq!(
+            &chime.payload[..chime.payload_len],
+            &payload[..],
+            "{rate} Hz"
+        );
         assert_start_within_2_ms(&chime, rate, pad);
     }
 }
@@ -206,7 +237,10 @@ fn time_at_a_later_sample_comes_from_start_sample() {
 
         // The encoded time is that of the first sample of the chime.
         let expected = UNIX as f64 + (sample as f64 - pad as f64) / rate as f64;
-        assert!((time - expected).abs() < 0.002, "{time} against {expected} at {rate} Hz");
+        assert!(
+            (time - expected).abs() < 0.002,
+            "{time} against {expected} at {rate} Hz"
+        );
     }
 }
 
@@ -231,7 +265,9 @@ fn several_chimes_in_one_stream_are_each_decoded_once() {
     let events = run(rate, &channel::to_f32(&stream));
     assert_eq!(events.len(), times.len(), "{events:?}");
     for ((event, &time), &start) in events.iter().zip(&times).zip(&starts) {
-        let Event::Chime(chime) = event else { panic!("{event:?}") };
+        let Event::Chime(chime) = event else {
+            panic!("{event:?}")
+        };
         let message = TimeMessage::parse(&chime.payload[..chime.payload_len]).unwrap();
         assert_eq!(message.unix_time, time);
         assert_start_within_2_ms(chime, rate, start);
@@ -255,8 +291,11 @@ fn blocks_give_the_same_events_as_single_samples() {
     let samples = channel::to_f32(&channel::add_white_noise(stream, rate, 0.0, 9));
 
     let mut decoder = Decoder::new(rate).unwrap();
-    let one_at_a_time: Vec<(usize, Event)> =
-        samples.iter().enumerate().filter_map(|(i, &x)| decoder.push(x).map(|event| (i, event))).collect();
+    let one_at_a_time: Vec<(usize, Event)> = samples
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &x)| decoder.push(x).map(|event| (i, event)))
+        .collect();
     assert_eq!(one_at_a_time.len(), 2, "{one_at_a_time:?}");
 
     for lengths in [&[1024][..], &[1, 23, 24, 25, 1000], &[7]] {
@@ -293,7 +332,9 @@ fn a_chime_soon_after_another_is_read_while_the_echoes_are_still_fading() {
         let read: Vec<u32> = events
             .iter()
             .filter_map(|event| match event {
-                Event::Chime(chime) => TimeMessage::parse(&chime.payload[..chime.payload_len]).map(|m| m.unix_time),
+                Event::Chime(chime) => {
+                    TimeMessage::parse(&chime.payload[..chime.payload_len]).map(|m| m.unix_time)
+                }
                 Event::Unreadable(_) => None,
             })
             .collect();
@@ -328,8 +369,12 @@ fn a_chime_starting_after_10_s_of_noise_decodes() {
 fn all_payload_lengths_from_the_connector_decode() {
     let rate = 48_000;
     let pad = pad_samples(rate);
-    let payloads =
-        [time_payload(), location_payload(), deployment_payload(), location_and_deployment_payload()];
+    let payloads = [
+        time_payload(),
+        location_payload(),
+        deployment_payload(),
+        location_and_deployment_payload(),
+    ];
     for (payload, expected_len) in payloads.iter().zip([6, 13, 14, 21]) {
         assert_eq!(payload.len(), expected_len);
         let x = channel::pad(mix(rate, payload), pad, pad);
@@ -345,10 +390,14 @@ fn a_crc_match_with_another_length_is_not_a_chime() {
     let rate = 48_000;
     for payload_len in [5, 7, 10, 12, 15, 20] {
         let payload: Vec<u8> = (1..=payload_len).collect();
-        let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
+        let carrier =
+            carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
         let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
         let events = run(rate, &channel::to_f32(&x));
-        assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{payload_len} bytes: {events:?}");
+        assert!(
+            !events.iter().any(|event| matches!(event, Event::Chime(_))),
+            "{payload_len} bytes: {events:?}"
+        );
     }
 }
 
@@ -360,10 +409,15 @@ fn a_crc_match_with_a_time_zone_out_of_range_is_not_a_chime() {
         // The generator clamps the time zone, as the encoder does.
         let mut payload = time_payload();
         payload[4..6].copy_from_slice(&time_zone.to_le_bytes());
-        let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
+        let carrier =
+            carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
         let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
         let unreadable = the_unreadable(&run(rate, &channel::to_f32(&x)));
-        assert_eq!(unreadable.reason, UnreadableReason::MessageRefused, "time zone {time_zone}");
+        assert_eq!(
+            unreadable.reason,
+            UnreadableReason::MessageRefused,
+            "time zone {time_zone}"
+        );
         assert_eq!(unreadable.bytes_received, 8);
     }
 }
@@ -387,7 +441,8 @@ fn a_message_with_too_many_corrected_words_is_refused_and_says_so() {
     let rate = 48_000;
     let message = with_crc(&time_payload());
     let render = |flipped: usize| {
-        let carrier = carrier_with_symbol_lengths(rate, &lengths_with_flipped_codewords(&message, flipped));
+        let carrier =
+            carrier_with_symbol_lengths(rate, &lengths_with_flipped_codewords(&message, flipped));
         channel::to_f32(&channel::pad(carrier, pad_samples(rate), pad_samples(rate)))
     };
     let chime = the_chime(&run(rate, &render(10)));
@@ -415,7 +470,11 @@ fn a_carrier_at_minus_80_dbfs_decodes_over_a_quiet_noise_floor() {
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
     assert_eq!(&chime.payload[..chime.payload_len], &payload[..]);
     assert_start_within_2_ms(&chime, rate, pad);
-    assert!((chime.level_dbfs + 83.4).abs() < 1.0, "level_dbfs {}", chime.level_dbfs);
+    assert!(
+        (chime.level_dbfs + 83.4).abs() < 1.0,
+        "level_dbfs {}",
+        chime.level_dbfs
+    );
 }
 
 #[test]
@@ -426,7 +485,11 @@ fn level_matches_the_carrier_rms_of_the_channel_simulator() {
     let x = channel::pad(mix(rate, &payload), pad, pad);
     let expected = channel::db(channel::carrier_rms(&x, rate)) as f32;
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-    assert!((chime.level_dbfs - expected).abs() < 0.3, "{} against {expected}", chime.level_dbfs);
+    assert!(
+        (chime.level_dbfs - expected).abs() < 0.3,
+        "{} against {expected}",
+        chime.level_dbfs
+    );
 }
 
 #[test]
@@ -434,9 +497,17 @@ fn a_full_scale_carrier_reads_about_minus_3_dbfs() {
     let payload = time_payload();
     let rate = 48_000;
     let render = generator::render(rate, &payload, TUNE_TIME);
-    let x = channel::pad(render.mix_with_gains(1.0, 0.0), pad_samples(rate), pad_samples(rate));
+    let x = channel::pad(
+        render.mix_with_gains(1.0, 0.0),
+        pad_samples(rate),
+        pad_samples(rate),
+    );
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-    assert!((chime.level_dbfs + 3.4).abs() < 0.5, "level_dbfs {}", chime.level_dbfs);
+    assert!(
+        (chime.level_dbfs + 3.4).abs() < 0.5,
+        "level_dbfs {}",
+        chime.level_dbfs
+    );
 }
 
 #[test]
@@ -447,7 +518,11 @@ fn samples_above_full_scale_decode() {
     let x = channel::gain_db(x, 24.0);
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
     assert_eq!(&chime.payload[..chime.payload_len], &payload[..]);
-    assert!((chime.level_dbfs - 8.6).abs() < 0.5, "level_dbfs {}", chime.level_dbfs);
+    assert!(
+        (chime.level_dbfs - 8.6).abs() < 0.5,
+        "level_dbfs {}",
+        chime.level_dbfs
+    );
 }
 
 #[test]
@@ -459,7 +534,11 @@ fn snr_reads_close_to_the_snr_in_the_2_khz_band() {
         let x = channel::pad(mix(rate, &payload), pad, pad);
         let x = channel::add_white_noise(x, rate, snr_db, 31);
         let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-        assert!((chime.snr_db as f64 - snr_db).abs() < 1.5, "{} at {snr_db} dB", chime.snr_db);
+        assert!(
+            (chime.snr_db as f64 - snr_db).abs() < 1.5,
+            "{} at {snr_db} dB",
+            chime.snr_db
+        );
     }
 }
 
@@ -473,7 +552,12 @@ fn snr_is_nan_when_the_noise_was_not_measured() {
 
     for pad_ms in [0, 20, 40] {
         let pad = rate as usize * pad_ms / 1000;
-        let x = channel::add_white_noise(channel::pad(clean.clone(), pad, rate as usize), rate, 10.0, 51);
+        let x = channel::add_white_noise(
+            channel::pad(clean.clone(), pad, rate as usize),
+            rate,
+            10.0,
+            51,
+        );
         let chime = the_chime(&run(rate, &channel::to_f32(&x)));
         assert!(chime.snr_db.is_nan(), "{pad_ms} ms: {chime:?}");
     }
@@ -482,9 +566,17 @@ fn snr_is_nan_when_the_noise_was_not_measured() {
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
     assert!(chime.snr_db.is_nan(), "after digital silence: {chime:?}");
 
-    let x = channel::add_white_noise(channel::pad(clean, rate as usize / 10, rate as usize), rate, 10.0, 52);
+    let x = channel::add_white_noise(
+        channel::pad(clean, rate as usize / 10, rate as usize),
+        rate,
+        10.0,
+        52,
+    );
     let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-    assert!((chime.snr_db - 10.0).abs() < 3.0, "after 100 ms of noise: {chime:?}");
+    assert!(
+        (chime.snr_db - 10.0).abs() < 3.0,
+        "after 100 ms of noise: {chime:?}"
+    );
 }
 
 /// A real noise floor far below -120 dBFS in the band still gives the true SNR.
@@ -510,7 +602,11 @@ fn band_level_reads_a_tone_and_white_noise() {
         decoder.push((0.5 * (2.0 * PI * 18_100.0 * t).sin()) as f32);
     }
     // An amplitude of 0.5 is -9 dBFS RMS.
-    assert!((decoder.band_level_dbfs() + 9.03).abs() < 0.5, "tone: {}", decoder.band_level_dbfs());
+    assert!(
+        (decoder.band_level_dbfs() + 9.03).abs() < 0.5,
+        "tone: {}",
+        decoder.band_level_dbfs()
+    );
 
     // White noise has 1/12 of its power in the 2 kHz band out of 24 kHz.
     let mut decoder = Decoder::new(rate).unwrap();
@@ -519,7 +615,11 @@ fn band_level_reads_a_tone_and_white_noise() {
         decoder.push(sample);
     }
     let expected = -20.0 - 10.0 * 12f32.log10();
-    assert!((decoder.band_level_dbfs() - expected).abs() < 1.0, "noise: {}", decoder.band_level_dbfs());
+    assert!(
+        (decoder.band_level_dbfs() - expected).abs() < 1.0,
+        "noise: {}",
+        decoder.band_level_dbfs()
+    );
 
     let mut decoder = Decoder::new(rate).unwrap();
     decoder.push(0.0);
@@ -531,8 +631,9 @@ fn band_level_reads_a_tone_and_white_noise() {
 #[test]
 fn a_steady_18_khz_tone_gives_no_events() {
     let rate = 48_000u32;
-    let tone: Vec<f64> =
-        (0..10 * rate).map(|n| 0.25 * (2.0 * PI * 18_000.0 * n as f64 / rate as f64).sin()).collect();
+    let tone: Vec<f64> = (0..10 * rate)
+        .map(|n| 0.25 * (2.0 * PI * 18_000.0 * n as f64 / rate as f64).sin())
+        .collect();
     let tone = channel::add_white_noise_rms(tone, 1e-4, 9);
     assert_eq!(run(rate, &channel::to_f32(&tone)), Vec::new());
 }
@@ -542,7 +643,11 @@ fn white_noise_gives_no_events() {
     let rate = 48_000;
     for (scale, seed) in [(0.01, 1), (1e-5, 2), (3.0, 3)] {
         let noise = channel::add_white_noise_rms(vec![0.0; 60 * rate as usize], scale, seed);
-        assert_eq!(run(rate, &channel::to_f32(&noise)), Vec::new(), "RMS level {scale}");
+        assert_eq!(
+            run(rate, &channel::to_f32(&noise)),
+            Vec::new(),
+            "RMS level {scale}"
+        );
     }
 }
 
@@ -555,14 +660,22 @@ fn digital_silence_gives_no_events() {
 #[test]
 fn tone_mode_gives_no_chime() {
     let rate = 48_000u32;
-    let lengths: Vec<f64> = [10.0, 5.0].iter().copied().cycle().take(2 * 5000 / 15).collect();
+    let lengths: Vec<f64> = [10.0, 5.0]
+        .iter()
+        .copied()
+        .cycle()
+        .take(2 * 5000 / 15)
+        .collect();
     let mut x = carrier_with_symbol_lengths(rate, &lengths);
     for (n, sample) in x.iter_mut().enumerate() {
         *sample += 0.5 * (2.0 * PI * 523.0 * n as f64 / rate as f64).sin();
     }
     let x = channel::add_white_noise_rms(channel::pad(x, 24_000, 24_000), 1e-3, 4);
     let events = run(rate, &channel::to_f32(&x));
-    assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{events:?}");
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Chime(_))),
+        "{events:?}"
+    );
 }
 
 /// A decoder built in place must not depend on what the memory held before, and it must
@@ -571,7 +684,12 @@ fn tone_mode_gives_no_chime() {
 fn a_decoder_built_in_place_reads_the_same_whatever_the_memory_held() {
     let payload = time_payload();
     let rate = 48_000;
-    let x = channel::add_white_noise(channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate)), rate, 0.0, 41);
+    let x = channel::add_white_noise(
+        channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate)),
+        rate,
+        0.0,
+        41,
+    );
     let x = channel::to_f32(&x);
     let expected = run(rate, &x);
     assert_eq!(the_chime(&expected).payload[..6], payload[..]);
@@ -581,7 +699,10 @@ fn a_decoder_built_in_place_reads_the_same_whatever_the_memory_held() {
         // SAFETY: writing bytes to memory that this function owns and has not read.
         unsafe { slot.as_mut_ptr().write_bytes(pattern, 1) };
         let decoder = Decoder::init_in_place(&mut slot, rate).unwrap();
-        let events: Vec<Event> = x.iter().filter_map(|&sample| decoder.push(sample)).collect();
+        let events: Vec<Event> = x
+            .iter()
+            .filter_map(|&sample| decoder.push(sample))
+            .collect();
         assert_eq!(events, expected, "memory filled with {pattern:#x}");
     }
 }
@@ -594,7 +715,10 @@ fn a_decoder_can_be_rebuilt_in_place_at_another_rate() {
     for rate in [48_000, 192_000, 44_100] {
         let x = channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate));
         let decoder = Decoder::init_in_place(&mut slot, rate).unwrap();
-        let events: Vec<Event> = channel::to_f32(&x).iter().filter_map(|&sample| decoder.push(sample)).collect();
+        let events: Vec<Event> = channel::to_f32(&x)
+            .iter()
+            .filter_map(|&sample| decoder.push(sample))
+            .collect();
         assert_eq!(the_chime(&events).payload[..6], payload[..], "{rate} Hz");
     }
 }
@@ -633,7 +757,10 @@ fn a_chime_cut_off_in_its_data_is_signal_lost_and_the_next_chime_decodes() {
     assert_eq!(events.len(), 2, "{events:?}");
     let unreadable = the_unreadable(&events[..1]);
     assert_eq!(unreadable.reason, UnreadableReason::SignalLost);
-    assert!((2..=5).contains(&unreadable.bytes_received), "{unreadable:?}");
+    assert!(
+        (2..=5).contains(&unreadable.bytes_received),
+        "{unreadable:?}"
+    );
     assert_eq!(the_chime(&events[1..]).payload[..6], payload[..]);
     assert_start_within_2_ms(&the_chime(&events[1..]), rate, second_start);
 }
@@ -653,7 +780,10 @@ fn a_chime_that_started_before_the_first_sample_has_a_negative_start() {
         let chime = the_chime(&run(rate as u32, &channel::to_f32(&x)));
         assert_eq!(chime.payload[..chime.payload_len], payload[..]);
         let error_ms = (chime.start_sample + dropped as i64) as f64 * 1000.0 / rate as f64;
-        assert!(error_ms.abs() <= 2.0, "{kept_symbols} start symbols kept: {error_ms} ms off");
+        assert!(
+            error_ms.abs() <= 2.0,
+            "{kept_symbols} start symbols kept: {error_ms} ms off"
+        );
     }
 }
 
@@ -689,7 +819,11 @@ fn a_chime_cut_off_reports_what_arrived_before_the_cut() {
         let x = channel::pad(whole[..keep].to_vec(), pad_samples(rate), rate as usize);
         let x = channel::add_white_noise_rms(x, 1e-4, 62);
         let unreadable = the_unreadable(&run(rate, &channel::to_f32(&x)));
-        assert_eq!(unreadable.reason, UnreadableReason::SignalLost, "{data_ms} ms of data");
+        assert_eq!(
+            unreadable.reason,
+            UnreadableReason::SignalLost,
+            "{data_ms} ms of data"
+        );
         assert!(
             unreadable.bytes_received.abs_diff(bytes_sent) <= 1,
             "{data_ms} ms of data: {bytes_sent} bytes sent, {unreadable:?}"
@@ -721,7 +855,10 @@ fn a_loud_sound_does_not_hide_quiet_chimes_after_it() {
             }
             x.extend_from_slice(&tail);
             let events = run(rate, &channel::to_f32(&x));
-            let read = events.iter().filter(|event| matches!(event, Event::Chime(_))).count();
+            let read = events
+                .iter()
+                .filter(|event| matches!(event, Event::Chime(_)))
+                .count();
             assert_eq!(read, 6, "{rate} Hz, gap noise {gap_noise_rms}: {events:?}");
         }
     }
@@ -766,7 +903,10 @@ fn a_message_longer_than_the_format_allows_is_too_many_bytes() {
     // One more than the longest message, which is the byte that showed the message was
     // too long.
     assert_eq!(unreadable.bytes_received, format::MAX_MESSAGE_BYTES + 1);
-    assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{events:?}");
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Chime(_))),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -777,7 +917,10 @@ fn a_message_of_only_zeros_is_not_a_chime() {
     let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&message, 8));
     let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
     let events = run(rate, &channel::to_f32(&x));
-    assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{events:?}");
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Chime(_))),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -793,7 +936,10 @@ fn nan_and_infinite_samples_do_not_stop_the_decoder() {
             assert_eq!(decoder.push(3e20), None);
         }
         let x = channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate));
-        let events: Vec<Event> = channel::to_f32(&x).iter().filter_map(|&sample| decoder.push(sample)).collect();
+        let events: Vec<Event> = channel::to_f32(&x)
+            .iter()
+            .filter_map(|&sample| decoder.push(sample))
+            .collect();
         assert_eq!(the_chime(&events).payload[..6], payload[..], "{rate} Hz");
     }
 }
@@ -837,7 +983,9 @@ fn decodes_below_0_db_snr() {
     // At -3 dB in the 2 kHz band, AudioMoth's own decoder has stopped working.
     let payload = time_payload();
     let rate = 48_000;
-    let good = successes(rate, &payload, -3.0, 20, || padded(rate, mix(rate, &payload)));
+    let good = successes(rate, &payload, -3.0, 20, || {
+        padded(rate, mix(rate, &payload))
+    });
     assert!(good >= 19, "{good} of 20");
 }
 
@@ -857,9 +1005,11 @@ fn decodes_with_carrier_frequency_error() {
 fn decodes_through_reverb() {
     let payload = time_payload();
     let rate = 48_000;
-    for (profile, snr_db) in
-        [(ReverbProfile::Small, 0.0), (ReverbProfile::Medium, 10.0), (ReverbProfile::Large, 25.0)]
-    {
+    for (profile, snr_db) in [
+        (ReverbProfile::Small, 0.0),
+        (ReverbProfile::Medium, 10.0),
+        (ReverbProfile::Large, 25.0),
+    ] {
         let good = successes(rate, &payload, snr_db, 6, || {
             padded(rate, channel::reverb(mix(rate, &payload), rate, profile))
         });
@@ -873,7 +1023,10 @@ fn decodes_a_clipped_input() {
     for payload in [time_payload(), location_and_deployment_payload()] {
         for gain in [6.0, 20.0] {
             let good = successes(rate, &payload, 20.0, 4, || {
-                padded(rate, channel::clip(channel::gain_db(mix(rate, &payload), gain), 0.5))
+                padded(
+                    rate,
+                    channel::clip(channel::gain_db(mix(rate, &payload), gain), 0.5),
+                )
             });
             assert_eq!(good, 4, "{} bytes, gain {gain} dB", payload.len());
         }
@@ -909,7 +1062,10 @@ fn sensitivity_table() {
                     })
                 })
                 .collect();
-            handles.into_iter().map(|handle| handle.join().unwrap()).sum()
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .sum()
         });
         println!("{snr_db:5.1} dB in the 2 kHz band: {total} of {trials}");
     }

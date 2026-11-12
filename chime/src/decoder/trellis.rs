@@ -117,7 +117,11 @@ impl Path {
         }
         *next = *self;
         next.metric = metric;
-        let polarity = if flipped { -self.reference } else { self.reference };
+        let polarity = if flipped {
+            -self.reference
+        } else {
+            self.reference
+        };
         next.reference = polarity * memory + bucket;
         next.history = (self.history << 1) | ((self.history & 1) ^ flipped as u32);
     }
@@ -134,7 +138,8 @@ impl Path {
             return false;
         };
         let crc = format::crc16(&self.bytes[..payload_len]);
-        self.bytes[payload_len] == (crc & 0xFF) as u8 && self.bytes[payload_len + 1] == (crc >> 8) as u8
+        self.bytes[payload_len] == (crc & 0xFF) as u8
+            && self.bytes[payload_len + 1] == (crc >> 8) as u8
     }
 
     /// True when the CRC matches and the message is one that a chime could carry.
@@ -175,7 +180,9 @@ impl Path {
 
 /// True for a state that is the first bucket of a symbol, which follows a polarity flip.
 pub(super) fn starts_a_symbol(state: usize) -> bool {
-    state == S0 || state == T0 || (state >= FIRST_DATA_STATE && (state - FIRST_DATA_STATE).is_multiple_of(4))
+    state == S0
+        || state == T0
+        || (state >= FIRST_DATA_STATE && (state - FIRST_DATA_STATE).is_multiple_of(4))
 }
 
 /// True for a state in a stop symbol.
@@ -237,7 +244,13 @@ impl Trellis {
     ///
     /// `distance` is the distance in baseband samples from the start of the walk to this
     /// bucket, and `memory` is the weight of the older buckets in a path's reference.
-    pub(super) fn step(&mut self, bucket: Cplx, echo_taps: &[Cplx; ECHO_TAPS], distance: f32, memory: f32) -> usize {
+    pub(super) fn step(
+        &mut self,
+        bucket: Cplx,
+        echo_taps: &[Cplx; ECHO_TAPS],
+        distance: f32,
+        memory: f32,
+    ) -> usize {
         let (buffer_a, buffer_b) = self.buffers.split_at_mut(1);
         let (old, new) = if self.current == 0 {
             (&buffer_a[0], &mut buffer_b[0])
@@ -286,7 +299,11 @@ impl Trellis {
             let after_0 = data_state(previous, 1);
             let after_1 = data_state(previous, 3);
             let next = &mut new[data_state(symbol, 0)];
-            let (source, bit) = if flip(after_1) > flip(after_0) { (after_1, 1) } else { (after_0, 0) };
+            let (source, bit) = if flip(after_1) > flip(after_0) {
+                (after_1, 1)
+            } else {
+                (after_0, 0)
+            };
             let can_start_data = symbol == 0 && old[S2].start_symbols > 0;
             if can_start_data && flip(S2) > flip(source) {
                 old[S2].extend_into(next, cleaned[S2], flip(S2), true, memory);

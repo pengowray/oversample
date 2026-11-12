@@ -196,7 +196,8 @@ fn compare_readings(first: Option<&[u8]>, second: Option<&[u8]>) -> Reading {
 /// search that started it.
 fn heard_a_chime(coherence: f32, well_above_noise: bool, path: &Path) -> bool {
     let whole_message = path.byte_count as usize >= WHOLE_MESSAGE_BYTES;
-    let start_symbols_seen = coherence >= CLEAN_START_COHERENCE || (coherence >= SOME_START_COHERENCE && whole_message);
+    let start_symbols_seen =
+        coherence >= CLEAN_START_COHERENCE || (coherence >= SOME_START_COHERENCE && whole_message);
     (well_above_noise && start_symbols_seen) || path.codeword_score() >= CODEWORD_SCORE_OF_A_CHIME
 }
 
@@ -246,7 +247,10 @@ impl Decoder {
     ///
     /// To change the sample rate, call this again with the same slot. Whatever `slot` held
     /// is overwritten, and a decoder has nothing to drop.
-    pub fn init_in_place(slot: &mut MaybeUninit<Decoder>, sample_rate_hz: u32) -> Option<&mut Decoder> {
+    pub fn init_in_place(
+        slot: &mut MaybeUninit<Decoder>,
+        sample_rate_hz: u32,
+    ) -> Option<&mut Decoder> {
         if sample_rate_hz < MIN_SAMPLE_RATE_HZ {
             return None;
         }
@@ -307,7 +311,10 @@ impl Decoder {
         // walk that starts in this call waits for the next, because the timing search
         // is a large cost.
         let was_walking = self.walking;
-        if self.detector.push(baseband.limited, baseband.raw_power, was_walking) {
+        if self
+            .detector
+            .push(baseband.limited, baseband.raw_power, was_walking)
+        {
             #[cfg(feature = "profile")]
             if self.last_stage == Stage::Detector {
                 return None;
@@ -375,7 +382,8 @@ impl Decoder {
         match reading {
             Reading::Message(index) => {
                 let event = self.chime_event(index);
-                self.detector.wait_for_echoes(HOLDOFF_AFTER_CHIME_BLOCKS, self.walkers[index].mean_power());
+                self.detector
+                    .wait_for_echoes(HOLDOFF_AFTER_CHIME_BLOCKS, self.walkers[index].mean_power());
                 Some(Event::Chime(event))
             }
             Reading::Conflict => self.unreadable_event(UnreadableReason::ConflictingReads),
@@ -406,7 +414,8 @@ impl Decoder {
         let chosen = self.most_chime_like_walker();
         let heard = chosen.is_some_and(|(index, state)| {
             let walker = &self.walkers[index];
-            let well_above_noise = walker.level_reference() >= WELL_ABOVE_NOISE * self.detector.noise_bucket();
+            let well_above_noise =
+                walker.level_reference() >= WELL_ABOVE_NOISE * self.detector.noise_bucket();
             heard_a_chime(self.coherence, well_above_noise, walker.path(state))
         });
         if !heard {
@@ -443,7 +452,9 @@ impl Decoder {
         // These three reached the stop symbols, which look like start symbols.
         let fixed_wait = if matches!(
             reason,
-            UnreadableReason::BadCrc | UnreadableReason::ConflictingReads | UnreadableReason::MessageRefused
+            UnreadableReason::BadCrc
+                | UnreadableReason::ConflictingReads
+                | UnreadableReason::MessageRefused
         ) {
             HOLDOFF_AFTER_BAD_CHIME_BLOCKS
         } else {
@@ -482,8 +493,11 @@ impl Decoder {
     /// only where the walk started.
     fn start_sample(&self, walk_start: f64, path: &Path) -> i64 {
         if path.data_start >= 0.0 {
-            let data_start = self.front_end.input_position(walk_start + path.data_start as f64);
-            let start = data_start - START_SYMBOLS as f64 * START_STOP_US as f64 * 1e-6 * self.front_end.sample_rate();
+            let data_start = self
+                .front_end
+                .input_position(walk_start + path.data_start as f64);
+            let start = data_start
+                - START_SYMBOLS as f64 * START_STOP_US as f64 * 1e-6 * self.front_end.sample_rate();
             libm::floor(start + 0.5) as i64
         } else {
             round_to_u64(self.front_end.input_position(walk_start).max(0.0)) as i64

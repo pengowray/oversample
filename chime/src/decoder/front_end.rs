@@ -150,8 +150,15 @@ pub(super) struct Baseband {
 /// `MIN_STAGE1_RATE_HZ`, or 1 if that is below `MIN_STAGE1_DECIMATION`.
 fn stage1_decimation(rate: f64, decimation: u32) -> u32 {
     let most = (rate / MIN_STAGE1_RATE_HZ) as u32;
-    let best = (1..=most.min(MAX_STAGE1_DECIMATION as u32)).rev().find(|d| decimation % d == 0).unwrap_or(1);
-    if best >= MIN_STAGE1_DECIMATION { best } else { 1 }
+    let best = (1..=most.min(MAX_STAGE1_DECIMATION as u32))
+        .rev()
+        .find(|d| decimation % d == 0)
+        .unwrap_or(1);
+    if best >= MIN_STAGE1_DECIMATION {
+        best
+    } else {
+        1
+    }
 }
 
 /// The weight of the input `k` samples before an output's last sample, in a first stage of
@@ -159,7 +166,12 @@ fn stage1_decimation(rate: f64, decimation: u32) -> u32 {
 /// step from each average, over `d1` cubed. Counted rather than convolved, so that building
 /// a decoder needs no scratch arrays on the stack.
 fn stage1_weight(k: usize, d1: usize) -> f64 {
-    const { assert!(STAGE1_ORDER == 3, "stage1_weight counts three moving averages") };
+    const {
+        assert!(
+            STAGE1_ORDER == 3,
+            "stage1_weight counts three moving averages"
+        )
+    };
     let mut ways = 0;
     for a in 0..d1 {
         for b in 0..d1 {
@@ -181,7 +193,10 @@ fn stage1_taps(position: usize, d1: usize, step: f64) -> [Cplx; STAGE1_ORDER] {
         let k = output * d1 + d1 - 1 - position;
         let weight = stage1_weight(k, d1);
         let angle = step * k as f64;
-        *tap = Cplx { re: (weight * libm::cos(angle)) as f32, im: (weight * libm::sin(angle)) as f32 };
+        *tap = Cplx {
+            re: (weight * libm::cos(angle)) as f32,
+            im: (weight * libm::sin(angle)) as f32,
+        };
     }
     taps
 }
@@ -228,12 +243,16 @@ impl FrontEnd {
         let d1 = stage1_decimation(rate, decimation);
         let step = 2.0 * core::f64::consts::PI * CARRIER_HZ as f64 / rate;
         let filter = Butterworth4::lowpass((rate / d1 as f64) as f32, FILTER_CUTOFF_HZ);
-        let turn = |angle: f64| Cplx { re: libm::cos(angle) as f32, im: libm::sin(angle) as f32 };
+        let turn = |angle: f64| Cplx {
+            re: libm::cos(angle) as f32,
+            im: libm::sin(angle) as f32,
+        };
         // SAFETY: the caller makes `this` valid for writes, and these are all of its fields.
         unsafe {
             let rows = addr_of_mut!((*this).taps).cast::<[Cplx; STAGE1_ORDER]>();
             for position in 0..MAX_STAGE1_DECIMATION {
-                rows.add(position).write(stage1_taps(position, d1 as usize, step));
+                rows.add(position)
+                    .write(stage1_taps(position, d1 as usize, step));
             }
             addr_of_mut!((*this).sums).write([Cplx::ZERO; STAGE1_ORDER]);
             addr_of_mut!((*this).d1).write(d1);
@@ -246,7 +265,8 @@ impl FrontEnd {
             addr_of_mut!((*this).d2_count).write(0);
             addr_of_mut!((*this).sample_rate).write(rate);
             addr_of_mut!((*this).baseband_rate).write(rate / decimation as f64);
-            addr_of_mut!((*this).delay).write(FILTER_DELAY_S * rate + (STAGE1_ORDER * (d1 as usize - 1)) as f64 / 2.0);
+            addr_of_mut!((*this).delay)
+                .write(FILTER_DELAY_S * rate + (STAGE1_ORDER * (d1 as usize - 1)) as f64 / 2.0);
             addr_of_mut!((*this).running_power).write(POWER_FLOOR);
             addr_of_mut!((*this).loud_run).write(0);
             addr_of_mut!((*this).input_samples).write(0);
@@ -279,7 +299,10 @@ impl FrontEnd {
         while taken < input.len() {
             let position = self.position as usize;
             let n = (d1 - position).min(input.len() - taken);
-            for (&x, row) in input[taken..taken + n].iter().zip(&self.taps[position..position + n]) {
+            for (&x, row) in input[taken..taken + n]
+                .iter()
+                .zip(&self.taps[position..position + n])
+            {
                 s0 += row[0] * x;
                 s1 += row[1] * x;
                 s2 += row[2] * x;
@@ -327,7 +350,11 @@ impl FrontEnd {
     fn stage2(&mut self, out: Cplx, ring: &mut Ring) -> Option<Baseband> {
         // Checking here rather than at each input sample costs an eighth as much. A fault
         // in one input sample loses the three outputs that it adds into, 125 us at 192 kHz.
-        let out = if out.power() < MAX_STAGE1_POWER { out } else { Cplx::ZERO };
+        let out = if out.power() < MAX_STAGE1_POWER {
+            out
+        } else {
+            Cplx::ZERO
+        };
         let z = out.mul(self.turn);
         self.turn = self.turn.mul(self.turn_step);
         let i = self.filter_i.process_sample(z.re + SUBNORMAL_GUARD);
@@ -359,7 +386,9 @@ impl FrontEnd {
             (z, raw_power)
         };
         // The floor keeps this out of the subnormal numbers during digital silence.
-        self.running_power = (self.running_power + (used_power - self.running_power) * LIMIT_WEIGHT).max(POWER_FLOOR);
+        self.running_power = (self.running_power
+            + (used_power - self.running_power) * LIMIT_WEIGHT)
+            .max(POWER_FLOOR);
         ring.push(z);
         Some(Baseband { limited, raw_power })
     }
@@ -404,7 +433,10 @@ mod tests {
             }
             for k in 0..STAGE1_ORDER * d1 {
                 let expected = convolved.get(k).copied().unwrap_or(0.0);
-                assert!((stage1_weight(k, d1) - expected).abs() < 1e-12, "d1 {d1}, k {k}");
+                assert!(
+                    (stage1_weight(k, d1) - expected).abs() < 1e-12,
+                    "d1 {d1}, k {k}"
+                );
             }
         }
     }
@@ -419,9 +451,14 @@ mod tests {
                 FrontEnd::init_in_place(slot.as_mut_ptr(), rate);
                 slot.assume_init_mut()
             };
-            let mut ring = Ring { samples: [Cplx::ZERO; RING_LEN], count: 0 };
+            let mut ring = Ring {
+                samples: [Cplx::ZERO; RING_LEN],
+                count: 0,
+            };
             let input: std::vec::Vec<f32> = (0..rate as usize / 4)
-                .map(|n| libm::sin(2.0 * core::f64::consts::PI * hz * n as f64 / rate as f64) as f32)
+                .map(|n| {
+                    libm::sin(2.0 * core::f64::consts::PI * hz * n as f64 / rate as f64) as f32
+                })
                 .collect();
             let (mut at, mut sum, mut count) = (0, 0.0f64, 0);
             while at < input.len() {
@@ -444,7 +481,10 @@ mod tests {
     fn the_band_keeps_the_butterworth_shape() {
         for rate in [48_000, 96_000, 192_000] {
             let at_cutoff = relative_power_db(rate, 1_000.0);
-            assert!((at_cutoff + 3.0).abs() < 0.2, "{rate} Hz: {at_cutoff:.2} dB at 1 kHz");
+            assert!(
+                (at_cutoff + 3.0).abs() < 0.2,
+                "{rate} Hz: {at_cutoff:.2} dB at 1 kHz"
+            );
         }
     }
 

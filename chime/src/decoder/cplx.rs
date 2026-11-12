@@ -40,14 +40,21 @@ impl Cplx {
     /// This number scaled down, if necessary, so that its power is at most `limit`.
     pub(super) fn limited(self, limit: f32) -> Cplx {
         let power = self.power();
-        if power > limit { self * libm::sqrtf(limit / power) } else { self }
+        if power > limit {
+            self * libm::sqrtf(limit / power)
+        } else {
+            self
+        }
     }
 }
 
 impl Add for Cplx {
     type Output = Cplx;
     fn add(self, other: Cplx) -> Cplx {
-        Cplx { re: self.re + other.re, im: self.im + other.im }
+        Cplx {
+            re: self.re + other.re,
+            im: self.im + other.im,
+        }
     }
 }
 
@@ -61,20 +68,29 @@ impl AddAssign for Cplx {
 impl Sub for Cplx {
     type Output = Cplx;
     fn sub(self, other: Cplx) -> Cplx {
-        Cplx { re: self.re - other.re, im: self.im - other.im }
+        Cplx {
+            re: self.re - other.re,
+            im: self.im - other.im,
+        }
     }
 }
 
 impl Neg for Cplx {
     type Output = Cplx;
     fn neg(self) -> Cplx {
-        Cplx { re: -self.re, im: -self.im }
+        Cplx {
+            re: -self.re,
+            im: -self.im,
+        }
     }
 }
 
 impl Mul<f32> for Cplx {
     type Output = Cplx;
     fn mul(self, gain: f32) -> Cplx {
-        Cplx { re: self.re * gain, im: self.im * gain }
+        Cplx {
+            re: self.re * gain,
+            im: self.im * gain,
+        }
     }
 }

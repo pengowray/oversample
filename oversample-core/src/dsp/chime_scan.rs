@@ -56,7 +56,9 @@ impl FoundChime {
     /// The phone's local time as ISO 8601 with its UTC offset, such as
     /// `2026-10-26T17:33:40+10:00`.
     pub fn local_time_iso(&self) -> String {
-        let local = chime::LocalTime::from_epoch_seconds(self.unix_time as i64 + self.timezone_minutes as i64 * 60);
+        let local = chime::LocalTime::from_epoch_seconds(
+            self.unix_time as i64 + self.timezone_minutes as i64 * 60,
+        );
         let sign = if self.timezone_minutes < 0 { '-' } else { '+' };
         let offset = self.timezone_minutes.unsigned_abs();
         format!(
@@ -74,7 +76,8 @@ impl FoundChime {
 
     /// The deployment ID as 16 hex digits, in the order the chime sends it.
     pub fn deployment_id_hex(&self) -> Option<String> {
-        self.deployment_id.map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect())
+        self.deployment_id
+            .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect())
     }
 }
 
@@ -109,17 +112,28 @@ impl ChimeScanner {
             // SAFETY: `init_in_place` returned Some, so it wrote the whole decoder.
             decoders.push(unsafe { slot.assume_init() });
         }
-        Some(Self { decoders, pushed: vec![0; channels], sample_rate, start_frame, result: ChimeScanResult::default() })
+        Some(Self {
+            decoders,
+            pushed: vec![0; channels],
+            sample_rate,
+            start_frame,
+            result: ChimeScanResult::default(),
+        })
     }
 
     /// The next samples of `channel`.
     pub fn push(&mut self, channel: usize, samples: &[f32]) {
-        let Some(decoder) = self.decoders.get_mut(channel) else { return };
+        let Some(decoder) = self.decoders.get_mut(channel) else {
+            return;
+        };
         for &x in samples {
             if let Some(event) = decoder.push(x) {
                 match event {
                     Event::Chime(chime) => {
-                        let Some(message) = TimeMessage::parse(&chime.payload[..chime.payload_len]) else { continue };
+                        let Some(message) = TimeMessage::parse(&chime.payload[..chime.payload_len])
+                        else {
+                            continue;
+                        };
                         let start_frame = self.start_frame as f64 + chime.start_sample as f64;
                         let found = FoundChime {
                             channels: vec![channel as u32],
@@ -141,7 +155,9 @@ impl ChimeScanner {
     }
 
     pub fn finish(mut self) -> ChimeScanResult {
-        self.result.chimes.sort_by(|a, b| a.start_secs.total_cmp(&b.start_secs));
+        self.result
+            .chimes
+            .sort_by(|a, b| a.start_secs.total_cmp(&b.start_secs));
         self.result
     }
 }
@@ -181,7 +197,9 @@ pub fn merge(results: impl IntoIterator<Item = ChimeScanResult>) -> ChimeScanRes
             add(&mut merged.chimes, chime);
         }
     }
-    merged.chimes.sort_by(|a, b| a.start_secs.total_cmp(&b.start_secs));
+    merged
+        .chimes
+        .sort_by(|a, b| a.start_secs.total_cmp(&b.start_secs));
     merged
 }
 
@@ -207,7 +225,10 @@ mod tests {
     /// level the phone page plays them.
     fn render(payload: &[u8], gain: f32) -> Vec<f32> {
         let carrier = chime::encode::render(RATE, payload, &[]).carrier;
-        carrier.iter().map(|&c| (c * (gain * chime::format::CARRIER_AMPLITUDE) as f64) as f32).collect()
+        carrier
+            .iter()
+            .map(|&c| (c * (gain * chime::format::CARRIER_AMPLITUDE) as f64) as f32)
+            .collect()
     }
 
     fn payload(unix: u32, tz: i16, location: Option<[u8; 7]>, id: Option<&[u8; 8]>) -> Vec<u8> {
@@ -235,7 +256,15 @@ mod tests {
     fn a_stop_chime_gives_its_time_location_and_command() {
         // -33.87, 151.21, packed as the phone page's library packs them.
         let location = [0x50, 0x2F, 0xFB, 0x8D, 0x40, 0x1A, 0x48];
-        let chime = render(&payload(1_793_000_020, 600, Some(location), Some(&RemoteCommand::Stop.deployment_id())), 0.1);
+        let chime = render(
+            &payload(
+                1_793_000_020,
+                600,
+                Some(location),
+                Some(&RemoteCommand::Stop.deployment_id()),
+            ),
+            0.1,
+        );
         let mut seed = 1;
         let mut x = noise(RATE as usize * 2 + chime.len(), &mut seed);
         for (a, b) in x[RATE as usize..].iter_mut().zip(&chime) {
@@ -252,12 +281,22 @@ mod tests {
         assert_eq!(result.chimes.len(), 1, "{result:?}");
         let found = &result.chimes[0];
         assert_eq!(found.channels, [0, 1]);
-        assert!((found.start_secs - 1_001.0).abs() < 0.01, "{}", found.start_secs);
+        assert!(
+            (found.start_secs - 1_001.0).abs() < 0.01,
+            "{}",
+            found.start_secs
+        );
         assert_eq!(found.local_time_iso(), "2026-10-26T17:33:40+10:00");
         let (lat, lon) = found.location.unwrap();
-        assert!((lat + 33.87).abs() < 1e-5 && (lon - 151.21).abs() < 1e-5, "{lat} {lon}");
+        assert!(
+            (lat + 33.87).abs() < 1e-5 && (lon - 151.21).abs() < 1e-5,
+            "{lat} {lon}"
+        );
         assert_eq!(found.remote_command(), Some(RemoteCommand::Stop));
-        assert_eq!(found.deployment_id_hex().as_deref(), Some("4241545801020000"));
+        assert_eq!(
+            found.deployment_id_hex().as_deref(),
+            Some("4241545801020000")
+        );
         assert!(found.snr_db.is_some());
     }
 
@@ -275,7 +314,10 @@ mod tests {
         assert_eq!(result.chimes.len(), 1);
         assert_eq!(result.chimes[0].remote_command(), None);
         assert_eq!(result.chimes[0].location, None);
-        assert_eq!(result.chimes[0].local_time_iso(), "2026-10-26T04:03:20-03:30");
+        assert_eq!(
+            result.chimes[0].local_time_iso(),
+            "2026-10-26T04:03:20-03:30"
+        );
     }
 
     #[test]
@@ -287,7 +329,10 @@ mod tests {
     #[test]
     fn edge_ranges_cover_short_files_whole() {
         assert_eq!(edge_ranges(50 * 48_000, 48_000, 30.0), [(0, 50 * 48_000)]);
-        assert_eq!(edge_ranges(100 * 48_000, 48_000, 30.0), [(0, 30 * 48_000), (70 * 48_000, 30 * 48_000)]);
+        assert_eq!(
+            edge_ranges(100 * 48_000, 48_000, 30.0),
+            [(0, 30 * 48_000), (70 * 48_000, 30 * 48_000)]
+        );
     }
 
     #[test]
@@ -302,8 +347,14 @@ mod tests {
             level_dbfs,
             snr_db: None,
         };
-        let a = ChimeScanResult { chimes: vec![found(0, 10.0, -70.0)], unreadable: 1 };
-        let b = ChimeScanResult { chimes: vec![found(1, 10.02, -60.0), found(1, 50.0, -60.0)], unreadable: 2 };
+        let a = ChimeScanResult {
+            chimes: vec![found(0, 10.0, -70.0)],
+            unreadable: 1,
+        };
+        let b = ChimeScanResult {
+            chimes: vec![found(1, 10.02, -60.0), found(1, 50.0, -60.0)],
+            unreadable: 2,
+        };
         let merged = merge([a, b]);
         assert_eq!(merged.unreadable, 3);
         assert_eq!(merged.chimes.len(), 2);

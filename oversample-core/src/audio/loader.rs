@@ -870,9 +870,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
 /// depth for a lossless codec (FLAC, ALAC), and [`FileMetadata::LOSSY_BITS`]
 /// for every other codec. The enabled decoders for those (MP3, AAC, Vorbis)
 /// are all lossy.
-pub fn symphonia_pcm_bits(
-    params: &symphonia::core::codecs::audio::AudioCodecParameters,
-) -> u16 {
+pub fn symphonia_pcm_bits(params: &symphonia::core::codecs::audio::AudioCodecParameters) -> u16 {
     use symphonia::core::codecs::audio::well_known::{CODEC_ID_ALAC, CODEC_ID_FLAC};
     let declared = params
         .bits_per_sample
@@ -1044,8 +1042,7 @@ pub fn parse_m4a_audio_entry(bytes: &[u8]) -> Option<(u16, u32)> {
 /// [`FileMetadata::LOSSY_BITS`] for AAC and every other codec. For decoders
 /// that give float samples whatever the codec, such as the browser's.
 pub fn m4a_pcm_bits(bytes: &[u8]) -> u16 {
-    find_m4a_audio_sample_entries(bytes, alac_sample_entry_bits)
-        .unwrap_or(FileMetadata::LOSSY_BITS)
+    find_m4a_audio_sample_entries(bytes, alac_sample_entry_bits).unwrap_or(FileMetadata::LOSSY_BITS)
 }
 
 /// The bit depth of an `alac` first sample entry in a stsd body: the depth
@@ -1084,10 +1081,7 @@ fn alac_sample_entry_bits(entries_body: &[u8]) -> Option<u16> {
 /// Call `parse` on the stsd entries of each audio track in an MP4 (the stsd
 /// body after its version, flags and entry count) and return the first
 /// `Some`.
-fn find_m4a_audio_sample_entries<T>(
-    bytes: &[u8],
-    parse: impl Fn(&[u8]) -> Option<T>,
-) -> Option<T> {
+fn find_m4a_audio_sample_entries<T>(bytes: &[u8], parse: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
     let moov = find_top_level_atom(bytes, *b"moov")?;
     let mut pos = 0usize;
     while pos + 8 <= moov.len() {
@@ -1620,7 +1614,11 @@ mod tests {
         for codec in [CODEC_ID_MP3, CODEC_ID_AAC, CODEC_ID_VORBIS] {
             let mut p = AudioCodecParameters::new();
             p.for_codec(codec).with_bits_per_sample(16);
-            assert_eq!(symphonia_pcm_bits(&p), FileMetadata::LOSSY_BITS, "{codec:?}");
+            assert_eq!(
+                symphonia_pcm_bits(&p),
+                FileMetadata::LOSSY_BITS,
+                "{codec:?}"
+            );
         }
     }
 

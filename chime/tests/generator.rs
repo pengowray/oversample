@@ -32,11 +32,16 @@ const TZ: i16 = 660;
 const INT16_SCALE: f64 = 32767.0;
 
 fn read_fixture() -> (hound::WavSpec, Vec<i16>) {
-    let path =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/js_48000_u1793000000_tz660.wav");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/js_48000_u1793000000_tz660.wav"
+    );
     let mut reader = hound::WavReader::open(path).expect("fixture opens");
     let spec = reader.spec();
-    let samples = reader.samples::<i16>().map(|s| s.expect("fixture sample")).collect();
+    let samples = reader
+        .samples::<i16>()
+        .map(|s| s.expect("fixture sample"))
+        .collect();
     (spec, samples)
 }
 
@@ -87,8 +92,16 @@ fn bytes_from_symbol_lengths(lengths: &[usize], sample_rate: u32) -> Vec<u8> {
 
     let stop_intervals = STOP_SYMBOLS - 1;
     let data = &lengths[START_SYMBOLS..lengths.len() - stop_intervals];
-    assert!(lengths[..START_SYMBOLS].iter().all(|&l| classify(l) == 2), "start symbols");
-    assert!(lengths[lengths.len() - stop_intervals..].iter().all(|&l| classify(l) == 2), "stop");
+    assert!(
+        lengths[..START_SYMBOLS].iter().all(|&l| classify(l) == 2),
+        "start symbols"
+    );
+    assert!(
+        lengths[lengths.len() - stop_intervals..]
+            .iter()
+            .all(|&l| classify(l) == 2),
+        "stop"
+    );
     assert_eq!(data.len() % SYMBOLS_PER_BYTE, 0);
 
     data.chunks(SYMBOLS_PER_BYTE)
@@ -96,12 +109,18 @@ fn bytes_from_symbol_lengths(lengths: &[usize], sample_rate: u32) -> Vec<u8> {
             let mut words = [0u8; 2];
             for (index, &length) in symbols.iter().enumerate() {
                 let bit = classify(length);
-                assert!(bit < 2, "data symbol {index} has the length of a start symbol");
+                assert!(
+                    bit < 2,
+                    "data symbol {index} has the length of a start symbol"
+                );
                 words[index % 2] |= bit << (index / 2);
             }
             let (low, low_corrected) = chime::format::hamming_decode(words[0]);
             let (high, high_corrected) = chime::format::hamming_decode(words[1]);
-            assert!(!low_corrected && !high_corrected, "a clean waveform needs no correction");
+            assert!(
+                !low_corrected && !high_corrected,
+                "a clean waveform needs no correction"
+            );
             low | (high << 4)
         })
         .collect()
@@ -115,7 +134,11 @@ fn predicted_seconds(payload: &[u8]) -> f64 {
     let data_microseconds: u64 = generator::encode(&message)
         .iter()
         .map(|&bit| {
-            (if bit == 1 { chime::format::DATA_1_US } else { chime::format::DATA_0_US }) as u64
+            (if bit == 1 {
+                chime::format::DATA_1_US
+            } else {
+                chime::format::DATA_0_US
+            }) as u64
         })
         .sum();
     let framing_microseconds = ((chime::format::START_SYMBOLS + chime::format::STOP_SYMBOLS)
@@ -136,13 +159,21 @@ fn rust_port_matches_the_fixture_within_one_lsb() {
     assert_eq!(spec.bits_per_sample, 16);
 
     let rendered = render_fixture_message(48000).mix();
-    assert_eq!(rendered.len(), fixture.len(), "a length difference means a loop bound is wrong");
+    assert_eq!(
+        rendered.len(),
+        fixture.len(),
+        "a length difference means a loop bound is wrong"
+    );
 
     let mut worst: f64 = 0.0;
     for (index, (&expected, &ours)) in fixture.iter().zip(&rendered).enumerate() {
         let error = (expected as f64 - ours * INT16_SCALE).abs();
         worst = worst.max(error);
-        assert!(error <= 1.0, "sample {index}: fixture {expected}, port {}", ours * INT16_SCALE);
+        assert!(
+            error <= 1.0,
+            "sample {index}: fixture {expected}, port {}",
+            ours * INT16_SCALE
+        );
     }
     println!("Largest difference from the fixture: {worst:.3} LSB of 16-bit");
 }
@@ -156,7 +187,10 @@ fn payload_matches_what_the_javascript_printed() {
 fn crate_crc_matches_the_port_of_the_javascript_crc() {
     let expected = generator::crc16(&JS_PAYLOAD);
     assert_eq!(chime::format::crc16(&JS_PAYLOAD).to_le_bytes(), expected);
-    assert_eq!(chime::format::crc16(b"123456789").to_le_bytes(), generator::crc16(b"123456789"));
+    assert_eq!(
+        chime::format::crc16(b"123456789").to_le_bytes(),
+        generator::crc16(b"123456789")
+    );
 }
 
 #[test]
@@ -179,7 +213,11 @@ fn fixture_duration_is_what_the_format_predicts() {
     assert!((predicted - 0.990).abs() < 1e-9, "predicted {predicted} s");
     let predicted_samples = predicted * 48000.0;
     let difference = fixture.len() as f64 - predicted_samples;
-    assert!(difference.abs() <= 2.0, "{} samples, predicted {predicted_samples}", fixture.len());
+    assert!(
+        difference.abs() <= 2.0,
+        "{} samples, predicted {predicted_samples}",
+        fixture.len()
+    );
 }
 
 #[test]
@@ -197,7 +235,9 @@ fn longer_payload_layouts_and_tunes() {
     payload.extend_from_slice(&generator::location_bytes(51.5, -0.1));
     assert_eq!(
         payload,
-        [0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02, 0xE0, 0xD3, 0x11, 0x03, 0xCB, 0xF3, 0xFF],
+        [
+            0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02, 0xE0, 0xD3, 0x11, 0x03, 0xCB, 0xF3, 0xFF
+        ],
         "bytes printed by chime_render.mjs --location 51.5,-0.1"
     );
 
@@ -207,7 +247,9 @@ fn longer_payload_layouts_and_tunes() {
     ]));
     assert_eq!(
         payload,
-        [0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01],
+        [
+            0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01
+        ],
         "bytes printed by chime_render.mjs --deployment 0123456789abcdef"
     );
 
@@ -232,9 +274,10 @@ fn rust_port_matches_another_js_render() {
     let mut reader = hound::WavReader::open(&path).expect("render opens");
     let spec = reader.spec();
     let fixture: Vec<f64> = match spec.sample_format {
-        hound::SampleFormat::Int => {
-            reader.samples::<i16>().map(|s| s.unwrap() as f64 / INT16_SCALE).collect()
-        }
+        hound::SampleFormat::Int => reader
+            .samples::<i16>()
+            .map(|s| s.unwrap() as f64 / INT16_SCALE)
+            .collect(),
         hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap() as f64).collect(),
     };
 
@@ -243,7 +286,11 @@ fn rust_port_matches_another_js_render() {
             let payload: Vec<u8> = (0..hex.len() / 2)
                 .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex payload"))
                 .collect();
-            generator::render(spec.sample_rate, &payload, generator::tune_for_payload(payload.len()))
+            generator::render(
+                spec.sample_rate,
+                &payload,
+                generator::tune_for_payload(payload.len()),
+            )
         }
         Err(_) => render_fixture_message(spec.sample_rate),
     };
@@ -263,6 +310,9 @@ fn rust_port_matches_another_js_render() {
         .zip(&rendered)
         .map(|(js, ours)| (js - ours).abs())
         .fold(0.0, f64::max);
-    println!("Largest difference: {worst:.3e}, or {:.3} LSB of 16-bit", worst * INT16_SCALE);
+    println!(
+        "Largest difference: {worst:.3e}, or {:.3} LSB of 16-bit",
+        worst * INT16_SCALE
+    );
     assert!(worst * INT16_SCALE <= 1.0);
 }

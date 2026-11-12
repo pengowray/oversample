@@ -116,7 +116,11 @@ pub fn analyze_bits(
         value_coverage: None,
     };
     if total == 0 {
-        return empty(0, "No samples", vec!["File contains no audio samples".into()]);
+        return empty(
+            0,
+            "No samples",
+            vec!["File contains no audio samples".into()],
+        );
     }
     // A lossy file (FileMetadata::LOSSY_BITS) has no stored bits to count.
     if bits_per_sample == 0 {

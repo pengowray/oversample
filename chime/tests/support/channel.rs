@@ -21,7 +21,9 @@ impl Xorshift {
     /// Any seed works, including 0.
     pub fn new(seed: u64) -> Self {
         let scrambled = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
-        let mut generator = Self { state: if scrambled == 0 { 1 } else { scrambled } };
+        let mut generator = Self {
+            state: if scrambled == 0 { 1 } else { scrambled },
+        };
         for _ in 0..8 {
             generator.next_u64();
         }
@@ -48,7 +50,11 @@ impl Xorshift {
 
     /// +1.0 or -1.0.
     fn sign(&mut self) -> f64 {
-        if self.next_u64() >> 63 == 0 { 1.0 } else { -1.0 }
+        if self.next_u64() >> 63 == 0 {
+            1.0
+        } else {
+            -1.0
+        }
     }
 
     /// Exponentially distributed, for the gaps between events that arrive at
@@ -130,8 +136,14 @@ pub fn carrier_rms(x: &[f64], sample_rate: u32) -> f64 {
     }
     let peak = moving_power.iter().cloned().fold(0.0, f64::max);
     let threshold = peak / 2.0;
-    let first = moving_power.iter().position(|&p| p >= threshold).unwrap_or(0);
-    let last = moving_power.iter().rposition(|&p| p >= threshold).unwrap_or(0);
+    let first = moving_power
+        .iter()
+        .position(|&p| p >= threshold)
+        .unwrap_or(0);
+    let last = moving_power
+        .iter()
+        .rposition(|&p| p >= threshold)
+        .unwrap_or(0);
     rms(&band[first..=last])
 }
 
@@ -257,7 +269,11 @@ impl SincKernel {
                 if ratio >= 1.0 {
                     return 0.0;
                 }
-                let sinc = if i == 0 { 1.0 } else { (PI * t).sin() / (PI * t) };
+                let sinc = if i == 0 {
+                    1.0
+                } else {
+                    (PI * t).sin() / (PI * t)
+                };
                 sinc * bessel_i0(KAISER_BETA * (1.0 - ratio * ratio).sqrt()) / normaliser
             })
             .collect();
@@ -282,7 +298,9 @@ impl SincKernel {
         let half = SINC_HALF_WIDTH as i64;
         let first = (centre - half + 1).max(0);
         let last = (centre + half).min(x.len() as i64 - 1);
-        (first..=last).map(|k| x[k as usize] * self.at(position - k as f64)).sum()
+        (first..=last)
+            .map(|k| x[k as usize] * self.at(position - k as f64))
+            .sum()
     }
 }
 
@@ -334,7 +352,10 @@ pub fn pad(x: Vec<f64>, before: usize, after: usize) -> Vec<f64> {
 /// [`add_white_noise_rms`] for a signal with no chime in it.
 pub fn add_white_noise(x: Vec<f64>, sample_rate: u32, snr_db_in_band: f64, seed: u64) -> Vec<f64> {
     let carrier = carrier_rms(&x, sample_rate);
-    assert!(carrier > 0.0, "the signal has nothing in the 17 to 19 kHz band");
+    assert!(
+        carrier > 0.0,
+        "the signal has nothing in the 17 to 19 kHz band"
+    );
     let band_noise_rms = carrier / amplitude_from_db(snr_db_in_band);
     let total_noise_rms = band_noise_rms * (sample_rate as f64 / 2.0 / 2000.0).sqrt();
     add_white_noise_rms(x, total_noise_rms, seed)
@@ -344,7 +365,8 @@ pub fn add_white_noise(x: Vec<f64>, sample_rate: u32, snr_db_in_band: f64, seed:
 /// that has no chime in it.
 pub fn add_white_noise_rms(mut x: Vec<f64>, total_noise_rms: f64, seed: u64) -> Vec<f64> {
     let mut random = Xorshift::new(seed);
-    x.iter_mut().for_each(|s| *s += total_noise_rms * random.gaussian());
+    x.iter_mut()
+        .for_each(|s| *s += total_noise_rms * random.gaussian());
     x
 }
 
@@ -387,7 +409,9 @@ pub fn rate_error_ppm(x: Vec<f64>, ppm: f64) -> Vec<f64> {
     let kernel = SincKernel::new();
     let speed = 1.0 + ppm * 1e-6;
     let output_length = (x.len() as f64 / speed).floor() as usize;
-    (0..output_length).map(|n| kernel.interpolate(&x, n as f64 * speed)).collect()
+    (0..output_length)
+        .map(|n| kernel.interpolate(&x, n as f64 * speed))
+        .collect()
 }
 
 /// Ideal interpolation by a whole-number factor, for a 48 kHz render that reaches a
@@ -395,14 +419,18 @@ pub fn rate_error_ppm(x: Vec<f64>, ppm: f64) -> Vec<f64> {
 /// samples, and every `factor`th output sample equals an input sample.
 pub fn upsample_sinc(x: Vec<f64>, factor: usize) -> Vec<f64> {
     let kernel = SincKernel::new();
-    (0..x.len() * factor).map(|n| kernel.interpolate(&x, n as f64 / factor as f64)).collect()
+    (0..x.len() * factor)
+        .map(|n| kernel.interpolate(&x, n as f64 / factor as f64))
+        .collect()
 }
 
 /// Zero-order hold by a whole-number factor, for a poor output stage. Each input
 /// sample is repeated `factor` times, which leaves images of the carrier at the
 /// input sample rate minus 18 kHz, plus 18 kHz, and so on.
 pub fn zoh_upsample(x: Vec<f64>, factor: usize) -> Vec<f64> {
-    x.into_iter().flat_map(|s| std::iter::repeat_n(s, factor)).collect()
+    x.into_iter()
+        .flat_map(|s| std::iter::repeat_n(s, factor))
+        .collect()
 }
 
 /// Adds mains hum at `freq_hz` with harmonics 2 to 5 at 1/2 to 1/5 of the
@@ -421,7 +449,13 @@ pub fn hum(mut x: Vec<f64>, sample_rate: u32, freq_hz: f64, dbfs: f64) -> Vec<f6
 
 /// Adds single-sample impulses of random polarity at random times, on average
 /// `rate_per_second` of them each second. `dbfs` is their peak amplitude.
-pub fn clicks(mut x: Vec<f64>, sample_rate: u32, rate_per_second: f64, dbfs: f64, seed: u64) -> Vec<f64> {
+pub fn clicks(
+    mut x: Vec<f64>,
+    sample_rate: u32,
+    rate_per_second: f64,
+    dbfs: f64,
+    seed: u64,
+) -> Vec<f64> {
     let mut random = Xorshift::new(seed);
     let amplitude = amplitude_from_db(dbfs);
     let mean_gap = sample_rate as f64 / rate_per_second;
@@ -442,8 +476,17 @@ const BAT_CALL_END_HZ: f64 = 40_000.0;
 /// Each call is a 3 ms downward FM sweep from 80 to 40 kHz with 0.3 ms sin^2 ramps.
 /// `dbfs` is the peak amplitude. `sample_rate` must be above 160 kHz; the X8's bat
 /// recordings are 192 kHz.
-pub fn bat_calls(mut x: Vec<f64>, sample_rate: u32, rate_per_second: f64, dbfs: f64, seed: u64) -> Vec<f64> {
-    assert!(sample_rate > 160_000, "an 80 kHz sweep needs a sample rate above 160 kHz");
+pub fn bat_calls(
+    mut x: Vec<f64>,
+    sample_rate: u32,
+    rate_per_second: f64,
+    dbfs: f64,
+    seed: u64,
+) -> Vec<f64> {
+    assert!(
+        sample_rate > 160_000,
+        "an 80 kHz sweep needs a sample rate above 160 kHz"
+    );
     let rate = sample_rate as f64;
     let mut random = Xorshift::new(seed);
     let amplitude = amplitude_from_db(dbfs);
@@ -457,7 +500,9 @@ pub fn bat_calls(mut x: Vec<f64>, sample_rate: u32, rate_per_second: f64, dbfs: 
         let start = position as usize;
         let polarity = random.sign();
         for n in 0..call_samples {
-            let Some(sample) = x.get_mut(start + n) else { break };
+            let Some(sample) = x.get_mut(start + n) else {
+                break;
+            };
             let t = n as f64 / rate;
             let edge = t.min(BAT_CALL_SECONDS - t) / ramp_seconds;
             let envelope = (edge.min(1.0) * PI / 2.0).sin().powi(2);
@@ -529,7 +574,10 @@ const LARGE_REFLECTIONS: [(f64, f64, f64); 5] = [
 
 fn profile_definition(profile: ReverbProfile) -> ProfileDefinition {
     match profile {
-        ReverbProfile::Small => ProfileDefinition { reflections: &SMALL_REFLECTIONS, tail: None },
+        ReverbProfile::Small => ProfileDefinition {
+            reflections: &SMALL_REFLECTIONS,
+            tail: None,
+        },
         ReverbProfile::Medium => ProfileDefinition {
             reflections: &MEDIUM_REFLECTIONS,
             tail: Some(Tail {
@@ -563,7 +611,11 @@ pub fn impulse_response(sample_rate: u32, profile: ReverbProfile) -> Vec<f64> {
     let definition = profile_definition(profile);
     let kernel = SincKernel::new();
 
-    let reflections_end = definition.reflections.iter().map(|r| r.0).fold(0.0, f64::max);
+    let reflections_end = definition
+        .reflections
+        .iter()
+        .map(|r| r.0)
+        .fold(0.0, f64::max);
     let tail_end = definition.tail.map_or(0.0, |tail| tail.rt60_seconds * 1.2);
     let length = (reflections_end.max(tail_end) * rate) as usize + SINC_HALF_WIDTH + 1;
     let mut response = vec![0.0; length];
@@ -584,7 +636,8 @@ pub fn impulse_response(sample_rate: u32, profile: ReverbProfile) -> Vec<f64> {
         // A^2 rate exp(-2 k t0) / (2 k), and this solves that for A.
         let decay = NEPERS_IN_60_DB / tail.rt60_seconds;
         let energy = 10f64.powf(tail.energy_db / 10.0);
-        let start_amplitude = (energy * 2.0 * decay * (2.0 * decay * tail.start_seconds).exp() / rate).sqrt();
+        let start_amplitude =
+            (energy * 2.0 * decay * (2.0 * decay * tail.start_seconds).exp() / rate).sqrt();
         let mut random = Xorshift::new(tail.seed);
         let first = (tail.start_seconds * rate) as usize;
         for (n, sample) in response.iter_mut().enumerate().skip(first) {

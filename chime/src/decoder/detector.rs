@@ -210,13 +210,15 @@ impl Detector {
         let samples = (self.half_bucket_len * STEPS_PER_BLOCK) as f32;
         let samples_in_sum = (self.half_bucket_len * 2) as f32;
         let block_band = self.block_band / samples;
-        let newest_bucket = self.block_e / (STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
+        let newest_bucket =
+            self.block_e / (STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
 
         // The oldest block in the window is the one about to be replaced. The noise
         // floor uses it because rho has had 50 ms to rise if a chime was starting.
         let oldest = self.window_index;
         let oldest_band = self.window_band[oldest] / samples;
-        let oldest_bucket = self.window_e[oldest] / (STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
+        let oldest_bucket =
+            self.window_e[oldest] / (STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
         let window_was_full = self.window_blocks == WINDOW_BLOCKS;
         self.window_blocks = (self.window_blocks + 1).min(WINDOW_BLOCKS);
 
@@ -238,8 +240,13 @@ impl Detector {
         // loud moment cannot stay in the sums.
         let sum_p: f32 = self.window_p.iter().sum();
         let sum_e: f32 = self.window_e.iter().sum();
-        let window_power = sum_e / (WINDOW_BLOCKS as f32 * STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
-        let rho = if window_power > POWER_FLOOR { sum_p / sum_e } else { 0.0 };
+        let window_power = sum_e
+            / (WINDOW_BLOCKS as f32 * STEPS_PER_BLOCK as f32 * samples_in_sum * samples_in_sum);
+        let rho = if window_power > POWER_FLOOR {
+            sum_p / sum_e
+        } else {
+            0.0
+        };
 
         if walking {
             return false;

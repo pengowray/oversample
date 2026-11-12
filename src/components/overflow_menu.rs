@@ -4,10 +4,10 @@ use crate::annotations::{
 };
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::components::channel_delay_row::{ChannelDelayRow, DelayRegion};
-use crate::components::surface_3d::open_surface_3d;
 use crate::components::file_sidebar::export_section::open_export_panel;
 use crate::components::file_sidebar::settings_panel::{delete_annotation, toggle_annotation_lock};
 use crate::components::icons::Icon;
+use crate::components::surface_3d::open_surface_3d;
 use crate::state::store_fields::*;
 use crate::state::{ActiveFocus, AppState, Selection};
 use leptos::prelude::*;

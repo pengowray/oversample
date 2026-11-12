@@ -1710,7 +1710,10 @@ pub(crate) async fn build_streaming_overview(
 
 /// Scan raw bytes (from after the data chunk) for a GUANO "guan" chunk.
 /// `data_size` is the `data` chunk's size, for the pad byte after odd-sized audio.
-pub(crate) fn scan_tail_for_guano(tail_bytes: &[u8], data_size: u64) -> Option<crate::audio::guano::GuanoMetadata> {
+pub(crate) fn scan_tail_for_guano(
+    tail_bytes: &[u8],
+    data_size: u64,
+) -> Option<crate::audio::guano::GuanoMetadata> {
     crate::audio::guano::parse_guano_after_data(tail_bytes, data_size)
 }
 

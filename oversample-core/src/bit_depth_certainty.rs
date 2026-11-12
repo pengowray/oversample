@@ -810,7 +810,16 @@ mod tests {
             Some(&am),
             std::slice::from_ref(&grid),
         );
-        let r = compose(bits, false, AudioFormat::Mp3, &bit, &lsb, Some(&pip), Some(&am), &[grid]);
+        let r = compose(
+            bits,
+            false,
+            AudioFormat::Mp3,
+            &bit,
+            &lsb,
+            Some(&pip),
+            Some(&am),
+            &[grid],
+        );
         assert_eq!(r.headline, "Lossy MP3: bit-depth analysis doesn't apply");
     }
 

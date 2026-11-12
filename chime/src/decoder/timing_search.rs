@@ -53,7 +53,10 @@ pub(super) fn search(
     let first = ring.count() - window as u64;
 
     let phase_per_period = libm::atan2f(lag_q, lag_p);
-    let rotation = Cplx { re: libm::cosf(phase_per_period), im: -libm::sinf(phase_per_period) };
+    let rotation = Cplx {
+        re: libm::cosf(phase_per_period),
+        im: -libm::sinf(phase_per_period),
+    };
 
     let slot_count = libm::ceil(period) as usize;
     let slots = &mut slots[..slot_count];
@@ -100,5 +103,9 @@ pub(super) fn search(
     let newest = ring.count() as f64;
     let boundary = first as f64 + best_slot as f64;
     let periods = libm::floor((newest - boundary) / period - WALK_BACK_SYMBOLS).max(0.0);
-    Some(Found { start: boundary + periods * period, coherence, carrier_frequency: phase_per_period / 3.0 })
+    Some(Found {
+        start: boundary + periods * period,
+        coherence,
+        carrier_frequency: phase_per_period / 3.0,
+    })
 }

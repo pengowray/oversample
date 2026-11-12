@@ -762,9 +762,9 @@ pub fn encode_f32_samples(samples: &[f32], fmt: &WavWriteFormat) -> Vec<u8> {
         (32, _) => samples.iter().for_each(|&s| {
             out.extend_from_slice(&(scaled(s, 2_147_483_648.0) as i32).to_le_bytes())
         }),
-        _ => samples.iter().for_each(|&s| {
-            out.extend_from_slice(&(scaled(s, 32_768.0) as i16).to_le_bytes())
-        }),
+        _ => samples
+            .iter()
+            .for_each(|&s| out.extend_from_slice(&(scaled(s, 32_768.0) as i16).to_le_bytes())),
     }
     out
 }

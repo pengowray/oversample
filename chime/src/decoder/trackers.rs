@@ -25,7 +25,10 @@ pub(super) struct CarrierTracker {
 
 impl CarrierTracker {
     pub(super) const fn new() -> CarrierTracker {
-        CarrierTracker { phasor: Cplx::ONE, frequency: 0.0 }
+        CarrierTracker {
+            phasor: Cplx::ONE,
+            frequency: 0.0,
+        }
     }
 
     pub(super) fn begin(&mut self, frequency: f32) {
@@ -53,7 +56,10 @@ impl CarrierTracker {
         self.frequency = frequency;
         // cos and sin of a small angle, followed by the same correction of the amplitude
         // as the mixer. A small error in the step only looks like a small frequency error.
-        let step = Cplx { re: 1.0 - 0.5 * frequency * frequency, im: frequency };
+        let step = Cplx {
+            re: 1.0 - 0.5 * frequency * frequency,
+            im: frequency,
+        };
         let phasor = self.phasor.mul(step);
         self.phasor = phasor * (0.5 * (3.0 - phasor.power()));
     }
@@ -84,7 +90,12 @@ pub(super) struct BucketGrid {
 
 impl BucketGrid {
     pub(super) const fn new(bucket_len: f64) -> BucketGrid {
-        BucketGrid { bucket_len, edge: 0.0, error: 0.0, power: 0.0 }
+        BucketGrid {
+            bucket_len,
+            edge: 0.0,
+            error: 0.0,
+            power: 0.0,
+        }
     }
 
     pub(super) fn begin(&mut self, start: f64) {
@@ -250,8 +261,20 @@ impl EchoFilter {
     /// `bucket_index` counts the buckets of the walk, and `useful_fraction` is the share
     /// of the direct signal's error that the filter's error must stay below for the
     /// filter's output to be used.
-    pub(super) fn update(&mut self, bucket: Cplx, history: u32, bucket_index: u32, useful_fraction: f32) {
-        let polarity_of = |age: usize| if (history >> age) & 1 == 1 { 1.0f32 } else { -1.0 };
+    pub(super) fn update(
+        &mut self,
+        bucket: Cplx,
+        history: u32,
+        bucket_index: u32,
+        useful_fraction: f32,
+    ) {
+        let polarity_of = |age: usize| {
+            if (history >> age) & 1 == 1 {
+                1.0f32
+            } else {
+                -1.0
+            }
+        };
 
         let mut predicted = self.direct_tap * polarity_of(0);
         for (tap, &estimate) in self.estimates.iter().enumerate() {
@@ -274,7 +297,11 @@ impl EchoFilter {
                 *estimate += error * (ECHO_STEP * polarity_of(tap + 1));
             }
             let power = estimate.power();
-            let gain = if power > tap_limit { 1.0 - tap_limit / power } else { 0.0 };
+            let gain = if power > tap_limit {
+                1.0 - tap_limit / power
+            } else {
+                0.0
+            };
             self.taps[tap] = *estimate * gain;
         }
         if self.error_power > useful_fraction * self.direct_error_power {

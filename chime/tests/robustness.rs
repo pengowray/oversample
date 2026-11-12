@@ -182,7 +182,11 @@ const FIELD_C: Condition = Condition {
 };
 
 /// The carrier is 20 dB weaker than usual, and the melody clips the input hard.
-const OVERLOADED: Condition = Condition { melody_db: 20.0, overdrive_db: Some(40.0), ..CLEAN };
+const OVERLOADED: Condition = Condition {
+    melody_db: 20.0,
+    overdrive_db: Some(40.0),
+    ..CLEAN
+};
 
 /// A condition with a label, a sample rate and a number of trials.
 #[derive(Clone)]
@@ -194,35 +198,166 @@ struct Row {
 }
 
 fn row(label: &str, condition: Condition) -> Row {
-    Row { label: label.to_string(), rate: RATE, trials: TRIALS, condition }
+    Row {
+        label: label.to_string(),
+        rate: RATE,
+        trials: TRIALS,
+        condition,
+    }
 }
 
 /// The impairments of the matrix that do not set an SNR.
 fn impairment_rows() -> Vec<Row> {
     vec![
-        row("carrier -40 dBFS", Condition { carrier_peak_dbfs: Some(-40.0), ..CLEAN }),
-        row("carrier -60 dBFS", Condition { carrier_peak_dbfs: Some(-60.0), ..CLEAN }),
-        row("carrier -80 dBFS", Condition { carrier_peak_dbfs: Some(-80.0), ..CLEAN }),
-        row("melody +20 dB", Condition { melody_db: 20.0, ..CLEAN }),
-        row("melody +40 dB", Condition { melody_db: 40.0, ..CLEAN }),
-        row("speaker low-pass 16 kHz", Condition { lowpass_hz: Some(16_000.0), ..CLEAN }),
-        row("speaker nonlinearity", Condition { nonlinearity: true, ..CLEAN }),
-        row("reverb small", Condition { reverb: Some(ReverbProfile::Small), ..CLEAN }),
-        row("reverb medium", Condition { reverb: Some(ReverbProfile::Medium), ..CLEAN }),
-        row("reverb large", Condition { reverb: Some(ReverbProfile::Large), ..CLEAN }),
-        row("rate +100 ppm", Condition { rate_ppm: 100.0, ..CLEAN }),
-        row("rate -100 ppm", Condition { rate_ppm: -100.0, ..CLEAN }),
-        row("rate +500 ppm", Condition { rate_ppm: 500.0, ..CLEAN }),
-        row("rate -500 ppm", Condition { rate_ppm: -500.0, ..CLEAN }),
+        row(
+            "carrier -40 dBFS",
+            Condition {
+                carrier_peak_dbfs: Some(-40.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "carrier -60 dBFS",
+            Condition {
+                carrier_peak_dbfs: Some(-60.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "carrier -80 dBFS",
+            Condition {
+                carrier_peak_dbfs: Some(-80.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "melody +20 dB",
+            Condition {
+                melody_db: 20.0,
+                ..CLEAN
+            },
+        ),
+        row(
+            "melody +40 dB",
+            Condition {
+                melody_db: 40.0,
+                ..CLEAN
+            },
+        ),
+        row(
+            "speaker low-pass 16 kHz",
+            Condition {
+                lowpass_hz: Some(16_000.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "speaker nonlinearity",
+            Condition {
+                nonlinearity: true,
+                ..CLEAN
+            },
+        ),
+        row(
+            "reverb small",
+            Condition {
+                reverb: Some(ReverbProfile::Small),
+                ..CLEAN
+            },
+        ),
+        row(
+            "reverb medium",
+            Condition {
+                reverb: Some(ReverbProfile::Medium),
+                ..CLEAN
+            },
+        ),
+        row(
+            "reverb large",
+            Condition {
+                reverb: Some(ReverbProfile::Large),
+                ..CLEAN
+            },
+        ),
+        row(
+            "rate +100 ppm",
+            Condition {
+                rate_ppm: 100.0,
+                ..CLEAN
+            },
+        ),
+        row(
+            "rate -100 ppm",
+            Condition {
+                rate_ppm: -100.0,
+                ..CLEAN
+            },
+        ),
+        row(
+            "rate +500 ppm",
+            Condition {
+                rate_ppm: 500.0,
+                ..CLEAN
+            },
+        ),
+        row(
+            "rate -500 ppm",
+            Condition {
+                rate_ppm: -500.0,
+                ..CLEAN
+            },
+        ),
         row("DC offset 0.1", Condition { dc: 0.1, ..CLEAN }),
         row("hum 50 Hz -20 dBFS", Condition { hum: true, ..CLEAN }),
-        row("clipping, 20 dB overdrive", Condition { overdrive_db: Some(20.0), ..CLEAN }),
-        row("clipping, 40 dB overdrive", Condition { overdrive_db: Some(40.0), ..CLEAN }),
-        row("clicks 20/s 0 dBFS", Condition { clicks: true, ..CLEAN }),
-        row("bat calls 20/s -20 dBFS", Condition { bat_calls: true, ..CLEAN }),
-        row("48 kHz render, sinc upsample", Condition { upsample_from_48k: Some(Upsample::Sinc), ..CLEAN }),
-        row("48 kHz render, zero-order hold", Condition { upsample_from_48k: Some(Upsample::ZeroOrderHold), ..CLEAN }),
-        row("inverted polarity", Condition { invert: true, ..CLEAN }),
+        row(
+            "clipping, 20 dB overdrive",
+            Condition {
+                overdrive_db: Some(20.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "clipping, 40 dB overdrive",
+            Condition {
+                overdrive_db: Some(40.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "clicks 20/s 0 dBFS",
+            Condition {
+                clicks: true,
+                ..CLEAN
+            },
+        ),
+        row(
+            "bat calls 20/s -20 dBFS",
+            Condition {
+                bat_calls: true,
+                ..CLEAN
+            },
+        ),
+        row(
+            "48 kHz render, sinc upsample",
+            Condition {
+                upsample_from_48k: Some(Upsample::Sinc),
+                ..CLEAN
+            },
+        ),
+        row(
+            "48 kHz render, zero-order hold",
+            Condition {
+                upsample_from_48k: Some(Upsample::ZeroOrderHold),
+                ..CLEAN
+            },
+        ),
+        row(
+            "inverted polarity",
+            Condition {
+                invert: true,
+                ..CLEAN
+            },
+        ),
     ]
 }
 
@@ -231,14 +366,26 @@ fn matrix_rows() -> Vec<Row> {
     let mut rows = vec![row("clean", CLEAN)];
     rows.extend(impairment_rows());
     for snr_db in [20.0, 10.0, 5.0, 0.0, -5.0, -10.0, -15.0] {
-        rows.push(row(&format!("SNR {snr_db:+} dB"), Condition { snr_db: Some(snr_db), ..CLEAN }));
+        rows.push(row(
+            &format!("SNR {snr_db:+} dB"),
+            Condition {
+                snr_db: Some(snr_db),
+                ..CLEAN
+            },
+        ));
     }
     rows.push(row("FIELD-A", FIELD_A));
     rows.push(row("FIELD-B", FIELD_B));
     rows.push(row("FIELD-C", FIELD_C));
     for rate in [44_100, 48_000, 96_000] {
-        rows.push(Row { rate, ..row(&format!("clean at {rate} Hz"), CLEAN) });
-        rows.push(Row { rate, ..row(&format!("FIELD-A at {rate} Hz"), FIELD_A) });
+        rows.push(Row {
+            rate,
+            ..row(&format!("clean at {rate} Hz"), CLEAN)
+        });
+        rows.push(Row {
+            rate,
+            ..row(&format!("FIELD-A at {rate} Hz"), FIELD_A)
+        });
     }
     rows
 }
@@ -249,7 +396,10 @@ fn noisy_impairment_rows() -> Vec<Row> {
         .into_iter()
         .map(|row| Row {
             label: format!("{}, SNR +10", row.label),
-            condition: Condition { snr_db: Some(10.0), ..row.condition },
+            condition: Condition {
+                snr_db: Some(10.0),
+                ..row.condition
+            },
             ..row
         })
         .collect()
@@ -258,41 +408,227 @@ fn noisy_impairment_rows() -> Vec<Row> {
 /// Table 3: conditions that the shipped decoder's constants were not tuned on, and a
 /// quiet carrier against sounds that have a fixed level.
 fn untuned_rows() -> Vec<Row> {
-    let carrier_40 = Condition { carrier_peak_dbfs: Some(-40.0), ..CLEAN };
-    let snr_10 = Condition { snr_db: Some(10.0), ..CLEAN };
-    let utc = Condition { time_zone: Some(0), ..CLEAN };
-    let utc_snr_10 = Condition { time_zone: Some(0), ..snr_10 };
+    let carrier_40 = Condition {
+        carrier_peak_dbfs: Some(-40.0),
+        ..CLEAN
+    };
+    let snr_10 = Condition {
+        snr_db: Some(10.0),
+        ..CLEAN
+    };
+    let utc = Condition {
+        time_zone: Some(0),
+        ..CLEAN
+    };
+    let utc_snr_10 = Condition {
+        time_zone: Some(0),
+        ..snr_10
+    };
     vec![
-        row("random room small", Condition { acoustic: Some(random_room_small), ..CLEAN }),
-        row("random room medium", Condition { acoustic: Some(random_room_medium), ..CLEAN }),
-        row("random room large", Condition { acoustic: Some(random_room_large), ..CLEAN }),
-        row("random room small, SNR +10", Condition { acoustic: Some(random_room_small), ..snr_10 }),
-        row("random room medium, SNR +10", Condition { acoustic: Some(random_room_medium), ..snr_10 }),
-        row("random room large, SNR +10", Condition { acoustic: Some(random_room_large), ..snr_10 }),
-        row("phone moves 2 cm at 2 Hz", Condition { acoustic: Some(hand_wobble::<20>), ..CLEAN }),
-        row("phone moves 2 cm at 2 Hz, SNR +10", Condition { acoustic: Some(hand_wobble::<20>), ..snr_10 }),
-        row("phone moves 2 cm at 2 Hz, UTC", Condition { acoustic: Some(hand_wobble::<20>), ..utc }),
-        row("phone moves 2 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<20>), ..utc_snr_10 }),
-        row("phone moves 1 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<10>), ..utc_snr_10 }),
-        row("phone moves 5 mm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<5>), ..utc_snr_10 }),
+        row(
+            "random room small",
+            Condition {
+                acoustic: Some(random_room_small),
+                ..CLEAN
+            },
+        ),
+        row(
+            "random room medium",
+            Condition {
+                acoustic: Some(random_room_medium),
+                ..CLEAN
+            },
+        ),
+        row(
+            "random room large",
+            Condition {
+                acoustic: Some(random_room_large),
+                ..CLEAN
+            },
+        ),
+        row(
+            "random room small, SNR +10",
+            Condition {
+                acoustic: Some(random_room_small),
+                ..snr_10
+            },
+        ),
+        row(
+            "random room medium, SNR +10",
+            Condition {
+                acoustic: Some(random_room_medium),
+                ..snr_10
+            },
+        ),
+        row(
+            "random room large, SNR +10",
+            Condition {
+                acoustic: Some(random_room_large),
+                ..snr_10
+            },
+        ),
+        row(
+            "phone moves 2 cm at 2 Hz",
+            Condition {
+                acoustic: Some(hand_wobble::<20>),
+                ..CLEAN
+            },
+        ),
+        row(
+            "phone moves 2 cm at 2 Hz, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<20>),
+                ..snr_10
+            },
+        ),
+        row(
+            "phone moves 2 cm at 2 Hz, UTC",
+            Condition {
+                acoustic: Some(hand_wobble::<20>),
+                ..utc
+            },
+        ),
+        row(
+            "phone moves 2 cm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<20>),
+                ..utc_snr_10
+            },
+        ),
+        row(
+            "phone moves 1 cm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<10>),
+                ..utc_snr_10
+            },
+        ),
+        row(
+            "phone moves 5 mm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<5>),
+                ..utc_snr_10
+            },
+        ),
         row("phone still, UTC, SNR +10", utc_snr_10),
-        row("reverb small, moves 2 cm, UTC, SNR +10", Condition { acoustic: Some(moves_in_small_room), ..utc_snr_10 }),
-        row("reverb medium, moves 5 mm, SNR +10", Condition { acoustic: Some(moves_in_medium_room), ..snr_10 }),
-        row("steady 18.3 kHz tone, carrier -6 dB", Condition { added: Some(steady_tone), ..CLEAN }),
-        row("insect pulses 17.8 kHz", Condition { added: Some(insect_pulses), ..CLEAN }),
-        row("carrier -40, clicks 0 dBFS", Condition { clicks: true, ..carrier_40 }),
-        row("carrier -40, damped rings 0 dBFS", Condition { added: Some(damped_rings::<0>), ..carrier_40 }),
-        row("carrier -40, damped rings -20 dBFS", Condition { added: Some(damped_rings::<20>), ..carrier_40 }),
-        row("carrier -40, bat calls -20 dBFS", Condition { bat_calls: true, ..carrier_40 }),
-        row("carrier -40, hum -20 dBFS", Condition { hum: true, ..carrier_40 }),
-        row("melody +30 dB, 20 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(20.0), ..CLEAN }),
-        row("melody +30 dB, 20 dB overdrive, SNR +20", Condition { melody_db: 30.0, overdrive_db: Some(20.0), snr_db: Some(20.0), ..CLEAN }),
+        row(
+            "reverb small, moves 2 cm, UTC, SNR +10",
+            Condition {
+                acoustic: Some(moves_in_small_room),
+                ..utc_snr_10
+            },
+        ),
+        row(
+            "reverb medium, moves 5 mm, SNR +10",
+            Condition {
+                acoustic: Some(moves_in_medium_room),
+                ..snr_10
+            },
+        ),
+        row(
+            "steady 18.3 kHz tone, carrier -6 dB",
+            Condition {
+                added: Some(steady_tone),
+                ..CLEAN
+            },
+        ),
+        row(
+            "insect pulses 17.8 kHz",
+            Condition {
+                added: Some(insect_pulses),
+                ..CLEAN
+            },
+        ),
+        row(
+            "carrier -40, clicks 0 dBFS",
+            Condition {
+                clicks: true,
+                ..carrier_40
+            },
+        ),
+        row(
+            "carrier -40, damped rings 0 dBFS",
+            Condition {
+                added: Some(damped_rings::<0>),
+                ..carrier_40
+            },
+        ),
+        row(
+            "carrier -40, damped rings -20 dBFS",
+            Condition {
+                added: Some(damped_rings::<20>),
+                ..carrier_40
+            },
+        ),
+        row(
+            "carrier -40, bat calls -20 dBFS",
+            Condition {
+                bat_calls: true,
+                ..carrier_40
+            },
+        ),
+        row(
+            "carrier -40, hum -20 dBFS",
+            Condition {
+                hum: true,
+                ..carrier_40
+            },
+        ),
+        row(
+            "melody +30 dB, 20 dB overdrive",
+            Condition {
+                melody_db: 30.0,
+                overdrive_db: Some(20.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "melody +30 dB, 20 dB overdrive, SNR +20",
+            Condition {
+                melody_db: 30.0,
+                overdrive_db: Some(20.0),
+                snr_db: Some(20.0),
+                ..CLEAN
+            },
+        ),
         row("melody +20 dB, 40 dB overdrive", OVERLOADED),
-        row("melody +30 dB, 30 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(30.0), ..CLEAN }),
-        row("melody +30 dB, 40 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(40.0), ..CLEAN }),
-        row("21-byte payload, clean", Condition { long_payload: true, ..CLEAN }),
-        row("21-byte payload, SNR 0", Condition { long_payload: true, snr_db: Some(0.0), ..CLEAN }),
-        row("21-byte payload, FIELD-A", Condition { long_payload: true, ..FIELD_A }),
+        row(
+            "melody +30 dB, 30 dB overdrive",
+            Condition {
+                melody_db: 30.0,
+                overdrive_db: Some(30.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "melody +30 dB, 40 dB overdrive",
+            Condition {
+                melody_db: 30.0,
+                overdrive_db: Some(40.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "21-byte payload, clean",
+            Condition {
+                long_payload: true,
+                ..CLEAN
+            },
+        ),
+        row(
+            "21-byte payload, SNR 0",
+            Condition {
+                long_payload: true,
+                snr_db: Some(0.0),
+                ..CLEAN
+            },
+        ),
+        row(
+            "21-byte payload, FIELD-A",
+            Condition {
+                long_payload: true,
+                ..FIELD_A
+            },
+        ),
     ]
 }
 
@@ -302,7 +638,13 @@ fn sensitivity_rows() -> Vec<Row> {
         .rev()
         .map(|snr| Row {
             trials: 60,
-            ..row(&format!("SNR {snr:+} dB"), Condition { snr_db: Some(snr as f64), ..CLEAN })
+            ..row(
+                &format!("SNR {snr:+} dB"),
+                Condition {
+                    snr_db: Some(snr as f64),
+                    ..CLEAN
+                },
+            )
         })
         .collect()
 }
@@ -339,7 +681,11 @@ fn random_room(x: Vec<f64>, rate: u32, seed: u64, kind: &RoomKind) -> Vec<f64> {
         let start = 0.005;
         let energy = 10f64.powf(energy_db / 10.0);
         let amplitude = (energy * 2.0 * decay * (2.0 * decay * start).exp() / rate).sqrt();
-        for (n, sample) in response.iter_mut().enumerate().skip((start * rate) as usize) {
+        for (n, sample) in response
+            .iter_mut()
+            .enumerate()
+            .skip((start * rate) as usize)
+        {
             *sample += amplitude * (-decay * n as f64 / rate).exp() * random.gaussian();
         }
     }
@@ -347,7 +693,13 @@ fn random_room(x: Vec<f64>, rate: u32, seed: u64, kind: &RoomKind) -> Vec<f64> {
 }
 
 fn random_room_small(x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
-    let kind = RoomKind { reflections: 6, longest_delay_s: 0.010, strongest_db: -6.0, weakest_db: -20.0, tail: None };
+    let kind = RoomKind {
+        reflections: 6,
+        longest_delay_s: 0.010,
+        strongest_db: -6.0,
+        weakest_db: -20.0,
+        tail: None,
+    };
     random_room(x, rate, seed, &kind)
 }
 
@@ -381,7 +733,13 @@ fn hand_wobble<const MILLIMETRES: u32>(x: Vec<f64>, rate: u32, seed: u64) -> Vec
     let phase = 2.0 * PI * random.uniform();
     let rate = rate as f64;
     let swing = MILLIMETRES as f64 * 0.001 / 343.0 * rate;
-    let at = |n: i64| if n >= 0 && (n as usize) < x.len() { x[n as usize] } else { 0.0 };
+    let at = |n: i64| {
+        if n >= 0 && (n as usize) < x.len() {
+            x[n as usize]
+        } else {
+            0.0
+        }
+    };
     (0..x.len())
         .map(|n| {
             let position = n as f64 + swing * (2.0 * PI * 2.0 * n as f64 / rate + phase).sin();
@@ -411,7 +769,8 @@ fn moves_in_medium_room(x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
 fn steady_tone(mut x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
     let phase = 2.0 * PI * Xorshift::new(seed ^ 0x544F_4E45).uniform();
     for (n, sample) in x.iter_mut().enumerate() {
-        *sample += 0.5 * CARRIER_GAIN * (2.0 * PI * 18_300.0 * n as f64 / rate as f64 + phase).sin();
+        *sample +=
+            0.5 * CARRIER_GAIN * (2.0 * PI * 18_300.0 * n as f64 / rate as f64 + phase).sin();
     }
     x
 }
@@ -443,7 +802,9 @@ fn damped_rings<const ATTENUATION_DB: u32>(mut x: Vec<f64>, rate: u32, seed: u64
     while (position as usize) < x.len() {
         let frequency = 12_000.0 + random.uniform() * 18_000.0;
         for k in 0..length {
-            let Some(sample) = x.get_mut(position as usize + k) else { break };
+            let Some(sample) = x.get_mut(position as usize + k) else {
+                break;
+            };
             let t = k as f64 / rate;
             *sample += amplitude * (-t / 0.0003).exp() * (2.0 * PI * frequency * t).sin();
         }
@@ -465,9 +826,12 @@ fn tone_bursts(mut x: Vec<f64>, rate: u32, amplitude: f64, seed: u64) -> Vec<f64
         let frequency = 17_500.0 + random.uniform() * 1_000.0;
         let phase = 2.0 * PI * random.uniform();
         for k in 0..length as usize {
-            let Some(sample) = x.get_mut(position as usize + k) else { break };
+            let Some(sample) = x.get_mut(position as usize + k) else {
+                break;
+            };
             let envelope = (PI * k as f64 / length).sin();
-            *sample += amplitude * envelope * (2.0 * PI * frequency * k as f64 / rate + phase).sin();
+            *sample +=
+                amplitude * envelope * (2.0 * PI * frequency * k as f64 / rate + phase).sin();
         }
         position += -(1.0 - random.uniform()).ln() * mean_gap;
     }
@@ -477,7 +841,9 @@ fn tone_bursts(mut x: Vec<f64>, rate: u32, amplitude: f64, seed: u64) -> Vec<f64
 // -- Building a trial's signal -------------------------------------------------
 
 /// Real time zone offsets, in minutes.
-const TIME_ZONES: [i16; 13] = [-720, -600, -480, -300, -210, 0, 60, 330, 345, 480, 570, 660, 840];
+const TIME_ZONES: [i16; 13] = [
+    -720, -600, -480, -300, -210, 0, 60, 330, 345, 480, 570, 660, 840,
+];
 
 /// Seed for one trial of one row. It depends on the label and not on the row's place
 /// in a table, so that adding a row does not change the results of the others.
@@ -524,7 +890,8 @@ fn build_signal(condition: &Condition, rate: u32, seed: u64) -> TrialSignal {
         Some(kind) => {
             assert!(rate.is_multiple_of(48_000));
             let factor = (rate / 48_000) as usize;
-            let rendered = generator::render(48_000, &payload, notes).mix_with_gains(carrier_gain, MELODY_GAIN);
+            let rendered = generator::render(48_000, &payload, notes)
+                .mix_with_gains(carrier_gain, MELODY_GAIN);
             match kind {
                 Upsample::Sinc => channel::upsample_sinc(rendered, factor),
                 Upsample::ZeroOrderHold => channel::zoh_upsample(rendered, factor),
@@ -581,19 +948,29 @@ fn build_signal(condition: &Condition, rate: u32, seed: u64) -> TrialSignal {
     if condition.invert {
         x = channel::invert(x);
     }
-    TrialSignal { samples: x, payload, true_start: before }
+    TrialSignal {
+        samples: x,
+        payload,
+        true_start: before,
+    }
 }
 
 // -- Running the decoders ------------------------------------------------------
 
 fn decoder_events(rate: u32, samples: &[f32]) -> Vec<Event> {
     let mut decoder = Decoder::new(rate).expect("rate above 40 kHz");
-    samples.iter().filter_map(|&sample| decoder.push(sample)).collect()
+    samples
+        .iter()
+        .filter_map(|&sample| decoder.push(sample))
+        .collect()
 }
 
 fn port_events(rate: u32, samples: &[f32]) -> Vec<Event> {
     let mut port = AudioMothPort::new(rate);
-    samples.iter().filter_map(|&sample| port.push(sample)).collect()
+    samples
+        .iter()
+        .filter_map(|&sample| port.push(sample))
+        .collect()
 }
 
 /// The channel output as a 48 kHz recorder would have it, if `rate` allows that.
@@ -602,7 +979,13 @@ fn decimated_to_48k(x: &[f64], rate: u32) -> Option<Vec<f32>> {
         return None;
     }
     let filtered = channel::band_limited(x, rate, 0.0, 22_000.0);
-    Some(filtered.iter().step_by((rate / 48_000) as usize).map(|&s| s as f32).collect())
+    Some(
+        filtered
+            .iter()
+            .step_by((rate / 48_000) as usize)
+            .map(|&s| s as f32)
+            .collect(),
+    )
 }
 
 /// Totals for one decoder over the trials of a row.
@@ -639,7 +1022,8 @@ impl Tally {
         if exact == 1 && wrong == 0 {
             self.passes += 1;
             let start = start.expect("one exact chime");
-            self.start_errors_ms.push((start as f64 - true_start as f64) * 1000.0 / rate as f64);
+            self.start_errors_ms
+                .push((start as f64 - true_start as f64) * 1000.0 / rate as f64);
         }
     }
 }
@@ -658,7 +1042,9 @@ fn error_stats(errors: &[f64]) -> Option<ErrorStats> {
     Some(ErrorStats {
         mean: errors.iter().sum::<f64>() / count,
         mean_size: errors.iter().map(|e| e.abs()).sum::<f64>() / count,
-        largest_size: errors.iter().fold(0.0, |largest: f64, e| largest.max(e.abs())),
+        largest_size: errors
+            .iter()
+            .fold(0.0, |largest: f64, e| largest.max(e.abs())),
     })
 }
 
@@ -695,11 +1081,15 @@ enum Decoders {
 
 /// Runs every trial of every row on worker threads.
 fn run_rows(rows: &[Row], decoders: Decoders) -> Vec<RowResult> {
-    let jobs: Vec<(usize, u32)> =
-        rows.iter().enumerate().flat_map(|(r, row)| (0..row.trials).map(move |trial| (r, trial))).collect();
+    let jobs: Vec<(usize, u32)> = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(r, row)| (0..row.trials).map(move |trial| (r, trial)))
+        .collect();
     let next_job = AtomicUsize::new(0);
     let results = Mutex::new(vec![RowResult::default(); rows.len()]);
-    let workers = std::thread::available_parallelism().map_or(4, |count| count.get().saturating_sub(2).max(1));
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |count| count.get().saturating_sub(2).max(1));
 
     std::thread::scope(|scope| {
         for _ in 0..workers {
@@ -725,23 +1115,43 @@ fn run_rows(rows: &[Row], decoders: Decoders) -> Vec<RowResult> {
                         report_wrong_payloads("Port", row, trial, &signal.payload, events);
                     }
                     if let Some(events) = &port_48k {
-                        report_wrong_payloads("Port at 48 kHz", row, trial, &signal.payload, events);
+                        report_wrong_payloads(
+                            "Port at 48 kHz",
+                            row,
+                            trial,
+                            &signal.payload,
+                            events,
+                        );
                     }
 
                     let mut results = results.lock().unwrap();
                     let result = &mut results[r];
                     let shipped_passes_before = result.shipped.passes;
                     let port_passes_before = result.port.passes;
-                    result.shipped.add_trial(&shipped, &signal.payload, signal.true_start, row.rate);
+                    result.shipped.add_trial(
+                        &shipped,
+                        &signal.payload,
+                        signal.true_start,
+                        row.rate,
+                    );
                     if let Some(events) = port {
-                        result.port.add_trial(&events, &signal.payload, signal.true_start, row.rate);
+                        result.port.add_trial(
+                            &events,
+                            &signal.payload,
+                            signal.true_start,
+                            row.rate,
+                        );
                     }
-                    if result.shipped.passes > shipped_passes_before || result.port.passes > port_passes_before {
+                    if result.shipped.passes > shipped_passes_before
+                        || result.port.passes > port_passes_before
+                    {
                         result.either_passes += 1;
                     }
                     if let Some(events) = port_48k {
                         let start_at_48k = signal.true_start / (row.rate / 48_000) as usize;
-                        result.port_48k.add_trial(&events, &signal.payload, start_at_48k, 48_000);
+                        result
+                            .port_48k
+                            .add_trial(&events, &signal.payload, start_at_48k, 48_000);
                     }
                 }
             });
@@ -785,7 +1195,10 @@ fn print_table(title: &str, rows: &[Row], results: &[RowResult]) {
             tally_cells(&result.port_48k)
         };
         let errors = match error_stats(&result.shipped.start_errors_ms) {
-            Some(stats) => format!("{:>6.2} {:>6.2} {:>6.2}", stats.mean, stats.mean_size, stats.largest_size),
+            Some(stats) => format!(
+                "{:>6.2} {:>6.2} {:>6.2}",
+                stats.mean, stats.mean_size, stats.largest_size
+            ),
             None => format!("{:>6} {:>6} {:>6}", "-", "-", "-"),
         };
         println!(
@@ -797,9 +1210,16 @@ fn print_table(title: &str, rows: &[Row], results: &[RowResult]) {
     }
 }
 
-fn print_start_error_summary(name: &str, results: &[&[RowResult]], select: fn(&RowResult) -> &Tally) {
-    let errors: Vec<f64> =
-        results.iter().flat_map(|table| table.iter()).flat_map(|result| select(result).start_errors_ms.iter().copied()).collect();
+fn print_start_error_summary(
+    name: &str,
+    results: &[&[RowResult]],
+    select: fn(&RowResult) -> &Tally,
+) {
+    let errors: Vec<f64> = results
+        .iter()
+        .flat_map(|table| table.iter())
+        .flat_map(|result| select(result).start_errors_ms.iter().copied())
+        .collect();
     match error_stats(&errors) {
         Some(stats) => println!(
             "{name}: {} decoded trials, mean error {:.3} ms, mean size of error {:.3} ms, largest size of error {:.3} ms",
@@ -825,22 +1245,43 @@ fn comparison_tables() {
 
     let noisy = noisy_impairment_rows();
     let noisy_results = run_rows(&noisy, Decoders::All);
-    print_table("Table 2: the impairments of table 1 with noise at +10 dB in the band", &noisy, &noisy_results);
+    print_table(
+        "Table 2: the impairments of table 1 with noise at +10 dB in the band",
+        &noisy,
+        &noisy_results,
+    );
 
     let untuned = untuned_rows();
     let untuned_results = run_rows(&untuned, Decoders::All);
-    print_table("Table 3: conditions the shipped decoder was not tuned on", &untuned, &untuned_results);
+    print_table(
+        "Table 3: conditions the shipped decoder was not tuned on",
+        &untuned,
+        &untuned_results,
+    );
 
     let sensitivity = sensitivity_rows();
     let sensitivity_results = run_rows(&sensitivity, Decoders::All);
-    print_table("Table 4: success against SNR", &sensitivity, &sensitivity_results);
+    print_table(
+        "Table 4: success against SNR",
+        &sensitivity,
+        &sensitivity_results,
+    );
 
     println!();
     println!("start_sample error over table 1:");
-    print_start_error_summary("chime::Decoder", &[&matrix_results], |result| &result.shipped);
-    print_start_error_summary("Port at the row's rate", &[&matrix_results], |result| &result.port);
+    print_start_error_summary("chime::Decoder", &[&matrix_results], |result| {
+        &result.shipped
+    });
+    print_start_error_summary("Port at the row's rate", &[&matrix_results], |result| {
+        &result.port
+    });
     println!("start_sample error over tables 1 to 4:");
-    let all: [&[RowResult]; 4] = [&matrix_results, &noisy_results, &untuned_results, &sensitivity_results];
+    let all: [&[RowResult]; 4] = [
+        &matrix_results,
+        &noisy_results,
+        &untuned_results,
+        &sensitivity_results,
+    ];
     print_start_error_summary("chime::Decoder", &all, |result| &result.shipped);
     print_start_error_summary("Port at the row's rate", &all, |result| &result.port);
 }
@@ -849,7 +1290,10 @@ fn comparison_tables() {
 
 /// Pushes `segments` in order. Returns the time spent on the segments marked true and
 /// the time spent on the others.
-fn timed_pass(mut push: impl FnMut(f32) -> Option<Event>, segments: &[(&[f32], bool)]) -> (Duration, Duration) {
+fn timed_pass(
+    mut push: impl FnMut(f32) -> Option<Event>,
+    segments: &[(&[f32], bool)],
+) -> (Duration, Duration) {
     let mut kept = Duration::ZERO;
     let mut other = Duration::ZERO;
     for &(segment, is_kept) in segments {
@@ -886,12 +1330,23 @@ fn decoder_cost() {
     const PASSES: usize = 5;
 
     println!();
-    println!("size of chime::Decoder: {} bytes", std::mem::size_of::<Decoder>());
-    println!("size of AudioMothPort:  {} bytes", std::mem::size_of::<AudioMothPort>());
+    println!(
+        "size of chime::Decoder: {} bytes",
+        std::mem::size_of::<Decoder>()
+    );
+    println!(
+        "size of AudioMothPort:  {} bytes",
+        std::mem::size_of::<AudioMothPort>()
+    );
 
     // White noise at -40 dBFS RMS, and the same noise with chimes in it.
     let gap = RATE as usize / 2;
-    let chime = generator::render(RATE, &generator::time_payload(1_793_000_000, 660), tune_for_payload(6)).mix();
+    let chime = generator::render(
+        RATE,
+        &generator::time_payload(1_793_000_000, 660),
+        tune_for_payload(6),
+    )
+    .mix();
     let chime_len = chime.len();
     let mut stream = Vec::new();
     for _ in 0..8 {
@@ -900,10 +1355,18 @@ fn decoder_cost() {
     }
     stream.extend(std::iter::repeat_n(0.0, gap));
     let with_noise = channel::to_f32(&channel::add_white_noise_rms(stream, 0.01, 77));
-    let noise = channel::to_f32(&channel::add_white_noise_rms(vec![0.0; 10 * RATE as usize], 0.01, 78));
+    let noise = channel::to_f32(&channel::add_white_noise_rms(
+        vec![0.0; 10 * RATE as usize],
+        0.01,
+        78,
+    ));
     // Noise first, so that the filter states hold values that decay to subnormal numbers
     // during the silence that follows it. Starting from silence would leave them at 0.
-    let burst = channel::to_f32(&channel::add_white_noise_rms(vec![0.0; RATE as usize / 10], 0.01, 79));
+    let burst = channel::to_f32(&channel::add_white_noise_rms(
+        vec![0.0; RATE as usize / 10],
+        0.01,
+        79,
+    ));
     let silence = vec![0.0f32; 10 * RATE as usize];
     let silence_segments: [(&[f32], bool); 2] = [(&burst, false), (&silence, true)];
 
@@ -922,7 +1385,9 @@ fn decoder_cost() {
 
     /// The smallest time of each kind over several runs.
     fn smallest(results: impl Iterator<Item = (Duration, Duration)>) -> (Duration, Duration) {
-        results.fold((Duration::MAX, Duration::MAX), |best, run| (best.0.min(run.0), best.1.min(run.1)))
+        results.fold((Duration::MAX, Duration::MAX), |best, run| {
+            (best.0.min(run.0), best.1.min(run.1))
+        })
     }
 
     let chime_samples = 8 * chime_len;
@@ -954,13 +1419,21 @@ fn decoder_cost() {
     }));
 
     let rows = [
-        ("white noise, -40 dBFS RMS", ns_per_sample(shipped_noise.0, noise.len()), ns_per_sample(port_noise.0, noise.len())),
+        (
+            "white noise, -40 dBFS RMS",
+            ns_per_sample(shipped_noise.0, noise.len()),
+            ns_per_sample(port_noise.0, noise.len()),
+        ),
         (
             "noise between chimes",
             ns_per_sample(shipped_chimes.1, gap_samples),
             ns_per_sample(port_chimes.1, gap_samples),
         ),
-        ("during chimes", ns_per_sample(shipped_chimes.0, chime_samples), ns_per_sample(port_chimes.0, chime_samples)),
+        (
+            "during chimes",
+            ns_per_sample(shipped_chimes.0, chime_samples),
+            ns_per_sample(port_chimes.0, chime_samples),
+        ),
         (
             "digital silence after noise",
             ns_per_sample(shipped_silence.0, silence.len()),
@@ -968,7 +1441,10 @@ fn decoder_cost() {
         ),
     ];
     println!("Host time per input sample at 192 kHz, smallest of {PASSES} runs:");
-    println!("{:<38} {:>16} {:>8} {:>16} {:>8}", "", "Decoder ns", "% RT", "Port ns", "% RT");
+    println!(
+        "{:<38} {:>16} {:>8} {:>16} {:>8}",
+        "", "Decoder ns", "% RT", "Port ns", "% RT"
+    );
     for (label, shipped, port) in rows {
         println!(
             "{label:<38} {shipped:>16.1} {:>8.2} {port:>16.1} {:>8.2}",
@@ -991,7 +1467,9 @@ fn decoder_cost() {
         })
         .min()
         .unwrap();
-    println!("Longest single push, smallest of {PASSES} runs: Decoder {shipped_longest} ns, Port {port_longest} ns");
+    println!(
+        "Longest single push, smallest of {PASSES} runs: Decoder {shipped_longest} ns, Port {port_longest} ns"
+    );
 }
 
 // -- Regression check ----------------------------------------------------------
@@ -1001,38 +1479,139 @@ fn decoder_cost() {
 /// or the simulator changes. Each noisy cell allows one miss below what the matrix shows.
 #[test]
 fn shipped_decoder_holds_its_expected_performance() {
-    let utc_snr_10 = Condition { time_zone: Some(0), snr_db: Some(10.0), ..CLEAN };
-    let carrier_40 = Condition { carrier_peak_dbfs: Some(-40.0), ..CLEAN };
+    let utc_snr_10 = Condition {
+        time_zone: Some(0),
+        snr_db: Some(10.0),
+        ..CLEAN
+    };
+    let carrier_40 = Condition {
+        carrier_peak_dbfs: Some(-40.0),
+        ..CLEAN
+    };
     let cells = [
         ("clean", CLEAN, 6),
-        ("rate -500 ppm", Condition { rate_ppm: -500.0, ..CLEAN }, 6),
-        ("melody +40 dB", Condition { melody_db: 40.0, ..CLEAN }, 6),
-        ("clipping, 40 dB overdrive", Condition { overdrive_db: Some(40.0), ..CLEAN }, 6),
-        ("reverb medium", Condition { reverb: Some(ReverbProfile::Medium), ..CLEAN }, 6),
-        ("SNR -4 dB", Condition { snr_db: Some(-4.0), ..CLEAN }, 5),
+        (
+            "rate -500 ppm",
+            Condition {
+                rate_ppm: -500.0,
+                ..CLEAN
+            },
+            6,
+        ),
+        (
+            "melody +40 dB",
+            Condition {
+                melody_db: 40.0,
+                ..CLEAN
+            },
+            6,
+        ),
+        (
+            "clipping, 40 dB overdrive",
+            Condition {
+                overdrive_db: Some(40.0),
+                ..CLEAN
+            },
+            6,
+        ),
+        (
+            "reverb medium",
+            Condition {
+                reverb: Some(ReverbProfile::Medium),
+                ..CLEAN
+            },
+            6,
+        ),
+        (
+            "SNR -4 dB",
+            Condition {
+                snr_db: Some(-4.0),
+                ..CLEAN
+            },
+            5,
+        ),
         ("FIELD-A", FIELD_A, 5),
         // A moving phone. The first three read 7, 15 and 19 of 20 in table 3 with one
         // trellis and with echo taps that learned during runs of equal symbols.
-        ("phone moves 2 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<20>), ..utc_snr_10 }, 5),
-        ("phone moves 1 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<10>), ..utc_snr_10 }, 6),
-        ("phone moves 5 mm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<5>), ..utc_snr_10 }, 6),
-        ("reverb small, moves 2 cm, UTC, SNR +10", Condition { acoustic: Some(moves_in_small_room), ..utc_snr_10 }, 5),
+        (
+            "phone moves 2 cm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<20>),
+                ..utc_snr_10
+            },
+            5,
+        ),
+        (
+            "phone moves 1 cm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<10>),
+                ..utc_snr_10
+            },
+            6,
+        ),
+        (
+            "phone moves 5 mm at 2 Hz, UTC, SNR +10",
+            Condition {
+                acoustic: Some(hand_wobble::<5>),
+                ..utc_snr_10
+            },
+            6,
+        ),
+        (
+            "reverb small, moves 2 cm, UTC, SNR +10",
+            Condition {
+                acoustic: Some(moves_in_small_room),
+                ..utc_snr_10
+            },
+            5,
+        ),
         // An overloaded input. These read 15 of 20 and 0 of 40 without the limit on loud
         // samples and the second trellis.
-        ("melody +30 dB, 20 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(20.0), ..CLEAN }, 6),
+        (
+            "melody +30 dB, 20 dB overdrive",
+            Condition {
+                melody_db: 30.0,
+                overdrive_db: Some(20.0),
+                ..CLEAN
+            },
+            6,
+        ),
         ("melody +20 dB, 40 dB overdrive", OVERLOADED, 5),
         // Loud bursts in the band. This read 7 of 20 without the limit on loud samples.
-        ("carrier -40, damped rings 0 dBFS", Condition { added: Some(damped_rings::<0>), ..carrier_40 }, 5),
+        (
+            "carrier -40, damped rings 0 dBFS",
+            Condition {
+                added: Some(damped_rings::<0>),
+                ..carrier_40
+            },
+            5,
+        ),
     ];
-    let rows: Vec<Row> =
-        cells.iter().map(|&(label, condition, _)| Row { trials: 6, ..row(label, condition) }).collect();
+    let rows: Vec<Row> = cells
+        .iter()
+        .map(|&(label, condition, _)| Row {
+            trials: 6,
+            ..row(label, condition)
+        })
+        .collect();
     let results = run_rows(&rows, Decoders::ShippedOnly);
     for ((label, _, required), result) in cells.iter().zip(&results) {
         let tally = &result.shipped;
-        assert_eq!(tally.wrong_payloads, 0, "{label}: a wrong payload passed the CRC");
-        assert!(tally.passes >= *required, "{label}: {} of 6 passed", tally.passes);
+        assert_eq!(
+            tally.wrong_payloads, 0,
+            "{label}: a wrong payload passed the CRC"
+        );
+        assert!(
+            tally.passes >= *required,
+            "{label}: {} of 6 passed",
+            tally.passes
+        );
         if let Some(stats) = error_stats(&tally.start_errors_ms) {
-            assert!(stats.largest_size <= 2.0, "{label}: start_sample is {} ms off", stats.largest_size);
+            assert!(
+                stats.largest_size <= 2.0,
+                "{label}: start_sample is {} ms off",
+                stats.largest_size
+            );
         }
     }
 }
@@ -1044,10 +1623,29 @@ fn shipped_decoder_holds_its_expected_performance() {
 #[test]
 fn echoes_after_a_read_give_no_event() {
     let cells = [
-        ("reverb large", Condition { reverb: Some(ReverbProfile::Large), ..CLEAN }),
-        ("reverb large, UTC", Condition { reverb: Some(ReverbProfile::Large), time_zone: Some(0), ..CLEAN }),
+        (
+            "reverb large",
+            Condition {
+                reverb: Some(ReverbProfile::Large),
+                ..CLEAN
+            },
+        ),
+        (
+            "reverb large, UTC",
+            Condition {
+                reverb: Some(ReverbProfile::Large),
+                time_zone: Some(0),
+                ..CLEAN
+            },
+        ),
     ];
-    let rows: Vec<Row> = cells.iter().map(|&(label, condition)| Row { trials: 8, ..row(label, condition) }).collect();
+    let rows: Vec<Row> = cells
+        .iter()
+        .map(|&(label, condition)| Row {
+            trials: 8,
+            ..row(label, condition)
+        })
+        .collect();
     let results = run_rows(&rows, Decoders::ShippedOnly);
     for ((label, _), result) in cells.iter().zip(&results) {
         let tally = &result.shipped;
@@ -1065,7 +1663,10 @@ fn echoes_after_a_read_give_no_event() {
 /// Runs a stream through the shipped decoder and counts the events of each kind.
 fn event_counts(rate: u32, stream: &[f64]) -> (usize, usize) {
     let events = decoder_events(rate, &channel::to_f32(stream));
-    let chimes = events.iter().filter(|event| matches!(event, Event::Chime(_))).count();
+    let chimes = events
+        .iter()
+        .filter(|event| matches!(event, Event::Chime(_)))
+        .count();
     (chimes, events.len() - chimes)
 }
 
@@ -1097,16 +1698,41 @@ fn sounds_with_no_chime_give_few_unreadable_events() {
 #[test]
 fn failed_chimes_are_still_reported() {
     let cells = [
-        ("reverb large, SNR +3", Condition { reverb: Some(ReverbProfile::Large), snr_db: Some(3.0), ..CLEAN }, 90),
+        (
+            "reverb large, SNR +3",
+            Condition {
+                reverb: Some(ReverbProfile::Large),
+                snr_db: Some(3.0),
+                ..CLEAN
+            },
+            90,
+        ),
         ("FIELD-B", FIELD_B, 80),
-        ("SNR -8 dB", Condition { snr_db: Some(-8.0), ..CLEAN }, 25),
+        (
+            "SNR -8 dB",
+            Condition {
+                snr_db: Some(-8.0),
+                ..CLEAN
+            },
+            25,
+        ),
     ];
-    let rows: Vec<Row> = cells.iter().map(|&(label, condition, _)| Row { trials: 20, ..row(label, condition) }).collect();
+    let rows: Vec<Row> = cells
+        .iter()
+        .map(|&(label, condition, _)| Row {
+            trials: 20,
+            ..row(label, condition)
+        })
+        .collect();
     let results = run_rows(&rows, Decoders::ShippedOnly);
     for ((label, _, percent), result) in cells.iter().zip(&results) {
         let tally = &result.shipped;
         let failed = 20 - tally.passes;
-        assert!(failed >= 4, "{label}: {} of 20 passed, which leaves too few failures to judge", tally.passes);
+        assert!(
+            failed >= 4,
+            "{label}: {} of 20 passed, which leaves too few failures to judge",
+            tally.passes
+        );
         assert!(
             tally.unreadable_events * 100 >= failed * percent,
             "{label}: {} unreadable events for {failed} failures",
@@ -1116,10 +1742,19 @@ fn failed_chimes_are_still_reported() {
 
     // A clean chime cut off at any point after its start symbols.
     let rate = 48_000u32;
-    let whole = generator::render(rate, &generator::time_payload(1_793_000_000, 0), tune_for_payload(6)).mix();
+    let whole = generator::render(
+        rate,
+        &generator::time_payload(1_793_000_000, 0),
+        tune_for_payload(6),
+    )
+    .mix();
     for tenths in 2..=9 {
         let cut = whole[..whole.len() * tenths / 10].to_vec();
-        let stream = channel::add_white_noise_rms(channel::pad(cut, rate as usize / 2, rate as usize), 1e-3, tenths as u64);
+        let stream = channel::add_white_noise_rms(
+            channel::pad(cut, rate as usize / 2, rate as usize),
+            1e-3,
+            tenths as u64,
+        );
         let (chimes, unreadable) = event_counts(rate, &stream);
         assert_eq!((chimes, unreadable), (0, 1), "cut off at {tenths} tenths");
     }

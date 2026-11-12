@@ -159,7 +159,11 @@ pub fn draw_band_gutter(
     } else {
         (w - FLAG_WIDTH).max(shield_x)
     };
-    ctx.set_fill_style_str(if hfr_on || is_drag { "#161616" } else { "#101010" });
+    ctx.set_fill_style_str(if hfr_on || is_drag {
+        "#161616"
+    } else {
+        "#101010"
+    });
     ctx.fill_rect(
         shield_x,
         freq_y(hi_clamped),
