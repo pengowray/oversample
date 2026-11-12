@@ -8,7 +8,7 @@ use crate::audio::streaming_source;
 use crate::canvas::spectrogram_renderer::freq_to_y;
 use crate::canvas::tile_cache::{
     at_spawn_limit, has_active_in_flight, is_current_file, tile_count_for_samples,
-    yield_to_browser, TileKey, IN_FLIGHT_TIMEOUT_MS, LOD_CONFIGS, TILE_COLS,
+    yield_to_browser, TileKey, BASELINE_HOP, IN_FLIGHT_TIMEOUT_MS, LOD_CONFIGS, TILE_COLS,
 };
 use crate::dsp::reassign::{main_frequency_line, reassign_noise_floor, LineGrid};
 use crate::state::store_fields::*;
@@ -22,11 +22,15 @@ use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::CanvasRenderingContext2d;
 
-/// Stretches read across the file for its noise floor.
-const FLOOR_READS: usize = 50;
-/// Frames in each stretch, back to back. 50 × 8 = 400 frames, as in
-/// `measure_current_noise_floor`.
-const FRAMES_PER_READ: usize = 8;
+/// Samples each noise floor is measured over: one baseline-zoom tile, about
+/// 0.34 s at 384 kHz. Short enough that sound which stays steady through it,
+/// such as electrical interference, counts as background; long enough that
+/// the calls in it are in fewer than half its frames.
+const FLOOR_STRETCH: usize = TILE_COLS * BASELINE_HOP;
+
+/// Floors kept. Each is one FFT's bins (at most a few KB), and a 10-minute
+/// 384 kHz file has about 1,800 stretches.
+const MAX_FLOORS: usize = 4096;
 
 struct FloorEntry {
     view: ChannelView,
@@ -35,8 +39,9 @@ struct FloorEntry {
 }
 
 thread_local! {
-    /// Keyed by (file id, FFT size).
-    static FLOORS: RefCell<HashMap<(u64, usize), FloorEntry>> = RefCell::new(HashMap::new());
+    /// Keyed by (file id, FFT size, stretch index).
+    static FLOORS: RefCell<HashMap<(u64, usize, usize), FloorEntry>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Forget every measured floor, for when tiles are recomputed from scratch.
@@ -44,17 +49,21 @@ pub fn clear_noise_floors() {
     FLOORS.with(|m| m.borrow_mut().clear());
 }
 
-/// Per-bin noise floor of a file at `fft_size`, for `reassign` tiles. The
-/// first call measures it from frames spread across the whole file; later
-/// calls, and calls made while it is being measured, get the same floor.
-/// Empty when the file has too little sound to measure.
+/// Per-bin noise floor at `fft_size` of the stretch of the file that holds
+/// `sample`, for line tiles. Every tile in the stretch, at every zoom level,
+/// gets the same floor, measured once from the stretch's own audio; calls
+/// made while it is being measured wait for it. Empty when the stretch has
+/// too little sound to measure.
 pub async fn noise_floor(
     audio: &AudioData,
     file_id: u64,
     view: ChannelView,
     fft_size: usize,
+    sample: usize,
 ) -> Rc<Vec<f32>> {
-    let key = (file_id, fft_size);
+    let total = audio.source.total_samples() as usize;
+    let stretch = sample.min(total.saturating_sub(1)) / FLOOR_STRETCH;
+    let key = (file_id, fft_size, stretch);
     loop {
         let known = FLOORS.with(|m| {
             m.borrow()
@@ -68,29 +77,28 @@ pub async fn noise_floor(
             None => break,
         }
     }
-    FLOORS.with(|m| m.borrow_mut().insert(key, FloorEntry { view, floor: None }));
-
-    let total = audio.source.total_samples() as usize;
-    let stretch = FRAMES_PER_READ * fft_size;
-    let mut frames = Vec::with_capacity(FLOOR_READS * stretch);
-    if total >= fft_size {
-        let span = total.saturating_sub(stretch);
-        for i in 0..FLOOR_READS {
-            let start = span * i / (FLOOR_READS - 1).max(1);
-            let read = streaming_source::read_region_ready(
-                audio.source.as_ref(),
-                view,
-                start as u64,
-                stretch.min(total),
-            )
-            .await;
-            if let Some(samples) = read {
-                let whole = samples.len() / fft_size * fft_size;
-                frames.extend_from_slice(&samples[..whole]);
-            }
+    FLOORS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= MAX_FLOORS {
+            m.retain(|_, e| e.floor.is_none());
         }
-    }
-    let floor = Rc::new(reassign_noise_floor(&frames, fft_size));
+        m.insert(key, FloorEntry { view, floor: None });
+    });
+
+    // The last stretch is short, so it is measured over the full length that
+    // ends at the end of the file.
+    let start = (stretch * FLOOR_STRETCH).min(total.saturating_sub(FLOOR_STRETCH));
+    let read = streaming_source::read_region_ready(
+        audio.source.as_ref(),
+        view,
+        start as u64,
+        FLOOR_STRETCH.min(total),
+    )
+    .await;
+    let floor = Rc::new(
+        read.map(|samples| reassign_noise_floor(&samples, fft_size))
+            .unwrap_or_default(),
+    );
     FLOORS.with(|m| {
         m.borrow_mut().insert(
             key,
@@ -386,10 +394,11 @@ pub fn schedule_line_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: u
         };
         let samples = &ch_samples[..];
 
-        // One floor per file and FFT size, measured from frames spread across
-        // the whole file, so a call that fills a deep-zoom tile is still
-        // measured against the quiet around it.
-        let noise_floor = noise_floor(&audio, file_id, cv, actual_fft).await;
+        // The floor of the 0.34 s stretch around the tile, the same at every
+        // zoom level, so a call that fills a deep-zoom tile is still measured
+        // against the quiet around it.
+        let tile_mid = (tile_col_start + TILE_COLS / 2) * config_hop;
+        let noise_floor = noise_floor(&audio, file_id, cv, actual_fft, tile_mid).await;
         if !request_still_active(&key) {
             return;
         }

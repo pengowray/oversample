@@ -334,7 +334,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         });
     }
 
-    // Clear reassignment tile cache when toggle changes
+    // Clear the loudest-frequency line's tiles when it is switched on or off
     Effect::new(move || {
         let _line = state.spect.loudest_freq_line().get();
         crate::canvas::reassign_line::clear_all();
