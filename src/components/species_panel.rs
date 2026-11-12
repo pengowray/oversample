@@ -486,12 +486,11 @@ fn forms_row(
     }
 }
 
-/// Everything below the name: the kinds of call, the shown kind's facts,
+/// Everything below the name and kinds of call: the shown kind's facts,
 /// warnings, the description, and sources.
 /// `compact` (the panel under a phone's spectrogram) puts the description,
 /// sources and draft note behind "More", so the spectrogram keeps its room.
 fn body(
-    state: AppState,
     shown: Memo<Option<Shown>>,
     form: Memo<Option<Form<'static>>>,
     warning: Signal<Option<String>>,
@@ -577,7 +576,6 @@ fn body(
         more_open.update(|v| *v = !*v);
     };
     view! {
-        {compact.then(|| forms_row(state, shown, form))}
         {facts}
         {move || warning.get().map(|w| view! { <div class="species-warn">{w}</div> })}
         {compact.then(|| view! {
@@ -955,7 +953,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                 view! { {window_div} {top_block} }.into_any()
             }}
             <div class="species-bottom species-text">
-                {body(state, shown, form, warning, false)}
+                {body(shown, form, warning, false)}
             </div>
         }
     };
@@ -1018,9 +1016,14 @@ pub fn SpeciesPanelBelow() -> impl IntoView {
         shown.get()?;
         Some(view! {
             <div class="species-panel-below species-text" style:max-height=max_height>
-                {nav_row(state)}
-                {name_block(shown)}
-                {body(state, shown, form, warning, true)}
+                // Pinned: which species and which kind of call stay in view
+                // while the facts below scroll.
+                <div class="species-head">
+                    {nav_row(state)}
+                    {name_block(shown)}
+                    {forms_row(state, shown, form)}
+                </div>
+                {body(shown, form, warning, true)}
             </div>
         })
     }

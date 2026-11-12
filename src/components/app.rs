@@ -1757,8 +1757,13 @@ fn MainArea() -> impl IntoView {
 
                         // Species panel under the spectrogram when the
                         // spectrogram is too small for its text column.
-                        {move || crate::components::species_panel::text_below(state)
-                            .then(|| view! { <SpeciesPanelBelow /> })}
+                        // Memo: only a change of answer remounts the panel.
+                        // A bare closure re-ran on every size change of the
+                        // spectrogram and rebuilt it, closing "More".
+                        {
+                            let below = Memo::new(move |_| crate::components::species_panel::text_below(state));
+                            move || below.get().then(|| view! { <SpeciesPanelBelow /> })
+                        }
                         // Bat book strip (between main view and bottom toolbar)
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
 

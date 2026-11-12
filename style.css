@@ -8303,6 +8303,15 @@ button.canvas-overflow-action-btn.disabled {
 .species-top .species-form-btn {
     flex-shrink: 0;
 }
+/* Pinned: once scrolled to the top of the column the name and kinds of
+   call stay there, so the text scrolling under them always says which
+   species and which kind of call it is about. Until then the block sits
+   just above (or below) the window, as placed. */
+.species-scroll .species-top {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
 .species-bottom {
     border-top: 1px solid #2a2a2a;
     min-height: 100%;
@@ -8456,6 +8465,19 @@ button.canvas-overflow-action-btn.disabled {
 .species-panel-below .species-sci {
     display: inline;
     margin-right: 8px;
+}
+/* Pinned head of the phone panel: species, step buttons and kinds of
+   call stay while the facts and More scroll under them. */
+.species-panel-below .species-head {
+    position: sticky;
+    top: -4px;
+    z-index: 1;
+    background: #141414;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+    margin-top: -4px;
 }
 .species-panel-below .species-forms {
     flex-wrap: nowrap;
