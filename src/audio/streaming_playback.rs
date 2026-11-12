@@ -737,9 +737,43 @@ pub(crate) fn het_carriers(base: f64, spacing: f64, count: u32) -> Vec<f64> {
     (0..n).map(|i| base + i as f64 * spacing).collect()
 }
 
+/// The selection's frequency band, when it has one. A selection that only
+/// covers a time range (its band is 0 Hz to Nyquist) has none, so it doesn't
+/// retune HET.
+pub(crate) fn selection_freq_band(
+    sel_freq_low: f64,
+    sel_freq_high: f64,
+    has_selection: bool,
+    nyquist: f64,
+) -> Option<(f64, f64)> {
+    (has_selection && (sel_freq_low > 0.0 || sel_freq_high < nyquist))
+        .then_some((sel_freq_low, sel_freq_high))
+}
+
+/// The carriers HET mixes with, in playback and in the XForm display: one
+/// carrier at `het_freq`, or a comb tiling upward from it. With a selection
+/// band, a single carrier sits at the band's centre and a comb starts at its
+/// low edge.
+pub(crate) fn het_carriers_for(
+    het_freq: f64,
+    comb_count: u32,
+    comb_spacing: f64,
+    band: Option<(f64, f64)>,
+) -> Vec<f64> {
+    if comb_count <= 1 {
+        vec![band.map_or(het_freq, |(lo, hi)| (lo + hi) / 2.0)]
+    } else {
+        het_carriers(
+            band.map_or(het_freq, |(lo, _)| lo),
+            comb_spacing,
+            comb_count,
+        )
+    }
+}
+
 /// Post-pitch heterodyne shift for PS / PV modes. The shift value is
 /// expressed in OUTPUT-Hz space, so it's small (typically 0–5 kHz) and
-/// the LP cutoff stays narrow, which keeps the 4-pole IIR well-behaved.
+/// the LP cutoff stays narrow, which keeps the low-pass well-behaved.
 ///
 /// Mathematically equivalent to a pre-pitch shift of `shift × factor`:
 ///     `|in/factor − shift_out| ≡ |in − shift_out·factor| / factor`
@@ -773,27 +807,19 @@ pub(crate) fn apply_dsp_mode(
     match params.mode {
         PlaybackMode::Normal => samples.to_vec(),
         PlaybackMode::Heterodyne => {
-            let has_sel =
-                params.has_selection && (params.sel_freq_low > 0.0 || params.sel_freq_high > 0.0);
-            if params.het_comb_count <= 1 {
-                // Single carrier: tune to the selection centre (or het_freq).
-                let lo = if has_sel {
-                    (params.sel_freq_low + params.sel_freq_high) / 2.0
-                } else {
-                    params.het_freq
-                };
-                heterodyne_mix(samples, sample_rate, lo, params.het_cutoff)
-            } else {
-                // Comb: tile upward from the BOTTOM of the target band — the
-                // selection's low edge, or the tuned het_freq anchor.
-                let base = if has_sel {
-                    params.sel_freq_low
-                } else {
-                    params.het_freq
-                };
-                let carriers = het_carriers(base, params.het_comb_spacing, params.het_comb_count);
-                heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff)
-            }
+            let band = selection_freq_band(
+                params.sel_freq_low,
+                params.sel_freq_high,
+                params.has_selection,
+                sample_rate as f64 / 2.0,
+            );
+            let carriers = het_carriers_for(
+                params.het_freq,
+                params.het_comb_count,
+                params.het_comb_spacing,
+                band,
+            );
+            heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff)
         }
         PlaybackMode::TimeExpansion => {
             // Rate change handled by AudioContext sample rate, not sample transform
@@ -879,6 +905,35 @@ async fn sleep(ms: u32) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn time_only_selection_does_not_retune_het() {
+        use super::{het_carriers_for, selection_freq_band};
+        let nyq = 192_000.0;
+        assert_eq!(selection_freq_band(0.0, nyq, true, nyq), None);
+        assert_eq!(selection_freq_band(30_000.0, 50_000.0, false, nyq), None);
+        assert_eq!(
+            selection_freq_band(30_000.0, 50_000.0, true, nyq),
+            Some((30_000.0, 50_000.0))
+        );
+        assert_eq!(
+            het_carriers_for(45_000.0, 1, 30_000.0, None),
+            vec![45_000.0]
+        );
+        assert_eq!(
+            het_carriers_for(45_000.0, 1, 30_000.0, Some((30_000.0, 50_000.0))),
+            vec![40_000.0]
+        );
+        assert_eq!(
+            het_carriers_for(31_000.0, 3, 30_000.0, None),
+            vec![31_000.0, 61_000.0, 91_000.0]
+        );
+        assert_eq!(
+            het_carriers_for(31_000.0, 2, 30_000.0, Some((20_000.0, 80_000.0))),
+            vec![20_000.0, 50_000.0]
+        );
+    }
+
     use super::het_carriers;
 
     #[test]

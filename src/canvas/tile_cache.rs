@@ -2403,13 +2403,24 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             }
         }
         PlaybackMode::Heterodyne => {
-            // Every carrier, as playback uses them. Playback also retunes to a
-            // selection; the display doesn't, so drawing a selection doesn't
-            // redraw every tile.
-            let carriers = crate::audio::streaming_playback::het_carriers(
+            // The same carriers playback uses, retuned to the selection's
+            // band when it has one (tile_scheduler redraws once the band
+            // is drawn).
+            use crate::audio::streaming_playback::{het_carriers_for, selection_freq_band};
+            let nyquist = sample_rate as f64 / 2.0;
+            let band = crate::audio::playback::effective_selection(&state).and_then(|sel| {
+                selection_freq_band(
+                    sel.freq_low.unwrap_or(0.0),
+                    sel.freq_high.unwrap_or(nyquist),
+                    true,
+                    nyquist,
+                )
+            });
+            let carriers = het_carriers_for(
                 state.transform.het_frequency().get_untracked(),
-                state.transform.het_comb_spacing().get_untracked(),
                 state.transform.het_comb_count().get_untracked(),
+                state.transform.het_comb_spacing().get_untracked(),
+                band,
             );
             let cutoff = state.transform.het_cutoff().get_untracked();
             crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff)

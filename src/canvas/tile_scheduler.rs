@@ -342,6 +342,39 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         });
     }
 
+    // The HET display retunes to the selection's frequency band, like
+    // playback. Redraw once the band is drawn (pointer released), not on
+    // every step of the drag.
+    {
+        let drawn_band = StoredValue::new(None::<(Option<f64>, Option<f64>)>);
+        Effect::new(move || {
+            let _ = (
+                state.interaction.selection().get(),
+                state.interaction.active_focus().get(),
+                state.annotations.selected_ids().get(),
+            );
+            if state.interaction.pointer_is_down().get() {
+                return;
+            }
+            let band = crate::audio::playback::effective_selection(&state)
+                .map(|sel| (sel.freq_low, sel.freq_high))
+                .filter(|(lo, hi)| lo.is_some() || hi.is_some());
+            if band == drawn_band.get_value() {
+                return;
+            }
+            drawn_band.set_value(band);
+            let het_display = state.display.transform().get_untracked()
+                && state.playback.mode().get_untracked() == crate::state::PlaybackMode::Heterodyne;
+            if het_display {
+                crate::canvas::tile_cache::clear_all_tiles();
+                state
+                    .viewmode
+                    .tile_ready_signal()
+                    .update(|n| *n = n.wrapping_add(1));
+            }
+        });
+    }
+
     // Clear the loudest-frequency line's tiles when it is switched on or off,
     // or when the lowest bat frequency (the line's lower limit) changes
     Effect::new(move || {
