@@ -2427,10 +2427,12 @@ body.sidebar-resizing {
 }
 
 .band-gutter {
-    /* Width = LABEL_COL_WIDTH (22) + two 20px fog cells = 62px of canvas,
+    /* Width = LABEL_COL_WIDTH (22) + one 20px fog cell = 42px of canvas,
        plus ~2px visual breathing room. Must stay in sync with
-       gutter_renderer::BAND_GUTTER_WIDTH. */
-    flex: 0 0 64px;
+       gutter_renderer::BAND_GUTTER_WIDTH. One cell, not two, on desktop:
+       a mouse needs no 40px drag surface, and the second cell took width
+       from the recording. Phones keep the wide gutter (rule below). */
+    flex: 0 0 44px;
     position: relative;
     /* Visible gap between the gutter and the wave canvas so the scale
        distinction (frequency vs. amplitude) reads at a glance. */
@@ -2484,10 +2486,10 @@ body.sidebar-resizing {
 }
 
 .view-bottom-corner {
-    /* Matches .band-gutter total occupation: flex-basis 64px (border-box,
-       so includes the 2px border) + 3px margin-left = 67px. Kept in sync
+    /* Matches .band-gutter total occupation: flex-basis 44px (border-box,
+       so includes the 2px border) + 3px margin-left = 47px. Kept in sync
        manually so the corner perfectly aligns with the column above. */
-    flex: 0 0 67px;
+    flex: 0 0 47px;
     background: #0a0a0a;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -3474,12 +3476,12 @@ body.sidebar-resizing {
 
 /* ── BAND cell — leftmost column of the hearing bar ───────────────────
    Width and right edge mirror the band-gutter column directly below
-   (64px + 3px margin + 2px border). The cell is now a clickable button
+   (44px + 3px margin + 2px border). The cell is now a clickable button
    that toggles HFR; the label is the literal "HFR" with per-letter
    brightness encoding HFR state (grey off, amber on, "H" dimmed when
    the active band sits entirely below 24 kHz). */
 .band-cell {
-    flex: 0 0 64px;
+    flex: 0 0 44px;
     margin-right: 3px;
     border-right: 2px solid #2a2a2a;
     border-top: none;
@@ -3507,9 +3509,10 @@ body.sidebar-resizing {
     pointer-events: none;
 }
 .band-cell-hfr-label {
-    font-size: 15px;
+    /* 14px with 1px spacing: "HFR" fits the 42px cell with room each side. */
+    font-size: 14px;
     font-weight: 700;
-    letter-spacing: 1.5px;
+    letter-spacing: 1px;
     color: #555;
     transition: color 0.15s;
 }
@@ -3525,6 +3528,10 @@ body.sidebar-resizing {
 /* On mobile the gutter widens to 84px — match it here too. */
 .app.mobile .band-cell {
     flex: 0 0 84px;
+}
+.app.mobile .band-cell-hfr-label {
+    font-size: 15px;
+    letter-spacing: 1.5px;
 }
 
 /* Mute-blink: blinks the selected mode radio button's label when

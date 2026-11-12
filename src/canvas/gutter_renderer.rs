@@ -9,16 +9,16 @@ use crate::canvas::overlays::{draw_bend_shield, draw_solid_shield};
 use crate::state::ShieldStyle;
 use web_sys::CanvasRenderingContext2d;
 
-/// Size (px) of one checkerboard cell. Two cells fit across the gutter's
-/// short axis, giving a ~40px-wide drag surface for finger-drag on mobile.
+/// Size (px) of one checkerboard cell. One cell fits across the desktop
+/// gutter; the wider phone gutter fits three, for finger-drag.
 pub const CELL: f64 = 20.0;
 
 /// Width (px) reserved on the left side of the band gutter for static
 /// frequency labels + ticks (mirrors the spectrogram's y-axis markers).
 pub const LABEL_COL_WIDTH: f64 = 22.0;
 
-/// Recommended band gutter width (px) — label column + two 20px fog cells.
-pub const BAND_GUTTER_WIDTH: f64 = LABEL_COL_WIDTH + 40.0;
+/// Recommended band gutter width (px) — label column + one 20px fog cell.
+pub const BAND_GUTTER_WIDTH: f64 = LABEL_COL_WIDTH + CELL;
 
 /// Width (px) of the coloured frequency flags, at the gutter's right edge.
 pub const FLAG_WIDTH: f64 = 12.0;
@@ -126,7 +126,7 @@ pub fn draw_band_gutter(
         None => (band_lo, band_hi),
     };
 
-    if range <= 0.0 || draw_hi <= draw_lo || matches!(shield_style, ShieldStyle::Off) {
+    if range <= 0.0 || draw_hi <= draw_lo {
         return;
     }
     // Clamp to visible range so out-of-view band shields don't leak past
@@ -152,7 +152,13 @@ pub fn draw_band_gutter(
     // colour) drew the eye more than the recording did. The rest of the
     // selected range is cleared of fog, so the range still reads across the
     // whole drag surface.
-    let flag_x = (w - FLAG_WIDTH).max(shield_x);
+    // With "Freq flags" Off there is no strip, and the cleared area (plus
+    // the dashed outline while HFR is off) is what shows the selected band.
+    let flag_x = if matches!(shield_style, ShieldStyle::Off) {
+        w
+    } else {
+        (w - FLAG_WIDTH).max(shield_x)
+    };
     ctx.set_fill_style_str(if hfr_on || is_drag { "#161616" } else { "#101010" });
     ctx.fill_rect(
         shield_x,
@@ -262,6 +268,21 @@ pub fn draw_band_gutter(
     // the user understand which resistor colours correspond to which
     // frequency without needing a numeric label on every flag.
     draw_right_edge_ticks(ctx, w, h, min_freq, max_freq, div_interval);
+
+    // Flags Off and HFR on: a solid outline, since the cleared area alone
+    // is faint against the fog.
+    if hfr_on && !is_drag && matches!(shield_style, ShieldStyle::Off) {
+        let y_top = freq_y(hi_clamped);
+        let y_bot = freq_y(lo_clamped);
+        ctx.set_stroke_style_str("rgba(255,255,255,0.45)");
+        ctx.set_line_width(1.0);
+        ctx.stroke_rect(
+            shield_x + 0.5,
+            y_top + 0.5,
+            shield_w - 1.0,
+            (y_bot - y_top) - 1.0,
+        );
+    }
 
     // Dashed outline around the selected range when HFR is off (signals
     // "previously selected — tap to resume listening"). Skipped during an
