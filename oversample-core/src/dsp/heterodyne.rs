@@ -1,4 +1,4 @@
-use crate::dsp::filters::lowpass_filter;
+use crate::dsp::filters::Butterworth;
 use std::f64::consts::PI;
 
 /// Simulate a heterodyne bat detector by mixing (multiplying) the input signal
@@ -24,25 +24,25 @@ pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64, cutoff_hz
         })
         .collect();
 
-    // Step 2: Cascaded low-pass filter to remove the sum frequency component.
-    // 4 passes of a single-pole IIR (EMA) give a -24 dB/octave ASYMPTOTIC
-    // rolloff. NOTE: this is NOT a 4th-order Butterworth — the four real poles
-    // sit at the same cutoff (a "synchronously-tuned" cascade), so the knee is
-    // gentle, the effective -3 dB point falls below `cutoff_hz`, and there is no
-    // maximally-flat passband. Only the far-stopband slope matches Butterworth.
+    // Step 2: low-pass to remove the sum frequency, keeping the difference
+    // tone flat up to near `cutoff_hz` (-3 dB there, 24 dB per octave above).
     let mut filtered = mixed;
-    for _ in 0..4 {
-        filtered = lowpass_filter(&filtered, cutoff_hz, sample_rate);
-    }
+    Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32)
+        .process_in_place(&mut filtered);
     filtered
 }
+
+/// Order of the Butterworth low-pass after the mixer.
+const HET_LP_ORDER: usize = 4;
 
 /// Stateful real-time heterodyne processor for live mic monitoring.
 /// Maintains oscillator phase and cascaded LP filter states between
 /// consecutive audio buffers to avoid clicks and transients.
 pub struct RealtimeHet {
     phase: f64,
-    lp_state: [f32; 4],
+    /// The low-pass and the (sample rate, cutoff) it is tuned for. Kept
+    /// across buffers; a new cutoff retunes it without clearing its memory.
+    lp: Option<(Butterworth, u32, f64)>,
 }
 
 impl Default for RealtimeHet {
@@ -55,12 +55,13 @@ impl RealtimeHet {
     pub fn new() -> Self {
         Self {
             phase: 0.0,
-            lp_state: [0.0; 4],
+            lp: None,
         }
     }
 
-    /// Process `input` through heterodyne (ring modulation + 4-pass LP) and
-    /// write result into `output`. Both slices must have the same length.
+    /// Process `input` through heterodyne (ring modulation + Butterworth
+    /// low-pass) and write the result into `output`. Both slices must have the
+    /// same length.
     pub fn process(
         &mut self,
         input: &[f32],
@@ -71,22 +72,24 @@ impl RealtimeHet {
     ) {
         let sr = sample_rate as f64;
         let phase_inc = 2.0 * PI * lo_freq / sr;
-        let dt = 1.0 / sr;
-        let rc = 1.0 / (2.0 * PI * cutoff_hz);
-        let alpha = (dt / (rc + dt)) as f32;
+        let lp = match &mut self.lp {
+            Some((lp, rate, cutoff)) if *rate == sample_rate => {
+                if *cutoff != cutoff_hz {
+                    lp.retune_lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32);
+                    *cutoff = cutoff_hz;
+                }
+                lp
+            }
+            _ => {
+                let lp = Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32);
+                &mut self.lp.insert((lp, sample_rate, cutoff_hz)).0
+            }
+        };
 
         for (i, &sample) in input.iter().enumerate() {
             // Ring modulation with continuous phase
             let lo = (self.phase + phase_inc * i as f64).cos() as f32;
-            let mut val = sample * lo;
-
-            // 4-pass cascaded single-pole LP filter
-            for s in self.lp_state.iter_mut() {
-                val = alpha * val + (1.0 - alpha) * *s;
-                *s = val;
-            }
-
-            output[i] = val;
+            output[i] = lp.process(sample * lo);
         }
 
         // Advance phase, keep in [0, 2π) to avoid precision loss
@@ -96,7 +99,7 @@ impl RealtimeHet {
     /// Reset state (call when HET params change significantly or mic restarts)
     pub fn reset(&mut self) {
         self.phase = 0.0;
-        self.lp_state = [0.0; 4];
+        self.lp = None;
     }
 }
 
@@ -130,7 +133,7 @@ pub fn heterodyne_comb_mix(
     acc
 }
 
-/// Stateful real-time comb heterodyne processor. Tracks a phase + 4-pass LP
+/// Stateful real-time comb heterodyne processor. Tracks a phase and low-pass
 /// state per carrier and sums the resulting difference tones. Output is
 /// scaled by 1/N so the level is comparable to single-carrier heterodyne.
 pub struct RealtimeCombHet {
@@ -240,6 +243,51 @@ mod tests {
             "Expected ~1000 Hz difference tone, got {} Hz",
             zc.estimated_frequency_hz
         );
+    }
+
+    fn tone(freq: f64, sr: u32, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| (std::f64::consts::TAU * freq * i as f64 / sr as f64).sin() as f32)
+            .collect()
+    }
+
+    fn peak_db(y: &[f32]) -> f64 {
+        20.0 * (y.iter().fold(0.0f32, |p, s| p.max(s.abs())) as f64).log10()
+    }
+
+    #[test]
+    fn het_passband_is_flat_up_to_near_the_cutoff() {
+        // The mixer halves the amplitude (-6 dB); the low-pass adds almost
+        // nothing up to 2/3 of the cutoff, and -3 dB at it.
+        let sr = 384_000;
+        let n = sr as usize / 4;
+        for (beat, lo_db, hi_db) in [
+            (2_000.0, -6.3, -5.8),
+            (10_000.0, -6.5, -5.8),
+            (15_000.0, -9.5, -8.5),
+        ] {
+            let y = heterodyne_mix(&tone(45_000.0 + beat, sr, n), sr, 45_000.0, 15_000.0);
+            let db = peak_db(&y[n / 4..]);
+            assert!((lo_db..hi_db).contains(&db), "{beat} Hz beat: {db:.2} dB");
+        }
+    }
+
+    #[test]
+    fn realtime_het_matches_one_shot_across_buffers() {
+        let sr = 384_000;
+        let x = tone(47_000.0, sr, 8_192);
+        let one_shot = heterodyne_mix(&x, sr, 45_000.0, 15_000.0);
+        let mut rt = RealtimeHet::new();
+        let mut out = vec![0.0; x.len()];
+        for (input, output) in x.chunks(1_000).zip(out.chunks_mut(1_000)) {
+            rt.process(input, output, sr, 45_000.0, 15_000.0);
+        }
+        let worst = one_shot
+            .iter()
+            .zip(&out)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "largest difference {worst}");
     }
 
     #[test]

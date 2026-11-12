@@ -409,13 +409,31 @@ impl Butterworth {
         )
     }
 
+    /// Change to a low-pass at `cutoff_hz` without clearing the filter's
+    /// memory, so a live stream doesn't click when the cutoff moves.
+    pub fn retune_lowpass(&mut self, order: usize, sample_rate: f32, cutoff_hz: f32) {
+        let fresh = Self::lowpass(order, sample_rate, cutoff_hz);
+        if fresh.0.len() != self.0.len() {
+            *self = fresh;
+            return;
+        }
+        for (section, new) in self.0.iter_mut().zip(fresh.0) {
+            *section = Biquad {
+                z1: section.z1,
+                z2: section.z2,
+                ..new
+            };
+        }
+    }
+
+    /// Filter one sample.
+    pub fn process(&mut self, x: f32) -> f32 {
+        self.0.iter_mut().fold(x, |y, section| section.process(y))
+    }
+
     pub fn process_in_place(&mut self, buf: &mut [f32]) {
         for x in buf {
-            let mut y = *x;
-            for section in &mut self.0 {
-                y = section.process(y);
-            }
-            *x = y;
+            *x = self.process(*x);
         }
     }
 }
