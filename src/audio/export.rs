@@ -108,17 +108,12 @@ pub(crate) fn process_region(
 /// for Peak, and the slider then the AGC leveler for Adaptive. The phase
 /// vocoder's level boost applies in every mode, as in playback.
 fn apply_output_gain(channels: &mut [Vec<f32>], output_rate: u32, params: &PlaybackParams) {
-    let mode_boost = if matches!(params.mode, PlaybackMode::PhaseVocoder) {
-        PV_MODE_BOOST_DB
-    } else {
-        0.0
-    };
-    let gain_db = mode_boost
-        + match params.gain_mode {
-            GainMode::Off => 0.0,
-            GainMode::Manual | GainMode::Adaptive => params.gain_db,
-            GainMode::AutoPeak => params.auto_peak_gain_db + params.gain_db,
-        };
+    let gain_db = output_gain_db(
+        params.mode,
+        params.gain_mode,
+        params.gain_db,
+        params.auto_peak_gain_db,
+    );
     for ch in channels.iter_mut() {
         apply_gain(ch, gain_db);
     }
@@ -129,6 +124,26 @@ fn apply_output_gain(channels: &mut [Vec<f32>], output_rate: u32, params: &Playb
             _ => channels.iter_mut().for_each(|ch| agc.process(ch)),
         }
     }
+}
+
+/// The fixed gain (dB) of [`apply_output_gain`], before any AGC.
+fn output_gain_db(
+    mode: PlaybackMode,
+    gain_mode: GainMode,
+    slider_db: f64,
+    auto_peak_db: f64,
+) -> f64 {
+    let mode_boost = if matches!(mode, PlaybackMode::PhaseVocoder) {
+        PV_MODE_BOOST_DB
+    } else {
+        0.0
+    };
+    mode_boost
+        + match gain_mode {
+            GainMode::Off => 0.0,
+            GainMode::Manual | GainMode::Adaptive => slider_db,
+            GainMode::AutoPeak => auto_peak_db + slider_db,
+        }
 }
 
 /// Scale `channels` together so their highest peak is `target_dbfs`. Silent
@@ -1009,6 +1024,20 @@ mod tests {
         );
         assert_eq!(wav_export_format(Pcm16, &meta(24, false)), (16, false));
         assert_eq!(wav_export_format(Float32, &meta(16, false)), (32, true));
+    }
+
+    #[test]
+    fn export_gain_follows_the_gain_mode() {
+        use GainMode::*;
+        let normal = PlaybackMode::Normal;
+        assert_eq!(output_gain_db(normal, Off, 6.0, 9.0), 0.0);
+        assert_eq!(output_gain_db(normal, Manual, 6.0, 9.0), 6.0);
+        assert_eq!(output_gain_db(normal, Adaptive, 6.0, 9.0), 6.0);
+        assert_eq!(output_gain_db(normal, AutoPeak, 6.0, 9.0), 15.0);
+        assert_eq!(
+            output_gain_db(PlaybackMode::PhaseVocoder, Off, 6.0, 9.0),
+            PV_MODE_BOOST_DB
+        );
     }
 
     #[test]

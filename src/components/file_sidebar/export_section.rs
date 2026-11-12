@@ -116,10 +116,20 @@ pub fn ExportPanel() -> impl IntoView {
         };
         chosen == depth
     };
-    let same_as_file_label = move || match file_wav_format() {
-        Some((bits, true)) => format!(" {bits}-bit float, same as the file"),
-        Some((bits, false)) => format!(" {bits}-bit, same as the file"),
-        None => " Same as the file".to_string(),
+    // A lossy file has no bit depth of its own; it is written as 16-bit.
+    // (8- and 12-bit files are also written as 16-bit, with every sample kept.)
+    let same_as_file_label = move || {
+        let lossy = state.library.files().with(|files| {
+            let idx = state.library.current_index().get();
+            idx.and_then(|i| files.get(i))
+                .is_some_and(|f| f.audio.metadata.pcm_bits().is_none())
+        });
+        match file_wav_format() {
+            Some((bits, true)) => format!(" {bits}-bit float, same as the file"),
+            Some((bits, false)) if lossy => format!(" {bits}-bit, for listening"),
+            Some((bits, false)) => format!(" {bits}-bit, same as the file"),
+            None => " Same as the file".to_string(),
+        }
     };
 
     let on_format_change = move |format: ExportFormat| {
