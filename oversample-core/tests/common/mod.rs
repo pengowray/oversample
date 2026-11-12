@@ -49,9 +49,9 @@ pub fn bat_demo_sounds_dir() -> PathBuf {
     corpus_root("BAT_DEMO_SOUNDS_DIR", "../batchi-extras/bat-demo-sounds").join("sounds")
 }
 
-/// Recordings of animals other than bats, for counting false bat calls
-/// (`NO_BAT_SOUNDS_DIR`, default `../batchi-extras/no-bat-sounds`). Local
-/// only: fetched with xc-fetch, list in batchi-extras/call-detect-regress.
+/// Recordings with no bats (other animals from xeno-canto, and sound effects),
+/// for counting false bat calls (`NO_BAT_SOUNDS_DIR`, default
+/// `../batchi-extras/no-bat-sounds`, its own git repository; see its README).
 pub fn no_bat_sounds_dir() -> PathBuf {
     corpus_root("NO_BAT_SOUNDS_DIR", "../batchi-extras/no-bat-sounds").join("sounds")
 }
