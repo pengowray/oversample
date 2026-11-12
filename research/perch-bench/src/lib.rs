@@ -10,7 +10,11 @@
 
 use tract_onnx::prelude::*;
 
-pub mod head;
+/// Perch's classifier: the app's own code in `birdnet-worker/src/perch`, so the
+/// bench measures what ships.
+pub mod head {
+    pub use birdnet_worker::perch::Classifier as Head;
+}
 
 pub const WIN: usize = 160_000;
 pub const EMB: usize = 1536;

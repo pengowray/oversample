@@ -78,7 +78,8 @@ python -I placement.py $M birds.f32
 # 12. The classifier stored in float16 and int8: same answers?
 python -I head_precision.py $M birds.f32
 
-# 13. Embedding model in tract + int8 classifier in plain Rust (src/head.rs)
+# 13. Embedding model in tract + int8 classifier in plain Rust (the app's
+#     birdnet-worker/src/perch, used here as a library)
 python -I export_head.py $M                     # perch_v2_head.int8.bin, 91 MB
 $CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx birds.f32 1 out/birds.head $M/perch_v2_head.int8.bin
 node bench-head.mjs $CARGO_TARGET_DIR/pkg-node $M/perch_v2_embed.tract.onnx $M/perch_v2_head.int8.bin birds.f32 out/birds.bindgen.head
@@ -102,8 +103,8 @@ $CARGO_TARGET_DIR/release/native $M/perch_v2_embed.tract.onnx events.f32 1 out/e
 python -I recheck.py $M events.list out/events.ort_full out/events.head
 ```
 
-`cargo test --release --lib` checks every classifier kernel this CPU can run against
-the portable one.
+In the Oversample workspace, `cargo test -p birdnet-worker --release --lib` checks every
+classifier kernel this CPU can run against the portable one.
 
 Step 7 loads BirdNET's `--target web` build from `../birdnet-bench/web/pkg`. If that
 folder is missing, build it as described in `../birdnet-bench/README.md`.

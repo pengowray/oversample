@@ -35,7 +35,7 @@ The embedding part plus the classifier gives exactly the full model's results
   ([head_precision.py](perch-bench/head_precision.py)). The full model is then 227 MB
   (float16) or 136 MB (int8), against 409 MB.
 - **Less memory and faster.** Built and measured: the embedding part in tract plus the
-  int8 classifier in plain Rust ([head/](perch-bench/src/head/mod.rs)) uses 231 MB of
+  int8 classifier in plain Rust ([perch/](../birdnet-worker/src/perch/classifier.rs)) uses 231 MB of
   WASM memory, against 1,231 MB for the full file in tract, and runs at 10 to 11 times
   real time in the browser build, against 7 times. It gives the same top class as the
   full model on 383 of 384 windows (birds, frogs, grasshoppers and crickets, land
@@ -133,10 +133,11 @@ line. Perch's labels have no common names, so results show scientific names.
 2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
    gzipped), run in plain Rust on the embedding model's spatial output
    ([export_head.py](perch-bench/export_head.py) writes it,
-   [head/](perch-bench/src/head/mod.rs) runs it: integer dot products of the 64 spatial
-   positions against the prototypes, a max over positions, and a weighted sum; the
-   inner loop has one file per CPU in [head/kernel/](perch-bench/src/head/kernel/mod.rs),
-   so the app copies the reader plus the kernel for each of its targets).
+   [birdnet-worker/src/perch](../birdnet-worker/src/perch/classifier.rs) runs it:
+   integer dot products of the 64 spatial positions against the prototypes, a max over
+   positions, and a weighted sum; the inner loop has one file per CPU in
+   [perch/kernel/](../birdnet-worker/src/perch/kernel/mod.rs), each compiled only for
+   its own target. The bench uses the same code).
    Download it the first time someone runs Perch with species names.
    Hide species results below a softmax probability of about 0.3 (the app's default):
    over 29 minutes of rain, thunder, traffic, wind and voices, 5 of 348 windows still
@@ -271,7 +272,7 @@ measurement (64 to 74 ms), so the comparison is fair.
 - The classifier is a large part of the time: 14,795 classes x 4 prototypes x 64
   positions x 1,536 values is 5.8 billion multiply-adds per window. A region of about
   900 classes adds 20 to 25 percent to the embedding time.
-- The plain-Rust classifier ([head/](perch-bench/src/head/mod.rs)) keeps the prototypes
+- The plain-Rust classifier ([perch/](../birdnet-worker/src/perch/classifier.rs)) keeps the prototypes
   as int8 and each spatial position as int16 with its own scale, and sums the products
   as integers: WASM SIMD's `i32x4.dot_i16x8_s` does 8 multiply-adds per instruction,
   where float32 needs two instructions for 4. In WASM it takes 208 to 214 ms per window,

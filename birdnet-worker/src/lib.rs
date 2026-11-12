@@ -20,7 +20,7 @@ pub mod resample;
 pub mod session;
 pub mod windows;
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "worker"))]
 mod wasm {
     use crate::session::{Attached, Session};
     use oversample_ipc::classifier::{attach, FromWorker, ToWorker};

@@ -10,6 +10,12 @@ description = "BirdNET and BattyBirdNET engine for Oversample: resampling, windo
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["worker"]
+# The Web Worker entry point (`#[wasm_bindgen(start)]`). Off for crates that use
+# the models as a library in their own WASM build, such as research/perch-bench.
+worker = []
+
 [dependencies]
 oversample-ipc = { path = "../oversample-ipc" }
 tract-onnx = "0.23"

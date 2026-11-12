@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 tract-onnx = "0.23"
+# Perch's classifier (birdnet-worker/src/perch), the same code the app runs.
+birdnet-worker = { path = "../../birdnet-worker", default-features = false }
 
 # The browser target. tract-onnx's default features pull in getrandom 0.4, which needs
 # its wasm_js backend on wasm32-unknown-unknown.
