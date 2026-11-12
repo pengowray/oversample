@@ -871,9 +871,23 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let cv = state.viewmode.channel_view().get_untracked();
         let col_start = tile_idx * TILE_COLS;
 
-        // Read only the sample region needed for this tile
+        // Display resampling keeps every m-th sample, so the STFT below steps
+        // by hop / m on the resampled audio and still makes TILE_COLS columns
+        // at the same times. (With the full hop it made 1/m of them, drawn as
+        // a thin strip at the start of each tile.)
+        let decim_target = state.display.decimate_effective().get_untracked();
+        let decim_m = if decim_target > 0 && decim_target < audio.sample_rate {
+            (audio.sample_rate as f64 / decim_target as f64)
+                .round()
+                .max(1.0) as usize
+        } else {
+            1
+        };
+
+        // Read only the sample region needed for this tile (the FFT window is
+        // m times longer in original samples when resampling).
         let sample_start = col_start * config_hop;
-        let sample_len = TILE_COLS * config_hop + actual_fft;
+        let sample_len = TILE_COLS * config_hop + actual_fft * decim_m;
 
         // When xform is active with a DSP mode that has per-chunk edge artifacts
         // (phase vocoder, pitch shift), read extra pre-padding samples so the
@@ -923,9 +937,8 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             raw_samples
         };
 
-        // Apply decimation if active — produces fewer samples, so STFT yields fewer columns per tile
-        let decim_target = state.display.decimate_effective().get_untracked();
-        let (samples, effective_rate) = if decim_target > 0 && decim_target < audio.sample_rate {
+        // Apply decimation if active; hops shrink by the same factor below.
+        let (samples, effective_rate) = if decim_m > 1 {
             let decimated =
                 crate::dsp::filters::decimate(&samples, audio.sample_rate, decim_target);
             let rate = crate::dsp::filters::decimated_rate(audio.sample_rate, decim_target);
@@ -933,6 +946,10 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         } else {
             (samples, audio.sample_rate)
         };
+        // At the deepest zooms the hop is already shorter than m samples, so a
+        // resampled tile there has fewer columns.
+        let tile_hop = (config_hop / decim_m).max(1);
+        let baseline_hop = (BASELINE_HOP / decim_m).max(1);
 
         // For coarse LODs (hop > baseline), use quality downscaling:
         // compute STFT at baseline resolution and aggregate via per-bin max.
@@ -943,20 +960,13 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
                 &samples,
                 effective_rate,
                 compute_fft,
-                BASELINE_HOP,
+                baseline_hop,
                 0,
                 TILE_COLS * oversample,
             );
             aggregate_columns_max(&dense_cols, oversample)
         } else {
-            compute_stft_columns(
-                &samples,
-                effective_rate,
-                actual_fft,
-                config_hop,
-                0,
-                TILE_COLS,
-            )
+            compute_stft_columns(&samples, effective_rate, actual_fft, tile_hop, 0, TILE_COLS)
         };
         IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
 
