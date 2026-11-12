@@ -136,6 +136,14 @@ const LINE_LOBE_BINS: usize = 2;
 /// pitch tracker smooths over a fixed time.
 pub const LINE_SMOOTH_S: f64 = 0.25e-3;
 
+/// Recordings at this sample rate or higher count as ultrasonic.
+pub const ULTRASONIC_SAMPLE_RATE: u32 = 96_000;
+
+/// In ultrasonic recordings the line ignores sound below this frequency, so
+/// wind, insects and handling noise, which are often louder than distant bat
+/// calls, don't take it over.
+pub const ULTRASONIC_LINE_MIN_HZ: f64 = 15_000.0;
+
 /// The tile grid a main-frequency line is computed on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineGrid {
@@ -143,17 +151,27 @@ pub struct LineGrid {
     pub hop_size: usize,
     /// Columns either side used for each point's median, at least 1.
     pub smooth_cols: usize,
+    /// Lowest FFT bin the line can be on.
+    pub min_bin: usize,
 }
 
 impl LineGrid {
     /// The grid for a zoom level's FFT size and hop, with
-    /// [`LINE_SMOOTH_S`] turned into columns.
+    /// [`LINE_SMOOTH_S`] turned into columns, and [`ULTRASONIC_LINE_MIN_HZ`]
+    /// into a bin for recordings at [`ULTRASONIC_SAMPLE_RATE`] or more.
     pub fn new(fft_size: usize, hop_size: usize, sample_rate: u32) -> Self {
         let smooth = LINE_SMOOTH_S * sample_rate as f64 / hop_size.max(1) as f64;
+        let min_bin = if sample_rate >= ULTRASONIC_SAMPLE_RATE {
+            let bin_hz = sample_rate as f64 / fft_size.max(1) as f64;
+            (ULTRASONIC_LINE_MIN_HZ / bin_hz).ceil() as usize
+        } else {
+            0
+        };
         Self {
             fft_size,
             hop_size,
             smooth_cols: (smooth.round() as usize).max(1),
+            min_bin,
         }
     }
 
@@ -195,7 +213,7 @@ pub struct LinePoint {
 /// the plain spectrogram has sound across the frequencies between them, and a
 /// point's frequency is the median of the joined points within
 /// `grid.smooth_cols` columns either side. Points joined to nothing are left
-/// out.
+/// out, and so is sound below `grid.min_bin`.
 ///
 /// Columns follow the convention of `compute_stft_columns`: column `c` holds
 /// the frame that starts at `c * hop_size`. `samples[0]` is the start of the
@@ -215,6 +233,7 @@ pub fn main_frequency_line(
         fft_size,
         hop_size,
         smooth_cols,
+        min_bin,
     } = grid;
     let n_bins = fft_size / 2 + 1;
     if samples.len() < fft_size || col_count == 0 || hop_size == 0 || noise_floor.len() != n_bins {
@@ -309,7 +328,7 @@ pub fn main_frequency_line(
         .map(|r| {
             let cells = &power[r * n_bins..(r + 1) * n_bins];
             let excess = |b: usize| cells[b] / noise_floor[b].max(f32::MIN_POSITIVE) as f64;
-            let peak = (0..n_bins).max_by(|&a, &b| excess(a).total_cmp(&excess(b)))?;
+            let peak = (min_bin..n_bins).max_by(|&a, &b| excess(a).total_cmp(&excess(b)))?;
             if excess(peak) < need {
                 return None;
             }
@@ -669,5 +688,29 @@ mod tests {
             top(&line),
             384_000 / fft
         );
+    }
+
+    #[test]
+    fn line_ignores_low_sound_in_ultrasonic_recordings() {
+        // A 7.9 kHz tone: below the 15 kHz limit at 384 kHz, so no line;
+        // at 48 kHz there is no limit, so it gets one.
+        let tone = |grid: LineGrid, seed| {
+            let cols = 32;
+            let (lead, mut samples, floor) = line_tile(grid, cols, seed);
+            for (i, s) in samples.iter_mut().enumerate() {
+                let ph = 2.0 * std::f64::consts::PI * i as f64 / grid.fft_size as f64;
+                *s += (5.3 * ph).sin() as f32;
+            }
+            main_frequency_line(&samples, lead, cols, grid, -200.0, &floor)
+        };
+        let ultrasonic = LineGrid::new(256, 64, 384_000);
+        assert_eq!(ultrasonic.min_bin, 10);
+        assert!(tone(ultrasonic, 19).is_empty());
+
+        let audible = LineGrid::new(256, 64, 48_000);
+        assert_eq!(audible.min_bin, 0);
+        let line = tone(audible, 20);
+        assert_eq!(line.len(), 32);
+        assert!(line.iter().all(|p| (p.freq_bin - 5.3).abs() < 0.1));
     }
 }

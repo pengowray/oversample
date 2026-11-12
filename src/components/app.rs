@@ -2223,7 +2223,7 @@ pub fn MainViewButton() -> impl IntoView {
                 view! {
                     <hr />
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;font-size:12px;"
-                        title="Draws a line at the loudest frequency in each column, where it is 15 dB or more above the noise, positioned with the reassignment method. Hidden when zoomed far out.">
+                        title="Draws a line over the spectrogram at the loudest frequency in each column, where that sound is 15 dB or more above the background noise (a steady hum or tone counts as background).\nThe line's position is calculated with the reassignment method, more precisely than the spectrogram's pixel grid.\nAt sample rates of 96 kHz or higher, sounds below 15 kHz are ignored (wind, insects, handling noise).\nHidden when zoomed far out.">
                         <input
                             type="checkbox"
                             prop:checked=move || state.spect.loudest_freq_line().get()
