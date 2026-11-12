@@ -179,13 +179,31 @@ pub fn download(state: AppState, choice: ModelChoice) {
 
 /// Download every file `choice` needs that is not stored yet, and finish when
 /// all are stored or one fails.
-pub async fn ensure_downloaded(state: AppState, choice: ModelChoice) -> Result<(), ClassifierError> {
+pub async fn ensure_downloaded(
+    state: AppState,
+    choice: ModelChoice,
+) -> Result<(), ClassifierError> {
     let mut files = choice.files();
     files.sort_by_key(|f| f.size);
     for f in files {
         download_file(state, f).await?;
     }
     Ok(())
+}
+
+/// Download Perch 2.0's files ([`catalog::PERCH_FILES`], 136 MB) that are not
+/// stored yet, smallest first. Nothing runs Perch yet; this only keeps the files
+/// on the device.
+pub fn download_perch(state: AppState) {
+    spawn_local(async move {
+        let mut files = catalog::PERCH_FILES.to_vec();
+        files.sort_by_key(|f| f.size);
+        for f in files {
+            if download_file(state, f).await.is_err() {
+                break;
+            }
+        }
+    });
 }
 
 /// Delete stored files.

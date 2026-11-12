@@ -1,6 +1,10 @@
 //! The model files BirdNET and BattyBirdNET need: where to download them, their
 //! size and SHA-256, and the attribution to show with results.
 //!
+//! Perch 2.0's files are listed too ([`PERCH_FILES`]), so they can be downloaded
+//! and kept like the others. Nothing runs Perch yet: there is no [`ModelChoice`]
+//! for it.
+//!
 //! The URLs name a fixed Hugging Face revision, so a file never changes under
 //! the same name. Hugging Face sends CORS headers, so the browser can fetch them
 //! directly. Nothing here is bundled with the app: files are downloaded when the
@@ -19,6 +23,15 @@ pub enum FileKind {
     BatHead(BatRegion),
     /// The labels of a regional head, in the order of its outputs.
     BatLabels(BatRegion),
+    /// Perch 2.0's embedding part, for tract: 5 s at 32 kHz in, the embedding and
+    /// the spatial embedding (the classifier's input) out.
+    PerchEmbedding,
+    /// Perch 2.0's classifier for its 14,795 classes, as int8 prototypes (format
+    /// in the file's model card).
+    PerchClassifier,
+    /// Perch 2.0's class names (one header line, then one per class), in the
+    /// order of the classifier's outputs.
+    PerchLabels,
 }
 
 /// One downloadable file.
@@ -36,6 +49,39 @@ pub struct ModelFile {
 
 const BATTY_REV: &str = "f685d7f7de1805ef83f71ffaad7440a8f40b4e10";
 const BIRDNET_REV: &str = "883825b65a370caff2974e02f31a15b02104ef0f";
+/// The revision of huggingface.co/pengowray/perch-v2-tract: Google's Perch 2.0
+/// split for tract by `research/perch-bench` (see `research/perch.md`). For
+/// Perch's attribution, once it can be run.
+pub const PERCH_REVISION: &str = "f378e7f4f98ce6298091e5e1768ec6d73466be89";
+/// The revision of Perch's label list (huggingface.co/cgeorgiaw/Perch).
+pub const PERCH_LABELS_REVISION: &str = "c3c3c816976a6c1bb75140b8fbaef7397a6f708f";
+
+pub const PERCH_EMBEDDING: ModelFile = ModelFile {
+    id: "perch_v2_embed.tract.onnx",
+    url: "https://huggingface.co/pengowray/perch-v2-tract/resolve/f378e7f4f98ce6298091e5e1768ec6d73466be89/perch_v2_embed.tract.onnx",
+    size: 44_718_343,
+    sha256: "834e554388700e6671912446e250ae78db38b9d1e758ee06931b362e009fa472",
+    kind: FileKind::PerchEmbedding,
+};
+
+pub const PERCH_CLASSIFIER: ModelFile = ModelFile {
+    id: "perch_v2_head.int8.bin",
+    url: "https://huggingface.co/pengowray/perch-v2-tract/resolve/f378e7f4f98ce6298091e5e1768ec6d73466be89/perch_v2_head.int8.bin",
+    size: 91_433_120,
+    sha256: "1e5500603a9a04c5ecc5c9669c09344a85af8f7c67664930062d78c91b9cbe25",
+    kind: FileKind::PerchClassifier,
+};
+
+pub const PERCH_LABELS: ModelFile = ModelFile {
+    id: "perch-v2-labels.csv",
+    url: "https://huggingface.co/cgeorgiaw/Perch/resolve/c3c3c816976a6c1bb75140b8fbaef7397a6f708f/assets/labels.csv",
+    size: 312_716,
+    sha256: "e4d5c0397d8fb08bf90c6b13a34810af53504faad927e472fcc567793c9de057",
+    kind: FileKind::PerchLabels,
+};
+
+/// Everything Perch needs, largest first.
+pub const PERCH_FILES: [&ModelFile; 3] = [&PERCH_CLASSIFIER, &PERCH_EMBEDDING, &PERCH_LABELS];
 
 pub const BACKBONE: ModelFile = ModelFile {
     id: "birdnet-v2.4-embeddings-fp32.onnx",
@@ -179,6 +225,7 @@ pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
         .into_iter()
         .chain(BAT_HEADS.iter())
         .chain(BAT_LABELS.iter())
+        .chain(PERCH_FILES)
 }
 
 /// The catalog entry stored under `id`, if any. The Tauri commands accept only
@@ -284,5 +331,18 @@ mod tests {
             bat_labels(BatRegion::UsaEast).url,
             "https://huggingface.co/tphakala/BattyBirdNET-onnx/resolve/f685d7f7de1805ef83f71ffaad7440a8f40b4e10/labels/BattyBirdNET-USA-EAST-256kHz_Labels.txt"
         );
+    }
+
+    #[test]
+    fn perch_files_are_pinned() {
+        for f in PERCH_FILES {
+            assert!(file_by_id(f.id).is_some());
+            assert_eq!(f.sha256.len(), 64);
+        }
+        for f in [&PERCH_EMBEDDING, &PERCH_CLASSIFIER] {
+            assert!(f.url.contains(PERCH_REVISION));
+            assert!(f.url.ends_with(f.id));
+        }
+        assert!(PERCH_LABELS.url.contains(PERCH_LABELS_REVISION));
     }
 }

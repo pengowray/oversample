@@ -10,6 +10,7 @@
 //!
 //! `choice` is `"birdnet"` or `"bats:<region>"`, and `region` a file-name part
 //! such as `"EU"`, `"UK"` or `"USA-EAST"` (see `BatRegion::file_stem`).
+//! `download("perch")` downloads Perch 2.0's files (nothing runs them yet).
 
 use super::*;
 use wasm_bindgen::prelude::*;
@@ -129,6 +130,10 @@ pub fn install(state: AppState) {
         Closure::<dyn Fn(String) -> bool>::new(move |c: String| match parse_choice(&c) {
             Some(c) => {
                 download(state, c);
+                true
+            }
+            None if c.eq_ignore_ascii_case("perch") => {
+                download_perch(state);
                 true
             }
             None => false,

@@ -114,6 +114,13 @@ Why add Perch:
 
 How to ship it:
 
+The two converted files are hosted at huggingface.co/pengowray/perch-v2-tract
+(revision `f378e7f`, Apache 2.0, with a model card listing the changes), and are in
+the app's model catalog (`PERCH_FILES` in `oversample-ipc/src/classifier/catalog.rs`)
+with the label list from cgeorgiaw/Perch. The app's model store keeps them like
+BirdNET's: OPFS in the browser, the app data folder's `models/` in Tauri. Nothing runs
+them in the app yet.
+
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
 2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
    gzipped), run in plain Rust on the embedding model's spatial output
