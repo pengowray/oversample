@@ -82,8 +82,11 @@ pub fn PeakSourceRow() -> impl IntoView {
             >"Sel"</button>
             <button class=move || class(PeakSource::Processed)
                 on:click=move |_| state.gain.peak_source().set(PeakSource::Processed)
-                title="Peak from the first 30 seconds after the playback filters and mode, before gain"
+                title="Peak of what plays (the selection, or the first 30 seconds) after the playback filters and mode, before gain"
             >"DSP"</button>
+            {move || state.processed_peak_measuring().then(|| view! {
+                <span class="peak-source-status">"measuring\u{2026}"</span>
+            })}
         </div>
     }
 }
@@ -188,7 +191,14 @@ pub(crate) fn GainCombo() -> impl IntoView {
             GainMode::AutoPeak => {
                 let auto_db = state.compute_auto_gain();
                 let total = auto_db + manual_db + pv_boost;
-                format!("+{:.0}dB", total)
+                // "…" while the DSP peak is measured (the raw peak is used
+                // meanwhile); the Peak from row says "measuring…".
+                let pending = if state.processed_peak_measuring() {
+                    "\u{2026}"
+                } else {
+                    ""
+                };
+                format!("+{:.0}dB{pending}", total)
             }
             GainMode::Adaptive => {
                 if manual_db > 0.0 || pv_boost > 0.0 {
@@ -278,7 +288,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
                     state.gain.auto().set(true);
                     state.panels.layer_panel_open().set(None);
                 }
-            >"AGC \u{2014} Automatic gain control"</button>
+            >"AGC \u{2014} Evens out loud and quiet parts"</button>
             <Show when=move || state.gain.mode().get() == GainMode::AutoPeak>
                 <PeakSourceRow />
             </Show>

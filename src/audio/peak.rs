@@ -225,9 +225,9 @@ pub fn start_selection_peak_scan(
     });
 }
 
-/// Seconds of audio the processed peak covers, from the start of the file,
-/// like the "30s" peak source.
-const PROCESSED_PEAK_SECS: f64 = 30.0;
+/// Seconds of audio the processed peak covers when nothing is selected, from
+/// the start of the file, like the "30s" peak source.
+pub(crate) const PROCESSED_PEAK_SECS: f64 = 30.0;
 
 /// Seconds processed between yields to the browser.
 const PROCESSED_SLICE_SECS: f64 = 2.0;
@@ -264,18 +264,20 @@ thread_local! {
 }
 
 /// Fingerprint of everything that changes the processed audio: the playback
-/// parameters (with gain off) and the channel view.
+/// parameters (with gain off, including the selection's band), the channel
+/// view and the time range measured.
 pub(crate) fn processed_fingerprint(
     params: &crate::audio::streaming_playback::PlaybackParams,
     view: ChannelView,
+    range_secs: (f64, f64),
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    format!("{params:?}|{view:?}").hash(&mut h);
+    format!("{params:?}|{view:?}|{range_secs:?}").hash(&mut h);
     h.finish()
 }
 
-/// Measure the peak of the first 30 s after the playback filters and mode,
+/// Measure the peak of `range_secs` after the playback filters and mode,
 /// before gain, in the background, and store it in `processed_peak_cache`.
 /// `params` must come from `snapshot_dsp_params`. Runs in 2 s slices with a
 /// yield between them; stops if the file is closed.
@@ -283,6 +285,7 @@ pub(crate) fn start_processed_peak_scan(
     state: AppState,
     file_id: u64,
     view: ChannelView,
+    range_secs: (f64, f64),
     fingerprint: u64,
     params: crate::audio::streaming_playback::PlaybackParams,
 ) {
@@ -304,9 +307,9 @@ pub(crate) fn start_processed_peak_scan(
 
     leptos::task::spawn_local(async move {
         let views = crate::audio::export::export_channel_views(source.as_ref(), view);
-        let end = duration.min(PROCESSED_PEAK_SECS);
+        let end = range_secs.1.min(duration);
         let mut peak: f32 = 0.0;
-        let mut t = 0.0;
+        let mut t = range_secs.0.max(0.0);
         while t < end {
             let t1 = (t + PROCESSED_SLICE_SECS).min(end);
             for buf in

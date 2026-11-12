@@ -5127,6 +5127,14 @@ body.sidebar-resizing {
     z-index: 1;
     position: relative;
 }
+/* "measuring…" after the Peak from buttons while the DSP peak runs. */
+.peak-source-status {
+    margin-left: 6px;
+    font-size: 10px;
+    color: #999;
+    font-style: italic;
+}
+
 .peak-src-btn.disabled {
     opacity: 0.35;
     cursor: default;

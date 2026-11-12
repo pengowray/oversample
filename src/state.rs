@@ -3436,18 +3436,23 @@ impl AppState {
                 .or(file.cached_peak_db),
             // Until the processed peak is measured (and while playing, when
             // no scan starts), use the raw first-30 s peak.
-            PeakSource::Processed => self.lookup_processed_peak(file).or(file.cached_peak_db),
+            PeakSource::Processed => self
+                .lookup_processed_peak(file)
+                .flatten()
+                .or(file.cached_peak_db),
         };
         let Some(peak_db) = peak_db else { return 0.0 };
         // Cap at +60 dB to avoid extreme amplification of very quiet recordings
         (-3.0 - peak_db).min(60.0)
     }
 
-    /// Peak of the first 30 s after the playback filters and mode (before
-    /// gain), or `None` while it is being measured. Starts a scan when the
-    /// DSP settings differ from the last measurement. Re-runs when the
-    /// measurement arrives and when the main DSP settings change.
-    fn lookup_processed_peak(&self, file: &LoadedFile) -> Option<f64> {
+    /// Peak of what playback would play (the selection with its frequency
+    /// band, or the first 30 s), after the playback filters and mode and
+    /// before gain. `None` until measured; `Some(None)` when it was silent.
+    /// Starts a scan when the settings differ from the last measurement.
+    /// Re-runs when the measurement arrives and when the main DSP settings
+    /// or the selection change.
+    fn lookup_processed_peak(&self, file: &LoadedFile) -> Option<Option<f64>> {
         // Subscribe to the settings that most often change the processed
         // audio, so the gain follows them (the snapshot below is untracked).
         let _ = (
@@ -3460,17 +3465,26 @@ impl AppState {
             self.noise_reduce.strength().get(),
             self.transform.het_frequency().get(),
             self.viewmode.channel_view().get(),
+            self.interaction.selection().get(),
+            self.interaction.active_focus().get(),
+            self.annotations.selected_ids().get(),
         );
         let view = self.viewmode.channel_view().get_untracked();
+        // The same selection playback would use: its time range and band.
+        let selection = crate::audio::playback::effective_selection(self);
+        let range_secs = match selection {
+            Some(sel) => (sel.time_start, sel.time_end),
+            None => (0.0, crate::audio::peak::PROCESSED_PEAK_SECS),
+        };
         let params =
-            crate::audio::playback::snapshot_dsp_params(self, None, file.audio.sample_rate);
-        let fingerprint = crate::audio::peak::processed_fingerprint(&params, view);
+            crate::audio::playback::snapshot_dsp_params(self, selection, file.audio.sample_rate);
+        let fingerprint = crate::audio::peak::processed_fingerprint(&params, view, range_secs);
         if let Some(peak) = self
             .gain
             .processed_peak_cache()
             .with(|c| c.get(file.id, fingerprint))
         {
-            return peak;
+            return Some(peak);
         }
         // Tracked, so a scan held back during playback starts when it stops.
         if !self.playback.is_playing().get() {
@@ -3478,11 +3492,28 @@ impl AppState {
                 *self,
                 file.id,
                 view,
+                range_secs,
                 fingerprint,
                 params,
             );
         }
         None
+    }
+
+    /// True while Auto gain waits for the DSP peak of the current file, and
+    /// uses the raw peak meanwhile. Reactive.
+    pub fn processed_peak_measuring(&self) -> bool {
+        if self.gain.peak_source().get() != PeakSource::Processed {
+            return false;
+        }
+        let Some(idx) = self.library.current_index().get() else {
+            return false;
+        };
+        self.library.files().with(|files| {
+            files
+                .get(idx)
+                .is_some_and(|f| self.lookup_processed_peak(f).is_none())
+        })
     }
 
     /// Look up cached selection peak, or trigger an async scan if not cached.

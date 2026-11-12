@@ -1964,7 +1964,7 @@ fn wave_auto_title(auto_on: bool, source: crate::state::PeakSource) -> String {
         PeakSource::FullWave => "the whole file",
         PeakSource::Selection => "the selection",
         PeakSource::First30s => "the first 30 s",
-        PeakSource::Processed => "the first 30 s after playback processing",
+        PeakSource::Processed => "the selection (or the first 30 s) after playback processing",
     };
     if auto_on {
         format!(
