@@ -55,6 +55,17 @@ pub fn run() {
             }));
             Ok(())
         })
+        // Debug builds only: run the JavaScript in OVERSAMPLE_DEV_EVAL after each page
+        // load, for trying things in the real webview (WebKitGTK has no WebDriver
+        // here). E.g. `window.__oversample_classifier.download("perch")`.
+        .on_page_load(|webview, payload| {
+            if cfg!(debug_assertions) && payload.event() == tauri::webview::PageLoadEvent::Finished
+            {
+                if let Ok(js) = std::env::var("OVERSAMPLE_DEV_EVAL") {
+                    let _ = webview.eval(js);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             cmd_mic::save_recording,
             cmd_mic::mic_open,
