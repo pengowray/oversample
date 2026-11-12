@@ -20,6 +20,9 @@ pub const LABEL_COL_WIDTH: f64 = 22.0;
 /// Recommended band gutter width (px) — label column + two 20px fog cells.
 pub const BAND_GUTTER_WIDTH: f64 = LABEL_COL_WIDTH + 40.0;
 
+/// Width (px) of the coloured frequency flags, at the gutter's right edge.
+pub const FLAG_WIDTH: f64 = 12.0;
+
 /// Draw the fogged-mirror checkerboard. Two colour cells alternated across
 /// a rectangle. `dim` is the checker brightness multiplier (1.0 = normal,
 /// < 1.0 fades the fog — used when the gutter is inactive).
@@ -144,6 +147,20 @@ pub fn draw_band_gutter(
     let alpha_active = if hfr_on || is_drag { 0.85 } else { 0.40 };
     let alpha_minor = if hfr_on || is_drag { 0.55 } else { 0.28 };
 
+    // The flags are a slim strip beside the view, the same width as the
+    // spectrogram's own colour bar. Full-width flags (40 px of saturated
+    // colour) drew the eye more than the recording did. The rest of the
+    // selected range is cleared of fog, so the range still reads across the
+    // whole drag surface.
+    let flag_x = (w - FLAG_WIDTH).max(shield_x);
+    ctx.set_fill_style_str(if hfr_on || is_drag { "#161616" } else { "#101010" });
+    ctx.fill_rect(
+        shield_x,
+        freq_y(hi_clamped),
+        flag_x - shield_x,
+        freq_y(lo_clamped) - freq_y(hi_clamped),
+    );
+
     // Major divisions from min_freq up to max_freq (aligned to div_interval).
     let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
     let mut freq = first_div;
@@ -164,9 +181,9 @@ pub fn draw_band_gutter(
                             let bands = freq_resistor_bands(freq);
                             draw_bend_shield(
                                 ctx,
-                                shield_x,
+                                flag_x,
                                 y_top,
-                                shield_w,
+                                FLAG_WIDTH,
                                 bar_h,
                                 bands,
                                 alpha_active,
@@ -176,9 +193,9 @@ pub fn draw_band_gutter(
                             let c = freq_shield_color(freq, div_interval);
                             draw_solid_shield(
                                 ctx,
-                                shield_x,
+                                flag_x,
                                 y_top,
-                                shield_w,
+                                FLAG_WIDTH,
                                 bar_h,
                                 c,
                                 alpha_active,
@@ -212,9 +229,9 @@ pub fn draw_band_gutter(
                             let bands = freq_resistor_bands(mf);
                             draw_bend_shield(
                                 ctx,
-                                shield_x,
+                                flag_x,
                                 y_top,
-                                shield_w,
+                                FLAG_WIDTH,
                                 bar_h,
                                 bands,
                                 alpha_minor,
@@ -224,9 +241,9 @@ pub fn draw_band_gutter(
                             let c = freq_shield_color(mf, minor_interval);
                             draw_solid_shield(
                                 ctx,
-                                shield_x,
+                                flag_x,
                                 y_top,
-                                shield_w,
+                                FLAG_WIDTH,
                                 bar_h,
                                 c,
                                 alpha_minor,
