@@ -224,3 +224,112 @@ pub fn start_selection_peak_scan(
             .update(|c| c.insert(key, peak_db));
     });
 }
+
+/// Seconds of audio the processed peak covers, from the start of the file,
+/// like the "30s" peak source.
+const PROCESSED_PEAK_SECS: f64 = 30.0;
+
+/// Seconds processed between yields to the browser.
+const PROCESSED_SLICE_SECS: f64 = 2.0;
+
+/// Processed peak for each file (by `LoadedFile::id`): the fingerprint of the
+/// DSP settings it was measured with, and the peak in dBFS (`None` when the
+/// processed audio was silent). One entry per file; a new fingerprint
+/// replaces the old one.
+#[derive(Clone, Debug, Default)]
+pub struct ProcessedPeakCache {
+    entries: HashMap<u64, (u64, Option<f64>)>,
+}
+
+impl ProcessedPeakCache {
+    /// The peak measured for `file_id` with these DSP settings, if any.
+    pub fn get(&self, file_id: u64, fingerprint: u64) -> Option<Option<f64>> {
+        self.entries
+            .get(&file_id)
+            .filter(|(fp, _)| *fp == fingerprint)
+            .map(|(_, peak)| *peak)
+    }
+
+    fn insert(&mut self, file_id: u64, fingerprint: u64, peak_db: Option<f64>) {
+        self.entries.insert(file_id, (fingerprint, peak_db));
+    }
+}
+
+thread_local! {
+    /// The (file id, fingerprint) being scanned, so repeated lookups while a
+    /// scan runs don't start more. Not reactive on purpose: lookups happen
+    /// inside reactive reads.
+    static PROCESSED_IN_FLIGHT: std::cell::Cell<Option<(u64, u64)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Fingerprint of everything that changes the processed audio: the playback
+/// parameters (with gain off) and the channel view.
+pub(crate) fn processed_fingerprint(
+    params: &crate::audio::streaming_playback::PlaybackParams,
+    view: ChannelView,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{params:?}|{view:?}").hash(&mut h);
+    h.finish()
+}
+
+/// Measure the peak of the first 30 s after the playback filters and mode,
+/// before gain, in the background, and store it in `processed_peak_cache`.
+/// `params` must come from `snapshot_dsp_params`. Runs in 2 s slices with a
+/// yield between them; stops if the file is closed.
+pub(crate) fn start_processed_peak_scan(
+    state: AppState,
+    file_id: u64,
+    view: ChannelView,
+    fingerprint: u64,
+    params: crate::audio::streaming_playback::PlaybackParams,
+) {
+    if PROCESSED_IN_FLIGHT.with(|f| f.get()) == Some((file_id, fingerprint)) {
+        return;
+    }
+    let Some((source, sr, duration)) = state.library.files().with_untracked(|files| {
+        files.iter().find(|f| f.id == file_id).map(|f| {
+            (
+                f.audio.source.clone(),
+                f.audio.sample_rate,
+                f.audio.duration_secs,
+            )
+        })
+    }) else {
+        return;
+    };
+    PROCESSED_IN_FLIGHT.with(|f| f.set(Some((file_id, fingerprint))));
+
+    leptos::task::spawn_local(async move {
+        let views = crate::audio::export::export_channel_views(source.as_ref(), view);
+        let end = duration.min(PROCESSED_PEAK_SECS);
+        let mut peak: f32 = 0.0;
+        let mut t = 0.0;
+        while t < end {
+            let t1 = (t + PROCESSED_SLICE_SECS).min(end);
+            for buf in
+                crate::audio::export::process_region(source.as_ref(), &views, sr, t, t1, &params)
+            {
+                peak = buf.iter().fold(peak, |p, s| p.max(s.abs()));
+            }
+            t = t1;
+            crate::canvas::tile_cache::yield_to_browser().await;
+            let open = state
+                .library
+                .files()
+                .with_untracked(|files| files.iter().any(|f| f.id == file_id));
+            if !open {
+                PROCESSED_IN_FLIGHT.with(|f| f.set(None));
+                return;
+            }
+        }
+        let peak_db = (peak > 1e-10).then(|| 20.0 * (peak as f64).log10());
+        PROCESSED_IN_FLIGHT.with(|f| f.set(None));
+        state
+            .gain
+            .processed_peak_cache()
+            .update(|c| c.insert(file_id, fingerprint, peak_db));
+    });
+}

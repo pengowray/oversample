@@ -116,6 +116,7 @@ pub fn audio_buffer_ahead_secs() -> Option<f64> {
 
 /// Snapshot of all playback parameters, frozen at play start so that
 /// parameter changes mid-playback don't cause glitches.
+#[derive(Debug)]
 pub(crate) struct PlaybackParams {
     pub mode: PlaybackMode,
     pub het_freq: f64,

@@ -1824,6 +1824,9 @@ pub struct GainState {
     pub peak_source: PeakSource,
     /// Cache for recently computed selection peak values.
     pub selection_peak_cache: crate::audio::peak::PeakCache,
+    /// Peak of the first 30 s after the playback filters and mode, for the
+    /// "DSP" peak source.
+    pub processed_peak_cache: crate::audio::peak::ProcessedPeakCache,
     /// Whether a peak scan is currently in progress (for UI indicator).
     pub peak_scanning: bool,
     /// Waveform-view gain (visual only, independent of audio gain).
@@ -2429,6 +2432,7 @@ impl AppState {
                 mode_last_auto: GainMode::AutoPeak,
                 peak_source: PeakSource::First30s,
                 selection_peak_cache: crate::audio::peak::PeakCache::default(),
+                processed_peak_cache: crate::audio::peak::ProcessedPeakCache::default(),
                 peak_scanning: false,
                 wave_view_db: 0.0,
                 wave_view_auto: false,
@@ -3430,15 +3434,55 @@ impl AppState {
             PeakSource::Selection => self
                 .lookup_selection_peak(file_index, file)
                 .or(file.cached_peak_db),
-            PeakSource::Processed => {
-                // Post-DSP peak: for now fall back to raw peak.
-                // Full implementation requires running the DSP chain on a sample window.
-                file.cached_peak_db
-            }
+            // Until the processed peak is measured (and while playing, when
+            // no scan starts), use the raw first-30 s peak.
+            PeakSource::Processed => self.lookup_processed_peak(file).or(file.cached_peak_db),
         };
         let Some(peak_db) = peak_db else { return 0.0 };
         // Cap at +60 dB to avoid extreme amplification of very quiet recordings
         (-3.0 - peak_db).min(60.0)
+    }
+
+    /// Peak of the first 30 s after the playback filters and mode (before
+    /// gain), or `None` while it is being measured. Starts a scan when the
+    /// DSP settings differ from the last measurement. Re-runs when the
+    /// measurement arrives and when the main DSP settings change.
+    fn lookup_processed_peak(&self, file: &LoadedFile) -> Option<f64> {
+        // Subscribe to the settings that most often change the processed
+        // audio, so the gain follows them (the snapshot below is untracked).
+        let _ = (
+            self.playback.mode().get(),
+            self.filter.enabled().get(),
+            self.filter.freq_low().get(),
+            self.filter.freq_high().get(),
+            self.notch.enabled().get(),
+            self.noise_reduce.enabled().get(),
+            self.noise_reduce.strength().get(),
+            self.transform.het_frequency().get(),
+            self.viewmode.channel_view().get(),
+        );
+        let view = self.viewmode.channel_view().get_untracked();
+        let params =
+            crate::audio::playback::snapshot_dsp_params(self, None, file.audio.sample_rate);
+        let fingerprint = crate::audio::peak::processed_fingerprint(&params, view);
+        if let Some(peak) = self
+            .gain
+            .processed_peak_cache()
+            .with(|c| c.get(file.id, fingerprint))
+        {
+            return peak;
+        }
+        // Tracked, so a scan held back during playback starts when it stops.
+        if !self.playback.is_playing().get() {
+            crate::audio::peak::start_processed_peak_scan(
+                *self,
+                file.id,
+                view,
+                fingerprint,
+                params,
+            );
+        }
+        None
     }
 
     /// Look up cached selection peak, or trigger an async scan if not cached.

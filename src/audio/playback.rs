@@ -504,6 +504,26 @@ pub(crate) fn snapshot_params(
     selection: Option<Selection>,
     sample_rate: u32,
 ) -> PlaybackParams {
+    let mut params = snapshot_dsp_params(state, selection, sample_rate);
+    params.gain_db = state.gain.db().get_untracked();
+    params.gain_mode = state.gain.mode().get_untracked();
+    params.auto_peak_gain_db = if params.gain_mode == GainMode::AutoPeak {
+        state.compute_auto_gain()
+    } else {
+        0.0
+    };
+    params.live_gain_db = state.gain.live_db().get_untracked();
+    params
+}
+
+/// The playback parameters with every gain stage off: what the filters and
+/// playback mode do to the audio. The processed peak is measured with these
+/// (computing the gain here would ask for that peak again).
+pub(crate) fn snapshot_dsp_params(
+    state: &AppState,
+    selection: Option<Selection>,
+    sample_rate: u32,
+) -> PlaybackParams {
     PlaybackParams {
         mode: state.playback.mode().get_untracked(),
         het_freq: state.transform.het_frequency().get_untracked(),
@@ -533,14 +553,10 @@ pub(crate) fn snapshot_params(
             crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)
         },
         zc_factor: state.transform.zc_factor().get_untracked(),
-        gain_db: state.gain.db().get_untracked(),
-        gain_mode: state.gain.mode().get_untracked(),
-        auto_peak_gain_db: if state.gain.mode().get_untracked() == GainMode::AutoPeak {
-            state.compute_auto_gain()
-        } else {
-            0.0
-        },
-        live_gain_db: state.gain.live_db().get_untracked(),
+        gain_db: 0.0,
+        gain_mode: GainMode::Off,
+        auto_peak_gain_db: 0.0,
+        live_gain_db: 0.0,
         filter_enabled: state.filter.enabled().get_untracked(),
         filter_freq_low: state.filter.freq_low().get_untracked(),
         filter_freq_high: state.filter.freq_high().get_untracked(),

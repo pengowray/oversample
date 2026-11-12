@@ -45,6 +45,49 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 // Band presets and their helpers moved into `hfr_button.rs` — they're
 // the body of HfrButton's right-half dropdown now.
 
+/// "Peak from": where every Auto gain takes its peak (playback Peak mode,
+/// Waveform Gain Auto, display Gain Auto, overview). One setting, shown in
+/// each menu whose Auto uses it.
+#[component]
+pub fn PeakSourceRow() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let class = move |src: PeakSource| {
+        if state.gain.peak_source().get() == src {
+            "peak-src-btn sel"
+        } else {
+            "peak-src-btn"
+        }
+    };
+    view! {
+        <div class="peak-source-row">
+            <span class="peak-source-label">"Peak from:"</span>
+            <button class=move || class(PeakSource::First30s)
+                on:click=move |_| state.gain.peak_source().set(PeakSource::First30s)
+                title="Peak from first 30 seconds"
+            >"30s"</button>
+            <button class=move || class(PeakSource::FullWave)
+                on:click=move |_| state.gain.peak_source().set(PeakSource::FullWave)
+                title="Peak from entire file"
+            >"Full"</button>
+            <button class=move || {
+                let base = class(PeakSource::Selection);
+                if state.interaction.selection().get().is_none() { format!("{} disabled", base) } else { base.to_string() }
+            }
+                on:click=move |_| {
+                    if state.interaction.selection().get_untracked().is_some() {
+                        state.gain.peak_source().set(PeakSource::Selection);
+                    }
+                }
+                title="Peak from current selection"
+            >"Sel"</button>
+            <button class=move || class(PeakSource::Processed)
+                on:click=move |_| state.gain.peak_source().set(PeakSource::Processed)
+                title="Peak from the first 30 seconds after the playback filters and mode, before gain"
+            >"DSP"</button>
+        </div>
+    }
+}
+
 fn layer_opt_class_simple(active: bool) -> &'static str {
     if active {
         "layer-panel-opt sel"
@@ -237,32 +280,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
                 }
             >"AGC \u{2014} Automatic gain control"</button>
             <Show when=move || state.gain.mode().get() == GainMode::AutoPeak>
-                <div class="peak-source-row">
-                    <span class="peak-source-label">"Peak from:"</span>
-                    <button class=move || if state.gain.peak_source().get() == PeakSource::First30s { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.gain.peak_source().set(PeakSource::First30s)
-                        title="Peak from first 30 seconds"
-                    >"30s"</button>
-                    <button class=move || if state.gain.peak_source().get() == PeakSource::FullWave { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.gain.peak_source().set(PeakSource::FullWave)
-                        title="Peak from entire file"
-                    >"Full"</button>
-                    <button class=move || {
-                        let base = if state.gain.peak_source().get() == PeakSource::Selection { "peak-src-btn sel" } else { "peak-src-btn" };
-                        if state.interaction.selection().get().is_none() { format!("{} disabled", base) } else { base.to_string() }
-                    }
-                        on:click=move |_| {
-                            if state.interaction.selection().get_untracked().is_some() {
-                                state.gain.peak_source().set(PeakSource::Selection);
-                            }
-                        }
-                        title="Peak from current selection"
-                    >"Sel"</button>
-                    <button class=move || if state.gain.peak_source().get() == PeakSource::Processed { "peak-src-btn sel" } else { "peak-src-btn" }
-                        on:click=move |_| state.gain.peak_source().set(PeakSource::Processed)
-                        title="Peak after DSP processing"
-                    >"DSP"</button>
-                </div>
+                <PeakSourceRow />
             </Show>
             <div class="layer-panel-slider-row" style="margin-top: 6px;">
                 <span class="slider-label">{move || if is_live() { "Live" } else { "Boost" }}</span>

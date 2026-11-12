@@ -1963,8 +1963,8 @@ fn wave_auto_title(auto_on: bool, source: crate::state::PeakSource) -> String {
     let peak_of = match source {
         PeakSource::FullWave => "the whole file",
         PeakSource::Selection => "the selection",
-        // The processed peak isn't measured yet; Auto uses the first 30 s.
-        PeakSource::First30s | PeakSource::Processed => "the first 30 s",
+        PeakSource::First30s => "the first 30 s",
+        PeakSource::Processed => "the first 30 s after playback processing",
     };
     if auto_on {
         format!(
@@ -2767,6 +2767,9 @@ pub fn MainViewButton() -> impl IntoView {
                                 }
                             >"Auto"</button>
                         </div>
+                        {move || state.gain.wave_view_auto().get().then(|| view! {
+                            <crate::components::hearing_bar::PeakSourceRow />
+                        })}
                     </div>
                 }
             })}

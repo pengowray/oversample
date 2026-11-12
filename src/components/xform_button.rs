@@ -284,6 +284,11 @@ pub fn XformButton() -> impl IntoView {
             <DspFilterRow label="Gain" signal=state.display.filter_gain() playback_active=gain_active custom_available=true />
             <DspFilterRow label="Resam" signal=state.display.filter_decimate() playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
 
+            // Display Gain Auto takes its peak from the shared "Peak from".
+            {move || state.display.auto_gain().get().then(|| view! {
+                <crate::components::hearing_bar::PeakSourceRow />
+            })}
+
             // Custom NR strength
             {move || show_nr_custom.get().then(|| {
                 let strength = state.display.nr_strength();
