@@ -581,46 +581,15 @@ pub(crate) fn snapshot_dsp_params(
     }
 }
 
+/// The selection's frequency band, as playback plays it: a 4th-order
+/// Butterworth band-pass (flat inside the band, 24 dB per octave outside).
 pub(crate) fn apply_bandpass(
     samples: &[f32],
     sample_rate: u32,
     freq_low: f64,
     freq_high: f64,
 ) -> Vec<f32> {
-    let mut result = samples.to_vec();
-    if freq_low > 0.0 {
-        let lp = cascaded_lowpass(&result, freq_low, sample_rate, 4);
-        for (r, l) in result.iter_mut().zip(lp.iter()) {
-            *r -= l;
-        }
-    }
-    if freq_high < (sample_rate as f64 / 2.0) {
-        result = cascaded_lowpass(&result, freq_high, sample_rate, 4);
-    }
-    result
-}
-
-fn lowpass_filter_inplace(buf: &mut [f32], cutoff_hz: f64, sample_rate: u32) {
-    if buf.is_empty() {
-        return;
-    }
-    let dt = 1.0 / sample_rate as f64;
-    let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff_hz);
-    let alpha = (dt / (rc + dt)) as f32;
-    let mut prev = buf[0];
-    for s in buf[1..].iter_mut() {
-        let y = alpha * *s + (1.0 - alpha) * prev;
-        *s = y;
-        prev = y;
-    }
-}
-
-fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
-    let mut result = samples.to_vec();
-    for _ in 0..passes {
-        lowpass_filter_inplace(&mut result, cutoff, sample_rate);
-    }
-    result
+    crate::dsp::filters::butterworth_bandpass(samples, sample_rate, freq_low, freq_high)
 }
 
 pub(crate) fn apply_gain(samples: &mut [f32], gain_db: f64) {

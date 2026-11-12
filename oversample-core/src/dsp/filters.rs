@@ -377,6 +377,97 @@ pub fn split_three_bands_fft(
     (below, middle, above)
 }
 
+/// One RBJ biquad section in transposed direct form II.
+#[derive(Clone, Copy, Debug)]
+struct Biquad {
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
+}
+
+impl Biquad {
+    fn new(sample_rate: f32, freq_hz: f32, q: f32, highpass: bool) -> Self {
+        let w = std::f32::consts::TAU * freq_hz / sample_rate;
+        let (cos_w, alpha) = (w.cos(), w.sin() / (2.0 * q));
+        let (b0, b1, b2) = if highpass {
+            let b1 = -(1.0 + cos_w);
+            (-b1 / 2.0, b1, -b1 / 2.0)
+        } else {
+            let b1 = 1.0 - cos_w;
+            (b1 / 2.0, b1, b1 / 2.0)
+        };
+        let a0 = 1.0 + alpha;
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: -2.0 * cos_w / a0,
+            a2: (1.0 - alpha) / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
+    }
+
+    fn process(&mut self, x: f32) -> f32 {
+        let y = self.b0 * x + self.z1;
+        self.z1 = self.b1 * x - self.a1 * y + self.z2;
+        self.z2 = self.b2 * x - self.a2 * y;
+        y
+    }
+}
+
+/// 4th-order Butterworth low- or high-pass filter: two biquads, flat in the
+/// passband, −3 dB at the cutoff and 24 dB per octave beyond it.
+#[derive(Clone, Debug)]
+pub struct Butterworth4([Biquad; 2]);
+
+impl Butterworth4 {
+    /// Q of the two sections of a 4th-order Butterworth filter.
+    const Q: [f32; 2] = [0.541_196_1, 1.306_563];
+
+    pub fn lowpass(sample_rate: f32, cutoff_hz: f32) -> Self {
+        Self(Self::Q.map(|q| Biquad::new(sample_rate, cutoff_hz, q, false)))
+    }
+
+    pub fn highpass(sample_rate: f32, cutoff_hz: f32) -> Self {
+        Self(Self::Q.map(|q| Biquad::new(sample_rate, cutoff_hz, q, true)))
+    }
+
+    pub fn process_in_place(&mut self, buf: &mut [f32]) {
+        for x in buf {
+            let y = self.0[0].process(*x);
+            *x = self.0[1].process(y);
+        }
+    }
+}
+
+/// Keep `freq_low`..`freq_high` Hz: a 4th-order Butterworth high-pass at
+/// `freq_low` and low-pass at `freq_high`. An edge at 0 Hz or at Nyquist is
+/// left open.
+pub fn butterworth_bandpass(
+    samples: &[f32],
+    sample_rate: u32,
+    freq_low: f64,
+    freq_high: f64,
+) -> Vec<f32> {
+    let mut out = samples.to_vec();
+    let sr = sample_rate as f32;
+    let nyquist = sample_rate as f64 / 2.0;
+    if freq_low > 0.0 && freq_low < nyquist {
+        Butterworth4::highpass(sr, freq_low as f32).process_in_place(&mut out);
+    }
+    if freq_high > 0.0 && freq_high < nyquist {
+        // Keep the cutoff just under Nyquist, where the biquad stays stable.
+        let fc = freq_high.min(nyquist * 0.98) as f32;
+        Butterworth4::lowpass(sr, fc).process_in_place(&mut out);
+    }
+    out
+}
+
 /// Simple single-pole IIR low-pass filter (first-order exponential moving average).
 ///
 /// Transfer function: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
@@ -446,6 +537,29 @@ pub fn decimated_rate(source_rate: u32, target_rate: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    fn tone_level_db(freq: f64, band: (f64, f64)) -> f64 {
+        let sr = 384_000u32;
+        let x: Vec<f32> = (0..sr as usize / 4)
+            .map(|i| (std::f64::consts::TAU * freq * i as f64 / sr as f64).sin() as f32)
+            .collect();
+        let y = butterworth_bandpass(&x, sr, band.0, band.1);
+        // Skip the first 10 ms while the filters settle.
+        let peak = y[3840..].iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        20.0 * (peak as f64).log10()
+    }
+
+    #[test]
+    fn bandpass_keeps_the_band_and_cuts_an_octave_away() {
+        let band = (30_000.0, 50_000.0);
+        let inside = tone_level_db(40_000.0, band);
+        assert!(inside > -1.5, "40 kHz in a 30-50 kHz band: {inside:.1} dB");
+        assert!(tone_level_db(15_000.0, band) < -20.0);
+        assert!(tone_level_db(100_000.0, band) < -20.0);
+        // An open edge passes everything on that side.
+        assert!(tone_level_db(150_000.0, (30_000.0, 192_000.0)) > -0.5);
+    }
+
     use super::*;
 
     #[test]
