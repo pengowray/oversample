@@ -324,7 +324,7 @@ pub fn schedule_line_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: u
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let actual_fft = state.spect.fft_mode().get_untracked().fft_for_lod(lod);
-    let lowest_bat_hz = state.lowest_bat_hz_untracked();
+    let lowest_bat_hz = state.lowest_bat_hz_for(file_idx);
 
     spawn_local(async move {
         yield_to_browser().await;

@@ -78,6 +78,10 @@ pub struct ProjectFile {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub noise_profile: Option<NoiseProfile>,
 
+    /// "Lowest bat frequency" for this file only, in Hz (from its .batm).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lowest_bat_hz: Option<f32>,
+
     /// Date/time adjustment in seconds. Added to the file's detected recording
     /// start time. Useful when the recorder's clock was wrong.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -243,6 +247,9 @@ impl BatProject {
         if pf.noise_profile.is_none() {
             pf.noise_profile = set.noise_profile.clone();
         }
+        if pf.lowest_bat_hz.is_none() {
+            pf.lowest_bat_hz = set.lowest_bat_hz;
+        }
 
         // Update audio metadata if missing
         if pf.audio_metadata.is_none() {
@@ -288,6 +295,7 @@ impl BatProject {
             audio_metadata,
             annotations: Vec::new(),
             noise_profile: None,
+            lowest_bat_hz: None,
             time_offset_secs: 0.0,
             recording_start_override_ms: None,
             metadata_from_tauri: false,

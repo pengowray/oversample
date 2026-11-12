@@ -319,7 +319,7 @@ fn InbuiltDetection() -> impl IntoView {
         let Some(file_id) = state.current_file_id_tracked() else {
             return;
         };
-        let params = state.call_detection.params().get();
+        let params = state.call_detection_params();
         let key = Some((file_id, search_key(&params)));
         if state.call_detection.scanned().get_untracked() == key
             || state.call_detection.scanning().get_untracked() == key
@@ -345,20 +345,33 @@ fn InbuiltDetection() -> impl IntoView {
 
     let commit = move || {
         let d = draft.get_untracked();
-        let old = state.call_detection.params().get_untracked();
-        if old != d {
-            // The lowest bat frequency is a saved setting shared with the
-            // loudest-frequency line, ZC and HFR (Settings > Bats).
-            if old.min_bat_hz != d.min_bat_hz {
-                crate::settings::set_lowest_bat_hz(d.min_bat_hz);
+        // The lowest bat frequency is shared with the loudest-frequency line,
+        // ZC and HFR. The slider changes the value in force: the file's own
+        // (Settings > Bats > this file) if it has one, else the app setting.
+        if d.min_bat_hz != state.lowest_bat_hz_untracked() {
+            let own = state
+                .library
+                .current_index()
+                .get_untracked()
+                .filter(|&i| state.file_lowest_bat_hz(i).is_some());
+            match own {
+                Some(i) => state.set_file_lowest_bat_hz(i, Some(d.min_bat_hz)),
+                None => state.set_lowest_bat_hz(d.min_bat_hz),
             }
-            state.call_detection.params().set(d);
+        }
+        let old = state.call_detection.params().get_untracked();
+        let new = CallScanParams {
+            min_bat_hz: old.min_bat_hz,
+            ..d
+        };
+        if old != new {
+            state.call_detection.params().set(new);
         }
     };
-    // Follow changes made elsewhere (Settings > Bats), so the next commit here
-    // doesn't put the old value back.
+    // Follow changes made elsewhere (Settings > Bats, or another file), so
+    // the next commit here doesn't put an old value back.
     Effect::new(move || {
-        let p = state.call_detection.params().get();
+        let p = state.call_detection_params();
         if draft.get_untracked() != p {
             draft.set(p);
         }
@@ -451,7 +464,7 @@ fn InbuiltDetection() -> impl IntoView {
         if !has_results.get() {
             return view! { <div class="detection-status"></div> }.into_any();
         }
-        let params = state.call_detection.params().get();
+        let params = state.call_detection_params();
         let Some((lo, hi)) = state.call_detection.band_hz().get() else {
             let rate = state.library.files().with(|files| {
                 state
@@ -612,7 +625,7 @@ fn InbuiltDetection() -> impl IntoView {
             return None;
         }
         let filter = list_filter.get();
-        let params = state.call_detection.params().get();
+        let params = state.call_detection_params();
         // Which train each call is in.
         let train_of: std::collections::HashMap<usize, usize> =
             state.call_detection.trains().with(|trains| {

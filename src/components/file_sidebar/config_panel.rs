@@ -16,6 +16,11 @@ fn parse_colormap_pref(s: &str) -> Colormap {
     }
 }
 
+/// Label and tooltip of the checkbox that gives the open file its own lowest
+/// bat frequency.
+const FILE_BAT_LABEL: &str = "This recording's lowest frequency";
+const FILE_BAT_TIP: &str = "Sets a lowest bat frequency for this recording only, saved in its .batm file. Untick to use the Lowest bat frequency setting above again.";
+
 /// Tooltip of the "Lowest bat frequency" setting.
 const LOWEST_BAT_TIP: &str = "Lowest frequency to look for bat calls. Default 16 kHz. Call detection, the Loudest-frequency line, ZC playback and HFR all use this value.\nLower it to find free-tailed bats near 11 kHz. Birds, insects and wind noise will also be picked up.";
 
@@ -65,8 +70,15 @@ pub(super) fn ConfigPanel() -> impl IntoView {
 
     // The slider shows its value while dragging; the setting (and everything
     // that follows it) changes when it is released.
-    let lowest_bat_khz = RwSignal::new(state.lowest_bat_hz_untracked() / 1000.0);
-    Effect::new(move || lowest_bat_khz.set(state.lowest_bat_hz() / 1000.0));
+    let lowest_bat_khz = RwSignal::new(0.0f32);
+    Effect::new(move || lowest_bat_khz.set(state.lowest_bat_hz_setting() / 1000.0));
+    // The open file's own value, while its slider is dragged.
+    let file_bat_khz = RwSignal::new(0.0f32);
+    Effect::new(move || {
+        if let Some(hz) = state.current_file_lowest_bat_hz() {
+            file_bat_khz.set(hz / 1000.0);
+        }
+    });
 
     view! {
         <div class="sidebar-panel">
@@ -111,6 +123,50 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         }
                     />
                 </div>
+                // The open file's own value, saved in its .batm.
+                {move || state.library.current_index().get().map(|idx| {
+                    let own = state.current_file_lowest_bat_hz().is_some();
+                    view! {
+                        <div class="setting-row" title=FILE_BAT_TIP>
+                            <label class="setting-label">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=own
+                                    on:change=move |ev| {
+                                        let on = event_target_checked(&ev);
+                                        let hz = on.then(|| lowest_bat_khz.get_untracked() * 1000.0);
+                                        state.set_file_lowest_bat_hz(idx, hz);
+                                    }
+                                />
+                                " "{FILE_BAT_LABEL}
+                            </label>
+                            <span class="setting-value">
+                                {move || own.then(|| format!("{:.0} kHz", file_bat_khz.get()))}
+                            </span>
+                        </div>
+                        {own.then(|| view! {
+                            <div class="setting-row" title=FILE_BAT_TIP>
+                                <input
+                                    type="range"
+                                    class="setting-range"
+                                    min="8"
+                                    max="30"
+                                    step="1"
+                                    prop:value=move || file_bat_khz.get().to_string()
+                                    on:input=move |ev| {
+                                        if let Ok(v) = event_target_value(&ev).parse::<f32>() {
+                                            file_bat_khz.set(v);
+                                        }
+                                    }
+                                    on:change=move |_| {
+                                        let hz = file_bat_khz.get_untracked() * 1000.0;
+                                        state.set_file_lowest_bat_hz(idx, Some(hz));
+                                    }
+                                />
+                            </div>
+                        })}
+                    }
+                })}
             </div>
 
             <div class="setting-group">

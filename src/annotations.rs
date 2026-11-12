@@ -408,6 +408,11 @@ pub struct AnnotationSet {
     #[serde(default)]
     pub annotations: Vec<Annotation>,
 
+    /// "Lowest bat frequency" for this file only, in Hz. None: use the app
+    /// setting (`AppState::lowest_bat_hz`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lowest_bat_hz: Option<f32>,
+
     /// Noise reduction profile (notch bands + spectral floor). Kept near the end
     /// because noise_floor.bin_magnitudes can be very long.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -440,6 +445,7 @@ impl AnnotationSet {
             file_identity,
             audio_metadata: None,
             annotations: Vec::new(),
+            lowest_bat_hz: None,
             noise_profile: None,
         }
     }
@@ -655,6 +661,35 @@ pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&Anno
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn lowest_bat_hz_is_optional_in_batm_files() {
+        // Built by hand: AnnotationSet::new reads the browser clock.
+        let set = AnnotationSet {
+            version: ANNOTATION_FORMAT_VERSION,
+            id: "test".to_string(),
+            app_version: String::new(),
+            created_at: None,
+            modified_at: None,
+            file_identity: crate::file_identity::identity_layer1("a.wav", 1000),
+            audio_metadata: None,
+            annotations: Vec::new(),
+            lowest_bat_hz: None,
+            noise_profile: None,
+        };
+        let yaml = yaml_serde::to_string(&set).unwrap();
+        assert!(!yaml.contains("lowest_bat_hz"), "written only when set");
+        let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(back.lowest_bat_hz, None);
+
+        let own = AnnotationSet {
+            lowest_bat_hz: Some(11_000.0),
+            ..set
+        };
+        let yaml = yaml_serde::to_string(&own).unwrap();
+        let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(back.lowest_bat_hz, Some(11_000.0));
+    }
     use super::*;
 
     /// `AnnotationId` must serialize as a BARE string (serde `transparent`), so

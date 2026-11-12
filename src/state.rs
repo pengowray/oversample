@@ -3939,24 +3939,104 @@ impl AppState {
         }
     }
 
-    /// "Lowest bat frequency" (Settings > Bats, and call detection): where bat
+    /// The app's "Lowest bat frequency" setting (Settings > Bats): where bat
     /// calls start for call detection, the loudest-frequency line, ZC division
-    /// and the default HFR band. Tracked.
-    pub fn lowest_bat_hz(&self) -> f32 {
+    /// and the default HFR band, unless a file has its own value. Tracked.
+    pub fn lowest_bat_hz_setting(&self) -> f32 {
         self.call_detection.params().with(|p| p.min_bat_hz)
+    }
+
+    /// Change the app's lowest bat frequency and save it.
+    pub fn set_lowest_bat_hz(&self, hz: f32) {
+        self.call_detection.params().update(|p| p.min_bat_hz = hz);
+        crate::settings::set_lowest_bat_hz(hz);
+    }
+
+    /// The lowest bat frequency saved in one file's .batm, if it has its own.
+    /// Untracked.
+    pub fn file_lowest_bat_hz(&self, file_idx: usize) -> Option<f32> {
+        let id = self.file_id_at(file_idx)?;
+        self.annotations
+            .store()
+            .with_untracked(|s| s.get(id).and_then(|set| set.lowest_bat_hz))
+    }
+
+    /// The lowest bat frequency in force for one file: its own, or the app
+    /// setting. Untracked.
+    pub fn lowest_bat_hz_for(&self, file_idx: usize) -> f32 {
+        self.file_lowest_bat_hz(file_idx).unwrap_or_else(|| {
+            self.call_detection
+                .params()
+                .with_untracked(|p| p.min_bat_hz)
+        })
+    }
+
+    /// The current file's own lowest bat frequency, if it has one. Tracked.
+    pub fn current_file_lowest_bat_hz(&self) -> Option<f32> {
+        let id = self.current_file_id_tracked()?;
+        self.annotations
+            .store()
+            .with(|s| s.get(id).and_then(|set| set.lowest_bat_hz))
+    }
+
+    /// The lowest bat frequency in force for the current file. Tracked: it
+    /// changes with the file, its .batm value and the app setting.
+    pub fn lowest_bat_hz(&self) -> f32 {
+        let setting = self.lowest_bat_hz_setting();
+        self.current_file_lowest_bat_hz().unwrap_or(setting)
+    }
+
+    /// Call-detection settings for the current file, with its lowest bat
+    /// frequency in force. Tracked.
+    pub fn call_detection_params(&self) -> crate::dsp::call_detect::CallScanParams {
+        crate::dsp::call_detect::CallScanParams {
+            min_bat_hz: self.lowest_bat_hz(),
+            ..self.call_detection.params().get()
+        }
     }
 
     /// [`Self::lowest_bat_hz`] without tracking.
     pub fn lowest_bat_hz_untracked(&self) -> f32 {
-        self.call_detection
-            .params()
-            .with_untracked(|p| p.min_bat_hz)
+        match self.library.current_index().get_untracked() {
+            Some(idx) => self.lowest_bat_hz_for(idx),
+            None => self
+                .call_detection
+                .params()
+                .with_untracked(|p| p.min_bat_hz),
+        }
     }
 
-    /// Change the lowest bat frequency and save it.
-    pub fn set_lowest_bat_hz(&self, hz: f32) {
-        self.call_detection.params().update(|p| p.min_bat_hz = hz);
-        crate::settings::set_lowest_bat_hz(hz);
+    /// Give one file its own lowest bat frequency, or `None` to go back to the
+    /// app setting, and save it to the file's .batm.
+    pub fn set_file_lowest_bat_hz(&self, file_idx: usize, hz: Option<f32>) {
+        let Some(file_id) = self.file_id_at(file_idx) else {
+            return;
+        };
+        let new_set = self.library.files().with_untracked(|files| {
+            files.get(file_idx).map(|f| {
+                let id = f.identity.clone().unwrap_or_else(|| {
+                    crate::file_identity::identity_layer1(
+                        &f.name,
+                        f.audio.metadata.file_size as u64,
+                    )
+                });
+                crate::annotations::AnnotationSet::new_with_metadata(
+                    id,
+                    &f.audio,
+                    f.cached_peak_db,
+                    f.cached_full_peak_db,
+                )
+            })
+        });
+        let Some(new_set) = new_set else {
+            return;
+        };
+        self.annotations.store().update(|store| {
+            let set = store.entry_or_insert_with(file_id, || new_set);
+            set.lowest_bat_hz = hz;
+            set.touch();
+        });
+        crate::opfs::save_annotations(*self, file_idx);
     }
 
     /// Highest frequency the active source can carry. When the current file
