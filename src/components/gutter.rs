@@ -95,13 +95,23 @@ pub fn BandGutter() -> impl IntoView {
     // acts as a stable frequency reference / overview while the main
     // canvas independently V-zooms. The gutter is wide enough to drag-
     // select bands at file scale; v-zoom navigation lives on the main
-    // canvas y-axis.
+    // canvas y-axis. When the display is resampled (XForm's Resam), the
+    // picture only reaches the new Nyquist, so the gutter does too and its
+    // labels line up with what is drawn.
     let display_range = move || -> (f64, f64) {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
+        let decim = state.display.decimate_effective().get();
         let nyquist = idx
             .and_then(|i| files.get(i))
-            .map(|f| f.audio.sample_rate as f64 / 2.0)
+            .map(|f| {
+                let rate = f.audio.sample_rate;
+                if decim > 0 && decim < rate {
+                    crate::dsp::filters::decimated_rate(rate, decim) as f64 / 2.0
+                } else {
+                    rate as f64 / 2.0
+                }
+            })
             .unwrap_or(0.0);
         (0.0, nyquist)
     };
