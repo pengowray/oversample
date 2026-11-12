@@ -87,12 +87,27 @@ pub fn file_place(file: &LoadedFile) -> Option<Place> {
         xc.and_then(|x| field(x, "Coordinates"))
             .and_then(parse_lat_lon)
     })?;
-    let week = guano
+    Some(Place {
+        lat,
+        lon,
+        week: file_week(file),
+    })
+}
+
+/// The recording's week from its metadata date, or 0 (the whole year).
+pub fn file_week(file: &LoadedFile) -> u32 {
+    let guano = file
+        .audio
+        .metadata
+        .guano
+        .as_ref()
+        .map(|g| g.fields.as_slice());
+    let xc = file.xc_metadata.as_deref();
+    guano
         .and_then(|g| field(g, "Timestamp"))
         .and_then(week_of_date)
         .or_else(|| xc.and_then(|x| field(x, "Date")).and_then(week_of_date))
-        .unwrap_or(0);
-    Some(Place { lat, lon, week })
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

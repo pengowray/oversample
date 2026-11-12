@@ -13,7 +13,7 @@ use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};
 use crate::classifier::{
-    self, catalog, location, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
+    self, catalog, location, place, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
 };
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -506,6 +506,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         if !location::applies_to(method) || !state.call_detection.mark_unexpected().get() {
             return;
         }
+        // Rerun when "Use my location" gives a place for recordings without one.
+        state.classifier.device_position().track();
         if let (Some(file), true) = (current_file.get(), has_results.get()) {
             location::update(state, file);
         }
@@ -633,6 +635,9 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             }}
         })
     };
+    // "Use my location" in the Place row: None idle, Some(None) waiting,
+    // Some(Some(msg)) failed.
+    let locating: RwSignal<Option<Option<String>>> = RwSignal::new(None);
     let results = move || {
         if !has_results.get() {
             return None;
@@ -660,7 +665,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     />
                 </div>
                 {headline}
-                {move || place_rows(state, method, current_file)}
+                {move || place_rows(state, method, current_file, locating)}
                 <div class="setting-row detection-annotate-row">
                     <label class="setting-label">
                         <input
@@ -881,50 +886,119 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-/// The recording's place and month, and the switch for marking unlikely
-/// birds. Shown only when the recording's metadata has a place.
+/// The Place row and "Mark birds unlikely here". The place is the
+/// recording's own GPS, or else this device's position once the user asks for
+/// it with "Use my location" (kept in memory for this session).
 fn place_rows(
     state: AppState,
     method: Method,
     current_file: Memo<Option<u64>>,
-) -> Option<impl IntoView> {
+    locating: RwSignal<Option<Option<String>>>,
+) -> Option<AnyView> {
     if !location::applies_to(method) {
         return None;
     }
     let file = current_file.get()?;
-    let o = state
-        .classifier
-        .occurrence()
-        .with(|m| m.get(&file).cloned())?;
-    let month = match o.place.week {
+    let (own, week) = state.library.files().with(|fs| {
+        fs.iter()
+            .find(|f| f.id == file)
+            .map(|f| (place::file_place(f), place::file_week(f)))
+    })?;
+    let device = state.classifier.device_position().get();
+    let place = own.or_else(|| device.map(|(lat, lon)| place::Place { lat, lon, week }));
+    let error = move || {
+        locating
+            .get()
+            .flatten()
+            .map(|msg| view! { <div class="setting-row setting-error" role="alert">{msg}</div> })
+    };
+    let Some(place) = place else {
+        let on_locate = move |_| {
+            if locating.get_untracked() == Some(None) {
+                return;
+            }
+            locating.set(Some(None));
+            spawn_local(async move {
+                use crate::device_location::{ask, LocationError};
+                let msg = match ask(state).await {
+                    Ok(_) => None,
+                    Err(LocationError::Denied) => Some("Location permission denied".to_string()),
+                    Err(LocationError::Unavailable(m)) => {
+                        Some(format!("Location unavailable: {m}"))
+                    }
+                };
+                locating.set(msg.map(Some));
+            });
+        };
+        return Some(
+            view! {
+                <div class="setting-row">
+                    <span class="setting-label">"Place"</span>
+                    <span class="setting-value">"No location data"</span>
+                </div>
+                <div class="setting-row">
+                    <button
+                        class="setting-button"
+                        disabled=move || locating.get() == Some(None)
+                        on:click=on_locate
+                    >
+                        {move || if locating.get() == Some(None) {
+                            "Getting location\u{2026}"
+                        } else {
+                            "Use my location"
+                        }}
+                    </button>
+                </div>
+                {error}
+            }
+            .into_any(),
+        );
+    };
+    let from_device = own.is_none();
+    let month = match place.week {
         0 => "any month".to_string(),
         w => MONTHS[((w - 1) / 4).min(11) as usize].to_string(),
     };
-    let checking = if o.scores.is_none() && state.call_detection.mark_unexpected().get() {
-        " (checking\u{2026})"
-    } else {
-        ""
-    };
-    Some(view! {
-        <div
-            class="setting-row"
-            title="From the recording's metadata. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. The place stays on this device."
-        >
-            <span class="setting-label">"Place"</span>
-            <span class="setting-value">{format!("{:.2}, {:.2} \u{b7} {month}{checking}", o.place.lat, o.place.lon)}</span>
-        </div>
-        <div class="setting-row detection-annotate-row">
-            <label class="setting-label">
-                <input
-                    type="checkbox"
-                    prop:checked=move || state.call_detection.mark_unexpected().get()
-                    on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
-                />
-                " Mark birds unlikely here"
-            </label>
-        </div>
-    })
+    let checking = state
+        .classifier
+        .occurrence()
+        .with(|m| m.get(&file).is_some_and(|o| o.scores.is_none()))
+        && state.call_detection.mark_unexpected().get();
+    let value = format!(
+        "{:.2}, {:.2} \u{b7} {month}{}",
+        place.lat,
+        place.lon,
+        if checking { " (checking\u{2026})" } else { "" }
+    );
+    Some(
+        view! {
+            <div
+                class="setting-row"
+                title=if from_device { PLACE_HELP_DEVICE } else { PLACE_HELP_OWN }
+            >
+                <span class="setting-label">"Place"</span>
+                <span class="setting-value">
+                    {from_device.then(|| view! { <span class="place-source">"Your location"</span> })}
+                    {value}
+                </span>
+            </div>
+            <div class="setting-row detection-annotate-row">
+                <label class="setting-label">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || state.call_detection.mark_unexpected().get()
+                        on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
+                    />
+                    " Mark birds unlikely here"
+                </label>
+            </div>
+        }
+        .into_any(),
+    )
 }
+
+const PLACE_HELP_OWN: &str = "From the recording's metadata. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. The place stays on this device.";
+const PLACE_HELP_DEVICE: &str = "Your location, from this device, used for recordings without location data. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. Your location stays on this device and is not saved.";
 
 /// The "By species" list: one row per species, most windows first. A click
 /// shows the species' best window.

@@ -370,14 +370,6 @@ pub struct RecordingPlace {
 }
 
 impl RecordingPlace {
-    /// Prefix for the strip's region label: "GPS" or "Xeno-Canto".
-    pub fn source_label(&self) -> &'static str {
-        match self.source {
-            PlaceSource::Gps { .. } => "GPS",
-            PlaceSource::XenoCanto => "Xeno-Canto",
-        }
-    }
-
     /// Where the place came from, e.g. "From GPS position 52.48, -1.90" (with
     /// the country added when the region is not the country itself) or "From
     /// Xeno-Canto country: United Kingdom".

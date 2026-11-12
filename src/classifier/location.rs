@@ -3,8 +3,11 @@
 //! unlikely ones. Birds only: in `research/perch.md`'s tests the Geomodel's
 //! insect ranges would have marked correct results. Runs on the device; the
 //! place is never sent anywhere.
+//!
+//! The place is the recording's own (GPS in its metadata), or else this
+//! device's position if the user asked for it this session.
 
-use super::place::{file_place, Place};
+use super::place::{file_place, file_week, Place};
 use super::{catalog, store, worker, ClassifierError, Method, SpeciesLabel};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -22,6 +25,8 @@ pub const MIN_OCCURRENCE: f32 = 0.01;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Occurrence {
     pub place: Place,
+    /// The place is this device's position, not the recording's.
+    pub from_device: bool,
     /// The Geomodel's score per species, in its labels order; `None` while it
     /// is worked out, or if that failed.
     pub scores: Option<Arc<Vec<f32>>>,
@@ -84,15 +89,22 @@ pub fn applies_to(method: Method) -> bool {
     matches!(method, Method::BirdNet | Method::Perch)
 }
 
-/// Work out the location list for file `file_id` if its metadata has a place,
-/// downloading the Geomodel (16 MB) the first time. Does nothing when it is
-/// already worked out for the same place and week.
+/// Work out the location list for file `file_id` if it has a place (its own,
+/// or this device's position), downloading the Geomodel (16 MB) the first
+/// time. Does nothing when it is already worked out for the same place and
+/// week.
 pub fn update(state: AppState, file_id: u64) {
-    let place = state
-        .library
-        .files()
-        .with_untracked(|files| files.iter().find(|f| f.id == file_id).and_then(file_place));
-    let Some(place) = place else {
+    let device = state.classifier.device_position().get_untracked();
+    let place = state.library.files().with_untracked(|files| {
+        let file = files.iter().find(|f| f.id == file_id)?;
+        file_place(file).map(|p| (p, false)).or_else(|| {
+            device.map(|(lat, lon)| {
+                let week = file_week(file);
+                (Place { lat, lon, week }, true)
+            })
+        })
+    });
+    let Some((place, from_device)) = place else {
         state.classifier.occurrence().update(|m| {
             m.remove(&file_id);
         });
@@ -111,6 +123,7 @@ pub fn update(state: AppState, file_id: u64) {
             file_id,
             Occurrence {
                 place,
+                from_device,
                 scores: cached.clone(),
             },
         );

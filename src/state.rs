@@ -1707,6 +1707,10 @@ pub struct ClassifierState {
     /// The location list per file id: the place and week from its metadata and
     /// the Geomodel's score per species there (`None` while being worked out).
     pub occurrence: std::collections::HashMap<u64, crate::classifier::Occurrence>,
+    /// This device's latitude and longitude, once asked for ("Use my location"
+    /// here or in the Bat book menu). The place for recordings without one of
+    /// their own. Kept in memory for this session only; never saved or sent.
+    pub device_position: Option<(f32, f32)>,
     /// Bumped by each run, rescore and cancel; older tasks stop when it changes.
     pub generation: u32,
 }

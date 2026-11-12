@@ -159,12 +159,21 @@ pub fn BatBookStrip() -> impl IntoView {
                         Some(tip)
                     }
                 >
+                    // A map pin marks a region taken from the recording's
+                    // place; the tooltip says where the place came from.
+                    {move || {
+                        state
+                            .bat_book
+                            .auto_resolved()
+                            .get()
+                            .is_some_and(|r| r.recording_place.is_some())
+                            .then(|| view! { <Icon kind=Icon::MapPin /> })
+                    }}
                     {move || {
                         let mode = state.bat_book.mode().get();
                         match (mode, state.bat_book.auto_resolved().get()) {
                             (_, Some(resolved)) if resolved.recording_place.is_some() => {
-                                let place = resolved.recording_place.as_ref().unwrap();
-                                format!("{}: {}", place.source_label(), resolved.source_label)
+                                resolved.source_label
                             }
                             (BatBookMode::Auto, Some(resolved)) => {
                                 if resolved.from_favourite {
@@ -274,9 +283,11 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
         locating.set(Some(None));
         leptos::task::spawn_local(async move {
             use crate::bat_book::auto_resolve::{region_at, PositionRegion};
-            use crate::device_location::{current, LocationError};
-            // The position is used here, on the device, and then dropped.
-            let msg = match current(state.is_tauri).await {
+            use crate::device_location::{ask, LocationError};
+            // The position stays on the device: here it picks a region, and
+            // it is kept in memory as the bird list's place for recordings
+            // without one.
+            let msg = match ask(state).await {
                 Err(LocationError::Denied) => "Location permission denied".to_string(),
                 Err(LocationError::Unavailable(m)) => format!("Location unavailable: {m}"),
                 Ok((lat, lon)) => match region_at(lat as f32, lon as f32) {

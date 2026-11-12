@@ -1504,6 +1504,20 @@ body.sidebar-resizing {
     background: #444;
 }
 
+/* An error under a settings row, such as "Location permission denied". */
+.setting-error {
+    color: #f88;
+    font-size: 11px;
+}
+
+/* "Your location" above the coordinates when the classifier's place is this
+   device's position, not the recording's own. Same size as the value so it
+   isn't missed. */
+.place-source {
+    display: block;
+    color: #8fc;
+}
+
 .setting-value {
     font-size: 11px;
     color: #888;
@@ -6641,16 +6655,32 @@ button.toolbar-overflow-btn {
     position: relative;
 }
 
+/* 24 x 24 px touch targets (WCAG 2.2); the negative margin keeps the header
+   row at its old height. #888 is 5.3:1 on the strip's background. */
 .bat-book-config-btn,
 .bat-book-close-btn {
     background: none;
     border: none;
-    color: #555;
+    color: #888;
     cursor: pointer;
     font-size: 13px;
     padding: 0 4px;
     line-height: 1;
+    min-width: 24px;
+    min-height: 24px;
+    margin: -3px 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition: color 0.15s;
+}
+
+/* Region label when the region comes from the recording's own place: a map
+   pin before it, with the source (GPS or Xeno-Canto) in the tooltip. */
+.bat-book-region-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
 }
 
 .bat-book-config-btn:hover,
@@ -6849,15 +6879,16 @@ button.toolbar-overflow-btn {
 }
 
 /* Star toggle in region dropdown */
+/* Empty stars at #888 (5.3:1 on the menu) rather than 30% opacity (1.8:1). */
 .bat-book-star {
     cursor: pointer;
     margin-right: 4px;
-    opacity: 0.3;
+    color: #888;
     font-size: 11px;
-    transition: opacity 0.15s;
+    transition: color 0.15s;
 }
-.bat-book-star:hover { opacity: 0.7; }
-.bat-book-star.active { opacity: 1; color: #fc0; }
+.bat-book-star:hover { color: #ddd; }
+.bat-book-star.active { color: #fc0; }
 
 /* Separator in region dropdown */
 .bat-book-region-separator {

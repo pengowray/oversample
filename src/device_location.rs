@@ -18,6 +18,19 @@ pub enum LocationError {
     Unavailable(String),
 }
 
+/// This device's position, also kept for this session as the classifier's
+/// place for recordings without one (`ClassifierState::device_position`).
+pub async fn ask(state: crate::state::AppState) -> Result<(f64, f64), LocationError> {
+    use crate::state::ClassifierStateStoreFields;
+    use leptos::prelude::*;
+    let pos = current(state.is_tauri).await?;
+    state
+        .classifier
+        .device_position()
+        .set(Some((pos.0 as f32, pos.1 as f32)));
+    Ok(pos)
+}
+
 /// This device's latitude and longitude.
 pub async fn current(is_tauri: bool) -> Result<(f64, f64), LocationError> {
     if is_tauri {
