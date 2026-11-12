@@ -713,11 +713,13 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
     let sample_rate = reader.ident_hdr.audio_sample_rate;
     let channels = reader.ident_hdr.audio_channels as u32;
 
+    // Float output, as the streaming OGG path gives: lewton's i16 output
+    // rounds every sample and clips the peaks Vorbis decodes past full scale.
     let mut all_samples: Vec<f32> = Vec::new();
     loop {
-        match reader.read_dec_packet_itl() {
+        match reader.read_dec_packet_generic::<lewton::samples::InterleavedSamples<f32>>() {
             Ok(Some(packet)) => {
-                all_samples.extend(packet.iter().map(|&s| s as f32 / 32768.0));
+                all_samples.extend_from_slice(&packet.samples);
             }
             Ok(None) => break,
             Err(e) => return Err(format!("OGG decode error: {e}")),
@@ -736,8 +738,8 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
         metadata: FileMetadata {
             file_size: bytes.len(),
             format: AudioFormat::Ogg,
-            // lewton decodes only Vorbis, which is lossy. Its i16 output is
-            // the decoder's choice, not a depth stored in the file.
+            // lewton decodes only Vorbis, which is lossy: there is no PCM
+            // depth stored in the file.
             bits_per_sample: FileMetadata::LOSSY_BITS,
             is_float: false,
             guano: None,
