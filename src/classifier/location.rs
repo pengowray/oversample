@@ -84,6 +84,26 @@ async fn geo_names() -> Result<Arc<GeoNames>, ClassifierError> {
     Ok(g)
 }
 
+/// The Geomodel's English names (lowercase "genus species" to name) for its
+/// 14,082 species, birds and others, if its labels file is stored; with
+/// `download`, it is downloaded first (672 KB). Names that only repeat the
+/// scientific name are left out.
+pub async fn english_names(state: AppState, download: bool) -> Option<HashMap<String, String>> {
+    if download {
+        super::download_file(state, &catalog::GEOMODEL_LABELS)
+            .await
+            .ok()?;
+    }
+    let geo = geo_names().await.ok()?;
+    Some(
+        geo.species
+            .iter()
+            .filter(|s| !s.english.is_empty() && !s.english.eq_ignore_ascii_case(&s.scientific))
+            .map(|s| (s.scientific.to_lowercase(), s.english.clone()))
+            .collect(),
+    )
+}
+
 /// Methods whose results can be marked.
 pub fn applies_to(method: Method) -> bool {
     matches!(method, Method::BirdNet | Method::Perch)

@@ -260,11 +260,10 @@ async fn labels(
                     file: file.id.to_string(),
                 });
             }
-            // Perch's labels have no common names: take Xeno-Canto's English
-            // names (99% of its birds, about a third of the rest) from the
-            // lists already stored, and fetch any missing ones without holding
-            // up the run.
-            let (names, complete) = crate::xc_client::english_names(&XC_GROUPS, false).await;
+            // Perch's labels have no common names: take English names from
+            // the lists already stored, and fetch any missing ones without
+            // holding up the run.
+            let (names, complete) = perch_english(state, &l, false).await;
             types::add_common_names(&mut l, &names);
             if !complete && !PERCH_NAMES_FETCHED.with(|f| f.replace(true)) {
                 spawn_local(fetch_perch_names(state, file));
@@ -280,16 +279,52 @@ async fn labels(
 /// The Xeno-Canto groups whose English names name Perch's classes.
 const XC_GROUPS: [&str; 5] = ["birds", "frogs", "grasshoppers", "land mammals", "bats"];
 
+/// The groups taken from the server's names file as well: Xeno-Canto's lists
+/// already name all of Perch's birds, but only about half of its frogs and
+/// grasshoppers, and none of the species without recordings there.
+const NAMES_FILE_GROUPS: [&str; 4] = ["frogs", "grasshoppers", "land mammals", "bats"];
+
+/// English names for Perch's labels ("Genus species" to name). For each
+/// label the first source that has one wins: Xeno-Canto's species lists, the
+/// Oversample server's names file (IUCN, Catalogue of Life, Wikidata and
+/// others), then the BirdNET Geomodel's labels, the only one with insects
+/// other than grasshoppers and crickets. With `fetch`, sources not stored yet
+/// are fetched (the Geomodel's labels are 672 KB). Returns the names and
+/// whether every source was found.
+async fn perch_english(
+    state: AppState,
+    labels: &[SpeciesLabel],
+    fetch: bool,
+) -> (HashMap<String, String>, bool) {
+    let (xc, xc_all) = crate::xc_client::english_names(&XC_GROUPS, fetch).await;
+    let (names_file, nf_all) =
+        crate::xc_client::names_file_english(&NAMES_FILE_GROUPS, fetch).await;
+    let geo = location::english_names(state, fetch).await;
+    let complete = xc_all && nf_all && geo.is_some();
+    let geo = geo.unwrap_or_default();
+    let names = labels
+        .iter()
+        .filter_map(|l| {
+            let key = l.scientific.to_lowercase();
+            xc.get(&l.scientific)
+                .or_else(|| names_file.get(&key))
+                .or_else(|| geo.get(&key))
+                .map(|en| (l.scientific.clone(), en.clone()))
+        })
+        .collect();
+    (names, complete)
+}
+
 /// Fetch the English name lists missing from storage, then rename Perch's
 /// labels and the results that use them.
 async fn fetch_perch_names(state: AppState, file: &'static ModelFile) {
-    let (names, _) = crate::xc_client::english_names(&XC_GROUPS, true).await;
-    if names.is_empty() {
-        return;
-    }
     let Some(old) = LABELS.with(|m| m.borrow().get(file.id).cloned()) else {
         return;
     };
+    let (names, _) = perch_english(state, &old, true).await;
+    if names.is_empty() {
+        return;
+    }
     let mut l = (*old).clone();
     types::add_common_names(&mut l, &names);
     let new = Arc::new(l);

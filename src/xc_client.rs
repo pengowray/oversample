@@ -478,6 +478,51 @@ pub async fn english_names(groups: &[&str], fetch: bool) -> (HashMap<String, Str
     (out, complete)
 }
 
+/// English names from the Oversample server's names file
+/// (`/names/english/{group}`): every species of a group it knows, with or
+/// without Xeno-Canto recordings, keyed by lowercase "genus species" (accepted
+/// names and synonyms of one species). Stored in OPFS like the species lists;
+/// with `fetch`, a group missing there is fetched and saved. Returns the names
+/// and whether every group was found. An older server without the route gives
+/// none.
+pub async fn names_file_english(groups: &[&str], fetch: bool) -> (HashMap<String, String>, bool) {
+    #[derive(serde::Deserialize)]
+    struct Reply {
+        names: HashMap<String, String>,
+    }
+    let mut out = HashMap::new();
+    let mut complete = true;
+    for group in groups {
+        let key = format!("english-{}", taxonomy_cache_key(group, None));
+        let mut body = crate::opfs::opfs_load_in(TAXONOMY_OPFS_DIR, &key)
+            .await
+            .ok()
+            .flatten();
+        if body.is_none() && fetch {
+            let url = format!(
+                "{}/names/english/{}",
+                proxy_base(),
+                group.replace(' ', "%20")
+            );
+            match server_get(&url, false).await {
+                Ok(ServerReply::Ready(b)) if serde_json::from_str::<Reply>(&b).is_ok() => {
+                    if let Err(e) = crate::opfs::opfs_save_in(TAXONOMY_OPFS_DIR, &key, &b).await {
+                        log::warn!("English names not cached: {e}");
+                    }
+                    body = Some(b);
+                }
+                Ok(_) => {}
+                Err(e) => log::info!("no names-file English names for {group}: {e:?}"),
+            }
+        }
+        match body.and_then(|b| serde_json::from_str::<Reply>(&b).ok()) {
+            Some(r) => out.extend(r.names),
+            None => complete = false,
+        }
+    }
+    (out, complete)
+}
+
 /// The language codes the server has common names in. `None` if the server
 /// can't say (unreachable, or an older server).
 pub async fn name_language_list() -> Option<Vec<String>> {
