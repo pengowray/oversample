@@ -2403,9 +2403,16 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             }
         }
         PlaybackMode::Heterodyne => {
-            let lo = state.transform.het_frequency().get_untracked();
+            // Every carrier, as playback uses them. Playback also retunes to a
+            // selection; the display doesn't, so drawing a selection doesn't
+            // redraw every tile.
+            let carriers = crate::audio::streaming_playback::het_carriers(
+                state.transform.het_frequency().get_untracked(),
+                state.transform.het_comb_spacing().get_untracked(),
+                state.transform.het_comb_count().get_untracked(),
+            );
             let cutoff = state.transform.het_cutoff().get_untracked();
-            crate::dsp::heterodyne::heterodyne_mix(samples, sample_rate, lo, cutoff)
+            crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff)
         }
         PlaybackMode::PitchShift => {
             let factor = state.transform.ps_factor().get_untracked();

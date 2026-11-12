@@ -320,6 +320,8 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let _mode = state.playback.mode().get();
             let _het = state.transform.het_frequency().get();
             let _het_cut = state.transform.het_cutoff().get();
+            let _het_comb = state.transform.het_comb_count().get();
+            let _het_spacing = state.transform.het_comb_spacing().get();
             let _te = state.transform.te_factor().get();
             let _ps = state.transform.ps_factor().get();
             let _pv = state.transform.pv_factor().get();
