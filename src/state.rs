@@ -1704,10 +1704,25 @@ pub struct BatBookState {
     pub favourites: Vec<crate::bat_book::types::BatBookRegion>,
     /// Currently selected bat book entry IDs (multi-select via shift-click).
     pub selected_ids: Vec<String>,
+    /// The species panel (facts and drawn calls of the shown species) is open.
     pub ref_open: bool,
-    /// Draw the selected species' call sketch at the left of the spectrogram
-    /// (when the species has one).
-    pub sketch_shown: bool,
+    /// Which kind of call the species panel shows and draws (search,
+    /// approach, buzz or a social call). Falls back to search calls for a
+    /// species without it.
+    pub call_form: crate::bat_book::call_sketch::FormKey,
+    /// With several species selected, the one the panel shows. None (or an
+    /// id no longer selected) means the last selected.
+    pub shown_id: Option<String>,
+    /// The spectrogram is too small for the text column beside the drawn
+    /// calls, so the species panel sits under the spectrogram instead.
+    pub panel_below: bool,
+    /// Why the drawn calls can't be seen at this zoom, if they can't. Set
+    /// by the drawing, shown by whichever panel holds the text.
+    pub panel_warning: Option<String>,
+    /// Height of the species panel under the spectrogram, CSS px (0 when
+    /// it isn't shown). The spectrogram would have this much more room
+    /// without it, which decides whether the column fits instead.
+    pub panel_below_px: f64,
     /// Width in CSS px of the call-sketch strip while it sits at the left edge
     /// of the spectrogram, covering it. 0 when the strip is hidden or placed
     /// after the end of the recording. Canvas overlays use it as the left edge
@@ -2743,7 +2758,11 @@ impl AppState {
                     .unwrap_or_default(),
                 selected_ids: Vec::new(),
                 ref_open: false,
-                sketch_shown: true,
+                call_form: Default::default(),
+                shown_id: None,
+                panel_below: false,
+                panel_warning: None,
+                panel_below_px: 0.0,
                 sketch_cover_px: 0.0,
                 last_clicked_id: None,
                 auto_focus: true,

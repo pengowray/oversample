@@ -2,7 +2,6 @@ use crate::audio::microphone;
 use crate::audio::playback;
 use crate::components::analysis_panel::AnalysisPanel;
 use crate::components::annotation_label_editor::AnnotationLabelEditor;
-use crate::components::bat_book_ref_panel::BatBookRefPanel;
 use crate::components::bat_book_strip::BatBookStrip;
 use crate::components::bottom_toolbar::BottomToolbar;
 use crate::components::chromagram_view::ChromagramView;
@@ -14,6 +13,7 @@ use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::components::overview::{OverviewPanel, OverviewToolbar};
 use crate::components::play_controls::{BookmarkPopup, ToastDisplay};
 use crate::components::right_sidebar::RightSidebar;
+use crate::components::species_panel::SpeciesPanelBelow;
 use crate::components::spectrogram::Spectrogram;
 use crate::components::toolbar::Toolbar;
 use crate::components::view_bar::ViewBar;
@@ -1753,10 +1753,14 @@ fn MainArea() -> impl IntoView {
                                 <AnnotationLabelEditor />
                             </div>
 
-                            // Bat book reference panel (floating overlay, right side)
-                            {move || (state.bat_book.ref_open().get() && !state.viewmode.clean_view().get()).then(|| view! { <BatBookRefPanel /> })}
                         </div>
 
+                        // Species panel under the spectrogram when the
+                        // spectrogram is too small for its text column.
+                        {move || (state.bat_book.open().get()
+                            && state.bat_book.panel_below().get()
+                            && !state.viewmode.clean_view().get())
+                            .then(|| view! { <SpeciesPanelBelow /> })}
                         // Bat book strip (between main view and bottom toolbar)
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
 
@@ -1773,8 +1777,8 @@ fn MainArea() -> impl IntoView {
                         <div class="empty-state">
                             {empty_msg}
                         </div>
+                        {move || state.bat_book.open().get().then(|| view! { <SpeciesPanelBelow /> })}
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
-                        {move || state.bat_book.ref_open().get().then(|| view! { <BatBookRefPanel /> })}
                     }.into_any()
                 }
             }}

@@ -62,7 +62,10 @@ fn OverlayToggles() -> impl IntoView {
     let toggle_book = move |_: web_sys::Event| {
         let on = book_on();
         state.bat_book.open().set(!on);
-        state.bat_book.ref_open().set(!on);
+        // Turning the book on opens the species panel only when a species is
+        // already selected; an empty panel says nothing.
+        let has_selection = !state.bat_book.selected_ids().get_untracked().is_empty();
+        state.bat_book.ref_open().set(!on && has_selection);
     };
 
     view! {

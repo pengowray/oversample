@@ -6831,141 +6831,6 @@ button.toolbar-overflow-btn {
     margin: 3px 0;
 }
 
-/* Reference panel (floating overlay, right side of main view). Right-
-   offset clears the waveform's band-gutter column (64px + 2px border +
-   3px margin ≈ 69px) so the panel doesn't overlap it when extended to
-   full height. Must stay in sync with gutter_renderer::BAND_GUTTER_WIDTH. */
-.bat-book-ref-panel {
-    position: absolute;
-    top: 8px;
-    right: 80px;
-    width: 160px;
-    max-height: calc(100% - 16px);
-    background: rgba(14, 14, 14, 0.93);
-    border: 1px solid #3a3a3a;
-    border-radius: 8px;
-    z-index: 25;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
-    overflow: hidden;
-    pointer-events: auto;
-}
-
-.ref-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 8px;
-    border-bottom: 1px solid #2a2a2a;
-    gap: 4px;
-    cursor: ns-resize;
-}
-
-.ref-panel-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: #ccc;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    min-width: 0;
-}
-
-.ref-panel-count {
-    font-weight: 400;
-    color: #888;
-    font-size: 10px;
-}
-
-.ref-panel-close {
-    background: none;
-    border: none;
-    color: #666;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 0;
-    line-height: 1;
-    flex-shrink: 0;
-    transition: color 0.15s;
-}
-
-.ref-panel-close:hover {
-    color: #eee;
-}
-
-.ref-panel-body {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    overflow-y: auto;
-}
-
-.ref-panel-family {
-    font-size: 10px;
-    color: #888;
-    font-style: italic;
-}
-
-.ref-panel-freq {
-    font-size: 13px;
-    font-weight: 600;
-    color: #4a8;
-}
-
-.ref-panel-call-type {
-    font-size: 10px;
-    color: #777;
-}
-
-.ref-panel-entry {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.ref-panel-entry + .ref-panel-entry {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid #2a2a2a;
-}
-
-.ref-panel-entry-name {
-    font-size: 11px;
-    font-weight: 600;
-    color: #ccc;
-}
-
-.ref-panel-sci {
-    font-size: 10px;
-    color: #aaa;
-    margin-top: -1px;
-}
-
-.ref-panel-commonness {
-    font-size: 9px;
-    color: #8a8;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.ref-panel-desc {
-    font-size: 10px;
-    color: #666;
-    line-height: 1.4;
-    margin-top: 2px;
-}
-.ref-panel-draft-notice {
-    font-size: 9px;
-    color: #887755;
-    font-style: italic;
-    padding-top: 6px;
-    border-top: 1px solid #333;
-    margin-top: 6px;
-}
-
 /* ── DSP Display Filter Panel ──────────────────────────────────────────────── */
 
 .dsp-filter-row {
@@ -8123,91 +7988,6 @@ button.canvas-overflow-action-btn.disabled {
     border-color: #444;
 }
 
-/* Typical calls strip: a bat book species' call sketch at the left of the
-   spectrogram, on the recording's own time and frequency scale. Its own
-   colour scheme and the dashed edge keep it apart from the recording. It lets
-   clicks through to the spectrogram, except on its text. */
-.call-sketch-strip {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    z-index: 6;
-    pointer-events: none;
-    border-right: 1px dashed rgba(255, 255, 255, 0.45);
-    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.5);
-}
-.call-sketch-canvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-}
-.call-sketch-text {
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    right: 4px;
-    padding: 4px 6px;
-    background: rgba(0, 0, 0, 0.6);
-    border-radius: 3px;
-    color: #ddd;
-    font-size: 11px;
-    line-height: 1.35;
-    pointer-events: auto;
-    font-variant-numeric: tabular-nums;
-}
-.call-sketch-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 4px;
-    color: #fff;
-    font-weight: 600;
-}
-.call-sketch-close {
-    background: none;
-    border: none;
-    color: #aaa;
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 0 2px;
-    min-width: 24px;
-    min-height: 24px;
-    margin: -5px -6px -4px 0;
-}
-.call-sketch-close:hover {
-    color: #fff;
-}
-.call-sketch-sources {
-    color: #999;
-    cursor: help;
-    margin-top: 2px;
-}
-.call-sketch-warn {
-    color: #cc9;
-    margin-top: 2px;
-}
-.ref-panel-sketch-btn {
-    margin-top: 4px;
-    background: #222;
-    color: #ccc;
-    border: 1px solid #444;
-    border-radius: 3px;
-    font-size: 11px;
-    padding: 2px 6px;
-    cursor: pointer;
-}
-.ref-panel-sketch-btn:hover {
-    border-color: #777;
-}
-.ref-panel-no-sketch {
-    margin-top: 4px;
-    font-size: 10px;
-    color: #888;
-    font-style: italic;
-}
 .annota-scope {
     display: flex;
     flex-direction: column;
@@ -8216,10 +7996,6 @@ button.canvas-overflow-action-btn.disabled {
 }
 .annota-scope .annota-check {
     margin-top: 0;
-}
-/* Strip placed after the end of the recording: framed on both sides. */
-.call-sketch-strip.call-sketch-floating {
-    border-left: 1px dashed rgba(255, 255, 255, 0.45);
 }
 
 /* The species count line holds the names menu at its right; the menu wraps
@@ -8363,4 +8139,227 @@ button.canvas-overflow-action-btn.disabled {
 
 .surface-3d-status.error {
     color: #e88;
+}
+
+/* ── Species panel ─────────────────────────────────────────────────────────
+   The selected bat book species' typical calls, drawn at the left of the
+   spectrogram on the recording's own time and frequency scale, with the
+   species text in a column over the drawing. A clear window in the column
+   sits over the drawn calls; the drawing stays put while the text scrolls
+   over it, so scrolling covers the calls and scrolling back shows them.
+   Its own colour scheme and the dashed edge keep the drawing apart from the
+   recording. */
+.species-calls {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 6;
+    border-right: 1px dashed rgba(255, 255, 255, 0.45);
+    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.5);
+}
+/* Placed after the end of the recording: framed on both sides. */
+.species-calls.species-calls-floating {
+    border-left: 1px dashed rgba(255, 255, 255, 0.45);
+}
+/* Text is under the spectrogram: the drawing alone lets clicks through. */
+.species-calls.species-calls-drawing-only {
+    pointer-events: none;
+}
+.species-calls-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+.species-scroll {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #555 transparent;
+}
+/* The text blocks are opaque so text scrolled over the drawing covers it. */
+.species-text {
+    background: #141414;
+    color: #ddd;
+    font-size: 12px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+.species-scroll .species-text {
+    padding: 6px 10px;
+}
+/* Fixed height: SpeciesCalls places the window from it (TOP_BLOCK_PX). */
+.species-top {
+    height: 70px;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-bottom: 1px solid #2a2a2a;
+}
+.species-bottom {
+    border-top: 1px solid #2a2a2a;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.species-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    color: #999;
+    font-size: 11px;
+}
+.species-pos {
+    flex: 1;
+    text-align: center;
+    white-space: nowrap;
+}
+.species-step,
+.species-close {
+    background: none;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border-radius: 4px;
+}
+.species-step:hover,
+.species-close:hover {
+    color: #fff;
+    background: #2a2a2a;
+}
+.species-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.species-sci {
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Kinds of call: one choice at a time; the chosen one is filled. */
+.species-forms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.species-form-btn {
+    background: #222;
+    color: #ccc;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 3px 8px;
+    min-height: 24px;
+    cursor: pointer;
+}
+.species-form-btn:hover {
+    background: #2e2e2e;
+    color: #fff;
+}
+.species-form-btn.sel {
+    background: #2a4a6a;
+    color: #fff;
+}
+/* A kind with no drawable shape: listed, its text muted. */
+.species-form-btn.undrawn {
+    color: #888;
+    font-style: italic;
+}
+.species-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.species-muted {
+    color: #888;
+    font-size: 11px;
+}
+.species-warn {
+    color: #cc9;
+}
+.species-desc {
+    color: #bbb;
+}
+.species-details-btn {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: #9ab;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 0;
+    min-height: 24px;
+}
+.species-details-btn:hover {
+    color: #cde;
+}
+.species-details {
+    color: #aaa;
+    font-size: 11px;
+}
+.species-details p {
+    margin: 0 0 6px;
+}
+.species-sources {
+    margin: 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.species-sources a {
+    color: #9ab;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+.species-sources a:hover {
+    text-decoration: underline;
+}
+.species-draft {
+    font-style: italic;
+}
+/* Under the spectrogram (phones held upright): in the page, above the bat
+   book strip. Kept short so the spectrogram keeps its room: names on one
+   line, the kinds of call on one scrolling line, facts flowing inline; the
+   rest is under More, and the panel scrolls if it still doesn't fit. */
+.species-panel-below {
+    flex-shrink: 0;
+    max-height: 24vh;
+    overflow-y: auto;
+    padding: 4px 10px 6px;
+    border-top: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.species-panel-below .species-name,
+.species-panel-below .species-sci {
+    display: inline;
+    margin-right: 8px;
+}
+.species-panel-below .species-forms {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.species-panel-below .species-form-btn {
+    flex-shrink: 0;
+}
+.species-panel-below .species-facts {
+    flex-direction: row;
+    flex-wrap: wrap;
+    column-gap: 12px;
 }
