@@ -346,6 +346,11 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let _line = state.spect.loudest_freq_line().get();
         let _lowest = lowest_bat_hz.get();
         crate::canvas::reassign_line::clear_all();
+        // Redraw, so the cleared line is recomputed rather than left on screen.
+        state
+            .viewmode
+            .tile_ready_signal()
+            .update(|n| *n = n.wrapping_add(1));
     });
 
     // Clear resonator tile cache when bandwidth, alpha schedule, Q, bin-count

@@ -18,7 +18,7 @@ fn parse_colormap_pref(s: &str) -> Colormap {
 
 /// Label and tooltip of the checkbox that gives the open file its own lowest
 /// bat frequency.
-const FILE_BAT_LABEL: &str = "This recording's lowest frequency";
+const FILE_BAT_LABEL: &str = "This recording only";
 const FILE_BAT_TIP: &str = "Sets a lowest bat frequency for this recording only, saved in its .batm file. Untick to use the Lowest bat frequency setting above again.";
 
 /// Tooltip of the "Lowest bat frequency" setting.
