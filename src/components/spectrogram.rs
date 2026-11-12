@@ -394,7 +394,7 @@ pub fn Spectrogram() -> impl IntoView {
                 state.spect.gain_db().get(),
             );
             let debug_tiles = state.spect.debug_tiles().get();
-            let reassign_on = state.spect.reassign_enabled().get();
+            let line_on = state.spect.loudest_freq_line().get();
             // Display-affecting checkbox subscriptions
             let display_auto_gain = state.display.auto_gain().get();
             let _display_eq = state.display.eq().get();
@@ -803,7 +803,7 @@ pub fn Spectrogram() -> impl IntoView {
                         );
 
                         // Reassignment line for this segment, as in single-file view.
-                        if reassign_on && !resonators_on && !xform_on && decim_effective == 0 {
+                        if line_on && !resonators_on && !xform_on && decim_effective == 0 {
                             if let Some(vg) = crate::canvas::tile_blit::ViewportGeometry::new(
                                 clip_right - clip_left,
                                 display_h as f64,
@@ -855,7 +855,7 @@ pub fn Spectrogram() -> impl IntoView {
                                 seg_time_res,
                                 is_playing,
                                 // The line is left off with XForm or decimation.
-                                reassign_on && !xform_on && decim_effective == 0,
+                                line_on && !xform_on && decim_effective == 0,
                                 &disposed,
                             );
                         }
@@ -998,7 +998,7 @@ pub fn Spectrogram() -> impl IntoView {
                     // Reassignment: the main-frequency line over the plain
                     // tiles. It is measured on the original audio, so it is
                     // left off when XForm or decimation changes the tiles.
-                    if reassign_on
+                    if line_on
                         && !resonators_on
                         && !xform_on
                         && decim_effective == 0
@@ -1052,7 +1052,7 @@ pub fn Spectrogram() -> impl IntoView {
                             time_res,
                             is_playing,
                             // The line is left off with XForm or decimation.
-                            reassign_on && !xform_on && decim_effective == 0,
+                            line_on && !xform_on && decim_effective == 0,
                             &disposed,
                         );
                     }
@@ -1659,7 +1659,7 @@ pub fn Spectrogram() -> impl IntoView {
                 let _playing = state.playback.is_playing().get();
                 let _file_idx = state.library.current_index().get();
                 let _main_view = state.viewmode.main_view().get();
-                let _reassign = state.spect.reassign_enabled().get();
+                let _line = state.spect.loudest_freq_line().get();
                 let _flow = state.flow.enabled().get();
                 // NOTE: intentionally NOT subscribing to tile_ready_signal here —
                 // that would create a feedback loop (tile completes -> prefetch fires -> schedules more).
@@ -1730,7 +1730,7 @@ pub fn Spectrogram() -> impl IntoView {
                         None
                     };
 
-                    let reassign = state.spect.reassign_enabled().get_untracked();
+                    let line_on = state.spect.loudest_freq_line().get_untracked();
 
                     let (ahead_secs, max_prefetch) = if is_playing {
                         (15.0, 60) // aggressive prefetch during playback
@@ -1748,7 +1748,7 @@ pub fn Spectrogram() -> impl IntoView {
                         3.0, // keep first 3 seconds ready
                         zoom,
                         flow_algo,
-                        reassign,
+                        line_on,
                         max_prefetch,
                     );
                 });

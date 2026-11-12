@@ -48,7 +48,7 @@ pub fn schedule_normal_tiles(
     display_w: f64,
     time_res: f64,
     is_playing: bool,
-    reassign_on: bool,
+    line_on: bool,
     disposed: &Arc<AtomicBool>,
 ) {
     let ideal_lod = tile_cache::select_lod(zoom);
@@ -96,7 +96,7 @@ pub fn schedule_normal_tiles(
     }
 
     let is_loading = state.library.loading().with_untracked(|v| !v.is_empty());
-    let use_reassign = reassign_on && ideal_lod > 1;
+    let use_line = line_on && ideal_lod > 1;
 
     let tile_order = visible_tile_order(first_tile, last_tile, viewport_center_tile);
     let mut any_missing = false;
@@ -108,7 +108,7 @@ pub fn schedule_normal_tiles(
             lod: ideal_lod,
             tile_idx: t,
         };
-        if use_reassign && !crate::canvas::reassign_line::has_line_tile(&line_key) {
+        if use_line && !crate::canvas::reassign_line::has_line_tile(&line_key) {
             crate::canvas::reassign_line::schedule_line_tile(state, file_idx, ideal_lod, t);
             any_missing = true;
         }
@@ -336,7 +336,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
 
     // Clear reassignment tile cache when toggle changes
     Effect::new(move || {
-        let _reassign = state.spect.reassign_enabled().get();
+        let _line = state.spect.loudest_freq_line().get();
         crate::canvas::reassign_line::clear_all();
     });
 

@@ -1373,7 +1373,7 @@ pub fn schedule_prefetch_tiles(
     initial_secs: f64,
     zoom: f64,
     flow_algo: Option<FlowAlgo>,
-    reassign: bool,
+    line_on: bool,
     max_prefetch: usize,
 ) {
     let lod = select_lod(zoom);
@@ -1420,7 +1420,7 @@ pub fn schedule_prefetch_tiles(
             schedule_flow_tile(state, file_idx, lod, t, algo);
         }
 
-        if reassign && lod > 1 {
+        if line_on && lod > 1 {
             crate::canvas::reassign_line::schedule_line_tile(state, file_idx, lod, t);
         }
     }

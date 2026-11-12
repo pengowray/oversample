@@ -2226,11 +2226,11 @@ pub fn MainViewButton() -> impl IntoView {
                         title="Draws a line at the loudest frequency in each column, where it is 15 dB or more above the noise, positioned with the reassignment method. Hidden when zoomed far out.">
                         <input
                             type="checkbox"
-                            prop:checked=move || state.spect.reassign_enabled().get()
+                            prop:checked=move || state.spect.loudest_freq_line().get()
                             on:change=move |ev: web_sys::Event| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                state.spect.reassign_enabled().set(input.checked());
+                                state.spect.loudest_freq_line().set(input.checked());
                             }
                         />
                         "Loudest-frequency line"

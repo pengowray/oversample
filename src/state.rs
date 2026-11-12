@@ -2000,8 +2000,9 @@ pub struct SpectState {
     pub debug_tiles: bool,
     /// FFT window mode (single size or multi-resolution).
     pub fft_mode: FftMode,
-    /// Enable reassignment spectrogram (sharper time-frequency localization).
-    pub reassign_enabled: bool,
+    /// Draw the loudest-frequency line over the spectrogram (placed by the
+    /// reassignment method; see `canvas::reassign_line`).
+    pub loudest_freq_line: bool,
     /// Colormap preference (when not overridden by HFR/flow).
     pub colormap_preference: Colormap,
     /// Colormap preference used when HFR mode is active.
@@ -2384,7 +2385,7 @@ impl AppState {
                 gain_db: 0.0,
                 debug_tiles: false,
                 fft_mode: FftMode::AdaptiveM,
-                reassign_enabled: false,
+                loudest_freq_line: false,
                 colormap_preference: Colormap::Viridis,
                 hfr_colormap_preference: Colormap::Inferno,
                 auto_range: true,
