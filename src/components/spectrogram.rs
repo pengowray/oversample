@@ -94,13 +94,17 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
                     s.end_s = w.end_s;
                 }
                 _ => {
-                    let name = run.label(&top).map_or("Unknown", |l| l.common.as_str());
+                    let label = run.label(&top);
+                    let name = label.map_or("Unknown", |l| l.common.as_str());
                     spans.push(spectrogram_renderer::StripSpan {
                         start_s: w.start_s,
                         end_s: w.end_s,
                         label: format!("{name} {:.2}", top.confidence),
                         colour,
                         inner_bounds: Vec::new(),
+                        unlikely: label.is_some_and(|l| {
+                            crate::classifier::location::unlikely_here(state, file, method, l)
+                        }),
                     });
                 }
             }

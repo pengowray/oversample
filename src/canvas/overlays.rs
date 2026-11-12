@@ -1188,11 +1188,17 @@ pub struct StripSpan {
     pub colour: Option<usize>,
     /// Window boundaries inside the span, in seconds, drawn as ticks.
     pub inner_bounds: Vec<f64>,
+    /// A bird the location list says is unlikely at the recording's place
+    /// and month: a small flag is drawn before the label.
+    pub unlikely: bool,
 }
 
 /// Height of the label strip along the top of the spectrogram, in canvas
 /// pixels. Clicks in this band select a window (spectrogram_events).
 pub const SPECIES_STRIP_H: f64 = 16.0;
+
+/// Colour of the flag on a bird unlikely at the recording's place.
+const UNLIKELY_FLAG_COLOUR: &str = "#ffcc88";
 
 /// Draw BirdNET or BattyBirdNET results as a strip along the top of the
 /// spectrogram: one box per stretch of windows with the same species, with
@@ -1260,12 +1266,27 @@ pub fn draw_species_strip(
             ctx.begin_path();
             ctx.rect(x0 + 1.0, 0.0, w - 2.0, SPECIES_STRIP_H);
             ctx.clip();
+            let mut text_x = x0 + 4.0;
+            if span.unlikely {
+                // Before the label, not after it: a label is cut to its box,
+                // so a mark at the end would be the first thing lost. Same
+                // colour as `.unlikely-flag` in the lists.
+                ctx.set_fill_style_str(UNLIKELY_FLAG_COLOUR);
+                ctx.fill_rect(text_x, 3.0, 1.25, 10.0);
+                ctx.begin_path();
+                ctx.move_to(text_x + 1.0, 3.0);
+                ctx.line_to(text_x + 7.0, 5.5);
+                ctx.line_to(text_x + 1.0, 8.0);
+                ctx.close_path();
+                ctx.fill();
+                text_x += 10.0;
+            }
             ctx.set_fill_style_str(if span.colour.is_some() {
                 "rgba(240, 240, 245, 0.95)"
             } else {
                 "rgba(200, 200, 200, 0.9)"
             });
-            let _ = ctx.fill_text(&span.label, x0 + 4.0, SPECIES_STRIP_H / 2.0 + 0.5);
+            let _ = ctx.fill_text(&span.label, text_x, SPECIES_STRIP_H / 2.0 + 0.5);
             ctx.restore();
         }
     }

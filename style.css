@@ -735,6 +735,20 @@ body.sidebar-resizing {
     color: #888;
 }
 
+/* The flag on a bird unlikely at the recording's place and month. The
+   warning colour used elsewhere (.bit-warning); the same shape and colour
+   are drawn on the spectrogram's label strip (overlays.rs). */
+.unlikely-flag {
+    margin-left: 5px;
+    color: #fc8;
+    font-size: 11px;
+    vertical-align: -1px;
+}
+
+.detection-status-note > .unlikely-flag {
+    margin-left: 0;
+}
+
 .detection-progress {
     height: 3px;
     margin-top: 4px;

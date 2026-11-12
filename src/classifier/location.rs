@@ -204,6 +204,18 @@ pub fn unlikely(occurrence: &Occurrence, label: &SpeciesLabel) -> Option<bool> {
     Some(*scores.get(i)? < MIN_OCCURRENCE)
 }
 
+/// True when "Mark birds unlikely here" is on and the location list says
+/// `label` is a bird unlikely at file `file`'s place and month. Reactive.
+pub fn unlikely_here(state: AppState, file: u64, method: Method, label: &SpeciesLabel) -> bool {
+    applies_to(method)
+        && state.call_detection.mark_unexpected().get()
+        && state.classifier.occurrence().with(|m| {
+            m.get(&file)
+                .and_then(|o| unlikely(o, label))
+                .unwrap_or(false)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

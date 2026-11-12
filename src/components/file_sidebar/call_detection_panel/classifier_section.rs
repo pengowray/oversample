@@ -15,6 +15,7 @@ use crate::classifier::summary::{self, WindowKind};
 use crate::classifier::{
     self, catalog, location, place, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
 };
+use crate::components::icons::Icon;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
@@ -581,6 +582,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 count(s.not_species_windows, "window", "windows")
             ));
         }
+        let mut unlikely_note = None;
         if let Some(file) = current_file.get() {
             let unlikely = state.classifier.results().with(|m| {
                 m.get(&(file, method)).map_or(0, |r| {
@@ -589,14 +591,14 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                         .filter(|row| {
                             r.labels
                                 .get(row.class as usize)
-                                .is_some_and(|l| unlikely_here(state, file, method, l))
+                                .is_some_and(|l| location::unlikely_here(state, file, method, l))
                         })
                         .count()
                 })
             });
             if unlikely > 0 {
-                notes.push(format!(
-                    "Unlikely here: {}",
+                unlikely_note = Some(format!(
+                    " Unlikely here: {}",
                     count(unlikely, "species", "species")
                 ));
             }
@@ -605,6 +607,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             <div class="detection-status">
                 <div class="detection-summary">{main}</div>
                 {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
+                {unlikely_note.map(|t| view! { <div class="detection-status-note">{unlikely_flag()}{t}</div> })}
             </div>
         })
     };
@@ -854,21 +857,17 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     }
 }
 
-/// True when "Mark birds unlikely here" is on and the location list says
-/// `label` is a bird unlikely at file `file`'s place and month. Reactive.
-fn unlikely_here(
-    state: AppState,
-    file: u64,
-    method: Method,
-    label: &classifier::SpeciesLabel,
-) -> bool {
-    location::applies_to(method)
-        && state.call_detection.mark_unexpected().get()
-        && state.classifier.occurrence().with(|m| {
-            m.get(&file)
-                .and_then(|o| location::unlikely(o, label))
-                .unwrap_or(false)
-        })
+/// The flag beside a bird the location list says is unlikely at the
+/// recording's place and month. One mark for every place a result is named
+/// (the lists, the top 3, the spectrogram's label strip), so it costs one
+/// character of width and the name stays on one line. The summary line
+/// "Unlikely here: 2 species" carries the same flag and so names it.
+fn unlikely_flag() -> impl IntoView {
+    view! {
+        <span class="unlikely-flag" title="Unlikely at this place and month">
+            <Icon kind=Icon::Flag />
+        </span>
+    }
 }
 
 const MONTHS: [&str; 12] = [
@@ -1043,7 +1042,7 @@ fn species_table(
                 let unlikely = current_file
                     .get()
                     .zip(label)
-                    .is_some_and(|(f, l)| unlikely_here(state, f, method, l));
+                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
                 let class = move || {
                     if state.call_detection.selected_window().get() == Some(i) {
                         "detection-row selected"
@@ -1055,7 +1054,7 @@ fn species_table(
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
                         <td class="detection-col-kind">
                             {species_swatch(slot)}{name}
-                            {unlikely.then(|| view! { <span class="detection-status-note">" · unlikely here"</span> })}
+                            {unlikely.then(unlikely_flag)}
                         </td>
                         <td class="detection-col-num">{row.windows}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
@@ -1101,6 +1100,10 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                 let name = class_name(label);
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let (start, end) = (w.start_s, w.end_s);
+                let unlikely = current_file
+                    .get()
+                    .zip(label)
+                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
                 let other = kind == WindowKind::NotSpecies;
                 let slot = (!other)
                     .then(|| order.iter().position(|&c| c == top.class))
@@ -1119,7 +1122,10 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
                         <td class="detection-col-num">{i + 1}</td>
                         <td>{crate::format_time::format_time_display(start, 1)}</td>
-                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
+                        <td class="detection-col-kind">
+                            {species_swatch(slot)}{name}
+                            {unlikely.then(unlikely_flag)}
+                        </td>
                         <td class="detection-col-num">{format!("{:.2}", top.confidence)}</td>
                     </tr>
                 })
@@ -1162,10 +1168,15 @@ fn top_three(
                 let scientific = label
                     .filter(|l| l.is_species && l.scientific != l.common)
                     .map(|l| l.scientific.clone());
+                let unlikely = current_file
+                    .get()
+                    .zip(label)
+                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
                 view! {
                     <tr>
                         <td class="detection-col-kind">
                             {class_name(label)}
+                            {unlikely.then(unlikely_flag)}
                             {scientific.map(|s| view! { <div class="detection-scientific">{s}</div> })}
                         </td>
                         <td class="detection-col-num">{format!("{:.2}", s.confidence)}</td>
