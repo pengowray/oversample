@@ -138,9 +138,10 @@ line. Perch's labels have no common names, so results show scientific names.
    inner loop has one file per CPU in [head/kernel/](perch-bench/src/head/kernel/mod.rs),
    so the app copies the reader plus the kernel for each of its targets).
    Download it the first time someone runs Perch with species names.
-   Hide species results below a softmax probability of about 0.3: rain, wind and
-   traffic alone put a bird, frog or coyote on top in 25 of 69 windows, always below
-   0.27 (see [Sound events](#sound-events)).
+   Hide species results below a softmax probability of about 0.3 (the app's default):
+   over 29 minutes of rain, thunder, traffic, wind and voices, 5 of 348 windows still
+   put an animal on top at 0.3 or more, the highest at 0.53 (see
+   [Sound events](#sound-events)).
 3. Later, if wanted: smaller classifier files for a subset of classes, for example a
    region of about 900 classes (about 22 MB in float32) or the 5,044 non-bird classes
    (about 124 MB in float32). tphakala's regional slices pick species with BirdNET's
@@ -427,11 +428,15 @@ What Perch called them (its top classes over each recording):
   cicada); the other 8 were Water, and Rain itself was never the top class. Howling wind
   came out as Coyote (Canis latrans) in 3 of 6 windows, with Wind second. Traffic and
   thunder put a bird or frog on top in 7 of 18 windows.
-- **Their scores were low:** every one of these 25 false animal windows had a softmax
-  probability of 0.27 or less (median 0.02 for rain, 0.07 for traffic, 0.20 for wind).
-  On the xeno-canto recordings above, 61 of 81 windows with the right species on top
-  scored 0.3 or more. So a cutoff of about 0.3 hides all of these false animals and
-  keeps most real detections, on this small set.
+- **Their scores were low:** in these first 30 s of each recording, every one of the 25
+  false animal windows had a softmax probability of 0.27 or less (median 0.02 for rain,
+  0.07 for traffic, 0.20 for wind). On the xeno-canto recordings above, 61 of 81 windows
+  with the right species on top scored 0.3 or more.
+- **The whole recordings:** run in full (29 minutes, 348 windows), 184 windows had an
+  animal on top, and 5 of them scored 0.3 or more: 1 of rain (0.39), 2 of thunder (up
+  to 0.33), 1 of traffic (0.32, a Pink-footed Goose) and 1 of wind (0.53). At 0.4, 1
+  window is left; at 0.5, also 1. So 0.3 hides almost all false animals and keeps most
+  real detections, on this small set; it is the app's default.
 
 ## 4. Bats
 

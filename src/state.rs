@@ -1617,9 +1617,10 @@ pub struct CallDetectionState {
     /// BirdNET and BattyBirdNET: windows whose top class is below this are left
     /// out of the summary, the lists, the annotations and the overlay.
     pub min_confidence: f32,
-    /// The same for Perch, whose confidences are softmax shares and run lower:
-    /// rain, wind and traffic alone put an animal on top at up to 0.27
-    /// (`research/perch.md`, "Sound events").
+    /// The same for Perch, whose confidences are softmax shares and run lower.
+    /// At 0.30, 5 of 348 windows of rain, thunder, traffic, wind and voices still
+    /// show an animal, and 61 of 81 correct windows stay (`research/perch.md`,
+    /// "Sound events").
     pub perch_min_confidence: f32,
     /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
     pub selected_window: Option<usize>,
