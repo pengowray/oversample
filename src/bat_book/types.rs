@@ -341,4 +341,48 @@ pub struct AutoResolved {
     pub source_label: String,
     /// True when the region was chosen because it's the user's favourite (fallback).
     pub from_favourite: bool,
+    /// The recording's own place, when the region was picked from it. A
+    /// recording with a place of its own keeps its region even when another
+    /// region is picked in the menu.
+    pub recording_place: Option<RecordingPlace>,
+}
+
+/// Where a recording's country came from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlaceSource {
+    /// Its GPS position (GUANO or Xeno-Canto coordinates), looked up offline.
+    Gps { lat: f32, lon: f32 },
+    /// Xeno-Canto's "Country" field.
+    XenoCanto,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordingPlace {
+    pub source: PlaceSource,
+    pub country: String,
+}
+
+impl RecordingPlace {
+    /// Prefix for the strip's region label: "GPS" or "Xeno-Canto".
+    pub fn source_label(&self) -> &'static str {
+        match self.source {
+            PlaceSource::Gps { .. } => "GPS",
+            PlaceSource::XenoCanto => "Xeno-Canto",
+        }
+    }
+
+    /// Where the place came from, e.g. "From GPS position 52.48, -1.90" (with
+    /// the country added when the region is not the country itself) or "From
+    /// Xeno-Canto country: United Kingdom".
+    pub fn detail(&self, region: BatBookRegion) -> String {
+        match self.source {
+            PlaceSource::Gps { lat, lon } if self.country == region.label() => {
+                format!("From GPS position {lat:.2}, {lon:.2}")
+            }
+            PlaceSource::Gps { lat, lon } => {
+                format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
+            }
+            PlaceSource::XenoCanto => format!("From Xeno-Canto country: {}", self.country),
+        }
+    }
 }

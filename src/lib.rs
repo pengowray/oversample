@@ -6,6 +6,7 @@ pub mod call_annotations;
 pub mod canvas;
 pub mod classifier;
 pub mod components;
+pub mod device_location;
 pub mod dsp;
 pub mod file_identity;
 pub mod focus_stack;

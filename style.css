@@ -6709,6 +6709,40 @@ button.toolbar-overflow-btn {
     color: #8fc;
 }
 
+/* The open recording's own region (from its GPS or Xeno-Canto country). It is
+   information, not an option: the recording's place always wins. */
+.bat-book-region-recording {
+    padding: 5px 12px 5px 14px;
+    font-size: 12px;
+    color: #8fc;
+}
+.bat-book-region-recording-src {
+    color: #999;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+/* Heading over the options that apply to recordings without a place. */
+.bat-book-region-heading {
+    padding: 4px 12px 2px 14px;
+    font-size: 11px;
+    color: #888;
+}
+.bat-book-region-locate {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.bat-book-region-locate:disabled {
+    cursor: progress;
+    color: #888;
+}
+.bat-book-region-error {
+    padding: 2px 12px 6px 14px;
+    max-width: 220px;
+    font-size: 11px;
+    color: #f88;
+}
+
 /* Scrollable chip area */
 .bat-book-scroll {
     overflow-x: auto;

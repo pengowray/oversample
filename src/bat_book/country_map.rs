@@ -80,6 +80,15 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
         // Bermuda → North America (lone Atlantic island, no own book)
         "bermuda" => Some(BatBookRegion::NorthAmerica),
 
+        // Caucasus → Europe (its bats are mostly the European species)
+        "armenia" | "azerbaijan" | "georgia" => Some(BatBookRegion::Europe),
+
+        // Greenland → North America (geographically; no resident bats)
+        "greenland" => Some(BatBookRegion::NorthAmerica),
+
+        // Kerguelen and nearby islands → Antarctica (no bats)
+        "french southern and antarctic lands" => Some(BatBookRegion::Antarctica),
+
         _ => None,
     };
     if let Some(region) = approx {
@@ -118,6 +127,7 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
             | "bulgaria"
             | "croatia"
             | "cyprus"
+            | "northern cyprus"
             | "czech republic"
             | "czechia"
             | "denmark"
@@ -209,6 +219,8 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
             | "seychelles"
             | "sierra leone"
             | "somalia"
+            | "somaliland"
+            | "western sahara"
             | "south africa"
             | "south sudan"
             | "sudan"

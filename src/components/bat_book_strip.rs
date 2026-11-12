@@ -33,23 +33,28 @@ pub fn BatBookStrip() -> impl IntoView {
     // Watches mode, files, and current_file_index. Sets bat_book_region
     // and bat_book_auto_resolved so downstream code (manifest Memo, etc.)
     // continues to work unchanged.
+    // A recording with its own place (GPS or Xeno-Canto country) always uses
+    // that place's region; a region picked in the menu is for recordings
+    // without one.
     Effect::new(move |_| {
         let mode = state.bat_book.mode().get();
-        match mode {
-            BatBookMode::Manual(region) => {
-                state.bat_book.region().set(region);
-                state.bat_book.auto_resolved().set(None);
+        let files = state.library.files().get();
+        let idx = state.library.current_index().get();
+        let file = idx.and_then(|i| files.get(i));
+        let favourites = state.bat_book.favourites().get_untracked();
+        let resolved = match mode {
+            BatBookMode::Auto => Some(auto_resolve::resolve_auto(file, &favourites)),
+            BatBookMode::Manual(_) => {
+                file.and_then(|f| auto_resolve::recording_region(f, &favourites))
             }
-            BatBookMode::Auto => {
-                let files = state.library.files().get();
-                let idx = state.library.current_index().get();
-                let file = idx.and_then(|i| files.get(i));
-                let favourites = state.bat_book.favourites().get_untracked();
-                let resolved = auto_resolve::resolve_auto(file, &favourites);
-                state.bat_book.region().set(resolved.region);
-                state.bat_book.auto_resolved().set(Some(resolved));
-            }
-        }
+        };
+        let region = match (&resolved, mode) {
+            (Some(r), _) => r.region,
+            (None, BatBookMode::Manual(region)) => region,
+            (None, BatBookMode::Auto) => BatBookRegion::Global,
+        };
+        state.bat_book.region().set(region);
+        state.bat_book.auto_resolved().set(resolved);
     });
 
     let manifest = Memo::new(move |_| {
@@ -98,11 +103,9 @@ pub fn BatBookStrip() -> impl IntoView {
             return;
         };
 
-        // Only auto-select when the book is open and in Auto mode
+        // Only auto-select when the book is open. `auto_resolved` is set only
+        // in Auto mode or when the region comes from the recording's place.
         if !is_open {
-            return;
-        }
-        if state.bat_book.mode().get_untracked() != BatBookMode::Auto {
             return;
         }
 
@@ -138,22 +141,39 @@ pub fn BatBookStrip() -> impl IntoView {
         <div class="bat-book-strip" on:click=move |_| { region_menu_open.set(false); }>
             <div class="bat-book-header">
                 <span class="bat-book-title" on:click=on_title_click style="cursor:pointer">"Bat Book"</span>
-                <span class="bat-book-region-label">
+                <span
+                    class="bat-book-region-label"
+                    title=move || {
+                        let resolved = state.bat_book.auto_resolved().get()?;
+                        let place = resolved.recording_place.as_ref()?;
+                        let mut tip = place.detail(resolved.region);
+                        if let BatBookMode::Manual(r) = state.bat_book.mode().get() {
+                            if r != resolved.region {
+                                tip.push_str(&format!(
+                                    "\n{} is used for recordings without location data.",
+                                    r.label()
+                                ));
+                            }
+                        }
+                        Some(tip)
+                    }
+                >
                     {move || {
                         let mode = state.bat_book.mode().get();
-                        match mode {
-                            BatBookMode::Auto => {
-                                if let Some(resolved) = state.bat_book.auto_resolved().get() {
-                                    if resolved.from_favourite {
-                                        format!("Auto: {} \u{2605}", resolved.source_label)
-                                    } else {
-                                        format!("Auto: {}", resolved.source_label)
-                                    }
+                        match (mode, state.bat_book.auto_resolved().get()) {
+                            (_, Some(resolved)) if resolved.recording_place.is_some() => {
+                                let place = resolved.recording_place.as_ref().unwrap();
+                                format!("{}: {}", place.source_label(), resolved.source_label)
+                            }
+                            (BatBookMode::Auto, Some(resolved)) => {
+                                if resolved.from_favourite {
+                                    format!("Auto: {} \u{2605}", resolved.source_label)
                                 } else {
-                                    "Auto".to_string()
+                                    format!("Auto: {}", resolved.source_label)
                                 }
                             }
-                            BatBookMode::Manual(r) => r.short_label().to_string(),
+                            (BatBookMode::Auto, None) => "Auto".to_string(),
+                            (BatBookMode::Manual(r), _) => r.short_label().to_string(),
                         }
                     }}
                 </span>
@@ -235,8 +255,63 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
 
     let is_auto_active = move || state.bat_book.mode().get() == BatBookMode::Auto;
 
+    // The open recording's own place, which wins over the options below.
+    let recording = move || {
+        let resolved = state.bat_book.auto_resolved().get()?;
+        let place = resolved.recording_place.clone()?;
+        Some((resolved.region, place))
+    };
+
+    // "Set region from my location": None = idle, Some(None) = waiting,
+    // Some(Some(msg)) = failed with msg.
+    let locating: RwSignal<Option<Option<String>>> = RwSignal::new(None);
+    let on_locate = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        if locating.get_untracked() == Some(None) {
+            return;
+        }
+        locating.set(Some(None));
+        leptos::task::spawn_local(async move {
+            use crate::bat_book::auto_resolve::{region_at, PositionRegion};
+            use crate::device_location::{current, LocationError};
+            // The position is used here, on the device, and then dropped.
+            let msg = match current(state.is_tauri).await {
+                Err(LocationError::Denied) => "Location permission denied".to_string(),
+                Err(LocationError::Unavailable(m)) => format!("Location unavailable: {m}"),
+                Ok((lat, lon)) => match region_at(lat as f32, lon as f32) {
+                    PositionRegion::Found(r, _) => {
+                        let mode = BatBookMode::Manual(r);
+                        state.bat_book.mode().set(mode);
+                        persist_mode(&mode);
+                        locating.set(None);
+                        region_menu_open.set(false);
+                        return;
+                    }
+                    PositionRegion::NoCountry => {
+                        "No country found for your location. Pick a region from the list."
+                            .to_string()
+                    }
+                    PositionRegion::NoRegion(c) => {
+                        format!("No Bat book region for {c}. Pick a region from the list.")
+                    }
+                },
+            };
+            locating.set(Some(Some(msg)));
+        });
+    };
+
     view! {
         <div class="bat-book-region-menu" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
+            // ── The recording's own place ────────────
+            {move || recording().map(|(region, place)| view! {
+                <div class="bat-book-region-recording">
+                    <div>{format!("This recording: {}", region.label())}</div>
+                    <div class="bat-book-region-recording-src">{place.detail(region)}</div>
+                </div>
+                <div class="bat-book-region-separator"></div>
+                <div class="bat-book-region-heading">"For recordings without location data"</div>
+            })}
+
             // ── Auto option ──────────────────────────
             <button
                 class=move || if is_auto_active() { "bat-book-region-opt active" } else { "bat-book-region-opt" }
@@ -267,6 +342,25 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
             {BatBookRegion::ALL.iter().map(|&r| {
                 view! { <RegionOption region=r is_favourite=false region_menu_open=region_menu_open /> }
             }).collect_view()}
+
+            // ── This device's location ───────────────
+            <div class="bat-book-region-separator"></div>
+            <button
+                class="bat-book-region-opt bat-book-region-locate"
+                title="Your location stays on this device and is not saved."
+                disabled=move || locating.get() == Some(None)
+                on:click=on_locate
+            >
+                <Icon kind=Icon::MapPin />
+                {move || if locating.get() == Some(None) {
+                    "Getting location\u{2026}"
+                } else {
+                    "Set region from my location"
+                }}
+            </button>
+            {move || locating.get().flatten().map(|msg| view! {
+                <div class="bat-book-region-error" role="alert">{msg}</div>
+            })}
         </div>
     }
 }

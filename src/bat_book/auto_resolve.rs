@@ -1,6 +1,6 @@
 use super::country_map::country_to_region;
 use super::data::{get_manifest, species};
-use super::types::{AutoResolved, BatBookRegion};
+use super::types::{AutoResolved, BatBookRegion, PlaceSource, RecordingPlace};
 use crate::state::LoadedFile;
 
 /// Search all regional bat books for a species by scientific name.
@@ -89,14 +89,70 @@ fn get_scientific_name(file: &LoadedFile) -> Option<String> {
     None
 }
 
-/// Extract country from XC metadata.
-fn get_country(file: &LoadedFile) -> Option<String> {
-    file.xc_metadata
-        .as_ref()?
+/// The recording's country and where it came from: Xeno-Canto's "Country",
+/// or else the country at its GPS position (GUANO or Xeno-Canto coordinates),
+/// looked up offline. Of a country's name variants, the one the region map
+/// knows is used.
+fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
+    let xc = file
+        .xc_metadata
+        .as_ref()
+        .and_then(|m| m.iter().find(|(k, _)| k == "Country"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(country) = xc {
+        return Some(RecordingPlace {
+            source: PlaceSource::XenoCanto,
+            country,
+        });
+    }
+    let place = crate::classifier::place::file_place(file)?;
+    let names = super::countries::country_names_at(place.lat, place.lon)?;
+    let country = names
         .iter()
-        .find(|(k, _)| k == "Country")
-        .map(|(_, v)| v.clone())
-        .filter(|v| !v.is_empty())
+        .find(|n| country_to_region(n).is_some())
+        .unwrap_or(&names[0])
+        .clone();
+    Some(RecordingPlace {
+        source: PlaceSource::Gps {
+            lat: place.lat,
+            lon: place.lon,
+        },
+        country,
+    })
+}
+
+/// The region for a position, through the country it is in.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PositionRegion {
+    /// The region and the country's name.
+    Found(BatBookRegion, String),
+    /// The position is outside every country outline (at sea, or a small
+    /// island missing at 1:110m).
+    NoCountry,
+    /// A country with no region in the region map.
+    NoRegion(String),
+}
+
+pub fn region_at(lat: f32, lon: f32) -> PositionRegion {
+    let Some(names) = super::countries::country_names_at(lat, lon) else {
+        return PositionRegion::NoCountry;
+    };
+    match names
+        .iter()
+        .find_map(|n| country_to_region(n).map(|m| (m.region, n)))
+    {
+        Some((region, name)) => PositionRegion::Found(region, name.clone()),
+        None => PositionRegion::NoRegion(names[0].clone()),
+    }
+}
+
+/// The region a recording's own place gives (Xeno-Canto country or GPS), if
+/// it has one the region map knows. This wins over a region picked in the
+/// menu, which is for recordings without a place.
+pub fn recording_region(file: &LoadedFile, favourites: &[BatBookRegion]) -> Option<AutoResolved> {
+    let resolved = resolve_auto(Some(file), favourites);
+    resolved.recording_place.is_some().then_some(resolved)
 }
 
 /// Resolve the bat book automatically from the current file's metadata.
@@ -116,12 +172,16 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
             matched_species_id: None,
             source_label: fallback_region.short_label().to_string(),
             from_favourite: is_fav,
+            recording_place: None,
         };
     };
 
     let scientific_name = get_scientific_name(file);
-    let country = get_country(file);
+    let place = get_country(file);
+    let country = place.as_ref().map(|p| p.country.clone());
     let country_match = country.as_deref().and_then(country_to_region);
+    // Kept only when the region comes from the recording's country.
+    let recording_place = country_match.and(place);
     let country_region = country_match.map(|m| m.region);
     // Marker appended to the country in the source label when the country was
     // routed to a region only APPROXIMATELY (no dedicated/continental book).
@@ -159,6 +219,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
                 matched_species_id: Some(final_id),
                 source_label: label,
                 from_favourite: false,
+                recording_place: country_region.and(recording_place),
             };
         }
     }
@@ -175,6 +236,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
             matched_species_id: None,
             source_label: label,
             from_favourite: false,
+            recording_place,
         };
     }
 
@@ -185,6 +247,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
         matched_species_id: None,
         source_label: fallback_region.short_label().to_string(),
         from_favourite: is_fav,
+        recording_place: None,
     }
 }
 
@@ -228,5 +291,31 @@ mod tests {
             let found = find_species_across_books(name, None).map(|(_, id)| id);
             assert_eq!(found.as_deref(), Some(id), "{name}");
         }
+    }
+
+    #[test]
+    fn positions_find_regions() {
+        let found = |lat, lon| match region_at(lat, lon) {
+            PositionRegion::Found(r, _) => Some(r),
+            _ => None,
+        };
+        assert_eq!(found(52.48, -1.90), Some(BatBookRegion::UK));
+        assert_eq!(found(37.98, 23.73), Some(BatBookRegion::Greece));
+        assert_eq!(found(9.93, -84.08), Some(BatBookRegion::CostaRica));
+        assert_eq!(region_at(0.0, -30.0), PositionRegion::NoCountry);
+    }
+
+    /// Every country in the outlines should reach some region, so a GPS
+    /// position on land never falls back to a favourite or Global unnoticed.
+    #[test]
+    fn every_outlined_country_has_a_region() {
+        let raw: Vec<(Vec<String>, serde_json::Value)> =
+            serde_json::from_str(include_str!("../data/countries-110m.json")).unwrap();
+        let missing: Vec<&str> = raw
+            .iter()
+            .filter(|(names, _)| !names.iter().any(|n| country_to_region(n).is_some()))
+            .map(|(names, _)| names[0].as_str())
+            .collect();
+        assert!(missing.is_empty(), "no region for: {missing:?}");
     }
 }
