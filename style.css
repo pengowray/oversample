@@ -7112,6 +7112,8 @@ button.toolbar-overflow-btn {
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    /* 24 px: the smallest touch target WCAG 2.2 allows. */
+    min-height: 24px;
 }
 .export-radio.disabled {
     color: #666;
@@ -7141,8 +7143,7 @@ button.toolbar-overflow-btn {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 3px;
-    padding: 4px 16px;
+    padding: 2px 16px;
 }
 
 .export-tooltip {
