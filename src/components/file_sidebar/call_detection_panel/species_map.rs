@@ -31,22 +31,36 @@ async fn load_map() -> Result<Map, String> {
     Ok(m)
 }
 
-/// The data `species-map.js` draws, as JSON.
-fn map_json(run: &ClassifierRun, map: &[(f32, f32)], min: f32, selected: Option<usize>) -> String {
-    let r = |v: f32| (v * 10_000.0).round() / 10_000.0;
+/// BirdNET's classes as `species-map.js` draws them: `[x, y, common, scientific]`.
+fn species_json(run: &ClassifierRun, map: &[(f32, f32)]) -> serde_json::Value {
     let species: Vec<_> = map
         .iter()
         .enumerate()
         .map(|(i, &(x, y))| {
             let l = run.labels.get(i);
             (
-                r(x),
-                r(y),
+                round4(x),
+                round4(y),
                 l.map_or("", |l| l.common.as_str()),
                 l.map_or("", |l| l.scientific.as_str()),
             )
         })
         .collect();
+    serde_json::json!(species)
+}
+
+fn round4(v: f32) -> f32 {
+    (v * 10_000.0).round() / 10_000.0
+}
+
+/// The parts of the map that change while a run is in progress: the found
+/// species, the windows' dots and the selection.
+fn windows_json(
+    run: &ClassifierRun,
+    map: &[(f32, f32)],
+    min: f32,
+    selected: Option<usize>,
+) -> serde_json::Value {
     let placed = place_windows(run, map, min);
     let mut found: Vec<u16> = placed
         .iter()
@@ -69,16 +83,14 @@ fn map_json(run: &ClassifierRun, map: &[(f32, f32)], min: f32, selected: Option<
                     )
                 })
                 .collect();
-            (r(p.x), r(p.y), p.index, w.start_s, w.end_s, top)
+            (round4(p.x), round4(p.y), p.index, w.start_s, w.end_s, top)
         })
         .collect();
     serde_json::json!({
-        "species": species,
         "found": found,
         "windows": windows,
         "selected": selected,
     })
-    .to_string()
 }
 
 fn js_api() -> Option<JsValue> {
@@ -132,6 +144,8 @@ pub(super) fn SpeciesMapDialog(
 
     let drawn: StoredValue<Option<web_sys::HtmlElement>, LocalStorage> =
         StoredValue::new_local(None);
+    // The file and windows JSON last sent to the chart.
+    let last: StoredValue<Option<(u64, String)>, LocalStorage> = StoredValue::new_local(None);
     Effect::new(move |_| {
         let Some(el) = chart_ref.get() else { return };
         let Some(Ok(m)) = map.get() else { return };
@@ -140,9 +154,24 @@ pub(super) fn SpeciesMapDialog(
         };
         let min = state.call_detection.min_confidence().get();
         let selected = state.call_detection.selected_window().get();
+        // Results arrive in batches while a run is going; most batches change
+        // nothing on the map, so redraw only when what is drawn changes, and
+        // send the 6,522 species points only when the file changes.
         let json = state.classifier.results().with(|r| {
-            r.get(&(file, Method::BirdNet))
-                .map(|run| map_json(run, &m, min, selected))
+            let run = r.get(&(file, Method::BirdNet))?;
+            let mut d = windows_json(run, &m, min, selected);
+            let key = (file, d.to_string());
+            if last.with_value(|l| l.as_ref() == Some(&key)) {
+                return None;
+            }
+            let new_file = last.with_value(|l| l.as_ref().map(|l| l.0)) != Some(file);
+            d["species"] = if new_file {
+                species_json(run, &m)
+            } else {
+                serde_json::Value::Null
+            };
+            last.set_value(Some(key));
+            Some(d.to_string())
         });
         let Some(json) = json else { return };
         let el: web_sys::HtmlElement = el.into();

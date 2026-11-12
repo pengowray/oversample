@@ -9,6 +9,7 @@
 //   oversampleSpeciesMap.dispose(el)
 // `json` is { species: [[x, y, common, scientific]...], found: [i...],
 //   windows: [[x, y, window, start, end, [[name, conf]...]]...], selected }
+// `species` is null when it is the same as the last call's.
 // `onPick(window)` runs when a window's dot is clicked.
 (function () {
   let loading = null;
@@ -127,8 +128,11 @@
 
   window.oversampleSpeciesMap = {
     async render(el, json, onPick) {
-      await loadEcharts();
       const d = JSON.parse(json);
+      const newSpecies = d.species !== null;
+      if (newSpecies) el.__species = d.species;
+      else d.species = el.__species;
+      await loadEcharts();
       let chart = window.echarts.getInstanceByDom(el);
       if (!chart) {
         chart = window.echarts.init(el, null, { renderer: 'canvas' });
@@ -149,10 +153,15 @@
           }
         });
         chart.setOption(options(d));
-      } else {
+      } else if (newSpecies) {
         // Keep the zoom: replace only the series.
-        chart.setOption({ series: options(d).series }, { replaceMerge: ['series'] });
-        if (el.__namesShown) chart.setOption({ series: [{ id: 'species', label: { show: true } }] });
+        const series = options(d).series;
+        series[0].label.show = !!el.__namesShown;
+        chart.setOption({ series }, { replaceMerge: ['series'] });
+      } else {
+        // Same species: leave the grey points alone and update the rest.
+        const [, found, windows] = options(d).series;
+        chart.setOption({ series: [found, windows] });
       }
       el.__onPick = onPick;
     },
