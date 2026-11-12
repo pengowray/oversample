@@ -174,6 +174,29 @@ fn selection_bandpass_active(sample_rate: u32, params: &PlaybackParams) -> bool 
         && (params.sel_freq_low > 0.0 || params.sel_freq_high < (sample_rate as f64 / 2.0))
 }
 
+/// The fixed gain (dB) of playback and export, before any AGC: none when
+/// gain is Off, the slider for Manual and Adaptive, the measured peak gain
+/// plus the slider for Peak. The phase vocoder's level boost applies in every
+/// mode.
+pub(crate) fn fixed_gain_db(
+    mode: PlaybackMode,
+    gain_mode: GainMode,
+    slider_db: f64,
+    auto_peak_db: f64,
+) -> f64 {
+    let mode_boost = if matches!(mode, PlaybackMode::PhaseVocoder) {
+        PV_MODE_BOOST_DB
+    } else {
+        0.0
+    };
+    mode_boost
+        + match gain_mode {
+            GainMode::Off => 0.0,
+            GainMode::Manual | GainMode::Adaptive => slider_db,
+            GainMode::AutoPeak => auto_peak_db + slider_db,
+        }
+}
+
 /// Duration of fade-in when starting playback (milliseconds).
 const FADE_IN_MS: f64 = 30.0;
 
@@ -347,17 +370,8 @@ async fn chunk_loop(
         None
     };
 
-    let mode_boost = match params.mode {
-        PlaybackMode::PhaseVocoder => PV_MODE_BOOST_DB,
-        _ => 0.0,
-    };
-
-    let global_gain = match params.gain_mode {
-        GainMode::Off => mode_boost,
-        GainMode::Manual => manual_boost + mode_boost,
-        GainMode::AutoPeak => auto_peak_gain + manual_boost + mode_boost,
-        GainMode::Adaptive => manual_boost + mode_boost, // AGC applied per-sample in process_one_chunk
-    };
+    // AGC (Adaptive) is applied per-sample in process_one_chunk, after this.
+    let global_gain = fixed_gain_db(params.mode, params.gain_mode, manual_boost, auto_peak_gain);
 
     // ── Pre-buffer phase ─────────────────────────────────────────────────────
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
@@ -557,22 +571,18 @@ async fn process_one_chunk(
         std::slice::from_ref(&channel_view)
     };
     let read_len = trailing_end - warmup_start;
-    let raw_views = streaming_source::read_views_ready(
-        source.as_ref(),
-        views,
-        warmup_start as u64,
-        read_len,
-    )
-    .await
-    .views
-    // If part of the region couldn't be loaded, play what is there (missing
-    // chunks are silent) rather than stalling the chunk schedule.
-    .unwrap_or_else(|| {
-        views
-            .iter()
-            .map(|&cv| source.read_region(cv, warmup_start as u64, read_len))
-            .collect()
-    });
+    let raw_views =
+        streaming_source::read_views_ready(source.as_ref(), views, warmup_start as u64, read_len)
+            .await
+            .views
+            // If part of the region couldn't be loaded, play what is there (missing
+            // chunks are silent) rather than stalling the chunk schedule.
+            .unwrap_or_else(|| {
+                views
+                    .iter()
+                    .map(|&cv| source.read_region(cv, warmup_start as u64, read_len))
+                    .collect()
+            });
     let mut raw_views = raw_views.into_iter();
 
     // Hann fades for the PV HQ overlap, applied after the warmup is trimmed.
