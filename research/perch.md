@@ -127,7 +127,10 @@ and "Delete model" deletes only its own files. Checked in Chromium (download, an
 switching to BirdNET and back) and in the Tauri desktop app on Linux, where it read the
 stored files and found the Pauraque at 0.862, as natively. On a 5-minute traffic
 recording, one window named a bird (Pink-footed Goose) at 0.32, so 0.30 is not a clean
-line. Perch's labels have no common names, so results show scientific names.
+line. Perch's labels have no common names; the app takes English names from
+Xeno-Canto's species lists (9,598 of Perch's 9,706 birds, 1,515 of its 4,891 other
+species), fetched in the background, and shows sound events (Thunder, Dog) as sounds
+rather than species.
 
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
 2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
@@ -549,6 +552,38 @@ with one change: Perch has no single weight vector per class.
   class was typically the 2nd or 3rd in the logits.
 - **A bat map** for Perch would have only the 2 Eptesicus classes, so bats would need
   their own map, built from a bat classifier trained on Perch or BirdNET embeddings.
+
+## 6. Location list (BirdNET Geomodel)
+
+BirdNET's own advice is to limit results to the species expected at the recording's place
+and time of year. Perch has no model for that, but the BirdNET+ Geomodel v3.0.4
+(huggingface.co/tphakala/BirdNET-Geomodel, Apache 2.0, from birdnet-team/geomodel) covers
+both: latitude, longitude and week (1 to 48; 0 for the whole year) in, a 0 to 1
+occurrence score for 14,082 species out (11,127 birds, 1,936 amphibians, 1,728 insects,
+1,168 mammals). Its labels file also has an English name for each.
+
+- **Runs in tract unchanged:** the 15.5 MB fp32 ONNX file loads in 0.17 s and answers in
+  2 ms, with the same scores as onnxruntime at three test places.
+- **Covers:** 9,391 of Perch's 9,706 birds, 2,832 of its 4,891 other species, and 6,230
+  of BirdNET V2.4's 6,522 classes (by scientific name; matching by eBird code is not
+  tried yet).
+- **Effect on Perch,** at a cutoff of 0.01 (upstream's region tool uses 0.01), on the 62
+  named xeno-canto recordings with a place and date, keeping only the expected species
+  (and every species the Geomodel doesn't cover):
+
+  | Group | True species in the list | Windows made right | Right windows hidden |
+  |---|---|---|---|
+  | Birds | 15 of 15 | 2 | 0 |
+  | Frogs | 4 of 5 (1 not covered) | 2 | 0 |
+  | Grasshoppers and crickets | 18 of 24 (5 not covered) | 1 | 14 |
+  | Land mammals | 10 of 10 (2 not covered) | 1 | 0 |
+
+  At 0.03 and 0.05 more true species drop out (Wood Duck, Red Deer, a treefrog), with no
+  further gains. So the filter helps birds a little and is safe for them, but its insect
+  ranges are thin: filtering insects would hide correct results.
+- **Stored scores:** the app keeps a window's top 10 classes. In 5 of 256 windows the
+  first expected species was ranked lower than that, so a filter applied to stored
+  results needs more classes kept, or the filtering done in the worker.
 
 ## Not tested
 
