@@ -417,11 +417,17 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
         // wSNR
         if let Some(ref w) = wsnr_result.get() {
-            let grade = w.grade.label();
-            report.push_str(&format!(
-                "\nRecording Quality (wSNR): {}\n  SNR: {:.1} dB(ISO/ITU)\n  Signal: {:.1} dB (ISO 226)\n  Noise: {:.1} dB (ITU-R 468)\n",
-                grade, w.snr_db, w.signal_db, w.noise_db
-            ));
+            if let Some(reason) = &w.not_measured {
+                report.push_str(&format!(
+                    "\nRecording Quality (wSNR): not measured\n  {}\n",
+                    reason
+                ));
+            } else {
+                report.push_str(&format!(
+                    "\nRecording Quality (wSNR): {}\n  SNR: {:.1} dB(ISO/ITU)\n  Signal: {:.1} dB (ISO 226)\n  Noise: {:.1} dB (ITU-R 468)\n",
+                    w.grade.label(), w.snr_db, w.signal_db, w.noise_db
+                ));
+            }
             if let Some(xc) = xc_quality.get() {
                 report.push_str(&format!("  XC quality (metadata): {}\n", xc.trim()));
             }
@@ -942,12 +948,27 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                 <div class="setting-group-title">"Recording Quality"</div>
                                 <div class="wsnr-result">
                                     <div class="wsnr-detail">Estimated wSNR:</div>
-                                    <div class="wsnr-header">
-                                        <span class=grade_class>{grade_label}</span>
-                                        <span class="wsnr-snr">{snr_text}</span>
-                                    </div>
-                                    <div class="wsnr-detail">{signal_text}</div>
-                                    <div class="wsnr-detail">{noise_text}</div>
+                                    {match w.not_measured.clone() {
+                                        // No grade or dB values here: the ones in the
+                                        // result are placeholders, not measurements.
+                                        Some(reason) => view! {
+                                            <div class="wsnr-header">
+                                                <span class="wsnr-grade wsnr-grade-none">"\u{2013}"</span>
+                                                <div>
+                                                    <div class="wsnr-not-measured">"Not measured"</div>
+                                                    <div class="wsnr-reason">{reason}</div>
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        None => view! {
+                                            <div class="wsnr-header">
+                                                <span class=grade_class>{grade_label}</span>
+                                                <span class="wsnr-snr">{snr_text}</span>
+                                            </div>
+                                            <div class="wsnr-detail">{signal_text}</div>
+                                            <div class="wsnr-detail">{noise_text}</div>
+                                        }.into_any(),
+                                    }}
                                     {if !warnings.is_empty() {
                                         view! { <div class="wsnr-warnings">{warnings}</div> }.into_any()
                                     } else {

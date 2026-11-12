@@ -58,6 +58,37 @@ pub struct WsnrResult {
     pub dense_pct: f64,
     pub has_silent_gaps: bool,
     pub warnings: Vec<String>,
+    /// Why no wSNR was measured. When this is `Some`, `snr_db`, `grade`,
+    /// `signal_db` and `noise_db` are placeholders and must not be shown as results.
+    pub not_measured: Option<String>,
+}
+
+impl WsnrResult {
+    /// A result for a recording that wSNR could not be measured on.
+    /// `warnings` keeps anything found before the measurement was abandoned.
+    fn not_measured(
+        reason: String,
+        fade: FadeInfo,
+        clipping: (bool, usize),
+        is_ultrasonic: bool,
+        warnings: Vec<String>,
+    ) -> Self {
+        WsnrResult {
+            snr_db: 0.0,
+            grade: WsnrGrade::E,
+            signal_db: f64::NEG_INFINITY,
+            noise_db: 0.0,
+            fade,
+            is_clipped: clipping.0,
+            clipping_samples: clipping.1,
+            is_ultrasonic,
+            dense_soundscape: false,
+            dense_pct: 0.0,
+            has_silent_gaps: false,
+            warnings,
+            not_measured: Some(reason),
+        }
+    }
 }
 
 /// Main wSNR analysis entry point.
@@ -67,49 +98,33 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
 
     // Guard: too short
     if duration < 0.6 {
-        warnings.push("Too short recording (<0.6s)".into());
-        return WsnrResult {
-            snr_db: 0.0,
-            grade: WsnrGrade::E,
-            signal_db: f64::NEG_INFINITY,
-            noise_db: 0.0,
-            fade: FadeInfo {
+        return WsnrResult::not_measured(
+            "Recording too short (under 0.6 s)".to_string(),
+            FadeInfo {
                 fade_in_secs: 0.0,
                 fade_out_secs: 0.0,
             },
-            is_clipped: false,
-            clipping_samples: 0,
-            is_ultrasonic: false,
-            dense_soundscape: false,
-            dense_pct: 0.0,
-            has_silent_gaps: false,
+            (false, 0),
+            false,
             warnings,
-        };
+        );
     }
 
     // Guard: too low sample rate
     if sample_rate < 30000 {
-        warnings.push(format!(
-            "Sample rate too low for wSNR ({} Hz, need >= 30kHz)",
-            sample_rate
-        ));
-        return WsnrResult {
-            snr_db: 0.0,
-            grade: WsnrGrade::E,
-            signal_db: f64::NEG_INFINITY,
-            noise_db: 0.0,
-            fade: FadeInfo {
+        return WsnrResult::not_measured(
+            format!(
+                "Sample rate too low: {} kHz (wSNR needs 30 kHz or more)",
+                sample_rate as f64 / 1000.0
+            ),
+            FadeInfo {
                 fade_in_secs: 0.0,
                 fade_out_secs: 0.0,
             },
-            is_clipped: false,
-            clipping_samples: 0,
-            is_ultrasonic: false,
-            dense_soundscape: false,
-            dense_pct: 0.0,
-            has_silent_gaps: false,
+            (false, 0),
+            false,
             warnings,
-        };
+        );
     }
 
     // Step 1: Clipping detection
@@ -131,24 +146,16 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     // Step 3: Guard silent files
     let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     if peak < 1e-10 {
-        warnings.push("File appears silent".into());
-        return WsnrResult {
-            snr_db: 0.0,
-            grade: WsnrGrade::E,
-            signal_db: f64::NEG_INFINITY,
-            noise_db: 0.0,
-            fade: FadeInfo {
+        return WsnrResult::not_measured(
+            "File appears silent".to_string(),
+            FadeInfo {
                 fade_in_secs: 0.0,
                 fade_out_secs: 0.0,
             },
-            is_clipped,
-            clipping_samples,
+            (is_clipped, clipping_samples),
             is_ultrasonic,
-            dense_soundscape: false,
-            dense_pct: 0.0,
-            has_silent_gaps: false,
             warnings,
-        };
+        );
     }
 
     // Step 4: HP filter at 100Hz for fade/transient detection (matches plugin)
@@ -199,24 +206,16 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         .saturating_sub((end_exclude * sample_rate as f64) as usize);
 
     if end_sample <= start_sample + (sample_rate as usize / 10) {
-        warnings.push("Usable region too short after fade/transient removal".into());
-        return WsnrResult {
-            snr_db: 0.0,
-            grade: WsnrGrade::E,
-            signal_db: f64::NEG_INFINITY,
-            noise_db: 0.0,
-            fade: FadeInfo {
+        return WsnrResult::not_measured(
+            "Usable region too short after fade/transient removal".to_string(),
+            FadeInfo {
                 fade_in_secs,
                 fade_out_secs,
             },
-            is_clipped,
-            clipping_samples,
+            (is_clipped, clipping_samples),
             is_ultrasonic,
-            dense_soundscape: false,
-            dense_pct: 0.0,
-            has_silent_gaps: false,
             warnings,
-        };
+        );
     }
 
     let analysis_region = &samples[start_sample..end_sample];
@@ -280,6 +279,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         dense_pct,
         has_silent_gaps,
         warnings,
+        not_measured: None,
     }
 }
 
@@ -981,6 +981,19 @@ mod tests {
         // <0.6s of audio should land in the "too short" branch.
         let samples = vec![0.0f32; 1000]; // ~0.023s at 44.1kHz
         let result = analyze_wsnr(&samples, 44_100);
-        assert!(result.warnings.iter().any(|w| w.contains("Too short")));
+        assert!(result
+            .not_measured
+            .as_deref()
+            .is_some_and(|reason| reason.contains("too short")));
+    }
+
+    #[test]
+    fn analyze_wsnr_low_sample_rate_is_not_measured() {
+        let samples = vec![0.1f32; 48_000];
+        let result = analyze_wsnr(&samples, 24_000);
+        assert!(result
+            .not_measured
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Sample rate too low")));
     }
 }

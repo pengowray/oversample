@@ -498,6 +498,19 @@ body.sidebar-resizing {
 .wsnr-grade-c { background: #3a3a1a; color: #fc6; }
 .wsnr-grade-d { background: #3a2a1a; color: #f96; }
 .wsnr-grade-e { background: #3a1a1a; color: #f66; }
+/* wSNR could not be measured: a grey dash, so the eye goes to the reason
+   beside it and not to a grade that was never given. */
+.wsnr-grade-none { background: #2a2a2a; color: #777; }
+
+.wsnr-not-measured {
+    font-size: 11px;
+    color: #888;
+}
+
+.wsnr-reason {
+    font-size: 12px;
+    color: #fc8;
+}
 
 .wsnr-grade-sm {
     display: inline-flex;
