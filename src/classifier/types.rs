@@ -77,6 +77,10 @@ pub struct SpeciesLabel {
     /// "noise". BirdNET's non-bird classes ("Dog_Dog") count as species here:
     /// they are named sounds.
     pub is_species: bool,
+    /// A named sound rather than an animal: BirdNET's "Dog_Dog" and
+    /// "Engine_Engine" (the same name twice), and Perch's sound events
+    /// ("Thunder"). Listed with the species, but counted as sounds.
+    pub is_sound: bool,
 }
 
 impl SpeciesLabel {
@@ -87,11 +91,13 @@ impl SpeciesLabel {
                 scientific: s.to_string(),
                 common: c.to_string(),
                 is_species: true,
+                is_sound: s == c,
             },
             None => SpeciesLabel {
                 scientific: line.to_string(),
                 common: line.to_string(),
                 is_species: false,
+                is_sound: false,
             },
         }
     }
@@ -121,15 +127,17 @@ pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
         .skip(1)
         .map(|l| {
             let l = l.trim();
-            let name = if l.contains(' ') {
-                l.to_string()
-            } else {
+            let is_sound = !l.contains(' ');
+            let name = if is_sound {
                 l.replace("_and_", ", ").replace('_', " ")
+            } else {
+                l.to_string()
             };
             SpeciesLabel {
                 scientific: name.clone(),
                 common: name,
                 is_species: true,
+                is_sound,
             }
         })
         .collect()
@@ -212,11 +220,13 @@ mod tests {
 
     #[test]
     fn labels_parse() {
-        let l = parse_labels("Pipistrellus pipistrellus_Common pipistrelle\nNOISE\n\n");
-        assert_eq!(l.len(), 2);
+        let l = parse_labels("Pipistrellus pipistrellus_Common pipistrelle\nNOISE\nDog_Dog\n\n");
+        assert_eq!(l.len(), 3);
         assert_eq!(l[0].scientific, "Pipistrellus pipistrellus");
         assert_eq!(l[0].common, "Common pipistrelle");
-        assert!(l[1].is_noise());
+        assert!(!l[0].is_sound);
+        assert!(l[1].is_noise() && !l[1].is_sound);
+        assert!(l[2].is_species && l[2].is_sound);
     }
 
     #[test]
@@ -229,6 +239,7 @@ mod tests {
         assert_eq!(l[1].common, "Splash, splatter");
         assert_eq!(l[2].common, "Motor vehicle (road)");
         assert!(l.iter().all(|x| x.is_species));
+        assert!(!l[0].is_sound && l[1].is_sound && l[2].is_sound);
     }
 
     #[test]

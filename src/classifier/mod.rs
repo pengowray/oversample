@@ -232,15 +232,20 @@ pub fn delete_files(state: AppState, files: Vec<&'static ModelFile>) {
 thread_local! {
     static LABELS: RefCell<HashMap<&'static str, Arc<Vec<SpeciesLabel>>>> =
         RefCell::new(HashMap::new());
+    /// Set once Perch's English names have been fetched from the server (or
+    /// tried), so a failing server is asked once per session.
+    static PERCH_NAMES_FETCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-async fn labels(file: &'static ModelFile) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
+async fn labels(
+    state: AppState,
+    file: &'static ModelFile,
+) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
     if let Some(l) = LABELS.with(|m| m.borrow().get(file.id).cloned()) {
         return Ok(l);
     }
     let bytes = store::read(file).await?;
     let text = String::from_utf8_lossy(&bytes);
-    let mut keep = true;
     let l = Arc::new(match file.kind {
         catalog::FileKind::PerchLabels => {
             let mut l = types::parse_perch_labels(&text);
@@ -252,23 +257,47 @@ async fn labels(file: &'static ModelFile) -> Result<Arc<Vec<SpeciesLabel>>, Clas
                 });
             }
             // Perch's labels have no common names: take Xeno-Canto's English
-            // names (99% of its birds, about a third of the rest). Without
-            // them (offline), keep the scientific names and try again next run.
-            let names = crate::xc_client::english_names(&XC_GROUPS).await;
-            keep = !names.is_empty();
+            // names (99% of its birds, about a third of the rest) from the
+            // lists already stored, and fetch any missing ones without holding
+            // up the run.
+            let (names, complete) = crate::xc_client::english_names(&XC_GROUPS, false).await;
             types::add_common_names(&mut l, &names);
+            if !complete && !PERCH_NAMES_FETCHED.with(|f| f.replace(true)) {
+                spawn_local(fetch_perch_names(state, file));
+            }
             l
         }
         _ => types::parse_labels(&text),
     });
-    if keep {
-        LABELS.with(|m| m.borrow_mut().insert(file.id, l.clone()));
-    }
+    LABELS.with(|m| m.borrow_mut().insert(file.id, l.clone()));
     Ok(l)
 }
 
 /// The Xeno-Canto groups whose English names name Perch's classes.
 const XC_GROUPS: [&str; 5] = ["birds", "frogs", "grasshoppers", "land mammals", "bats"];
+
+/// Fetch the English name lists missing from storage, then rename Perch's
+/// labels and the results that use them.
+async fn fetch_perch_names(state: AppState, file: &'static ModelFile) {
+    let (names, _) = crate::xc_client::english_names(&XC_GROUPS, true).await;
+    if names.is_empty() {
+        return;
+    }
+    let Some(old) = LABELS.with(|m| m.borrow().get(file.id).cloned()) else {
+        return;
+    };
+    let mut l = (*old).clone();
+    types::add_common_names(&mut l, &names);
+    let new = Arc::new(l);
+    LABELS.with(|m| m.borrow_mut().insert(file.id, new.clone()));
+    state.classifier.results().update(|m| {
+        for r in m.values_mut() {
+            if Arc::ptr_eq(&r.labels, &old) {
+                r.labels = new.clone();
+            }
+        }
+    });
+}
 
 fn next_generation(state: AppState) -> u32 {
     let g = state
@@ -376,7 +405,7 @@ async fn run_task(
             .into());
         }
     }
-    let labels = labels(choice.labels()).await?;
+    let labels = labels(state, choice.labels()).await?;
     worker::ensure_family(method == Method::Perch);
     worker::ensure_started(state).await?;
     let models = choice.models();
@@ -553,7 +582,7 @@ async fn rescore_task(
     let labels_file = catalog::bat_labels(region);
     download_file(state, labels_file).await?;
     download_file(state, head).await?;
-    let labels = labels(labels_file).await?;
+    let labels = labels(state, labels_file).await?;
     worker::ensure_family(false);
     worker::ensure_started(state).await?;
     worker::ensure_model(head).await?;

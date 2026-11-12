@@ -446,36 +446,36 @@ struct NameLanguageEntry {
 }
 
 /// Xeno-Canto's English names, keyed by "Genus species", for every species in
-/// `groups` that has recordings there: from the species lists the XC browser
-/// keeps in OPFS, or else from the Oversample server (not waiting while it is
-/// still indexing a group). A group that can't be had is left out, so offline
-/// this may be empty. Used to name Perch's results, whose labels are scientific
-/// names only.
-pub async fn english_names(groups: &[&str]) -> HashMap<String, String> {
+/// `groups` that has recordings there, from the species lists the XC browser
+/// keeps in OPFS. With `fetch`, a group missing there comes from the Oversample
+/// server (not waiting while it is still indexing the group) and is saved for
+/// next time; this takes a few seconds, since server requests are throttled.
+/// Returns the names, and whether every group was found. Used to name Perch's
+/// results, whose labels are scientific names only.
+pub async fn english_names(groups: &[&str], fetch: bool) -> (HashMap<String, String>, bool) {
     let mut out = HashMap::new();
+    let mut complete = true;
     for group in groups {
         let key = taxonomy_cache_key(group, None);
-        let taxonomy = match load_cached_taxonomy(&key).await {
-            Some(t) => Some(t),
-            None => match server_taxonomy(group, None, false, &mut |_| {}, &|| true).await {
+        let mut taxonomy = load_cached_taxonomy(&key).await;
+        if taxonomy.is_none() && fetch {
+            match server_taxonomy(group, None, false, &mut |_| {}, &|| true).await {
                 Ok(Some(t)) => {
                     save_cached_taxonomy(&key, &t).await;
-                    Some(t)
+                    taxonomy = Some(t);
                 }
-                Ok(None) => None,
-                Err(e) => {
-                    log::info!("no English names for {group}: {e:?}");
-                    None
-                }
-            },
-        };
+                Ok(None) => {}
+                Err(e) => log::info!("no English names for {group}: {e:?}"),
+            }
+        }
+        complete &= taxonomy.is_some();
         for s in taxonomy.iter().flat_map(|t| &t.species) {
             if !s.en.is_empty() {
                 out.insert(format!("{} {}", s.genus, s.sp), s.en.clone());
             }
         }
     }
-    out
+    (out, complete)
 }
 
 /// The language codes the server has common names in. `None` if the server

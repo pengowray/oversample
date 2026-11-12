@@ -530,11 +530,31 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 None => format!("No species at confidence {min:.2} or above."),
             }
         } else {
-            format!(
-                "{min:.2} or above: {}, {}",
-                count(s.species.len(), "species", "species"),
-                count(s.species_windows, "window", "windows")
-            )
+            // Named sounds (Thunder, Dog) are listed with the species but
+            // counted apart, so "3 species" never includes Thunder.
+            let sounds = state.classifier.results().with(|m| {
+                current_file
+                    .get()
+                    .and_then(|f| m.get(&(f, method)))
+                    .map_or(0, |r| {
+                        s.species
+                            .iter()
+                            .filter(|row| {
+                                r.labels.get(row.class as usize).is_some_and(|l| l.is_sound)
+                            })
+                            .count()
+                    })
+            });
+            let animals = s.species.len() - sounds;
+            let mut parts = Vec::new();
+            if animals > 0 {
+                parts.push(count(animals, "species", "species"));
+            }
+            if sounds > 0 {
+                parts.push(count(sounds, "sound", "sounds"));
+            }
+            parts.push(count(s.species_windows, "window", "windows"));
+            format!("{min:.2} or above: {}", parts.join(", "))
         };
         let mut notes = Vec::new();
         if s.below_windows > 0 {
