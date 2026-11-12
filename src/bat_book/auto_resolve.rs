@@ -100,7 +100,9 @@ fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
         .and_then(|m| m.iter().find(|(k, _)| k == "Country"))
         .map(|(_, v)| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    if let Some(country) = xc {
+    // A Xeno-Canto country the region map doesn't know falls through to the
+    // coordinates.
+    if let Some(country) = xc.filter(|c| country_to_region(c).is_some()) {
         return Some(RecordingPlace {
             source: PlaceSource::XenoCanto,
             country,
@@ -309,13 +311,11 @@ mod tests {
     /// position on land never falls back to a favourite or Global unnoticed.
     #[test]
     fn every_outlined_country_has_a_region() {
-        let raw: Vec<(Vec<String>, serde_json::Value)> =
-            serde_json::from_str(include_str!("../data/countries-110m.json")).unwrap();
-        let missing: Vec<&str> = raw
-            .iter()
-            .filter(|(names, _)| !names.iter().any(|n| country_to_region(n).is_some()))
-            .map(|(names, _)| names[0].as_str())
+        let missing: Vec<&str> = super::super::countries::all_country_names()
+            .filter(|names| !names.iter().any(|n| country_to_region(n).is_some()))
+            .map(|names| names[0].as_str())
             .collect();
+        assert!(missing.len() < 200, "outlines not loaded");
         assert!(missing.is_empty(), "no region for: {missing:?}");
     }
 }

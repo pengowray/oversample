@@ -35,7 +35,8 @@ pub fn BatBookStrip() -> impl IntoView {
     // continues to work unchanged.
     // A recording with its own place (GPS or Xeno-Canto country) always uses
     // that place's region; a region picked in the menu is for recordings
-    // without one.
+    // without one. The exception is a picked region that is part of the
+    // recording's region (VIC within Australia), which is kept.
     Effect::new(move |_| {
         let mode = state.bat_book.mode().get();
         let files = state.library.files().get();
@@ -44,9 +45,9 @@ pub fn BatBookStrip() -> impl IntoView {
         let favourites = state.bat_book.favourites().get_untracked();
         let resolved = match mode {
             BatBookMode::Auto => Some(auto_resolve::resolve_auto(file, &favourites)),
-            BatBookMode::Manual(_) => {
-                file.and_then(|f| auto_resolve::recording_region(f, &favourites))
-            }
+            BatBookMode::Manual(picked) => file
+                .and_then(|f| auto_resolve::recording_region(f, &favourites))
+                .filter(|r| !picked.is_part_of(r.region)),
         };
         let region = match (&resolved, mode) {
             (Some(r), _) => r.region,

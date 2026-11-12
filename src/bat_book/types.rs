@@ -301,6 +301,13 @@ impl BatBookRegion {
     pub fn from_storage_key(key: &str) -> Option<Self> {
         Self::ALL.iter().find(|r| r.storage_key() == key).copied()
     }
+
+    /// Whether this region is a part of `other` that has a book of its own
+    /// but no outline to find it from a position (VIC within Australia). A
+    /// hand-picked part is kept for a recording whose place gives `other`.
+    pub fn is_part_of(self, other: BatBookRegion) -> bool {
+        matches!((self, other), (Self::VicAustralia, Self::Australia))
+    }
 }
 
 /// Whether the bat book is in Auto mode (resolve from file metadata) or manually pinned.

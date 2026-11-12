@@ -46,7 +46,17 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
         | "martinique"
         | "aruba"
         | "curacao"
-        | "bonaire" => Some(BatBookRegion::SouthAmerica),
+        | "curaçao"
+        | "bonaire"
+        | "united states virgin islands"
+        | "british virgin islands"
+        | "anguilla"
+        | "cayman islands"
+        | "turks and caicos islands"
+        | "montserrat"
+        | "saint martin"
+        | "saint barthelemy"
+        | "sint maarten" => Some(BatBookRegion::SouthAmerica),
 
         // Oceania → Australia (closest regional book; note NZ has its own
         // distinct fauna but no dedicated book yet)
@@ -70,7 +80,10 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
         | "niue"
         | "american samoa"
         | "french polynesia"
-        | "wallis and futuna" => Some(BatBookRegion::Australia),
+        | "wallis and futuna"
+        | "pitcairn islands"
+        | "norfolk island"
+        | "ashmore and cartier islands" => Some(BatBookRegion::Australia),
 
         // Central Asia → Middle East (closest)
         "kazakhstan" | "kyrgyzstan" | "tajikistan" | "turkmenistan" | "uzbekistan" => {
@@ -87,7 +100,19 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
         "greenland" => Some(BatBookRegion::NorthAmerica),
 
         // Kerguelen and nearby islands → Antarctica (no bats)
-        "french southern and antarctic lands" => Some(BatBookRegion::Antarctica),
+        "french southern and antarctic lands"
+        | "heard island and mcdonald islands"
+        | "south georgia and the islands"
+        | "south georgia and the south sandwich islands" => Some(BatBookRegion::Antarctica),
+
+        // Crown dependencies → UK (same species as southern England)
+        "jersey" | "guernsey" | "isle of man" => Some(BatBookRegion::UK),
+
+        // Lone islands → the nearest regional book
+        "saint pierre and miquelon" => Some(BatBookRegion::Canada),
+        "saint helena" => Some(BatBookRegion::Africa),
+        "british indian ocean territory" => Some(BatBookRegion::SouthAsia),
+        "australian indian ocean territories" => Some(BatBookRegion::SoutheastAsia),
 
         _ => None,
     };
@@ -133,6 +158,8 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
             | "denmark"
             | "estonia"
             | "finland"
+            | "aland"
+            | "faroe islands"
             | "france"
             | "germany"
             | "hungary"
@@ -215,6 +242,7 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
             | "nigeria"
             | "rwanda"
             | "sao tome and principe"
+            | "são tomé and principe"
             | "senegal"
             | "seychelles"
             | "sierra leone"
@@ -256,9 +284,8 @@ pub fn country_to_region(country: &str) -> Option<RegionMatch> {
             | "afghanistan" => BatBookRegion::MiddleEast,
 
             // South Asia
-            "bangladesh" | "bhutan" | "india" | "maldives" | "nepal" | "pakistan" | "sri lanka" => {
-                BatBookRegion::SouthAsia
-            }
+            "bangladesh" | "bhutan" | "india" | "siachen glacier" | "maldives" | "nepal"
+            | "pakistan" | "sri lanka" => BatBookRegion::SouthAsia,
 
             // Southeast Asia
             "brunei" | "cambodia" | "indonesia" | "laos" | "malaysia" | "myanmar" | "burma"
