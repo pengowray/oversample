@@ -69,6 +69,24 @@ fn window_len(secs: f64) -> String {
     }
 }
 
+/// A small square in the colour the spectrogram's label strip gives this
+/// class, so a row in the lists can be matched to its label and call boxes.
+/// `slot` is the species' place in `summary::colour_order`; None for classes
+/// that are not a species ("Noise"). Inline style: the colour comes from
+/// overlays.rs, the shape from the species map legend's `.map-key`.
+fn species_swatch(slot: Option<usize>) -> impl IntoView {
+    use crate::canvas::spectrogram_renderer::{species_colour, NOT_SPECIES_COLOUR};
+    let colour = slot.map_or(NOT_SPECIES_COLOUR, |s| species_colour(s).0);
+    view! {
+        <span
+            class="map-key"
+            style=format!(
+                "display:inline-block;vertical-align:-1px;margin-right:6px;border-radius:2px;background:{colour}",
+            )
+        ></span>
+    }
+}
+
 /// A class name as shown: BattyBirdNET's lower-case classes get a capital.
 fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
     let Some(l) = label else {
@@ -726,10 +744,12 @@ fn species_table(
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
         };
+        let order = summary::colour_order(run);
         summary::summarise(run, min)
             .species
             .iter()
             .map(|row| {
+                let slot = order.iter().position(|&c| c == row.class);
                 let label = run.labels.get(row.class as usize);
                 let name = class_name(label);
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
@@ -744,7 +764,7 @@ fn species_table(
                 };
                 view! {
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
-                        <td class="detection-col-kind">{name}</td>
+                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
                         <td class="detection-col-num">{row.windows}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
                     </tr>
@@ -775,6 +795,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
         };
+        let order = summary::colour_order(run);
         run.windows
             .iter()
             .enumerate()
@@ -789,6 +810,9 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let (start, end) = (w.start_s, w.end_s);
                 let other = kind == WindowKind::NotSpecies;
+                let slot = (!other)
+                    .then(|| order.iter().position(|&c| c == top.class))
+                    .flatten();
                 let class = move || {
                     let mut c = String::from("detection-row");
                     if other {
@@ -803,7 +827,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
                         <td class="detection-col-num">{i + 1}</td>
                         <td>{crate::format_time::format_time_display(start, 1)}</td>
-                        <td class="detection-col-kind">{name}</td>
+                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
                         <td class="detection-col-num">{format!("{:.2}", top.confidence)}</td>
                     </tr>
                 })

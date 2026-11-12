@@ -1016,6 +1016,8 @@ pub const SPECIES_COLOURS: [(&str, &str); 3] = [
     ("rgba(179, 136, 255, 0.9)", "rgba(179, 136, 255, 0.12)"), // violet #b388ff
 ];
 pub const SPECIES_OTHER: (&str, &str) = ("rgba(220, 220, 220, 0.8)", "rgba(220, 220, 220, 0.10)");
+/// Strip border for BattyBirdNET's classes that are not a species ("Noise").
+pub const NOT_SPECIES_COLOUR: &str = "rgba(160, 160, 160, 0.6)";
 /// A bat call outside every species window, while species colours are shown.
 const UNLABELLED_CALL: (&str, &str) = ("rgba(170, 170, 170, 0.6)", "rgba(170, 170, 170, 0.06)");
 
@@ -1145,6 +1147,16 @@ pub fn draw_calls(
         } else {
             &dashes
         });
+        if species.is_some() && !is_selected {
+            // A dark edge under the coloured line, so the species colour stays
+            // visible on every colour map: Turbo's cyan is close to the sky
+            // blue, and Greyscale's light greys hide the grey boxes.
+            ctx.save();
+            ctx.set_stroke_style_str("rgba(0, 0, 0, 0.6)");
+            ctx.set_line_width(3.0);
+            ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+            ctx.restore();
+        }
         ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
 
         // The detection's number in the list, above the box when there is room.
@@ -1228,7 +1240,7 @@ pub fn draw_species_strip(
         ctx.fill_rect(x0, 0.0, w, SPECIES_STRIP_H);
         ctx.set_stroke_style_str(match span.colour {
             Some(slot) => species_colour(slot).0,
-            None => "rgba(160, 160, 160, 0.6)",
+            None => NOT_SPECIES_COLOUR,
         });
         ctx.set_line_width(1.0);
         ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, SPECIES_STRIP_H - 1.0);
