@@ -59,6 +59,15 @@ struct ViewScale {
     css_h: f64,
 }
 
+/// The spectrogram's size, CSS px.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct ViewSize {
+    w: f64,
+    h: f64,
+    /// Height it would have without the species panel under it.
+    room_h: f64,
+}
+
 /// Where the drawn calls are when none of them is in the visible frequency
 /// range.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -600,15 +609,32 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     });
     let form = Memo::new(move |_| shown.get()?.sketch.map(|s| chosen_form(s, state)));
 
-    // The spectrogram's size, CSS px. Its height changes without any signal
-    // (the bat book strip or the panel below opening shrinks it), so watch it.
-    let view_size = RwSignal::new((0.0f64, 0.0f64));
+    // The spectrogram's size, CSS px, and the height it would have without
+    // the species panel under it. Its height changes without any signal (the
+    // bat book strip or the panel below opening shrinks it), so watch it.
+    // Both heights are read in one go from the same layout: measured at
+    // different times, the panel's height could be counted while the
+    // spectrogram hadn't shrunk yet, and the panel would close and reopen
+    // every frame.
+    let view_size = RwSignal::new(ViewSize::default());
     Effect::new(move |_| {
         let Some(el) = canvas_ref.get() else { return };
         let canvas: &web_sys::HtmlCanvasElement = el.as_ref();
         let read = {
             let canvas = canvas.clone();
-            move || (canvas.client_width() as f64, canvas.client_height() as f64)
+            move || {
+                let h = canvas.client_height() as f64;
+                let panel_h = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.query_selector(".species-panel-below").ok().flatten())
+                    .and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok())
+                    .map_or(0.0, |p| p.offset_height() as f64);
+                ViewSize {
+                    w: canvas.client_width() as f64,
+                    h,
+                    room_h: h + panel_h,
+                }
+            }
         };
         view_size.set(read());
         let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
@@ -629,7 +655,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
 
     // None until the main canvas has a size.
     let scale = Memo::new(move |_| {
-        let (css_w, css_h) = view_size.get();
+        let ViewSize { w: css_w, h: css_h, .. } = view_size.get();
         let zoom = state.view.zoom_level().get();
         let idx = state.library.current_index().get()?;
         let (time_res, file_max) = state.library.files().with(|files| {
@@ -658,14 +684,17 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         })
     });
 
-    // Text under the spectrogram instead of over the drawing.
-    // Judged on the room the spectrogram would have without the panel
-    // below, or the panel would keep itself open by shrinking it.
+    // Text under the spectrogram instead of over the drawing. Judged on the
+    // room the spectrogram would have without the panel below, or the panel
+    // would keep itself open by shrinking it. Not from `scale`, which is None
+    // while the spectrogram has no height: that would close the panel that
+    // took its height, and reopen it.
     let below = Memo::new(move |_| {
-        let extra = state.bat_book.panel_below_px().get();
-        scale.get().is_some_and(|s| {
-            s.css_w < COLUMN_MIN_VIEW_W || s.css_h + extra < COLUMN_MIN_VIEW_H
-        })
+        if !open.get() {
+            return false;
+        }
+        let v = view_size.get();
+        v.w > 0.0 && (v.w < COLUMN_MIN_VIEW_W || v.room_h < COLUMN_MIN_VIEW_H)
     });
     Effect::new(move |_| {
         let b = below.get();
@@ -969,39 +998,10 @@ pub fn SpeciesPanelBelow() -> impl IntoView {
     });
     let form = Memo::new(move |_| shown.get()?.sketch.map(|s| chosen_form(s, state)));
     let warning = Signal::derive(move || state.bat_book.panel_warning().get());
-    // Report this panel's height (see `panel_below_px`).
-    let panel_ref = NodeRef::<leptos::html::Div>::new();
-    Effect::new(move |_| {
-        let Some(el) = panel_ref.get() else {
-            state.bat_book.panel_below_px().set(0.0);
-            return;
-        };
-        let el: web_sys::HtmlElement = el.into();
-        let read = {
-            let el = el.clone();
-            move || el.offset_height() as f64
-        };
-        state.bat_book.panel_below_px().set(read());
-        let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(move |_e: js_sys::Array| {
-            let h = read();
-            // try_*: the observer may fire after this component is gone.
-            if state.bat_book.panel_below_px().try_get_untracked().is_some_and(|old| old != h) {
-                state.bat_book.panel_below_px().try_set(h);
-            }
-        });
-        if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
-            obs.observe(&el);
-            on_cleanup(move || obs.disconnect());
-        }
-        cb.forget();
-    });
-    on_cleanup(move || {
-        state.bat_book.panel_below_px().try_set(0.0);
-    });
     move || {
         shown.get()?;
         Some(view! {
-            <div class="species-panel-below species-text" node_ref=panel_ref>
+            <div class="species-panel-below species-text">
                 {nav_row(state)}
                 {name_block(shown)}
                 {body(state, shown, form, warning, true)}

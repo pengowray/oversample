@@ -1781,10 +1781,6 @@ pub struct BatBookState {
     /// Why the drawn calls can't be seen at this zoom, if they can't. Set
     /// by the drawing, shown by whichever panel holds the text.
     pub panel_warning: Option<String>,
-    /// Height of the species panel under the spectrogram, CSS px (0 when
-    /// it isn't shown). The spectrogram would have this much more room
-    /// without it, which decides whether the column fits instead.
-    pub panel_below_px: f64,
     /// Width in CSS px of the call-sketch strip while it sits at the left edge
     /// of the spectrogram, covering it. 0 when the strip is hidden or placed
     /// after the end of the recording. Canvas overlays use it as the left edge
@@ -2834,7 +2830,6 @@ impl AppState {
                 shown_id: None,
                 panel_below: false,
                 panel_warning: None,
-                panel_below_px: 0.0,
                 sketch_cover_px: 0.0,
                 last_clicked_id: None,
                 auto_focus: true,
