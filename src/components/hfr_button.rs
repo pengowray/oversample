@@ -424,9 +424,9 @@ pub fn RangeButton() -> impl IntoView {
 
                 // ── Audible ──
                 <button
-                    class=move || layer_opt_class(band_selected(state, 0.0, 24_000.0), false)
-                    on:click=move |_| { apply_band(state, 0.0, 24_000.0); }
-                >"Audible (\u{2264}24 kHz)"</button>
+                    class=move || layer_opt_class(band_selected(state, 0.0, crate::dsp::ultrasonic::HEARING_LIMIT_HZ), false)
+                    on:click=move |_| { apply_band(state, 0.0, crate::dsp::ultrasonic::HEARING_LIMIT_HZ); }
+                >"Audible (\u{2264}20 kHz)"</button>
 
                 <hr/>
 

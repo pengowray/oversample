@@ -635,7 +635,7 @@ pub(crate) fn BandHfrCell() -> impl IntoView {
         let h_dim = on && {
             let lo = state.filter.band_ff_freq_lo().get();
             let hi = state.filter.band_ff_freq_hi().get();
-            hi > lo && hi < 24_000.0
+            hi > lo && hi <= crate::dsp::ultrasonic::HEARING_LIMIT_HZ
         };
         let mut s = String::from("band-cell band-cell-hfr");
         if on {

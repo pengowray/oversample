@@ -1,7 +1,7 @@
-//! Where bat calls start, and which recordings can hold them. One place for
-//! the split between audible and ultrasonic sound that call detection, the
-//! loudest-frequency line, zero-crossing division and the default HFR band
-//! share. The lowest bat frequency itself is a user setting
+//! Where bat calls start, where human hearing stops, and which recordings
+//! can hold ultrasound. One place for the splits between audible and
+//! ultrasonic sound that call detection, the loudest-frequency line,
+//! zero-crossing division, the HFR band and the playback warnings share. The lowest bat frequency itself is a user setting
 //! (`AppState::lowest_bat_hz`); this module has its default.
 
 /// Default for the user's "Lowest bat frequency" setting. Free-tailed bats
@@ -12,6 +12,11 @@ pub const DEFAULT_LOWEST_BAT_HZ: f32 = 16_000.0;
 /// searched or filtered for calls, so a call at the lowest frequency is not
 /// cut by the band's own edge.
 pub const BAND_BELOW_LOWEST_BAT_HZ: f32 = 1_000.0;
+
+/// Top of human hearing, for the "Audible" presets, the dimmed H of HFR and
+/// the warnings that a band is inaudible at 1:1. A fixed figure, not a
+/// setting: it describes people, not bats.
+pub const HEARING_LIMIT_HZ: f64 = 20_000.0;
 
 /// Recordings sampled faster than this count as ultrasonic: their Nyquist
 /// frequency is above 24 kHz, beyond what CD and DAT-rate recorders capture.

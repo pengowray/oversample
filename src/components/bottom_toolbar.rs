@@ -90,7 +90,7 @@ pub fn BottomToolbar() -> impl IntoView {
         }
         let lo = state.filter.band_ff_freq_lo().get();
         let hi = state.filter.band_ff_freq_hi().get();
-        hi > lo && lo >= 20_000.0
+        hi > lo && lo >= crate::dsp::ultrasonic::HEARING_LIMIT_HZ
     });
 
     let play_left_class = Signal::derive(move || {
@@ -481,7 +481,7 @@ pub fn BottomToolbar() -> impl IntoView {
                     let is_band_inaudible = mode == PlaybackMode::Normal && {
                         let lo = state.filter.band_ff_freq_lo().get_untracked();
                         let hi = state.filter.band_ff_freq_hi().get_untracked();
-                        hi > lo && lo >= 20_000.0
+                        hi > lo && lo >= crate::dsp::ultrasonic::HEARING_LIMIT_HZ
                     };
                     let extra_btn_class = Signal::derive(move || {
                         let mut s = String::from("layer-btn play-mode-extra");

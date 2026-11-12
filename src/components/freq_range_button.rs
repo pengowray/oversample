@@ -21,7 +21,7 @@ fn toggle_panel(state: &AppState, panel: LayerPanel) {
 fn range_label(min_f: Option<f64>, max_f: Option<f64>, file_max: f64) -> &'static str {
     match (min_f, max_f) {
         (None, None) | (Some(0.0), None) => "Full",
-        (_, Some(m)) if (m - 22_000.0).abs() < 100.0 => "22k",
+        (_, Some(m)) if (m - crate::dsp::ultrasonic::HEARING_LIMIT_HZ).abs() < 100.0 => "20k",
         (_, Some(m)) if (m - 50_000.0).abs() < 100.0 => "50k",
         (_, Some(m)) if (m - 100_000.0).abs() < 100.0 => "100k",
         (_, Some(m)) if (m - file_max).abs() < 100.0 => "Full",
@@ -111,11 +111,11 @@ pub fn FreqRangeButton() -> impl IntoView {
                         on:click=set_range(None, None)
                     >"Full"</button>
                     <button class=move || {
-                        let is_22k = state.view.max_display_freq().get().is_some_and(|m| (m - 22_000.0).abs() < 100.0);
-                        layer_opt_class(is_22k)
+                        let is_audible = state.view.max_display_freq().get().is_some_and(|m| (m - crate::dsp::ultrasonic::HEARING_LIMIT_HZ).abs() < 100.0);
+                        layer_opt_class(is_audible)
                     }
-                        on:click=set_range(Some(0.0), Some(22_000.0))
-                    >"0 – 22 kHz"</button>
+                        on:click=set_range(Some(0.0), Some(crate::dsp::ultrasonic::HEARING_LIMIT_HZ))
+                    >"0 – 20 kHz"</button>
                     <button class=move || {
                         let is_50k = state.view.max_display_freq().get().is_some_and(|m| (m - 50_000.0).abs() < 100.0);
                         layer_opt_class(is_50k)

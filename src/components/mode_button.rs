@@ -550,7 +550,7 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
     let band_inaudible = Signal::derive(move || {
         let lo = state.filter.band_ff_freq_lo().get();
         let hi = state.filter.band_ff_freq_hi().get();
-        hi > lo && lo >= 20_000.0
+        hi > lo && lo >= crate::dsp::ultrasonic::HEARING_LIMIT_HZ
     });
 
     let mode_button = move |bucket: ModeBucket| {
@@ -1134,7 +1134,7 @@ fn ModeSettingsBody() -> impl IntoView {
                     PlaybackMode::Normal => view! {
                         // 1:1 has no settings. The inaudible-band warning,
                         // when applicable, is the only thing worth showing.
-                        {move || (state.filter.band_ff_freq_lo().get() >= 20_000.0).then(|| {
+                        {move || (state.filter.band_ff_freq_lo().get() >= crate::dsp::ultrasonic::HEARING_LIMIT_HZ).then(|| {
                             view! {
                                 <div style="padding: 8px 10px; font-size: 11px; color: #e0a030; line-height: 1.35;">
                                     "Band is above human hearing. 1:1 mode won\u{2019}t make it audible — try HET, TE, or PS."

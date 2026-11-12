@@ -2558,9 +2558,9 @@ pub fn MainViewButton() -> impl IntoView {
                                     state.view.min_display_freq().set(None);
                                     state.view.max_display_freq().set(None);
                                 }
-                                "22k" => {
+                                "20k" => {
                                     state.view.min_display_freq().set(Some(0.0));
-                                    state.view.max_display_freq().set(Some(22_000.0));
+                                    state.view.max_display_freq().set(Some(crate::dsp::ultrasonic::HEARING_LIMIT_HZ));
                                 }
                                 "50k" => {
                                     state.view.min_display_freq().set(Some(0.0));
@@ -2581,7 +2581,7 @@ pub fn MainViewButton() -> impl IntoView {
                         {move || {
                             let options: [(&str, &str, Option<f64>, Option<f64>); 5] = [
                                 ("full", "Full", None, None),
-                                ("22k", "0 \u{2013} 22 kHz", Some(0.0), Some(22_000.0)),
+                                ("20k", "0 \u{2013} 20 kHz", Some(0.0), Some(crate::dsp::ultrasonic::HEARING_LIMIT_HZ)),
                                 ("50k", "0 \u{2013} 50 kHz", Some(0.0), Some(50_000.0)),
                                 ("100k", "0 \u{2013} 100 kHz", Some(0.0), Some(100_000.0)),
                                 ("192k", "0 \u{2013} 192 kHz", Some(0.0), Some(192_000.0)),
