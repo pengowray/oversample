@@ -6636,10 +6636,11 @@ button.toolbar-overflow-btn {
     min-height: 22px;
 }
 
+/* #888: 5.3:1 on the strip (#555 was 2.5:1). */
 .bat-book-title {
     font-size: 10px;
     font-weight: 600;
-    color: #555;
+    color: #888;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     user-select: none;
@@ -6839,9 +6840,10 @@ button.toolbar-overflow-btn {
     color: #8fc;
 }
 
+/* #888: 4.5:1 or better on the chip background (#777 was 3.95:1). */
 .bat-book-chip-freq {
     font-size: 9px;
-    color: #777;
+    color: #888;
     white-space: nowrap;
 }
 
