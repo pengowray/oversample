@@ -57,6 +57,10 @@ pub(crate) fn seed_from_ring<T: Copy>(
     seeded
 }
 
+/// Samples bit-depth detection needs before it is trusted: ~0.25 s at 192 kHz,
+/// enough to see the low-bit usage settle.
+const DETECT_MIN_SAMPLES: u64 = 48_000;
+
 /// cpal's I24 holds the value in the low 24 bits of an i32; I24 storage uses
 /// the top 24 bits, as I32 does.
 fn i24_to_top_aligned(s: cpal::I24) -> i32 {
@@ -131,6 +135,12 @@ pub struct RecordingBuffer {
     /// known when a recording starts. `detect_samples` gates on having enough data.
     pub detect_or: i32,
     pub detect_samples: u64,
+    /// F32 streams only: the smallest of 16, 24 and 32 bits that holds every
+    /// stored sample exactly (32 means float is needed), and whether any
+    /// sample was non-zero. A 16-bit converter behind a float stream gives
+    /// samples on the 1/32768 grid, so they can be written as 16-bit PCM.
+    pub float_fit_bits: u16,
+    pub float_nonzero: bool,
     /// Per-device user override of the output bit depth (12/16/24/32). When set,
     /// the recording is written at this effective depth instead of the
     /// auto-detected one. `None` = Auto (use detection).
@@ -166,6 +176,8 @@ impl RecordingBuffer {
             shared_fd: None,
             detect_or: 0,
             detect_samples: 0,
+            float_fit_bits: 16,
+            float_nonzero: false,
             force_bits: None,
             write_format: format,
             preroll_i16: VecDeque::new(),
@@ -225,6 +237,7 @@ impl RecordingBuffer {
             .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
     }
     pub fn push_f32(&mut self, data: &[f32], recording: bool) {
+        self.note_f32_bits(data);
         if recording {
             self.total_samples += data.len() / self.channels as usize;
             self.samples_f32.extend_from_slice(data);
@@ -282,9 +295,7 @@ impl RecordingBuffer {
     /// all zeros and would read as 0 bits). `container_bits` is the stream's
     /// container width (32 for I24/I32). Saturates at `container_bits`.
     pub fn effective_bits(&self, container_bits: u16) -> Option<u16> {
-        // ~0.25 s at 192 kHz; enough to see the LSB usage settle.
-        const MIN_SAMPLES: u64 = 48_000;
-        if self.detect_samples < MIN_SAMPLES || self.detect_or == 0 {
+        if self.detect_samples < DETECT_MIN_SAMPLES || self.detect_or == 0 {
             return None;
         }
         let trailing = self.detect_or.trailing_zeros().min(container_bits as u32);
@@ -304,6 +315,43 @@ impl RecordingBuffer {
         // start, immediately before `seed_preroll` reads them; seed clears them.
     }
 
+    /// Add stored F32 samples to the bit-depth detection. `float_fit_bits`
+    /// rises to 24 for a sample that is not a whole number of 16-bit steps, and
+    /// to 32 for one that is not a whole number of 24-bit steps or is at or past
+    /// full scale (+1.0 has no PCM value). It never falls.
+    pub fn note_f32_bits(&mut self, data: &[f32]) {
+        for &s in data {
+            if self.float_fit_bits == 32 {
+                break;
+            }
+            self.float_nonzero |= s != 0.0;
+            let needs = if !(-1.0..1.0).contains(&s) || (s * 8_388_608.0).fract() != 0.0 {
+                32
+            } else if (s * 32_768.0).fract() != 0.0 {
+                24
+            } else {
+                16
+            };
+            self.float_fit_bits = self.float_fit_bits.max(needs);
+        }
+        self.detect_samples += data.len() as u64;
+    }
+
+    /// The depth an F32 stream's samples fit in exactly, or `None` until
+    /// enough non-silent audio has been seen.
+    pub fn float_bits(&self) -> Option<u16> {
+        (self.detect_samples >= DETECT_MIN_SAMPLES && self.float_nonzero)
+            .then_some(self.float_fit_bits)
+    }
+
+    /// The bits detection has seen in use for this stream's format.
+    fn detected_bits(&self) -> Option<u16> {
+        match self.format {
+            NativeSampleFormat::F32 => self.float_bits(),
+            _ => self.effective_bits(32),
+        }
+    }
+
     /// Add raw I24/I32 samples (before any mono mix) to the bit-depth detection.
     pub fn note_i32_bits(&mut self, data: &[i32]) {
         self.detect_or = data.iter().fold(self.detect_or, |or, &s| or | s);
@@ -314,14 +362,14 @@ impl RecordingBuffer {
     /// `write_format`. A per-device override (`force_bits`) wins. Otherwise an
     /// I24/I32 stream is narrowed to 16 or 24 bits when detection shows its low
     /// bits are always zero; until detection has seen enough audio, the stream's
-    /// own format is used.
+    /// own format is used. An F32 stream is written as 16- or 24-bit PCM when
+    /// every sample fits exactly.
     pub fn choose_write_format(&mut self) -> NativeSampleFormat {
-        let target = self.force_bits.or_else(|| self.effective_bits(32));
+        use NativeSampleFormat::{F32, I16, I24, I32};
+        let target = self.force_bits.or_else(|| self.detected_bits());
         self.write_format = match (self.format, target) {
-            (NativeSampleFormat::I24 | NativeSampleFormat::I32, Some(b)) if b <= 16 => {
-                NativeSampleFormat::I16
-            }
-            (NativeSampleFormat::I32, Some(b)) if b <= 24 => NativeSampleFormat::I24,
+            (I24 | I32 | F32, Some(b)) if b <= 16 => I16,
+            (I32 | F32, Some(b)) if b <= 24 => I24,
             (other, _) => other,
         };
         self.write_format
@@ -334,7 +382,7 @@ impl RecordingBuffer {
         if self.force_bits.is_some() || self.write_format == self.format {
             return;
         }
-        if let Some(seen) = self.effective_bits(32) {
+        if let Some(seen) = self.detected_bits() {
             if seen > self.write_format.bits_per_sample() {
                 eprintln!(
                     "{context}: wrote {:?} but the stream now uses {seen} bits; the low bits were dropped",
@@ -369,7 +417,31 @@ impl RecordingBuffer {
                 NativeSampleFormat::I24 => encode_samples_i24(&self.samples_i32),
                 _ => encode_samples_i32(&self.samples_i32),
             },
-            NativeSampleFormat::F32 => encode_samples_f32(&self.samples_f32),
+            NativeSampleFormat::F32 => match self.write_format {
+                NativeSampleFormat::I16 => self
+                    .samples_f32
+                    .iter()
+                    .flat_map(|&s| {
+                        let v = (s as f64 * 32_768.0).round().clamp(-32_768.0, 32_767.0) as i16;
+                        (v & mask16).to_le_bytes()
+                    })
+                    .collect(),
+                NativeSampleFormat::I24 => {
+                    let top_aligned: Vec<i32> = self
+                        .samples_f32
+                        .iter()
+                        .map(|&s| {
+                            ((s as f64 * 8_388_608.0)
+                                .round()
+                                .clamp(-8_388_608.0, 8_388_607.0)
+                                as i32)
+                                << 8
+                        })
+                        .collect();
+                    encode_samples_i24(&top_aligned)
+                }
+                _ => encode_samples_f32(&self.samples_f32),
+            },
         }
     }
 
@@ -589,6 +661,20 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
     devices
 }
 
+/// How much of a sample a capture format can carry, for picking the deepest:
+/// 32-bit and 24-bit integer first (detection narrows them to what the device
+/// uses), then float, then 16-bit, then anything else.
+fn format_depth_rank(format: cpal::SampleFormat) -> u8 {
+    use cpal::SampleFormat::{F32, I16, I24, I32};
+    match format {
+        I32 => 4,
+        I24 => 3,
+        F32 => 2,
+        I16 => 1,
+        _ => 0,
+    }
+}
+
 /// The cpal sample formats to look for, best first, for a user's max bit depth.
 /// Empty for auto (0): accept any format. Above 16 bits, F32 is a fallback (and
 /// the only deeper format Android's AAudio backend opens).
@@ -711,6 +797,12 @@ pub fn open_mic(
         } else {
             format_filtered
         };
+        // With depth on Auto, try the deepest format first: the rate search
+        // takes the first config that has the rate, and hosts list I16 first
+        // (AAudio lists I16 before F32 at every rate). Bit-depth detection
+        // writes a 16-bit device's audio as 16-bit anyway.
+        let mut chan_filtered = chan_filtered;
+        chan_filtered.sort_by_key(|c| std::cmp::Reverse(format_depth_rank(c.sample_format())));
 
         // Now negotiate sample rate from the filtered configs
         let negotiated = if requested_max_rate > 0 {
@@ -719,7 +811,7 @@ pub fn open_mic(
             // Auto rate: pick the config with the highest max rate
             chan_filtered
                 .iter()
-                .max_by_key(|c| c.max_sample_rate())
+                .max_by_key(|c| (c.max_sample_rate(), format_depth_rank(c.sample_format())))
                 .map(|c| {
                     let rate = c.max_sample_rate();
                     c.clone().with_sample_rate(rate)
@@ -1127,7 +1219,9 @@ mod tests {
     /// detection to settle.
     fn i32_stream_with_24_bit_audio() -> RecordingBuffer {
         let mut buf = RecordingBuffer::new(NativeSampleFormat::I32, 48_000, 2);
-        let listened: Vec<i32> = (0..60_000_i32).map(|i| i.wrapping_mul(0x1234_5671) & !0xFF).collect();
+        let listened: Vec<i32> = (0..60_000_i32)
+            .map(|i| i.wrapping_mul(0x1234_5671) & !0xFF)
+            .collect();
         buf.note_i32_bits(&listened);
         buf
     }
@@ -1148,8 +1242,52 @@ mod tests {
         forced.force_bits = Some(16);
         assert_eq!(forced.choose_write_format(), NativeSampleFormat::I16);
         let mut float = RecordingBuffer::new(NativeSampleFormat::F32, 48_000, 1);
-        float.force_bits = Some(16);
+        float.note_f32_bits(&[0.5, 1.0 / 32_768.0]);
         assert_eq!(float.choose_write_format(), NativeSampleFormat::F32);
+        float.force_bits = Some(16);
+        assert_eq!(float.choose_write_format(), NativeSampleFormat::I16);
+    }
+
+    /// An F32 stream with enough audio seen, every sample `step` times an integer.
+    fn f32_stream_on_grid(step: f32) -> RecordingBuffer {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::F32, 48_000, 1);
+        let listened: Vec<f32> = (0..60_000_i32)
+            .map(|i| ((i * 7919) % 20_001 - 10_000) as f32 * step)
+            .collect();
+        buf.push_f32(&listened, false);
+        buf
+    }
+
+    #[test]
+    fn float_stream_from_a_16_bit_converter_is_written_as_16_bit_exactly() {
+        let mut buf = f32_stream_on_grid(1.0 / 32_768.0);
+        assert_eq!(buf.choose_write_format(), NativeSampleFormat::I16);
+        let samples: Vec<f32> = [-32_768, -1, 0, 1, 12_345, 32_767]
+            .iter()
+            .map(|&v| v as f32 / 32_768.0)
+            .collect();
+        buf.samples_f32 = samples;
+        let decoded: Vec<i16> = buf
+            .data_bytes()
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        assert_eq!(decoded, vec![-32_768, -1, 0, 1, 12_345, 32_767]);
+    }
+
+    #[test]
+    fn float_stream_written_as_24_bit_or_kept_float() {
+        let mut deeper = f32_stream_on_grid(1.0 / 8_388_608.0);
+        assert_eq!(deeper.choose_write_format(), NativeSampleFormat::I24);
+        deeper.samples_f32 = vec![-1.0, 3.0 / 8_388_608.0];
+        assert_eq!(deeper.data_bytes(), vec![0, 0, 0x80, 3, 0, 0]);
+
+        let mut float = f32_stream_on_grid(1.0 / 8_388_608.0);
+        float.push_f32(&[0.1], false);
+        assert_eq!(float.choose_write_format(), NativeSampleFormat::F32);
+        let mut over = f32_stream_on_grid(1.0 / 32_768.0);
+        over.push_f32(&[1.0], false);
+        assert_eq!(over.choose_write_format(), NativeSampleFormat::F32);
     }
 
     #[test]
@@ -1179,7 +1317,10 @@ mod tests {
     fn cpal_i24_lands_in_the_top_24_bits() {
         let top = i24_to_top_aligned(cpal::I24::new(0x12_3456).unwrap());
         assert_eq!(top, 0x1234_5600);
-        assert_eq!(crate::recovery::encode_samples_i24(&[top]), [0x56, 0x34, 0x12]);
+        assert_eq!(
+            crate::recovery::encode_samples_i24(&[top]),
+            [0x56, 0x34, 0x12]
+        );
         let min = i24_to_top_aligned(cpal::I24::new(-(1 << 23)).unwrap());
         assert_eq!(min, i32::MIN);
     }
