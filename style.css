@@ -3517,6 +3517,18 @@ body.sidebar-resizing {
     padding: 0 4px 0 0;
 }
 
+/* The hearing bar's "HEAR" label sits over the top of the HFR cell instead
+   of in a column before it. In its own column it pushed the HFR cell 33px
+   to the right of the band gutter that the cell belongs above. */
+.hearing-bar > .bar-label {
+    position: absolute;
+    left: 5px;
+    top: 3px;
+    padding: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+
 /* ── BAND cell — leftmost column of the hearing bar ───────────────────
    Width and right edge mirror the band-gutter column directly below
    (44px + 3px margin + 2px border). The cell is now a clickable button
@@ -3524,6 +3536,7 @@ body.sidebar-resizing {
    brightness encoding HFR state (grey off, amber on, "H" dimmed when
    the active band sits entirely below 24 kHz). */
 .band-cell {
+    /* The 9px top padding below is room for the "HEAR" label above "HFR". */
     flex: 0 0 44px;
     margin-right: 3px;
     border-right: 2px solid #2a2a2a;
@@ -3538,7 +3551,7 @@ body.sidebar-resizing {
     line-height: 1;
     user-select: none;
     cursor: pointer;
-    padding: 0;
+    padding: 9px 0 0;
     font: inherit;
     color: inherit;
     transition: background 0.15s;
@@ -4533,6 +4546,10 @@ body.sidebar-resizing {
 @media (max-width: 640px) {
     .bar-label {
         display: none;
+    }
+    /* No "HEAR" label above it here, so no room is kept for one. */
+    .band-cell {
+        padding-top: 0;
     }
     /* Tighten bar padding too — every pixel counts on phone screens. */
     .hearing-bar,
