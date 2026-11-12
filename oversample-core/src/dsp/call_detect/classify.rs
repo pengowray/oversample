@@ -134,7 +134,7 @@
 
 use super::detector::CallEvent;
 
-pub const DEFAULT_MIN_BAT_HZ: f32 = 16_000.0;
+pub const DEFAULT_MIN_BAT_HZ: f32 = crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ;
 pub const DEFAULT_MAX_AUDIBLE_DB: f32 = 4.0;
 pub const DEFAULT_TRAIN_WINDOW_S: f32 = 0.6;
 pub const DEFAULT_TRAIN_FREQ_HZ: f32 = 5_000.0;

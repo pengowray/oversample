@@ -2704,7 +2704,10 @@ impl AppState {
             }),
 
             call_detection: Store::new(CallDetectionState {
-                params: crate::dsp::call_detect::CallScanParams::default(),
+                params: crate::dsp::call_detect::CallScanParams {
+                    min_bat_hz: crate::settings::get_lowest_bat_hz(),
+                    ..Default::default()
+                },
                 scanned: None,
                 band_hz: None,
                 detected: Vec::new(),
@@ -3889,7 +3892,9 @@ impl AppState {
                                 .map(|f| f.audio.sample_rate)
                                 .unwrap_or(0)
                         });
-                        if sample_rate == 0 || sample_rate > 48_000 {
+                        if sample_rate == 0
+                            || crate::dsp::ultrasonic::is_ultrasonic_rate(sample_rate)
+                        {
                             self.playback.mode().set(PlaybackMode::PitchShift);
                         }
                     }
@@ -3932,6 +3937,26 @@ impl AppState {
         if self.viewmode.hfr_enabled().get_untracked() != hfr {
             self.viewmode.hfr_enabled().set(hfr);
         }
+    }
+
+    /// "Lowest bat frequency" (Settings > Bats, and call detection): where bat
+    /// calls start for call detection, the loudest-frequency line, ZC division
+    /// and the default HFR band. Tracked.
+    pub fn lowest_bat_hz(&self) -> f32 {
+        self.call_detection.params().with(|p| p.min_bat_hz)
+    }
+
+    /// [`Self::lowest_bat_hz`] without tracking.
+    pub fn lowest_bat_hz_untracked(&self) -> f32 {
+        self.call_detection
+            .params()
+            .with_untracked(|p| p.min_bat_hz)
+    }
+
+    /// Change the lowest bat frequency and save it.
+    pub fn set_lowest_bat_hz(&self, hz: f32) {
+        self.call_detection.params().update(|p| p.min_bat_hz = hz);
+        crate::settings::set_lowest_bat_hz(hz);
     }
 
     /// Highest frequency the active source can carry. When the current file

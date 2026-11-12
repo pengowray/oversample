@@ -247,7 +247,8 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
                     }
                 });
 
-                let (lo, hi) = species_range.unwrap_or((18_000.0, nyquist));
+                let lowest = state.lowest_bat_hz_untracked() as f64;
+                let (lo, hi) = species_range.unwrap_or((lowest.min(nyquist), nyquist));
                 state.set_band_ff_range(lo, hi);
             }
         }

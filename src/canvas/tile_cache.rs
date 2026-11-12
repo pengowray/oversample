@@ -2407,7 +2407,13 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
         }
         PlaybackMode::ZeroCrossing => {
             let factor = state.transform.zc_factor().get_untracked() as u32;
-            crate::dsp::zc_divide::zc_divide(samples, sample_rate, factor, false)
+            crate::dsp::zc_divide::zc_divide(
+                samples,
+                sample_rate,
+                factor,
+                false,
+                state.lowest_bat_hz_untracked(),
+            )
         }
     }
 }

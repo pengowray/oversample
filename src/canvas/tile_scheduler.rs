@@ -307,6 +307,10 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             .update(|n| *n = n.wrapping_add(1));
     });
 
+    // The lowest bat frequency alone, so changing other call-detection
+    // settings doesn't clear tiles.
+    let lowest_bat_hz = Memo::new(move |_| state.lowest_bat_hz());
+
     // Clear magnitude tiles when display transform/decimation toggles
     {
         let prev_xform = RwSignal::new(false);
@@ -320,6 +324,8 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let _ps = state.transform.ps_factor().get();
             let _pv = state.transform.pv_factor().get();
             let _zc = state.transform.zc_factor().get();
+            // ZC division filters from just below the lowest bat frequency.
+            let _lowest = lowest_bat_hz.get();
             let decim = state.display.decimate_effective().get();
             let decim_changed = decim != prev_decim.get_untracked();
             if xform_on || prev_xform.get_untracked() || decim_changed {
@@ -334,9 +340,11 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         });
     }
 
-    // Clear the loudest-frequency line's tiles when it is switched on or off
+    // Clear the loudest-frequency line's tiles when it is switched on or off,
+    // or when the lowest bat frequency (the line's lower limit) changes
     Effect::new(move || {
         let _line = state.spect.loudest_freq_line().get();
+        let _lowest = lowest_bat_hz.get();
         crate::canvas::reassign_line::clear_all();
     });
 

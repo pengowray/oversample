@@ -345,10 +345,24 @@ fn InbuiltDetection() -> impl IntoView {
 
     let commit = move || {
         let d = draft.get_untracked();
-        if state.call_detection.params().get_untracked() != d {
+        let old = state.call_detection.params().get_untracked();
+        if old != d {
+            // The lowest bat frequency is a saved setting shared with the
+            // loudest-frequency line, ZC and HFR (Settings > Bats).
+            if old.min_bat_hz != d.min_bat_hz {
+                crate::settings::set_lowest_bat_hz(d.min_bat_hz);
+            }
             state.call_detection.params().set(d);
         }
     };
+    // Follow changes made elsewhere (Settings > Bats), so the next commit here
+    // doesn't put the old value back.
+    Effect::new(move || {
+        let p = state.call_detection.params().get();
+        if draft.get_untracked() != p {
+            draft.set(p);
+        }
+    });
 
     // Memos, so the list is rebuilt (and its scroll position lost) only when
     // these values change, not on every change to the file list.
@@ -724,7 +738,7 @@ fn InbuiltDetection() -> impl IntoView {
                 <div class="setting-group-title">"Detection Settings"</div>
                 {slider(
                     "Lowest bat frequency",
-                    "Detections with a peak frequency below this are marked Low frequency. Default 16 kHz. Lower it to find free-tailed bats calling near 11 kHz; expect more false detections from birds and insects.",
+                    "Detections with a peak frequency below this are marked Low frequency. Default 16 kHz. Lower it to find free-tailed bats near 11 kHz; expect more false detections from birds and insects.\nThis is the Lowest bat frequency setting from Settings, which the Loudest-frequency line, ZC and HFR also use.",
                     (8.0, 30.0, 1.0),
                     |p| p.min_bat_hz as f64 / 1000.0,
                     |p, v| p.min_bat_hz = (v * 1000.0) as f32,

@@ -1,11 +1,13 @@
 use crate::dsp::filters::lowpass_filter;
+use crate::dsp::ultrasonic::bat_band_lo_hz;
 use crate::dsp::zero_crossing::{crossings_to_hz, CROSSINGS_PER_CYCLE};
 
-/// Bandpass-filter samples to the ultrasonic range (15 kHz – Nyquist).
-/// Shared by both `zc_divide` and `zc_rate_per_bin`.
-fn bandpass_ultrasonic(samples: &[f32], sample_rate: u32) -> Vec<f32> {
-    // High-pass at 15 kHz via subtracting lowpass from original
-    let lp = cascaded_lp(samples, 15_000.0, sample_rate, 4);
+/// Bandpass-filter samples to the bat range (`band_lo_hz` to Nyquist, 15 kHz
+/// for the default lowest bat frequency). Shared by both `zc_divide` and
+/// `zc_rate_per_bin`.
+fn bandpass_ultrasonic(samples: &[f32], sample_rate: u32, band_lo_hz: f64) -> Vec<f32> {
+    // High-pass via subtracting lowpass from original
+    let lp = cascaded_lp(samples, band_lo_hz, sample_rate, 4);
     let filtered: Vec<f32> = samples.iter().zip(lp.iter()).map(|(s, l)| s - l).collect();
 
     // Low-pass at 150 kHz (only matters if sample rate > 300 kHz)
@@ -28,10 +30,6 @@ fn adaptive_threshold(filtered: &[f32]) -> (f32, f32) {
     let threshold_low = threshold_high * 0.4;
     (threshold_high, threshold_low)
 }
-
-/// Crossings further apart than one cycle at this frequency (the high-pass
-/// cutoff) belong to different signals.
-const MIN_SIGNAL_HZ: f64 = 15_000.0;
 
 /// A crossing must pass this fraction of the envelope either side of zero.
 /// Low enough that a sine sampled at 192 kHz passes it every half-cycle up to
@@ -75,12 +73,14 @@ struct CrossingDetector {
 }
 
 impl CrossingDetector {
-    fn new(filtered: &[f32], sample_rate: u32) -> Self {
+    /// Crossings further apart than one cycle at `band_lo_hz` (the
+    /// high-pass cutoff) belong to different signals.
+    fn new(filtered: &[f32], sample_rate: u32, band_lo_hz: f64) -> Self {
         let (threshold_high, threshold_low) = adaptive_threshold(filtered);
         Self {
             threshold_high,
             threshold_low,
-            max_gap: (sample_rate as f64 / MIN_SIGNAL_HZ).ceil() as usize,
+            max_gap: (sample_rate as f64 / band_lo_hz.max(1.0)).ceil() as usize,
             armed: false,
             high: false,
             last_crossing: None,
@@ -125,7 +125,8 @@ impl CrossingDetector {
 /// Simulate a zero-crossing frequency division bat detector.
 ///
 /// Real FD detectors work by:
-/// 1. Bandpass filtering the input to the ultrasonic range (15-150 kHz)
+/// 1. Bandpass filtering the input to the bat range (from 1 kHz below
+///    `lowest_bat_hz`, 15 kHz by default, up to 150 kHz)
 /// 2. Using a Schmitt trigger (hysteresis comparator) to reject noise crossings
 ///    (see [`CrossingDetector`])
 /// 3. Counting whole cycles of the signal (two zero crossings each)
@@ -141,7 +142,9 @@ pub fn zc_divide(
     sample_rate: u32,
     division_factor: u32,
     skip_bandpass: bool,
+    lowest_bat_hz: f32,
 ) -> Vec<f32> {
+    let band_lo_hz = bat_band_lo_hz(lowest_bat_hz) as f64;
     if samples.len() < 2 || division_factor == 0 {
         return vec![0.0; samples.len()];
     }
@@ -149,14 +152,14 @@ pub fn zc_divide(
     let filtered = if skip_bandpass {
         samples.to_vec()
     } else {
-        bandpass_ultrasonic(samples, sample_rate)
+        bandpass_ultrasonic(samples, sample_rate, band_lo_hz)
     };
 
     // Envelope follower (~1ms window)
     let env_samples = ((sample_rate as f64 * 0.001) as usize).max(1);
     let envelope = smooth_envelope(&filtered, env_samples);
 
-    let mut detector = CrossingDetector::new(&filtered, sample_rate);
+    let mut detector = CrossingDetector::new(&filtered, sample_rate, band_lo_hz);
 
     // Each cycle has two zero crossings, so a click needs twice
     // `division_factor` of them.
@@ -203,7 +206,9 @@ pub fn zc_rate_per_bin(
     sample_rate: u32,
     bin_duration: f64,
     skip_bandpass: bool,
+    lowest_bat_hz: f32,
 ) -> Vec<(f64, bool)> {
+    let band_lo_hz = bat_band_lo_hz(lowest_bat_hz) as f64;
     if samples.len() < 2 {
         return Vec::new();
     }
@@ -211,11 +216,11 @@ pub fn zc_rate_per_bin(
     let filtered = if skip_bandpass {
         samples.to_vec()
     } else {
-        bandpass_ultrasonic(samples, sample_rate)
+        bandpass_ultrasonic(samples, sample_rate, band_lo_hz)
     };
     let env_samples = ((sample_rate as f64 * 0.001) as usize).max(1);
     let envelope = smooth_envelope(&filtered, env_samples);
-    let mut detector = CrossingDetector::new(&filtered, sample_rate);
+    let mut detector = CrossingDetector::new(&filtered, sample_rate, band_lo_hz);
 
     let bin_samples = ((sample_rate as f64 * bin_duration) as usize).max(1);
     let num_bins = filtered.len().div_ceil(bin_samples);
@@ -284,6 +289,7 @@ pub(crate) fn smooth_envelope(samples: &[f32], window: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ;
     use std::f64::consts::PI;
 
     fn make_sine(freq: f64, sample_rate: u32, duration: f64) -> Vec<f32> {
@@ -303,7 +309,7 @@ mod tests {
             .iter()
             .map(|s| s * 0.8)
             .collect();
-        let output = zc_divide(&input, sr, 10, false);
+        let output = zc_divide(&input, sr, 10, false, DEFAULT_LOWEST_BAT_HZ);
         assert_eq!(output.len(), input.len());
 
         let peak = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -319,7 +325,7 @@ mod tests {
             .iter()
             .map(|s| s * 0.005)
             .collect();
-        let output = zc_divide(&input, sr, 8, false);
+        let output = zc_divide(&input, sr, 8, false, DEFAULT_LOWEST_BAT_HZ);
         let peak = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(
             peak > 0.001,
@@ -330,21 +336,21 @@ mod tests {
     #[test]
     fn test_silence_produces_no_output() {
         let input = vec![0.0f32; 19200];
-        let output = zc_divide(&input, 192_000, 10, false);
+        let output = zc_divide(&input, 192_000, 10, false, DEFAULT_LOWEST_BAT_HZ);
         let peak = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(peak < 0.001, "Silence should produce no clicks");
     }
 
     #[test]
     fn test_empty_input() {
-        let output = zc_divide(&[], 192_000, 10, false);
+        let output = zc_divide(&[], 192_000, 10, false, DEFAULT_LOWEST_BAT_HZ);
         assert!(output.is_empty());
     }
 
     #[test]
     fn test_dc_signal_no_clicks() {
         let input = vec![1.0f32; 1000];
-        let output = zc_divide(&input, 44100, 10, false);
+        let output = zc_divide(&input, 44100, 10, false, DEFAULT_LOWEST_BAT_HZ);
         assert!(output.iter().all(|&s| s.abs() < 0.001));
     }
 
@@ -363,7 +369,7 @@ mod tests {
         // (tone Hz, division, expected click rate Hz)
         for (freq, division, expected) in [(40_000.0, 10, 4_000.0), (30_000.0, 6, 5_000.0)] {
             let input: Vec<f32> = make_sine(freq, sr, 0.1).iter().map(|s| s * 0.5).collect();
-            let output = zc_divide(&input, sr, division, false);
+            let output = zc_divide(&input, sr, division, false, DEFAULT_LOWEST_BAT_HZ);
             // Skip the first 2 ms while the filters settle and the envelope rises.
             let skip = (sr as f64 * 0.002) as usize;
             let clicks = count_clicks(&output[skip..]);
@@ -383,7 +389,7 @@ mod tests {
             .iter()
             .map(|s| s * 0.5)
             .collect();
-        let bins = zc_rate_per_bin(&input, sr, 0.001, false);
+        let bins = zc_rate_per_bin(&input, sr, 0.001, false, DEFAULT_LOWEST_BAT_HZ);
         // Leave out the first and last bins, which the tone only partly fills.
         let interior = &bins[1..bins.len() - 1];
         assert!(interior.iter().all(|&(_, armed)| armed));
@@ -416,7 +422,7 @@ mod tests {
         for (x, t) in input.iter_mut().zip(&tone) {
             *x += t * 0.5;
         }
-        let output = zc_divide(&input, sr, 10, false);
+        let output = zc_divide(&input, sr, 10, false, DEFAULT_LOWEST_BAT_HZ);
         let peak = output.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
         assert!(peak > 0.001, "the call should make clicks, peak={peak}");
         // Allow 1 ms for the last click and the output filter to die away.
@@ -436,13 +442,13 @@ mod tests {
         // Skip the bandpass so the 5 kHz tone reaches the detector. Its
         // half-cycles are 19.2 samples, longer than one 15 kHz cycle (12.8).
         let input = make_sine(5_000.0, sr, 0.05);
-        let output = zc_divide(&input, sr, 2, true);
+        let output = zc_divide(&input, sr, 2, true, DEFAULT_LOWEST_BAT_HZ);
         assert!(output.iter().all(|&s| s.abs() < 1e-6));
-        let bins = zc_rate_per_bin(&input, sr, 0.001, true);
+        let bins = zc_rate_per_bin(&input, sr, 0.001, true, DEFAULT_LOWEST_BAT_HZ);
         assert!(bins.iter().all(|&(freq, _)| freq == 0.0));
         // A 10 kHz tone (9.6 samples per half-cycle) still counts.
         let input = make_sine(10_000.0, sr, 0.05);
-        let output = zc_divide(&input, sr, 2, true);
+        let output = zc_divide(&input, sr, 2, true, DEFAULT_LOWEST_BAT_HZ);
         assert!(output.iter().any(|&s| s.abs() > 0.001));
     }
 
@@ -453,7 +459,7 @@ mod tests {
             .iter()
             .map(|s| s * 0.5)
             .collect();
-        let bins = zc_rate_per_bin(&input, sr, 0.001, false);
+        let bins = zc_rate_per_bin(&input, sr, 0.001, false, DEFAULT_LOWEST_BAT_HZ);
         assert!(!bins.is_empty());
         // Most bins should show ~45 kHz and be armed
         let armed_bins: Vec<_> = bins.iter().filter(|(_, armed)| *armed).collect();

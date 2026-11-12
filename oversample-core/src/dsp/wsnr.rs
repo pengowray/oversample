@@ -308,7 +308,7 @@ fn detect_clipping(samples: &[f32]) -> (bool, usize, f32) {
 // ---------------------------------------------------------------------------
 
 fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>) {
-    if sample_rate <= 48000 {
+    if !crate::dsp::ultrasonic::is_ultrasonic_rate(sample_rate) {
         return (false, None);
     }
 

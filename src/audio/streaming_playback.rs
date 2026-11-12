@@ -135,6 +135,8 @@ pub(crate) struct PlaybackParams {
     /// stays narrow. 0 = no shift (pure multiplicative pitch divide).
     pub ps_shift_hz: f64,
     pub zc_factor: f64,
+    /// Lowest bat frequency (Hz): ZC division filters from 1 kHz below it.
+    pub zc_lowest_bat_hz: f32,
     pub gain_db: f64,
     pub gain_mode: GainMode,
     pub auto_peak_gain_db: f64,
@@ -811,6 +813,7 @@ pub(crate) fn apply_dsp_mode(
             sample_rate,
             params.zc_factor as u32,
             params.filter_enabled,
+            params.zc_lowest_bat_hz,
         ),
     }
 }

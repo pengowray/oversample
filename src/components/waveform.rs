@@ -27,6 +27,7 @@ pub fn Waveform() -> impl IntoView {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let filter_enabled = state.filter.enabled().get();
+        let lowest_bat_hz = state.lowest_bat_hz();
         let cv = state.viewmode.channel_view().get();
         // Subscribe to EQ params so memo recomputes when they change
         let freq_low = state.filter.freq_low().get();
@@ -76,7 +77,7 @@ pub fn Waveform() -> impl IntoView {
             } else {
                 ch_samples.into_owned()
             };
-            zc_rate_per_bin(&samples, sr, ZC_BIN_DURATION, filter_enabled)
+            zc_rate_per_bin(&samples, sr, ZC_BIN_DURATION, filter_enabled, lowest_bat_hz)
         })
     });
 

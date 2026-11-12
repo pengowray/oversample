@@ -23,6 +23,7 @@ pub mod resonators;
 pub mod spectral_sub;
 pub mod spectrum_level;
 pub mod surface_grid;
+pub mod ultrasonic;
 pub mod wsnr;
 pub mod zc_divide;
 pub mod zero_crossing;

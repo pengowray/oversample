@@ -98,6 +98,7 @@ pub fn ZcDotChart() -> impl IntoView {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let filter_enabled = state.filter.enabled().get();
+        let lowest_bat_hz = state.lowest_bat_hz();
         let freq_low = state.filter.freq_low().get();
         let freq_high = state.filter.freq_high().get();
         let db_below = state.filter.db_below().get();
@@ -137,9 +138,15 @@ pub fn ZcDotChart() -> impl IntoView {
                         band_mode,
                     ),
                 };
-                zc_rate_per_bin(&filtered, sr, ZC_BIN_DURATION, filter_enabled)
+                zc_rate_per_bin(
+                    &filtered,
+                    sr,
+                    ZC_BIN_DURATION,
+                    filter_enabled,
+                    lowest_bat_hz,
+                )
             } else {
-                zc_rate_per_bin(raw, sr, ZC_BIN_DURATION, filter_enabled)
+                zc_rate_per_bin(raw, sr, ZC_BIN_DURATION, filter_enabled, lowest_bat_hz)
             }
         })
     });

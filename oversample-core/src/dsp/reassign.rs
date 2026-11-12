@@ -4,6 +4,7 @@
 //! in each spectrogram column ([`main_frequency_line`]).
 
 use crate::dsp::fft::{hann_window, plan_fft_forward};
+use crate::dsp::ultrasonic::is_ultrasonic_rate;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -136,14 +137,6 @@ const LINE_LOBE_BINS: usize = 2;
 /// pitch tracker smooths over a fixed time.
 pub const LINE_SMOOTH_S: f64 = 0.25e-3;
 
-/// Recordings at this sample rate or higher count as ultrasonic.
-pub const ULTRASONIC_SAMPLE_RATE: u32 = 96_000;
-
-/// In ultrasonic recordings the line ignores sound below this frequency, so
-/// wind, insects and handling noise, which are often louder than distant bat
-/// calls, don't take it over.
-pub const ULTRASONIC_LINE_MIN_HZ: f64 = 15_000.0;
-
 /// The tile grid a main-frequency line is computed on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineGrid {
@@ -151,19 +144,21 @@ pub struct LineGrid {
     pub hop_size: usize,
     /// Columns either side used for each point's median, at least 1.
     pub smooth_cols: usize,
-    /// Lowest FFT bin the line can be on.
+    /// Lowest FFT bin the line can be on: the lowest bat frequency in
+    /// ultrasonic recordings, so wind, insects and handling noise, often
+    /// louder than distant bat calls, don't take the line over.
     pub min_bin: usize,
 }
 
 impl LineGrid {
     /// The grid for a zoom level's FFT size and hop, with
-    /// [`LINE_SMOOTH_S`] turned into columns, and [`ULTRASONIC_LINE_MIN_HZ`]
-    /// into a bin for recordings at [`ULTRASONIC_SAMPLE_RATE`] or more.
-    pub fn new(fft_size: usize, hop_size: usize, sample_rate: u32) -> Self {
+    /// [`LINE_SMOOTH_S`] turned into columns, and `lowest_bat_hz` into a bin
+    /// for ultrasonic recordings ([`is_ultrasonic_rate`]).
+    pub fn new(fft_size: usize, hop_size: usize, sample_rate: u32, lowest_bat_hz: f32) -> Self {
         let smooth = LINE_SMOOTH_S * sample_rate as f64 / hop_size.max(1) as f64;
-        let min_bin = if sample_rate >= ULTRASONIC_SAMPLE_RATE {
+        let min_bin = if is_ultrasonic_rate(sample_rate) {
             let bin_hz = sample_rate as f64 / fft_size.max(1) as f64;
-            (ULTRASONIC_LINE_MIN_HZ / bin_hz).ceil() as usize
+            (lowest_bat_hz as f64 / bin_hz).ceil() as usize
         } else {
             0
         };
@@ -495,7 +490,7 @@ mod tests {
 
     #[test]
     fn line_follows_a_sweep_between_bins_and_columns() {
-        let grid = LineGrid::new(512, 32, 384_000);
+        let grid = LineGrid::new(512, 32, 384_000, 16_000.0);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 96);
         let (lead, mut samples, floor) = line_tile(grid, cols, 10);
         let sweep = Sweep {
@@ -531,7 +526,7 @@ mod tests {
 
     #[test]
     fn line_finds_a_tone_between_bins() {
-        let grid = LineGrid::new(256, 64, 384_000);
+        let grid = LineGrid::new(256, 64, 384_000, 16_000.0);
         let (fft, cols) = (grid.fft_size, 32);
         let (lead, mut samples, floor) = line_tile(grid, cols, 11);
         for (i, s) in samples.iter_mut().enumerate() {
@@ -552,7 +547,7 @@ mod tests {
 
     #[test]
     fn no_line_in_white_noise() {
-        let grid = LineGrid::new(512, 32, 384_000);
+        let grid = LineGrid::new(512, 32, 384_000, 16_000.0);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 256);
         let lead = grid.margin_cols();
         let samples = white_noise((lead + cols + lead) * hop + fft, 0.01, 12);
@@ -565,7 +560,7 @@ mod tests {
     fn line_does_not_join_unrelated_sounds() {
         // One tone hands over to another far above it, with nothing between
         // them: the line breaks at the handover instead of drawing a jump.
-        let grid = LineGrid::new(256, 64, 384_000);
+        let grid = LineGrid::new(256, 64, 384_000, 16_000.0);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 64);
         let (lead, mut samples, floor) = line_tile(grid, cols, 14);
         let switch = (lead + 32) * hop;
@@ -589,7 +584,7 @@ mod tests {
     #[test]
     fn line_tiles_join_without_a_seam() {
         // Two adjacent tiles give the same points as one tile twice as wide.
-        let grid = LineGrid::new(512, 32, 384_000);
+        let grid = LineGrid::new(512, 32, 384_000, 16_000.0);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 48);
         let lead = grid.margin_cols();
         let mut samples = white_noise((lead + 2 * cols + lead) * hop + fft, 0.001, 15);
@@ -622,7 +617,7 @@ mod tests {
         // A tone with a louder blip 6 bins above it for about 10 columns. The
         // median over LINE_SMOOTH_S keeps the line on the tone; a median of
         // one column either side does not.
-        let grid = LineGrid::new(256, 8, 384_000);
+        let grid = LineGrid::new(256, 8, 384_000, 16_000.0);
         assert!(grid.smooth_cols >= 8);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 96);
         let (lead, mut samples, floor) = line_tile(grid, cols, 17);
@@ -661,7 +656,7 @@ mod tests {
     #[test]
     fn smoothing_keeps_the_start_of_a_sweep() {
         // The first points of a sweep are not pulled towards the later ones.
-        let grid = LineGrid::new(512, 8, 384_000);
+        let grid = LineGrid::new(512, 8, 384_000, 16_000.0);
         let (fft, hop, cols) = (grid.fft_size, grid.hop_size, 256);
         let (lead, mut samples, floor) = line_tile(grid, cols, 18);
         let sweep = Sweep {
@@ -691,9 +686,9 @@ mod tests {
     }
 
     #[test]
-    fn line_ignores_low_sound_in_ultrasonic_recordings() {
-        // A 7.9 kHz tone: below the 15 kHz limit at 384 kHz, so no line;
-        // at 48 kHz there is no limit, so it gets one.
+    fn line_ignores_sound_below_the_lowest_bat_frequency() {
+        // A 7.9 kHz tone: below a 16 kHz lowest bat frequency at 384 kHz, so
+        // no line; at 48 kHz (not ultrasonic) there is no limit, so it gets one.
         let tone = |grid: LineGrid, seed| {
             let cols = 32;
             let (lead, mut samples, floor) = line_tile(grid, cols, seed);
@@ -703,11 +698,11 @@ mod tests {
             }
             main_frequency_line(&samples, lead, cols, grid, -200.0, &floor)
         };
-        let ultrasonic = LineGrid::new(256, 64, 384_000);
-        assert_eq!(ultrasonic.min_bin, 10);
+        let ultrasonic = LineGrid::new(256, 64, 384_000, 16_000.0);
+        assert_eq!(ultrasonic.min_bin, 11);
         assert!(tone(ultrasonic, 19).is_empty());
 
-        let audible = LineGrid::new(256, 64, 48_000);
+        let audible = LineGrid::new(256, 64, 48_000, 16_000.0);
         assert_eq!(audible.min_bin, 0);
         let line = tone(audible, 20);
         assert_eq!(line.len(), 32);

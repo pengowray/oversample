@@ -22,6 +22,10 @@ pub mod keys {
     pub const BAT_BOOK_FAVOURITES: &str = "oversample_bat_book_favourites";
     pub const SHIELD_STYLE: &str = "oversample_shield_style";
     pub const SHOW_STATUS_BAR: &str = "oversample_show_status_bar";
+    /// "Lowest bat frequency" in Hz: where bat calls start for call
+    /// detection, the loudest-frequency line, ZC division and the default HFR
+    /// band. Unset means `dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ`.
+    pub const LOWEST_BAT_HZ: &str = "oversample_lowest_bat_hz";
     /// JSON map of mic device name -> auto-detected effective bit depth, so a
     /// device seen in a prior session is known ahead of time.
     pub const MIC_BIT_DEPTHS: &str = "oversample_mic_bit_depths";
@@ -121,6 +125,18 @@ pub fn get_bool(key: &str, default: bool) -> bool {
 /// Write a bool setting as `"true"`/`"false"`.
 pub fn set_bool(key: &str, value: bool) {
     set_raw(key, if value { "true" } else { "false" });
+}
+
+/// The saved "Lowest bat frequency" in Hz, or the default.
+pub fn get_lowest_bat_hz() -> f32 {
+    get_raw(keys::LOWEST_BAT_HZ)
+        .and_then(|s| s.parse::<f32>().ok())
+        .filter(|hz| hz.is_finite() && *hz > 0.0)
+        .unwrap_or(crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ)
+}
+
+pub fn set_lowest_bat_hz(hz: f32) {
+    set_raw(keys::LOWEST_BAT_HZ, &hz.to_string());
 }
 
 #[cfg(test)]

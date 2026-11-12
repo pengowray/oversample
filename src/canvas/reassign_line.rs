@@ -324,6 +324,7 @@ pub fn schedule_line_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: u
 
     let config_hop = LOD_CONFIGS[lod as usize].hop_size;
     let actual_fft = state.spect.fft_mode().get_untracked().fft_for_lod(lod);
+    let lowest_bat_hz = state.lowest_bat_hz_untracked();
 
     spawn_local(async move {
         yield_to_browser().await;
@@ -368,7 +369,7 @@ pub fn schedule_line_tile(state: AppState, file_idx: usize, lod: u8, tile_idx: u
         // Read extra frames either side: neighbouring frames move energy
         // into this tile's edge columns, and the edge columns are joined and
         // smoothed with the next tiles' points.
-        let grid = LineGrid::new(actual_fft, config_hop, audio.sample_rate);
+        let grid = LineGrid::new(actual_fft, config_hop, audio.sample_rate, lowest_bat_hz);
         let margin = grid.margin_cols();
         let tile_col_start = tile_idx * TILE_COLS;
         let lead_cols = margin.min(tile_col_start);

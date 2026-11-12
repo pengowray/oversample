@@ -513,6 +513,7 @@ fn process_live_audio(
                 sample_rate,
                 params.zc_factor as u32,
                 params.filter_enabled,
+                params.zc_lowest_bat_hz,
             )
         }
         // Normal and TimeExpansion both pass through. TE is unimplementable
@@ -1936,6 +1937,7 @@ mod tests {
             pv_hq: false,
             ps_shift_hz: 0.0,
             zc_factor: 8.0,
+            zc_lowest_bat_hz: crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ,
             gain_db: 0.0,
             gain_mode: GainMode::Off,
             auto_peak_gain_db: 0.0,

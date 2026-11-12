@@ -16,6 +16,9 @@ fn parse_colormap_pref(s: &str) -> Colormap {
     }
 }
 
+/// Tooltip of the "Lowest bat frequency" setting.
+const LOWEST_BAT_TIP: &str = "Lowest frequency to look for bat calls. Default 16 kHz. Call detection, the Loudest-frequency line, ZC playback and HFR all use this value.\nLower it to find free-tailed bats near 11 kHz. Birds, insects and wind noise will also be picked up.";
+
 #[component]
 pub(super) fn ConfigPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -60,6 +63,11 @@ pub(super) fn ConfigPanel() -> impl IntoView {
     let is_tauri = state.is_tauri;
     let _ = is_tauri; // used in the view
 
+    // The slider shows its value while dragging; the setting (and everything
+    // that follows it) changes when it is released.
+    let lowest_bat_khz = RwSignal::new(state.lowest_bat_hz_untracked() / 1000.0);
+    Effect::new(move || lowest_bat_khz.set(state.lowest_bat_hz() / 1000.0));
+
     view! {
         <div class="sidebar-panel">
             // Recording settings moved to Record menu in bottom toolbar
@@ -73,6 +81,34 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         class="setting-checkbox"
                         prop:checked=move || state.view.follow_cursor().get()
                         on:change=on_follow_cursor
+                    />
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <div class="setting-group-title">"Bats"</div>
+                <div class="setting-row" title=LOWEST_BAT_TIP>
+                    <span class="setting-label">"Lowest bat frequency"</span>
+                    <span class="setting-value">
+                        {move || format!("{:.0} kHz", lowest_bat_khz.get())}
+                    </span>
+                </div>
+                <div class="setting-row" title=LOWEST_BAT_TIP>
+                    <input
+                        type="range"
+                        class="setting-range"
+                        min="8"
+                        max="30"
+                        step="1"
+                        prop:value=move || lowest_bat_khz.get().to_string()
+                        on:input=move |ev| {
+                            if let Ok(v) = event_target_value(&ev).parse::<f32>() {
+                                lowest_bat_khz.set(v);
+                            }
+                        }
+                        on:change=move |_| {
+                            state.set_lowest_bat_hz(lowest_bat_khz.get_untracked() * 1000.0);
+                        }
                     />
                 </div>
             </div>

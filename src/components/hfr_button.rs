@@ -7,7 +7,7 @@
 //     — the text that used to live in the BAND cell itself).
 //   • Clicking opens the band-presets dropdown (All, bat-book file
 //     species, bat-book selected species, focus/selection/annotation,
-//     Ultrasound, Audible, None).
+//     lowest bat frequency and up, Audible, None).
 //
 // Replaces the previous `HfrButton` combo, whose left half (the HFR
 // toggle) has moved to the BAND cell — see [BandHfrCell] in hearing_bar.rs.
@@ -407,16 +407,20 @@ pub fn RangeButton() -> impl IntoView {
                     }
                 }}
 
-                // ── Ultrasound ──
+                // ── Bat calls: lowest bat frequency (Settings > Bats) to Nyquist ──
                 <button
-                    class=move || layer_opt_class(band_selected(state, 20_000.0, nyquist_for_current(state)), false)
+                    class=move || {
+                        let lo = state.lowest_bat_hz() as f64;
+                        layer_opt_class(band_selected(state, lo, nyquist_for_current(state)), false)
+                    }
                     on:click=move |_| {
                         let nyq = nyquist_for_current(state);
-                        if nyq > 20_000.0 {
-                            apply_band(state, 20_000.0, nyq);
+                        let lo = state.lowest_bat_hz_untracked() as f64;
+                        if nyq > lo {
+                            apply_band(state, lo, nyq);
                         }
                     }
-                >"Ultrasound (\u{2265}20 kHz)"</button>
+                >{move || format!("From lowest bat frequency (\u{2265}{:.0} kHz)", state.lowest_bat_hz() / 1000.0)}</button>
 
                 // ── Audible ──
                 <button

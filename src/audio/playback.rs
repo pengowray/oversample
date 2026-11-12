@@ -553,6 +553,7 @@ pub(crate) fn snapshot_dsp_params(
             crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)
         },
         zc_factor: state.transform.zc_factor().get_untracked(),
+        zc_lowest_bat_hz: state.lowest_bat_hz_untracked(),
         gain_db: 0.0,
         gain_mode: GainMode::Off,
         auto_peak_gain_db: 0.0,
