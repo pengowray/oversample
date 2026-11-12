@@ -10,7 +10,7 @@ use crate::audio::video_export;
 use crate::audio::webcodecs_bindings as wc;
 use crate::state::{
     AppState, AudioCodecOption, ExportFormat, RightSidebarTab, VideoCodec, VideoResolution,
-    VideoViewMode,
+    VideoViewMode, WavExportDepth,
 };
 
 /// Open the info panel on the Export tab.
@@ -87,6 +87,41 @@ pub fn ExportPanel() -> impl IntoView {
         }
     };
 
+    // The WAV format each bit depth choice writes for the current file. A
+    // choice that writes the same format as the file's own depth is not shown
+    // (a 16-bit file offers no separate "16-bit"), and counts as that one.
+    let file_wav_format = move || {
+        let idx = state.library.current_index().get();
+        state.library.files().with(|files| {
+            idx.and_then(|i| files.get(i))
+                .map(|f| export::wav_export_format(WavExportDepth::SameAsFile, &f.audio.metadata))
+        })
+    };
+    let depth_shown = move |depth: WavExportDepth| {
+        depth == WavExportDepth::SameAsFile
+            || file_wav_format().map_or(true, |own| {
+                let fmt = match depth {
+                    WavExportDepth::Pcm16 => (16, false),
+                    _ => (32, true),
+                };
+                fmt != own
+            })
+    };
+    let depth_checked = move |depth: WavExportDepth| {
+        let chosen = state.export.wav_depth().get();
+        let chosen = if depth_shown(chosen) {
+            chosen
+        } else {
+            WavExportDepth::SameAsFile
+        };
+        chosen == depth
+    };
+    let same_as_file_label = move || match file_wav_format() {
+        Some((bits, true)) => format!(" {bits}-bit float, same as the file"),
+        Some((bits, false)) => format!(" {bits}-bit, same as the file"),
+        None => " Same as the file".to_string(),
+    };
+
     let on_format_change = move |format: ExportFormat| {
         state.export.format().set(format);
     };
@@ -127,6 +162,48 @@ pub fn ExportPanel() -> impl IntoView {
                         }}
                     </label>
                 </div>
+
+                // WAV bit depth (shown when WAV selected)
+                {move || {
+                    (state.export.format().get() == ExportFormat::Wav).then(|| view! {
+                        <div class="export-wav-options">
+                            <span class="export-option-label">"Bit depth:"</span>
+                            <label class="export-radio">
+                                <input
+                                    type="radio"
+                                    name="export-wav-depth"
+                                    prop:checked=move || depth_checked(WavExportDepth::SameAsFile)
+                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::SameAsFile)
+                                />
+                                {same_as_file_label}
+                            </label>
+                            <label
+                                class="export-radio"
+                                style:display=move || (!depth_shown(WavExportDepth::Pcm16)).then_some("none")
+                            >
+                                <input
+                                    type="radio"
+                                    name="export-wav-depth"
+                                    prop:checked=move || depth_checked(WavExportDepth::Pcm16)
+                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::Pcm16)
+                                />
+                                " 16-bit, for listening"
+                            </label>
+                            <label
+                                class="export-radio"
+                                style:display=move || (!depth_shown(WavExportDepth::Float32)).then_some("none")
+                            >
+                                <input
+                                    type="radio"
+                                    name="export-wav-depth"
+                                    prop:checked=move || depth_checked(WavExportDepth::Float32)
+                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::Float32)
+                                />
+                                " 32-bit float, for further processing"
+                            </label>
+                        </div>
+                    })
+                }}
 
                 // MP4-specific options (shown when MP4 selected)
                 {move || {
@@ -263,6 +340,17 @@ pub fn ExportPanel() -> impl IntoView {
                         None
                     }
                 }}
+
+                <div class="setting-row">
+                    <label class="export-radio">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || state.export.normalize().get()
+                            on:change=move |ev| state.export.normalize().set(event_target_checked(&ev))
+                        />
+                        " Normalize peak to \u{2212}3 dBFS"
+                    </label>
+                </div>
 
                 // Main export button
                 <div class="setting-row" style="gap: 4px; align-items: center;">

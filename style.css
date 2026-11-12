@@ -7117,7 +7117,8 @@ button.toolbar-overflow-btn {
     color: #666;
     cursor: not-allowed;
 }
-.export-radio input[type="radio"] {
+.export-radio input[type="radio"],
+.export-radio input[type="checkbox"] {
     margin: 0;
     accent-color: #4a8a5a;
 }
@@ -7133,6 +7134,15 @@ button.toolbar-overflow-btn {
 .export-mp4-options .sidebar-select {
     flex: 1;
     min-width: 0;
+}
+/* Radios, one per line: the panel is too narrow for a select to show
+   "32-bit float, for further processing" without cutting it off. */
+.export-wav-options {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 4px 16px;
 }
 
 .export-tooltip {

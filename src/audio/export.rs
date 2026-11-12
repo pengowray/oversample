@@ -12,7 +12,11 @@ use crate::audio::streaming_playback::{
     apply_dsp_mode, apply_filters, te_speed_ratio, PlaybackParams, PV_MODE_BOOST_DB,
 };
 use crate::audio::wav_encoder::encode_wav_at;
-use crate::state::{AppState, ExportFormat, LoadedFile, PlaybackMode, Selection};
+use crate::dsp::agc::{AgcConfig, AgcProcessor};
+use crate::state::{
+    AppState, ExportFormat, GainMode, LoadedFile, PlaybackMode, Selection, WavExportDepth,
+};
+use crate::types::FileMetadata;
 
 // Chunk size + filter warmup are shared with streaming playback so the offline
 // and live DSP pipelines stay consistent. See audio::chunk_params.
@@ -20,6 +24,19 @@ use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 
 /// Overlap samples for PV/PS crossfade (same as streaming_playback::PV_HQ_OVERLAP).
 const PV_HQ_OVERLAP: usize = 8192;
+
+/// The bits per sample and float flag a WAV export of a file with `meta` is
+/// written at, after the encoder's own rounding (an 8- or 12-bit file and a
+/// lossy file are written as 16-bit).
+pub(crate) fn wav_export_format(depth: WavExportDepth, meta: &FileMetadata) -> (u16, bool) {
+    let (bits, is_float) = match depth {
+        WavExportDepth::SameAsFile => (meta.pcm_bits().unwrap_or(16), meta.is_float),
+        WavExportDepth::Pcm16 => (16, false),
+        WavExportDepth::Float32 => (32, true),
+    };
+    let fmt = oversample_core::audio::wav::WavWriteFormat::for_f32_samples(1, 1, bits, is_float);
+    (fmt.bits_per_sample, fmt.is_float)
+}
 
 /// Build PlaybackParams for exporting a region.
 /// When `use_region_focus` is true and the region has frequency bounds,
@@ -78,8 +95,62 @@ pub(crate) fn process_region(
     for ch in &mut channels {
         ch.truncate(frames);
     }
+    apply_output_gain(
+        &mut channels,
+        export_output_rate(sample_rate, params),
+        params,
+    );
     channels
 }
+
+/// The gain stage of playback, applied to a whole processed region: none when
+/// gain is Off, the slider for Manual, the measured peak gain plus the slider
+/// for Peak, and the slider then the AGC leveler for Adaptive. The phase
+/// vocoder's level boost applies in every mode, as in playback.
+fn apply_output_gain(channels: &mut [Vec<f32>], output_rate: u32, params: &PlaybackParams) {
+    let mode_boost = if matches!(params.mode, PlaybackMode::PhaseVocoder) {
+        PV_MODE_BOOST_DB
+    } else {
+        0.0
+    };
+    let gain_db = mode_boost
+        + match params.gain_mode {
+            GainMode::Off => 0.0,
+            GainMode::Manual | GainMode::Adaptive => params.gain_db,
+            GainMode::AutoPeak => params.auto_peak_gain_db + params.gain_db,
+        };
+    for ch in channels.iter_mut() {
+        apply_gain(ch, gain_db);
+    }
+    if params.gain_mode == GainMode::Adaptive {
+        let mut agc = AgcProcessor::new(AgcConfig::default(), output_rate);
+        match channels {
+            [left, right] => agc.process_stereo(left, right),
+            _ => channels.iter_mut().for_each(|ch| agc.process(ch)),
+        }
+    }
+}
+
+/// Scale `channels` together so their highest peak is `target_dbfs`. Silent
+/// audio is left alone.
+pub(crate) fn normalize_peak(channels: &mut [Vec<f32>], target_dbfs: f64) {
+    let peak = channels
+        .iter()
+        .flatten()
+        .fold(0.0f32, |p, s| p.max(s.abs()));
+    if peak > 0.0 {
+        apply_gain_linear(channels, 10f64.powf(target_dbfs / 20.0) as f32 / peak);
+    }
+}
+
+fn apply_gain_linear(channels: &mut [Vec<f32>], factor: f32) {
+    for s in channels.iter_mut().flatten() {
+        *s *= factor;
+    }
+}
+
+/// Peak level of a normalized export, in dBFS.
+pub(crate) const NORMALIZE_DBFS: f64 = -3.0;
 
 /// Sample rate of the exported audio. Time expansion keeps every sample and
 /// changes the rate instead (slower for TE > 1, faster for negative TE).
@@ -205,15 +276,6 @@ fn process_region_view(
         pos = chunk_end;
     }
 
-    // Apply gain (including PV compensatory boost)
-    let pv_boost = if matches!(params.mode, PlaybackMode::PhaseVocoder) {
-        PV_MODE_BOOST_DB
-    } else {
-        0.0
-    };
-    let gain_db = params.gain_db + pv_boost;
-    apply_gain(&mut all_samples, gain_db);
-
     all_samples
 }
 
@@ -253,11 +315,10 @@ pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Process one region and encode it as a WAV file with GUANO metadata, at the
-/// source's depth (`pcm_bits`, `is_float`) so a 24-bit or float file
-/// exports without being cut to 16 bits. A lossy source (`pcm_bits` `None`)
-/// is written as 16-bit PCM: its codec noise is far above the 16-bit floor.
-/// Stereo when `views` has two entries (see [`export_channel_views`]).
+/// Process one region and encode it as a WAV file with GUANO metadata, at
+/// `bits` bits per sample (32-bit float when `is_float`); see
+/// [`wav_export_format`]. Stereo when `views` has two entries (see
+/// [`export_channel_views`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn export_one_region(
     source: &dyn AudioSource,
@@ -268,10 +329,14 @@ pub(crate) fn export_one_region(
     params: &PlaybackParams,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
-    pcm_bits: Option<u16>,
+    bits: u16,
     is_float: bool,
+    normalize: bool,
 ) -> Vec<u8> {
-    let channels = process_region(source, views, sample_rate, start_time, end_time, params);
+    let mut channels = process_region(source, views, sample_rate, start_time, end_time, params);
+    if normalize {
+        normalize_peak(&mut channels, NORMALIZE_DBFS);
+    }
     let frames = channels.first().map_or(0, Vec::len);
     let output_rate = export_output_rate(sample_rate, params);
 
@@ -279,7 +344,7 @@ pub(crate) fn export_one_region(
         &interleave(&channels),
         channels.len().max(1) as u16,
         output_rate,
-        pcm_bits.unwrap_or(16),
+        bits,
         is_float,
     );
 
@@ -891,6 +956,11 @@ pub fn export_selected(state: &AppState) {
     // Collect every region's WAV bytes first, then hand them to save_exports
     // as a batch so multi-region exports are saved one-at-a-time (no stacked
     // dialogs / racing permission prompts) and reported with a single toast.
+    let (bits, is_float) = wav_export_format(
+        state.export.wav_depth().get_untracked(),
+        &file.audio.metadata,
+    );
+    let normalize = state.export.normalize().get_untracked();
     let exports: Vec<(String, Vec<u8>)> = export_jobs(state, &file)
         .iter()
         .map(|job| {
@@ -903,8 +973,9 @@ pub fn export_selected(state: &AppState) {
                 &job.params,
                 &file.name,
                 file.audio.metadata.guano.as_ref(),
-                file.audio.metadata.pcm_bits(),
-                file.audio.metadata.is_float,
+                bits,
+                is_float,
+                normalize,
             );
             (wav_file_name(&file, &views, job), wav_data)
         })
@@ -916,6 +987,41 @@ pub fn export_selected(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta(bits_per_sample: u16, is_float: bool) -> FileMetadata {
+        FileMetadata {
+            bits_per_sample,
+            is_float,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn wav_export_depth_choices() {
+        use WavExportDepth::*;
+        assert_eq!(wav_export_format(SameAsFile, &meta(24, false)), (24, false));
+        assert_eq!(wav_export_format(SameAsFile, &meta(32, true)), (32, true));
+        // 12-bit and lossy files are written as 16-bit.
+        assert_eq!(wav_export_format(SameAsFile, &meta(12, false)), (16, false));
+        assert_eq!(
+            wav_export_format(SameAsFile, &meta(FileMetadata::LOSSY_BITS, false)),
+            (16, false)
+        );
+        assert_eq!(wav_export_format(Pcm16, &meta(24, false)), (16, false));
+        assert_eq!(wav_export_format(Float32, &meta(16, false)), (32, true));
+    }
+
+    #[test]
+    fn normalize_scales_all_channels_to_the_highest_peak() {
+        let mut channels = vec![vec![0.1, -0.5], vec![0.25, 0.0]];
+        normalize_peak(&mut channels, -6.0);
+        let target = 10f32.powf(-6.0 / 20.0);
+        assert!((channels[0][1] + target).abs() < 1e-6);
+        assert!((channels[1][0] - target / 2.0).abs() < 1e-6);
+        let mut silent = vec![vec![0.0; 4]];
+        normalize_peak(&mut silent, -3.0);
+        assert_eq!(silent, vec![vec![0.0; 4]]);
+    }
 
     #[test]
     fn base_name_strips_audio_extensions_only() {

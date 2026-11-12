@@ -264,7 +264,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         source.as_ref(),
         state.viewmode.channel_view().get_untracked(),
     );
-    let audio_channels = process_region(
+    let mut audio_channels = process_region(
         source.as_ref(),
         &views,
         sample_rate,
@@ -272,6 +272,12 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         end_time,
         &audio_params,
     );
+    if state.export.normalize().get_untracked() {
+        crate::audio::export::normalize_peak(
+            &mut audio_channels,
+            crate::audio::export::NORMALIZE_DBFS,
+        );
+    }
     let output_rate = export_output_rate(sample_rate, &audio_params);
 
     // Resample to a standard rate if needed (many players struggle with high rates)

@@ -414,6 +414,20 @@ pub enum ExportFormat {
     Mp4,
 }
 
+/// Sample format of exported WAV files. Processing (gain, filters, heterodyne,
+/// pitch shift) makes new samples, so the user picks by what the file is for.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum WavExportDepth {
+    /// The file's own depth: an unprocessed export is sample-for-sample.
+    #[default]
+    SameAsFile,
+    /// 16-bit PCM: enough for listening, and the smallest file.
+    Pcm16,
+    /// 32-bit float: keeps everything processing produced, including peaks
+    /// above full scale, for further processing.
+    Float32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum VideoResolution {
     #[default]
@@ -1761,6 +1775,10 @@ pub struct ExportState {
     pub section_open: bool,
     /// Selected export format: WAV or MP4.
     pub format: ExportFormat,
+    /// Bit depth of WAV exports.
+    pub wav_depth: WavExportDepth,
+    /// Scale each exported file so its processed peak is -3 dBFS.
+    pub normalize: bool,
     /// Video export progress (0.0 to 1.0), None = not exporting.
     pub video_progress: Option<f64>,
     /// Video export status message.
@@ -2850,6 +2868,8 @@ impl AppState {
             export: Store::new(ExportState {
                 section_open: false,
                 format: ExportFormat::default(),
+                wav_depth: WavExportDepth::default(),
+                normalize: false,
                 video_progress: None,
                 video_status: None,
                 video_cancel: false,
