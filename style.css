@@ -8191,12 +8191,25 @@ button.canvas-overflow-action-btn.disabled {
 .species-scroll .species-text {
     padding: 6px 10px;
 }
-/* Fixed height: SpeciesCalls places the window from it (TOP_BLOCK_PX). */
+/* Its height is set inline (TOP_BLOCK_PX): SpeciesCalls places the window
+   from it before it is laid out. */
 .species-top {
-    height: 70px;
     box-sizing: border-box;
     overflow: hidden;
     border-bottom: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+/* One row of kinds of call, scrolling sideways, so the block keeps its
+   fixed height whatever the number of kinds. */
+.species-top .species-forms {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.species-top .species-form-btn {
+    flex-shrink: 0;
 }
 .species-bottom {
     border-top: 1px solid #2a2a2a;

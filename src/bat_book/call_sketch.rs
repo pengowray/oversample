@@ -107,7 +107,7 @@ pub enum FormKind {
 impl FormKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Search => "Search",
+            Self::Search => "Search calls",
             Self::Approach => "Approach",
             Self::Buzz => "Feeding buzz",
             Self::Social => "Social",
@@ -667,7 +667,7 @@ mod tests {
     fn forms_come_after_search_in_file_order() {
         let s: CallSketch = serde_json::from_str(FORMS).unwrap();
         let names: Vec<&str> = s.forms().iter().map(|f| f.name()).collect();
-        assert_eq!(names, ["Search", "Approach", "Feeding buzz", "Song"]);
+        assert_eq!(names, ["Search calls", "Approach", "Feeding buzz", "Song"]);
         let song = s.forms()[3];
         assert!(
             !song.drawable(),

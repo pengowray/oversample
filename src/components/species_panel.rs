@@ -31,10 +31,12 @@ use crate::state::AppState;
 const MAX_WIDTH_FRACTION: f64 = 0.35;
 /// Width of the text column over the drawing, CSS px.
 const COLUMN_WIDTH: f64 = 270.0;
-/// Height of the column's top block (navigation, name, scientific name).
-/// Fixed so the clear window can be placed before the block is measured.
-/// Must match `.species-top` in style.css.
+/// Height of the column's top block (navigation, name, scientific name),
+/// and with the kinds-of-call row when the species has more than search
+/// calls. Fixed so the clear window can be placed before the block is
+/// measured; set inline on `.species-top`.
 const TOP_BLOCK_PX: f64 = 70.0;
+const TOP_BLOCK_WITH_FORMS_PX: f64 = 100.0;
 /// Clear space above and below the drawn calls in the window, CSS px.
 const WINDOW_MARGIN: f64 = 12.0;
 /// Below this spectrogram size the text goes in a panel under the
@@ -385,7 +387,7 @@ fn nav_row(state: AppState) -> impl IntoView {
             .and_then(|id| manifest.entries.iter().position(|e| e.id == id.as_str()));
         match pos {
             Some(p) => format!(
-                "{} {} / {}",
+                "{}: {} of {}",
                 region.short_label(),
                 p + 1,
                 manifest.entries.len()
@@ -424,21 +426,14 @@ fn name_block(shown: Memo<Option<Shown>>) -> impl IntoView {
     }
 }
 
-/// Everything below the name: the kinds of call, the shown kind's facts,
-/// warnings, the description, and sources.
-/// `compact` (the panel under a phone's spectrogram) puts the description,
-/// sources and draft note behind "More", so the spectrogram keeps its room.
-fn body(
+/// Kinds of call: one button each, when the species has more than search
+/// calls. The chosen one is drawn.
+fn forms_row(
     state: AppState,
     shown: Memo<Option<Shown>>,
     form: Memo<Option<Form<'static>>>,
-    warning: Signal<Option<String>>,
-    compact: bool,
 ) -> impl IntoView {
-    let details_open = RwSignal::new(false);
-    let more_open = RwSignal::new(!compact);
-    // Kinds of call: one button each, when the species has more than search.
-    let forms_row = move || {
+    move || {
         let sketch = shown.get()?.sketch?;
         let forms = sketch.forms();
         if forms.len() < 2 {
@@ -468,7 +463,22 @@ fn body(
                 }).collect_view()}
             </div>
         })
-    };
+    }
+}
+
+/// Everything below the name: the kinds of call, the shown kind's facts,
+/// warnings, the description, and sources.
+/// `compact` (the panel under a phone's spectrogram) puts the description,
+/// sources and draft note behind "More", so the spectrogram keeps its room.
+fn body(
+    state: AppState,
+    shown: Memo<Option<Shown>>,
+    form: Memo<Option<Form<'static>>>,
+    warning: Signal<Option<String>>,
+    compact: bool,
+) -> impl IntoView {
+    let details_open = RwSignal::new(false);
+    let more_open = RwSignal::new(!compact);
     let facts = move || {
         let Some(s) = shown.get() else { return None };
         let Some(f) = form.get() else {
@@ -547,7 +557,7 @@ fn body(
         more_open.update(|v| *v = !*v);
     };
     view! {
-        {forms_row}
+        {compact.then(|| forms_row(state, shown, form))}
         {facts}
         {move || warning.get().map(|w| view! { <div class="species-warn">{w}</div> })}
         {compact.then(|| view! {
@@ -826,6 +836,21 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
 
         let y_of = |khz: f64| freq_to_y(khz * 1000.0, min_f, max_f, css_h);
         let line = cmap.apply(240);
+        // Name the drawing just above the calls, so it reads as a sketch of
+        // a kind of call (and which kind) even when the text is scrolled.
+        if let Some((_, hi)) = form.get_untracked().and_then(|f| f.khz_extent()) {
+            if let Some(f) = form.get_untracked() {
+                let label = if f.kind == FormKind::Search {
+                    "Typical search calls".to_string()
+                } else {
+                    format!("Typical {}", f.name().to_lowercase())
+                };
+                ctx.set_font("10px system-ui, sans-serif");
+                ctx.set_fill_style_str(&rgba(cmap.apply(170), 1.0));
+                let y = (y_of(hi) - 3.0).clamp(10.0, css_h - 2.0);
+                let _ = ctx.fill_text(&label, call_sketch::STRIP_PAD, y);
+            }
+        }
         ctx.set_line_cap("round");
         ctx.set_line_join("round");
 
@@ -878,12 +903,18 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     // window when there's room, else just below it; the rest follows.
     let column = move || {
         let (top, h) = window.get().unwrap_or((0.0, 0.0));
-        let name_first = TOP_BLOCK_PX <= top;
-        let spacer = if name_first { top - TOP_BLOCK_PX } else { top };
+        let has_forms = shown
+            .get()
+            .and_then(|s| s.sketch)
+            .is_some_and(|sk| sk.forms().len() > 1);
+        let top_h = if has_forms { TOP_BLOCK_WITH_FORMS_PX } else { TOP_BLOCK_PX };
+        let name_first = top_h <= top;
+        let spacer = if name_first { top - top_h } else { top };
         let top_block = view! {
-            <div class="species-top species-text">
+            <div class="species-top species-text" style:height=format!("{top_h}px")>
                 {nav_row(state)}
                 {name_block(shown)}
+                {forms_row(state, shown, form)}
             </div>
         };
         let window_div = view! { <div class="species-window" style:height=format!("{h}px")></div> };

@@ -12,6 +12,12 @@
       "runtimeExecutable": "trunk",
       "runtimeArgs": ["serve", "--release", "--port", "21259"],
       "port": 21259
+    },
+    {
+      "name": "trunk-own-dist",
+      "runtimeExecutable": "trunk",
+      "runtimeArgs": ["serve", "--release", "--port", "21262", "--dist", "target/dist-own"],
+      "port": 21262
     }
   ]
 }
