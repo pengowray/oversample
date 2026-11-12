@@ -1,4 +1,4 @@
-//! BirdNET and BattyBirdNET for Oversample, run in a Web Worker.
+//! BirdNET, BattyBirdNET and Perch 2.0 for Oversample, run in a Web Worker.
 //!
 //! Trunk builds this crate as a worker (`data-type="worker"` in `index.html`),
 //! so tract (about 15 MB of WASM) stays out of the app's own bundle and loads
@@ -8,12 +8,14 @@
 //!
 //! - [`resample`]: band-limited resampling to the model rate (rubato), with the
 //!   resampler's delay removed so times line up.
-//! - [`windows`]: cutting the resampled audio into 144,000-sample windows.
-//! - [`engine`]: the backbone and regional heads in tract.
+//! - [`windows`]: cutting the resampled audio into the method's windows.
+//! - [`engine`]: BirdNET's backbone and the regional heads in tract.
+//! - [`perch`]: Perch's embedding model in tract and its classifier.
 //! - [`session`]: the worker's state and message handling, browser-free so the
 //!   native tests run it.
 
 pub mod engine;
+pub mod perch;
 pub mod resample;
 pub mod session;
 pub mod windows;

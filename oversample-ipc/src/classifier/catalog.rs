@@ -1,16 +1,12 @@
-//! The model files BirdNET and BattyBirdNET need: where to download them, their
-//! size and SHA-256, and the attribution to show with results.
-//!
-//! Perch 2.0's files are listed too ([`PERCH_FILES`]), so they can be downloaded
-//! and kept like the others. Nothing runs Perch yet: there is no [`ModelChoice`]
-//! for it.
+//! The model files BirdNET, BattyBirdNET and Perch 2.0 need: where to download
+//! them, their size and SHA-256, and the attribution to show with results.
 //!
 //! The URLs name a fixed Hugging Face revision, so a file never changes under
 //! the same name. Hugging Face sends CORS headers, so the browser can fetch them
 //! directly. Nothing here is bundled with the app: files are downloaded when the
 //! user asks, then kept (OPFS in the browser, the app data folder in Tauri).
 
-use super::{BatRegion, Method};
+use super::{BatRegion, Method, ModelPart};
 
 /// What a file is used for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -45,6 +41,27 @@ pub struct ModelFile {
     /// SHA-256, lowercase hex.
     pub sha256: &'static str,
     pub kind: FileKind,
+}
+
+impl ModelFile {
+    /// What the worker builds from this file; `None` for label lists.
+    pub fn part(&self) -> Option<ModelPart> {
+        match self.kind {
+            FileKind::Backbone => Some(ModelPart::Backbone),
+            FileKind::BatHead(_) => Some(ModelPart::BatHead),
+            FileKind::PerchEmbedding => Some(ModelPart::PerchEmbedding),
+            FileKind::PerchClassifier => Some(ModelPart::PerchClassifier),
+            FileKind::BirdNetLabels | FileKind::BatLabels(_) | FileKind::PerchLabels => None,
+        }
+    }
+
+    /// True for Perch's files.
+    pub fn is_perch(&self) -> bool {
+        matches!(
+            self.kind,
+            FileKind::PerchEmbedding | FileKind::PerchClassifier | FileKind::PerchLabels
+        )
+    }
 }
 
 const BATTY_REV: &str = "f685d7f7de1805ef83f71ffaad7440a8f40b4e10";
@@ -187,11 +204,12 @@ pub fn bat_labels(region: BatRegion) -> &'static ModelFile {
     &BAT_LABELS[region_index(region)]
 }
 
-/// What to run: BirdNET, or BattyBirdNET with one region's head.
+/// What to run: BirdNET, BattyBirdNET with one region's head, or Perch 2.0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModelChoice {
     BirdNet,
     Bats(BatRegion),
+    Perch,
 }
 
 impl ModelChoice {
@@ -199,6 +217,7 @@ impl ModelChoice {
         match self {
             ModelChoice::BirdNet => Method::BirdNet,
             ModelChoice::Bats(_) => Method::Bats,
+            ModelChoice::Perch => Method::Perch,
         }
     }
 
@@ -207,6 +226,17 @@ impl ModelChoice {
         match self {
             ModelChoice::BirdNet => vec![&BACKBONE, &BIRDNET_LABELS],
             ModelChoice::Bats(r) => vec![&BACKBONE, bat_head(r), bat_labels(r)],
+            ModelChoice::Perch => PERCH_FILES.to_vec(),
+        }
+    }
+
+    /// The models the worker needs, in load order: the audio model, then any
+    /// head.
+    pub fn models(self) -> Vec<&'static ModelFile> {
+        match self {
+            ModelChoice::BirdNet => vec![&BACKBONE],
+            ModelChoice::Bats(r) => vec![&BACKBONE, bat_head(r)],
+            ModelChoice::Perch => vec![&PERCH_EMBEDDING, &PERCH_CLASSIFIER],
         }
     }
 
@@ -215,17 +245,23 @@ impl ModelChoice {
         match self {
             ModelChoice::BirdNet => &BIRDNET_LABELS,
             ModelChoice::Bats(r) => bat_labels(r),
+            ModelChoice::Perch => &PERCH_LABELS,
         }
     }
 }
 
 /// Every file in the catalog.
 pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
+    birdnet_files().chain(PERCH_FILES)
+}
+
+/// BirdNET's and BattyBirdNET's files (they share the backbone), without
+/// Perch's.
+pub fn birdnet_files() -> impl Iterator<Item = &'static ModelFile> {
     [&BACKBONE, &BIRDNET_LABELS]
         .into_iter()
         .chain(BAT_HEADS.iter())
         .chain(BAT_LABELS.iter())
-        .chain(PERCH_FILES)
 }
 
 /// The catalog entry stored under `id`, if any. The Tauri commands accept only
@@ -266,6 +302,14 @@ const BATTY_CREDITS: &[&str] = &[
 
 const CITATION: &str = "Kahl, S., Wood, C. M., Eibl, M., & Klinck, H. (2021). BirdNET: A deep learning solution for avian diversity monitoring. Ecological Informatics, 61, 101236.";
 
+const PERCH_CREDITS: &[&str] = &[
+    "Perch 2.0 was developed by Google DeepMind (kaggle.com/models/google/bird-vocalization-classifier).",
+    "Split into two files for tract, with the classifier stored as int8, by Oversample (huggingface.co/pengowray/perch-v2-tract).",
+];
+
+const PERCH_CITATION: &str =
+    "Perch 2.0: The Bittern Lesson for Bioacoustics (2025). arXiv:2508.04665.";
+
 pub fn attribution(method: Method) -> Attribution {
     match method {
         Method::BirdNet => Attribution {
@@ -289,6 +333,17 @@ pub fn attribution(method: Method) -> Attribution {
             citation: CITATION,
             source_url: "https://huggingface.co/tphakala/BattyBirdNET-onnx",
             revision: BATTY_REV,
+        },
+        Method::Perch => Attribution {
+            name: "Perch 2.0",
+            powered_by: "Perch 2.0 by Google DeepMind",
+            powered_by_url: "https://www.kaggle.com/models/google/bird-vocalization-classifier",
+            licence: "Apache 2.0",
+            licence_url: "https://www.apache.org/licenses/LICENSE-2.0",
+            credits: PERCH_CREDITS,
+            citation: PERCH_CITATION,
+            source_url: "https://huggingface.co/pengowray/perch-v2-tract",
+            revision: PERCH_REVISION,
         },
     }
 }

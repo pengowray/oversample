@@ -203,18 +203,12 @@ const TAP_SLOP_TOUCH: f64 = 8.0;
 /// detection tab.
 fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<usize> {
     use crate::classifier::summary::{window_kind, WindowKind};
-    use crate::classifier::Method;
-    use crate::state::DetectionMethod;
     if !(0.0..reach).contains(&px_y) || !state.call_detection.overlay_enabled().get_untracked() {
         return None;
     }
-    let method = match state.call_detection.method().get_untracked() {
-        DetectionMethod::Inbuilt => return None,
-        DetectionMethod::BirdNet => Method::BirdNet,
-        DetectionMethod::Bats => Method::Bats,
-    };
+    let method = state.call_detection.method().get_untracked().classifier()?;
     let file = state.current_file_id()?;
-    let min = state.call_detection.min_confidence().get_untracked();
+    let min = crate::classifier::min_confidence_untracked(state, method);
     state.classifier.results().with_untracked(|m| {
         let run = m.get(&(file, method))?;
         run.windows.iter().enumerate().position(|(i, w)| {

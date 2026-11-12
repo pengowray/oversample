@@ -6,7 +6,8 @@
 //! audio, embeddings) travel beside it as transferred typed arrays, under the
 //! other names in [`attach`].
 //!
-//! Both methods use the same model, BirdNET V2.4 with an embeddings output:
+//! The first two methods use the same model, BirdNET V2.4 with an embeddings
+//! output:
 //!
 //! - **BirdNET (birds):** audio at 48 kHz, 3 s windows of 144,000 samples. The
 //!   model's 6,522 logits go through a sigmoid to give a confidence per class.
@@ -14,17 +15,33 @@
 //!   windows (0.5625 s of real time), so the model hears the calls 5.33 times
 //!   lower. The 1,024-value embedding goes through a small regional classifier
 //!   (a "head"), then a sigmoid.
+//!
+//! The third is Google's Perch 2.0, as two files:
+//!
+//! - **Perch (birds, frogs, insects, some mammals and everyday sounds):** audio
+//!   at 32 kHz, 5 s windows of 160,000 samples. The embedding model gives a
+//!   1,536-value embedding and a 16 x 4 grid of them; the classifier scores the
+//!   grid for 14,795 classes. Its logits go through a softmax over all classes,
+//!   so a confidence is a share of 1 (the classes compete).
 
 use serde::{Deserialize, Serialize};
 
 pub mod catalog;
 
-/// Samples per model window, at the method's model rate.
+/// Samples per BirdNET window (BirdNET and BattyBirdNET). Perch's is
+/// [`PERCH_WINDOW_SAMPLES`]; see [`Method::window_samples`].
 pub const WINDOW_SAMPLES: usize = 144_000;
-/// Length of the embedding the backbone gives for each window.
+/// Length of BirdNET's embedding. Perch's is [`PERCH_EMBEDDING_LEN`]; see
+/// [`Method::embedding_len`].
 pub const EMBEDDING_LEN: usize = 1024;
 /// Classes the backbone scores (the BirdNET V2.4 label list).
 pub const BIRDNET_CLASSES: usize = 6522;
+/// Samples per Perch window: 5 s at 32 kHz.
+pub const PERCH_WINDOW_SAMPLES: usize = 160_000;
+/// Length of Perch's embedding.
+pub const PERCH_EMBEDDING_LEN: usize = 1536;
+/// Classes Perch's classifier scores.
+pub const PERCH_CLASSES: usize = 14_795;
 /// Classes kept per window, highest confidence first.
 pub const TOP_K: usize = 10;
 /// Lowest sample rate BattyBirdNET accepts. Bat calls above 48 kHz are missing
@@ -40,6 +57,9 @@ pub enum Method {
     BirdNet,
     /// Bats, with a BattyBirdNET regional head on the BirdNET embedding.
     Bats,
+    /// Google's Perch 2.0: birds, frogs, insects, some mammals and everyday
+    /// sounds, 14,795 classes.
+    Perch,
 }
 
 impl Method {
@@ -48,20 +68,77 @@ impl Method {
         match self {
             Method::BirdNet => 48_000,
             Method::Bats => 256_000,
+            Method::Perch => 32_000,
         }
     }
 
-    /// Length of one window in the recording, in seconds (3 s or 0.5625 s).
+    /// Samples per model window, at [`Self::model_rate`].
+    pub fn window_samples(self) -> usize {
+        match self {
+            Method::BirdNet | Method::Bats => WINDOW_SAMPLES,
+            Method::Perch => PERCH_WINDOW_SAMPLES,
+        }
+    }
+
+    /// Floats per window in the embeddings a run keeps.
+    pub fn embedding_len(self) -> usize {
+        match self {
+            Method::BirdNet | Method::Bats => EMBEDDING_LEN,
+            Method::Perch => PERCH_EMBEDDING_LEN,
+        }
+    }
+
+    /// Length of one window in the recording, in seconds (3 s, 0.5625 s or 5 s).
     pub fn window_secs(self) -> f64 {
-        WINDOW_SAMPLES as f64 / self.model_rate() as f64
+        self.window_samples() as f64 / self.model_rate() as f64
     }
 
     /// Lowest source sample rate this method accepts, if any.
     pub fn min_source_rate(self) -> Option<u32> {
         match self {
-            Method::BirdNet => None,
+            Method::BirdNet | Method::Perch => None,
             Method::Bats => Some(BATS_MIN_SOURCE_RATE),
         }
+    }
+}
+
+/// What a model file is to the worker. The worker holds one model of each
+/// [`ModelSlot`]; a model of another family (BirdNET or Perch) replaces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModelPart {
+    /// BirdNET V2.4 with an embeddings output.
+    Backbone,
+    /// A BattyBirdNET regional head.
+    BatHead,
+    /// Perch 2.0's embedding model.
+    PerchEmbedding,
+    /// Perch 2.0's int8 classifier.
+    PerchClassifier,
+}
+
+/// Where a model sits in the worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModelSlot {
+    /// The model that takes the audio: BirdNET's backbone or Perch's embedding
+    /// model.
+    Audio,
+    /// The model that scores its output: a BattyBirdNET head or Perch's
+    /// classifier.
+    Head,
+}
+
+impl ModelPart {
+    pub fn slot(self) -> ModelSlot {
+        match self {
+            ModelPart::Backbone | ModelPart::PerchEmbedding => ModelSlot::Audio,
+            ModelPart::BatHead | ModelPart::PerchClassifier => ModelSlot::Head,
+        }
+    }
+
+    /// True for Perch's files. The worker restarts when the family changes,
+    /// since its memory never shrinks.
+    pub fn is_perch(self) -> bool {
+        matches!(self, ModelPart::PerchEmbedding | ModelPart::PerchClassifier)
     }
 }
 
@@ -134,8 +211,10 @@ impl BatRegion {
     }
 }
 
-/// One class and its confidence (sigmoid of the logit, 0 to 1). `class` indexes
-/// the label list of the model that scored it.
+/// One class and its confidence, 0 to 1. `class` indexes the label list of the
+/// model that scored it. BirdNET and BattyBirdNET: the sigmoid of the logit.
+/// Perch: the softmax over all its classes, so the confidences of one window
+/// add up to at most 1.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Score {
     pub class: u16,
@@ -221,13 +300,12 @@ fn fmt_khz(rate: u32) -> String {
 pub mod attach {
     /// The [`super::ToWorker`] or [`super::FromWorker`] message.
     pub const MSG: &str = "msg";
-    /// `ArrayBuffer` of model bytes, on [`super::ToWorker::LoadBackbone`] and
-    /// [`super::ToWorker::LoadHead`].
+    /// `ArrayBuffer` of model bytes, on [`super::ToWorker::Load`].
     pub const BYTES: &str = "bytes";
     /// `Float32Array` of source-rate mono samples, on [`super::ToWorker::Chunk`].
     pub const SAMPLES: &str = "samples";
-    /// `Float32Array` of [`super::EMBEDDING_LEN`] values per window, on
-    /// [`super::FromWorker::Window`] (one window) and
+    /// `Float32Array` of the method's [`super::Method::embedding_len`] values per
+    /// window, on [`super::FromWorker::Window`] (one window) and
     /// [`super::ToWorker::Rescore`] (all windows, back to back).
     pub const EMBEDDING: &str = "embedding";
 }
@@ -236,11 +314,10 @@ pub mod attach {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd")]
 pub enum ToWorker {
-    /// Build the backbone from [`attach::BYTES`]. `key` names it, so the app can
-    /// tell whether the worker already holds it. Answered by `Loaded`.
-    LoadBackbone { key: String },
-    /// Build a regional head from [`attach::BYTES`]. Answered by `Loaded`.
-    LoadHead { key: String },
+    /// Build a model from [`attach::BYTES`] into its part's slot, replacing what
+    /// was there. `key` names it, so the app can tell whether the worker
+    /// already holds it. Answered by `Loaded`.
+    Load { key: String, part: ModelPart },
     /// Start a run. Any run before it is dropped.
     Start {
         run: u32,
@@ -296,6 +373,7 @@ mod tests {
     fn window_lengths() {
         assert_eq!(Method::BirdNet.window_secs(), 3.0);
         assert_eq!(Method::Bats.window_secs(), 0.5625);
+        assert_eq!(Method::Perch.window_secs(), 5.0);
     }
 
     #[test]

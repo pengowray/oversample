@@ -19,7 +19,7 @@ use crate::call_annotations::{
     build_call_annotations, count_call_annotations, count_detector_annotations, detector_tags_in,
     kind_label, remove_detector_annotations, AnnotateWhat,
 };
-use crate::classifier::BatRegion;
+use crate::classifier::{BatRegion, Method};
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
 };
@@ -836,13 +836,16 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
             <div class="detection-annotate-row detection-radio-group detection-methods">
                 {option(DetectionMethod::Inbuilt, "In-built bat call detection", "Finds bat calls. Runs automatically.")}
                 {option(DetectionMethod::BirdNet, "BirdNET", "Bird species, plus some other sounds such as dog and engine")}
+                // Before BattyBirdNET, so the region list stays under it.
+                {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs, insects and some mammals, plus sounds such as traffic and thunder")}
                 {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species for one region")}
                 {region_select}
             </div>
             {move || match method() {
                 DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),
-                DetectionMethod::BirdNet => view! { <ClassifierSection bats=false /> }.into_any(),
-                DetectionMethod::Bats => view! { <ClassifierSection bats=true /> }.into_any(),
+                DetectionMethod::BirdNet => view! { <ClassifierSection method=Method::BirdNet /> }.into_any(),
+                DetectionMethod::Perch => view! { <ClassifierSection method=Method::Perch /> }.into_any(),
+                DetectionMethod::Bats => view! { <ClassifierSection method=Method::Bats /> }.into_any(),
             }}
         </div>
     }

@@ -2,8 +2,11 @@
 //! native tests drive the same code the Web Worker runs.
 
 use crate::engine::{top_scores, Backbone, Head};
+use crate::perch;
 use crate::windows::{Window, Windower};
-use oversample_ipc::classifier::{ClassifierError, FromWorker, Method, ToWorker, EMBEDDING_LEN};
+use oversample_ipc::classifier::{
+    ClassifierError, FromWorker, Method, ModelPart, ModelSlot, ToWorker,
+};
 
 /// Arrays that arrive next to a [`ToWorker`] message.
 #[derive(Default)]
@@ -30,10 +33,22 @@ struct Run {
     windower: Windower,
 }
 
+/// The model that takes the audio.
+enum AudioModel {
+    BirdNet(Backbone),
+    Perch(perch::Embedding),
+}
+
+/// The model that scores the audio model's output.
+enum HeadModel {
+    Bat(Head),
+    Perch(perch::Classifier),
+}
+
 #[derive(Default)]
 pub struct Session {
-    backbone: Option<(String, Backbone)>,
-    head: Option<(String, Head)>,
+    audio: Option<(String, AudioModel)>,
+    head: Option<(String, HeadModel)>,
     run: Option<Run>,
 }
 
@@ -51,39 +66,36 @@ impl Session {
         now_ms: &dyn Fn() -> f64,
     ) {
         match msg {
-            ToWorker::LoadBackbone { key } => {
+            ToWorker::Load { key, part } => {
                 // Free the old model first: two at once may not fit on a phone.
-                self.backbone = None;
-                let t = now_ms();
-                match Backbone::load(att.bytes.as_deref().unwrap_or_default()) {
-                    Ok(b) => {
-                        self.backbone = Some((key.clone(), b));
-                        out.send(
-                            FromWorker::Loaded {
-                                key,
-                                ms: now_ms() - t,
-                            },
-                            None,
-                        );
-                    }
-                    Err(e) => out.send(load_error(None, e), None),
+                match part.slot() {
+                    ModelSlot::Audio => self.audio = None,
+                    ModelSlot::Head => self.head = None,
                 }
-            }
-            ToWorker::LoadHead { key } => {
-                self.head = None;
                 let t = now_ms();
-                match Head::load(att.bytes.as_deref().unwrap_or_default()) {
-                    Ok(h) => {
-                        self.head = Some((key.clone(), h));
-                        out.send(
-                            FromWorker::Loaded {
-                                key,
-                                ms: now_ms() - t,
-                            },
-                            None,
-                        );
-                    }
-                    Err(e) => out.send(load_error(None, e), None),
+                let bytes = att.bytes.unwrap_or_default();
+                let built = match part {
+                    ModelPart::Backbone => Backbone::load(&bytes)
+                        .map(|m| self.audio = Some((key.clone(), AudioModel::BirdNet(m))))
+                        .map_err(|e| format!("{e:#}")),
+                    ModelPart::PerchEmbedding => perch::Embedding::load(&bytes)
+                        .map(|m| self.audio = Some((key.clone(), AudioModel::Perch(m))))
+                        .map_err(|e| format!("{e:#}")),
+                    ModelPart::BatHead => Head::load(&bytes)
+                        .map(|m| self.head = Some((key.clone(), HeadModel::Bat(m))))
+                        .map_err(|e| format!("{e:#}")),
+                    ModelPart::PerchClassifier => perch::Classifier::from_bytes(bytes)
+                        .map(|m| self.head = Some((key.clone(), HeadModel::Perch(m)))),
+                };
+                match built {
+                    Ok(()) => out.send(
+                        FromWorker::Loaded {
+                            key,
+                            ms: now_ms() - t,
+                        },
+                        None,
+                    ),
+                    Err(message) => out.send(load_error(message), None),
                 }
             }
             ToWorker::Start {
@@ -152,15 +164,16 @@ impl Session {
                 }
             }
             ToWorker::Rescore { run, windows } => {
-                let Some((_, head)) = self.head.as_ref() else {
+                let Some((_, HeadModel::Bat(head))) = self.head.as_ref() else {
                     out.send(
                         inference_error(run, "no regional model loaded".into()),
                         None,
                     );
                     return;
                 };
+                let len = Method::Bats.embedding_len();
                 let emb = att.embedding.unwrap_or_default();
-                if emb.len() != windows as usize * EMBEDDING_LEN {
+                if emb.len() != windows as usize * len {
                     out.send(
                         inference_error(run, "embeddings do not match the window count".into()),
                         None,
@@ -168,7 +181,7 @@ impl Session {
                     return;
                 }
                 let mut top = Vec::with_capacity(windows as usize);
-                for e in emb.chunks_exact(EMBEDDING_LEN) {
+                for e in emb.chunks_exact(len) {
                     match head.run(e) {
                         Ok(logits) => top.push(top_scores(&logits)),
                         Err(err) => {
@@ -198,24 +211,41 @@ impl Session {
             out.send(inference_error(run, message), None);
             false
         };
-        let Some((_, backbone)) = self.backbone.as_ref() else {
-            return fail(self, out, "no model loaded".into());
+        let audio = self.audio.as_ref().map(|(_, m)| m);
+        let head = self.head.as_ref().map(|(_, h)| h);
+        // Check the models once, not per window.
+        let ready = match (method, audio, head) {
+            (Method::BirdNet, Some(AudioModel::BirdNet(_)), _) => Ok(()),
+            (Method::Bats, Some(AudioModel::BirdNet(_)), Some(HeadModel::Bat(_))) => Ok(()),
+            (Method::Bats, Some(AudioModel::BirdNet(_)), _) => Err("no regional model loaded"),
+            (Method::Perch, Some(AudioModel::Perch(_)), Some(HeadModel::Perch(_))) => Ok(()),
+            (Method::Perch, Some(AudioModel::Perch(_)), _) => {
+                Err("Perch's classifier is not loaded")
+            }
+            _ => Err("no model loaded"),
         };
-        let head = match method {
-            Method::BirdNet => None,
-            Method::Bats => match self.head.as_ref() {
-                Some((_, h)) => Some(h),
-                None => return fail(self, out, "no regional model loaded".into()),
-            },
-        };
+        if let Err(message) = ready {
+            return fail(self, out, message.into());
+        }
         for w in windows {
-            let res = backbone.run(&w.samples).and_then(|b| {
-                let logits = match head {
-                    Some(h) => h.run(&b.embedding)?,
-                    None => b.logits,
-                };
-                Ok((top_scores(&logits), b.embedding))
-            });
+            let res = match (audio, head) {
+                (Some(AudioModel::BirdNet(backbone)), head) => {
+                    backbone.run(&w.samples).and_then(|b| {
+                        let logits = match (method, head) {
+                            (Method::Bats, Some(HeadModel::Bat(h))) => h.run(&b.embedding)?,
+                            _ => b.logits,
+                        };
+                        Ok((top_scores(&logits), b.embedding))
+                    })
+                }
+                (Some(AudioModel::Perch(embed)), Some(HeadModel::Perch(classifier))) => {
+                    embed.run(&w.samples).map(|e| {
+                        let logits = classifier.scores(&e.spatial);
+                        (perch::top_scores(&logits), e.embedding)
+                    })
+                }
+                _ => unreachable!("checked above"),
+            };
             match res {
                 Ok((top, embedding)) => out.send(
                     FromWorker::Window {
@@ -234,12 +264,10 @@ impl Session {
     }
 }
 
-fn load_error(run: Option<u32>, e: tract_onnx::prelude::TractError) -> FromWorker {
+fn load_error(message: String) -> FromWorker {
     FromWorker::Error {
-        run,
-        error: ClassifierError::ModelLoad {
-            message: format!("{e:#}"),
-        },
+        run: None,
+        error: ClassifierError::ModelLoad { message },
     }
 }
 

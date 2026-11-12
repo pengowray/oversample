@@ -1,4 +1,4 @@
-//! What the Call detection tab shows for a BirdNET or BattyBirdNET run: the
+//! What the Call detection tab shows for a BirdNET, BattyBirdNET or Perch run: the
 //! windows at or above the minimum confidence, the species they name, and the
 //! annotations made from them.
 
@@ -164,12 +164,13 @@ pub fn spans(run: &ClassifierRun, min_confidence: f32, merge: bool) -> Vec<Span>
     out
 }
 
-/// The `auto` tag value on annotations from this run: `birdnet`, or
+/// The `auto` tag value on annotations from this run: `birdnet`, `perch2`, or
 /// `battybirdnet-uk` (one per region, so adding another region's results
 /// keeps the first region's annotations).
 pub fn auto_tag_value(run: &ClassifierRun) -> String {
     match (run.method, run.region) {
         (Method::BirdNet, _) => "birdnet".to_string(),
+        (Method::Perch, _) => "perch2".to_string(),
         (Method::Bats, Some(r)) => format!("battybirdnet-{}", r.file_stem().to_lowercase()),
         (Method::Bats, None) => "battybirdnet".to_string(),
     }

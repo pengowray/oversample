@@ -11,7 +11,10 @@
 //! `BIRDNET_MODELS_DIR=... cargo test -p birdnet-worker --release --test real_models`.
 
 use birdnet_worker::session::{Attached, Session};
-use oversample_ipc::classifier::{FromWorker, Method, Score, ToWorker, EMBEDDING_LEN};
+use oversample_ipc::classifier::{
+    FromWorker, Method, ModelPart, Score, ToWorker, EMBEDDING_LEN, PERCH_CLASSES,
+    PERCH_EMBEDDING_LEN,
+};
 use std::path::{Path, PathBuf};
 
 fn models_dir() -> Option<PathBuf> {
@@ -67,13 +70,18 @@ fn send(s: &mut Session, msg: ToWorker, att: Attached, out: &mut Out) {
 }
 
 fn load_model(s: &mut Session, head: bool, path: &Path) {
+    let part = if head {
+        ModelPart::BatHead
+    } else {
+        ModelPart::Backbone
+    };
+    load_part(s, part, path);
+}
+
+fn load_part(s: &mut Session, part: ModelPart, path: &Path) {
     let bytes = std::fs::read(path).unwrap();
     let key = path.display().to_string();
-    let msg = if head {
-        ToWorker::LoadHead { key }
-    } else {
-        ToWorker::LoadBackbone { key }
-    };
+    let msg = ToWorker::Load { key, part };
     let mut out = new_out();
     send(
         s,
@@ -171,6 +179,73 @@ fn birdnet_finds_pauraque() {
     );
     assert_eq!(names[top.class as usize], "Nyctidromus albicollis");
     assert!(top.confidence > 0.9);
+}
+
+/// `PERCH_MODELS_DIR`: a folder with `perch_v2_embed.tract.onnx`,
+/// `perch_v2_head.int8.bin` and `labels.csv` (huggingface.co/pengowray/perch-v2-tract
+/// and cgeorgiaw/Perch `assets/labels.csv`).
+fn perch_dir() -> Option<PathBuf> {
+    let d = PathBuf::from(std::env::var_os("PERCH_MODELS_DIR")?);
+    d.is_dir().then_some(d)
+}
+
+/// Perch through the worker's own resampling and windowing names a bird and a
+/// katydid that it named in `research/perch.md`'s tests (at 0.86 and 0.88 there).
+#[test]
+fn perch_finds_pauraque_and_a_katydid() {
+    let Some(models) = perch_dir() else {
+        eprintln!("PERCH_MODELS_DIR not set; skipped");
+        return;
+    };
+    // labels.csv: a header line, then one name per class.
+    let names: Vec<String> = std::fs::read_to_string(models.join("labels.csv"))
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(str::to_string)
+        .collect();
+    assert_eq!(names.len(), PERCH_CLASSES);
+    let mut s = Session::new();
+    load_part(
+        &mut s,
+        ModelPart::PerchEmbedding,
+        &models.join("perch_v2_embed.tract.onnx"),
+    );
+    load_part(
+        &mut s,
+        ModelPart::PerchClassifier,
+        &models.join("perch_v2_head.int8.bin"),
+    );
+    for (file, species) in [
+        (
+            "XC1083752 - Pauraque - Nyctidromus albicollis.wav",
+            "Nyctidromus albicollis",
+        ),
+        ("XC875004 -  - Mecopoda elongata.wav", "Mecopoda elongata"),
+    ] {
+        let (samples, rate) = load(&sounds_dir().join("no-bat-sounds/sounds").join(file), 30.0);
+        let t = std::time::Instant::now();
+        let out = analyse(&mut s, Method::Perch, &samples, rate);
+        assert_eq!(
+            out.embeddings.len(),
+            out.windows.len() * PERCH_EMBEDDING_LEN
+        );
+        assert_eq!(out.windows[0].1, 5.0);
+        for w in &out.windows {
+            let total: f32 = w.2.iter().map(|s| s.confidence).sum();
+            assert!(total <= 1.0001, "softmax shares add up to {total}");
+        }
+        let top = best(&out.windows);
+        eprintln!(
+            "{file}: {} windows at {rate} Hz in {:.1} s; best {} {:.3}",
+            out.windows.len(),
+            t.elapsed().as_secs_f64(),
+            names[top.class as usize],
+            top.confidence
+        );
+        assert_eq!(names[top.class as usize], species);
+        assert!(top.confidence > 0.6);
+    }
 }
 
 #[test]

@@ -11,7 +11,7 @@ use super::ClassifierError;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
 use leptos::prelude::*;
-use oversample_ipc::classifier::{attach, FromWorker, Method, Score, ToWorker};
+use oversample_ipc::classifier::{attach, FromWorker, Method, ModelSlot, Score, ToWorker};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -65,8 +65,12 @@ struct Client {
     _on_message: Closure<dyn FnMut(MessageEvent)>,
     _on_error: Closure<dyn FnMut(web_sys::Event)>,
     ready: bool,
-    backbone: Option<String>,
+    /// The model in each slot, by file id.
+    audio: Option<String>,
     head: Option<String>,
+    /// True once a Perch model has been loaded, false once a BirdNET one has.
+    /// The worker's memory never shrinks, so changing family restarts it.
+    perch: Option<bool>,
     waiters: Vec<(Wait, oneshot::Sender<Result<Reply, ClassifierError>>)>,
     active: Option<Active>,
 }
@@ -109,8 +113,9 @@ pub async fn ensure_started(state: AppState) -> Result<(), Stopped> {
             _on_message: on_message,
             _on_error: on_error,
             ready: false,
-            backbone: None,
+            audio: None,
             head: None,
+            perch: None,
             waiters: Vec::new(),
             active: None,
         };
@@ -296,7 +301,7 @@ fn on_message(ev: MessageEvent) {
                 client.waiters = keep;
                 if run.is_none() {
                     // The worker dropped the model it was replacing.
-                    client.backbone = None;
+                    client.audio = None;
                     client.head = None;
                 }
                 for (_, tx) in hit {
@@ -330,20 +335,31 @@ fn on_error(ev: web_sys::Event) {
     }
 }
 
-/// Make sure the worker holds the model file `key` as backbone (`head` false)
-/// or head, reading and sending it if not.
-pub async fn ensure_model(
-    file: &'static super::catalog::ModelFile,
-    head: bool,
-) -> Result<(), Stopped> {
+/// Stop the worker if it holds models of the other family (BirdNET or Perch),
+/// so loading this family starts from fresh memory. Call before
+/// [`ensure_started`].
+pub fn ensure_family(perch: bool) {
+    let other = CLIENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|cl| cl.perch.is_some_and(|p| p != perch))
+    });
+    if other {
+        terminate();
+    }
+}
+
+/// Make sure the worker holds model `file` in its slot, reading and sending it
+/// if not.
+pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<(), Stopped> {
+    let part = file
+        .part()
+        .ok_or_else(|| worker_err(format!("{} is not a model", file.id)))?;
     let key = file.id.to_string();
     let loaded = CLIENT.with(|c| {
-        c.borrow().as_ref().is_some_and(|cl| {
-            if head {
-                cl.head.as_deref() == Some(&key)
-            } else {
-                cl.backbone.as_deref() == Some(&key)
-            }
+        c.borrow().as_ref().is_some_and(|cl| match part.slot() {
+            ModelSlot::Audio => cl.audio.as_deref() == Some(&key),
+            ModelSlot::Head => cl.head.as_deref() == Some(&key),
         })
     });
     if loaded {
@@ -353,15 +369,20 @@ pub async fn ensure_model(
     let waiter = CLIENT.with(|c| {
         let mut c = c.borrow_mut();
         let client = c.as_mut()?;
-        let msg = if head {
-            client.head = None;
-            ToWorker::LoadHead { key: key.clone() }
-        } else {
-            client.backbone = None;
-            ToWorker::LoadBackbone { key: key.clone() }
-        };
+        match part.slot() {
+            ModelSlot::Audio => client.audio = None,
+            ModelSlot::Head => client.head = None,
+        }
+        client.perch = Some(part.is_perch());
         let buf = bytes.buffer();
-        client.post(&msg, Some((attach::BYTES, &buf)), Some(&buf));
+        client.post(
+            &ToWorker::Load {
+                key: key.clone(),
+                part,
+            },
+            Some((attach::BYTES, &buf)),
+            Some(&buf),
+        );
         Some(client.wait(Wait::Loaded(key.clone())))
     });
     let Some(waiter) = waiter else {
@@ -370,10 +391,9 @@ pub async fn ensure_model(
     wait(waiter).await?;
     CLIENT.with(|c| {
         if let Some(cl) = c.borrow_mut().as_mut() {
-            if head {
-                cl.head = Some(key);
-            } else {
-                cl.backbone = Some(key);
+            match part.slot() {
+                ModelSlot::Audio => cl.audio = Some(key),
+                ModelSlot::Head => cl.head = Some(key),
             }
         }
     });

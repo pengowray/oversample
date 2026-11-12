@@ -110,6 +110,32 @@ pub fn parse_labels(text: &str) -> Vec<SpeciesLabel> {
         .collect()
 }
 
+/// Parse Perch's `labels.csv`: a header line, then one class per line, with no
+/// common names. Species are scientific names ("Apus apus"); the 198 sound
+/// events are FSD50K names, where "_and_" stands for a comma and "_" for a space
+/// ("Splash_and_splatter" becomes "Splash, splatter"). Sound events are not
+/// species, so the tab counts them with "Noise and other sounds" rather than
+/// calling Vehicle a species.
+pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
+    text.lines()
+        .skip(1)
+        .map(|l| {
+            let l = l.trim();
+            let is_species = l.contains(' ');
+            let name = if is_species {
+                l.to_string()
+            } else {
+                l.replace("_and_", ", ").replace('_', " ")
+            };
+            SpeciesLabel {
+                scientific: name.clone(),
+                common: name,
+                is_species,
+            }
+        })
+        .collect()
+}
+
 /// One window's scores.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowScores {
@@ -132,15 +158,17 @@ pub struct ClassifierRun {
     pub method: Method,
     /// The region whose head gave the scores (BattyBirdNET only).
     pub region: Option<BatRegion>,
-    /// The backbone file (its URL holds the pinned revision).
+    /// The model that took the audio: BirdNET's backbone or Perch's embedding
+    /// model (its URL holds the pinned revision).
     pub backbone: &'static ModelFile,
-    /// The regional head file (BattyBirdNET only).
+    /// The model that scored it: a BattyBirdNET regional head or Perch's
+    /// classifier. `None` for BirdNET.
     pub head: Option<&'static ModelFile>,
     /// The recording's sample rate.
     pub source_rate: u32,
-    /// The rate the audio was resampled to (48 kHz or 256 kHz).
+    /// The rate the audio was resampled to (48, 256 or 32 kHz).
     pub model_rate: u32,
-    /// Length of one window in the recording: 3 s or 0.5625 s.
+    /// Length of one window in the recording: 3 s, 0.5625 s or 5 s.
     pub window_secs: f64,
     /// Names for `Score::class`, in the model's class order.
     pub labels: Arc<Vec<SpeciesLabel>>,
@@ -159,10 +187,11 @@ impl ClassifierRun {
 }
 
 /// Window `i`'s embedding in a run's embeddings
-/// (`ClassifierState::embeddings`): `EMBEDDING_LEN` floats per window, back to
-/// back, in window order.
-pub fn embedding(embeddings: &[f32], i: usize) -> Option<&[f32]> {
-    embeddings.get(i * super::EMBEDDING_LEN..(i + 1) * super::EMBEDDING_LEN)
+/// (`ClassifierState::embeddings`): `method.embedding_len()` floats per window
+/// (1,024 for BirdNET, 1,536 for Perch), back to back, in window order.
+pub fn embedding(embeddings: &[f32], method: Method, i: usize) -> Option<&[f32]> {
+    let len = method.embedding_len();
+    embeddings.get(i * len..(i + 1) * len)
 }
 
 #[cfg(test)]
@@ -176,5 +205,18 @@ mod tests {
         assert_eq!(l[0].scientific, "Pipistrellus pipistrellus");
         assert_eq!(l[0].common, "Common pipistrelle");
         assert!(l[1].is_noise());
+    }
+
+    #[test]
+    fn perch_labels_parse() {
+        let l = parse_perch_labels(
+            "inat2024_fsd50k\nApus apus\nSplash_and_splatter\nMotor_vehicle_(road)\n",
+        );
+        assert_eq!(l.len(), 3);
+        assert_eq!(l[0].common, "Apus apus");
+        assert_eq!(l[1].common, "Splash, splatter");
+        assert_eq!(l[2].common, "Motor vehicle (road)");
+        assert!(l[0].is_species);
+        assert!(!l[1].is_species && !l[2].is_species);
     }
 }

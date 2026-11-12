@@ -1,4 +1,5 @@
-//! BirdNET (birds) and BattyBirdNET (bats) on the device.
+//! BirdNET (birds), BattyBirdNET (bats) and Perch 2.0 (birds, frogs, insects,
+//! some mammals and everyday sounds) on the device.
 //!
 //! The models run in a Web Worker built from the `birdnet-worker` crate, so the
 //! page never blocks and tract stays out of the app's WASM. The worker starts
@@ -11,8 +12,8 @@
 //! - [`refresh_downloads`]: check which files are on this device. Call when the
 //!   panel opens; until then every status is [`DownloadStatus::Unknown`].
 //! - [`download`]: download what a [`ModelChoice`] needs (the 67 MB backbone,
-//!   plus labels, plus a region's head for bats). Progress goes to
-//!   `state.classifier.downloads()`, per file id.
+//!   plus labels, plus a region's head for bats; Perch's three files, 136 MB).
+//!   Progress goes to `state.classifier.downloads()`, per file id.
 //! - [`is_ready`]: true when every file a choice needs is downloaded (reads
 //!   `downloads`, so it is reactive).
 //! - [`delete_files`]: delete stored files (e.g. `catalog::all_files()`).
@@ -27,7 +28,8 @@
 //!   head and labels first if needed.
 //! - [`cancel`]: stop the run; the windows so far are kept, marked incomplete.
 //! - [`unload`]: stop the worker and free its memory (about 300 MB while a
-//!   model is loaded). The next run starts it again.
+//!   BirdNET model is loaded, about 400 MB for Perch). The next run starts it
+//!   again. Switching between BirdNET and Perch restarts it too.
 //!
 //! State (`state.classifier`, a [`crate::state::ClassifierState`]):
 //! - `downloads()`: `HashMap<&'static str, DownloadStatus>`, keyed by
@@ -38,13 +40,13 @@
 //! - `results()`: `HashMap<(file_id, Method), ClassifierRun>`. Windows fill in
 //!   while a run goes (about every 100 ms). Read with `.with(..)`, not `.get()`.
 //! - `embeddings()`: `HashMap<(file_id, Method), Vec<f32>>`, 1,024 floats per
-//!   window in window order (see [`types::embedding`]), for a later "find
-//!   similar calls" feature. Kept apart from `results` so showing scores never
-//!   copies them.
+//!   window (1,536 for Perch) in window order (see [`types::embedding`]), for a
+//!   later "find similar calls" feature. Kept apart from `results` so showing
+//!   scores never copies them.
 //!
-//! Attribution: [`catalog::attribution`] gives the licence (CC BY-NC-SA 4.0),
-//! the "Powered by BirdNET" line and link, credits, citation, source URL and
-//! revision, to show with results and in About.
+//! Attribution: [`catalog::attribution`] gives the licence (CC BY-NC-SA 4.0 for
+//! BirdNET, Apache 2.0 for Perch), the "Powered by" line and link, credits,
+//! citation, source URL and revision, to show with results and in About.
 
 pub mod species_map;
 pub mod store;
@@ -55,7 +57,7 @@ mod worker;
 
 pub use oversample_ipc::classifier::catalog::{self, Attribution, ModelChoice, ModelFile};
 pub use oversample_ipc::classifier::{
-    BatRegion, ClassifierError, Method, Score, EMBEDDING_LEN, TOP_K,
+    BatRegion, ClassifierError, Method, Score, EMBEDDING_LEN, PERCH_CLASSES, TOP_K,
 };
 pub use types::{ClassifierRun, DownloadStatus, RunStatus, SpeciesLabel, WindowScores};
 
@@ -191,19 +193,28 @@ pub async fn ensure_downloaded(
     Ok(())
 }
 
-/// Download Perch 2.0's files ([`catalog::PERCH_FILES`], 136 MB) that are not
-/// stored yet, smallest first. Nothing runs Perch yet; this only keeps the files
-/// on the device.
-pub fn download_perch(state: AppState) {
-    spawn_local(async move {
-        let mut files = catalog::PERCH_FILES.to_vec();
-        files.sort_by_key(|f| f.size);
-        for f in files {
-            if download_file(state, f).await.is_err() {
-                break;
-            }
-        }
-    });
+/// The minimum confidence the tab uses for `method` (reactive). Perch has its
+/// own, since its confidences are softmax shares.
+pub fn min_confidence(state: AppState, method: Method) -> f32 {
+    match method {
+        Method::Perch => state.call_detection.perch_min_confidence().get(),
+        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().get(),
+    }
+}
+
+/// [`min_confidence`] without tracking.
+pub fn min_confidence_untracked(state: AppState, method: Method) -> f32 {
+    match method {
+        Method::Perch => state.call_detection.perch_min_confidence().get_untracked(),
+        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().get_untracked(),
+    }
+}
+
+pub fn set_min_confidence(state: AppState, method: Method, value: f32) {
+    match method {
+        Method::Perch => state.call_detection.perch_min_confidence().set(value),
+        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().set(value),
+    }
 }
 
 /// Delete stored files.
@@ -228,7 +239,21 @@ async fn labels(file: &'static ModelFile) -> Result<Arc<Vec<SpeciesLabel>>, Clas
         return Ok(l);
     }
     let bytes = store::read(file).await?;
-    let l = Arc::new(types::parse_labels(&String::from_utf8_lossy(&bytes)));
+    let text = String::from_utf8_lossy(&bytes);
+    let l = Arc::new(match file.kind {
+        catalog::FileKind::PerchLabels => {
+            let l = types::parse_perch_labels(&text);
+            // A list that doesn't line up with the classifier would name every
+            // result wrongly.
+            if l.len() != PERCH_CLASSES {
+                return Err(ClassifierError::Corrupt {
+                    file: file.id.to_string(),
+                });
+            }
+            l
+        }
+        _ => types::parse_labels(&text),
+    });
     LABELS.with(|m| m.borrow_mut().insert(file.id, l.clone()));
     Ok(l)
 }
@@ -340,15 +365,17 @@ async fn run_task(
         }
     }
     let labels = labels(choice.labels()).await?;
+    worker::ensure_family(method == Method::Perch);
     worker::ensure_started(state).await?;
-    worker::ensure_model(&catalog::BACKBONE, false).await?;
-    let (region, head) = match choice {
-        ModelChoice::BirdNet => (None, None),
-        ModelChoice::Bats(r) => {
-            let h = catalog::bat_head(r);
-            worker::ensure_model(h, true).await?;
-            (Some(r), Some(h))
-        }
+    let models = choice.models();
+    for m in &models {
+        worker::ensure_model(m).await?;
+    }
+    let backbone = models[0];
+    let head = models.get(1).copied();
+    let region = match choice {
+        ModelChoice::Bats(r) => Some(r),
+        ModelChoice::BirdNet | ModelChoice::Perch => None,
     };
     if !is_latest(state, generation) {
         return Err(Stopped::Superseded);
@@ -361,7 +388,7 @@ async fn run_task(
             ClassifierRun {
                 method,
                 region,
-                backbone: &catalog::BACKBONE,
+                backbone,
                 head,
                 source_rate: rate,
                 model_rate: method.model_rate(),
@@ -515,16 +542,18 @@ async fn rescore_task(
     download_file(state, labels_file).await?;
     download_file(state, head).await?;
     let labels = labels(labels_file).await?;
+    worker::ensure_family(false);
     worker::ensure_started(state).await?;
-    worker::ensure_model(head, true).await?;
+    worker::ensure_model(head).await?;
     if !is_latest(state, generation) {
         return Err(Stopped::Superseded);
     }
     // Copy the embeddings into the message without cloning the Vec.
+    let len = Method::Bats.embedding_len();
     let waiter = state.classifier.embeddings().with_untracked(|m| {
         let e = m.get(&key).map(Vec::as_slice).unwrap_or_default();
-        let windows = (e.len() / EMBEDDING_LEN) as u32;
-        worker::rescore(generation, windows, &e[..windows as usize * EMBEDDING_LEN])
+        let windows = (e.len() / len) as u32;
+        worker::rescore(generation, windows, &e[..windows as usize * len])
     })?;
     let Reply::Rescored(top) = worker::wait(waiter).await? else {
         return Err(Stopped::Superseded);

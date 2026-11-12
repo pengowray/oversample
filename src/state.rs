@@ -1617,7 +1617,11 @@ pub struct CallDetectionState {
     /// BirdNET and BattyBirdNET: windows whose top class is below this are left
     /// out of the summary, the lists, the annotations and the overlay.
     pub min_confidence: f32,
-    /// BirdNET and BattyBirdNET: the window picked in the lists.
+    /// The same for Perch, whose confidences are softmax shares and run lower:
+    /// rain, wind and traffic alone put an animal on top at up to 0.27
+    /// (`research/perch.md`, "Sound events").
+    pub perch_min_confidence: f32,
+    /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
     pub selected_window: Option<usize>,
 }
 
@@ -1631,6 +1635,21 @@ pub enum DetectionMethod {
     BirdNet,
     /// BattyBirdNET, bats for one region.
     Bats,
+    /// Perch 2.0: birds, frogs, insects, some mammals and everyday sounds.
+    Perch,
+}
+
+impl DetectionMethod {
+    /// The classifier method, `None` for the in-built detector.
+    pub fn classifier(self) -> Option<crate::classifier::Method> {
+        use crate::classifier::Method;
+        match self {
+            DetectionMethod::Inbuilt => None,
+            DetectionMethod::BirdNet => Some(Method::BirdNet),
+            DetectionMethod::Bats => Some(Method::Bats),
+            DetectionMethod::Perch => Some(Method::Perch),
+        }
+    }
 }
 
 /// BirdNET and BattyBirdNET: model downloads, the run in progress, and results.
@@ -2655,6 +2674,7 @@ impl AppState {
                 method: DetectionMethod::Inbuilt,
                 bat_region: crate::classifier::BatRegion::Uk,
                 min_confidence: 0.5,
+                perch_min_confidence: 0.3,
                 selected_window: None,
             }),
 

@@ -8,9 +8,9 @@
 //! - `status()`: a JSON string with downloads, the run status and a summary of
 //!   each result (window count, completeness, best class)
 //!
-//! `choice` is `"birdnet"` or `"bats:<region>"`, and `region` a file-name part
-//! such as `"EU"`, `"UK"` or `"USA-EAST"` (see `BatRegion::file_stem`).
-//! `download("perch")` downloads Perch 2.0's files (nothing runs them yet).
+//! `choice` is `"birdnet"`, `"perch"` or `"bats:<region>"`, and `region` a
+//! file-name part such as `"EU"`, `"UK"` or `"USA-EAST"` (see
+//! `BatRegion::file_stem`).
 
 use super::*;
 use wasm_bindgen::prelude::*;
@@ -25,6 +25,9 @@ fn parse_choice(s: &str) -> Option<ModelChoice> {
     if s.eq_ignore_ascii_case("birdnet") {
         return Some(ModelChoice::BirdNet);
     }
+    if s.eq_ignore_ascii_case("perch") {
+        return Some(ModelChoice::Perch);
+    }
     let r = s.strip_prefix("bats:")?;
     parse_region(r).map(ModelChoice::Bats)
 }
@@ -33,6 +36,7 @@ fn method_name(m: Method) -> &'static str {
     match m {
         Method::BirdNet => "BirdNet",
         Method::Bats => "Bats",
+        Method::Perch => "Perch",
     }
 }
 
@@ -130,10 +134,6 @@ pub fn install(state: AppState) {
         Closure::<dyn Fn(String) -> bool>::new(move |c: String| match parse_choice(&c) {
             Some(c) => {
                 download(state, c);
-                true
-            }
-            None if c.eq_ignore_ascii_case("perch") => {
-                download_perch(state);
                 true
             }
             None => false,

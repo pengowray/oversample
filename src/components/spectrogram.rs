@@ -55,20 +55,15 @@ struct SpeciesStrip {
     windows: Vec<spectrogram_renderer::SpeciesWindow>,
 }
 
-/// The BirdNET / BattyBirdNET label strip for the current file, when that
-/// method is picked in the Call detection tab: stretches of neighbouring
+/// The BirdNET / BattyBirdNET / Perch label strip for the current file, when
+/// that method is picked in the Call detection tab: stretches of neighbouring
 /// windows with the same top class at or above the minimum confidence, each
 /// species in its own colour. Reactive: call inside the draw effect.
 fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Option<SpeciesStrip> {
     use crate::classifier::summary::{colour_order, window_kind, WindowKind};
-    use crate::classifier::Method;
-    let method = match method {
-        crate::state::DetectionMethod::Inbuilt => return None,
-        crate::state::DetectionMethod::BirdNet => Method::BirdNet,
-        crate::state::DetectionMethod::Bats => Method::Bats,
-    };
+    let method = method.classifier()?;
     let file = state.current_file_id_tracked()?;
-    let min = state.call_detection.min_confidence().get();
+    let min = crate::classifier::min_confidence(state, method);
     let selected = state.call_detection.selected_window().get();
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
@@ -1290,9 +1285,14 @@ pub fn Spectrogram() -> impl IntoView {
 
                 // Call detection overlay, for the file the calls came from.
                 // Also under BattyBirdNET, so each call box sits under the
-                // species label of its window; BirdNET (birds) hides them.
+                // species label of its window; BirdNET and Perch (mostly not
+                // bats) hide them.
                 if detection_overlay
-                    && detection_method != crate::state::DetectionMethod::BirdNet
+                    && !matches!(
+                        detection_method,
+                        crate::state::DetectionMethod::BirdNet
+                            | crate::state::DetectionMethod::Perch
+                    )
                     && detection_file.is_some()
                     && detection_file == state.current_file_id()
                 {

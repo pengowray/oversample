@@ -1,9 +1,9 @@
 //! Cutting a stream of source audio into model windows.
 
 use crate::resample::StreamResampler;
-use oversample_ipc::classifier::{Method, WINDOW_SAMPLES};
+use oversample_ipc::classifier::Method;
 
-/// One window of model-rate audio, ready for the backbone.
+/// One window of model-rate audio, ready for the model.
 pub struct Window {
     pub index: u32,
     /// Start in the recording, in seconds.
@@ -11,18 +11,18 @@ pub struct Window {
     /// End in the recording, in seconds. For the last window this is the end of
     /// the recording, not the end of its zero padding.
     pub end_s: f64,
-    /// Exactly [`WINDOW_SAMPLES`] samples.
+    /// Exactly the method's [`Method::window_samples`] samples.
     pub samples: Vec<f32>,
 }
 
 /// Resamples source audio to the method's model rate and cuts it into windows
-/// of [`WINDOW_SAMPLES`], without overlap. Window `k` starts at
+/// of [`Method::window_samples`], without overlap. Window `k` starts at
 /// `k * method.window_secs()` in the recording.
 ///
 /// The last window is padded with zeros. It is dropped when it holds less than a
 /// third of a window of audio (1 s for BirdNET, as BirdNET-Analyzer's
-/// `SIG_MINLEN` does, and 0.1875 s for bats), unless it is the only window, so a
-/// very short recording still gets one result.
+/// `SIG_MINLEN` does, 0.1875 s for bats and 1.67 s for Perch), unless it is the
+/// only window, so a very short recording still gets one result.
 pub struct Windower {
     method: Method,
     source_rate: u32,
@@ -38,7 +38,7 @@ impl Windower {
             method,
             source_rate,
             resampler: StreamResampler::new(source_rate, method.model_rate()),
-            buf: Vec::with_capacity(WINDOW_SAMPLES * 2),
+            buf: Vec::with_capacity(method.window_samples() * 2),
             next_index: 0,
             source_samples: 0,
         }
@@ -57,10 +57,10 @@ impl Windower {
         self.resampler.finish(&mut self.buf);
         let mut out = self.take_full();
         let left = self.buf.len();
-        let min = WINDOW_SAMPLES / 3;
-        if left > 0 && (left >= min || self.next_index == 0) {
+        let win = self.method.window_samples();
+        if left > 0 && (left >= win / 3 || self.next_index == 0) {
             let mut samples = std::mem::take(&mut self.buf);
-            samples.resize(WINDOW_SAMPLES, 0.0);
+            samples.resize(win, 0.0);
             let start_s = self.next_index as f64 * self.method.window_secs();
             let end_s = self.duration_s().max(start_s);
             out.push(Window {
@@ -88,17 +88,18 @@ impl Windower {
     fn take_full(&mut self) -> Vec<Window> {
         let mut out = Vec::new();
         let win_s = self.method.window_secs();
+        let win = self.method.window_samples();
         let mut at = 0;
-        while self.buf.len() - at >= WINDOW_SAMPLES {
+        while self.buf.len() - at >= win {
             let start_s = self.next_index as f64 * win_s;
             out.push(Window {
                 index: self.next_index,
                 start_s,
                 end_s: start_s + win_s,
-                samples: self.buf[at..at + WINDOW_SAMPLES].to_vec(),
+                samples: self.buf[at..at + win].to_vec(),
             });
             self.next_index += 1;
-            at += WINDOW_SAMPLES;
+            at += win;
         }
         self.buf.drain(..at);
         out

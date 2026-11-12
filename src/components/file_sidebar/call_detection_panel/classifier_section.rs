@@ -1,10 +1,10 @@
-//! The BirdNET and BattyBirdNET part of the Call detection tab: download the
-//! model, analyse the current file, list the species found, and add them as
+//! The BirdNET, BattyBirdNET and Perch part of the Call detection tab: download
+//! the model, analyse the current file, list the species found, and add them as
 //! annotations. The calls it makes are in `crate::classifier`.
 //!
 //! Order on screen: the action (download, analyse, progress), the results
 //! (minimum confidence, summary, list, the selected window's top 3), adding
-//! annotations, then the stored model and the attribution BirdNET's licence
+//! annotations, then the stored model and the attribution the model's licence
 //! asks for.
 
 use super::species_map::SpeciesMapDialog;
@@ -142,10 +142,61 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice) {
     });
 }
 
+/// The large files the panel's download button and "Delete model" stand for:
+/// BirdNET's backbone (shared by BirdNET and BattyBirdNET; labels and regional
+/// classifiers are small and download on Analyse), or all of Perch's files.
+fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
+    match method {
+        Method::BirdNet | Method::Bats => vec![&catalog::BACKBONE],
+        Method::Perch => catalog::PERCH_FILES.to_vec(),
+    }
+}
+
+/// The files that "Delete model" removes.
+fn deletable_files(method: Method) -> Vec<&'static catalog::ModelFile> {
+    match method {
+        Method::BirdNet | Method::Bats => catalog::birdnet_files().collect(),
+        Method::Perch => catalog::PERCH_FILES.to_vec(),
+    }
+}
+
+/// One status for several files: failed or unknown if any is, downloading
+/// (with the share of all their bytes) while any is, downloaded when all are.
+fn combined_status(
+    downloads: &std::collections::HashMap<&'static str, DownloadStatus>,
+    files: &[&'static catalog::ModelFile],
+) -> DownloadStatus {
+    let total: u64 = files.iter().map(|f| f.size).sum();
+    let mut done = 0.0;
+    let mut downloading = false;
+    let mut missing = false;
+    for f in files {
+        match downloads.get(f.id).cloned().unwrap_or_default() {
+            DownloadStatus::Failed(e) => return DownloadStatus::Failed(e),
+            DownloadStatus::Unknown => return DownloadStatus::Unknown,
+            DownloadStatus::Downloaded => done += f.size as f64,
+            DownloadStatus::Downloading { fraction } => {
+                downloading = true;
+                done += fraction * f.size as f64;
+            }
+            DownloadStatus::NotDownloaded => missing = true,
+        }
+    }
+    if downloading {
+        DownloadStatus::Downloading {
+            fraction: done / total.max(1) as f64,
+        }
+    } else if missing {
+        DownloadStatus::NotDownloaded
+    } else {
+        DownloadStatus::Downloaded
+    }
+}
+
 /// Add the windows at or above the minimum confidence as annotations,
 /// replacing the ones this method (and region) added before.
 fn add_annotations(state: AppState, file_id: u64, method: Method, merge: bool) {
-    let min = state.call_detection.min_confidence().get_untracked();
+    let min = classifier::min_confidence_untracked(state, method);
     let now = now_iso8601();
     let built = state.classifier.results().with_untracked(|m| {
         m.get(&(file_id, method)).map(|run| {
@@ -206,15 +257,13 @@ fn add_annotations(state: AppState, file_id: u64, method: Method, merge: bool) {
 }
 
 #[component]
-pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
+pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     let state = expect_context::<AppState>();
-    let method = if bats { Method::Bats } else { Method::BirdNet };
-    let choice = move || {
-        if bats {
-            ModelChoice::Bats(state.call_detection.bat_region().get())
-        } else {
-            ModelChoice::BirdNet
-        }
+    let bats = method == Method::Bats;
+    let choice = move || match method {
+        Method::BirdNet => ModelChoice::BirdNet,
+        Method::Bats => ModelChoice::Bats(state.call_detection.bat_region().get()),
+        Method::Perch => ModelChoice::Perch,
     };
 
     // Which model files are on this device; checked once per opening.
@@ -234,11 +283,12 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 .map(|f| (f.audio.sample_rate, f.audio.duration_secs))
         })
     });
+    let model_size: u64 = model_files(method).iter().map(|f| f.size).sum();
     let backbone = Memo::new(move |_| {
         state
             .classifier
             .downloads()
-            .with(|m| m.get(catalog::BACKBONE.id).cloned().unwrap_or_default())
+            .with(|m| combined_status(m, &model_files(method)))
     });
     // This file's results for this method: (windows, complete, region, window length).
     let results_info = Memo::new(move |_| {
@@ -248,7 +298,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 .map(|r| (r.windows.len(), r.complete, r.region, r.window_secs))
         })
     });
-    let min_conf = move || state.call_detection.min_confidence().get();
+    let min_conf = move || classifier::min_confidence(state, method);
     let summary = Memo::new(move |_| {
         let file = current_file.get()?;
         let min = min_conf();
@@ -317,13 +367,13 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 .into_any();
             }
             DownloadStatus::Downloading { fraction } => {
-                let done = (fraction * catalog::BACKBONE.size as f64 / MB).round();
+                let done = (fraction * model_size as f64 / MB).round();
                 let pct = fraction * 100.0;
                 return view! {
                     <div class="detection-status">
                         <div>{format!(
                             "Downloading model: {done:.0} of {:.0} MB",
-                            catalog::BACKBONE.size as f64 / MB
+                            model_size as f64 / MB
                         )}</div>
                         <div class="detection-progress">
                             <div class="detection-progress-fill" style=format!("width:{pct:.1}%")></div>
@@ -415,6 +465,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
         let label = match choice() {
             ModelChoice::BirdNet => "Analyse with BirdNET".to_string(),
             ModelChoice::Bats(r) => format!("Analyse with BattyBirdNET ({})", r.label()),
+            ModelChoice::Perch => "Analyse with Perch 2.0".to_string(),
         };
         let error = match run_status() {
             RunStatus::Failed {
@@ -553,7 +604,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                         prop:value=move || min_conf().to_string()
                         on:input=move |ev| {
                             if let Ok(v) = event_target_value(&ev).parse::<f32>() {
-                                state.call_detection.min_confidence().set(v);
+                                classifier::set_min_confidence(state, method, v);
                             }
                         }
                     />
@@ -572,8 +623,9 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                 {lists}
                 {move || top_three(state, method, current_file)}
                 // BirdNET only: BattyBirdNET's regional classifiers give no
-                // usable map (research/species-map/README.md).
-                {(!bats).then(|| view! {
+                // usable map (research/species-map/README.md), and the map is
+                // laid out from BirdNET's classes, not Perch's.
+                {(method == Method::BirdNet).then(|| view! {
                     <div class="detection-annotate-row">
                         <button class="psd-btn" on:click=move |_| map_open.set(true)>"Species map"</button>
                     </div>
@@ -665,19 +717,33 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
     let model = move || {
         let downloaded = backbone.get() == DownloadStatus::Downloaded;
         let a = catalog::attribution(method);
-        let byline = if bats {
-            "BattyBirdNET by rdz-oss, powered by BirdNET."
-        } else {
-            "Powered by BirdNET."
+        let (byline, used_by, cant_run) = match method {
+            Method::BirdNet => (
+                "Powered by BirdNET.",
+                " Used by BirdNET and BattyBirdNET.",
+                "BirdNET and BattyBirdNET",
+            ),
+            Method::Bats => (
+                "BattyBirdNET by rdz-oss, powered by BirdNET.",
+                " Used by BirdNET and BattyBirdNET.",
+                "BirdNET and BattyBirdNET",
+            ),
+            Method::Perch => ("Perch 2.0 by Google DeepMind.", "", "Perch"),
         };
+        // The link text is the site, e.g. "birdnet.cornell.edu".
+        let site = a
+            .powered_by_url
+            .trim_start_matches("https://")
+            .trim_start_matches("www.")
+            .trim_end_matches('/');
         view! {
             <div class="setting-group">
                 <div class="setting-group-title">"Model"</div>
                 {downloaded.then(|| view! {
                     <div class="detection-status">
                         <div class="detection-status-note">{format!(
-                            "Downloaded: {}. Used by BirdNET and BattyBirdNET.",
-                            mb(catalog::BACKBONE.size)
+                            "Downloaded: {}.{used_by}",
+                            mb(model_size)
                         )}</div>
                     </div>
                     <button
@@ -686,18 +752,18 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                             let ok = web_sys::window()
                                 .and_then(|w| {
                                     w.confirm_with_message(&format!(
-                                        "Delete the model ({}) from this device? BirdNET and BattyBirdNET can't run until it is downloaded again. Results already shown stay.",
-                                        mb(catalog::BACKBONE.size)
+                                        "Delete the model ({}) from this device? {cant_run} can't run until it is downloaded again. Results already shown stay.",
+                                        mb(model_size)
                                     ))
                                     .ok()
                                 })
                                 .unwrap_or(false);
                             if ok {
                                 classifier::cancel(state);
-                                classifier::delete_files(state, catalog::all_files().collect());
+                                classifier::delete_files(state, deletable_files(method));
                             }
                         }
-                    >{format!("Delete model ({})", mb(catalog::BACKBONE.size))}</button>
+                    >{format!("Delete model ({})", mb(model_size))}</button>
                 })}
                 <div class="detection-status detection-credit">
                     {byline}" "
@@ -713,7 +779,7 @@ pub(super) fn ClassifierSection(bats: bool) -> impl IntoView {
                             {a.credits.iter().map(|c| view! { <p>{*c}</p> }).collect::<Vec<_>>()}
                             <p>{a.citation}</p>
                             <p>
-                                <a href=a.powered_by_url target="_blank" rel="noopener">"birdnet.cornell.edu"</a>
+                                <a href=a.powered_by_url target="_blank" rel="noopener">{site}</a>
                             </p>
                         </div>
                     })}
@@ -739,7 +805,7 @@ fn species_table(
     method: Method,
     current_file: Memo<Option<u64>>,
 ) -> impl IntoView {
-    let min = state.call_detection.min_confidence().get();
+    let min = classifier::min_confidence(state, method);
     let rows = state.classifier.results().with(|m| {
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
@@ -790,7 +856,7 @@ fn species_table(
 
 /// The "By window" list: windows at or above the minimum, in time order.
 fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
-    let min = state.call_detection.min_confidence().get();
+    let min = classifier::min_confidence(state, method);
     let rows = state.classifier.results().with(|m| {
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
