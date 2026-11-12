@@ -102,7 +102,9 @@ fn is_key_tick(t: f64, key_interval: f64) -> bool {
 /// When zoomed in with sub-second tick intervals and the view is deep into the
 /// file (>10 s), a key-marker system kicks in: "round" boundaries (e.g. every
 /// second) get prominent absolute labels while intermediate ticks show compact
-/// relative offsets like "+50ms".
+/// relative offsets like "+50 ms". With two or more key ticks on screen, each
+/// offset counts from the key tick before it; with only one, ticks before it
+/// count down to it ("−200 ms") so every offset refers to a visible label.
 pub fn draw_time_markers(
     ctx: &CanvasRenderingContext2d,
     scroll_offset: f64,
@@ -145,6 +147,12 @@ pub fn draw_time_markers(
     let first_tick = (scaled_scroll / interval).ceil() * interval;
     let use_relative = interval < 1.0 && first_tick > 10.0;
     let use_clock = show_clock_time && clock.is_some();
+    // The only key tick on screen, if there is exactly one.
+    let lone_key = {
+        let first_key = (scaled_scroll / key_interval - 1e-9).ceil();
+        let last_key = (end_time / key_interval + 1e-9).floor();
+        (last_key == first_key).then_some(first_key * key_interval)
+    };
 
     // ── Minor ticks (no labels) ──
     let minor_interval = interval / 5.0;
@@ -213,8 +221,9 @@ pub fn draw_time_markers(
                 let clk = clock.unwrap();
                 format_clock_time(clk.recording_start_epoch_ms, t, interval)
             } else if use_relative && !is_key {
-                let nearest_key = (t / key_interval).floor() * key_interval;
-                format_time::format_relative_label(t - nearest_key, interval)
+                let reference =
+                    lone_key.unwrap_or_else(|| (t / key_interval).floor() * key_interval);
+                format_time::format_relative_label(t - reference, interval)
             } else {
                 format_time::format_time_label(t, interval, use_ms)
             };

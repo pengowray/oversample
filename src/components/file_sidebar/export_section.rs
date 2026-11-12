@@ -299,7 +299,7 @@ pub fn ExportPanel() -> impl IntoView {
                         .map(|dur| view! {
                             <div class="export-detail">
                                 <span class="export-detail-label">"Length"</span>
-                                <span>{export::format_duration(dur)}</span>
+                                <span>{crate::format_time::format_duration_compact(dur)}</span>
                             </div>
                         })
                 }}

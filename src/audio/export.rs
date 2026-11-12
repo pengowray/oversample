@@ -746,22 +746,6 @@ pub fn get_export_info(state: &AppState) -> Option<ExportInfo> {
     })
 }
 
-/// Format a duration in seconds to a human-readable string.
-pub fn format_duration(secs: f64) -> String {
-    if secs < 60.0 {
-        format!("{:.1}s", secs)
-    } else if secs < 3600.0 {
-        let m = (secs / 60.0) as u32;
-        let s = (secs % 60.0) as u32;
-        format!("{}m {:02}s", m, s)
-    } else {
-        let h = (secs / 3600.0) as u32;
-        let m = ((secs % 3600.0) / 60.0) as u32;
-        let s = (secs % 60.0) as u32;
-        format!("{}h {:02}m {:02}s", h, m, s)
-    }
-}
-
 /// Get the list of selected Region annotations.
 pub fn get_selected_regions(state: &AppState) -> Vec<(Annotation, Region)> {
     let selected_ids = state.annotations.selected_ids().get_untracked();
