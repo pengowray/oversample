@@ -29,6 +29,10 @@ pub mod keys {
     pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
     /// The mic panel's Channels setting: "mono" or "stereo".
     pub const MIC_CHANNEL_MODE: &str = "oversample_mic_channel_mode";
+    /// The Export panel's WAV bit depth: "same", "16" or "float".
+    pub const EXPORT_WAV_DEPTH: &str = "oversample_export_wav_depth";
+    /// The Export panel's "Normalize peak to -3 dBFS" checkbox.
+    pub const EXPORT_NORMALIZE: &str = "oversample_export_normalize";
     /// Xeno-Canto API key saved in the browser (web build only; the desktop app
     /// keeps its key in a native config file, see `xc_lib::key_store`).
     pub const XC_WEB_API_KEY: &str = "oversample_xc_api_key";

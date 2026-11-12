@@ -428,6 +428,24 @@ pub enum WavExportDepth {
     Float32,
 }
 
+impl WavExportDepth {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::SameAsFile => "same",
+            Self::Pcm16 => "16",
+            Self::Float32 => "float",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "16" => Self::Pcm16,
+            "float" => Self::Float32,
+            _ => Self::SameAsFile,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum VideoResolution {
     #[default]
@@ -2875,8 +2893,13 @@ impl AppState {
             export: Store::new(ExportState {
                 section_open: false,
                 format: ExportFormat::default(),
-                wav_depth: WavExportDepth::default(),
-                normalize: false,
+                wav_depth: crate::settings::get_raw(crate::settings::keys::EXPORT_WAV_DEPTH)
+                    .map(|v| WavExportDepth::from_key(&v))
+                    .unwrap_or_default(),
+                normalize: crate::settings::get_bool(
+                    crate::settings::keys::EXPORT_NORMALIZE,
+                    false,
+                ),
                 video_progress: None,
                 video_status: None,
                 video_cancel: false,

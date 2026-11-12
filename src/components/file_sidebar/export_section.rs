@@ -132,6 +132,11 @@ pub fn ExportPanel() -> impl IntoView {
         }
     };
 
+    let set_wav_depth = move |depth: WavExportDepth| {
+        state.export.wav_depth().set(depth);
+        crate::settings::set_raw(crate::settings::keys::EXPORT_WAV_DEPTH, depth.key());
+    };
+
     let on_format_change = move |format: ExportFormat| {
         state.export.format().set(format);
     };
@@ -183,7 +188,7 @@ pub fn ExportPanel() -> impl IntoView {
                                     type="radio"
                                     name="export-wav-depth"
                                     prop:checked=move || depth_checked(WavExportDepth::SameAsFile)
-                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::SameAsFile)
+                                    on:change=move |_| set_wav_depth(WavExportDepth::SameAsFile)
                                 />
                                 {same_as_file_label}
                             </label>
@@ -195,7 +200,7 @@ pub fn ExportPanel() -> impl IntoView {
                                     type="radio"
                                     name="export-wav-depth"
                                     prop:checked=move || depth_checked(WavExportDepth::Pcm16)
-                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::Pcm16)
+                                    on:change=move |_| set_wav_depth(WavExportDepth::Pcm16)
                                 />
                                 " 16-bit, for listening"
                             </label>
@@ -207,7 +212,7 @@ pub fn ExportPanel() -> impl IntoView {
                                     type="radio"
                                     name="export-wav-depth"
                                     prop:checked=move || depth_checked(WavExportDepth::Float32)
-                                    on:change=move |_| state.export.wav_depth().set(WavExportDepth::Float32)
+                                    on:change=move |_| set_wav_depth(WavExportDepth::Float32)
                                 />
                                 " 32-bit float, for further processing"
                             </label>
@@ -356,7 +361,11 @@ pub fn ExportPanel() -> impl IntoView {
                         <input
                             type="checkbox"
                             prop:checked=move || state.export.normalize().get()
-                            on:change=move |ev| state.export.normalize().set(event_target_checked(&ev))
+                            on:change=move |ev| {
+                            let on = event_target_checked(&ev);
+                            state.export.normalize().set(on);
+                            crate::settings::set_bool(crate::settings::keys::EXPORT_NORMALIZE, on);
+                        }
                         />
                         " Normalize peak to \u{2212}3 dBFS"
                     </label>
