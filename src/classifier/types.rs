@@ -113,16 +113,15 @@ pub fn parse_labels(text: &str) -> Vec<SpeciesLabel> {
 /// Parse Perch's `labels.csv`: a header line, then one class per line, with no
 /// common names. Species are scientific names ("Apus apus"); the 198 sound
 /// events are FSD50K names, where "_and_" stands for a comma and "_" for a space
-/// ("Splash_and_splatter" becomes "Splash, splatter"). Sound events are not
-/// species, so the tab counts them with "Noise and other sounds" rather than
-/// calling Vehicle a species.
+/// ("Splash_and_splatter" becomes "Splash, splatter"). Every class counts as a
+/// species here, as BirdNET's named sounds ("Dog", "Engine") do, so thunder or
+/// traffic is listed and can be added as an annotation.
 pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
     text.lines()
         .skip(1)
         .map(|l| {
             let l = l.trim();
-            let is_species = l.contains(' ');
-            let name = if is_species {
+            let name = if l.contains(' ') {
                 l.to_string()
             } else {
                 l.replace("_and_", ", ").replace('_', " ")
@@ -130,7 +129,7 @@ pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
             SpeciesLabel {
                 scientific: name.clone(),
                 common: name,
-                is_species,
+                is_species: true,
             }
         })
         .collect()
@@ -216,7 +215,6 @@ mod tests {
         assert_eq!(l[0].common, "Apus apus");
         assert_eq!(l[1].common, "Splash, splatter");
         assert_eq!(l[2].common, "Motor vehicle (road)");
-        assert!(l[0].is_species);
-        assert!(!l[1].is_species && !l[2].is_species);
+        assert!(l.iter().all(|x| x.is_species));
     }
 }
