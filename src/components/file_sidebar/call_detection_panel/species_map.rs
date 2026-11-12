@@ -6,7 +6,7 @@
 use super::classifier_section::show_window;
 use crate::classifier::species_map::{parse_map, place_windows};
 use crate::classifier::summary::{window_kind, WindowKind};
-use crate::classifier::{ClassifierRun, Method};
+use crate::classifier::{location, ClassifierRun, Method};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
@@ -55,11 +55,15 @@ fn round4(v: f32) -> f32 {
 
 /// The parts of the map that change while a run is in progress: the found
 /// species, the windows' dots and the selection.
+///
+/// `unlikely` says whether a class is a bird unlikely at the recording's
+/// place and month; those get a flag after their name.
 fn windows_json(
     run: &ClassifierRun,
     map: &[(f32, f32)],
     min: f32,
     selected: Option<usize>,
+    unlikely: &dyn Fn(u16) -> bool,
 ) -> serde_json::Value {
     let placed = place_windows(run, map, min);
     let mut found: Vec<u16> = placed
@@ -68,6 +72,7 @@ fn windows_json(
         .collect();
     found.sort_unstable();
     found.dedup();
+    let unlikely_found: Vec<u16> = found.iter().copied().filter(|&c| unlikely(c)).collect();
     let windows: Vec<_> = placed
         .iter()
         .map(|p| {
@@ -80,6 +85,7 @@ fn windows_json(
                     (
                         run.label(s).map_or("Unknown", |l| l.common.as_str()),
                         (s.confidence * 100.0).round() / 100.0,
+                        unlikely(s.class),
                     )
                 })
                 .collect();
@@ -88,6 +94,7 @@ fn windows_json(
         .collect();
     serde_json::json!({
         "found": found,
+        "unlikely": unlikely_found,
         "windows": windows,
         "selected": selected,
     })
@@ -120,6 +127,8 @@ pub(super) fn SpeciesMapDialog(
     // None while loading; then the map, or why it could not load.
     let map: RwSignal<Option<Result<Map, String>>> = RwSignal::new(None);
     let error: RwSignal<Option<String>> = RwSignal::new(None);
+    // True while a species in the results is flagged, so the legend names the flag.
+    let any_unlikely = RwSignal::new(false);
     spawn_local(async move {
         let m = load_map().await;
         map.set(Some(m));
@@ -159,7 +168,16 @@ pub(super) fn SpeciesMapDialog(
         // send the 6,522 species points only when the file changes.
         let json = state.classifier.results().with(|r| {
             let run = r.get(&(file, Method::BirdNet))?;
-            let mut d = windows_json(run, &m, min, selected);
+            let unlikely = |class: u16| {
+                run.labels.get(class as usize).is_some_and(|l| {
+                    location::unlikely_here(state, file, Method::BirdNet, l)
+                })
+            };
+            let mut d = windows_json(run, &m, min, selected, &unlikely);
+            let any = d["unlikely"].as_array().is_some_and(|a| !a.is_empty());
+            if any_unlikely.get_untracked() != any {
+                any_unlikely.set(any);
+            }
             let key = (file, d.to_string());
             if last.with_value(|l| l.as_ref() == Some(&key)) {
                 return None;
@@ -269,6 +287,9 @@ pub(super) fn SpeciesMapDialog(
                         <li><span class="map-key map-key-species"></span>"BirdNET's 6,522 species and sounds"</li>
                         <li><span class="map-key map-key-found"></span>"Species in the results"</li>
                         <li><span class="map-key map-key-window"></span>{windows_label}</li>
+                        <Show when=move || any_unlikely.get()>
+                            <li><span class="unlikely-flag map-key-flag">"\u{2691}"</span>"Unlikely at this place and month"</li>
+                        </Show>
                         <Show when=selected_shown>
                             <li><span class="map-key map-key-selected"></span>"Selected window"</li>
                         </Show>

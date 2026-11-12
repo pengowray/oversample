@@ -2,9 +2,9 @@
 //! windows at or above the minimum confidence, the species they name, and the
 //! annotations made from them.
 
-use super::{ClassifierRun, Method};
+use super::{ClassifierRun, Method, SpeciesLabel};
 use crate::annotations::{Annotation, AnnotationId, AnnotationKind, Region};
-use oversample_core::annotation_tags::{self, Tag, AUTO};
+use oversample_core::annotation_tags::{self, Tag, AUTO, UNLIKELY_HERE};
 
 /// How a window's top class compares with the minimum confidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,19 +183,26 @@ pub fn has_auto_tag(annotation: &Annotation, value: &str) -> bool {
 
 /// Annotations for `spans`: a time region labelled with the species and its
 /// best confidence ("Song thrush 0.91"), with the scientific name in the notes.
+/// A species `unlikely` returns true for also gets the `#unlikely-here` tag.
 pub fn build_annotations(
     run: &ClassifierRun,
     spans: &[Span],
     now: &str,
     mut new_id: impl FnMut() -> AnnotationId,
+    unlikely: impl Fn(&SpeciesLabel) -> bool,
 ) -> Vec<Annotation> {
     let tag = Tag::with_value(AUTO, auto_tag_value(run)).to_stored();
+    let unlikely_tag = Tag::flag(UNLIKELY_HERE).to_stored();
     spans
         .iter()
         .enumerate()
         .map(|(order, s)| {
             let label = run.labels.get(s.class as usize);
             let common = label.map_or("Unknown", |l| l.common.as_str());
+            let mut tags = vec![tag.clone()];
+            if label.is_some_and(&unlikely) {
+                tags.push(unlikely_tag.clone());
+            }
             Annotation {
                 id: new_id(),
                 kind: AnnotationKind::Region(Region {
@@ -214,7 +221,7 @@ pub fn build_annotations(
                     .map(|l| l.scientific.clone()),
                 parent_id: None,
                 sort_order: Some(order as f64),
-                tags: vec![tag.clone()],
+                tags,
                 label_default: None,
             }
         })
@@ -286,10 +293,13 @@ mod tests {
     #[test]
     fn annotations_carry_region_tag() {
         let r = run(&[(1, 0.8)]);
-        let a = build_annotations(&r, &spans(&r, 0.5, true), "now", || {
-            AnnotationId::from("a".to_string())
-        });
+        let new_id = || AnnotationId::from("a".to_string());
+        let a = build_annotations(&r, &spans(&r, 0.5, true), "now", new_id, |_| false);
         assert_eq!(a.len(), 1);
+        assert!(has_auto_tag(&a[0], "battybirdnet-uk"));
+        assert!(!annotation_tags::has_flag(&a[0].tags, UNLIKELY_HERE));
+        let a = build_annotations(&r, &spans(&r, 0.5, true), "now", new_id, |_| true);
+        assert!(annotation_tags::has_flag(&a[0].tags, UNLIKELY_HERE));
         assert!(has_auto_tag(&a[0], "battybirdnet-uk"));
         assert_eq!(a[0].notes.as_deref(), Some("Pipistrellus pygmaeus"));
     }

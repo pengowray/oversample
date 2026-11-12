@@ -36,6 +36,9 @@ pub const SPECIES: &str = "species";
 /// Made by a detector rather than by hand. The value names the detector, such
 /// as `auto=calls-1`.
 pub const AUTO: &str = "auto";
+/// On an annotation made from a BirdNET or Perch result: a bird the location
+/// list says is unlikely at the recording's place and month.
+pub const UNLIKELY_HERE: &str = "unlikely-here";
 
 /// Namespace for fields that came from, or go to, Xeno-canto's Annota-JSON.
 pub const XC_NS: &str = "xc";

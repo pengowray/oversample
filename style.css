@@ -749,6 +749,12 @@ body.sidebar-resizing {
     white-space: nowrap;
 }
 
+.species-map-legend .map-key-flag {
+    margin: 0;
+    width: 8px;
+    line-height: 1;
+}
+
 .detection-status-note > .unlikely-flag {
     margin-left: 0;
 }

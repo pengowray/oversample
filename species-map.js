@@ -8,7 +8,8 @@
 //   oversampleSpeciesMap.resetZoom(el)
 //   oversampleSpeciesMap.dispose(el)
 // `json` is { species: [[x, y, common, scientific]...], found: [i...],
-//   windows: [[x, y, window, start, end, [[name, conf]...]]...], selected }
+//   unlikely: [i...] (found birds unlikely at the recording's place and month),
+//   windows: [[x, y, window, start, end, [[name, conf, unlikely]...]]...], selected }
 // `species` is null when it is the same as the last call's.
 // `onPick(window)` runs when a window's dot is clicked.
 (function () {
@@ -41,9 +42,14 @@
   const SURFACE = '#1e1e1e';
   const WINDOW = '#50dc96';
   const SELECTED = '#ffc850';
+  // The flag on a bird unlikely at the recording's place and month. Same
+  // colour as `.unlikely-flag` in the lists (style.css).
+  const FLAG = '#ffcc88';
+  const FLAG_HTML = ` <span style="color:${FLAG}">\u2691</span>`;
 
   function options(d) {
     const found = new Set(d.found);
+    const unlikely = new Set(d.unlikely || []);
     return {
       animation: false,
       backgroundColor: 'transparent',
@@ -64,12 +70,13 @@
           const v = p.data.value || p.data;
           if (p.seriesId === 'windows') {
             const rows = v[5]
-              .map(([n, c]) => `${esc(n)} <span style="float:right;margin-left:12px">${c.toFixed(2)}</span>`)
+              .map(([n, c, u]) => `${esc(n)}${u ? FLAG_HTML : ''} <span style="float:right;margin-left:12px">${c.toFixed(2)}</span>`)
               .join('<br>');
             return `<b>Window ${v[2] + 1}</b>, ${time(v[3])} to ${time(v[4])}<br>${rows}`;
           }
           const sci = v[3] && v[3] !== v[2] ? `<br><i style="color:${MUTED}">${esc(v[3])}</i>` : '';
-          return `${esc(v[2])}${sci}`;
+          const flag = p.data.unlikely ? `<br>${FLAG_HTML} Unlikely at this place and month` : '';
+          return `${esc(v[2])}${sci}${flag}`;
         },
       },
       series: [
@@ -94,13 +101,17 @@
           // The species the windows name, ringed and labelled.
           id: 'found',
           type: 'scatter',
-          data: d.species.filter((_, i) => found.has(i)),
+          data: d.species.flatMap((s, i) =>
+            found.has(i) ? [{ value: s, unlikely: unlikely.has(i) }] : []
+          ),
           symbolSize: 9,
           itemStyle: { color: 'transparent', borderColor: INK, borderWidth: 1.5 },
           label: {
             show: true,
             position: 'right',
-            formatter: (p) => p.data[2],
+            formatter: (p) =>
+              p.data.unlikely ? `${p.data.value[2]} {flag|\u2691}` : p.data.value[2],
+            rich: { flag: { color: FLAG, fontSize: 11 } },
             color: INK,
             fontSize: 11,
           },

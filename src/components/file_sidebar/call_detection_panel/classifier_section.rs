@@ -203,7 +203,9 @@ fn add_annotations(state: AppState, file_id: u64, method: Method, merge: bool) {
         m.get(&(file_id, method)).map(|run| {
             let spans = summary::spans(run, min, merge);
             (
-                summary::build_annotations(run, &spans, &now, AnnotationId::new),
+                summary::build_annotations(run, &spans, &now, AnnotationId::new, |l| {
+                    untrack(|| location::unlikely_here(state, file_id, method, l))
+                }),
                 summary::auto_tag_value(run),
             )
         })
