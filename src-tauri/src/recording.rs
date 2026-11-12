@@ -61,6 +61,14 @@ pub(crate) fn seed_from_ring<T: Copy>(
 /// enough to see the low-bit usage settle.
 const DETECT_MIN_SAMPLES: u64 = 48_000;
 
+/// The mean of one frame of 16-bit samples, top-aligned in an i32 as I24
+/// storage holds it. Keeps the half step (or finer) that averaging adds, which
+/// a 16-bit mix would round away.
+pub(crate) fn mix_i16_top_aligned(frame: &[i16]) -> i32 {
+    let sum: i64 = frame.iter().map(|&s| s as i64).sum();
+    ((sum << 16) / frame.len().max(1) as i64) as i32
+}
+
 /// cpal's I24 holds the value in the low 24 bits of an i32; I24 storage uses
 /// the top 24 bits, as I32 does.
 fn i24_to_top_aligned(s: cpal::I24) -> i32 {
@@ -841,9 +849,18 @@ pub fn open_mic(
     let channels = stream_config.channels as usize;
     let stereo = requested_channels == 2 && channels == 2;
     let stored_channels: usize = if stereo { 2 } else { 1 };
+    // A 16-bit device with several channels mixed to mono is stored as 24-bit,
+    // keeping the half steps of the mix. Detection still writes it as 16-bit
+    // when every channel carries the same audio.
+    let mix_i16_deeper = format == NativeSampleFormat::I16 && channels > 1 && !stereo;
+    let storage_format = if mix_i16_deeper {
+        NativeSampleFormat::I24
+    } else {
+        format
+    };
 
     let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
-        format,
+        storage_format,
         sample_rate,
         stored_channels as u16,
     )));
@@ -863,15 +880,22 @@ pub fn open_mic(
         NativeSampleFormat::I16 => device.build_input_stream(
             stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                if mix_i16_deeper {
+                    let mixed: Vec<i32> = data.chunks(channels).map(mix_i16_top_aligned).collect();
+                    let mut buf = buf.lock().unwrap();
+                    buf.note_i32_bits(&mixed);
+                    let recording = rec.load(Ordering::Relaxed);
+                    if recording || strm.load(Ordering::Relaxed) {
+                        buf.push_i32(&mixed, recording);
+                    }
+                    return;
+                }
                 let mut buf = buf.lock().unwrap();
                 let recording = rec.load(Ordering::Relaxed);
                 if !recording && !strm.load(Ordering::Relaxed) {
                     return;
                 }
-                let stored = samples_to_store(data, channels, stereo, |frame| {
-                    (frame.iter().map(|&s| s as i32).sum::<i32>() / channels as i32) as i16
-                });
-                buf.push_i16(&stored, recording);
+                buf.push_i16(data, recording);
             },
             err_callback,
             None,
@@ -1259,6 +1283,26 @@ mod tests {
             .collect();
         buf.note_f32_bits(&listened);
         buf
+    }
+
+    #[test]
+    fn a_16_bit_mono_mix_keeps_its_half_steps() {
+        assert_eq!(mix_i16_top_aligned(&[-2, -1]), -3 << 15);
+        assert_eq!(mix_i16_top_aligned(&[100, 100]), 100 << 16);
+        // Identical channels mix to whole 16-bit steps, so detection writes
+        // them as 16-bit; different channels need 24-bit.
+        let mut same = RecordingBuffer::new(NativeSampleFormat::I24, 48_000, 1);
+        let mixes: Vec<i32> = (0..60_000_i32)
+            .map(|i| mix_i16_top_aligned(&[(i % 3000) as i16, (i % 3000) as i16]))
+            .collect();
+        same.note_i32_bits(&mixes);
+        assert_eq!(same.choose_write_format(), NativeSampleFormat::I16);
+        let mut differ = RecordingBuffer::new(NativeSampleFormat::I24, 48_000, 1);
+        let mixes: Vec<i32> = (0..60_000_i32)
+            .map(|i| mix_i16_top_aligned(&[(i % 3000) as i16, (i % 3001) as i16]))
+            .collect();
+        differ.note_i32_bits(&mixes);
+        assert_eq!(differ.choose_write_format(), NativeSampleFormat::I24);
     }
 
     #[test]

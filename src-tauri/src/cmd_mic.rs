@@ -191,9 +191,14 @@ pub fn mic_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    if let Some(writer) =
-        recovery::start_writer(&app, &args, write_format, m.sample_rate, m.channels, "batcap")
-    {
+    if let Some(writer) = recovery::start_writer(
+        &app,
+        &args,
+        write_format,
+        m.sample_rate,
+        m.channels,
+        "batcap",
+    ) {
         if let Ok(mut guard) = m.recovery.writer.lock() {
             *guard = Some(writer);
         }
@@ -498,10 +503,14 @@ pub fn mic_get_status(state: tauri::State<MicMutex>) -> MicStatus {
                 .buffer
                 .lock()
                 .map(|b| {
-                    // Detection only applies to i32 (24/32-bit) container streams.
-                    let eff = matches!(b.format, NativeSampleFormat::I24 | NativeSampleFormat::I32)
-                        .then(|| b.effective_bits(32))
-                        .flatten();
+                    // Detection describes the device's own samples, so it is
+                    // reported for 24-bit, 32-bit and float devices only (not
+                    // for a 16-bit device whose mono mix is stored as 24-bit).
+                    let eff = match m.format {
+                        NativeSampleFormat::I24 | NativeSampleFormat::I32 => b.effective_bits(32),
+                        NativeSampleFormat::F32 => b.float_bits(),
+                        NativeSampleFormat::I16 => None,
+                    };
                     (b.total_samples, eff)
                 })
                 .unwrap_or((0, None));

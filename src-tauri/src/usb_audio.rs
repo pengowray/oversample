@@ -170,6 +170,22 @@ impl UsbDecoder {
         }
     }
 
+    /// True when 16-bit frames are mixed to mono: the mix is stored as
+    /// top-aligned i32 (I24), keeping its half steps.
+    fn mixes_i16(&self) -> bool {
+        self.format == NativeSampleFormat::I16 && !self.keep_channels
+    }
+
+    /// The format the recording buffer stores: the stream's, except that a
+    /// 16-bit mono mix is stored as I24.
+    pub(crate) fn storage_format(&self) -> NativeSampleFormat {
+        if self.mixes_i16() {
+            NativeSampleFormat::I24
+        } else {
+            self.format
+        }
+    }
+
     /// Channels stored per frame: 1, or 2 for a stereo stream.
     pub(crate) fn stored_channels(&self) -> u16 {
         if self.keep_channels {
@@ -192,6 +208,17 @@ impl UsbDecoder {
     /// Decode one packet (little-endian samples, channels interleaved).
     pub(crate) fn decode(&mut self, bytes: &[u8]) {
         let (ch, keep) = (self.channels, self.keep_channels);
+        if self.mixes_i16() {
+            for frame in bytes.chunks_exact(2 * ch) {
+                let samples: Vec<i16> = frame
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                    .collect();
+                self.i32s
+                    .push(crate::recording::mix_i16_top_aligned(&samples));
+            }
+            return;
+        }
         match self.format {
             NativeSampleFormat::I16 => decode_frames(
                 bytes,
@@ -231,6 +258,11 @@ impl UsbDecoder {
     /// Hand the decoded samples to the recording (or the pre-roll ring) and the
     /// live display.
     pub(crate) fn push_to(&self, buf: &mut RecordingBuffer, recording: bool) {
+        if self.mixes_i16() {
+            buf.note_i32_bits(&self.i32s);
+            buf.push_i32(&self.i32s, recording);
+            return;
+        }
         match self.format {
             NativeSampleFormat::I16 => buf.push_i16(&self.i16s, recording),
             NativeSampleFormat::I24 => buf.push_i32(&self.i32s, recording),
@@ -276,13 +308,15 @@ pub fn start_usb_stream(
     let format = usb_sample_format(sample_bytes, is_float);
     let decoder = UsbDecoder::new(format, num_channels as usize, stereo);
     let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
-        format,
+        decoder.storage_format(),
         sample_rate,
         decoder.stored_channels(),
     )));
     eprintln!(
         "USB stream: {} ch, {} bytes per sample, stored as {:?}",
-        num_channels, sample_bytes, format
+        num_channels,
+        sample_bytes,
+        decoder.storage_format()
     );
 
     let cancel = cancel_flag.clone();
@@ -831,7 +865,8 @@ mod tests {
         packet: &[u8],
     ) -> RecordingBuffer {
         let mut decoder = UsbDecoder::new(format, channels, stereo);
-        let mut buf = RecordingBuffer::new(format, 48_000, decoder.stored_channels());
+        let mut buf =
+            RecordingBuffer::new(decoder.storage_format(), 48_000, decoder.stored_channels());
         decoder.decode(packet);
         decoder.push_to(&mut buf, true);
         buf
@@ -863,12 +898,12 @@ mod tests {
         assert_eq!(stereo.samples_i16, vec![100, -200, 300, -400]);
         assert_eq!(stereo.total_samples, 2);
         let mixed = decode(NativeSampleFormat::I16, 2, false, &bytes);
-        assert_eq!(mixed.samples_i16, vec![-50, -50]);
+        assert_eq!(mixed.samples_i32, vec![-50 << 16, -50 << 16]);
         let mono = decode(NativeSampleFormat::I16, 1, false, &bytes);
         assert_eq!(mono.samples_i16, vec![100, -200, 300, -400]);
-        // A mono mix rounds down, as the 16-bit decoder always did.
+        // A mono mix keeps its half step.
         let odd = decode(NativeSampleFormat::I16, 2, false, &le_bytes(&[-2, -1], 2));
-        assert_eq!(odd.samples_i16, vec![-2]);
+        assert_eq!(odd.samples_i32, vec![-3 << 15]);
     }
 
     /// The Portacapture X8's 2-channel alternate setting: 3-byte samples, left then right.
