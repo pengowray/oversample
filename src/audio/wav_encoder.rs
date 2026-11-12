@@ -96,17 +96,6 @@ pub fn insert_cue_chunks(wav: &mut Vec<u8>, cue_bytes: &[u8]) {
     crate::audio::wav::set_riff_size(wav);
 }
 
-/// Encode mono f32 samples as a 16-bit PCM WAV file (web mode fallback).
-pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    encode_wav_interleaved(samples, 1, sample_rate)
-}
-
-/// Encode f32 samples as a 16-bit PCM WAV file. `samples` is interleaved when
-/// `channels` is more than 1.
-pub fn encode_wav_interleaved(samples: &[f32], channels: u16, sample_rate: u32) -> Vec<u8> {
-    encode_wav_at(samples, channels, sample_rate, 16, false)
-}
-
 /// Encode f32 samples as a WAV file of `bits_per_sample` bits: 24 or 32 (32-bit
 /// float when `is_float`), or 16 for any other depth, as
 /// [`WavWriteFormat::for_f32_samples`](crate::audio::wav::WavWriteFormat::for_f32_samples)

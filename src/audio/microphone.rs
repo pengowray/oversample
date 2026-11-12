@@ -1340,4 +1340,3 @@ pub(crate) use crate::audio::live_recording::{
     spawn_live_processing_loop, spawn_smooth_scroll_animation, start_live_armed,
     start_live_listening, start_live_recording,
 };
-pub use crate::audio::wav_encoder::encode_wav;
