@@ -28,6 +28,14 @@ pub enum FileKind {
     /// Perch 2.0's class names (one header line, then one per class), in the
     /// order of the classifier's outputs.
     PerchLabels,
+    /// The BirdNET+ Geomodel: latitude, longitude and week in, a 0 to 1
+    /// occurrence score for each of its 14,082 species out. Used to mark birds
+    /// not expected at a recording's place and time.
+    Geomodel,
+    /// The Geomodel's species, one per line in output order: species code (an
+    /// eBird code for birds, a number for others), scientific name, English
+    /// name, tab-separated.
+    GeomodelLabels,
 }
 
 /// One downloadable file.
@@ -51,7 +59,12 @@ impl ModelFile {
             FileKind::BatHead(_) => Some(ModelPart::BatHead),
             FileKind::PerchEmbedding => Some(ModelPart::PerchEmbedding),
             FileKind::PerchClassifier => Some(ModelPart::PerchClassifier),
-            FileKind::BirdNetLabels | FileKind::BatLabels(_) | FileKind::PerchLabels => None,
+            // Run on its own, outside the worker's two slots.
+            FileKind::Geomodel => None,
+            FileKind::BirdNetLabels
+            | FileKind::BatLabels(_)
+            | FileKind::PerchLabels
+            | FileKind::GeomodelLabels => None,
         }
     }
 
@@ -72,6 +85,28 @@ const BIRDNET_REV: &str = "883825b65a370caff2974e02f31a15b02104ef0f";
 pub const PERCH_REVISION: &str = "f378e7f4f98ce6298091e5e1768ec6d73466be89";
 /// The revision of Perch's label list (huggingface.co/cgeorgiaw/Perch).
 pub const PERCH_LABELS_REVISION: &str = "c3c3c816976a6c1bb75140b8fbaef7397a6f708f";
+/// The revision of huggingface.co/tphakala/BirdNET-Geomodel (BirdNET+ Geomodel
+/// v3.0.4 from birdnet-team/geomodel, Apache 2.0).
+pub const GEOMODEL_REVISION: &str = "e4a58d521af276de0c69a9cf8348d431e97854e3";
+
+pub const GEOMODEL: ModelFile = ModelFile {
+    id: "birdnet-geomodel-v3.0.4-fp32-b1.onnx",
+    url: "https://huggingface.co/tphakala/BirdNET-Geomodel/resolve/e4a58d521af276de0c69a9cf8348d431e97854e3/birdnet-geomodel-v3.0.4-fp32-b1.onnx",
+    size: 15_503_473,
+    sha256: "0de81d222c23dcb6fa428e958b4dac978783191357e01b7268a103fc6f08e61a",
+    kind: FileKind::Geomodel,
+};
+
+pub const GEOMODEL_LABELS: ModelFile = ModelFile {
+    id: "birdnet-geomodel-v3.0.4-labels.txt",
+    url: "https://huggingface.co/tphakala/BirdNET-Geomodel/resolve/e4a58d521af276de0c69a9cf8348d431e97854e3/BirdNET%2B_Geomodel_V3.0.4_Global_14K_Labels.txt",
+    size: 671_823,
+    sha256: "8250b457e45d43fc3e77b5cbd06a1d311baf585ab9c51ed8d42e011d98534835",
+    kind: FileKind::GeomodelLabels,
+};
+
+/// The location list's files, shared by every method; "Delete model" leaves them.
+pub const GEOMODEL_FILES: [&ModelFile; 2] = [&GEOMODEL, &GEOMODEL_LABELS];
 
 pub const PERCH_EMBEDDING: ModelFile = ModelFile {
     id: "perch_v2_embed.tract.onnx",
@@ -252,7 +287,7 @@ impl ModelChoice {
 
 /// Every file in the catalog.
 pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
-    birdnet_files().chain(PERCH_FILES)
+    birdnet_files().chain(PERCH_FILES).chain(GEOMODEL_FILES)
 }
 
 /// BirdNET's and BattyBirdNET's files (they share the backbone), without

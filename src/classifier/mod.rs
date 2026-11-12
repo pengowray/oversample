@@ -48,12 +48,16 @@
 //! BirdNET, Apache 2.0 for Perch), the "Powered by" line and link, credits,
 //! citation, source URL and revision, to show with results and in About.
 
+pub mod location;
+pub mod place;
 pub mod species_map;
 pub mod store;
 pub mod summary;
 pub mod test_hook;
 pub mod types;
 mod worker;
+
+pub use location::Occurrence;
 
 pub use oversample_ipc::classifier::catalog::{self, Attribution, ModelChoice, ModelFile};
 pub use oversample_ipc::classifier::{

@@ -30,6 +30,7 @@ enum Wait {
     ChunkDone(u32, u32),
     Done(u32),
     Rescored(u32),
+    Occurrence(u32),
 }
 
 impl Wait {
@@ -46,6 +47,8 @@ impl Wait {
 pub enum Reply {
     Ok,
     Rescored(Vec<Vec<Score>>),
+    /// The Geomodel's score for each of its species.
+    Occurrence(Vec<f32>),
 }
 
 pub type Waiter = oneshot::Receiver<Result<Reply, ClassifierError>>;
@@ -288,6 +291,9 @@ fn on_message(ev: MessageEvent) {
             FromWorker::Rescored { run, top } => {
                 client.resolve(&Wait::Rescored(run), Ok(Reply::Rescored(top)));
             }
+            FromWorker::Occurrence { req, scores } => {
+                client.resolve(&Wait::Occurrence(req), Ok(Reply::Occurrence(scores)));
+            }
             FromWorker::Error { run, error } => {
                 flush = client.take_flush();
                 // Fail every waiter the error concerns: the run's, or (for a
@@ -296,7 +302,7 @@ fn on_message(ev: MessageEvent) {
                     .into_iter()
                     .partition(|(w, _)| match run {
                         Some(r) => w.run() == Some(r),
-                        None => matches!(w, Wait::Loaded(_)),
+                        None => matches!(w, Wait::Loaded(_) | Wait::Occurrence(_)),
                     });
                 client.waiters = keep;
                 if run.is_none() {
@@ -464,6 +470,33 @@ pub fn rescore(run: u32, windows: u32, embeddings: &[f32]) -> Result<Waiter, Sto
             Some(&buf),
         );
         Ok(client.wait(Wait::Rescored(run)))
+    })
+}
+
+/// Score a place and week with the Geomodel (`bytes`, its file), which the
+/// worker builds and drops for this one query. `week` 0 is the whole year.
+pub fn occurrence(
+    req: u32,
+    lat: f32,
+    lon: f32,
+    week: u32,
+    bytes: &js_sys::Uint8Array,
+) -> Result<Waiter, Stopped> {
+    CLIENT.with(|c| {
+        let mut c = c.borrow_mut();
+        let client = c.as_mut().ok_or(Stopped::Superseded)?;
+        let buf = bytes.buffer();
+        client.post(
+            &ToWorker::Occurrence {
+                req,
+                lat,
+                lon,
+                week,
+            },
+            Some((attach::BYTES, &buf)),
+            Some(&buf),
+        );
+        Ok(client.wait(Wait::Occurrence(req)))
     })
 }
 

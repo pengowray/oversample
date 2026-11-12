@@ -15,6 +15,7 @@
 //!   native tests run it.
 
 pub mod engine;
+pub mod geomodel;
 pub mod perch;
 pub mod resample;
 pub mod session;

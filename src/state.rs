@@ -1636,6 +1636,9 @@ pub struct CallDetectionState {
     /// show an animal, and 61 of 81 correct windows stay (`research/perch.md`,
     /// "Sound events").
     pub perch_min_confidence: f32,
+    /// BirdNET and Perch: mark birds the BirdNET+ Geomodel does not expect at
+    /// the recording's place and week (when its metadata has a place).
+    pub mark_unexpected: bool,
     /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
     pub selected_window: Option<usize>,
 }
@@ -1683,6 +1686,9 @@ pub struct ClassifierState {
     /// Embeddings per (file id, method): `EMBEDDING_LEN` floats per window, in
     /// window order.
     pub embeddings: std::collections::HashMap<(u64, crate::classifier::Method), Vec<f32>>,
+    /// The location list per file id: the place and week from its metadata and
+    /// the Geomodel's score per species there (`None` while being worked out).
+    pub occurrence: std::collections::HashMap<u64, crate::classifier::Occurrence>,
     /// Bumped by each run, rescore and cancel; older tasks stop when it changes.
     pub generation: u32,
 }
@@ -2694,6 +2700,7 @@ impl AppState {
                 bat_region: crate::classifier::BatRegion::Uk,
                 min_confidence: 0.5,
                 perch_min_confidence: 0.3,
+                mark_unexpected: true,
                 selected_window: None,
             }),
 

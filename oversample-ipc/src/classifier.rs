@@ -48,6 +48,12 @@ pub const TOP_K: usize = 10;
 /// from anything recorded below this.
 pub const BATS_MIN_SOURCE_RATE: u32 = 96_000;
 
+/// The Geomodel's week of a date: 4 per month, days 1 to 7 in the first, 8 to
+/// 14 in the second, 15 to 21 in the third and the rest in the fourth (1 to 48).
+pub fn week_of(month: u32, day: u32) -> u32 {
+    (month.clamp(1, 12) - 1) * 4 + ((day.max(1) - 1) / 7 + 1).min(4)
+}
+
 /// What a run looks for. Results are kept per file and method; a BattyBirdNET
 /// run can be scored again with another region without running the backbone
 /// again.
@@ -334,6 +340,16 @@ pub enum ToWorker {
     /// Score `windows` stored embeddings ([`attach::EMBEDDING`]) with the loaded
     /// head. Answered by `Rescored`.
     Rescore { run: u32, windows: u32 },
+    /// Build the Geomodel from [`attach::BYTES`], score the place and week, and
+    /// drop the model again (it stays out of the two model slots). `week` is
+    /// 1 to 48 (4 per month), or 0 for the whole year: the highest score over
+    /// all 48 weeks. Answered by `Occurrence`.
+    Occurrence {
+        req: u32,
+        lat: f32,
+        lon: f32,
+        week: u32,
+    },
 }
 
 /// Worker to app.
@@ -358,6 +374,9 @@ pub enum FromWorker {
     Done { run: u32, windows: u32 },
     /// New scores for every stored window, in window order.
     Rescored { run: u32, top: Vec<Vec<Score>> },
+    /// The Geomodel's 0 to 1 occurrence score for each of its species, in the
+    /// order of its labels file.
+    Occurrence { req: u32, scores: Vec<f32> },
     /// Something failed. `run` is `None` for model loading.
     Error {
         run: Option<u32>,
@@ -374,6 +393,15 @@ mod tests {
         assert_eq!(Method::BirdNet.window_secs(), 3.0);
         assert_eq!(Method::Bats.window_secs(), 0.5625);
         assert_eq!(Method::Perch.window_secs(), 5.0);
+    }
+
+    #[test]
+    fn weeks() {
+        assert_eq!(week_of(1, 1), 1);
+        assert_eq!(week_of(1, 8), 2);
+        assert_eq!(week_of(1, 31), 4);
+        assert_eq!(week_of(6, 1), 21);
+        assert_eq!(week_of(12, 31), 48);
     }
 
     #[test]

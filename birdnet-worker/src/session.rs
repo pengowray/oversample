@@ -192,6 +192,19 @@ impl Session {
                 }
                 out.send(FromWorker::Rescored { run, top }, None);
             }
+            ToWorker::Occurrence {
+                req,
+                lat,
+                lon,
+                week,
+            } => {
+                let res = crate::geomodel::Geomodel::load(att.bytes.as_deref().unwrap_or_default())
+                    .and_then(|g| g.scores(lat, lon, week));
+                match res {
+                    Ok(scores) => out.send(FromWorker::Occurrence { req, scores }, None),
+                    Err(e) => out.send(load_error(format!("{e:#}")), None),
+                }
+            }
         }
     }
 

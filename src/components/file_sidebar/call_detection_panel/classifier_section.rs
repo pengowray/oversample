@@ -13,7 +13,7 @@ use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};
 use crate::classifier::{
-    self, catalog, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
+    self, catalog, location, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
 };
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -500,6 +500,16 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // The slider is built once per set of results, so dragging it re-renders
     // only the summary and the list below it.
     let has_results = Memo::new(move |_| results_info.get().is_some_and(|(n, ..)| n > 0));
+    // The location list for this file, once it has results and while marking
+    // is on (the first time downloads the Geomodel, 16 MB).
+    Effect::new(move |_| {
+        if !location::applies_to(method) || !state.call_detection.mark_unexpected().get() {
+            return;
+        }
+        if let (Some(file), true) = (current_file.get(), has_results.get()) {
+            location::update(state, file);
+        }
+    });
     // The method and region are picked just above, so the title names the
     // region only while the results are for another one (a relabel is going
     // or failed).
@@ -569,6 +579,26 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 count(s.not_species_windows, "window", "windows")
             ));
         }
+        if let Some(file) = current_file.get() {
+            let unlikely = state.classifier.results().with(|m| {
+                m.get(&(file, method)).map_or(0, |r| {
+                    s.species
+                        .iter()
+                        .filter(|row| {
+                            r.labels
+                                .get(row.class as usize)
+                                .is_some_and(|l| unlikely_here(state, file, method, l))
+                        })
+                        .count()
+                })
+            });
+            if unlikely > 0 {
+                notes.push(format!(
+                    "Unlikely here: {}",
+                    count(unlikely, "species", "species")
+                ));
+            }
+        }
         Some(view! {
             <div class="detection-status">
                 <div class="detection-summary">{main}</div>
@@ -630,6 +660,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     />
                 </div>
                 {headline}
+                {move || place_rows(state, method, current_file)}
                 <div class="setting-row detection-annotate-row">
                     <label class="setting-label">
                         <input
@@ -818,6 +849,83 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     }
 }
 
+/// True when "Mark birds unlikely here" is on and the location list says
+/// `label` is a bird unlikely at file `file`'s place and month. Reactive.
+fn unlikely_here(
+    state: AppState,
+    file: u64,
+    method: Method,
+    label: &classifier::SpeciesLabel,
+) -> bool {
+    location::applies_to(method)
+        && state.call_detection.mark_unexpected().get()
+        && state.classifier.occurrence().with(|m| {
+            m.get(&file)
+                .and_then(|o| location::unlikely(o, label))
+                .unwrap_or(false)
+        })
+}
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// The recording's place and month, and the switch for marking unlikely
+/// birds. Shown only when the recording's metadata has a place.
+fn place_rows(
+    state: AppState,
+    method: Method,
+    current_file: Memo<Option<u64>>,
+) -> Option<impl IntoView> {
+    if !location::applies_to(method) {
+        return None;
+    }
+    let file = current_file.get()?;
+    let o = state
+        .classifier
+        .occurrence()
+        .with(|m| m.get(&file).cloned())?;
+    let month = match o.place.week {
+        0 => "any month".to_string(),
+        w => MONTHS[((w - 1) / 4).min(11) as usize].to_string(),
+    };
+    let checking = if o.scores.is_none() && state.call_detection.mark_unexpected().get() {
+        " (checking\u{2026})"
+    } else {
+        ""
+    };
+    Some(view! {
+        <div
+            class="setting-row"
+            title="From the recording's metadata. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. The place stays on this device."
+        >
+            <span class="setting-label">"Place"</span>
+            <span class="setting-value">{format!("{:.2}, {:.2} \u{b7} {month}{checking}", o.place.lat, o.place.lon)}</span>
+        </div>
+        <div class="setting-row detection-annotate-row">
+            <label class="setting-label">
+                <input
+                    type="checkbox"
+                    prop:checked=move || state.call_detection.mark_unexpected().get()
+                    on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
+                />
+                " Mark birds unlikely here"
+            </label>
+        </div>
+    })
+}
+
 /// The "By species" list: one row per species, most windows first. A click
 /// shows the species' best window.
 fn species_table(
@@ -841,6 +949,10 @@ fn species_table(
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let w = &run.windows[row.best_window];
                 let (start, end, i) = (w.start_s, w.end_s, row.best_window);
+                let unlikely = current_file
+                    .get()
+                    .zip(label)
+                    .is_some_and(|(f, l)| unlikely_here(state, f, method, l));
                 let class = move || {
                     if state.call_detection.selected_window().get() == Some(i) {
                         "detection-row selected"
@@ -850,7 +962,10 @@ fn species_table(
                 };
                 view! {
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
-                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
+                        <td class="detection-col-kind">
+                            {species_swatch(slot)}{name}
+                            {unlikely.then(|| view! { <span class="detection-status-note">" · unlikely here"</span> })}
+                        </td>
                         <td class="detection-col-num">{row.windows}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
                     </tr>
