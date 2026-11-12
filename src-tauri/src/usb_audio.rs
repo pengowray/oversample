@@ -241,7 +241,10 @@ impl UsbDecoder {
                 buf.note_i32_bits(&self.i32s);
                 buf.push_i32(&self.i32s, recording)
             }
-            NativeSampleFormat::F32 => buf.push_f32(&self.f32s, recording),
+            NativeSampleFormat::F32 => {
+                buf.note_f32_bits(&self.f32s);
+                buf.push_f32(&self.f32s, recording)
+            }
         }
     }
 }

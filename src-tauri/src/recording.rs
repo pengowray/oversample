@@ -237,7 +237,6 @@ impl RecordingBuffer {
             .extend(data.iter().map(|&s| s as f32 / 2147483648.0));
     }
     pub fn push_f32(&mut self, data: &[f32], recording: bool) {
-        self.note_f32_bits(data);
         if recording {
             self.total_samples += data.len() / self.channels as usize;
             self.samples_f32.extend_from_slice(data);
@@ -899,14 +898,18 @@ pub fn open_mic(
         NativeSampleFormat::F32 => device.build_input_stream(
             stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                // Detection sees the samples as stored (after any mono mix)
+                // whenever the stream runs, so the depth is known when a
+                // recording starts.
+                let stored = samples_to_store(data, channels, stereo, |frame| {
+                    frame.iter().sum::<f32>() / channels as f32
+                });
                 let mut buf = buf.lock().unwrap();
+                buf.note_f32_bits(&stored);
                 let recording = rec.load(Ordering::Relaxed);
                 if !recording && !strm.load(Ordering::Relaxed) {
                     return;
                 }
-                let stored = samples_to_store(data, channels, stereo, |frame| {
-                    frame.iter().sum::<f32>() / channels as f32
-                });
                 buf.push_f32(&stored, recording);
             },
             err_callback,
@@ -1254,7 +1257,7 @@ mod tests {
         let listened: Vec<f32> = (0..60_000_i32)
             .map(|i| ((i * 7919) % 20_001 - 10_000) as f32 * step)
             .collect();
-        buf.push_f32(&listened, false);
+        buf.note_f32_bits(&listened);
         buf
     }
 
@@ -1283,10 +1286,10 @@ mod tests {
         assert_eq!(deeper.data_bytes(), vec![0, 0, 0x80, 3, 0, 0]);
 
         let mut float = f32_stream_on_grid(1.0 / 8_388_608.0);
-        float.push_f32(&[0.1], false);
+        float.note_f32_bits(&[0.1]);
         assert_eq!(float.choose_write_format(), NativeSampleFormat::F32);
         let mut over = f32_stream_on_grid(1.0 / 32_768.0);
-        over.push_f32(&[1.0], false);
+        over.note_f32_bits(&[1.0]);
         assert_eq!(over.choose_write_format(), NativeSampleFormat::F32);
     }
 
