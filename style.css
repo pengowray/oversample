@@ -745,6 +745,10 @@ body.sidebar-resizing {
     vertical-align: -1px;
 }
 
+.unlikely-name-end {
+    white-space: nowrap;
+}
+
 .detection-status-note > .unlikely-flag {
     margin-left: 0;
 }

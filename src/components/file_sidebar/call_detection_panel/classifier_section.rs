@@ -864,10 +864,29 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
 /// "Unlikely here: 2 species" carries the same flag and so names it.
 fn unlikely_flag() -> impl IntoView {
     view! {
-        <span class="unlikely-flag" title="Unlikely at this place and month">
+        <span
+            class="unlikely-flag"
+            role="img"
+            aria-label="Unlikely at this place and month"
+            title="Unlikely at this place and month"
+        >
             <Icon kind=Icon::Flag />
         </span>
     }
+}
+
+/// A class name, with the flag after it when the bird is unlikely here. The
+/// name's last word and the flag are kept on one line, so a long name never
+/// leaves the flag alone on a second line.
+fn flagged_name(name: String, unlikely: bool) -> impl IntoView {
+    if !unlikely {
+        return name.into_any();
+    }
+    let (head, last) = match name.rfind(' ') {
+        Some(i) => (name[..=i].to_string(), name[i + 1..].to_string()),
+        None => (String::new(), name),
+    };
+    view! { {head}<span class="unlikely-name-end">{last}{unlikely_flag()}</span> }.into_any()
 }
 
 const MONTHS: [&str; 12] = [
@@ -1006,6 +1025,7 @@ fn place_rows(
                         on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
                     />
                     " Mark birds unlikely here"
+                    {unlikely_flag()}
                 </label>
             </div>
         }
@@ -1053,8 +1073,7 @@ fn species_table(
                 view! {
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
                         <td class="detection-col-kind">
-                            {species_swatch(slot)}{name}
-                            {unlikely.then(unlikely_flag)}
+                            {species_swatch(slot)}{flagged_name(name, unlikely)}
                         </td>
                         <td class="detection-col-num">{row.windows}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
@@ -1123,8 +1142,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                         <td class="detection-col-num">{i + 1}</td>
                         <td>{crate::format_time::format_time_display(start, 1)}</td>
                         <td class="detection-col-kind">
-                            {species_swatch(slot)}{name}
-                            {unlikely.then(unlikely_flag)}
+                            {species_swatch(slot)}{flagged_name(name, unlikely)}
                         </td>
                         <td class="detection-col-num">{format!("{:.2}", top.confidence)}</td>
                     </tr>
@@ -1175,8 +1193,7 @@ fn top_three(
                 view! {
                     <tr>
                         <td class="detection-col-kind">
-                            {class_name(label)}
-                            {unlikely.then(unlikely_flag)}
+                            {flagged_name(class_name(label), unlikely)}
                             {scientific.map(|s| view! { <div class="detection-scientific">{s}</div> })}
                         </td>
                         <td class="detection-col-num">{format!("{:.2}", s.confidence)}</td>
