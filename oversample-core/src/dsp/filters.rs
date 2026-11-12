@@ -185,98 +185,55 @@ pub fn apply_eq_filter_fast(
         return Vec::new();
     }
 
-    let gain_below = 10.0_f64.powf(db_below / 20.0) as f32;
-    let gain_selected = 10.0_f64.powf(db_selected / 20.0) as f32;
-    let harmonics_bounds = harmonics_band_bounds(freq_low, freq_high, band_mode);
-    let gain_harmonics = if harmonics_bounds.is_some() {
-        10.0_f64.powf(db_harmonics / 20.0) as f32
-    } else {
-        0.0
-    };
+    let gain = |db: f64| 10.0_f64.powf(db / 20.0) as f32;
+    let gain_below = gain(db_below);
+    let gain_selected = gain(db_selected);
+    // Two-band mode folds everything above freq_low into the selected band.
     let gain_above = if band_mode.has_above_band() {
-        10.0_f64.powf(db_above / 20.0) as f32
+        gain(db_above)
     } else {
         gain_selected
     };
 
-    // Split at freq_low: below vs rest
-    let lp_low = cascaded_lowpass(samples, freq_low, sample_rate, 4);
-    let hp_low: Vec<f32> = samples
-        .iter()
-        .zip(lp_low.iter())
-        .map(|(s, l)| s - l)
-        .collect();
-
-    // Split rest at freq_high: selected vs upper
-    let lp_high = cascaded_lowpass(&hp_low, freq_high, sample_rate, 4);
-
-    let len = samples.len();
-    let mut output = vec![0.0f32; len];
-
-    // Below band
-    for i in 0..len {
-        output[i] += lp_low[i] * gain_below;
+    // Crossovers and the gain of the band above each one, in ascending order.
+    // The harmonics band sits between freq_high and 2 × freq_high, with the
+    // "above" gain on both sides of it.
+    let mut splits: Vec<(f64, f32)> = vec![(freq_low, gain_selected), (freq_high, gain_above)];
+    if let Some((h_lo, h_hi)) = harmonics_band_bounds(freq_low, freq_high, band_mode) {
+        splits.push((h_lo, gain(db_harmonics)));
+        splits.push((h_hi, gain_above));
     }
-
-    // Selected band
-    for i in 0..len {
-        output[i] += lp_high[i] * gain_selected;
-    }
-
-    if let Some((harmonics_lower, harmonics_upper)) = harmonics_bounds {
-        // Split the upper region around the harmonics band so widened selections map to 2x bounds.
-        let hp_high: Vec<f32> = hp_low
-            .iter()
-            .zip(lp_high.iter())
-            .map(|(s, l)| s - l)
-            .collect();
-        let lp_harm_upper = cascaded_lowpass(&hp_high, harmonics_upper, sample_rate, 4);
-        let hp_harm_lower: Vec<f32> = if harmonics_lower > freq_high {
-            let lp_harm_lower = cascaded_lowpass(&hp_high, harmonics_lower, sample_rate, 4);
-            hp_high
-                .iter()
-                .zip(lp_harm_lower.iter())
-                .map(|(s, l)| s - l)
-                .collect()
-        } else {
-            hp_high.clone()
-        };
-        for i in 0..len {
-            let harmonics = hp_harm_lower[i] - (hp_high[i] - lp_harm_upper[i]);
-            let above = hp_high[i] - hp_harm_lower[i] + (hp_high[i] - lp_harm_upper[i]);
-            output[i] += harmonics * gain_harmonics + above * gain_above;
-        }
-    } else {
-        // Above band (or selected dB in 2-band mode): hp_high = hp_low - lp_high; inline
-        for i in 0..len {
-            output[i] += (hp_low[i] - lp_high[i]) * gain_above;
+    let nyquist = sample_rate as f64 / 2.0;
+    let mut freqs: Vec<f64> = Vec::new();
+    let mut gains: Vec<f32> = vec![gain_below];
+    for (f, g) in splits {
+        if f <= 0.0 {
+            // No band below 0 Hz: the band above starts at the bottom.
+            gains[0] = g;
+        } else if f < nyquist * 0.98 && freqs.last().is_none_or(|&last| f > last) {
+            freqs.push(f);
+            gains.push(g);
+        } else if f < nyquist * 0.98 {
+            // Same crossover as the last one (harmonics starting at freq_high).
+            *gains.last_mut().unwrap() = g;
         }
     }
 
+    // Linkwitz-Riley bands add back to the input level, so equal gains leave
+    // the sound unchanged, and a band with the others muted stays flat
+    // inside (a 4th-order Butterworth pair loses 8.6 dB mid-band in a
+    // 30-50 kHz band; this loses about 2 dB there, less in wider bands).
+    let bands = lr8_split(samples, sample_rate, &freqs);
+    let mut output = vec![0.0f32; samples.len()];
+    for (band, g) in bands.iter().zip(&gains) {
+        if *g == 0.0 {
+            continue;
+        }
+        for (o, b) in output.iter_mut().zip(band) {
+            *o += b * g;
+        }
+    }
     output
-}
-
-fn lowpass_filter_inplace(buf: &mut [f32], cutoff_hz: f64, sample_rate: u32) {
-    if buf.is_empty() {
-        return;
-    }
-    let dt = 1.0 / sample_rate as f64;
-    let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff_hz);
-    let alpha = (dt / (rc + dt)) as f32;
-    let mut prev = buf[0];
-    for s in buf[1..].iter_mut() {
-        let y = alpha * *s + (1.0 - alpha) * prev;
-        *s = y;
-        prev = y;
-    }
-}
-
-pub fn cascaded_lowpass(samples: &[f32], cutoff: f64, sample_rate: u32, passes: usize) -> Vec<f32> {
-    let mut result = samples.to_vec();
-    for _ in 0..passes {
-        lowpass_filter_inplace(&mut result, cutoff, sample_rate);
-    }
-    result
 }
 
 /// Split a signal into three brick-wall frequency bands via overlap-add FFT.
@@ -420,29 +377,90 @@ impl Biquad {
     }
 }
 
-/// 4th-order Butterworth low- or high-pass filter: two biquads, flat in the
-/// passband, −3 dB at the cutoff and 24 dB per octave beyond it.
+/// Butterworth low- or high-pass filter of even `order`, as `order / 2`
+/// biquads: flat in the passband, −3 dB at the cutoff and `6 × order` dB per
+/// octave beyond it.
 #[derive(Clone, Debug)]
-pub struct Butterworth4([Biquad; 2]);
+pub struct Butterworth(Vec<Biquad>);
 
-impl Butterworth4 {
-    /// Q of the two sections of a 4th-order Butterworth filter.
-    const Q: [f32; 2] = [0.541_196_1, 1.306_563];
-
-    pub fn lowpass(sample_rate: f32, cutoff_hz: f32) -> Self {
-        Self(Self::Q.map(|q| Biquad::new(sample_rate, cutoff_hz, q, false)))
+impl Butterworth {
+    /// Q of each biquad section: 1 / (2·cos((2k − 1)·π / (2·order))).
+    fn qs(order: usize) -> impl Iterator<Item = f32> {
+        let n = order.max(2) / 2 * 2;
+        (1..=n / 2).map(move |k| {
+            let angle = (2 * k - 1) as f32 * std::f32::consts::PI / (2 * n) as f32;
+            1.0 / (2.0 * angle.cos())
+        })
     }
 
-    pub fn highpass(sample_rate: f32, cutoff_hz: f32) -> Self {
-        Self(Self::Q.map(|q| Biquad::new(sample_rate, cutoff_hz, q, true)))
+    pub fn lowpass(order: usize, sample_rate: f32, cutoff_hz: f32) -> Self {
+        Self(
+            Self::qs(order)
+                .map(|q| Biquad::new(sample_rate, cutoff_hz, q, false))
+                .collect(),
+        )
+    }
+
+    pub fn highpass(order: usize, sample_rate: f32, cutoff_hz: f32) -> Self {
+        Self(
+            Self::qs(order)
+                .map(|q| Biquad::new(sample_rate, cutoff_hz, q, true))
+                .collect(),
+        )
     }
 
     pub fn process_in_place(&mut self, buf: &mut [f32]) {
         for x in buf {
-            let y = self.0[0].process(*x);
-            *x = self.0[1].process(y);
+            let mut y = *x;
+            for section in &mut self.0 {
+                y = section.process(y);
+            }
+            *x = y;
         }
     }
+}
+
+/// 8th-order Linkwitz-Riley low-pass (a 4th-order Butterworth applied twice):
+/// −6 dB at `fc`. With [`lr8_highpass`] at the same `fc` it sums to an
+/// all-pass, so the two halves add back to the original level.
+fn lr8_lowpass(x: &[f32], sample_rate: u32, fc: f64) -> Vec<f32> {
+    let mut y = x.to_vec();
+    for _ in 0..2 {
+        Butterworth::lowpass(4, sample_rate as f32, fc as f32).process_in_place(&mut y);
+    }
+    y
+}
+
+/// 8th-order Linkwitz-Riley high-pass; see [`lr8_lowpass`].
+fn lr8_highpass(x: &[f32], sample_rate: u32, fc: f64) -> Vec<f32> {
+    let mut y = x.to_vec();
+    for _ in 0..2 {
+        Butterworth::highpass(4, sample_rate as f32, fc as f32).process_in_place(&mut y);
+    }
+    y
+}
+
+/// Split `x` into bands at the ascending crossover frequencies `splits`, with
+/// 8th-order Linkwitz-Riley filters. Band `i` covers `splits[i-1]..splits[i]`.
+/// Each band also passes through the all-pass of every later crossover, so
+/// the bands stay in phase and add back to the original level at every
+/// frequency. Each crossover slope is 48 dB per octave.
+fn lr8_split(x: &[f32], sample_rate: u32, splits: &[f64]) -> Vec<Vec<f32>> {
+    let mut bands = Vec::with_capacity(splits.len() + 1);
+    let mut rest = x.to_vec();
+    for &fc in splits {
+        bands.push(lr8_lowpass(&rest, sample_rate, fc));
+        rest = lr8_highpass(&rest, sample_rate, fc);
+    }
+    bands.push(rest);
+    for i in 0..splits.len() {
+        for &fc in &splits[i + 1..] {
+            let low = lr8_lowpass(&bands[i], sample_rate, fc);
+            let high = lr8_highpass(&bands[i], sample_rate, fc);
+            bands[i] = low.iter().zip(&high).map(|(a, b)| a + b).collect();
+        }
+    }
+    bands
 }
 
 /// Keep `freq_low`..`freq_high` Hz: a 4th-order Butterworth high-pass at
@@ -458,12 +476,12 @@ pub fn butterworth_bandpass(
     let sr = sample_rate as f32;
     let nyquist = sample_rate as f64 / 2.0;
     if freq_low > 0.0 && freq_low < nyquist {
-        Butterworth4::highpass(sr, freq_low as f32).process_in_place(&mut out);
+        Butterworth::highpass(4, sr, freq_low as f32).process_in_place(&mut out);
     }
     if freq_high > 0.0 && freq_high < nyquist {
         // Keep the cutoff just under Nyquist, where the biquad stays stable.
         let fc = freq_high.min(nyquist * 0.98) as f32;
-        Butterworth4::lowpass(sr, fc).process_in_place(&mut out);
+        Butterworth::lowpass(4, sr, fc).process_in_place(&mut out);
     }
     out
 }
@@ -499,8 +517,8 @@ pub fn lowpass_filter(samples: &[f32], cutoff_hz: f64, sample_rate: u32) -> Vec<
 
 /// Decimate (downsample) audio from `source_rate` to `target_rate`.
 ///
-/// Applies a 4-pass cascaded lowpass anti-aliasing filter at `target_rate / 2` Hz,
-/// then takes every M-th sample where M = source_rate / target_rate.
+/// Applies an 8th-order Butterworth anti-aliasing low-pass, then takes every
+/// M-th sample where M = source_rate / target_rate.
 ///
 /// Returns the original samples unchanged if `target_rate >= source_rate`.
 /// Rounds to the nearest integer decimation factor.
@@ -515,9 +533,13 @@ pub fn decimate(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32>
         return samples.to_vec();
     }
 
-    // Anti-aliasing: lowpass at Nyquist of the target rate
-    let nyquist = target_rate as f64 / 2.0;
-    let filtered = cascaded_lowpass(samples, nyquist, source_rate, 4);
+    // Anti-aliasing: 8th-order Butterworth low-pass at 45% of the rate the
+    // output actually gets (source / m, which can be below target_rate), so
+    // little above its Nyquist folds back and the band below stays flat.
+    let out_rate = source_rate as f64 / m as f64;
+    let mut filtered = samples.to_vec();
+    Butterworth::lowpass(8, source_rate as f32, (0.45 * out_rate) as f32)
+        .process_in_place(&mut filtered);
 
     // Take every M-th sample
     filtered.iter().step_by(m).copied().collect()
@@ -537,6 +559,97 @@ pub fn decimated_rate(source_rate: u32, target_rate: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Peak level (dB) of `y` after the first 10 ms.
+    fn level_db(y: &[f32]) -> f64 {
+        let peak = y[3840..].iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        20.0 * (peak as f64).log10()
+    }
+
+    fn tone(freq: f64, sr: u32, secs: f64) -> Vec<f32> {
+        (0..(sr as f64 * secs) as usize)
+            .map(|i| (std::f64::consts::TAU * freq * i as f64 / sr as f64).sin() as f32)
+            .collect()
+    }
+
+    fn fast_eq(x: &[f32], band: (f64, f64), db: [f64; 4], mode: BandMode) -> Vec<f32> {
+        apply_eq_filter_fast(x, 384_000, band.0, band.1, db[0], db[1], db[2], db[3], mode)
+    }
+
+    #[test]
+    fn fast_eq_at_0_db_leaves_every_frequency_at_its_level() {
+        for f in [
+            5_000.0, 29_000.0, 30_000.0, 40_000.0, 50_000.0, 75_000.0, 100_000.0, 150_000.0,
+        ] {
+            let y = fast_eq(
+                &tone(f, 384_000, 0.25),
+                (30_000.0, 50_000.0),
+                [0.0; 4],
+                BandMode::FourBand,
+            );
+            let db = level_db(&y);
+            assert!(db.abs() < 0.2, "{f} Hz: {db:.2} dB");
+        }
+    }
+
+    #[test]
+    fn fast_eq_band_alone_is_flat_inside_and_steep_outside() {
+        let muted = [-120.0, 0.0, -120.0, -120.0];
+        let band = (30_000.0, 50_000.0);
+        let mid = level_db(&fast_eq(
+            &tone(40_000.0, 384_000, 0.25),
+            band,
+            muted,
+            BandMode::ThreeBand,
+        ));
+        assert!(mid > -2.5, "40 kHz in 30-50 kHz: {mid:.1} dB");
+        let wide = level_db(&fast_eq(
+            &tone(40_000.0, 384_000, 0.25),
+            (20_000.0, 80_000.0),
+            muted,
+            BandMode::ThreeBand,
+        ));
+        assert!(wide > -0.3, "40 kHz in 20-80 kHz: {wide:.1} dB");
+        for f in [15_000.0, 100_000.0] {
+            let out = level_db(&fast_eq(
+                &tone(f, 384_000, 0.25),
+                band,
+                muted,
+                BandMode::ThreeBand,
+            ));
+            assert!(out < -40.0, "{f} Hz: {out:.1} dB");
+        }
+    }
+
+    #[test]
+    fn fast_eq_two_band_cut_below_has_no_bump_at_the_edge() {
+        // Cutting only below 30 kHz: no boost at the crossover, -6 dB at it.
+        let cut = [-120.0, 0.0, 0.0, 0.0];
+        for (f, lo, hi) in [
+            (30_000.0, -7.0, -5.0),
+            (45_000.0, -1.0, 0.2),
+            (120_000.0, -0.2, 0.2),
+        ] {
+            let db = level_db(&fast_eq(
+                &tone(f, 384_000, 0.25),
+                (30_000.0, 60_000.0),
+                cut,
+                BandMode::TwoBand,
+            ));
+            assert!((lo..hi).contains(&db), "{f} Hz: {db:.2} dB");
+        }
+    }
+
+    #[test]
+    fn decimate_keeps_the_band_and_blocks_aliases() {
+        // 384 kHz to 48 kHz: 20 kHz stays, 40 kHz (would alias to 8 kHz) goes.
+        let kept = decimate(&tone(18_000.0, 384_000, 0.25), 384_000, 48_000);
+        let db = 20.0 * (kept[600..].iter().fold(0.0f32, |p, s| p.max(s.abs())) as f64).log10();
+        assert!(db > -1.0, "18 kHz after decimation: {db:.1} dB");
+        let alias = decimate(&tone(40_000.0, 384_000, 0.25), 384_000, 48_000);
+        let db = 20.0 * (alias[600..].iter().fold(0.0f32, |p, s| p.max(s.abs())) as f64).log10();
+        assert!(db < -40.0, "40 kHz folded to 8 kHz: {db:.1} dB");
+    }
 
     fn tone_level_db(freq: f64, band: (f64, f64)) -> f64 {
         let sr = 384_000u32;

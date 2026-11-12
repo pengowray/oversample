@@ -713,7 +713,7 @@ pub(crate) fn peak_position(db: &[f32], k: usize) -> f32 {
 mod tests {
     use super::*;
     use crate::dsp::call_detect::spectrum::SpectrumAnalyzer;
-    use crate::dsp::call_detect::test_util::{chirp, noise, sine, Butterworth4};
+    use crate::dsp::call_detect::test_util::{chirp, noise, sine, Butterworth};
 
     const FS: f32 = 192_000.0;
     const N: usize = 512;
@@ -854,8 +854,8 @@ mod tests {
         // Loud noise from 20 to 35 kHz, all the time.
         let len = ms(1500.0);
         let mut band = noise(0.5, len, 5);
-        let mut hp = Butterworth4::highpass(FS, 20_000.0);
-        let mut lp = Butterworth4::lowpass(FS, 35_000.0);
+        let mut hp = Butterworth::highpass(4, FS, 20_000.0);
+        let mut lp = Butterworth::lowpass(4, FS, 35_000.0);
         hp.process_in_place(&mut band);
         lp.process_in_place(&mut band);
         let mut x = noise(0.03, len, 6);

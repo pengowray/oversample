@@ -38,8 +38,8 @@ pub fn add(x: &mut [f32], at: usize, s: &[f32]) {
     }
 }
 
-/// 4th-order Butterworth filter, for shaping test noise.
-pub use crate::dsp::filters::Butterworth4;
+/// Butterworth filters, for shaping test noise.
+pub use crate::dsp::filters::Butterworth;
 
 /// A call from `f0` to `f1` Hz with a Hann envelope, `n` samples long, as a
 /// bat's calls fade in and out. An abrupt start splatters into the audible
