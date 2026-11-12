@@ -20,9 +20,9 @@ pub fn format_time_label(seconds: f64, interval: f64, use_ms: bool) -> String {
         if use_ms {
             let ms = seconds * 1000.0;
             return if interval < 0.01 {
-                format!("{:.1}ms", ms)
+                format!("{:.1} ms", ms)
             } else {
-                format!("{:.0}ms", ms)
+                format!("{:.0} ms", ms)
             };
         }
         return format_seconds_adaptive(seconds, interval);
@@ -39,27 +39,26 @@ pub fn format_time_label(seconds: f64, interval: f64, use_ms: bool) -> String {
     format_hours_minutes_seconds_adaptive(seconds, interval)
 }
 
-/// Format a relative time offset as "+50ms", "−0.2s", etc.
+/// An offset from a reference time: `+200 ms` under a second, `+1.5 s` from
+/// a second up, `−50 ms` before it. `interval` is the tick spacing (or the
+/// precision wanted), in seconds. Empty when the offset is 0.
+///
+/// Every offset in the app uses this, so the main timeline and the 3D view
+/// label offsets the same way.
 pub fn format_relative_label(offset: f64, interval: f64) -> String {
     let abs = offset.abs();
-    if abs < 0.0005 {
+    if abs < interval * 1e-3 {
         return String::new();
     }
     let sign = if offset >= 0.0 { "+" } else { "\u{2212}" }; // − (Unicode minus)
-
-    if abs < 1.0 && interval < 0.1 {
-        let ms = abs * 1000.0;
-        if interval < 0.001 {
-            format!("{}{:.1}ms", sign, ms)
-        } else {
-            format!("{}{:.0}ms", sign, ms)
-        }
-    } else if interval >= 1.0 {
-        format!("{}{:.0}s", sign, abs)
-    } else if interval >= 0.1 {
-        format!("{}{:.1}s", sign, abs)
+    let ms_decimals: i32 = if interval >= 0.001 { 0 } else { 1 };
+    let ms = abs * 1000.0;
+    let scale = 10f64.powi(ms_decimals);
+    if (ms * scale).round() / scale < 1000.0 {
+        format!("{sign}{ms:.prec$} ms", prec = ms_decimals as usize)
     } else {
-        format!("{}{:.2}s", sign, abs)
+        // Rounded to 1 ms; Display drops trailing zeros ("+1 s", "+1.5 s").
+        format!("{sign}{} s", ms.round() / 1000.0)
     }
 }
 
@@ -169,27 +168,11 @@ pub fn offset_axis_ticks(start: f64, span: f64, max_ticks: usize) -> (Vec<f64>, 
             if i == 0 {
                 format_time_display(start, precision)
             } else {
-                format_offset(v, step)
+                format_relative_label(v, step)
             }
         })
         .collect();
     (vals, text)
-}
-
-/// A positive offset: `+200 ms` under a second, `+1.5 s` from a second up.
-/// `step` is the tick spacing (or the precision wanted), in seconds.
-pub fn format_offset(offset: f64, step: f64) -> String {
-    if offset < 1.0 - 1e-9 {
-        let ms = offset * 1000.0;
-        if step >= 0.001 {
-            format!("+{ms:.0} ms")
-        } else {
-            format!("+{ms:.1} ms")
-        }
-    } else {
-        // Rounded to 1 ms; Display drops trailing zeros ("+1 s", "+1.5 s").
-        format!("+{} s", (offset * 1000.0).round() / 1000.0)
-    }
 }
 
 /// Smallest 1, 2 or 5 times a power of ten that is at least `raw`.
@@ -317,7 +300,19 @@ mod tests {
 
     #[test]
     fn offset_hover_precision() {
-        assert_eq!(format_offset(0.1184, 0.0001), "+118.4 ms");
-        assert_eq!(format_offset(1.2345, 0.0001), "+1.235 s");
+        assert_eq!(format_relative_label(0.1184, 0.0001), "+118.4 ms");
+        assert_eq!(format_relative_label(1.2345, 0.0001), "+1.235 s");
+    }
+
+    #[test]
+    fn relative_labels_on_the_main_timeline() {
+        assert_eq!(format_relative_label(0.05, 0.01), "+50 ms");
+        assert_eq!(format_relative_label(0.4, 0.2), "+400 ms");
+        assert_eq!(format_relative_label(1.5, 0.5), "+1.5 s");
+        assert_eq!(format_relative_label(2.0, 1.0), "+2 s");
+        assert_eq!(format_relative_label(-0.05, 0.01), "\u{2212}50 ms");
+        assert_eq!(format_relative_label(0.9996, 0.001), "+1 s");
+        assert_eq!(format_relative_label(0.0, 0.1), "");
+        assert_eq!(format_time_label(0.05, 0.01, true), "50 ms");
     }
 }

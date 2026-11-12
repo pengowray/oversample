@@ -6,7 +6,7 @@ use crate::audio::source::ChannelView;
 use crate::audio::streaming_source::read_region_ready;
 use crate::canvas::spectrogram_renderer::Colormap;
 use crate::dsp::surface_grid::{surface_grid, SurfaceGrid};
-use crate::format_time::{format_offset, format_time_display, offset_axis_ticks};
+use crate::format_time::{format_relative_label, format_time_display, offset_axis_ticks};
 use crate::state::store_fields::*;
 use crate::state::{AppState, Selection};
 use js_sys::{Array, Float32Array, Float64Array, Object, Reflect};
@@ -111,7 +111,7 @@ async fn draw(
         &strings(
             grid.times_s
                 .iter()
-                .map(|&t| format_offset(t, 0.0001))
+                .map(|&t| format_relative_label(t, 0.0001))
                 .collect(),
         ),
     );
