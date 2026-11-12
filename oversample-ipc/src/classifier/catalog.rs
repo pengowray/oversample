@@ -303,8 +303,8 @@ const BATTY_CREDITS: &[&str] = &[
 const CITATION: &str = "Kahl, S., Wood, C. M., Eibl, M., & Klinck, H. (2021). BirdNET: A deep learning solution for avian diversity monitoring. Ecological Informatics, 61, 101236.";
 
 const PERCH_CREDITS: &[&str] = &[
-    "Perch 2.0 was developed by Google DeepMind (kaggle.com/models/google/bird-vocalization-classifier).",
-    "Split into two files for tract, with the classifier stored as int8, by Oversample (huggingface.co/pengowray/perch-v2-tract).",
+    "Perch 2.0 was developed by Google DeepMind.",
+    "Split into two smaller files for this app by Oversample (huggingface.co/pengowray/perch-v2-tract).",
 ];
 
 const PERCH_CITATION: &str =
