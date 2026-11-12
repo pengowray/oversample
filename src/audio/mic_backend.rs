@@ -1728,6 +1728,7 @@ async fn open_usb(state: &AppState) -> bool {
         &oversample_ipc::plugins::UsbOpenArgs {
             device_name: device_name.clone(),
             sample_rate: max_sr as i32,
+            max_bit_depth: state.mic.max_bit_depth().get_untracked() as i32,
         },
     )
     .await
@@ -1804,7 +1805,10 @@ async fn open_usb(state: &AppState) -> bool {
         4 => 32,
         _ => 16,
     };
-    state.mic.bits_per_sample().set(if info.is_float { 32 } else { usb_bits });
+    state
+        .mic
+        .bits_per_sample()
+        .set(if info.is_float { 32 } else { usb_bits });
     state.mic.is_float().set(info.is_float);
 
     // Setup HET playback AudioContext and chunk handler (same as cpal)

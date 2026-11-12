@@ -488,9 +488,18 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             // A device with several input alternate settings (the Portacapture X8 has 8 channels
             // of 3 or 4 bytes, and 2 channels of 3 bytes) streams the stereo one: Oversample uses
             // one or two channels.
+            // Among settings with the same channels and rate, the deepest samples win (a
+            // device may offer 2-byte and 3-byte settings), within the user's max bit depth,
+            // and PCM before float of the same size.
             val endpoint = audioInfo.endpoints
                 .filter { it.address and 0x80 != 0 } // input endpoints only
-                .sortedWith(compareBy<AudioEndpointInfo>({ channelRank(it.channels) }, { -it.sampleRate }))
+                .sortedWith(compareBy<AudioEndpointInfo>(
+                    { channelRank(it.channels) },
+                    { -it.sampleRate },
+                    { if (args.maxBitDepth > 0 && sampleBits(it) > args.maxBitDepth) 1 else 0 },
+                    { -sampleBits(it) },
+                    { if (it.isFloat) 1 else 0 }
+                ))
                 .firstOrNull()
                 ?: audioInfo.endpoints.first()
 
@@ -764,6 +773,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /** Order for choosing among input alternate settings: 2 channels, then 1, then more. */
+    /** Bits each sample takes in a packet. */
+    private fun sampleBits(endpoint: AudioEndpointInfo): Int = endpoint.subslotSize * 8
+
     private fun channelRank(channels: Int): Int = when (channels) {
         2 -> 0
         1 -> 1
@@ -1170,4 +1182,4 @@ data class RequestPermissionArgs(val deviceName: String = "")
 data class DeviceNameArgs(val deviceName: String = "")
 
 @InvokeArg
-data class OpenUsbDeviceArgs(val deviceName: String = "", val sampleRate: Int = 0)
+data class OpenUsbDeviceArgs(val deviceName: String = "", val sampleRate: Int = 0, val maxBitDepth: Int = 0)

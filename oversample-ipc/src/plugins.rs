@@ -136,6 +136,9 @@ pub struct UsbDeviceNameArgs {
 pub struct UsbOpenArgs {
     pub device_name: String,
     pub sample_rate: i32,
+    /// Most bits per sample to stream (16, 24 or 32), or 0 for the deepest
+    /// the device offers.
+    pub max_bit_depth: i32,
 }
 
 /// Args for the native `usb_start_stream` command (Rust, not a plugin), sent
