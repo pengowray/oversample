@@ -2526,13 +2526,25 @@ body.sidebar-resizing {
    gutter's total occupation (width + 3px margin) so the corner stays
    aligned with the column above it. */
 .app.mobile .band-gutter {
-    flex: 0 0 84px;
+    /* 22px of labels + two 20px fog cells. 84px (three cells) was a sixth
+       of a phone's width. */
+    flex: 0 0 64px;
 }
 .app.mobile .view-bottom-row {
     flex: 0 0 40px;
 }
 .app.mobile .view-bottom-corner {
-    flex: 0 0 87px;
+    flex: 0 0 67px;
+}
+/* The phone layout in a narrow window with a mouse (a small desktop window,
+   a side pane): no finger to make room for, so the desktop width. */
+@media (pointer: fine) {
+    .app.mobile .band-gutter {
+        flex: 0 0 44px;
+    }
+    .app.mobile .view-bottom-corner {
+        flex: 0 0 47px;
+    }
 }
 
 .band-gutter-tooltip {
@@ -3531,9 +3543,14 @@ body.sidebar-resizing {
     color: #555;
 }
 
-/* On mobile the gutter widens to 84px — match it here too. */
+/* On mobile the gutter widens to 64px — match it here too. */
 .app.mobile .band-cell {
-    flex: 0 0 84px;
+    flex: 0 0 64px;
+}
+@media (pointer: fine) {
+    .app.mobile .band-cell {
+        flex: 0 0 44px;
+    }
 }
 .app.mobile .band-cell-hfr-label {
     font-size: 15px;

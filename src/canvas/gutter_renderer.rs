@@ -10,7 +10,7 @@ use crate::state::ShieldStyle;
 use web_sys::CanvasRenderingContext2d;
 
 /// Size (px) of one checkerboard cell. One cell fits across the desktop
-/// gutter; the wider phone gutter fits three, for finger-drag.
+/// gutter; the wider phone gutter fits two, for finger-drag.
 pub const CELL: f64 = 20.0;
 
 /// Width (px) reserved on the left side of the band gutter for static
