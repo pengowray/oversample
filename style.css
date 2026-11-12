@@ -745,14 +745,39 @@ body.sidebar-resizing {
     vertical-align: -1px;
 }
 
-.unlikely-name-end {
-    white-space: nowrap;
+/* The flag's own column in the results tables: fixed width whether or not
+   a row is flagged, so turning the marks on or off moves nothing. */
+.detection-table .detection-col-flag {
+    width: 14px;
+    padding-left: 0;
+    padding-right: 0;
+    text-align: center;
+}
+
+.detection-col-flag .unlikely-flag {
+    margin-left: 0;
 }
 
 .species-map-legend .map-key-flag {
     margin: 0;
     width: 8px;
     line-height: 1;
+}
+
+/* How many species are flagged, beside "Mark birds unlikely here". Room for
+   "Checking..." is kept whether the value is blank, a count or that, so the
+   label wraps the same way in every state and the row keeps its height. */
+.detection-marked-count {
+    flex: none;
+    min-width: 62px;
+    white-space: nowrap;
+}
+
+/* A checkbox label that shares its row with a value wraps inside the panel
+   instead of pushing the value past the panel's edge. */
+.setting-row.detection-annotate-row > .setting-label {
+    flex-shrink: 1;
+    min-width: 0;
 }
 
 .detection-status-note > .unlikely-flag {

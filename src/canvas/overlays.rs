@@ -1921,6 +1921,10 @@ pub fn draw_annotations(
     canvas_height: f64,
     is_mobile: bool,
     annotations_focused: bool,
+    // Height of anything drawn across the top of the view (the BirdNET label
+    // strip). Annotation labels start below it, so the two sets of labels
+    // are not drawn on top of each other.
+    label_top: f64,
 ) {
     let visible_time = (canvas_width / zoom) * time_resolution;
     let start_time = scroll_offset;
@@ -2011,7 +2015,7 @@ pub fn draw_annotations(
                     .map(|m| label_inset + m.width() <= x1 - x0)
                     .unwrap_or(false);
             if fits {
-                let _ = ctx.fill_text(label, x0 + label_inset, y0 + 12.0);
+                let _ = ctx.fill_text(label, x0 + label_inset, y0.max(label_top) + 12.0);
             }
         }
 

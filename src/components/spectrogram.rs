@@ -1477,6 +1477,11 @@ pub fn Spectrogram() -> impl IntoView {
                                 display_h as f64,
                                 state.status.is_mobile().get_untracked(),
                                 active_focus == Some(crate::state::ActiveFocus::Annotations),
+                                if detection_overlay && species_strip.is_some() {
+                                    spectrogram_renderer::SPECIES_STRIP_H
+                                } else {
+                                    0.0
+                                },
                             );
                         }
                     }

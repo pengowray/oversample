@@ -584,32 +584,10 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 count(s.not_species_windows, "window", "windows")
             ));
         }
-        let mut unlikely_note = None;
-        if let Some(file) = current_file.get() {
-            let unlikely = state.classifier.results().with(|m| {
-                m.get(&(file, method)).map_or(0, |r| {
-                    s.species
-                        .iter()
-                        .filter(|row| {
-                            r.labels
-                                .get(row.class as usize)
-                                .is_some_and(|l| location::unlikely_here(state, file, method, l))
-                        })
-                        .count()
-                })
-            });
-            if unlikely > 0 {
-                unlikely_note = Some(format!(
-                    " Unlikely here: {}",
-                    count(unlikely, "species", "species")
-                ));
-            }
-        }
         Some(view! {
             <div class="detection-status">
                 <div class="detection-summary">{main}</div>
                 {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
-                {unlikely_note.map(|t| view! { <div class="detection-status-note">{unlikely_flag()}{t}</div> })}
             </div>
         })
     };
@@ -877,18 +855,54 @@ fn unlikely_flag() -> impl IntoView {
     }
 }
 
-/// A class name, with the flag after it when the bird is unlikely here. The
-/// name's last word and the flag are kept on one line, so a long name never
-/// leaves the flag alone on a second line.
-fn flagged_name(name: String, unlikely: bool) -> impl IntoView {
-    if !unlikely {
-        return name.into_any();
+/// The flag column of a results table: a narrow cell after the name, present
+/// for the methods the location list applies to. A column of its own, so
+/// turning "Mark birds unlikely here" on or off never re-wraps a name or
+/// changes a row's height. Only the cell's content follows the setting; the
+/// tables are not rebuilt.
+fn flag_cell(
+    state: AppState,
+    method: Method,
+    file: Option<u64>,
+    label: Option<&classifier::SpeciesLabel>,
+) -> Option<impl IntoView> {
+    if !location::applies_to(method) {
+        return None;
     }
-    let (head, last) = match name.rfind(' ') {
-        Some(i) => (name[..=i].to_string(), name[i + 1..].to_string()),
-        None => (String::new(), name),
-    };
-    view! { {head}<span class="unlikely-name-end">{last}{unlikely_flag()}</span> }.into_any()
+    let label = label.cloned();
+    Some(view! {
+        <td class="detection-col-flag">
+            {move || {
+                file.zip(label.as_ref())
+                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l))
+                    .then(unlikely_flag)
+            }}
+        </td>
+    })
+}
+
+/// The header cell above [`flag_cell`].
+fn flag_header(method: Method) -> Option<impl IntoView> {
+    location::applies_to(method).then(|| view! { <th class="detection-col-flag"></th> })
+}
+
+/// How many of the species at or above the minimum confidence are birds
+/// unlikely at the file's place and month. Reactive.
+fn unlikely_species_count(state: AppState, file: u64, method: Method) -> usize {
+    let min = classifier::min_confidence(state, method);
+    state.classifier.results().with(|m| {
+        m.get(&(file, method)).map_or(0, |run| {
+            summary::summarise(run, min)
+                .species
+                .iter()
+                .filter(|row| {
+                    run.labels
+                        .get(row.class as usize)
+                        .is_some_and(|l| location::unlikely_here(state, file, method, l))
+                })
+                .count()
+        })
+    })
 }
 
 const MONTHS: [&str; 12] = [
@@ -979,17 +993,24 @@ fn place_rows(
         0 => "any month".to_string(),
         w => MONTHS[((w - 1) / 4).min(11) as usize].to_string(),
     };
-    let checking = state
-        .classifier
-        .occurrence()
-        .with(|m| m.get(&file).is_some_and(|o| o.scores.is_none()))
-        && state.call_detection.mark_unexpected().get();
-    let value = format!(
-        "{:.2}, {:.2} \u{b7} {month}{}",
-        place.lat,
-        place.lon,
-        if checking { " (checking\u{2026})" } else { "" }
-    );
+    let value = format!("{:.2}, {:.2} \u{b7} {month}", place.lat, place.lon);
+    // Beside the checkbox, so turning it on or off changes this one value
+    // and moves nothing: blank when off, then "Checking..." until the
+    // location list is worked out, then how many listed species are flagged.
+    let marked = move || {
+        if !state.call_detection.mark_unexpected().get() {
+            return String::new();
+        }
+        let checking = state
+            .classifier
+            .occurrence()
+            .with(|m| m.get(&file).is_none_or(|o| o.scores.is_none()));
+        if checking {
+            "Checking\u{2026}".to_string()
+        } else {
+            count(unlikely_species_count(state, file, method), "species", "species")
+        }
+    };
     Some(
         view! {
             <div
@@ -1029,6 +1050,7 @@ fn place_rows(
                     " Mark birds unlikely here"
                     {unlikely_flag()}
                 </label>
+                <span class="setting-value detection-marked-count">{marked}</span>
             </div>
         }
         .into_any(),
@@ -1061,10 +1083,7 @@ fn species_table(
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let w = &run.windows[row.best_window];
                 let (start, end, i) = (w.start_s, w.end_s, row.best_window);
-                let unlikely = current_file
-                    .get()
-                    .zip(label)
-                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
+                let flag = flag_cell(state, method, current_file.get(), label);
                 let class = move || {
                     if state.call_detection.selected_window().get() == Some(i) {
                         "detection-row selected"
@@ -1074,9 +1093,8 @@ fn species_table(
                 };
                 view! {
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
-                        <td class="detection-col-kind">
-                            {species_swatch(slot)}{flagged_name(name, unlikely)}
-                        </td>
+                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
+                        {flag}
                         <td class="detection-col-num">{row.windows}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
                     </tr>
@@ -1090,6 +1108,7 @@ fn species_table(
                 <thead>
                     <tr>
                         <th>"Species"</th>
+                        {flag_header(method)}
                         <th class="detection-col-num">"Windows"</th>
                         <th class="detection-col-num" title="Best confidence">"Best"</th>
                     </tr>
@@ -1121,10 +1140,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                 let name = class_name(label);
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let (start, end) = (w.start_s, w.end_s);
-                let unlikely = current_file
-                    .get()
-                    .zip(label)
-                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
+                let flag = flag_cell(state, method, current_file.get(), label);
                 let other = kind == WindowKind::NotSpecies;
                 let slot = (!other)
                     .then(|| order.iter().position(|&c| c == top.class))
@@ -1143,9 +1159,8 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
                         <td class="detection-col-num">{i + 1}</td>
                         <td>{crate::format_time::format_time_display(start, 1)}</td>
-                        <td class="detection-col-kind">
-                            {species_swatch(slot)}{flagged_name(name, unlikely)}
-                        </td>
+                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
+                        {flag}
                         <td class="detection-col-num">{format!("{:.2}", top.confidence)}</td>
                     </tr>
                 })
@@ -1160,6 +1175,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                         <th class="detection-col-num">"#"</th>
                         <th>"Start"</th>
                         <th>"Species"</th>
+                        {flag_header(method)}
                         <th class="detection-col-num" title="Confidence">"Conf."</th>
                     </tr>
                 </thead>
@@ -1188,16 +1204,14 @@ fn top_three(
                 let scientific = label
                     .filter(|l| l.is_species && l.scientific != l.common)
                     .map(|l| l.scientific.clone());
-                let unlikely = current_file
-                    .get()
-                    .zip(label)
-                    .is_some_and(|(f, l)| location::unlikely_here(state, f, method, l));
+                let flag = flag_cell(state, method, current_file.get(), label);
                 view! {
                     <tr>
                         <td class="detection-col-kind">
-                            {flagged_name(class_name(label), unlikely)}
+                            {class_name(label)}
                             {scientific.map(|s| view! { <div class="detection-scientific">{s}</div> })}
                         </td>
+                        {flag}
                         <td class="detection-col-num">{format!("{:.2}", s.confidence)}</td>
                     </tr>
                 }
