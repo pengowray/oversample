@@ -118,8 +118,16 @@ The two converted files are hosted at huggingface.co/pengowray/perch-v2-tract
 (revision `f378e7f`, Apache 2.0, with a model card listing the changes), and are in
 the app's model catalog (`PERCH_FILES` in `oversample-ipc/src/classifier/catalog.rs`)
 with the label list from cgeorgiaw/Perch. The app's model store keeps them like
-BirdNET's: OPFS in the browser, the app data folder's `models/` in Tauri. Nothing runs
-them in the app yet.
+BirdNET's: OPFS in the browser, the app data folder's `models/` in Tauri.
+
+Built (2026-11-12): Perch 2.0 is a method in the Call detection tab, beside BirdNET and
+BattyBirdNET, run in the same model worker (`birdnet-worker/src/perch/`). Its minimum
+confidence defaults to 0.30, its 198 sound events count as "Noise and other sounds",
+and "Delete model" deletes only its own files. Checked in Chromium (download, analyse,
+switching to BirdNET and back) and in the Tauri desktop app on Linux, where it read the
+stored files and found the Pauraque at 0.862, as natively. On a 5-minute traffic
+recording, one window named a bird (Pink-footed Goose) at 0.32, so 0.30 is not a clean
+line. Perch's labels have no common names, so results show scientific names.
 
 1. The 45 MB embedding model (40 MB gzipped), cached the same way as BirdNET's model.
 2. The classifier for all 14,795 classes as a separate int8 file (91 MB, 73 MB
