@@ -25,15 +25,18 @@ pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64, cutoff_hz
         .collect();
 
     // Step 2: low-pass to remove the sum frequency, keeping the difference
-    // tone flat up to near `cutoff_hz` (-3 dB there, 24 dB per octave above).
+    // tone flat up to near `cutoff_hz` (-3 dB there, 48 dB per octave above).
     let mut filtered = mixed;
     Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32)
         .process_in_place(&mut filtered);
     filtered
 }
 
-/// Order of the Butterworth low-pass after the mixer.
-const HET_LP_ORDER: usize = 4;
+/// Order of the Butterworth low-pass after the mixer. 8th order, so with a
+/// comb of carriers spaced 2 × cutoff a call close to one carrier leaks
+/// through its neighbour at about -16 dB (4th order: -9 dB), while a call
+/// midway between two still comes through both at -3 dB.
+const HET_LP_ORDER: usize = 8;
 
 /// Stateful real-time heterodyne processor for live mic monitoring.
 /// Maintains oscillator phase and cascaded LP filter states between
@@ -347,6 +350,19 @@ mod tests {
             (comb - single).abs() < 0.5,
             "comb {comb:.2} dB vs single {single:.2} dB"
         );
+    }
+
+    #[test]
+    fn neighbouring_carrier_leaks_little() {
+        // Carriers 30 kHz apart with a 15 kHz cutoff (Auto's spacing). A
+        // 50 kHz call is 11 kHz from the 61 kHz carrier and 19 kHz from the
+        // 31 kHz one; the copy through the farther carrier is >= 15 dB down.
+        let sr = 384_000;
+        let n = sr as usize / 4;
+        let x = tone(50_000.0, sr, n);
+        let near = peak_db(&heterodyne_mix(&x, sr, 61_000.0, 15_000.0)[n / 4..]);
+        let far = peak_db(&heterodyne_mix(&x, sr, 31_000.0, 15_000.0)[n / 4..]);
+        assert!(near - far >= 15.0, "near {near:.1} dB, far {far:.1} dB");
     }
 
     #[test]
