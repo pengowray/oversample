@@ -417,16 +417,15 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
 
         // wSNR
         if let Some(ref w) = wsnr_result.get() {
-            if let Some(reason) = &w.not_measured {
-                report.push_str(&format!(
+            match &w.measurement {
+                Err(reason) => report.push_str(&format!(
                     "\nRecording Quality (wSNR): not measured\n  {}\n",
                     reason
-                ));
-            } else {
-                report.push_str(&format!(
+                )),
+                Ok(m) => report.push_str(&format!(
                     "\nRecording Quality (wSNR): {}\n  SNR: {:.1} dB(ISO/ITU)\n  Signal: {:.1} dB (ISO 226)\n  Noise: {:.1} dB (ITU-R 468)\n",
-                    w.grade.label(), w.snr_db, w.signal_db, w.noise_db
-                ));
+                    m.grade.label(), m.snr_db, m.signal_db, m.noise_db
+                )),
             }
             if let Some(xc) = xc_quality.get() {
                 report.push_str(&format!("  XC quality (metadata): {}\n", xc.trim()));
@@ -905,18 +904,6 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 match wsnr_result.get().as_ref() {
                     None => view! { <span></span> }.into_any(),
                     Some(w) => {
-                        let grade_class = match w.grade {
-                            wsnr::WsnrGrade::A => "wsnr-grade wsnr-grade-a",
-                            wsnr::WsnrGrade::B => "wsnr-grade wsnr-grade-b",
-                            wsnr::WsnrGrade::C => "wsnr-grade wsnr-grade-c",
-                            wsnr::WsnrGrade::D => "wsnr-grade wsnr-grade-d",
-                            wsnr::WsnrGrade::E => "wsnr-grade wsnr-grade-e",
-                        };
-                        let grade_label = w.grade.label().to_string();
-                        let snr_text = format!("{:.1} dB(ISO/ITU)", w.snr_db);
-                        let signal_text = format!("Signal: {:.1} dB (ISO 226)", w.signal_db);
-                        let noise_text = format!("Noise: {:.1} dB (ITU-R 468)", w.noise_db);
-
                         let xc_comparison = xc_quality.get().map(|xc_q| {
                             let xc_letter = xc_q.trim().to_uppercase();
                             let xc_badge_class = match xc_letter.as_str() {
@@ -948,10 +935,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                 <div class="setting-group-title">"Recording Quality"</div>
                                 <div class="wsnr-result">
                                     <div class="wsnr-detail">Estimated wSNR:</div>
-                                    {match w.not_measured.clone() {
-                                        // No grade or dB values here: the ones in the
-                                        // result are placeholders, not measurements.
-                                        Some(reason) => view! {
+                                    {match w.measurement.clone() {
+                                        Err(reason) => view! {
                                             <div class="wsnr-header">
                                                 <span class="wsnr-grade wsnr-grade-none">"\u{2013}"</span>
                                                 <div>
@@ -960,14 +945,23 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                                 </div>
                                             </div>
                                         }.into_any(),
-                                        None => view! {
-                                            <div class="wsnr-header">
-                                                <span class=grade_class>{grade_label}</span>
-                                                <span class="wsnr-snr">{snr_text}</span>
-                                            </div>
-                                            <div class="wsnr-detail">{signal_text}</div>
-                                            <div class="wsnr-detail">{noise_text}</div>
-                                        }.into_any(),
+                                        Ok(m) => {
+                                            let grade_class = match m.grade {
+                                                wsnr::WsnrGrade::A => "wsnr-grade wsnr-grade-a",
+                                                wsnr::WsnrGrade::B => "wsnr-grade wsnr-grade-b",
+                                                wsnr::WsnrGrade::C => "wsnr-grade wsnr-grade-c",
+                                                wsnr::WsnrGrade::D => "wsnr-grade wsnr-grade-d",
+                                                wsnr::WsnrGrade::E => "wsnr-grade wsnr-grade-e",
+                                            };
+                                            view! {
+                                                <div class="wsnr-header">
+                                                    <span class=grade_class>{m.grade.label()}</span>
+                                                    <span class="wsnr-snr">{format!("{:.1} dB(ISO/ITU)", m.snr_db)}</span>
+                                                </div>
+                                                <div class="wsnr-detail">{format!("Signal: {:.1} dB (ISO 226)", m.signal_db)}</div>
+                                                <div class="wsnr-detail">{format!("Noise: {:.1} dB (ITU-R 468)", m.noise_db)}</div>
+                                            }.into_any()
+                                        }
                                     }}
                                     {if !warnings.is_empty() {
                                         view! { <div class="wsnr-warnings">{warnings}</div> }.into_any()

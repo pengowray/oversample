@@ -45,11 +45,17 @@ pub struct FadeInfo {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct WsnrResult {
+pub struct WsnrMeasurement {
     pub snr_db: f64,
     pub grade: WsnrGrade,
     pub signal_db: f64,
     pub noise_db: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WsnrResult {
+    /// The measured wSNR, or the reason no wSNR was measured.
+    pub measurement: Result<WsnrMeasurement, String>,
     pub fade: FadeInfo,
     pub is_clipped: bool,
     pub clipping_samples: usize,
@@ -58,9 +64,6 @@ pub struct WsnrResult {
     pub dense_pct: f64,
     pub has_silent_gaps: bool,
     pub warnings: Vec<String>,
-    /// Why no wSNR was measured. When this is `Some`, `snr_db`, `grade`,
-    /// `signal_db` and `noise_db` are placeholders and must not be shown as results.
-    pub not_measured: Option<String>,
 }
 
 impl WsnrResult {
@@ -74,10 +77,7 @@ impl WsnrResult {
         warnings: Vec<String>,
     ) -> Self {
         WsnrResult {
-            snr_db: 0.0,
-            grade: WsnrGrade::E,
-            signal_db: f64::NEG_INFINITY,
-            noise_db: 0.0,
+            measurement: Err(reason),
             fade,
             is_clipped: clipping.0,
             clipping_samples: clipping.1,
@@ -86,7 +86,6 @@ impl WsnrResult {
             dense_pct: 0.0,
             has_silent_gaps: false,
             warnings,
-            not_measured: Some(reason),
         }
     }
 }
@@ -114,7 +113,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     if sample_rate < 30000 {
         return WsnrResult::not_measured(
             format!(
-                "Sample rate too low: {} kHz (wSNR needs 30 kHz or more)",
+                "Sample rate too low: {} kHz (needs 30 kHz)",
                 sample_rate as f64 / 1000.0
             ),
             FadeInfo {
@@ -264,10 +263,12 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
     }
 
     WsnrResult {
-        snr_db,
-        grade,
-        signal_db,
-        noise_db,
+        measurement: Ok(WsnrMeasurement {
+            snr_db,
+            grade,
+            signal_db,
+            noise_db,
+        }),
         fade: FadeInfo {
             fade_in_secs,
             fade_out_secs,
@@ -279,7 +280,6 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         dense_pct,
         has_silent_gaps,
         warnings,
-        not_measured: None,
     }
 }
 
@@ -982,9 +982,8 @@ mod tests {
         let samples = vec![0.0f32; 1000]; // ~0.023s at 44.1kHz
         let result = analyze_wsnr(&samples, 44_100);
         assert!(result
-            .not_measured
-            .as_deref()
-            .is_some_and(|reason| reason.contains("too short")));
+            .measurement
+            .is_err_and(|reason| reason.contains("too short")));
     }
 
     #[test]
@@ -992,8 +991,7 @@ mod tests {
         let samples = vec![0.1f32; 48_000];
         let result = analyze_wsnr(&samples, 24_000);
         assert!(result
-            .not_measured
-            .as_deref()
-            .is_some_and(|reason| reason.contains("Sample rate too low")));
+            .measurement
+            .is_err_and(|reason| reason.contains("Sample rate too low")));
     }
 }
