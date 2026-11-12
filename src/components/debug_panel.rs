@@ -198,7 +198,7 @@ pub fn DebugPanel() -> impl IntoView {
                     }
                     let items: Vec<_> = entries.iter().map(|(ts, level, msg)| {
                         let relative = (*ts - start_time) / 1000.0;
-                        let time_str = format!("{:+.1}s", relative);
+                        let time_str = format!("{:+.1} s", relative);
                         let level_cls = match level.as_str() {
                             "error" => "debug-level-error",
                             "warn" => "debug-level-warn",

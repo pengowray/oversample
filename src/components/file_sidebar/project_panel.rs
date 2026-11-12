@@ -640,7 +640,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     {sample_rate.map(|sr| format!("  {}kHz", sr / 1000)).unwrap_or_default()}
                     {if has_annotations { " annot." } else { "" }}
                     {if has_noise { " NR" } else { "" }}
-                    {if time_offset != 0.0 { format!("  offset {time_offset:+.1}s") } else { String::new() }}
+                    {if time_offset != 0.0 { format!("  offset {}", crate::format_time::format_relative_label(time_offset, 0.1)) } else { String::new() }}
                 </div>
             </div>
         }

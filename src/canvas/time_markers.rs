@@ -73,7 +73,7 @@ pub fn format_clock_time_full(epoch_ms: f64, file_offset_secs: f64, source: &str
 
 /// Determine a "key interval" — a larger, rounder interval for primary labels.
 /// When zoomed in with sub-second ticks deep into a file, key markers appear at
-/// round second/minute boundaries while intermediate ticks show "+Xms" offsets.
+/// round second/minute boundaries while intermediate ticks show "+X ms" offsets.
 fn key_interval_for(interval: f64) -> f64 {
     if interval >= 1.0 {
         return interval;
@@ -136,7 +136,7 @@ pub fn draw_time_markers(
     let end_time = (scaled_scroll + scaled_visible).min(scaled_duration);
 
     // Only use ms format when the max visible time is ≤ 100 ms; otherwise
-    // prefer seconds ("0.5s" instead of "500ms").
+    // prefer seconds ("0.5s" instead of "500 ms").
     let use_ms = end_time <= 0.1;
 
     // Key marker system: when sub-second ticks are deep into the file,
