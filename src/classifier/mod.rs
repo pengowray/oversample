@@ -240,9 +240,10 @@ async fn labels(file: &'static ModelFile) -> Result<Arc<Vec<SpeciesLabel>>, Clas
     }
     let bytes = store::read(file).await?;
     let text = String::from_utf8_lossy(&bytes);
+    let mut keep = true;
     let l = Arc::new(match file.kind {
         catalog::FileKind::PerchLabels => {
-            let l = types::parse_perch_labels(&text);
+            let mut l = types::parse_perch_labels(&text);
             // A list that doesn't line up with the classifier would name every
             // result wrongly.
             if l.len() != PERCH_CLASSES {
@@ -250,13 +251,24 @@ async fn labels(file: &'static ModelFile) -> Result<Arc<Vec<SpeciesLabel>>, Clas
                     file: file.id.to_string(),
                 });
             }
+            // Perch's labels have no common names: take Xeno-Canto's English
+            // names (99% of its birds, about a third of the rest). Without
+            // them (offline), keep the scientific names and try again next run.
+            let names = crate::xc_client::english_names(&XC_GROUPS).await;
+            keep = !names.is_empty();
+            types::add_common_names(&mut l, &names);
             l
         }
         _ => types::parse_labels(&text),
     });
-    LABELS.with(|m| m.borrow_mut().insert(file.id, l.clone()));
+    if keep {
+        LABELS.with(|m| m.borrow_mut().insert(file.id, l.clone()));
+    }
     Ok(l)
 }
+
+/// The Xeno-Canto groups whose English names name Perch's classes.
+const XC_GROUPS: [&str; 5] = ["birds", "frogs", "grasshoppers", "land mammals", "bats"];
 
 fn next_generation(state: AppState) -> u32 {
     let g = state

@@ -837,7 +837,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 {option(DetectionMethod::Inbuilt, "In-built bat call detection", "Finds bat calls. Runs automatically.")}
                 {option(DetectionMethod::BirdNet, "BirdNET", "Bird species, plus some other sounds such as dog and engine")}
                 // Before BattyBirdNET, so the region list stays under it.
-                {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs, insects and some mammals, plus sounds such as traffic and thunder")}
+                {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs and insects, plus sounds such as thunder and traffic")}
                 {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species for one region")}
                 {region_select}
             </div>

@@ -135,6 +135,19 @@ pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
         .collect()
 }
 
+/// Give each label whose scientific name is in `names` ("Genus species" to an
+/// English name) that common name. Others keep the scientific name.
+pub fn add_common_names(
+    labels: &mut [SpeciesLabel],
+    names: &std::collections::HashMap<String, String>,
+) {
+    for l in labels {
+        if let Some(en) = names.get(&l.scientific) {
+            l.common = en.clone();
+        }
+    }
+}
+
 /// One window's scores.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowScores {
@@ -216,5 +229,18 @@ mod tests {
         assert_eq!(l[1].common, "Splash, splatter");
         assert_eq!(l[2].common, "Motor vehicle (road)");
         assert!(l.iter().all(|x| x.is_species));
+    }
+
+    #[test]
+    fn perch_common_names() {
+        let mut l = parse_perch_labels("h\nApus apus\nAbavorana luctuosa\nThunder\n");
+        let names = [("Apus apus".to_string(), "Common Swift".to_string())]
+            .into_iter()
+            .collect();
+        add_common_names(&mut l, &names);
+        assert_eq!(l[0].common, "Common Swift");
+        assert_eq!(l[0].scientific, "Apus apus");
+        assert_eq!(l[1].common, "Abavorana luctuosa");
+        assert_eq!(l[2].common, "Thunder");
     }
 }

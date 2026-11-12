@@ -33,7 +33,7 @@
 //! are unit-tested on the host; the fetch wrappers are thin.
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use oversample_ipc::xc::{
     XcCachedFile, XcGroupArgs, XcGroupTaxonomy, XcIdArgs, XcRecording, XcSearchArgs,
@@ -443,6 +443,39 @@ struct NameLanguagesReply {
 #[derive(serde::Deserialize)]
 struct NameLanguageEntry {
     code: String,
+}
+
+/// Xeno-Canto's English names, keyed by "Genus species", for every species in
+/// `groups` that has recordings there: from the species lists the XC browser
+/// keeps in OPFS, or else from the Oversample server (not waiting while it is
+/// still indexing a group). A group that can't be had is left out, so offline
+/// this may be empty. Used to name Perch's results, whose labels are scientific
+/// names only.
+pub async fn english_names(groups: &[&str]) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for group in groups {
+        let key = taxonomy_cache_key(group, None);
+        let taxonomy = match load_cached_taxonomy(&key).await {
+            Some(t) => Some(t),
+            None => match server_taxonomy(group, None, false, &mut |_| {}, &|| true).await {
+                Ok(Some(t)) => {
+                    save_cached_taxonomy(&key, &t).await;
+                    Some(t)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    log::info!("no English names for {group}: {e:?}");
+                    None
+                }
+            },
+        };
+        for s in taxonomy.iter().flat_map(|t| &t.species) {
+            if !s.en.is_empty() {
+                out.insert(format!("{} {}", s.genus, s.sp), s.en.clone());
+            }
+        }
+    }
+    out
 }
 
 /// The language codes the server has common names in. `None` if the server
