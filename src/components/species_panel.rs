@@ -25,7 +25,7 @@ use crate::bat_book::data::get_manifest;
 use crate::bat_book::types::BatBookEntry;
 use crate::canvas::spectrogram_renderer::{freq_to_y, Colormap};
 use crate::state::store_fields::*;
-use crate::state::AppState;
+use crate::state::{AppState, SpectSize};
 
 /// Widest the drawing may get, as a fraction of the spectrogram's width.
 const MAX_WIDTH_FRACTION: f64 = 0.35;
@@ -43,6 +43,10 @@ const WINDOW_MARGIN: f64 = 12.0;
 /// spectrogram: the column would cover too much of the recording.
 const COLUMN_MIN_VIEW_W: f64 = 2.0 * COLUMN_WIDTH;
 const COLUMN_MIN_VIEW_H: f64 = 230.0;
+/// The panel under the spectrogram takes at most this fraction of the
+/// spectrogram's room, but never less than the navigation and name rows.
+const PANEL_BELOW_MAX_FRACTION: f64 = 0.5;
+const PANEL_BELOW_MIN_PX: f64 = 56.0;
 
 /// The main view's scale, which the drawing copies.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,15 +61,6 @@ struct ViewScale {
     /// Spectrogram size, CSS px.
     css_w: f64,
     css_h: f64,
-}
-
-/// The spectrogram's size, CSS px.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct ViewSize {
-    w: f64,
-    h: f64,
-    /// Height it would have without the species panel under it.
-    room_h: f64,
 }
 
 /// Where the drawn calls are when none of them is in the visible frequency
@@ -100,6 +95,22 @@ fn shown_id(state: AppState) -> Option<String> {
         Some(id) if ids.contains(&id) => Some(id),
         _ => ids.last().cloned(),
     }
+}
+
+/// The species panel is open over the spectrogram (not hidden by clean view).
+fn panel_open(state: AppState) -> bool {
+    state.bat_book.open().get()
+        && state.bat_book.ref_open().get()
+        && !state.viewmode.clean_view().get()
+}
+
+/// The species text goes in a panel under the spectrogram instead of a column
+/// over the drawn calls: the column would cover too much of the recording.
+/// Judged on the room the spectrogram would have without the panel below,
+/// or the panel would keep itself open by shrinking it.
+pub fn text_below(state: AppState) -> bool {
+    let v = state.bat_book.spect_size().get();
+    panel_open(state) && v.w > 0.0 && (v.w < COLUMN_MIN_VIEW_W || v.room_h < COLUMN_MIN_VIEW_H)
 }
 
 fn entry_for(state: AppState, id: &str) -> Option<BatBookEntry> {
@@ -591,11 +602,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     let draw_ref = NodeRef::<leptos::html::Canvas>::new();
     let scroll_ref = NodeRef::<leptos::html::Div>::new();
 
-    let open = Memo::new(move |_| {
-        state.bat_book.open().get()
-            && state.bat_book.ref_open().get()
-            && !state.viewmode.clean_view().get()
-    });
+    let open = Memo::new(move |_| panel_open(state));
     let shown = Memo::new(move |_| {
         if !open.get() {
             return None;
@@ -616,7 +623,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     // different times, the panel's height could be counted while the
     // spectrogram hadn't shrunk yet, and the panel would close and reopen
     // every frame.
-    let view_size = RwSignal::new(ViewSize::default());
+    let view_size = state.bat_book.spect_size();
     Effect::new(move |_| {
         let Some(el) = canvas_ref.get() else { return };
         let canvas: &web_sys::HtmlCanvasElement = el.as_ref();
@@ -629,7 +636,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                     .and_then(|d| d.query_selector(".species-panel-below").ok().flatten())
                     .and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok())
                     .map_or(0.0, |p| p.offset_height() as f64);
-                ViewSize {
+                SpectSize {
                     w: canvas.client_width() as f64,
                     h,
                     room_h: h + panel_h,
@@ -655,7 +662,9 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
 
     // None until the main canvas has a size.
     let scale = Memo::new(move |_| {
-        let ViewSize { w: css_w, h: css_h, .. } = view_size.get();
+        let SpectSize {
+            w: css_w, h: css_h, ..
+        } = view_size.get();
         let zoom = state.view.zoom_level().get();
         let idx = state.library.current_index().get()?;
         let (time_res, file_max) = state.library.files().with(|files| {
@@ -684,24 +693,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         })
     });
 
-    // Text under the spectrogram instead of over the drawing. Judged on the
-    // room the spectrogram would have without the panel below, or the panel
-    // would keep itself open by shrinking it. Not from `scale`, which is None
-    // while the spectrogram has no height: that would close the panel that
-    // took its height, and reopen it.
-    let below = Memo::new(move |_| {
-        if !open.get() {
-            return false;
-        }
-        let v = view_size.get();
-        v.w > 0.0 && (v.w < COLUMN_MIN_VIEW_W || v.room_h < COLUMN_MIN_VIEW_H)
-    });
-    Effect::new(move |_| {
-        let b = below.get();
-        if state.bat_book.panel_below().get_untracked() != b {
-            state.bat_book.panel_below().set(b);
-        }
-    });
+    let below = Memo::new(move |_| text_below(state));
 
     let layout = Memo::new(move |_| {
         let f = form.get()?;
@@ -811,7 +803,11 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             cover.set(px);
         }
     });
-    on_cleanup(move || cover.set(0.0));
+    on_cleanup(move || {
+        cover.set(0.0);
+        // No spectrogram, no measurement: the panel below closes with it.
+        view_size.try_set(SpectSize::default());
+    });
 
     // The clear window over the drawn calls: top and height, CSS px.
     let window = Memo::new(move |_| {
@@ -936,7 +932,11 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             .get()
             .and_then(|s| s.sketch)
             .is_some_and(|sk| sk.forms().len() > 1);
-        let top_h = if has_forms { TOP_BLOCK_WITH_FORMS_PX } else { TOP_BLOCK_PX };
+        let top_h = if has_forms {
+            TOP_BLOCK_WITH_FORMS_PX
+        } else {
+            TOP_BLOCK_PX
+        };
         let name_first = top_h <= top;
         let spacer = if name_first { top - top_h } else { top };
         let top_block = view! {
@@ -998,10 +998,26 @@ pub fn SpeciesPanelBelow() -> impl IntoView {
     });
     let form = Memo::new(move |_| shown.get()?.sketch.map(|s| chosen_form(s, state)));
     let warning = Signal::derive(move || state.bat_book.panel_warning().get());
+    // At most half the spectrogram's room, so a short window still shows
+    // the recording; the rest of the text scrolls. The room is measured
+    // without this panel, so its height can't change the cap.
+    let max_height = move || {
+        let room = state.bat_book.spect_size().get().room_h;
+        if room > 0.0 {
+            format!(
+                "min(24vh, {}px)",
+                (room * PANEL_BELOW_MAX_FRACTION)
+                    .max(PANEL_BELOW_MIN_PX)
+                    .round()
+            )
+        } else {
+            "24vh".to_string()
+        }
+    };
     move || {
         shown.get()?;
         Some(view! {
-            <div class="species-panel-below species-text">
+            <div class="species-panel-below species-text" style:max-height=max_height>
                 {nav_row(state)}
                 {name_block(shown)}
                 {body(state, shown, form, warning, true)}

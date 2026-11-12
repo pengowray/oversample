@@ -1752,6 +1752,15 @@ pub struct TimelineState {
     pub show_clock_time: bool,
 }
 
+/// The spectrogram's size, CSS px. All zero until measured.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SpectSize {
+    pub w: f64,
+    pub h: f64,
+    /// Height it would have without the species panel under it.
+    pub room_h: f64,
+}
+
 /// Bat Book reference subsystem state.
 #[derive(Clone, Debug, Store)]
 pub struct BatBookState {
@@ -1775,9 +1784,10 @@ pub struct BatBookState {
     /// With several species selected, the one the panel shows. None (or an
     /// id no longer selected) means the last selected.
     pub shown_id: Option<String>,
-    /// The spectrogram is too small for the text column beside the drawn
-    /// calls, so the species panel sits under the spectrogram instead.
-    pub panel_below: bool,
+    /// The spectrogram's size, measured by the species panel's drawing.
+    /// Decides whether the species text fits in a column over the drawn
+    /// calls or goes under the spectrogram (`species_panel::text_below`).
+    pub spect_size: SpectSize,
     /// Why the drawn calls can't be seen at this zoom, if they can't. Set
     /// by the drawing, shown by whichever panel holds the text.
     pub panel_warning: Option<String>,
@@ -2828,7 +2838,7 @@ impl AppState {
                 ref_open: false,
                 call_form: Default::default(),
                 shown_id: None,
-                panel_below: false,
+                spect_size: SpectSize::default(),
                 panel_warning: None,
                 sketch_cover_px: 0.0,
                 last_clicked_id: None,

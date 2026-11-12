@@ -8426,7 +8426,9 @@ button.canvas-overflow-action-btn.disabled {
 /* Under the spectrogram (phones held upright): in the page, above the bat
    book strip. Kept short so the spectrogram keeps its room: names on one
    line, the kinds of call on one scrolling line, facts flowing inline; the
-   rest is under More, and the panel scrolls if it still doesn't fit. */
+   rest is under More, and the panel scrolls if it still doesn't fit.
+   max-height is also set inline to at most half the spectrogram's room
+   (SpeciesPanelBelow), so short windows keep some of the recording. */
 .species-panel-below {
     flex-shrink: 0;
     max-height: 24vh;

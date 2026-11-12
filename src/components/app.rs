@@ -1757,9 +1757,7 @@ fn MainArea() -> impl IntoView {
 
                         // Species panel under the spectrogram when the
                         // spectrogram is too small for its text column.
-                        {move || (state.bat_book.open().get()
-                            && state.bat_book.panel_below().get()
-                            && !state.viewmode.clean_view().get())
+                        {move || crate::components::species_panel::text_below(state)
                             .then(|| view! { <SpeciesPanelBelow /> })}
                         // Bat book strip (between main view and bottom toolbar)
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
