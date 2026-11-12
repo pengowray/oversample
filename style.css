@@ -6670,7 +6670,8 @@ button.toolbar-overflow-btn {
     position: absolute;
     bottom: calc(100% + 4px);
     left: 0;
-    min-width: 160px;
+    /* Wide enough for "This recording: United Kingdom" on one line. */
+    min-width: 230px;
     max-height: 60vh;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;

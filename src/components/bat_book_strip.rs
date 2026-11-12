@@ -297,6 +297,16 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
                 },
             };
             locating.set(Some(Some(msg)));
+            // The message is under the button at the end of a scrolling menu;
+            // scroll it into view once it has been drawn.
+            request_animation_frame(|| {
+                if let Some(el) = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.query_selector(".bat-book-region-error").ok().flatten())
+                {
+                    el.scroll_into_view_with_bool(false);
+                }
+            });
         });
     };
 
@@ -380,13 +390,14 @@ fn RegionOption(
         match state.bat_book.mode().get() {
             BatBookMode::Manual(mr) => mr == r,
             BatBookMode::Auto => {
-                // In auto mode, highlight the resolved region
+                // In auto mode, highlight the resolved region, unless it came
+                // from the recording's place: these options are for
+                // recordings without one.
                 state
                     .bat_book
                     .auto_resolved()
                     .get()
-                    .map(|res| res.region == r)
-                    .unwrap_or(false)
+                    .is_some_and(|res| res.region == r && res.recording_place.is_none())
             }
         }
     };
