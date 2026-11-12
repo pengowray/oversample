@@ -8,3 +8,6 @@
 
 # style: cargo fmt --all
 48a922d9d43eda60d1b9cad1168708ed7806c0df
+
+# cargo fmt: chime, chime_scan, file sidebar and recent files (2026-11-13)
+23161694c6fde7b4404730e6b1da16f21d111bed
