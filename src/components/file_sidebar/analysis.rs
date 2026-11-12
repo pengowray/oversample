@@ -168,7 +168,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 return;
             }
 
-            let nyq_res = effective_nyquist::detect(&samples, sample_rate);
+            let nyq_res =
+                effective_nyquist::detect(&samples, sample_rate, bits_per_sample, is_float);
             if compute_gen.try_get_untracked() != Some(generation) {
                 return;
             }
@@ -201,7 +202,11 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 if compute_gen.try_get_untracked() != Some(generation) {
                     return;
                 }
-                grid_results.push(float_grid::detect(channel_samples, bits_per_sample, is_float));
+                grid_results.push(float_grid::detect(
+                    channel_samples,
+                    bits_per_sample,
+                    is_float,
+                ));
             }
             float_grid_results.set(grid_results);
 

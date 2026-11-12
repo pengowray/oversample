@@ -798,7 +798,7 @@ mod tests {
         let pip = pipistrelle::detect(&samples, rate, bits, false);
         let am = audiomoth::detect(&samples, rate, bits, false, false);
         let grid = float_grid::detect(&samples, bits, false);
-        let nyq = effective_nyquist::detect(&samples, rate);
+        let nyq = effective_nyquist::detect(&samples, rate, bits, false);
         let _ = infer_device_hints(
             rate,
             bits,

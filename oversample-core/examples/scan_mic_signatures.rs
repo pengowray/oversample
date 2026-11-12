@@ -60,7 +60,7 @@ fn main() {
         let bit = bit_analysis::analyze_bits(mono, bits, is_float, dur);
         let lsb = lsb_autocorr::analyze_lsb_autocorr(mono, bits, is_float);
         let pip = pipistrelle::detect(mono, sample_rate, bits, is_float);
-        let nyq = effective_nyquist::detect(mono, sample_rate);
+        let nyq = effective_nyquist::detect(mono, sample_rate, bits, is_float);
         let lsb_zero_padded =
             matches!(lsb.verdict, lsb_autocorr::LsbVerdict::ZeroPaddedNBit { .. });
         let am = audiomoth::detect(mono, sample_rate, bits, is_float, lsb_zero_padded);
