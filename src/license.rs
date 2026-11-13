@@ -184,7 +184,7 @@ fn is_cc_port(part: &str) -> bool {
 /// Universal" and the Public Domain Mark is "Public Domain Mark 1.0
 /// Universal", the titles of their Creative Commons pages. `None` when the
 /// code has no version, or names a licence Creative Commons never published
-/// ("CC NC-SA 4.0", "CC BY-XX 4.0").
+/// ("CC NC-SA 4.0", "CC BY-XX 4.0", "CC BY 2.1 DE", "CC NC-ND 1.0 IL").
 pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     if code.eq_ignore_ascii_case(CC0_LABEL) {
         return Some("CC0 1.0 Universal".to_string());
@@ -209,7 +209,9 @@ struct CcLicense {
 
 impl CcLicense {
     /// `None` when the label has no version, or names a licence Creative
-    /// Commons never published ("CC NC-SA 4.0", "CC BY-XX 4.0").
+    /// Commons never published ("CC NC-SA 4.0", "CC BY-XX 4.0"), including
+    /// one whose port has no licences of that version:
+    /// "CC BY 2.1 DE", "CC BY 3.0 SCOTLAND".
     fn from_label(label: &str) -> Option<Self> {
         let lower = label.to_ascii_lowercase();
         let mut words = lower.split_whitespace();
@@ -222,11 +224,20 @@ impl CcLicense {
         {
             return None;
         }
-        // 4.0 licences have no ports, and 2.1 licences all have one
-        // ("jp", "es", "au", ...).
-        if port.is_some_and(|p| !is_cc_port(p) || version == "4.0")
-            || (version == "2.1" && port.is_none())
-        {
+        // 4.0 licences have no ports. Every 2.1 licence has a port, and only
+        // the au, ca, es and jp ports have version 2.1. The Scotland port
+        // has only version 2.5.
+        let port_has_version = match port {
+            None => version != "2.1",
+            Some(p) if !is_cc_port(p) => false,
+            Some("scotland") => version == "2.5",
+            Some(p) => match version {
+                "4.0" => false,
+                "2.1" => ["au", "ca", "es", "jp"].contains(&p),
+                _ => true,
+            },
+        };
+        if !port_has_version {
             return None;
         }
         // Version 1.0's addresses put ND before NC ("by-nd-nc", "nd-nc"), and
@@ -282,6 +293,11 @@ impl CcLicense {
 /// lower case as its addresses spell them ("by-nc"), in this version and port.
 fn is_published(elements: &str, version: &str, port: Option<&str>) -> bool {
     match version {
+        // The 1.0 Israel port has only the licences with BY:
+        // ".../licenses/by-sa/1.0/il/", but no ".../licenses/sa/1.0/il/".
+        "1.0" if port.is_some_and(|p| p.eq_ignore_ascii_case("il")) => {
+            CC_ELEMENTS_1_0.contains(&elements) && (elements == "by" || elements.starts_with("by-"))
+        }
         "1.0" => CC_ELEMENTS_1_0.contains(&elements),
         "2.0" if port.is_some_and(|p| p.eq_ignore_ascii_case("jp")) => {
             CC_ELEMENTS.contains(&elements) || CC_ELEMENTS_2_0_JP.contains(&elements)
@@ -440,7 +456,13 @@ mod tests {
                 "CC BY-NC-SA 2.1 es",
                 Some("Creative Commons Attribution-NonCommercial-ShareAlike 2.1 ES"),
             ),
+            ("CC BY 2.1 CA", Some("Creative Commons Attribution 2.1 CA")),
             ("CC BY 2.1", None),
+            // Only the au, ca, es and jp ports have version 2.1, and the
+            // Scotland port has only version 2.5.
+            ("CC BY 2.1 DE", None),
+            ("CC BY 3.0 SCOTLAND", None),
+            ("CC BY-SA 2.0 scotland", None),
             ("CC BY 4.0 AU", None),
             ("CC BY 3.0 legalcode", None),
             ("CC BY-XX 4.0", None),
@@ -486,6 +508,21 @@ mod tests {
                 "CC BY-NC-ND 1.0 FI",
                 Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 FI"),
             ),
+            (
+                "CC NC 1.0 FI",
+                Some("Creative Commons NonCommercial 1.0 FI"),
+            ),
+            // The 1.0 Israel port has only the licences with BY.
+            (
+                "CC BY-SA 1.0 IL",
+                Some("Creative Commons Attribution-ShareAlike 1.0 IL"),
+            ),
+            (
+                "CC BY-NC-ND 1.0 IL",
+                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 IL"),
+            ),
+            ("CC NC-ND 1.0 IL", None),
+            ("CC SA 1.0 IL", None),
             // The 2.0 Japan port also has licences without BY.
             (
                 "CC NC 2.0 JP",
@@ -996,8 +1033,19 @@ mod tests {
                 "CC BY 2.1 JP",
                 Some("https://creativecommons.org/licenses/by/2.1/jp/"),
             ),
+            (
+                "CC BY-SA 2.1 CA",
+                Some("https://creativecommons.org/licenses/by-sa/2.1/ca/"),
+            ),
+            (
+                "CC BY-NC-ND 1.0 IL",
+                Some("https://creativecommons.org/licenses/by-nd-nc/1.0/il/"),
+            ),
             // No version, or a name Creative Commons doesn't have.
             ("CC BY 2.1", None),
+            ("CC BY 2.1 DE", None),
+            ("CC BY 3.0 SCOTLAND", None),
+            ("CC NC-ND 1.0 IL", None),
             ("CC NC-SA 4.0", None),
             ("CC NC 2.0", None),
             ("CC BY-SA-NC 2.5", None),
