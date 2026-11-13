@@ -15,6 +15,18 @@ use crate::wikimedia::{self, WikiFile, WikiTarget};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+thread_local! {
+    /// Text for the next WikiBrowser to open with and run, set by [`open_with`].
+    static PREFILL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Opens the dialog with `text` in its box and runs it, for example a Wikipedia article
+/// link pasted into Find recordings, whose audio files this dialog lists.
+pub fn open_with(state: AppState, text: &str) {
+    PREFILL.with(|p| *p.borrow_mut() = Some(text.to_string()));
+    state.dialogs.wiki_browser_open().set(true);
+}
+
 fn format_size(bytes: u64) -> String {
     const MB: f64 = 1_000_000.0;
     if bytes >= 1_000_000 {
@@ -87,6 +99,11 @@ pub fn WikiBrowser() -> impl IntoView {
             searched.set(true);
         });
     };
+
+    if let Some(text) = PREFILL.with(|p| p.borrow_mut().take()) {
+        input.set(text);
+        submit();
+    }
 
     view! {
         <div class="xc-modal-overlay" on:click=move |_| close()>

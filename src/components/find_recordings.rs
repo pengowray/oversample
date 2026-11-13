@@ -58,6 +58,13 @@ const APPROX_TIP: &str =
 const LOAD_FAILED: &str = "Could not load recording: {name} ({reason})";
 const MORE_SPECIES: &str = "Show more species ({remaining} not shown)";
 const MORE_RECORDINGS: &str = "Show more recordings ({remaining} not shown)";
+/// When the server only estimates the total, so the number left is unknown.
+const MORE_RECORDINGS_PLAIN: &str = "Show more recordings";
+const TRY_AGAIN: &str = "Try again";
+const LIST_HEAD_SPECIES: &str = "Species";
+const LIST_HEAD_COUNT: &str = "Recordings";
+const NO_RECORDINGS_HEADING: &str = "Species with no recordings";
+const LOAD_WIKI_PAGE: &str = "List the audio files of this Wikipedia page";
 const DEMOS_HEADING: &str = "Demo recordings";
 const DEMOS_NOTE: &str = "Hand-picked recordings, mostly of bats. They load quickly.";
 const ALL_RECORDINGS: &str = "All recordings";
@@ -91,6 +98,16 @@ fn plural(n: u64, one: &str, many: &str) -> String {
         format!("1 {one}")
     } else {
         format!("{} {many}", with_commas(n))
+    }
+}
+
+/// "1,204 recordings", or "about 1,204 recordings" when the server estimated it.
+fn count_text(n: u64, exact: bool) -> String {
+    let text = plural(n, "recording", "recordings");
+    if exact {
+        text
+    } else {
+        format!("about {text}")
     }
 }
 
@@ -153,7 +170,11 @@ thread_local! {
 #[derive(Clone, Debug, PartialEq)]
 enum Link {
     Xc(u64),
+    /// A Commons or Wikipedia file: loads directly.
     Wikimedia(String),
+    /// A Wikipedia article, which may have several audio files: listed in the
+    /// Commons dialog.
+    WikiPage(String),
 }
 
 fn detect_link(text: &str) -> Option<Link> {
@@ -169,9 +190,8 @@ fn detect_link(text: &str) -> Option<Link> {
         }
     }
     match crate::wikimedia::parse_input(t) {
-        Ok(
-            crate::wikimedia::WikiTarget::File { .. } | crate::wikimedia::WikiTarget::Page { .. },
-        ) => Some(Link::Wikimedia(t.to_string())),
+        Ok(crate::wikimedia::WikiTarget::File { .. }) => Some(Link::Wikimedia(t.to_string())),
+        Ok(crate::wikimedia::WikiTarget::Page { .. }) => Some(Link::WikiPage(t.to_string())),
         _ => None,
     }
 }
@@ -404,6 +424,8 @@ pub fn FindRecordings() -> impl IntoView {
         RwSignal::new(Default::default());
     let error: RwSignal<Option<String>> = RwSignal::new(None);
     let locating = RwSignal::new(false);
+    // Bumped by "Try again" to repeat the requests after the server was unavailable.
+    let retry = RwSignal::new(0u32);
 
     let species: RwSignal<Vec<SpeciesHit>> = RwSignal::new(Vec::new());
     let species_total = RwSignal::new(0u64);
@@ -414,6 +436,8 @@ pub fn FindRecordings() -> impl IntoView {
 
     let recs: RwSignal<Vec<RecordingItem>> = RwSignal::new(Vec::new());
     let recs_total = RwSignal::new(0u64);
+    // False when the server estimated the total (dense "near" searches).
+    let recs_exact = RwSignal::new(true);
     let recs_cursor: RwSignal<Option<String>> = RwSignal::new(None);
     let recs_loading = RwSignal::new(false);
     let recs_truncated = RwSignal::new(false);
@@ -472,6 +496,7 @@ pub fn FindRecordings() -> impl IntoView {
 
     // Species list: runs on every change of the query or filters; typing waits 250 ms.
     Effect::new(move |_| {
+        retry.track();
         let q = query.get();
         let f = filter.get();
         // Near with no point yet (still locating) has nothing to search.
@@ -527,6 +552,7 @@ pub fn FindRecordings() -> impl IntoView {
 
     // Facets for the Group and Country menus.
     Effect::new(move |_| {
+        retry.track();
         let f = filter.get();
         facets_gen.update_value(|g| *g += 1);
         let my = facets_gen.get_value();
@@ -553,21 +579,17 @@ pub fn FindRecordings() -> impl IntoView {
                 return;
             }
             Selected::All => None,
-            Selected::Species(hit) => {
-                if hit.n == 0 {
-                    recs.set(Vec::new());
-                    recs_total.set(0);
-                    recs_cursor.set(None);
-                    return;
-                }
-                Some(hit.key.clone())
-            }
+            // Always asked: the species' count in the list was taken under the
+            // filters at the time, which may have changed since.
+            Selected::Species(hit) => Some(hit.key.clone()),
         };
         if near_mode.get_untracked() != NearMode::Anywhere && f.near.is_none() {
             return;
         }
         recs_loading.set(true);
         recs.set(Vec::new());
+        recs_total.set(0);
+        recs_cursor.set(None);
         spawn_local(async move {
             let result = search::recordings(key.as_deref(), &f, None).await;
             if recs_gen.try_get_value() != Some(my) {
@@ -576,6 +598,7 @@ pub fn FindRecordings() -> impl IntoView {
             match result {
                 Ok(page) => {
                     recs_total.try_set(page.total);
+                    recs_exact.try_set(page.total_exact);
                     recs_cursor.try_set(page.cursor);
                     recs_truncated.try_set(page.truncated);
                     recs.try_set(page.items);
@@ -590,6 +613,15 @@ pub fn FindRecordings() -> impl IntoView {
             }
             recs_loading.try_set(false);
         });
+    });
+
+    // With no search, the demo list is all there is: on a phone, show it straight away.
+    Effect::new(move |_| {
+        if availability.get() == Availability::Unavailable
+            && selected.get_untracked() == Selected::Demos
+        {
+            show_detail.set(true);
+        }
     });
 
     // Demo index, fetched once per dialog.
@@ -749,6 +781,11 @@ pub fn FindRecordings() -> impl IntoView {
     };
 
     let load_link = move |link: Link| {
+        if let Link::WikiPage(text) = &link {
+            crate::components::wiki_browser::open_with(state, text);
+            state.dialogs.find_recordings_open().set(false);
+            return;
+        }
         if loading.get_untracked().is_some() {
             return;
         }
@@ -760,6 +797,7 @@ pub fn FindRecordings() -> impl IntoView {
                     crate::wikimedia::load_from_input(state, &text).await;
                     Ok(())
                 }
+                Link::WikiPage(_) => Ok(()),
             };
             loading.try_set(None);
             match result {
@@ -859,6 +897,7 @@ pub fn FindRecordings() -> impl IntoView {
             let text = match &l {
                 Link::Xc(n) => format!("Load XC{n}"),
                 Link::Wikimedia(_) => "Load from Wikimedia".to_string(),
+                Link::WikiPage(_) => LOAD_WIKI_PAGE.to_string(),
             };
             view! {
                 <button class="find-link-row" on:click=move |_| load_link(l.clone())>
@@ -900,6 +939,11 @@ pub fn FindRecordings() -> impl IntoView {
                 <div class="find-notice">
                     <p>{UNAVAILABLE}</p>
                     <div class="find-notice-actions">
+                        <button class="xc-btn" on:click=move |_| {
+                            availability.set(Availability::Unknown);
+                            show_detail.set(false);
+                            retry.update(|r| *r += 1);
+                        }>{TRY_AGAIN}</button>
                         <button class="xc-btn" on:click=move |_| open_xc_browser()>{XC_BROWSER}</button>
                         <button class="xc-btn" on:click=move |_| open_wiki_browser()>{COMMONS_BROWSER}</button>
                     </div>
@@ -909,9 +953,15 @@ pub fn FindRecordings() -> impl IntoView {
             _ => {
                 let list = species.get();
                 let empty = list.is_empty() && !species_loading.get() && link.is_none();
+                // Name matches with no recordings come last; a subheading marks where they start.
+                let first_zero = list.iter().position(|h| h.n == 0);
                 let rows = list
                     .into_iter()
-                    .map(|hit| {
+                    .enumerate()
+                    .map(|(i, hit)| {
+                        let subhead = (Some(i) == first_zero).then(|| view! {
+                            <div class="find-list-subhead">{NO_RECORDINGS_HEADING}</div>
+                        });
                         let is_sel = matches!(&sel, Selected::Species(s) if s.key == hit.key);
                         let name = hit.display_name();
                         let sci = hit.scientific();
@@ -925,7 +975,7 @@ pub fn FindRecordings() -> impl IntoView {
                             view! { <span class="find-sp-count">{with_commas(n)}</span> }.into_any()
                         };
                         let for_click = hit.clone();
-                        view! {
+                        let row = view! {
                             <button
                                 class="find-species-row"
                                 class:selected=is_sel
@@ -936,11 +986,19 @@ pub fn FindRecordings() -> impl IntoView {
                                 {count}
                                 <span class="find-sp-sci"><i>{sci}</i>" \u{00B7} "{grp}</span>
                             </button>
-                        }
+                        };
+                        view! { {subhead}{row} }
                     })
                     .collect::<Vec<_>>();
                 let remaining = species_total.get().saturating_sub(species.with(|s| s.len() as u64));
+                let has_rows = !rows.is_empty();
                 view! {
+                    {has_rows.then(|| view! {
+                        <div class="find-list-head">
+                            <span>{LIST_HEAD_SPECIES}</span>
+                            <span>{LIST_HEAD_COUNT}</span>
+                        </div>
+                    })}
                     {rows}
                     {empty.then(|| (!q.trim().is_empty()).then(|| view! {
                         <p class="find-empty">{fill(NO_SPECIES_MATCH, &[("query", q.trim())])}</p>
@@ -1051,7 +1109,7 @@ pub fn FindRecordings() -> impl IntoView {
         view! {
             <div class="find-rec-head" class:with-species=show_species>
                 {show_species.then(|| view! { <span>"Species"</span> })}
-                <span>"Place"</span>
+                <span>{if near_on { "Distance, place" } else { "Place" }}</span>
                 <span>"Date"</span>
                 <span class="find-rec-num">"Length"</span>
                 <span class="find-rec-num">"Sample rate"</span>
@@ -1063,10 +1121,17 @@ pub fn FindRecordings() -> impl IntoView {
             {(recs_truncated.get() && near_on).then(|| view! {
                 <p class="find-empty">{fill(TRUNCATED, &[("km", &km.get().to_string())])}</p>
             })}
-            {(recs_cursor.get().is_some() && remaining > 0).then(|| view! {
-                <button class="find-more" disabled=move || recs_loading.get() on:click=move |_| more_recs()>
-                    {fill(MORE_RECORDINGS, &[("remaining", &with_commas(remaining))])}
-                </button>
+            {recs_cursor.get().is_some().then(|| {
+                let text = if recs_exact.get() && remaining > 0 {
+                    fill(MORE_RECORDINGS, &[("remaining", &with_commas(remaining))])
+                } else {
+                    MORE_RECORDINGS_PLAIN.to_string()
+                };
+                view! {
+                    <button class="find-more" disabled=move || recs_loading.get() on:click=move |_| more_recs()>
+                        {text}
+                    </button>
+                }
             })}
         }
     };
@@ -1164,7 +1229,7 @@ pub fn FindRecordings() -> impl IntoView {
                     <div class="find-detail-head">
                         <h3>{ALL_RECORDINGS}</h3>
                         <p class="find-detail-sub">
-                            {move || format!("{}{}", plural(recs_total.get(), "recording", "recordings"), filter_summary())}
+                            {move || format!("{}{}", count_text(recs_total.get(), recs_exact.get()), filter_summary())}
                         </p>
                     </div>
                     {(n == 0 && !recs_loading.get()).then(|| view! { <p class="find-empty">{NO_RECORDINGS_FILTERS}</p> })}
@@ -1178,38 +1243,42 @@ pub fn FindRecordings() -> impl IntoView {
                 let sci = hit.scientific();
                 let wiki = hit.wikipedia_url();
                 let bb = hit.beastiebot_url();
-                let zero = hit.n == 0;
+                let any_filter = move || {
+                    let f = filter.get();
+                    f.group.is_some() || f.country.is_some() || f.near.is_some()
+                };
                 view! {
                     {back}
                     <div class="find-detail-head">
                         <h3>{name}" "<i class="find-detail-sci">{sci}</i></h3>
                         <p class="find-detail-sub">
-                            {move || if zero {
-                                String::new()
-                            } else {
-                                format!("{}{} \u{00B7} ", plural(recs_total.get(), "recording", "recordings"), filter_summary())
+                            {move || match recs_total.get() {
+                                0 => String::new(),
+                                t => format!("{}{} \u{00B7} ", count_text(t, recs_exact.get()), filter_summary()),
                             }}
                             <a href=wiki target="_blank" rel="noopener">"Wikipedia"</a>
                             " \u{00B7} "
                             <a href=bb target="_blank" rel="noopener">"BeastieBot"</a>
                         </p>
                     </div>
-                    {zero.then(|| {
-                        let sources: Vec<String> = status
-                            .get()
-                            .keys()
-                            .map(|k| search::source_label(k).to_string())
-                            .collect();
-                        let sources = if sources.is_empty() { vec!["Xeno-canto".to_string()] } else { sources };
-                        view! { <p class="find-empty">{fill(NO_RECORDINGS_SPECIES, &[("sources", &join_or(&sources))])}</p> }
+                    // With a filter set, no recordings may only mean none under the
+                    // filter; without one, the species has none in any indexed source.
+                    {move || (recs_total.get() == 0 && !recs_loading.get()).then(|| {
+                        let text = if any_filter() {
+                            NO_RECORDINGS_FILTERS.to_string()
+                        } else {
+                            let sources: Vec<String> = status
+                                .get()
+                                .keys()
+                                .map(|k| search::source_label(k).to_string())
+                                .collect();
+                            let sources = if sources.is_empty() { vec!["Xeno-canto".to_string()] } else { sources };
+                            fill(NO_RECORDINGS_SPECIES, &[("sources", &join_or(&sources))])
+                        };
+                        view! { <p class="find-empty">{text}</p> }
                     })}
-                    {(!zero).then(|| view! {
-                        {move || (recs_total.get() == 0 && !recs_loading.get()).then(|| view! {
-                            <p class="find-empty">{NO_RECORDINGS_FILTERS}</p>
-                        })}
-                        {move || recordings_table(false)}
-                        {move || recs_loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
-                    })}
+                    {move || (recs_total.get() > 0).then(|| recordings_table(false))}
+                    {move || recs_loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
                 }
                 .into_any()
             }

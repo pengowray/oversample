@@ -6783,6 +6783,24 @@ button.toolbar-overflow-btn {
     padding-bottom: 8px;
 }
 
+/* Column labels over the species list, so its numbers read as recordings. */
+.find-list-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 16px;
+    color: #a0a0a0;
+    font-size: 11px;
+    border-bottom: 1px solid #333;
+}
+
+/* Starts the name matches that have no recordings, after those that have some. */
+.find-list-subhead {
+    padding: 10px 16px 4px;
+    color: #a0a0a0;
+    font-size: 11px;
+    border-bottom: 1px solid #2a2a3a;
+}
+
 /* Species rows: name and count on the first line, scientific name and group
    under the name. The selected row gets a background, not bold, so text
    doesn't rewrap. */
@@ -6935,6 +6953,18 @@ button.toolbar-overflow-btn {
     text-decoration: underline;
 }
 
+/* 24 px tall so the link meets the minimum target size. */
+.find-rec-source {
+    white-space: nowrap;
+    display: inline-block;
+    line-height: 24px;
+}
+
+.find-modal .xc-modal-close {
+    min-width: 28px;
+    min-height: 28px;
+}
+
 .find-detail-head .demo-random-bat {
     margin-top: 8px;
 }
@@ -7072,6 +7102,11 @@ button.toolbar-overflow-btn {
     .find-back {
         display: inline-block;
         margin: 8px 16px 0;
+    }
+
+    /* Group and Country fit side by side at 375 px. */
+    .find-filters .xc-select {
+        max-width: 140px;
     }
 
     /* Phone: place takes the first line; date, length, rate, quality and
