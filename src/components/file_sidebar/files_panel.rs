@@ -342,10 +342,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             let lic = file_badges::get_xc_field(&meta.fields, "License")?;
                             let label = file_badges::parse_cc_license(&lic)?;
                             let attr = file_badges::get_xc_field(&meta.fields, "Attribution");
+                            let title = file_badges::license_title(&label);
                             let tooltip = if let Some(attr_text) = attr {
-                                format!("{label} license\n{attr_text}")
+                                format!("{title}\n{attr_text}")
                             } else {
-                                format!("{label} license")
+                                title
                             };
                             Some((label, tooltip))
                         });
