@@ -830,7 +830,9 @@ pub fn FindRecordings() -> impl IntoView {
             // filters at the time, which may have changed since.
             Selected::Species(hit) => Some(hit.key.clone()),
         };
-        if near_mode.get_untracked() != NearMode::Anywhere && f.near.is_none() {
+        // Near with no point yet (still locating): wait. Tracked, so that going back to
+        // Anywhere (location refused) asks again; the filter does not change then.
+        if near_mode.get() != NearMode::Anywhere && f.near.is_none() {
             return;
         }
         if let Some(el) = detail_el.get_untracked() {

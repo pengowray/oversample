@@ -241,6 +241,36 @@ test.describe("Find recordings", () => {
     await expect(end).not.toContainText("Couldn't load more");
   });
 
+  test("near me: refused location lists recordings again", async ({ page }) => {
+    await stubSearch(page, { modern: true });
+    await openDialog(page);
+    await page.locator(".find-fixed-row", { hasText: "All recordings" }).click();
+    await expect(page.locator(".find-rec-row")).toHaveCount(50);
+    await page.locator("label", { hasText: "Near" }).locator("select").selectOption("me");
+    await expect(page.locator(".xc-error")).toContainText("Location access denied");
+    await expect(page.locator(".find-rec-row")).toHaveCount(50);
+    await expect(page.locator(".find-detail .xc-loading")).toHaveCount(0);
+  });
+
+  test("near me: distance sorts first, other sorts keep the point", async ({ page, context }) => {
+    await context.grantPermissions(["geolocation"]);
+    await context.setGeolocation({ latitude: 51.5, longitude: -0.12 });
+    const seen = await stubSearch(page, { modern: true });
+    await openDialog(page);
+    await page.locator(".find-fixed-row", { hasText: "All recordings" }).click();
+    await expect(page.locator(".find-rec-row")).toHaveCount(50);
+    await page.locator("label", { hasText: "Near" }).locator("select").selectOption("me");
+    await expect.poll(() => seen.recordings.at(-1)?.searchParams.get("near")).toBe("51.5,-0.1");
+    expect(seen.recordings.at(-1)?.searchParams.has("sort")).toBe(false);
+    const distance = page.locator(".find-rec-head .find-sort", { hasText: "Distance" });
+    await expect(distance).toHaveClass(/active/);
+    await page.locator(".find-rec-head .find-sort", { hasText: "Quality" }).click();
+    await expect.poll(() => seen.recordings.at(-1)?.searchParams.get("sort")).toBe("best");
+    expect(seen.recordings.at(-1)?.searchParams.get("near")).toBe("51.5,-0.1");
+    await distance.click();
+    await expect.poll(() => seen.recordings.at(-1)?.searchParams.has("sort")).toBe(false);
+  });
+
   test("an older server gets no sort or sample-rate parameters", async ({ page }) => {
     const seen = await stubSearch(page, { modern: false });
     await openDialog(page);
