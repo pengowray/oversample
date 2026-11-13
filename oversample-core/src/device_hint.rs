@@ -446,7 +446,11 @@ pub enum MetadataMatch {
 }
 
 /// Best-effort device claim from metadata. Prefers GUANO `Make`+`Model`
-/// (most authoritative), falls back to XC `dvc`/`mic`.
+/// (most authoritative), falls back to Xeno-canto's device and microphone.
+///
+/// `xc_metadata` is either the app's site metadata rows, labelled "Device" and
+/// "Microphone" (`xc_lib::metadata`), or raw Xeno-canto JSON keys, `dvc` and
+/// `mic`. Both are read.
 pub fn extract_device_claim(
     xc_metadata: Option<&[(String, String)]>,
     guano: Option<&[(String, String)]>,
@@ -473,16 +477,16 @@ pub fn extract_device_claim(
         }
     }
     if let Some(xc) = xc_metadata {
-        let dvc = xc
-            .iter()
-            .find(|(k, _)| k == "dvc")
-            .map(|(_, v)| v.trim())
-            .unwrap_or("");
-        let mic = xc
-            .iter()
-            .find(|(k, _)| k == "mic")
-            .map(|(_, v)| v.trim())
-            .unwrap_or("");
+        // The first non-empty value under either name.
+        let field = |names: [&str; 2]| {
+            xc.iter()
+                .filter(|(k, _)| names.contains(&k.as_str()))
+                .map(|(_, v)| v.trim())
+                .find(|v| !v.is_empty())
+                .unwrap_or("")
+        };
+        let dvc = field(["Device", "dvc"]);
+        let mic = field(["Microphone", "mic"]);
         if !dvc.is_empty() && !mic.is_empty() && !mic_subsumed_by_dvc(dvc, mic) {
             return Some(format!("{} ({})", dvc, mic));
         } else if !dvc.is_empty() {
@@ -646,6 +650,33 @@ mod tests {
             extract_device_claim(Some(&x), None).as_deref(),
             Some("Pettersson D500x (Advanced electret)"),
         );
+    }
+
+    #[test]
+    fn extract_reads_site_metadata_labels() {
+        // The rows the app builds from Xeno-canto (xc_lib::metadata) are
+        // labelled, not keyed by the API's field names.
+        let x = vec![
+            ("Species".into(), "Common Pipistrelle".into()),
+            ("Device".into(), "Pettersson D500x".into()),
+            ("Microphone".into(), "Advanced electret".into()),
+        ];
+        assert_eq!(
+            extract_device_claim(Some(&x), None).as_deref(),
+            Some("Pettersson D500x (Advanced electret)"),
+        );
+        let hints = vec![DeviceHint {
+            label: "Pettersson D500x sample format".into(),
+            confidence: HintConfidence::Strong,
+            candidates: vec!["Pettersson D500X".into()],
+            detail: String::new(),
+        }];
+        match compare_to_metadata(&hints, Some(&x), None) {
+            MetadataMatch::Match { claim, .. } => {
+                assert_eq!(claim, "Pettersson D500x (Advanced electret)")
+            }
+            other => panic!("expected match, got {:?}", other),
+        }
     }
 
     #[test]
