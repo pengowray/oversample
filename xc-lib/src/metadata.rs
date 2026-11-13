@@ -140,4 +140,19 @@ mod tests {
         let blank = serde_json::json!({ "rmk": " \r\n" });
         assert!(parse_xc_json_metadata(&blank).is_empty());
     }
+
+    #[test]
+    fn api_recording_lists_its_remarks() {
+        let rec = crate::api::parse_recording(&serde_json::json!({
+            "id": "924726",
+            "file": "https://xeno-canto.org/924726/download",
+            "method": "field recording",
+            "rmk": "Recording with Magenta Bat5",
+        }))
+        .unwrap();
+        let fields = recording_to_metadata(&rec);
+        let i = fields.iter().position(|(k, _)| k == "Remarks").unwrap();
+        assert_eq!(fields[i].1, "Recording with Magenta Bat5");
+        assert_eq!(fields[i - 1].0, "Method");
+    }
 }

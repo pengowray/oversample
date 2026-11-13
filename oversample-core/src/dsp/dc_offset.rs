@@ -95,10 +95,12 @@ pub const MIN_SOUND_SECS: f64 = 0.25;
 
 /// The offset to remove from a recording, measured from its first
 /// [`OFFSET_WINDOW_SECS`] (`samples`): [`mean_outside_silence`], or 0 when
-/// they hold less than [`MIN_SOUND_SECS`] of sound.
+/// they hold less than [`MIN_SOUND_SECS`] of sound. A recording shorter than
+/// that only needs half its length to be sound.
 pub fn recording_offset(samples: &[f32], sample_rate: u32) -> f32 {
     let (sum, count) = sum_outside_silence(samples);
-    if (count as f64) < MIN_SOUND_SECS * sample_rate as f64 {
+    let needed = (MIN_SOUND_SECS * sample_rate as f64).min(samples.len() as f64 / 2.0);
+    if count == 0 || (count as f64) < needed {
         return 0.0;
     }
     let dc = (sum / count as f64) as f32;
@@ -287,5 +289,15 @@ mod tests {
             *s = 0.5;
         }
         assert!((recording_offset(&samples, sr) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn short_recording_still_gets_its_offset() {
+        // A 0.1 s clip is all sound, though shorter than MIN_SOUND_SECS.
+        let samples: Vec<f32> = (0..4_800)
+            .map(|i| 0.05 + 0.01 * (i as f32 * 0.7).sin())
+            .collect();
+        assert!((recording_offset(&samples, 48_000) - 0.05).abs() < 1e-3);
+        assert_eq!(recording_offset(&[], 48_000), 0.0);
     }
 }
