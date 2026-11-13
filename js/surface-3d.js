@@ -53,6 +53,91 @@
         return { x: 1.5 * k, y: -1.6 * k, z: 1.1 * k };
     }
 
+    // Pinch to zoom on touch screens. Plotly's 3D camera follows only the
+    // first finger (one finger rotates) and has no pinch, so two-finger
+    // gestures are caught on the plot element before they reach Plotly's
+    // canvas, and move the camera toward or away from the centre instead.
+    var MIN_EYE_DIST = 0.25;
+    var MAX_EYE_DIST = 12;
+
+    function addPinchZoom(el) {
+        if (el._oversamplePinch) return;
+        el._oversamplePinch = true;
+        // At the start of the pinch: finger spacing and the camera.
+        var start = null;
+        // From the second finger down until the last finger is up. Plotly
+        // must not see the moves of a finger left down after a pinch: it
+        // would rotate by the distance from where that finger first landed.
+        var active = false;
+        var spacing = 1;
+        var frame = 0;
+
+        function fingerSpacing(touches) {
+            return Math.max(1, Math.hypot(
+                touches[0].clientX - touches[1].clientX,
+                touches[0].clientY - touches[1].clientY));
+        }
+        function begin(touches) {
+            var scene = el._fullLayout && el._fullLayout.scene && el._fullLayout.scene._scene;
+            if (!scene || !scene.getCamera) return;
+            start = { spacing: fingerSpacing(touches), camera: scene.getCamera() };
+            spacing = start.spacing;
+            active = true;
+        }
+        function zoom() {
+            frame = 0;
+            if (!start || !window.Plotly) return;
+            var cam = start.camera;
+            var c = cam.center;
+            var dx = cam.eye.x - c.x, dy = cam.eye.y - c.y, dz = cam.eye.z - c.z;
+            var dist = Math.hypot(dx, dy, dz) || 1;
+            var k = start.spacing / spacing;
+            k = Math.min(Math.max(k, MIN_EYE_DIST / dist), MAX_EYE_DIST / dist);
+            window.Plotly.relayout(el, {
+                'scene.camera': {
+                    up: cam.up,
+                    center: c,
+                    eye: { x: c.x + dx * k, y: c.y + dy * k, z: c.z + dz * k },
+                    projection: cam.projection,
+                },
+            });
+        }
+        var opts = { capture: true, passive: false };
+        el.addEventListener('touchstart', function (ev) {
+            if (ev.touches.length >= 2) begin(ev.touches);
+            if (active) {
+                ev.stopPropagation();
+                ev.preventDefault();
+            }
+        }, opts);
+        el.addEventListener('touchmove', function (ev) {
+            if (!active) return;
+            ev.stopPropagation();
+            ev.preventDefault();
+            if (!start || ev.touches.length < 2) return;
+            spacing = fingerSpacing(ev.touches);
+            if (!frame) frame = requestAnimationFrame(zoom);
+        }, opts);
+        function end(ev) {
+            if (!active) return;
+            if (ev.touches.length >= 2) {
+                // A third finger lifted: carry on with the two still down.
+                begin(ev.touches);
+            } else {
+                start = null;
+            }
+            if (ev.touches.length > 0) {
+                ev.stopPropagation();
+            } else {
+                // Let the last finger's touchend through, so Plotly ends the
+                // rotation the first finger started.
+                active = false;
+            }
+        }
+        el.addEventListener('touchend', end, opts);
+        el.addEventListener('touchcancel', end, opts);
+    }
+
     // d: { z: Float32Array (rows = frequencies, row-major), nx, ny,
     //      times_s: Float64Array(nx), offsets from the selection start,
     //      freqs_khz: Float64Array(ny), level: Float32Array, unclamped z,
@@ -66,6 +151,7 @@
         return loadPlotly().then(function (Plotly) {
             // The dialog may have closed (and purged) while Plotly loaded.
             if (!el.isConnected) return;
+            addPinchZoom(el);
             var z = new Array(d.ny);
             for (var j = 0; j < d.ny; j++) {
                 z[j] = Array.prototype.slice.call(d.z, j * d.nx, (j + 1) * d.nx);

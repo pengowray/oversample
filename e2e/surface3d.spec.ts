@@ -13,6 +13,17 @@ test.use({
 type Eye = { x: number; y: number; z: number };
 const webglWarnings: string[] = [];
 
+/** Camera eye relative to the point it looks at. */
+function eyeFromCenter(page: Page): Promise<Eye> {
+  return page.evaluate(() => {
+    const el = document.querySelector(".surface-3d-plot") as unknown as {
+      _fullLayout: { scene: { _scene: { getCamera(): { eye: Eye; center: Eye } } } };
+    };
+    const { eye, center } = el._fullLayout.scene._scene.getCamera();
+    return { x: eye.x - center.x, y: eye.y - center.y, z: eye.z - center.z };
+  });
+}
+
 function cameraEye(page: Page): Promise<Eye> {
   return page.evaluate(() => {
     const el = document.querySelector(".surface-3d-plot") as unknown as {
@@ -54,7 +65,7 @@ async function openSurface(page: Page) {
   await expect(page.locator(".surface-3d-status")).toHaveCount(0);
 }
 
-test("View in 3D draws the selection and dragging rotates it", async ({ page }, testInfo) => {
+test("View in 3D draws the selection; dragging rotates it and pinching zooms", async ({ page }, testInfo) => {
   // SwiftShader renders slowly: opening plus the redraws below take about a minute.
   test.setTimeout(150_000);
   await openSurface(page);
@@ -140,6 +151,31 @@ test("View in 3D draws the selection and dragging rotates it", async ({ page }, 
     );
     expect(Math.max(p.customdata[0], floor)).toBeCloseTo(p.z, 3);
   }
+
+  // A two-finger pinch zooms: spreading the fingers to 3 times their spacing
+  // brings the camera to a third of its distance, looking the same way.
+  // Real multi-touch through the DevTools protocol (Playwright has no API for
+  // it). This is Chromium's touch handling, not the Android WebView's.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  const eye0 = await eyeFromCenter(page);
+  const pinchAt = (half: number) => [
+    { x: cx - half, y: cy, id: 1 },
+    { x: cx + half, y: cy, id: 2 },
+  ];
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pinchAt(40) });
+  for (let i = 1; i <= 10; i++) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pinchAt(40 + i * 8) });
+    await page.waitForTimeout(30);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(500);
+  const eye1 = await eyeFromCenter(page);
+  const len = (e: Eye) => Math.hypot(e.x, e.y, e.z);
+  expect(len(eye1) / len(eye0)).toBeCloseTo(1 / 3, 1);
+  const cos = (eye0.x * eye1.x + eye0.y * eye1.y + eye0.z * eye1.z) / (len(eye0) * len(eye1));
+  expect(cos).toBeGreaterThan(0.999);
+  await page.screenshot({ path: testInfo.outputPath("surface3d-pinched.png") });
 
   await page.keyboard.press("Escape");
   await expect(page.locator(".surface-3d-dialog")).toHaveCount(0);

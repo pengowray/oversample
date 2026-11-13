@@ -201,7 +201,7 @@ fn Surface3dBody(region: Selection) -> impl IntoView {
         ..region
     };
     let hint = if state.status.is_mobile().get_untracked() {
-        "Drag to rotate"
+        "Drag to rotate, pinch to zoom"
     } else {
         "Drag to rotate, scroll to zoom"
     };
