@@ -620,22 +620,33 @@ fn escape_bare_url(
 
 /// The byte of `src` where a bare URL that starts at byte `start`, in the
 /// text event `events[text_event]`, ends at the latest: at the next character
-/// that [`ends_url`] accepts, or where a code span, link, image, raw HTML or
-/// line break starts.
+/// that [`ends_url`] accepts, where a code span, link, image, raw HTML or line
+/// break starts, or where an entity such as "&#32;" that stands for such a
+/// character starts.
+///
+/// It reads `src` and the events only as far as that byte, so a paragraph
+/// with thousands of URLs and no spaces takes linear time, not quadratic.
 fn url_limit(
     src: &str,
     events: &[(Event, Range<usize>)],
     text_event: usize,
     start: usize,
 ) -> usize {
-    let stop = src[start..].find(ends_url).map_or(src.len(), |n| start + n);
+    // The byte of the first character in `src[from..to]` that ends a URL.
+    let ends_in = |from: usize, to: usize| src[from..to.max(from)].find(ends_url).map(|n| from + n);
     // How far in `src` the events read so far reach.
-    let mut reached = events[text_event].1.end;
+    let mut reached = events[text_event].1.end.max(start);
+    if let Some(stop) = ends_in(start, reached) {
+        return stop;
+    }
     for (event, range) in &events[text_event + 1..] {
-        if reached >= stop {
-            break;
-        }
-        reached = match event {
+        let next = match event {
+            // Text that reads differently from its source, such as " " from
+            // "&#32;", and has a character that ends a URL. `escape_bare_url`
+            // ends the URL at the start of this text.
+            Event::Text(s) if s.contains(ends_url) && **s != src[range.clone()] => {
+                return ends_in(reached, range.start).unwrap_or(range.start.max(reached));
+            }
             Event::Text(_) => range.end,
             // The range of an emphasis element runs from its opening `*` or
             // `_` to the end of its closing one, and strong has two of each.
@@ -643,13 +654,17 @@ fn url_limit(
             Event::Start(Tag::Strong) => range.start + 2,
             Event::End(TagEnd::Emphasis | TagEnd::Strong) => range.end,
             // The end of a paragraph, heading or list item.
-            Event::End(_) => return stop.min(reached),
+            Event::End(_) => return reached,
             // A code span, link, image, raw HTML, line break or any other
             // element.
-            _ => return stop.min(range.start),
+            _ => return ends_in(reached, range.start).unwrap_or(range.start.max(reached)),
         };
+        if let Some(stop) = ends_in(reached, next) {
+            return stop;
+        }
+        reached = next.max(reached);
     }
-    stop
+    ends_in(reached, src.len()).unwrap_or(src.len())
 }
 
 /// Turn the bare http and https URLs in the text of `blocks` into links, as
@@ -738,9 +753,9 @@ fn link_bare_urls_in(
 /// start or end of emphasis cut it, or text from an image or from a link that
 /// is not shown as a link joins it. A link to the part before the cut would
 /// go to the wrong address. [`escape_emphasis_in_bare_urls`] stops this for
-/// almost every URL, so this only catches the ones it cannot see.
+/// almost every URL, so this only catches the ones it cannot see. Only the
+/// start of `after` is read, as [`joins_url`] describes.
 fn push_text_with_links(text: &str, after: &str, items: &mut Vec<MdInline>) {
-    let after = &after[..after.find(ends_url).unwrap_or(after.len())];
     let mut done = 0;
     let mut from = 0;
     while let Some((start, end)) = find_bare_url(text, from) {
@@ -751,9 +766,7 @@ fn push_text_with_links(text: &str, after: &str, items: &mut Vec<MdInline>) {
         };
         // Only punctuation that `trim_url_end` left out comes after the URL
         // in `text`, and the URL would be longer with `after` added.
-        let cut = !after.is_empty()
-            && !text[end..].contains(ends_url)
-            && trim_url_end(&format!("{}{after}", &text[start..])).len() > url.len();
+        let cut = !text[end..].contains(ends_url) && joins_url(&text[start..], url.len(), after);
         if cut {
             continue;
         }
@@ -769,6 +782,31 @@ fn push_text_with_links(text: &str, after: &str, items: &mut Vec<MdInline>) {
     if done < text.len() {
         items.push(MdInline::Text(text[done..].to_string()));
     }
+}
+
+/// Whether the URL at the start of `url_and_tail`, which is `url_len` bytes
+/// long, would be longer if the text `after` came straight after
+/// `url_and_tail`.
+///
+/// It reads `after` only up to its first character that [`trim_url_end`]
+/// can never leave out, or that ends a URL. So it takes no longer for a long
+/// `after` than for a short one, and a paragraph with thousands of texts and
+/// no spaces takes linear time, not quadratic.
+fn joins_url(url_and_tail: &str, url_len: usize, after: &str) -> bool {
+    // The end of the punctuation at the start of `after`.
+    let mut punctuation_end = 0;
+    for (i, c) in after.char_indices() {
+        if ends_url(c) {
+            break;
+        }
+        // `trim_url_end` stops at this character, so the URL takes it in.
+        if !is_trailing_punctuation(c) && !matches!(c, ')' | ']') {
+            return true;
+        }
+        punctuation_end = i + c.len_utf8();
+    }
+    punctuation_end > 0
+        && trim_url_end(&format!("{url_and_tail}{}", &after[..punctuation_end])).len() > url_len
 }
 
 /// The byte range of the first bare http or https URL in `text` that starts
@@ -857,7 +895,7 @@ fn trim_url_end(url: &str) -> &str {
     let mut end = url.len();
     while let Some(last) = url[..end].chars().next_back() {
         match last {
-            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '~' => {}
+            c if is_trailing_punctuation(c) => {}
             ')' if close_parens > open_parens => close_parens -= 1,
             ']' if close_brackets > open_brackets => close_brackets -= 1,
             _ => break,
@@ -865,6 +903,11 @@ fn trim_url_end(url: &str) -> &str {
         end -= last.len_utf8();
     }
     &url[..end]
+}
+
+/// Whether [`trim_url_end`] always leaves `c` out at the end of a URL.
+fn is_trailing_punctuation(c: char) -> bool {
+    matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '~')
 }
 
 /// Append an inline element, joining it to the text before it when both are
@@ -1173,6 +1216,35 @@ mod tests {
             }
         }
         let mut out = String::new();
+        of_blocks(blocks, &mut out);
+        out
+    }
+
+    /// The address of every link in `blocks`, in order.
+    fn link_hrefs(blocks: &[MdBlock]) -> Vec<String> {
+        fn of_inlines(items: &[MdInline], out: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    Link { href, children } => {
+                        out.push(href.clone());
+                        of_inlines(children, out);
+                    }
+                    Emphasis(c) | Strong(c) => of_inlines(c, out),
+                    Text(_) | Code(_) | LineBreak => {}
+                }
+            }
+        }
+        fn of_blocks(blocks: &[MdBlock], out: &mut Vec<String>) {
+            for block in blocks {
+                match block {
+                    Paragraph(items) | Plain(items) => of_inlines(items, out),
+                    List { items, .. } => items.iter().for_each(|i| of_blocks(i, out)),
+                    Quote(inner) => of_blocks(inner, out),
+                    Literal(_) | Rule => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
         of_blocks(blocks, &mut out);
         out
     }
@@ -1728,6 +1800,45 @@ mod tests {
                 &items[items.len() - 2..],
                 [Emphasis(vec![link("https://a.example/x")]), text(after)],
                 "{src}"
+            );
+        }
+    }
+
+    // The next two tests take well under a second in a debug build. When
+    // each text or URL read on to the end of its paragraph, they took 39 and
+    // 27 seconds.
+
+    #[test]
+    fn many_texts_with_no_spaces_take_linear_time() {
+        let n = 16_000;
+        let blocks = parse(&"b*a*".repeat(n));
+        assert_eq!(plain_text(&blocks), "ba".repeat(n));
+        let blocks = parse(&"*a*".repeat(n));
+        assert_eq!(plain_text(&blocks).matches('a').count(), n);
+        // Each URL is cut by emphasis, so none of them is linked.
+        let n = 4_000;
+        let blocks = parse(&format!("[{}](javascript:x)", "https://a.b/c*d*".repeat(n)));
+        assert_eq!(plain_text(&blocks), "https://a.b/cd".repeat(n));
+        assert!(link_hrefs(&blocks).is_empty());
+    }
+
+    #[test]
+    fn many_bare_urls_with_no_spaces_take_linear_time() {
+        let n = 4_000;
+        let blocks = parse(&"https://a.example/_x[l](y)".repeat(n));
+        assert_eq!(plain_text(&blocks), "https://a.example/_xl".repeat(n));
+        // An entity for a space or "<" ends each URL.
+        for (entity, shown) in [("&#32;", " "), ("&lt;", "<")] {
+            let blocks = parse(&format!("https://a.example/_x{entity}").repeat(n));
+            assert_eq!(
+                plain_text(&blocks),
+                format!("https://a.example/_x{shown}").repeat(n),
+                "{entity}"
+            );
+            assert_eq!(
+                link_hrefs(&blocks),
+                vec!["https://a.example/_x"; n],
+                "{entity}"
             );
         }
     }
