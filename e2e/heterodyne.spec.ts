@@ -132,8 +132,11 @@ test.describe("heterodyne badge and note", () => {
       HEADLINE,
       'Remarks: "handheld hetrodyne detector set at 31,9 kHz"',
       CONSEQUENCE_TUNED,
-      "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
-        "at either 21.9 or 41.9 kHz.",
+      // A no-break space before each "kHz" keeps the unit with its number.
+      (
+        "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
+        "at either 21.9 or 41.9 kHz."
+      ).replaceAll(" kHz", "\u00a0kHz"),
     ];
 
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");

@@ -267,14 +267,15 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
 pub fn tuned_line(tuned_hz: u32) -> String {
     let tuned = i64::from(tuned_hz);
     let example = if tuned <= 10_000 { 5_000 } else { 10_000 };
-    // Two decimals, so a tuning given as "31,95 kHz" is shown as written.
-    let khz = |hz: i64| format_khz(hz, 2);
+    // Two decimals, so a tuning given as "31,95 kHz" is shown as written. A
+    // no-break space before each "kHz" keeps it on the number's line when the
+    // note wraps in the narrow panel.
+    let khz = |hz: i64| format!("{}\u{a0}kHz", format_khz(hz, 2));
     format!(
-        "Detector tuned to {} kHz: a sound at {} kHz in this file came from a call at \
-         either {} or {} kHz.",
+        "Detector tuned to {}: a sound at {} in this file came from a call at either {} or {}.",
         khz(tuned),
         khz(example),
-        khz(tuned - example),
+        format_khz(tuned - example, 2),
         khz(tuned + example),
     )
 }
@@ -358,6 +359,11 @@ mod tests {
 
     use LineRole::{Detail, Plain, Warning};
 
+    /// `s` with the no-break space the note puts before each "kHz".
+    fn nbsp(s: &str) -> String {
+        s.replace(" kHz", "\u{a0}kHz")
+    }
+
     #[test]
     fn level_a_lines() {
         let hint = file_hint(
@@ -393,11 +399,13 @@ mod tests {
         assert_eq!(
             texts(&hint),
             [
-                "Recorded from a heterodyne bat detector's audio output.",
-                "Remarks: \"handheld hetrodyne detector set at 31,9 kHz\"",
-                "Frequencies are not the bat's call frequencies.",
-                "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call \
-                 at either 21.9 or 41.9 kHz.",
+                "Recorded from a heterodyne bat detector's audio output.".to_string(),
+                "Remarks: \"handheld hetrodyne detector set at 31,9 kHz\"".to_string(),
+                "Frequencies are not the bat's call frequencies.".to_string(),
+                nbsp(
+                    "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a \
+                     call at either 21.9 or 41.9 kHz."
+                ),
             ]
         );
         assert_eq!(roles(&hint), [Warning, Detail, Warning, Plain]);
@@ -419,12 +427,14 @@ mod tests {
         assert_eq!(
             texts(&hint),
             [
-                "Recorded from a heterodyne bat detector's audio output.",
-                "Remarks: \"Recording with Magenta Bat5\"",
-                "The Magenta Bat5 is a heterodyne-only detector.",
-                "Frequencies are not the bat's call frequencies.",
-                "Detector tuned to 45 kHz: a sound at 10 kHz in this file came from a call \
-                 at either 35 or 55 kHz.",
+                "Recorded from a heterodyne bat detector's audio output.".to_string(),
+                "Remarks: \"Recording with Magenta Bat5\"".to_string(),
+                "The Magenta Bat5 is a heterodyne-only detector.".to_string(),
+                "Frequencies are not the bat's call frequencies.".to_string(),
+                nbsp(
+                    "Detector tuned to 45 kHz: a sound at 10 kHz in this file came from a \
+                     call at either 35 or 55 kHz."
+                ),
             ]
         );
         assert_eq!(roles(&hint), [Warning, Detail, Detail, Warning, Plain]);
@@ -434,22 +444,30 @@ mod tests {
     fn tuned_line_examples() {
         assert_eq!(
             tuned_line(23_500),
-            "Detector tuned to 23.5 kHz: a sound at 10 kHz in this file came from a call \
-             at either 13.5 or 33.5 kHz."
+            nbsp(
+                "Detector tuned to 23.5 kHz: a sound at 10 kHz in this file came from a call \
+                 at either 13.5 or 33.5 kHz."
+            )
         );
         // Two decimals, as the remark gave them.
         assert_eq!(
             tuned_line(31_950),
-            "Detector tuned to 31.95 kHz: a sound at 10 kHz in this file came from a call \
-             at either 21.95 or 41.95 kHz."
+            nbsp(
+                "Detector tuned to 31.95 kHz: a sound at 10 kHz in this file came from a call \
+                 at either 21.95 or 41.95 kHz."
+            )
         );
         // Tuned to 10 kHz or lower: a 5 kHz example keeps both calls above 0.
         assert_eq!(
             tuned_line(10_000),
-            "Detector tuned to 10 kHz: a sound at 5 kHz in this file came from a call \
-             at either 5 or 15 kHz."
+            nbsp(
+                "Detector tuned to 10 kHz: a sound at 5 kHz in this file came from a call \
+                 at either 5 or 15 kHz."
+            )
         );
-        assert!(tuned_line(10_500).contains("a sound at 10 kHz"));
+        assert!(tuned_line(10_500).contains(&nbsp("a sound at 10 kHz")));
+        // Every "kHz" keeps its number on the same line.
+        assert!(!tuned_line(31_900).contains(" kHz"));
     }
 
     #[test]
