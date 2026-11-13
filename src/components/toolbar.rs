@@ -24,10 +24,15 @@ pub fn Toolbar() -> impl IntoView {
     let overflow_menu_open = RwSignal::new(false);
     let toolbar_ref = NodeRef::<leptos::html::Div>::new();
 
-    // Set --toolbar-h CSS variable on document root so mobile overlays know toolbar height
+    // Set --toolbar-h CSS variable on document root so mobile overlays know toolbar height.
+    // The badge row wraps onto more lines on a phone (a long licence, the
+    // "Heterodyne recording" badge), so the height is measured again whenever
+    // the toolbar resizes; otherwise an open sidebar would cover the lower rows.
     Effect::new(move |_| {
-        if let Some(el) = toolbar_ref.get() {
-            let h = el.offset_height();
+        let Some(el) = toolbar_ref.get() else {
+            return;
+        };
+        let set_height = |el: &web_sys::HtmlElement| {
             if let Some(doc_el) = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.document_element())
@@ -35,9 +40,20 @@ pub fn Toolbar() -> impl IntoView {
                 let _ = doc_el
                     .unchecked_ref::<web_sys::HtmlElement>()
                     .style()
-                    .set_property("--toolbar-h", &format!("{}px", h));
+                    .set_property("--toolbar-h", &format!("{}px", el.offset_height()));
             }
+        };
+        set_height(&el);
+        let observed = el.clone();
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
+            move |_e: js_sys::Array| set_height(&observed),
+        );
+        if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            obs.observe(&el);
         }
+        // The toolbar lives as long as the app, so the observer is never
+        // disconnected.
+        cb.forget();
     });
 
     // Derived: current file name
