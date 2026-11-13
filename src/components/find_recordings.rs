@@ -626,12 +626,7 @@ pub fn FindRecordings() -> impl IntoView {
     let km = RwSignal::new(memory.as_ref().map(|m| m.km).unwrap_or(DEFAULT_KM));
     let min_smp = RwSignal::new(memory.as_ref().and_then(|m| m.min_smp));
     let rec_sort = RwSignal::new(memory.as_ref().map(|m| m.rec_sort).unwrap_or_default());
-    let species_sort = RwSignal::new(
-        memory
-            .as_ref()
-            .map(|m| m.species_sort)
-            .unwrap_or_default(),
-    );
+    let species_sort = RwSignal::new(memory.as_ref().map(|m| m.species_sort).unwrap_or_default());
     let selected = RwSignal::new(
         memory
             .as_ref()
@@ -1180,11 +1175,7 @@ pub fn FindRecordings() -> impl IntoView {
 
     // Rates with no recordings under the other filters are left out, as in the Group menu.
     let rate_menu = move || {
-        let counts = facets.with(|f| {
-            f.as_ref()
-                .and_then(|f| f.rates.clone())
-                .unwrap_or_default()
-        });
+        let counts = facets.with(|f| f.as_ref().and_then(|f| f.rates.clone()).unwrap_or_default());
         let current = min_smp.get();
         let options = MIN_RATES
             .iter()
@@ -1354,9 +1345,9 @@ pub fn FindRecordings() -> impl IntoView {
     // The end of a list: how many rows are listed out of how many, and the state of the
     // next page.
     let list_end = move |text: Option<String>,
-                          loading_more: RwSignal<bool>,
-                          more_error: RwSignal<Option<String>>,
-                          retry_more: Box<dyn Fn() + Send + Sync>| {
+                         loading_more: RwSignal<bool>,
+                         more_error: RwSignal<Option<String>>,
+                         retry_more: Box<dyn Fn() + Send + Sync>| {
         text.map(|text| {
             view! {
                 <div class="find-list-end">
@@ -1390,8 +1381,10 @@ pub fn FindRecordings() -> impl IntoView {
             && !q.trim().is_empty()
             && detect_link(&q).is_none()
             && availability.get() != Availability::Unavailable)
-            .then(|| view! {
-                <p class="find-empty">{fill(NO_SPECIES_MATCH, &[("query", q.trim())])}</p>
+            .then(|| {
+                view! {
+                    <p class="find-empty">{fill(NO_SPECIES_MATCH, &[("query", q.trim())])}</p>
+                }
             })
     };
 
