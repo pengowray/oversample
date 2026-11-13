@@ -487,15 +487,20 @@ fn pages_of(json: &serde_json::Value) -> Vec<serde_json::Value> {
 /// Look up one file. When the link came from another wiki, ask that wiki
 /// first: its own upload takes the title's place there, even when Commons has
 /// a different file of the same name. A Commons file is fetched from Commons,
-/// which also returns its structured data (P14424).
+/// which also returns its structured data (P14424). When the wiki can't be
+/// reached, Commons is still asked.
 pub async fn fetch_file(api_host: &str, title: &str) -> Result<WikiFile, String> {
     if api_host != COMMONS {
-        let json = api_get(api_host, &params_for(api_host, &[("titles", title)])).await?;
-        let file = pages_of(&json)
-            .first()
-            .and_then(|p| parse_file_page(p, api_host));
-        if let Some(file) = file.filter(|f| !f.on_commons()) {
-            return Ok(file);
+        match api_get(api_host, &params_for(api_host, &[("titles", title)])).await {
+            Ok(json) => {
+                let file = pages_of(&json)
+                    .first()
+                    .and_then(|p| parse_file_page(p, api_host));
+                if let Some(file) = file.filter(|f| !f.on_commons()) {
+                    return Ok(file);
+                }
+            }
+            Err(e) => log::warn!("Looking up {title} on {api_host} failed: {e}"),
         }
     }
     let json = api_get(COMMONS, &params_for(COMMONS, &[("titles", title)])).await?;
