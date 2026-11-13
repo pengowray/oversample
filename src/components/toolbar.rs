@@ -2,7 +2,9 @@ use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_badges::{get_xc_field, FileBadgeData, FileBadgeRow};
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
-use crate::license::{cc_license_full_name, license_link, license_title, parse_cc_license};
+use crate::license::{
+    cc_license_full_name, license_label, license_link, license_title, parse_cc_license,
+};
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, PlaybackMode, RecordReadyState, RightSidebarTab,
@@ -52,20 +54,13 @@ pub fn Toolbar() -> impl IntoView {
         files.get(idx).and_then(|f| f.site_metadata.clone())
     });
 
-    // Derived: the licence badge's label, and whether the licence is a Creative
-    // Commons one, which gets the CC icon. Other licences (GFDL, "Public
-    // domain", "Fair use" from Wikimedia) show their name as sent, so their
-    // licence dialog can be opened too.
+    // Derived: the licence badge's label, the same one the search results
+    // show. Licences that are not Creative Commons (GFDL, "Public domain",
+    // "Fair use" from Wikimedia) show their name as sent, so their licence
+    // dialog can be opened too.
     let license_badge = Memo::new(move |_| {
         let meta = site_metadata.get()?;
-        let lic = get_xc_field(&meta.fields, "License")?;
-        match parse_cc_license(&lic) {
-            Some(label) => Some((label, true)),
-            None => {
-                let lic = lic.trim();
-                (!lic.is_empty()).then(|| (lic.to_string(), false))
-            }
-        }
+        license_label(&get_xc_field(&meta.fields, "License")?)
     });
 
     // Derived: is current file unsaved (recording not yet saved by user)
@@ -466,12 +461,9 @@ pub fn Toolbar() -> impl IntoView {
 
                             // Licence badge — subtle text, opens license modal on click.
                             // CC licences show the CC icon and drop "CC " from the label.
-                            {license.map(|(label, is_cc)| {
-                                let short_label = if is_cc {
-                                    label.strip_prefix("CC ").unwrap_or(&label).to_string()
-                                } else {
-                                    label.clone()
-                                };
+                            {license.map(|label| {
+                                let is_cc = label.is_cc;
+                                let short_label = label.badge_text().to_string();
                                 view! {
                                     <button
                                         class="toolbar-cc-badge"

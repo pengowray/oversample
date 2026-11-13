@@ -3,15 +3,19 @@
 //! dialog titles, and the web address to link a licence to.
 
 /// Parse a licence value into a short label. Takes a Creative Commons address
-/// or short name in the forms Xeno-canto, the search server and Wikimedia
-/// Commons send:
+/// or short name in the forms Xeno-canto, the search server, iNaturalist and
+/// Wikimedia Commons send:
 /// - "//creativecommons.org/licenses/by-nc-sa/4.0/" -> "CC BY-NC-SA 4.0"
 /// - ".../licenses/by/3.0/au/" (a licence ported to one country) -> "CC BY 3.0 AU"
 /// - ".../publicdomain/zero/1.0/", "CC0", "cc0 1.0" -> "CC0 1.0"
 /// - ".../publicdomain/mark/1.0/", "Public Domain Mark 1.0" -> "Public Domain Mark 1.0"
+/// - "CC BY-NC (Attribution-Non-Commercial)" (GBIF) -> "CC BY-NC"
+/// - "cc-by-nc" (iNaturalist) -> "CC BY-NC"
+/// - "CC BY-SA 3.0 de" (Commons), "cc by-sa 3.0 de", "CC-BY-SA-3.0-DE" -> "CC BY-SA 3.0 DE"
 ///
-/// Other values that start with "CC" come back unchanged. `None` for anything
-/// else, such as "GFDL" or "Public domain".
+/// Other values that start with "CC" and a space or hyphen come back with
+/// "CC" in capitals and the rest unchanged. `None` for anything else, such as
+/// "GFDL" or "Public domain".
 pub(crate) fn parse_cc_license(lic: &str) -> Option<String> {
     let lic = lic.trim();
     let lower = lic.to_ascii_lowercase();
@@ -21,19 +25,20 @@ pub(crate) fn parse_cc_license(lic: &str) -> Option<String> {
         // CC0 and the Public Domain Mark only have version 1.0, so an address
         // without a version still names it.
         let version_or_1 = |part: Option<&&str>| {
-            part.filter(|v| v.starts_with(|c: char| c.is_ascii_digit()))
+            part.filter(|v| is_version(v))
                 .map_or("1.0", |v| v)
                 .to_string()
         };
         return match parts.as_slice() {
-            ["licenses", code, version, rest @ ..] => {
+            ["licenses", code, version, rest @ ..] if is_version(version) => {
                 let code = code.to_uppercase();
                 Some(match rest.first().filter(|p| is_cc_port(p)) {
                     Some(port) => format!("CC {code} {version} {}", port.to_uppercase()),
                     None => format!("CC {code} {version}"),
                 })
             }
-            ["licenses", code] => Some(format!("CC {}", code.to_uppercase())),
+            // ".../licenses/by-nc/" or ".../licenses/by-nc/legalcode".
+            ["licenses", code, ..] => Some(format!("CC {}", code.to_uppercase())),
             ["publicdomain", "zero", rest @ ..] => {
                 Some(format!("CC0 {}", version_or_1(rest.first())))
             }
@@ -43,6 +48,8 @@ pub(crate) fn parse_cc_license(lic: &str) -> Option<String> {
             _ => None,
         };
     }
+    let name = without_description(lic);
+    let lower = name.to_ascii_lowercase();
     // "CC0", "CC0 1.0", "CC0-1.0", "CC0 1.0 Universal".
     if let Some(rest) = lower.strip_prefix("cc0") {
         let rest = rest.trim_start_matches([' ', '-', '_']);
@@ -55,10 +62,93 @@ pub(crate) fn parse_cc_license(lic: &str) -> Option<String> {
             return Some(PD_MARK_LABEL.to_string());
         }
     }
-    if lower.starts_with("cc") {
-        return Some(lic.to_string());
+    let rest = lower.strip_prefix("cc")?;
+    if !(rest.is_empty() || rest.starts_with([' ', '-', '_'])) {
+        return None;
     }
-    None
+    // "cc" is ASCII, so the rest of `name` starts at byte 2.
+    Some(cc_short_name(rest).unwrap_or_else(|| format!("CC{}", &name[2..])))
+}
+
+/// A short CC name with its parts in capitals, from what follows "CC" in a
+/// short name: " by-sa 3.0 de" -> "CC BY-SA 3.0 DE", "-by-nc" -> "CC BY-NC".
+/// The parts are licence elements (BY, NC, SA, ND), then an optional version,
+/// then an optional port. `None` when any part is something else.
+fn cc_short_name(rest: &str) -> Option<String> {
+    let mut parts = rest
+        .split([' ', '-', '_'])
+        .filter(|p| !p.is_empty())
+        .peekable();
+    let mut elements = Vec::new();
+    while let Some(e) = parts.next_if(|p| matches!(*p, "by" | "nc" | "sa" | "nd")) {
+        elements.push(e.to_ascii_uppercase());
+    }
+    if elements.is_empty() {
+        return None;
+    }
+    let mut label = format!("CC {}", elements.join("-"));
+    if let Some(version) = parts.next_if(|p| is_version(p)) {
+        label = format!("{label} {version}");
+        if let Some(port) = parts.next_if(|p| is_cc_port(p)) {
+            label = format!("{label} {}", port.to_ascii_uppercase());
+        }
+    }
+    parts.next().is_none().then_some(label)
+}
+
+/// A licence version: "4.0", "2.5".
+fn is_version(part: &str) -> bool {
+    part.starts_with(|c: char| c.is_ascii_digit())
+        && part
+            .split('.')
+            .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The name without a description in brackets after it:
+/// "CC BY-NC (Attribution-Non-Commercial)" -> "CC BY-NC".
+fn without_description(name: &str) -> &str {
+    match name.find(" (") {
+        Some(idx) if name.ends_with(')') => name[..idx].trim_end(),
+        _ => name,
+    }
+}
+
+/// A file's licence as the toolbar badge and the search results show it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LicenseLabel {
+    /// The short label for a Creative Commons licence ("CC BY-NC 4.0",
+    /// "CC0 1.0"), or the licence value as sent ("GFDL", "Fair use").
+    pub text: String,
+    /// A Creative Commons licence or the Public Domain Mark, shown with the
+    /// CC icon.
+    pub is_cc: bool,
+}
+
+impl LicenseLabel {
+    /// The toolbar badge's text. The CC icon stands for "CC ", so a CC
+    /// label drops it: "BY-NC 4.0".
+    pub fn badge_text(&self) -> &str {
+        if self.is_cc {
+            self.text.strip_prefix("CC ").unwrap_or(&self.text)
+        } else {
+            &self.text
+        }
+    }
+}
+
+/// The label for a licence value: its short CC label, or the value as sent
+/// for other licences. `None` for an empty value.
+pub(crate) fn license_label(lic: &str) -> Option<LicenseLabel> {
+    match parse_cc_license(lic) {
+        Some(text) => Some(LicenseLabel { text, is_cc: true }),
+        None => {
+            let lic = lic.trim();
+            (!lic.is_empty()).then(|| LicenseLabel {
+                text: lic.to_string(),
+                is_cc: false,
+            })
+        }
+    }
 }
 
 const CC0_LABEL: &str = "CC0 1.0";
@@ -276,9 +366,31 @@ mod tests {
                 Some("Public Domain Mark 1.0"),
             ),
             ("https://creativecommons.org/about/", None),
+            // An address with a page name where the version would be.
+            (
+                "https://creativecommons.org/licenses/by-nc/legalcode",
+                Some("CC BY-NC"),
+            ),
             // Short names from the search server and Wikimedia Commons.
             ("CC BY-NC 4.0", Some("CC BY-NC 4.0")),
-            (" CC BY-SA 3.0 de ", Some("CC BY-SA 3.0 de")),
+            (" CC BY-SA 3.0 de ", Some("CC BY-SA 3.0 DE")),
+            ("cc by-sa 4.0", Some("CC BY-SA 4.0")),
+            ("CC BY-SA 3.0 igo", Some("CC BY-SA 3.0 IGO")),
+            // GBIF's short name with a description.
+            ("CC BY-NC (Attribution-Non-Commercial)", Some("CC BY-NC")),
+            ("CC0 (Public Domain Dedication)", Some("CC0 1.0")),
+            // iNaturalist's codes, and SPDX-style names.
+            ("cc-by-nc", Some("CC BY-NC")),
+            ("cc-by-nc-sa", Some("CC BY-NC-SA")),
+            ("CC-BY 4.0", Some("CC BY 4.0")),
+            ("CC-BY-NC-4.0", Some("CC BY-NC 4.0")),
+            ("CC-BY-SA-3.0-DE", Some("CC BY-SA 3.0 DE")),
+            // A CC name the parser can't read keeps its text, with "CC" in capitals.
+            ("CC", Some("CC")),
+            ("cc Attribution 4.0", Some("CC Attribution 4.0")),
+            ("CC BY 4.0 International", Some("CC BY 4.0 International")),
+            ("CC BY-NC (", Some("CC BY-NC (")),
+            ("ccMixter", None),
             ("CC0", Some("CC0 1.0")),
             ("cc0", Some("CC0 1.0")),
             ("CC0 1.0", Some("CC0 1.0")),
@@ -293,6 +405,158 @@ mod tests {
         ] {
             assert_eq!(parse_cc_license(lic).as_deref(), label, "{lic}");
         }
+    }
+
+    /// Every licence value in the search server's index on 2026-11-14, with
+    /// its source and number of recordings, and the forms the task names.
+    /// The search results list shows `text`; the toolbar badge shows
+    /// `badge_text`.
+    #[test]
+    fn labels_for_search_results_and_badges() {
+        for (lic, text, badge) in [
+            // GBIF
+            (
+                "http://creativecommons.org/licenses/by-sa/4.0/",
+                "CC BY-SA 4.0",
+                "BY-SA 4.0",
+            ), // 3,096
+            ("CC BY-NC (Attribution-Non-Commercial)", "CC BY-NC", "BY-NC"), // 1,634
+            (
+                "http://creativecommons.org/licenses/by-nc/4.0/",
+                "CC BY-NC 4.0",
+                "BY-NC 4.0",
+            ), // 731
+            (
+                "https://creativecommons.org/licenses/by-sa/4.0/deed.es",
+                "CC BY-SA 4.0",
+                "BY-SA 4.0",
+            ), // 662
+            (
+                "http://creativecommons.org/licenses/by/4.0/",
+                "CC BY 4.0",
+                "BY 4.0",
+            ), // 541
+            (
+                "http://creativecommons.org/licenses/by-nc-nd/4.0/",
+                "CC BY-NC-ND 4.0",
+                "BY-NC-ND 4.0",
+            ), // 33
+            (
+                "http://creativecommons.org/licenses/by/4.0/legalcode",
+                "CC BY 4.0",
+                "BY 4.0",
+            ), // 12
+            (
+                "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+                "CC BY-NC-SA 4.0",
+                "BY-NC-SA 4.0",
+            ), // 12
+            (
+                "http://creativecommons.org/licenses/by-sa/3.0/",
+                "CC BY-SA 3.0",
+                "BY-SA 3.0",
+            ), // 1
+            (
+                "http://creativecommons.org/licenses/by-nd/4.0/",
+                "CC BY-ND 4.0",
+                "BY-ND 4.0",
+            ), // 1
+            (
+                "http://creativecommons.org/licenses/by-nc/4.0/legalcode",
+                "CC BY-NC 4.0",
+                "BY-NC 4.0",
+            ), // 1
+            (
+                "http://creativecommons.org/publicdomain/zero/1.0/legalcode",
+                "CC0 1.0",
+                "CC0 1.0",
+            ),
+            // Xeno-canto
+            (
+                "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+                "CC BY-NC-SA 4.0",
+                "BY-NC-SA 4.0",
+            ), // 12,740
+            (
+                "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+                "CC BY-NC-ND 4.0",
+                "BY-NC-ND 4.0",
+            ), // 3,037
+            (
+                "https://creativecommons.org/licenses/by-sa/4.0/",
+                "CC BY-SA 4.0",
+                "BY-SA 4.0",
+            ), // 890
+            (
+                "https://creativecommons.org/licenses/by-nc/4.0/",
+                "CC BY-NC 4.0",
+                "BY-NC 4.0",
+            ), // 883
+            (
+                "https://creativecommons.org/licenses/by/4.0/",
+                "CC BY 4.0",
+                "BY 4.0",
+            ), // 392
+            (
+                "https://creativecommons.org/publicdomain/zero/1.0/",
+                "CC0 1.0",
+                "CC0 1.0",
+            ), // 78
+            (
+                "https://creativecommons.org/licenses/by-sa/3.0/",
+                "CC BY-SA 3.0",
+                "BY-SA 3.0",
+            ), // 5
+            (
+                "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+                "CC BY-NC-SA 3.0",
+                "BY-NC-SA 3.0",
+            ), // 4
+            (
+                "https://creativecommons.org/licenses/by-nc-nd/2.5/",
+                "CC BY-NC-ND 2.5",
+                "BY-NC-ND 2.5",
+            ), // 1
+            // Xeno-canto's API sends addresses without "https:".
+            (
+                "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                "CC BY-NC-SA 4.0",
+                "BY-NC-SA 4.0",
+            ),
+            // Short names
+            ("CC0", "CC0 1.0", "CC0 1.0"),
+            ("CC0 1.0", "CC0 1.0", "CC0 1.0"),
+            (
+                "https://creativecommons.org/publicdomain/mark/1.0/",
+                "Public Domain Mark 1.0",
+                "Public Domain Mark 1.0",
+            ),
+            ("cc-by-nc", "CC BY-NC", "BY-NC"),
+            (
+                "http://creativecommons.org/licenses/by/3.0/au/",
+                "CC BY 3.0 AU",
+                "BY 3.0 AU",
+            ),
+            ("CC BY-SA 3.0 de", "CC BY-SA 3.0 DE", "BY-SA 3.0 DE"),
+        ] {
+            let label = license_label(lic).unwrap();
+            assert_eq!(label.text, text, "{lic}");
+            assert_eq!(label.badge_text(), badge, "{lic}");
+            assert!(label.is_cc, "{lic}");
+        }
+        // Licences that are not Creative Commons keep their name, in the
+        // results and on the badge.
+        for (lic, text) in [
+            ("GFDL", "GFDL"),
+            (" Fair use ", "Fair use"),
+            ("Public domain", "Public domain"),
+        ] {
+            let label = license_label(lic).unwrap();
+            assert_eq!(label.text, text, "{lic}");
+            assert_eq!(label.badge_text(), text, "{lic}");
+            assert!(!label.is_cc, "{lic}");
+        }
+        assert_eq!(license_label("  "), None);
     }
 
     #[test]
