@@ -112,6 +112,9 @@ yaml_serde = "0.10"
 sha2 = "0.11"
 blake3 = { version = "1", default-features = false }
 futures-channel = "0.3"
+# Xeno-canto remarks are Markdown. No default features: the HTML writer and
+# the command-line options parser are not used.
+pulldown-cmark = { version = "0.13.6", default-features = false }
 
 [profile.release]
 opt-level = "s"

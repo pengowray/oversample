@@ -1795,6 +1795,99 @@ body.sidebar-resizing {
 .metadata-value-block.metadata-value-lines {
     white-space: pre-line;
 }
+/* Xeno-canto remarks rendered from Markdown (markdown.rs). Remarks can run to
+   several paragraphs and a reference list, so the gaps are small to keep them
+   compact in the narrow panel. Long URLs in the text wrap anywhere, so the
+   panel never scrolls sideways at 375 px. */
+.metadata-markdown {
+    overflow-wrap: anywhere;
+}
+.metadata-markdown p,
+.metadata-markdown ul,
+.metadata-markdown ol,
+.metadata-markdown pre,
+.metadata-markdown blockquote,
+.metadata-markdown hr {
+    margin-bottom: 6px;
+}
+/* A block quote (lines starting with ">") is indented, as on Xeno-canto, so
+   it does not read as ordinary text. Indent only, no bar down the side. */
+.metadata-markdown blockquote {
+    padding-left: 12px;
+    color: #bbb;
+}
+.metadata-markdown li > p {
+    margin-bottom: 3px;
+}
+.metadata-markdown > :last-child,
+.metadata-markdown li > :last-child,
+.metadata-markdown blockquote > :last-child {
+    margin-bottom: 0;
+}
+/* The global reset removes list padding, which would put the markers outside
+   the row. */
+.metadata-markdown ul {
+    padding-left: 18px;
+}
+/* A numbered list's numbers sit in its indent, so the indent grows with the
+   widest number: markdown.rs sets --marker-digits to the digit count of the
+   last item's number. A remark line starting "2019. " is a list that starts at
+   2019, and an 18px indent cut off its first digit at 375 px. 1ch is the width
+   of a digit; the extra 1.5ch is for the "." and the gap. One digit gives
+   about the same indent as a bullet list. The next rule stops this from the
+   fourth list level down. */
+.metadata-markdown ol {
+    padding-left: calc((var(--marker-digits, 1) + 1.5) * 1ch);
+}
+/* From the fourth list level down, each level is indented only 8px and its
+   markers sit at the start of the item's first line, so the indent no longer
+   grows with the marker. markdown.rs keeps up to eight levels, and eight
+   levels of "2019." with their own indents need about 320px, which ran off
+   the panel's 247px at 375 px. Wrapped lines start under the marker, not
+   under the text. When an item starts with a paragraph (markdown.rs sets
+   .paragraph-first), the paragraph is inline, so that its text stays on the
+   marker's line, and the block after it gets the gap that the paragraph's
+   margin gives on the first three levels. */
+.metadata-markdown li li li :is(ul, ol) {
+    list-style-position: inside;
+    padding-left: 8px;
+}
+.metadata-markdown li li li :is(ul, ol) > li.paragraph-first > p:first-child {
+    display: inline;
+}
+.metadata-markdown li li li :is(ul, ol) > li.paragraph-first > p:first-child + * {
+    margin-top: 3px;
+}
+.metadata-markdown li + li {
+    margin-top: 3px;
+}
+/* Same link style as the map links under GPS positions. */
+.metadata-markdown a {
+    color: #8cf;
+    text-decoration: none;
+}
+.metadata-markdown a:hover {
+    text-decoration: underline;
+}
+.metadata-markdown code,
+.metadata-markdown pre {
+    font-family: monospace;
+    font-size: 12px;
+}
+/* Code blocks and raw XML (some recorders' headers) keep their line breaks
+   and tabs, and wrap long lines. break-all wraps at the panel edge: without it
+   a long tab-indented line breaks after its tab, which looks like a blank line
+   followed by an unindented one. Tabs are 2 wide to fit nested XML at 375 px. */
+.metadata-markdown pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    tab-size: 2;
+    color: #bbb;
+}
+.metadata-markdown hr {
+    border: 0;
+    border-top: 1px solid #333;
+}
 .metadata-value-block.metadata-hash {
     font-family: monospace;
     font-size: 11px;
