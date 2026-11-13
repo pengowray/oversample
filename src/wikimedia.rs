@@ -202,6 +202,10 @@ pub fn parse_input(input: &str) -> Result<WikiTarget, String> {
                 .find(|s| has_audio_ext(s))
                 .ok_or("That upload.wikimedia.org link doesn't point at an audio file")?;
             let api_host = match segments.as_slice() {
+                // be-tarask.wikipedia.org keeps its uploads under its old
+                // name. be-x-old.wikipedia.org redirects to it without the
+                // CORS headers a browser needs, so ask be-tarask directly.
+                ["wikipedia", "be-x-old", ..] => "be-tarask.wikipedia.org".to_string(),
                 ["wikipedia", lang, ..] if is_wikipedia_org_folder(lang) => {
                     format!("{lang}.wikipedia.org")
                 }
@@ -258,9 +262,11 @@ fn normalise_file_title(title: &str) -> String {
 }
 
 /// Whether a folder under upload.wikimedia.org/wikipedia/ holds the uploads
-/// of the wiki at <folder>.wikipedia.org. Those folders are a Wikipedia's
-/// language code ("en", "simple", "zh-yue", "zh-min-nan") or have the same
-/// form: 2 or 3 letters, optionally followed by hyphenated parts.
+/// of a wiki at wikipedia.org. That wiki is at <folder>.wikipedia.org, except
+/// for be-x-old, whose wiki is be-tarask.wikipedia.org (see `parse_input`).
+/// Those folders are a Wikipedia's language code ("en", "simple", "zh-yue",
+/// "zh-min-nan") or have the same form: 2 or 3 letters, optionally followed
+/// by hyphenated parts.
 /// ten (ten.wikipedia.org) and wg-en (wg-en.wikipedia.org) are wikis of that
 /// form that are not a Wikipedia in one language. test and test2 hold the
 /// uploads of test.wikipedia.org and test2.wikipedia.org. The folders of
@@ -793,7 +799,6 @@ mod tests {
             "zh-yue",
             "zh-min-nan",
             "zh-classical",
-            "be-tarask",
             "bat-smg",
             // Wikis at ten.wikipedia.org and wg-en.wikipedia.org.
             "ten",
@@ -814,6 +819,17 @@ mod tests {
                 "{lang}"
             );
         }
+        // be-tarask.wikipedia.org keeps its uploads in the be-x-old folder.
+        assert_eq!(
+            parse_input(
+                "https://upload.wikimedia.org/wikipedia/be-x-old/1/1d/Bat_out_of_Hell_-_chorus.ogg"
+            )
+            .unwrap(),
+            WikiTarget::File {
+                api_host: "be-tarask.wikipedia.org".to_string(),
+                title: "File:Bat out of Hell - chorus.ogg".to_string(),
+            }
+        );
     }
 
     #[test]
