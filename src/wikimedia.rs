@@ -260,20 +260,21 @@ fn normalise_file_title(title: &str) -> String {
 /// Whether a folder under upload.wikimedia.org/wikipedia/ holds the uploads
 /// of the wiki at <folder>.wikipedia.org. Those folders are a Wikipedia's
 /// language code ("en", "simple", "zh-yue", "zh-min-nan") or have the same
-/// form: 2 or 3 letters, optionally followed by hyphenated parts. ten
-/// (ten.wikipedia.org) and wg-en (wg-en.wikipedia.org) are wikis of that form
-/// that are not a Wikipedia in one language. The folders of other wikis
-/// (commons, meta, species, mediawiki, foundation, sources, incubator, test,
-/// test2, wikimania2014, ...) don't have that form, except fdc, whose wiki is
-/// fdc.wikimedia.org. Checked against the 364 Wikipedias and the special
-/// wikis in Wikimedia's site matrix on 2026-11-14.
+/// form: 2 or 3 letters, optionally followed by hyphenated parts.
+/// ten (ten.wikipedia.org) and wg-en (wg-en.wikipedia.org) are wikis of that
+/// form that are not a Wikipedia in one language. test and test2 hold the
+/// uploads of test.wikipedia.org and test2.wikipedia.org. The folders of
+/// other wikis (commons, meta, species, mediawiki, foundation, sources,
+/// incubator, wikimania2014, ...) don't have that form, except fdc, whose
+/// wiki is fdc.wikimedia.org. Checked against the 364 Wikipedias and the
+/// special wikis in Wikimedia's site matrix on 2026-11-14.
 fn is_wikipedia_org_folder(s: &str) -> bool {
     let letters = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase());
     let mut parts = s.split('-');
     let first = parts.next().unwrap_or_default();
     let code_form =
         s == "simple" || ((2..=3).contains(&first.len()) && letters(first) && parts.all(letters));
-    code_form && s != "fdc"
+    (code_form && s != "fdc") || s == "test" || s == "test2"
 }
 
 fn classify(host: String, title: String) -> WikiTarget {
@@ -768,8 +769,6 @@ mod tests {
             "foundation",
             "sources",
             "incubator",
-            "test",
-            "test2",
             "wikimania2014",
             "fdc",
             "arbcom-en",
@@ -799,6 +798,9 @@ mod tests {
             // Wikis at ten.wikipedia.org and wg-en.wikipedia.org.
             "ten",
             "wg-en",
+            // The test wikis at test.wikipedia.org and test2.wikipedia.org.
+            "test",
+            "test2",
         ] {
             assert_eq!(
                 parse_input(&format!(
@@ -823,6 +825,18 @@ mod tests {
             WikiTarget::File {
                 api_host: "ten.wikipedia.org".to_string(),
                 title: "File:The Wikipedia Song.ogg".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn direct_upload_url_of_the_test_wiki_names_that_wiki() {
+        // Commons reports this file missing; test.wikipedia.org has it.
+        assert_eq!(
+            parse_input("https://upload.wikimedia.org/wikipedia/test/9/93/Amir.ogg").unwrap(),
+            WikiTarget::File {
+                api_host: "test.wikipedia.org".to_string(),
+                title: "File:Amir.ogg".to_string(),
             }
         );
     }
