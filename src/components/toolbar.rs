@@ -632,14 +632,16 @@ pub fn Toolbar() -> impl IntoView {
 
             // CC License modal
             {move || show_cc_modal.get().then(|| {
-                let (meta, site) = match site_metadata.get() {
+                let site_meta = site_metadata.get();
+                // Xeno-canto's Recordist, or Wikimedia's Author, in the same row.
+                let person = site_meta.as_ref().and_then(|m| m.credited_person());
+                let (meta, site) = match site_meta {
                     Some(m) => (m.fields, Some(m.site)),
                     None => (Vec::new(), None),
                 };
                 let field = |key: &str| get_xc_field(&meta, key);
                 let species = field("Species").unwrap_or_default();
                 let sci_name = field("Scientific name").unwrap_or_default();
-                let recordist = field("Recordist").unwrap_or_default();
                 let date = field("Date").unwrap_or_default();
                 let attribution = field("Attribution").unwrap_or_default();
                 let url = field("URL").unwrap_or_default();
@@ -701,10 +703,10 @@ pub fn Toolbar() -> impl IntoView {
 
                                 // Key fields
                                 <div class="cc-fields">
-                                    {(!recordist.is_empty()).then(|| view! {
+                                    {person.map(|(label, name)| view! {
                                         <div class="cc-row">
-                                            <span class="cc-label">"Recordist"</span>
-                                            <span class="cc-value">{recordist}</span>
+                                            <span class="cc-label">{label}</span>
+                                            <span class="cc-value">{name}</span>
                                         </div>
                                     })}
                                     {(!date.is_empty()).then(|| view! {

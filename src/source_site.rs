@@ -119,6 +119,18 @@ impl SiteMetadata {
         self.site == SourceSite::XenoCanto
     }
 
+    /// The person the licence dialog credits, with the label to show:
+    /// "Recordist" from Xeno-canto and the search sources, or "Author" from
+    /// Wikimedia. `None` when the file has neither field.
+    pub fn credited_person(&self) -> Option<(&'static str, String)> {
+        ["Recordist", "Author"].into_iter().find_map(|key| {
+            self.fields
+                .iter()
+                .find(|(k, v)| k == key && !v.trim().is_empty())
+                .map(|(_, v)| (key, v.clone()))
+        })
+    }
+
     /// Xeno-canto's A to E quality rating. Other sites' "Quality"
     /// (iNaturalist's "Research grade") rates the identification, not the
     /// sound, so it gives `None`.
@@ -169,6 +181,40 @@ mod tests {
         for (site, key, _) in KNOWN.iter() {
             assert_eq!(&SourceSite::from_search_key(key), site);
         }
+    }
+
+    #[test]
+    fn credits_the_recordist_or_the_author() {
+        let meta = |site: SourceSite, fields: &[(&str, &str)]| {
+            SiteMetadata::new(
+                site,
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            meta(SourceSite::XenoCanto, &[("Recordist", "Ann Bee")]).credited_person(),
+            Some(("Recordist", "Ann Bee".to_string()))
+        );
+        assert_eq!(
+            meta(
+                SourceSite::WikimediaCommons,
+                &[("Description", "A bat"), ("Author", "Cy Dee")]
+            )
+            .credited_person(),
+            Some(("Author", "Cy Dee".to_string()))
+        );
+        assert_eq!(
+            meta(
+                SourceSite::Gbif,
+                &[("Recordist", "  "), ("Author", "Ed Fox")]
+            )
+            .credited_person(),
+            Some(("Author", "Ed Fox".to_string()))
+        );
+        assert_eq!(meta(SourceSite::Wikipedia, &[]).credited_person(), None);
     }
 
     #[test]
