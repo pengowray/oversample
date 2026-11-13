@@ -4,20 +4,47 @@
     {
       "name": "trunk-dev",
       "runtimeExecutable": "trunk",
-      "runtimeArgs": ["serve", "--release", "--port", "21347"],
+      "runtimeArgs": [
+        "serve",
+        "--release",
+        "--port",
+        "21347"
+      ],
       "port": 21347
     },
     {
       "name": "trunk-tauri",
       "runtimeExecutable": "trunk",
-      "runtimeArgs": ["serve", "--release", "--port", "21259"],
+      "runtimeArgs": [
+        "serve",
+        "--release",
+        "--port",
+        "21259"
+      ],
       "port": 21259
     },
     {
       "name": "trunk-own-dist",
       "runtimeExecutable": "trunk",
-      "runtimeArgs": ["serve", "--release", "--port", "21262", "--dist", "target/dist-own"],
+      "runtimeArgs": [
+        "serve",
+        "--release",
+        "--port",
+        "21262",
+        "--dist",
+        "target/dist-own"
+      ],
       "port": 21262
+    },
+    {
+      "name": "api-local",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd ../batchi-backend && INDEX_GROUPS= CORS_ORIGINS=http://localhost:21347,http://localhost:21259 cargo run --release"
+      ],
+      "port": 8787,
+      "url": "http://127.0.0.1:8787"
     }
   ]
 }

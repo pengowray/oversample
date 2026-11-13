@@ -31,6 +31,8 @@ use crate::xc_client::{self, XcSource};
 const TITLE: &str = "Find recordings";
 const SEARCH_PLACEHOLDER: &str =
     "Species name in any language, or a Xeno-canto, Wikimedia Commons or Wikipedia link";
+/// For screens too narrow for [`SEARCH_PLACEHOLDER`].
+const SEARCH_PLACEHOLDER_SHORT: &str = "Species name or link";
 const ALL_SPECIES: &str = "All species";
 const ALL_COUNTRIES: &str = "All countries";
 const NEAR_ANYWHERE: &str = "Anywhere";
@@ -235,6 +237,14 @@ fn open_file_point(state: AppState) -> Result<(f64, f64), &'static str> {
         .ok_or(NEAR_FILE_NO_LOCATION)
 }
 
+/// Whether the window is phone-width, where the long search placeholder is cut off.
+fn narrow_screen() -> bool {
+    web_sys::window()
+        .and_then(|w| w.inner_width().ok())
+        .and_then(|w| w.as_f64())
+        .is_some_and(|w| w < 600.0)
+}
+
 // ── Loading ─────────────────────────────────────────────────────────────────
 
 /// Downloads `item` and adds it to the library as the current file.
@@ -416,6 +426,18 @@ pub fn FindRecordings() -> impl IntoView {
     let demos_error: RwSignal<Option<String>> = RwSignal::new(None);
     // Id of the recording (or demo file name) being loaded, so its button shows progress.
     let loading: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // "Current recording" from the last time the dialog was open may be another file
+    // now: take its position again, or go back to Anywhere if it has none.
+    if near_mode.get_untracked() == NearMode::File {
+        match open_file_point(state) {
+            Ok((lat, lon)) => near_point.set(Some(search::round_point(lat, lon))),
+            Err(_) => {
+                near_mode.set(NearMode::Anywhere);
+                near_point.set(None);
+            }
+        }
+    }
 
     let filter = Memo::new(move |_| Filter {
         group: group.get(),
@@ -964,6 +986,7 @@ pub fn FindRecordings() -> impl IntoView {
                     }
                     parts.join(", ")
                 };
+                let place_title = place.clone();
                 let dist = item.km.filter(|_| near_on).map(|k| {
                     if k < 10.0 {
                         format!("{k:.1} km")
@@ -1001,9 +1024,9 @@ pub fn FindRecordings() -> impl IntoView {
                 view! {
                     <div class="find-rec-row" class:with-species=show_species>
                         {species_cell}
-                        <span class="find-rec-place">
-                            {place}
+                        <span class="find-rec-place-cell">
                             {dist.map(|d| view! { <span class="find-rec-dist">{d}</span> })}
+                            <span class="find-rec-place" title=place_title>{place}</span>
                         </span>
                         <span class="find-rec-date">{item.date.clone()}</span>
                         <span class="find-rec-num">{length}</span>
@@ -1205,7 +1228,7 @@ pub fn FindRecordings() -> impl IntoView {
                     <input
                         class="xc-input find-search"
                         r#type="search"
-                        placeholder=SEARCH_PLACEHOLDER
+                        placeholder=if narrow_screen() { SEARCH_PLACEHOLDER_SHORT } else { SEARCH_PLACEHOLDER }
                         prop:value=move || query.get()
                         on:input=move |ev| query.set(event_target_value(&ev))
                         on:keydown=move |ev: web_sys::KeyboardEvent| {

@@ -6837,8 +6837,9 @@ button.toolbar-overflow-btn {
     color: #a0a0a0;
 }
 
+/* #a8a8a8 keeps 4.5:1 on the selected row's #33335a. */
 .find-zero {
-    color: #888;
+    color: #a8a8a8;
 }
 
 .find-link-row {
@@ -6951,7 +6952,7 @@ button.toolbar-overflow-btn {
 }
 
 .find-rec-head.with-species, .find-rec-row.with-species {
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 84px 52px 72px 64px 84px 58px;
+    grid-template-columns: minmax(0, 0.6fr) minmax(0, 1.4fr) 84px 52px 72px 64px 84px 58px;
 }
 
 .find-rec-head {
@@ -6972,14 +6973,26 @@ button.toolbar-overflow-btn {
     background: #26263e;
 }
 
+/* Distance (the sort order when Near is set) comes first; the place text is
+   held to two lines, with the full text in its tooltip. */
+.find-rec-place-cell {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
 .find-rec-place {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
     overflow-wrap: anywhere;
 }
 
 .find-rec-dist {
-    margin-left: 6px;
-    color: #a0a0a0;
+    color: #e0e0e0;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .find-rec-date, .find-rec-num {
@@ -7077,7 +7090,7 @@ button.toolbar-overflow-btn {
         font-weight: 600;
     }
 
-    .find-rec-row .find-rec-place {
+    .find-rec-row .find-rec-place-cell {
         grid-column: 1 / -2;
     }
 
