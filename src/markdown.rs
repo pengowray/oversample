@@ -983,8 +983,24 @@ fn numbered_list_style(start: u64, items: usize) -> String {
 fn list_items_view(items: &[Vec<MdBlock>]) -> Vec<AnyView> {
     items
         .iter()
-        .map(|blocks| view! { <li>{markdown_view(blocks)}</li> }.into_any())
+        .map(|blocks| {
+            view! {
+                <li class:paragraph-first=paragraph_first(blocks)>{markdown_view(blocks)}</li>
+            }
+            .into_any()
+        })
         .collect()
+}
+
+/// Whether a list item starts with a paragraph and no plain text comes
+/// straight after it. From the fourth list level down, style.css shows such a
+/// paragraph inline, so that it starts on the line of the item's marker.
+/// Plain text has no element around it, so CSS cannot see it, and it would
+/// run into an inline paragraph with no space. A heading in a tight item
+/// gives that order, since headings are shown as paragraphs.
+fn paragraph_first(blocks: &[MdBlock]) -> bool {
+    matches!(blocks.first(), Some(MdBlock::Paragraph(_)))
+        && !matches!(blocks.get(1), Some(MdBlock::Plain(_)))
 }
 
 fn inlines_view(inlines: &[MdInline]) -> Vec<AnyView> {
@@ -1437,6 +1453,22 @@ mod tests {
         assert_eq!(numbered_list_style(0, 1), "--marker-digits: 1");
         assert_eq!(numbered_list_style(123_456_789, 1), "--marker-digits: 9");
         assert_eq!(numbered_list_style(u64::MAX, 3), "--marker-digits: 20");
+    }
+
+    #[test]
+    fn only_items_that_start_with_a_paragraph_are_paragraph_first() {
+        let first_item = |src: &str| match parse(src).into_iter().next() {
+            Some(List { items, .. }) => items[0].clone(),
+            other => panic!("{other:?}"),
+        };
+        // A loose item, and a loose item with a list after its paragraph.
+        assert!(paragraph_first(&first_item("- a\n\n- b")));
+        assert!(paragraph_first(&first_item("- a\n\n  - b")));
+        // A tight item has plain text, with no paragraph.
+        assert!(!paragraph_first(&first_item("- a")));
+        // A heading after or before the text of a tight item.
+        assert!(!paragraph_first(&first_item("- a\n  # b")));
+        assert!(!paragraph_first(&first_item("- # a\n  b")));
     }
 
     fn link(url: &str) -> MdInline {

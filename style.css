@@ -1834,7 +1834,8 @@ body.sidebar-resizing {
    last item's number. A remark line starting "2019. " is a list that starts at
    2019, and an 18px indent cut off its first digit at 375 px. 1ch is the width
    of a digit; the extra 1.5ch is for the "." and the gap. One digit gives
-   about the same indent as a bullet list. */
+   about the same indent as a bullet list. The next rule stops this from the
+   fourth list level down. */
 .metadata-markdown ol {
     padding-left: calc((var(--marker-digits, 1) + 1.5) * 1ch);
 }
@@ -1843,17 +1844,18 @@ body.sidebar-resizing {
    grows with the marker. markdown.rs keeps up to eight levels, and eight
    levels of "2019." with their own indents need about 320px, which ran off
    the panel's 247px at 375 px. Wrapped lines start under the marker, not
-   under the text. A loose item's first paragraph is inline, so that its text
-   stays on the marker's line, and the block after it gets the gap that the
-   paragraph's margin gives on the first three levels. */
+   under the text. When an item starts with a paragraph (markdown.rs sets
+   .paragraph-first), the paragraph is inline, so that its text stays on the
+   marker's line, and the block after it gets the gap that the paragraph's
+   margin gives on the first three levels. */
 .metadata-markdown li li li :is(ul, ol) {
     list-style-position: inside;
     padding-left: 8px;
 }
-.metadata-markdown li li li :is(ul, ol) > li > p:first-child {
+.metadata-markdown li li li :is(ul, ol) > li.paragraph-first > p:first-child {
     display: inline;
 }
-.metadata-markdown li li li :is(ul, ol) > li > p:first-child + * {
+.metadata-markdown li li li :is(ul, ol) > li.paragraph-first > p:first-child + * {
     margin-top: 3px;
 }
 .metadata-markdown li + li {
