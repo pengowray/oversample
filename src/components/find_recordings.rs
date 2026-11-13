@@ -1493,9 +1493,16 @@ pub fn FindRecordings() -> impl IntoView {
                 format!("{} km", k.round() as i64)
             }
         });
+        // Xeno-canto gives whole seconds, so 0 is a recording under a second.
         let length = item
             .len_s
-            .map(|s| crate::format_time::format_duration(s, 0))
+            .map(|s| {
+                if s < 1.0 {
+                    "<1s".to_string()
+                } else {
+                    crate::format_time::format_duration(s, 0)
+                }
+            })
             .unwrap_or_default();
         let rate = item
             .smp

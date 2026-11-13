@@ -6840,6 +6840,14 @@ button.toolbar-overflow-btn {
     vertical-align: 1px;
 }
 
+/* A faint two-way mark on the headings that sort but are not sorted, so they
+   can be told from the plain ones (Place, Source). */
+.find-sort:not(.active)::after {
+    content: "\21C5";
+    margin-left: 3px;
+    opacity: 0.45;
+}
+
 /* "Sort by" shows only on a phone, where the column headings are hidden and
    the sortable ones stand alone. */
 .find-sort-label {
