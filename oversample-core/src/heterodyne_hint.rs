@@ -33,6 +33,8 @@
 //! uploads are rare, so the word lists for languages other than English, the
 //! negation words and the listening phrases have no real hits behind them.
 
+use std::collections::HashSet;
+
 /// Free-text fields that describe a recording. An absent or empty field
 /// counts as no text.
 ///
@@ -146,11 +148,17 @@ pub struct HeterodyneHint {
     pub excerpt: String,
     /// The matched words exactly as they appear in the field, such as
     /// "hetrodyne" or "Magenta Bat5". Always a substring of `excerpt`.
+    ///
+    /// Widening a match to whole words adds at most 30 characters on each
+    /// side, so a match inside a long run of letters and digits ends inside
+    /// that run. A match longer than [`EXCERPT_MAX_CHARS`] is cut to that
+    /// length, keeping the matched tokens in view, or the heterodyne word
+    /// when it is part of a longer token.
     pub matched: String,
 }
 
-/// Longest excerpt, in characters, not counting the `…` marks. A match longer
-/// than this is quoted whole.
+/// Longest excerpt, in characters, not counting the `…` marks. A longer match
+/// is cut to this length, so no excerpt is longer.
 pub const EXCERPT_MAX_CHARS: usize = 80;
 
 /// Decides from a recording's text whether it is heterodyne audio.
@@ -179,12 +187,13 @@ pub fn infer_heterodyne_hint(
     let evidence = analysis.quoted_evidence()?;
     let field_text = text.get(evidence.field).unwrap_or("");
     let clause = analysis.fields[field_index(evidence.field)].clauses[evidence.clause].span;
+    let matched = quoted_match(field_text, evidence);
     Some(HeterodyneHint {
         level,
         source: evidence.source,
         field: evidence.field,
-        excerpt: excerpt(field_text, clause, evidence.span),
-        matched: field_text[evidence.span.0..evidence.span.1].to_string(),
+        excerpt: excerpt(field_text, clause, matched),
+        matched: field_text[matched.0..matched.1].to_string(),
     })
 }
 
@@ -801,8 +810,14 @@ struct Evidence {
     field: TextField,
     /// Index into the field's clauses.
     clause: usize,
-    /// Byte range of the matched words in the field text.
+    /// Byte range of the matched tokens in the field text. Only the quoted
+    /// evidence is widened to whole words, in [`quoted_match`].
     span: (usize, usize),
+    /// Whether the quote widens `span` to whole words. False for an
+    /// uppercase "HET", which is a whole word already, and for a match in a
+    /// script written without spaces, where the whole word would be the
+    /// whole run of text.
+    widen: bool,
     /// What matched, written the way the Python reference writes it: the
     /// lowercase token or tokens, or "label [sequence]" for a model. The
     /// cross-check against the reference compares this.
@@ -822,6 +837,8 @@ struct Analysis<'a> {
     fields: Vec<FieldText<'a>>,
     evidence: Vec<Evidence>,
     other_mode: Vec<OtherMode>,
+    /// The field and clause of each entry in `other_mode`, for lookups.
+    other_mode_clauses: HashSet<(TextField, usize)>,
     /// The last full-spectrum recorder named in the device or microphone
     /// field.
     fs_named: Option<&'static str>,
@@ -835,9 +852,7 @@ struct Analysis<'a> {
 
 impl Analysis<'_> {
     fn in_other_mode_clause(&self, e: &Evidence) -> bool {
-        self.other_mode
-            .iter()
-            .any(|o| o.field == e.field && o.clause == e.clause)
+        self.other_mode_clauses.contains(&(e.field, e.clause))
     }
 
     /// The evidence to quote: the first at the highest level, preferring a
@@ -851,11 +866,12 @@ impl Analysis<'_> {
 }
 
 /// An R1 match. `index` is the token position, or `None` for an uppercase
-/// "HET" or a CJK match, which have no negation check and search the whole
-/// clause for bleed cues.
+/// "HET" or a CJK match, which have no negation check, search the whole
+/// clause for bleed cues, and are quoted without widening.
 struct HetWord {
     index: Option<usize>,
     key: String,
+    /// Byte range of the matched tokens or text in the field text.
     span: (usize, usize),
 }
 
@@ -867,7 +883,7 @@ fn het_words(text: &str, clause: &Clause) -> Vec<HetWord> {
             out.push(HetWord {
                 index: Some(i),
                 key: t.clone(),
-                span: quoted_span(text, clause, i, i),
+                span: token_span(clause, i, i),
             });
         } else if t == "het" {
             let next = toks.get(i + 1).map_or("", String::as_str);
@@ -888,7 +904,7 @@ fn het_words(text: &str, clause: &Clause) -> Vec<HetWord> {
                 out.push(HetWord {
                     index: Some(i),
                     key: format!("het {next}"),
-                    span: quoted_span(text, clause, first, last),
+                    span: token_span(clause, first, last),
                 });
             }
         }
@@ -1028,9 +1044,9 @@ fn other_mode_hits(fields: &[FieldText]) -> Vec<OtherMode> {
     out
 }
 
-/// Byte range of the tokens `first..=last`, widened to whole words.
-fn quoted_span(text: &str, clause: &Clause, first: usize, last: usize) -> (usize, usize) {
-    whole_words(text, (clause.spans[first].0, clause.spans[last].1))
+/// Byte range of the tokens `first..=last` in the field text.
+fn token_span(clause: &Clause, first: usize, last: usize) -> (usize, usize) {
+    (clause.spans[first].0, clause.spans[last].1)
 }
 
 fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'a> {
@@ -1055,13 +1071,14 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
     for f in &fields {
         for (ci, clause) in f.clauses.iter().enumerate() {
             let toks = &clause.words;
-            let mut push = |level, source, span, key| {
+            let mut push = |level, source, span, widen, key| {
                 evidence.push(Evidence {
                     level,
                     source,
                     field: f.field,
                     clause: ci,
                     span,
+                    widen,
                     key,
                 })
             };
@@ -1078,7 +1095,14 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     None => &toks[..],
                 };
                 if !negated && !bleed_or_listen(window) {
-                    push(SaysHeterodyne, Src::HeterodyneWord, hit.span, hit.key);
+                    let widen = hit.index.is_some();
+                    push(
+                        SaysHeterodyne,
+                        Src::HeterodyneWord,
+                        hit.span,
+                        widen,
+                        hit.key,
+                    );
                 }
             }
 
@@ -1089,7 +1113,8 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     push(
                         SaysHeterodyne,
                         Src::TuningPhrase,
-                        quoted_span(f.text, clause, i, end),
+                        token_span(clause, i, end),
+                        true,
                         toks[i..=k].join(" "),
                     );
                 }
@@ -1105,14 +1130,18 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         .filter(|m| !(sony_pcm_d100 && m.seq == "d 100")),
                 );
             }
+            // The listening cue is searched for once per clause, not once
+            // per model match: a clause can name thousands of bare D200s.
+            let listening = !het_only.is_empty() && any_seq(toks, LISTEN_SEQS).is_some();
             for m in het_only {
-                if is_negated(toks, m.index) || any_seq(toks, LISTEN_SEQS).is_some() {
+                if listening || is_negated(toks, m.index) {
                     continue;
                 }
                 push(
                     HeterodyneOnlyDetector,
                     Src::HeterodyneOnlyDetector,
-                    quoted_span(f.text, clause, m.index, m.index + seq_len(m.seq) - 1),
+                    token_span(clause, m.index, m.index + seq_len(m.seq) - 1),
+                    true,
                     format!("{} [{}]", m.label, m.seq),
                 );
             }
@@ -1129,7 +1158,8 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                 push(
                     MayBeHeterodyne,
                     Src::DualModeDetector,
-                    quoted_span(f.text, clause, m.index, m.index + seq_len(m.seq) - 1),
+                    token_span(clause, m.index, m.index + seq_len(m.seq) - 1),
+                    true,
                     format!("{} [{}]", m.label, m.seq),
                 );
             }
@@ -1156,7 +1186,8 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     push(
                         MayBeHeterodyne,
                         Src::DetectorOutput,
-                        quoted_span(f.text, clause, i, i + n - 1),
+                        token_span(clause, i, i + n - 1),
+                        true,
                         key,
                     );
                 }
@@ -1177,6 +1208,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
         raw_level: evidence.iter().map(|e| e.level).max(),
         fields,
         evidence,
+        other_mode_clauses: other_mode.iter().map(|o| (o.field, o.clause)).collect(),
         other_mode,
         fs_named,
         text_level: None,
@@ -1236,41 +1268,121 @@ fn sample_rate_gate(
 /// such as Japanese, is cut at the character.
 const SNAP_CHARS: usize = 15;
 
-/// The clause around `span`, cut to about [`EXCERPT_MAX_CHARS`] characters at
-/// word boundaries, with `…` where text was cut.
+/// Most characters that widening a match to whole words adds on each side.
+const WIDEN_MAX_CHARS: usize = 30;
+
+/// Byte range of the text to quote as the match. The evidence's tokens are
+/// widened to whole words when the evidence allows it. If that is longer
+/// than [`EXCERPT_MAX_CHARS`], it is cut to that length around the tokens,
+/// or around the heterodyne word when an R1 token is longer than the word.
+/// When the tokens alone are longer than the limit and hold no heterodyne
+/// word, the match is their first [`EXCERPT_MAX_CHARS`] characters.
+fn quoted_match(text: &str, evidence: &Evidence) -> (usize, usize) {
+    let span = if evidence.widen {
+        whole_words(text, evidence.span)
+    } else {
+        evidence.span
+    };
+    if text[span.0..span.1].chars().count() <= EXCERPT_MAX_CHARS {
+        return span;
+    }
+    let focus = match evidence.source {
+        HeterodyneSource::HeterodyneWord => stem_span(text, evidence.span),
+        _ => None,
+    };
+    cut_around(
+        text,
+        span,
+        focus.unwrap_or(evidence.span),
+        EXCERPT_MAX_CHARS,
+    )
+}
+
+/// Byte range of the first heterodyne stem (in [`HET_STEMS`] order) inside
+/// the token at `span`. `None` when the token has no stem, as for the tokens
+/// of "het detector".
+fn stem_span(text: &str, span: (usize, usize)) -> Option<(usize, usize)> {
+    let token = &text[span.0..span.1];
+    let lower: String = token.chars().flat_map(char::to_lowercase).collect();
+    let (at, len) = HET_STEMS
+        .iter()
+        .find_map(|s| lower.find(s).map(|at| (at, s.len())))?;
+    // Map the stem's byte range in `lower` back to whole characters of
+    // `token`. One character can lowercase to more than one byte or char.
+    let (mut start, mut end) = (None, None);
+    let mut low = 0;
+    for (o, ch) in token.char_indices() {
+        let next = low + ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if start.is_none() && next > at {
+            start = Some(o);
+        }
+        if next >= at + len {
+            end = Some(o + ch.len_utf8());
+            break;
+        }
+        low = next;
+    }
+    Some((span.0 + start?, span.0 + end?))
+}
+
+/// A byte range of at most `max` characters inside `outer` that contains
+/// `focus`. The characters left over are split evenly before and after the
+/// focus, and when one side runs out of text the other side gets the rest.
+/// A focus longer than `max` keeps only its first `max` characters.
+fn cut_around(
+    text: &str,
+    outer: (usize, usize),
+    focus: (usize, usize),
+    max: usize,
+) -> (usize, usize) {
+    let focus_chars = text[focus.0..focus.1].chars().count();
+    if focus_chars >= max {
+        let end = text[focus.0..focus.1]
+            .char_indices()
+            .nth(max)
+            .map_or(focus.1, |(o, _)| focus.0 + o);
+        return (focus.0, end);
+    }
+    let room = max - focus_chars;
+    let before = text[outer.0..focus.0].chars().count();
+    let after = text[focus.1..outer.1].chars().count();
+    let take_after = after.min(room - before.min(room / 2));
+    let take_before = before.min(room - take_after);
+    // Skip the characters before the focus that do not fit.
+    let start = text[outer.0..focus.0]
+        .char_indices()
+        .nth(before - take_before)
+        .map_or(focus.0, |(o, _)| outer.0 + o);
+    let end = text[focus.1..outer.1]
+        .char_indices()
+        .nth(take_after)
+        .map_or(outer.1, |(o, _)| focus.1 + o);
+    (start, end)
+}
+
+/// The clause around `span`, cut to at most [`EXCERPT_MAX_CHARS`] characters
+/// at word boundaries, with `…` where text was cut. `span` must be at most
+/// [`EXCERPT_MAX_CHARS`] characters, as [`quoted_match`] makes it.
 fn excerpt(text: &str, clause: (usize, usize), span: (usize, usize)) -> String {
     let raw = &text[clause.0..clause.1];
     let start = clause.0 + (raw.len() - raw.trim_start().len());
     let end = clause.0 + raw.trim_end().len();
-    let (ms, me) = (span.0.max(start), span.1.min(end));
     if text[start..end].chars().count() <= EXCERPT_MAX_CHARS {
         return text[start..end].to_string();
     }
 
-    let room = EXCERPT_MAX_CHARS.saturating_sub(text[ms..me].chars().count());
-    let before = text[start..ms].chars().count();
-    let after = text[me..end].chars().count();
-    let take_after = after.min(room - before.min(room / 2));
-    let take_before = before.min(room - take_after);
-
+    let (ms, me) = (span.0.max(start), span.1.min(end));
+    let (at_start, at_end) = cut_around(text, (start, end), (ms, me), EXCERPT_MAX_CHARS);
     let mut out = String::new();
     let mut cut_start = start;
-    if take_before < before {
-        // Byte offset that leaves `take_before` chars before the match.
-        let at = text[start..ms]
-            .char_indices()
-            .nth(before - take_before)
-            .map_or(ms, |(o, _)| start + o);
-        cut_start = snap_forward(text, at, ms);
+    if at_start > start {
+        cut_start = snap_forward(text, at_start, ms);
         out.push('…');
     }
     let mut cut_end = end;
-    if take_after < after {
-        let at = text[me..end]
-            .char_indices()
-            .nth(take_after)
-            .map_or(end, |(o, _)| me + o);
-        cut_end = snap_back(text, at, me);
+    if at_end < end {
+        // The `min` keeps the limit valid if `span` was too long.
+        cut_end = snap_back(text, at_end, me.min(at_end));
     }
     out.push_str(&text[cut_start..cut_end]);
     if cut_end < end {
@@ -1324,16 +1436,22 @@ fn snap_back(text: &str, at: usize, limit: usize) -> usize {
 }
 
 /// Widens a token span to the whole run of alphanumeric characters around
-/// it, so a match on "bat" in "Bat5" quotes "Bat5".
+/// it, so a match on "bat" in "Bat5" quotes "Bat5". It adds at most
+/// [`WIDEN_MAX_CHARS`] characters on each side.
 fn whole_words(text: &str, (mut start, mut end): (usize, usize)) -> (usize, usize) {
-    while let Some(c) = text[..start]
+    for c in text[..start]
         .chars()
-        .next_back()
-        .filter(|c| c.is_alphanumeric())
+        .rev()
+        .take(WIDEN_MAX_CHARS)
+        .take_while(|c| c.is_alphanumeric())
     {
         start -= c.len_utf8();
     }
-    while let Some(c) = text[end..].chars().next().filter(|c| c.is_alphanumeric()) {
+    for c in text[end..]
+        .chars()
+        .take(WIDEN_MAX_CHARS)
+        .take_while(|c| c.is_alphanumeric())
+    {
         end += c.len_utf8();
     }
     (start, end)
@@ -2120,6 +2238,58 @@ mod tests {
         assert_eq!(hint.matched, "ヘテロダイン");
         assert!(hint.excerpt.starts_with('…') && hint.excerpt.ends_with('…'));
         assert_eq!(hint.excerpt.chars().count(), EXCERPT_MAX_CHARS + 2);
+    }
+
+    /// Checks the length limits of a hint for remarks `s`, and returns it.
+    fn bounded_hint(s: &str) -> HeterodyneHint {
+        let hint = infer_heterodyne_hint(&remarks(s), Some(44100)).unwrap();
+        let core = hint.excerpt.trim_start_matches('…').trim_end_matches('…');
+        assert!(
+            core.chars().count() <= EXCERPT_MAX_CHARS,
+            "{}",
+            hint.excerpt
+        );
+        assert!(hint.matched.chars().count() <= EXCERPT_MAX_CHARS);
+        assert!(hint.excerpt.contains(&hint.matched));
+        assert!(s.contains(core));
+        hint
+    }
+
+    #[test]
+    fn long_runs_without_spaces_are_quoted_in_part() {
+        // Widening stops 30 characters after the matched token.
+        let s = "heterodyne1".repeat(100_000 / 11);
+        let hint = bounded_hint(&s);
+        assert_eq!(hint.matched, s[..40]);
+        assert_eq!(hint.excerpt, format!("{}…", &s[..80]));
+
+        // A token longer than the limit is cut around the heterodyne word.
+        let s = format!("{}heterodyne{}", "a".repeat(50_000), "a".repeat(50_000));
+        let hint = bounded_hint(&s);
+        assert_eq!(hint.matched.chars().count(), EXCERPT_MAX_CHARS);
+        assert!(hint.matched.contains("heterodyne"), "{}", hint.matched);
+        assert_eq!(hint.excerpt, format!("…{}…", hint.matched));
+
+        // The cut follows the word, not the middle of the token.
+        let s = format!("{}heterodyne{}", "a".repeat(10), "a".repeat(99_990));
+        let hint = bounded_hint(&s);
+        assert!(hint.matched.starts_with(&s[..20]), "{}", hint.matched);
+        assert!(hint.excerpt.ends_with('…') && !hint.excerpt.starts_with('…'));
+
+        // A model name in a long run: the match keeps the model name.
+        let s = format!("Pettersson {}", "D200".repeat(25_000));
+        let hint = bounded_hint(&s);
+        assert!(hint.matched.starts_with("Pettersson D200D200"));
+    }
+
+    #[test]
+    fn stem_is_found_where_lowercase_has_other_byte_lengths() {
+        // The Kelvin sign "K" (3 bytes) lowercases to "k" (1 byte).
+        let s = format!("{0}HETERODYNE{0}", "\u{212a}".repeat(60));
+        let (a, b) = stem_span(&s, (0, s.len())).unwrap();
+        assert_eq!(&s[a..b], "HETERODYN");
+        let hint = bounded_hint(&s);
+        assert!(hint.matched.contains("HETERODYNE"), "{}", hint.matched);
     }
 
     #[test]
