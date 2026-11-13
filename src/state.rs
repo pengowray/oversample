@@ -295,7 +295,8 @@ pub struct LoadedFile {
     /// human-readable labels ("Species", "License", ...) and are matched by
     /// name by the metadata panel, device hinting, and bat-book auto-resolve.
     pub xc_metadata: Option<Vec<(String, String)>>,
-    /// Heading `xc_metadata` is shown under. `None` means Xeno-Canto.
+    /// Heading `xc_metadata` is shown under. `None` means Xeno-Canto; read it
+    /// through `metadata_source()`.
     pub source_label: Option<String>,
     /// Hash data from XC sidecar (for verification against computed identity).
     pub xc_hashes: Option<SidecarHashes>,
@@ -340,7 +341,21 @@ pub struct LoadedFile {
     pub max_display_freq: Option<f64>,
 }
 
+/// Name of the source a file's `xc_metadata` came from when `source_label` is unset.
+pub const XC_SOURCE_NAME: &str = "Xeno-canto";
+
 impl LoadedFile {
+    /// Name of the site or archive `xc_metadata` came from ("Xeno-canto",
+    /// "iNaturalist", "Wikimedia Commons", ...).
+    pub fn metadata_source(&self) -> &str {
+        self.source_label.as_deref().unwrap_or(XC_SOURCE_NAME)
+    }
+
+    /// True when `xc_metadata` came from Xeno-canto.
+    pub fn metadata_is_xc(&self) -> bool {
+        self.metadata_source() == XC_SOURCE_NAME
+    }
+
     /// Get the recording start time as milliseconds since Unix epoch, if available.
     ///
     /// Sources (in priority order):
@@ -566,21 +581,22 @@ impl RightSidebarTab {
             Self::Selection => "Annotations",
             Self::Export => "Export",
             Self::Psd => "Power spectrum",
-            Self::Analysis => "Analysis",
+            Self::Analysis => "Data analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::CallDetection => "Call detection",
             Self::DebugLog => "Debug Log",
         }
     }
 
+    /// Menu order.
     pub const ALL: &'static [RightSidebarTab] = &[
         Self::Metadata,
         Self::Selection,
-        Self::Export,
         Self::Psd,
+        Self::CallDetection,
         Self::Analysis,
         Self::Harmonics,
-        Self::CallDetection,
+        Self::Export,
         Self::DebugLog,
     ];
 }

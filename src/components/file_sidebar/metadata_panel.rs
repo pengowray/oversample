@@ -721,7 +721,7 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
                 .map(|(_, v)| v.clone())
                 .filter(|v| !v.trim().is_empty())
         };
-        let date_label = format!("{} date", f.source_label.as_deref().unwrap_or("Xeno-canto"));
+        let date_label = format!("{} date", f.metadata_source());
         match (get("Date"), get("Time")) {
             (Some(d), Some(t)) => rows.push((date_label, format!("{d}T{t}"))),
             (Some(d), None) => rows.push((date_label, d)),
@@ -1385,8 +1385,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             ("0 B".to_string(), "File size".to_string())
                         };
                         let xc_fields: Vec<_> = f.xc_metadata.clone().unwrap_or_default();
-                        let source_label = f.source_label.clone()
-                            .unwrap_or_else(|| "Xeno-canto".to_string());
+                        let source_label = f.metadata_source().to_string();
                         let has_xc = !xc_fields.is_empty();
                         let guano_fields: Vec<_> = meta.guano.as_ref()
                             .map(|g| g.fields.clone())

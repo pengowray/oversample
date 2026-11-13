@@ -357,10 +357,11 @@ pub struct AutoResolved {
 /// Where a recording's country came from.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceSource {
-    /// Its GPS position (GUANO or Xeno-Canto coordinates), looked up offline.
+    /// Its GPS position (GUANO or source-site coordinates), looked up offline.
     Gps { lat: f32, lon: f32 },
-    /// Xeno-Canto's "Country" field.
-    XenoCanto,
+    /// The "Country" field of the site the recording came from, named by
+    /// `source` ("Xeno-canto", "iNaturalist", ...).
+    Metadata { source: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -372,16 +373,16 @@ pub struct RecordingPlace {
 impl RecordingPlace {
     /// Where the place came from, e.g. "From GPS position 52.48, -1.90" (with
     /// the country added when the region is not the country itself) or "From
-    /// Xeno-Canto country: United Kingdom".
+    /// iNaturalist country: Australia".
     pub fn detail(&self, region: BatBookRegion) -> String {
-        match self.source {
-            PlaceSource::Gps { lat, lon } if self.country == region.label() => {
+        match &self.source {
+            &PlaceSource::Gps { lat, lon } if self.country == region.label() => {
                 format!("From GPS position {lat:.2}, {lon:.2}")
             }
-            PlaceSource::Gps { lat, lon } => {
+            &PlaceSource::Gps { lat, lon } => {
                 format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
             }
-            PlaceSource::XenoCanto => format!("From Xeno-Canto country: {}", self.country),
+            PlaceSource::Metadata { source } => format!("From {source} country: {}", self.country),
         }
     }
 }

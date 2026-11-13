@@ -247,16 +247,21 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         run_analysis(false);
     });
 
-    let xc_quality = Memo::new(move |_| {
+    // Xeno-canto's A-E quality rating, to compare with the wSNR estimate.
+    // Other sites' "Quality" (iNaturalist's "Research grade") rates the
+    // identification, not the sound, so it isn't shown here.
+    let xc_rating = Memo::new(move |_| {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
-        idx.and_then(|i| files.get(i).cloned())
-            .and_then(|file| file.xc_metadata)
-            .and_then(|meta| {
-                meta.iter()
-                    .find(|(k, _)| k == "Quality")
-                    .map(|(_, v)| v.clone())
-            })
+        let file = idx.and_then(|i| files.get(i))?;
+        if !file.metadata_is_xc() {
+            return None;
+        }
+        file.xc_metadata
+            .as_ref()?
+            .iter()
+            .find(|(k, _)| k == "Quality")
+            .and_then(|(_, v)| xc_rating_letter(v))
     });
 
     let report_text = Memo::new(move |_| {
@@ -427,8 +432,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     m.grade.label(), m.snr_db, m.signal_db, m.noise_db
                 )),
             }
-            if let Some(xc) = xc_quality.get() {
-                report.push_str(&format!("  XC quality (metadata): {}\n", xc.trim()));
+            if let Some(letter) = xc_rating.get() {
+                report.push_str(&format!("  Xeno-canto quality rating: {letter}\n"));
             }
             for msg in &w.warnings {
                 report.push_str(&format!("  \u{26a0} {}\n", msg));
@@ -904,25 +909,15 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 match wsnr_result.get().as_ref() {
                     None => view! { <span></span> }.into_any(),
                     Some(w) => {
-                        let xc_comparison = xc_quality.get().map(|xc_q| {
-                            let xc_letter = xc_q.trim().to_uppercase();
-                            let xc_badge_class = match xc_letter.as_str() {
-                                "A" => "wsnr-grade-sm wsnr-grade-a",
-                                "B" => "wsnr-grade-sm wsnr-grade-b",
-                                "C" => "wsnr-grade-sm wsnr-grade-c",
-                                "D" => "wsnr-grade-sm wsnr-grade-d",
+                        let xc_comparison = xc_rating.get().map(|letter| {
+                            let badge_class = match letter {
+                                'A' => "wsnr-grade-sm wsnr-grade-a",
+                                'B' => "wsnr-grade-sm wsnr-grade-b",
+                                'C' => "wsnr-grade-sm wsnr-grade-c",
+                                'D' => "wsnr-grade-sm wsnr-grade-d",
                                 _ => "wsnr-grade-sm wsnr-grade-e",
                             };
-                            //let computed = grade_label.clone();
-                            let note = "";
-                            /*
-                            let note = if xc_letter == computed {
-                                "(matches)".to_string()
-                            } else {
-                                format!("(estimated: {})", computed)
-                            };
-                            */
-                            (xc_letter, xc_badge_class.to_string(), note)
+                            (letter.to_string(), badge_class)
                         });
 
                         let warnings: Vec<_> = w.warnings.iter().map(|msg| {
@@ -968,11 +963,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                     } else {
                                         view! { <span></span> }.into_any()
                                     }}
-                                    {xc_comparison.map(|(letter, badge_class, note)| view! {
+                                    {xc_comparison.map(|(letter, badge_class)| view! {
                                         <div class="wsnr-comparison">
-                                            "Metadata: "
+                                            "Xeno-canto quality rating "
                                             <span class=badge_class>{letter}</span>
-                                            " (XC grade)" {note}
                                         </div>
                                     })}
                                 </div>
@@ -1823,4 +1817,27 @@ async fn yield_to_browser() {
         let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 0);
     });
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+}
+
+/// Xeno-canto's quality rating as a letter, when it is one of A to E.
+/// Xeno-canto sends "no score" for unrated recordings.
+fn xc_rating_letter(quality: &str) -> Option<char> {
+    let mut chars = quality.trim().chars();
+    let c = chars.next()?.to_ascii_uppercase();
+    (chars.next().is_none() && ('A'..='E').contains(&c)).then_some(c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::xc_rating_letter;
+
+    #[test]
+    fn rating_letter_is_a_to_e_only() {
+        assert_eq!(xc_rating_letter("A"), Some('A'));
+        assert_eq!(xc_rating_letter(" e "), Some('E'));
+        assert_eq!(xc_rating_letter("no score"), None);
+        assert_eq!(xc_rating_letter("Research grade"), None);
+        assert_eq!(xc_rating_letter("F"), None);
+        assert_eq!(xc_rating_letter(""), None);
+    }
 }

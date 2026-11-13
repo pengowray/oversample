@@ -650,11 +650,15 @@ pub fn Toolbar() -> impl IntoView {
                 } else {
                     country
                 };
-                let is_demo = {
+                let (is_demo, source) = {
                     let files = state.library.files().get();
                     let idx = state.library.current_index().get();
-                    idx.and_then(|i| files.get(i)).map(|f| f.is_demo).unwrap_or(false)
+                    idx.and_then(|i| files.get(i))
+                        .map(|f| (f.is_demo, f.metadata_source().to_string()))
+                        .unwrap_or_else(|| (false, crate::state::XC_SOURCE_NAME.to_string()))
                 };
+                // Non-breaking hyphen, so "Xeno-canto" stays on one line.
+                let open_label = format!("Open on {} \u{2197}", source.replace('-', "\u{2011}"));
 
                 view! {
                     <div class="modal-overlay" on:click=move |_| show_cc_modal.set(false)>
@@ -741,7 +745,7 @@ pub fn Toolbar() -> impl IntoView {
                                 // Links row
                                 <div class="cc-links">
                                     {(!url.is_empty()).then(|| view! {
-                                        <a class="cc-link-btn" href=url target="_blank" rel="noopener">"Open on Xeno\u{2011}Canto \u{2197}"</a>
+                                        <a class="cc-link-btn" href=url target="_blank" rel="noopener">{open_label}</a>
                                     })}
                                     <button class="cc-link-btn" on:click=move |e: web_sys::MouseEvent| {
                                         e.stop_propagation();

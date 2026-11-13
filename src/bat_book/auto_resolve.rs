@@ -89,8 +89,9 @@ fn get_scientific_name(file: &LoadedFile) -> Option<String> {
     None
 }
 
-/// The recording's country and where it came from: Xeno-Canto's "Country",
-/// or else the country at its GPS position (GUANO or Xeno-Canto coordinates),
+/// The recording's country and where it came from: the source site's
+/// "Country" (Xeno-canto, iNaturalist, ...), or else the country at its GPS
+/// position (GUANO or source-site coordinates),
 /// looked up offline. Of a country's name variants, the one the region map
 /// knows is used.
 fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
@@ -100,11 +101,13 @@ fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
         .and_then(|m| m.iter().find(|(k, _)| k == "Country"))
         .map(|(_, v)| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    // A Xeno-Canto country the region map doesn't know falls through to the
+    // A source-site country the region map doesn't know falls through to the
     // coordinates.
     if let Some(country) = xc.filter(|c| country_to_region(c).is_some()) {
         return Some(RecordingPlace {
-            source: PlaceSource::XenoCanto,
+            source: PlaceSource::Metadata {
+                source: file.metadata_source().to_string(),
+            },
             country,
         });
     }

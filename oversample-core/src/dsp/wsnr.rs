@@ -136,10 +136,30 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         ));
     }
 
-    // Step 2: Ultrasonic content detection
-    let (is_ultrasonic, ultrasonic_msg) = detect_ultrasonic(samples, sample_rate);
-    if let Some(msg) = ultrasonic_msg {
-        warnings.push(msg);
+    // Step 2: Ultrasonic content detection. wSNR weights by human hearing, so
+    // a mostly ultrasonic recording (a bat recording) gets no grade.
+    match detect_ultrasonic(samples, sample_rate) {
+        Ultrasonic::Mostly { pct } => {
+            return WsnrResult::not_measured(
+                format!(
+                    "Mostly ultrasonic ({pct:.0}% of energy above 20 kHz). \
+                     wSNR covers audible sound only."
+                ),
+                FadeInfo {
+                    fade_in_secs: 0.0,
+                    fade_out_secs: 0.0,
+                },
+                (is_clipped, clipping_samples),
+                true,
+                warnings,
+            );
+        }
+        Ultrasonic::Some { pct } => warnings.push(format!(
+            "Possible ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz) \u{2014} wSNR reflects audible-band quality only.",
+            sample_rate / 1000,
+            pct
+        )),
+        Ultrasonic::None => {}
     }
 
     // Step 3: Guard silent files
@@ -152,7 +172,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
                 fade_out_secs: 0.0,
             },
             (is_clipped, clipping_samples),
-            is_ultrasonic,
+            false,
             warnings,
         );
     }
@@ -212,7 +232,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
                 fade_out_secs,
             },
             (is_clipped, clipping_samples),
-            is_ultrasonic,
+            false,
             warnings,
         );
     }
@@ -254,14 +274,6 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
                 .into(),
         );
     }
-    if is_ultrasonic && grade == WsnrGrade::A {
-        warnings.push(
-            "A grade reflects low audible-band noise (expected for ultrasonic equipment); \
-             does not assess bat call quality"
-                .into(),
-        );
-    }
-
     WsnrResult {
         measurement: Ok(WsnrMeasurement {
             snr_db,
@@ -275,7 +287,7 @@ pub fn analyze_wsnr(samples: &[f32], sample_rate: u32) -> WsnrResult {
         },
         is_clipped,
         clipping_samples,
-        is_ultrasonic,
+        is_ultrasonic: false,
         dense_soundscape,
         dense_pct,
         has_silent_gaps,
@@ -307,9 +319,24 @@ fn detect_clipping(samples: &[f32]) -> (bool, usize, f32) {
 // Ultrasonic content detection
 // ---------------------------------------------------------------------------
 
-fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>) {
+/// Share of energy above 20 kHz, from a few windows in the middle of the file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Ultrasonic {
+    None,
+    /// Over 50%: the recording is mostly ultrasonic.
+    Mostly {
+        pct: f64,
+    },
+    /// A high sample rate with a little energy above 20 kHz: likely a bat
+    /// detector recording whose calls missed the analysis windows.
+    Some {
+        pct: f64,
+    },
+}
+
+fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> Ultrasonic {
     if !crate::dsp::ultrasonic::is_ultrasonic_rate(sample_rate) {
-        return (false, None);
+        return Ultrasonic::None;
     }
 
     let fft_size = 4096;
@@ -317,7 +344,7 @@ fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>
     let num_bins = fft_size / 2 + 1;
 
     if bin_20k >= num_bins {
-        return (false, None);
+        return Ultrasonic::None;
     }
 
     // Analyze a few windows from the middle of the file
@@ -362,29 +389,21 @@ fn detect_ultrasonic(samples: &[f32], sample_rate: u32) -> (bool, Option<String>
     }
 
     if windows_analyzed == 0 {
-        return (false, None);
+        return Ultrasonic::None;
     }
 
     let total = total_below + total_above;
     if total < 1e-20 {
-        return (false, None);
+        return Ultrasonic::None;
     }
 
-    let ratio = total_above / total;
-    if ratio > 0.5 {
-        (true, Some(format!(
-            "Ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz). wSNR reflects audible-band quality only.",
-            sample_rate / 1000, ratio * 100.0
-        )))
-    } else if ratio > 0.001 && sample_rate >= 256000 {
-        // High sample rate with some detectable ultrasonic energy — likely a bat detector
-        // recording where the target calls didn't happen to land in the analysis windows.
-        (false, Some(format!(
-            "Possible ultrasonic content ({}kHz SR, {:.0}% energy above 20kHz) \u{2014} wSNR reflects audible-band quality only.",
-            sample_rate / 1000, ratio * 100.0
-        )))
+    let pct = total_above / total * 100.0;
+    if pct > 50.0 {
+        Ultrasonic::Mostly { pct }
+    } else if pct > 0.1 && sample_rate >= 256000 {
+        Ultrasonic::Some { pct }
     } else {
-        (false, None)
+        Ultrasonic::None
     }
 }
 
@@ -984,6 +1003,19 @@ mod tests {
         assert!(result
             .measurement
             .is_err_and(|reason| reason.contains("too short")));
+    }
+
+    #[test]
+    fn mostly_ultrasonic_recording_gets_no_grade() {
+        let sr = 192_000;
+        let samples: Vec<f32> = (0..sr as usize * 2)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 45_000.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let result = analyze_wsnr(&samples, sr);
+        assert!(result.is_ultrasonic);
+        assert!(result
+            .measurement
+            .is_err_and(|reason| reason.starts_with("Mostly ultrasonic (100% of energy")));
     }
 
     #[test]
