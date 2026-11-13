@@ -1814,7 +1814,8 @@ async fn finalize_in_memory_recording(
         },
     };
 
-    let preview = compute_preview(&audio, 256, 128);
+    // Recordings keep their offset on screen (see `canvas::display_dc`).
+    let preview = compute_preview(&audio, 256, 128, 0.0);
     let audio_for_stft = audio.clone();
 
     // ── Phase 3: Update or create the file in state ─────────────────────
@@ -2007,7 +2008,8 @@ async fn finalize_streaming_tauri_recording(
             wav: Some(header.details.clone()),
         },
     };
-    let preview = crate::dsp::fft::compute_preview(&audio, 256, 128);
+    // Recordings keep their offset on screen (see `canvas::display_dc`).
+    let preview = crate::dsp::fft::compute_preview(&audio, 256, 128, 0.0);
 
     state.log_debug(
         "rec",

@@ -2,6 +2,7 @@
 pub use oversample_core::canvas::{colormap_2d, colors, spectral_store};
 
 pub mod coord;
+pub mod display_dc;
 pub mod flow;
 pub mod freq_adjustments;
 pub mod gutter_renderer;

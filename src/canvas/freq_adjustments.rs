@@ -1,8 +1,21 @@
+use crate::canvas::display_dc::{self, DcTarget};
+use crate::dsp::dc_offset::floor_without_offset;
 use crate::dsp::filters::harmonics_band_bounds;
 use crate::state::store_fields::*;
 use crate::state::{AppState, DisplayFilterMode};
 use leptos::prelude::*;
 use std::cell::RefCell;
+
+/// The offset the display removes from the current file in the current
+/// channel view: 0 for live and in-app recordings, `None` until measured.
+fn current_display_offset(state: &AppState) -> Option<f32> {
+    let idx = state.library.current_index().get_untracked()?;
+    let target = state
+        .library
+        .files()
+        .with_untracked(|files| files.get(idx).map(DcTarget::of))?;
+    display_dc::known_offset(target, state.viewmode.channel_view().get_untracked())
+}
 
 thread_local! {
     /// Cache for freq_adjustments: (fingerprint, result).
@@ -72,6 +85,8 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         .map(|f| f.bin_magnitudes.len())
         .unwrap_or(0)
         .hash(&mut h);
+    // The playback floor's lowest bins depend on the offset the display removes.
+    current_display_offset(state).map(f32::to_bits).hash(&mut h);
     state
         .display
         .nr_strength()
@@ -210,36 +225,46 @@ fn compute_freq_adjustments_inner(
             let dsp_enabled = state.display.xform_enabled().get_untracked();
             let nr_mode = state.display.filter_nr().get_untracked();
 
-            let (nf_opt, strength) = if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
-                // Auto: use display-specific auto-learned floor
-                (state.display.auto_noise_floor().get_untracked(), 0.8)
-            } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
-                // Custom: prefer display auto floor with custom strength
-                let floor = state
-                    .display
-                    .auto_noise_floor()
-                    .get_untracked()
-                    .or_else(|| state.noise_reduce.floor().get_untracked());
-                (floor, state.display.nr_strength().get_untracked())
-            } else if state.noise_reduce.enabled().get_untracked() {
-                // Same/fallback: use playback noise floor
-                (
-                    state.noise_reduce.floor().get_untracked(),
-                    state.noise_reduce.strength().get_untracked(),
-                )
-            } else {
-                (None, 0.0)
-            };
+            // The display's own floor is learned without the file's offset;
+            // the playback floor (`from_playback`) still holds it.
+            let (nf_opt, strength, from_playback) =
+                if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
+                    // Auto: use display-specific auto-learned floor
+                    (state.display.auto_noise_floor().get_untracked(), 0.8, false)
+                } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
+                    // Custom: prefer display auto floor with custom strength
+                    let strength = state.display.nr_strength().get_untracked();
+                    match state.display.auto_noise_floor().get_untracked() {
+                        Some(floor) => (Some(floor), strength, false),
+                        None => (state.noise_reduce.floor().get_untracked(), strength, true),
+                    }
+                } else if state.noise_reduce.enabled().get_untracked() {
+                    // Same/fallback: use playback noise floor
+                    (
+                        state.noise_reduce.floor().get_untracked(),
+                        state.noise_reduce.strength().get_untracked(),
+                        true,
+                    )
+                } else {
+                    (None, 0.0, false)
+                };
 
             if let Some(nf) = nf_opt {
-                let nf_bins = nf.bin_magnitudes.len();
+                let without_offset = if from_playback {
+                    current_display_offset(state)
+                        .and_then(|dc| floor_without_offset(&nf.bin_magnitudes, nf.fft_size, dc))
+                } else {
+                    None
+                };
+                let floor_bins = without_offset.as_deref().unwrap_or(&nf.bin_magnitudes);
+                let nf_bins = floor_bins.len();
                 let nf_max_freq = nf.sample_rate as f64 / 2.0;
                 for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                     let bin = tile_height - 1 - row;
                     let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
                     let nf_bin = ((freq / nf_max_freq) * (nf_bins - 1) as f64).round() as usize;
                     if nf_bin < nf_bins {
-                        let noise_mag = nf.bin_magnitudes[nf_bin];
+                        let noise_mag = floor_bins[nf_bin];
                         if noise_mag > 1e-15 {
                             let noise_db = 20.0 * (noise_mag as f32).log10();
                             *adj_val -= noise_db * strength as f32;

@@ -240,7 +240,8 @@ pub(crate) async fn load_named_bytes(
 
     // Phase 1: fast preview
     state.loading_update(load_id, crate::state::LoadingStage::Preview);
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
     let audio_for_stft = audio.clone();
     let name_check = name.clone();
 
@@ -291,13 +292,14 @@ pub(crate) async fn load_named_bytes(
         sample_rate: audio.sample_rate,
     };
 
+    let new_id = crate::state::next_file_id();
     let file_index;
     {
         let mut idx = 0;
         state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
-                id: crate::state::next_file_id(),
+                id: new_id,
                 name,
                 audio,
                 spectrogram: placeholder_spec,
@@ -331,6 +333,7 @@ pub(crate) async fn load_named_bytes(
         state.library.current_index().set(Some(idx));
         file_index = idx;
     }
+    crate::canvas::display_dc::seed_mono(new_id, display_dc);
 
     // Stable id of the file we just pushed. Background/async writes below guard on
     // this rather than the (positional index, name) pair — removing a file shifts

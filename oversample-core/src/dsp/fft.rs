@@ -175,7 +175,14 @@ pub fn compute_stft_columns(
 
 /// Compute a fast low-resolution preview spectrogram as an RGBA pixel buffer.
 /// Uses FFT=256 with a dynamic hop to produce roughly `target_width` columns.
-pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32) -> PreviewImage {
+/// `dc` is the recording's offset (`dc_offset`), removed from each frame; 0
+/// keeps the samples as they are.
+pub fn compute_preview(
+    audio: &AudioData,
+    target_width: u32,
+    target_height: u32,
+    dc: f32,
+) -> PreviewImage {
     // For streaming files, only the head samples are in memory — don't try to
     // read the entire multi-GB file. audio.samples contains the loaded portion.
     let total = if audio.source.is_fully_loaded() {
@@ -194,9 +201,26 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
 
     let fft_size = 256;
     let hop = (total / target_width as usize).max(fft_size);
-    let spec = compute_spectrogram(audio, fft_size, hop);
+    // Copy out only the frames the preview uses (about `target_width` of
+    // them), so the offset can come off without copying the whole recording.
+    let samples: &[f32] = &audio.samples;
+    let mut frames = Vec::new();
+    let mut pos = 0;
+    while pos + fft_size <= samples.len() {
+        frames.extend_from_slice(&samples[pos..pos + fft_size]);
+        pos += hop;
+    }
+    super::dc_offset::subtract_dc(&mut frames, dc);
+    let columns = compute_stft_columns(
+        &frames,
+        audio.sample_rate,
+        fft_size,
+        fft_size,
+        0,
+        usize::MAX,
+    );
 
-    if spec.columns.is_empty() {
+    if columns.is_empty() {
         return PreviewImage {
             width: 1,
             height: 1,
@@ -204,8 +228,8 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
         };
     }
 
-    let src_w = spec.columns.len();
-    let src_h = spec.columns[0].magnitudes.len();
+    let src_w = columns.len();
+    let src_h = columns[0].magnitudes.len();
     let out_w = (src_w as u32).min(target_width);
     let out_h = (src_h as u32).min(target_height);
 
@@ -213,13 +237,13 @@ pub fn compute_preview(audio: &AudioData, target_width: u32, target_height: u32)
     // the Auto range for this image's noise floor and the file's bit depth.
     let full_scale = full_scale_db(fft_size);
     let max_range = max_display_range_db(audio.metadata.bits_per_sample, audio.metadata.is_float);
-    let range = auto_range_db(noise_floor_dbfs(&spec.columns), max_range);
+    let range = auto_range_db(noise_floor_dbfs(&columns), max_range);
 
     let mut pixels = vec![0u8; (out_w * out_h * 4) as usize];
 
     for x in 0..out_w {
         let src_col = (x as usize * src_w) / out_w as usize;
-        let col = &spec.columns[src_col.min(src_w - 1)];
+        let col = &columns[src_col.min(src_w - 1)];
         for y in 0..out_h {
             // Map output row to source bin (row 0 = highest freq)
             let src_bin = src_h - 1 - ((y as usize * src_h) / out_h as usize).min(src_h - 1);
@@ -361,5 +385,34 @@ mod tests {
             error < result.freq_resolution * 2.0,
             "Peak at {peak_freq} Hz, expected ~{freq} Hz"
         );
+    }
+
+    #[test]
+    fn preview_drops_the_offset_row() {
+        // Noise on top of a large offset.
+        let mut seed = 1u32;
+        let samples: Vec<f32> = (0..96_000)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                0.05 + 0.01 * ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5)
+            })
+            .collect();
+        let dc = crate::dsp::dc_offset::mean_outside_silence(&samples);
+        let audio = test_audio(samples, 48_000);
+        // Mean grey of row `y` (row 0 is the top, the last row is bin 0).
+        let row_grey = |p: &PreviewImage, y: u32| {
+            (0..p.width)
+                .map(|x| p.pixels[((y * p.width + x) * 4) as usize] as f32)
+                .sum::<f32>()
+                / p.width as f32
+        };
+        let kept = compute_preview(&audio, 256, 128, 0.0);
+        let removed = compute_preview(&audio, 256, 128, dc);
+        let bottom = kept.height - 1;
+        let middle = kept.height / 2;
+        assert!(row_grey(&kept, bottom) > row_grey(&kept, middle) + 60.0);
+        assert!(row_grey(&removed, bottom) < row_grey(&removed, middle) + 20.0);
+        // Rows away from the offset stay as they were (rounding aside).
+        assert!((row_grey(&kept, middle) - row_grey(&removed, middle)).abs() < 1.0);
     }
 }

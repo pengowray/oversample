@@ -53,6 +53,8 @@ pub(super) struct NewStreamingFile {
     pub total_cols: usize,
     pub fft_size: usize,
     pub silence_check: Option<SilenceCheck>,
+    /// The mono mix's offset, from [`crate::canvas::display_dc::head_offset`].
+    pub display_dc: f32,
 }
 
 /// Push a freshly-decoded streaming file into the library, select it, and run the
@@ -141,14 +143,16 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         total_cols,
         fft_size,
         silence_check,
+        display_dc,
     } = f;
+    let id = crate::state::next_file_id();
     let file_index;
     {
         let mut idx = 0;
         state.library.files().update(|files| {
             idx = files.len();
             files.push(LoadedFile {
-                id: crate::state::next_file_id(),
+                id,
                 name,
                 audio,
                 spectrogram,
@@ -182,6 +186,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         state.library.current_index().set(Some(idx));
         file_index = idx;
     }
+    crate::canvas::display_dc::seed_mono(id, display_dc);
 
     crate::audio::peak::start_full_peak_scan(state, file_index);
 
@@ -406,7 +411,8 @@ pub(super) async fn try_streaming_wav(
     };
 
     // Compute preview from head samples (fast)
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
 
     // Check for silence/quiet in head
     let (silence_check, cached_peak_db) = {
@@ -475,6 +481,7 @@ pub(super) async fn try_streaming_wav(
             total_cols,
             fft_size,
             silence_check,
+            display_dc,
         },
     );
 
@@ -667,7 +674,8 @@ pub(super) async fn try_streaming_flac(
     };
 
     // Compute preview from head samples
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
 
     // Check for silence/quiet in head
     let (silence_check, cached_peak_db) = {
@@ -735,6 +743,7 @@ pub(super) async fn try_streaming_flac(
             total_cols,
             fft_size,
             silence_check,
+            display_dc,
         },
     );
 
@@ -1012,7 +1021,8 @@ pub(super) async fn try_streaming_mp3(
     };
 
     // Compute preview from head samples
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
 
     // Check for silence/quiet in head
     let (silence_check, cached_peak_db) = {
@@ -1080,6 +1090,7 @@ pub(super) async fn try_streaming_mp3(
             total_cols,
             fft_size,
             silence_check,
+            display_dc,
         },
     );
 
@@ -1376,7 +1387,8 @@ pub(super) async fn try_streaming_ogg(
     };
 
     // Compute preview from head samples
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
 
     // Check for silence/quiet in head
     let (silence_check, cached_peak_db) = {
@@ -1444,6 +1456,7 @@ pub(super) async fn try_streaming_ogg(
             total_cols,
             fft_size,
             silence_check,
+            display_dc,
         },
     );
 
@@ -1573,6 +1586,16 @@ pub(crate) async fn build_streaming_overview(
     let sample_rate = file.audio.sample_rate;
     let total_samples = source.total_samples() as usize;
 
+    // The same offset the main view removes. Loaders record the mono mix's
+    // offset with the file, so this reads nothing for them.
+    let dc = crate::canvas::display_dc::offset(
+        crate::canvas::display_dc::DcTarget::of(&file),
+        source.as_ref(),
+        ChannelView::MonoMix,
+    )
+    .await
+    .unwrap_or(0.0);
+
     const FFT_SIZE: usize = 512;
     const TARGET_COLS: usize = 1024;
     const TARGET_HEIGHT: u32 = 256;
@@ -1642,7 +1665,9 @@ pub(crate) async fn build_streaming_overview(
                 .await;
             }
 
-            let samples = source.read_region(ChannelView::MonoMix, sample_start as u64, read_len);
+            let mut samples =
+                source.read_region(ChannelView::MonoMix, sample_start as u64, read_len);
+            crate::canvas::display_dc::subtract_dc(&mut samples, dc);
             let cols = crate::dsp::fft::compute_stft_columns(
                 &samples,
                 sample_rate,
@@ -2042,7 +2067,8 @@ pub(super) async fn try_streaming_m4a(
         },
     };
 
-    let preview = compute_preview(&audio, 256, 128);
+    let display_dc = crate::canvas::display_dc::head_offset(&audio);
+    let preview = compute_preview(&audio, 256, 128, display_dc);
 
     let (silence_check, cached_peak_db) = {
         use crate::audio::source::ChannelView;
@@ -2108,6 +2134,7 @@ pub(super) async fn try_streaming_m4a(
             total_cols,
             fft_size,
             silence_check,
+            display_dc,
         },
     );
 

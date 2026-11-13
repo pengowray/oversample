@@ -719,10 +719,23 @@ pub fn App() -> impl IntoView {
             // mono-mix) and slice the head out of it.
             let needed = (0.5 * sample_rate as f64).ceil() as usize;
             let slice_len = needed.min(file.audio.samples.len());
-            let samples = std::sync::Arc::new(file.audio.samples[..slice_len].to_vec());
+            let mut samples = file.audio.samples[..slice_len].to_vec();
+            let dc_target = crate::canvas::display_dc::DcTarget::of(&file);
+            let source = file.audio.source.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
                 crate::canvas::tile_cache::yield_to_browser().await;
+                // Learn from what the display draws: without the file's
+                // offset. Otherwise the floor's lowest bin holds the offset
+                // and darkens the display's now-quiet lowest row to black.
+                let dc = crate::canvas::display_dc::offset(
+                    dc_target,
+                    source.as_ref(),
+                    crate::audio::source::ChannelView::MonoMix,
+                )
+                .await
+                .unwrap_or(0.0);
+                crate::canvas::display_dc::subtract_dc(&mut samples, dc);
                 let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
                     &samples,
                     sample_rate,

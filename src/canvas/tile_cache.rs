@@ -35,6 +35,7 @@
 
 use crate::audio::streaming_playback::PV_HQ_OVERLAP;
 use crate::audio::streaming_source;
+use crate::canvas::display_dc::{self, DcTarget};
 use crate::canvas::spectrogram_renderer::{self, FlowAlgo, PreRendered};
 use crate::state::store_fields::*;
 use crate::state::{AppState, LoadedFile, PlaybackMode};
@@ -858,17 +859,22 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             }
         }
 
-        let audio = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+        let file = state.library.files().with_untracked(|files| {
+            files
+                .get(file_idx)
+                .map(|f| (DcTarget::of(f), f.audio.clone()))
+        });
+        let Some((dc_target, audio)) = file else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
 
         // Compute STFT columns for this tile using channel-aware samples
         let cv = state.viewmode.channel_view().get_untracked();
+        let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
         let col_start = tile_idx * TILE_COLS;
 
         // Display resampling keeps every m-th sample, so the STFT below steps
@@ -919,10 +925,11 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
             return;
         }
 
-        let Some(raw_samples) = read.into_first() else {
+        let Some(mut raw_samples) = read.into_first() else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
+        display_dc::subtract_dc(&mut raw_samples, dc);
 
         // Apply DSP transform (heterodyne, pitch shift, etc.) when display_transform is active
         let samples = if xform_on {
@@ -1495,16 +1502,21 @@ pub fn schedule_tile_on_demand(state: AppState, file_idx: usize, tile_idx: usize
             }
         }
 
-        let audio = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+        let file = state.library.files().with_untracked(|files| {
+            files
+                .get(file_idx)
+                .map(|f| (DcTarget::of(f), f.audio.clone()))
+        });
+        let Some((dc_target, audio)) = file else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
 
         let cv = state.viewmode.channel_view().get_untracked();
+        let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+            IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
         let col_start = tile_idx * TILE_COLS;
         let hop_size = BASELINE_HOP;
         let fft_size = state
@@ -1530,10 +1542,14 @@ pub fn schedule_tile_on_demand(state: AppState, file_idx: usize, tile_idx: usize
             return;
         }
 
-        let Some(samples) = read.into_first() else {
+        let Some(mut samples) = read.into_first() else {
             IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
+        // The spectral store keeps these columns for other display reads
+        // (store tiles, Chromagram, the display's loudest point), so they
+        // too are without the offset.
+        display_dc::subtract_dc(&mut samples, dc);
         let cols = compute_stft_columns(
             &samples,
             audio.sample_rate,
@@ -1672,16 +1688,21 @@ pub fn schedule_flow_tile(
             }
         }
 
-        let audio = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+        let file = state.library.files().with_untracked(|files| {
+            files
+                .get(file_idx)
+                .map(|f| (DcTarget::of(f), f.audio.clone()))
+        });
+        let Some((dc_target, audio)) = file else {
             FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
 
         let cv = state.viewmode.channel_view().get_untracked();
+        let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+            FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
         let col_start = tile_idx * TILE_COLS;
 
         let rendered = match algo {
@@ -1709,10 +1730,11 @@ pub fn schedule_flow_tile(
                 }
 
                 // Reads stop at the end of the file, so a tile starting past it reads empty.
-                let Some(ch_samples) = read.filter(|v| !v.is_empty()) else {
+                let Some(mut ch_samples) = read.filter(|v| !v.is_empty()) else {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
                 };
+                display_dc::subtract_dc(&mut ch_samples, dc);
                 let samples = &ch_samples[..];
 
                 yield_to_browser().await;
@@ -1749,10 +1771,11 @@ pub fn schedule_flow_tile(
                     return;
                 }
 
-                let Some(region_samples) = read else {
+                let Some(mut region_samples) = read else {
                     FLOW_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                     return;
                 };
+                display_dc::subtract_dc(&mut region_samples, dc);
 
                 let prev_col = if extra_cols > 0 {
                     let prev_cols = compute_stft_columns(
@@ -1951,22 +1974,27 @@ fn schedule_chroma_tile_fft(state: AppState, file_idx: usize, tile_idx: usize, k
             c
         } else {
             // On-demand: compute STFT from audio samples (same as schedule_tile_on_demand)
-            let audio = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-            let Some(audio) = audio else {
+            let file = state.library.files().with_untracked(|files| {
+                files
+                    .get(file_idx)
+                    .map(|f| (DcTarget::of(f), f.audio.clone()))
+            });
+            let Some((dc_target, audio)) = file else {
                 CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                 return;
             };
 
             let cv = state.viewmode.channel_view().get_untracked();
+            let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+                CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+                return;
+            };
             let hop_size = BASELINE_HOP;
             let fft_size = active_baseline_fft(state);
             let sample_start = col_start * hop_size;
             let sample_len = TILE_COLS * hop_size + fft_size;
 
-            let Some(samples) = streaming_source::read_region_ready(
+            let Some(mut samples) = streaming_source::read_region_ready(
                 audio.source.as_ref(),
                 cv,
                 sample_start as u64,
@@ -1977,6 +2005,7 @@ fn schedule_chroma_tile_fft(state: AppState, file_idx: usize, tile_idx: usize, k
                 CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
                 return;
             };
+            display_dc::subtract_dc(&mut samples, dc);
             let cols = compute_stft_columns(
                 &samples,
                 audio.sample_rate,
@@ -2070,11 +2099,12 @@ fn schedule_chroma_tile_resonator(
             }
         }
 
-        let audio = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+        let file = state.library.files().with_untracked(|files| {
+            files
+                .get(file_idx)
+                .map(|f| (DcTarget::of(f), f.audio.clone()))
+        });
+        let Some((dc_target, audio)) = file else {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
@@ -2108,6 +2138,10 @@ fn schedule_chroma_tile_resonator(
         let pre_pad_cols = (tile_sample_start - padded_start) / hop_size;
         let padded_len = (pre_pad_cols + TILE_COLS) * hop_size;
 
+        let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+            CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
         let read = streaming_source::read_region_ready(
             audio.source.as_ref(),
             cv,
@@ -2125,7 +2159,7 @@ fn schedule_chroma_tile_resonator(
             return;
         }
 
-        let Some(samples) = read else {
+        let Some(mut samples) = read else {
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
@@ -2133,6 +2167,7 @@ fn schedule_chroma_tile_resonator(
             CHROMA_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
+        display_dc::subtract_dc(&mut samples, dc);
 
         yield_to_browser().await;
 
@@ -2573,16 +2608,21 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             }
         }
 
-        let audio = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_idx).map(|f| f.audio.clone()));
-        let Some(audio) = audio else {
+        let file = state.library.files().with_untracked(|files| {
+            files
+                .get(file_idx)
+                .map(|f| (DcTarget::of(f), f.audio.clone()))
+        });
+        let Some((dc_target, audio)) = file else {
             RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
 
         let cv = state.viewmode.channel_view().get_untracked();
+        let Some(dc) = display_dc::offset(dc_target, audio.source.as_ref(), cv).await else {
+            RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
+            return;
+        };
 
         // Warmup samples before the tile's first column so the EMA state has
         // converged by the time we emit output.
@@ -2607,7 +2647,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             return;
         }
 
-        let Some(samples) = read else {
+        let Some(mut samples) = read else {
             RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         };
@@ -2615,6 +2655,7 @@ pub fn schedule_resonator_tile(state: AppState, file_idx: usize, lod: u8, tile_i
             RESONATOR_IN_FLIGHT.with(|s| s.borrow_mut().remove(&key));
             return;
         }
+        display_dc::subtract_dc(&mut samples, dc);
 
         yield_to_browser().await;
         if !resonator_request_still_active(&key) {

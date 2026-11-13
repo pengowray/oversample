@@ -5,6 +5,7 @@ pub mod call_detect;
 pub mod channel_delay;
 pub mod chime_scan;
 pub mod chromagram;
+pub mod dc_offset;
 pub mod depth_range;
 pub mod effective_nyquist;
 pub mod fft;
