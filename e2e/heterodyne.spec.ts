@@ -198,6 +198,33 @@ test.describe("heterodyne badge and note", () => {
     await expect(page.locator(".heterodyne-note")).toBeVisible();
   });
 
+  test("the badge scrolls the Info panel back to the Sample rate row and note", async ({
+    page,
+  }) => {
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await showInfo(page);
+    const panel = page.locator(".right-sidebar .sidebar-panel");
+    await panel.evaluate((el) => (el.scrollTop = el.scrollHeight));
+    const note = page.locator(".heterodyne-note");
+    const top = (sel: string) =>
+      page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, sel);
+    const panelBox = (await panel.boundingBox())!;
+    expect(await top(".heterodyne-note")).toBeLessThan(panelBox.y);
+
+    await page.locator(".toolbar-badge-row .file-badge-heterodyne").click();
+    // The Sample rate row (just above the note) and the note are both in view.
+    await expect
+      .poll(() => note.evaluate((n) => n.previousElementSibling!.getBoundingClientRect().top), {
+        timeout: 2_000,
+      })
+      .toBeGreaterThanOrEqual(panelBox.y - 1);
+    const noteBox = (await note.boundingBox())!;
+    expect(noteBox.y + noteBox.height).toBeLessThanOrEqual(panelBox.y + panelBox.height + 1);
+    expect(await note.evaluate((n) => n.previousElementSibling!.textContent)).toContain(
+      "Sample rate",
+    );
+  });
+
   test("a Ctrl-click on the badge only selects the row", async ({ page }) => {
     await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
     await page

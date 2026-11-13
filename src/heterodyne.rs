@@ -194,7 +194,7 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
     // "Magenta Bat4/Bat5" -> maker "Magenta", models ["Bat4", "Bat5"].
     let maker_end = label[..slash].rfind(' ')?;
     let maker = &label[..maker_end];
-    let models = label[maker_end + 1..].split('/');
+    let models: Vec<&str> = label[maker_end + 1..].split('/').collect();
     // Letters and digits only, lower case, so "Bat 5" matches "Bat5".
     let key = |s: &str| -> String {
         s.chars()
@@ -209,13 +209,24 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
     // The model named first; the longer name wins at the same position
     // ("D1000X" over "D1000").
     let model = models
+        .iter()
         .filter_map(|m| {
             text.find(&key(m))
-                .map(|at| (at, std::cmp::Reverse(m.len()), m))
+                .map(|at| (at, std::cmp::Reverse(m.len()), *m))
         })
         .min()
-        .map(|(_, _, m)| m);
-    Some(match model {
+        .map(|(_, _, m)| m.to_string());
+    // The text may name a shorter form of a model: "D240" for "D240x",
+    // "D1000" for "D1000X". Then the note uses the text's own words.
+    let short_form = || {
+        let words = hint.matched.trim();
+        let words_key = key(words);
+        (!words_key.is_empty()
+            && !words_key.starts_with(&key(maker))
+            && models.iter().any(|m| key(m).starts_with(&words_key)))
+        .then(|| words.to_string())
+    };
+    Some(match model.or_else(short_form) {
         Some(m) => format!("{maker} {m}"),
         None => label.to_string(),
     })
@@ -400,6 +411,25 @@ mod tests {
         assert_eq!(
             line("Device", "SSF BAT3", 48_000),
             "The SSF BAT3 is a heterodyne-only detector."
+        );
+        // A shorter form of a model in the group: the text's own words.
+        assert_eq!(
+            line("Device", "Pettersson D240", 44_100),
+            "The Pettersson D240 has a heterodyne mode and other modes."
+        );
+        assert_eq!(
+            line("Device", "Pettersson D1000", 44_100),
+            "The Pettersson D1000 has a heterodyne mode and other modes."
+        );
+        // A model number later in the remark, outside the quoted clause,
+        // doesn't count.
+        assert_eq!(
+            line(
+                "Remarks",
+                "Recorded with a Magenta bat detector. Bat 5 m overhead",
+                48_000
+            ),
+            "The Magenta Bat4/Bat5 is a heterodyne-only detector."
         );
         // No model of the group in the text: the group label stays.
         assert_eq!(
