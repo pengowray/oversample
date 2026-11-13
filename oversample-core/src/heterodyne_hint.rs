@@ -172,6 +172,9 @@ pub struct HeterodyneHint {
     /// "het 45 kHz") does not count. R1 reads the number after "het" only to
     /// tell the Dutch word "het" from heterodyne, so the rules never treat it
     /// as a tuning value.
+    ///
+    /// When this is set, the quote (`source`, `field`, `excerpt`, `matched`)
+    /// is the first tuning phrase, so it always shows the frequency.
     pub tuned_hz: Option<u32>,
 }
 
@@ -202,7 +205,13 @@ pub fn infer_heterodyne_hint(
 ) -> Option<HeterodyneHint> {
     let analysis = analyze(text, sample_rate);
     let level = analysis.level?;
-    let evidence = analysis.quoted_evidence()?;
+    let tuned_hz = analysis.tuned_hz();
+    // With a tuning, quote the tuning phrase, so the quote shows the
+    // frequency the app goes on to use.
+    let evidence = match tuned_hz {
+        Some(_) => analysis.tuning_evidence()?,
+        None => analysis.quoted_evidence()?,
+    };
     let field_text = text.get(evidence.field).unwrap_or("");
     let clause = analysis.fields[field_index(evidence.field)].clauses[evidence.clause].span;
     let matched = quoted_match(field_text, evidence);
@@ -213,7 +222,7 @@ pub fn infer_heterodyne_hint(
         field: evidence.field,
         excerpt: excerpt(field_text, clause, matched),
         matched: field_text[matched.0..matched.1].to_string(),
-        tuned_hz: analysis.tuned_hz(),
+        tuned_hz,
     })
 }
 
@@ -904,6 +913,14 @@ impl Analysis<'_> {
             .map(|e| e.tuned_hz);
         let first = values.next()??;
         values.all(|v| v == Some(first)).then_some(first)
+    }
+
+    /// The first R2 tuning phrase outside other-mode clauses: the evidence to
+    /// quote when [`Analysis::tuned_hz`] gives a frequency.
+    fn tuning_evidence(&self) -> Option<&Evidence> {
+        self.evidence
+            .iter()
+            .find(|e| e.source == HeterodyneSource::TuningPhrase && !self.in_other_mode_clause(e))
     }
 }
 
@@ -2339,13 +2356,14 @@ mod tests {
             hint,
             HeterodyneHint {
                 level: SaysHeterodyne,
-                source: HeterodyneSource::HeterodyneWord,
+                // The remark gives a tuning, so the tuning phrase is quoted.
+                source: HeterodyneSource::TuningPhrase,
                 detector: None,
                 field: TextField::Remarks,
                 excerpt:
                     "The sound was recordet from a handheld hetrodyne detector set at 31,9 kHz"
                         .into(),
-                matched: "hetrodyne".into(),
+                matched: "set at 31,9 kHz".into(),
                 tuned_hz: Some(31_900),
             }
         );
@@ -2476,6 +2494,50 @@ mod tests {
         .unwrap();
         assert_eq!(hint.level, MayBeHeterodyne);
         assert_eq!(hint.tuned_hz, None);
+    }
+
+    #[test]
+    fn with_a_tuning_the_quote_shows_the_frequency() {
+        // The heterodyne word is in an earlier clause.
+        let hint =
+            infer_heterodyne_hint(&remarks("Heterodyne detector. Set at 45 kHz"), Some(44100))
+                .unwrap();
+        assert_eq!(hint.tuned_hz, Some(45_000));
+        assert_eq!(hint.source, HeterodyneSource::TuningPhrase);
+        assert_eq!(hint.excerpt, "Set at 45 kHz");
+
+        // The heterodyne word and the tuning are in different fields.
+        let t = RecordingText {
+            remarks: Some("Heterodyne recording"),
+            description: Some("Bat detector tuned to 45 kHz"),
+            ..Default::default()
+        };
+        let hint = infer_heterodyne_hint(&t, Some(44100)).unwrap();
+        assert_eq!(hint.field, TextField::Description);
+        assert_eq!(hint.matched, "tuned to 45 kHz");
+
+        // A long clause is cut around the tuning phrase, not the heterodyne
+        // word far before it.
+        let s = format!(
+            "Heterodyne {} detector set at 31,9 kHz",
+            "word ".repeat(30).trim_end()
+        );
+        let hint = infer_heterodyne_hint(&remarks(&s), Some(44100)).unwrap();
+        assert!(
+            hint.excerpt.ends_with("detector set at 31,9 kHz"),
+            "{}",
+            hint.excerpt
+        );
+        assert!(!hint.excerpt.contains("Heterodyne"), "{}", hint.excerpt);
+
+        // Without a tuning, the heterodyne word is quoted as before.
+        let hint = infer_heterodyne_hint(
+            &remarks("Heterodyne. Bat detector tuned to 45 kHz, time expanded 10x"),
+            Some(44100),
+        )
+        .unwrap();
+        assert_eq!(hint.tuned_hz, None);
+        assert_eq!(hint.source, HeterodyneSource::HeterodyneWord);
     }
 
     #[test]
