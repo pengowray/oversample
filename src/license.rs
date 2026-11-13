@@ -272,6 +272,39 @@ pub(crate) fn license_link(license: &str, license_url: Option<&str>) -> Option<S
         .or_else(|| cc_license_page(&parse_cc_license(license)?))
 }
 
+/// The licence dialog's title: "CC BY 4.0 license" for a Creative Commons
+/// licence, "License" for others.
+pub(crate) fn license_dialog_title(license: &str) -> String {
+    parse_cc_license(license).map_or_else(|| "License".to_string(), |l| license_title(&l))
+}
+
+/// The licence dialog's row under the attribution: the licence's full name
+/// ("Creative Commons Attribution-NonCommercial 4.0 International"), or its
+/// name as sent for a licence that isn't Creative Commons ("GFDL"), with the
+/// address `license_link` finds for it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LicenseNameRow {
+    pub text: String,
+    pub href: Option<String>,
+}
+
+/// The licence dialog's name row for a License value and its "License URL"
+/// field. `None` when the row would only repeat the dialog title, with no
+/// full name and no link: GBIF's "CC BY-NC (Attribution-Non-Commercial)"
+/// has no version, so its title "CC BY-NC license" is all there is to say.
+pub(crate) fn license_name_row(license: &str, license_url: Option<&str>) -> Option<LicenseNameRow> {
+    let lic = license.trim();
+    if lic.is_empty() {
+        return None;
+    }
+    let label = parse_cc_license(lic);
+    let full_name = label.as_deref().and_then(cc_license_full_name);
+    let href = license_link(lic, license_url);
+    let has_more = full_name.is_some() || href.is_some();
+    let text = full_name.unwrap_or_else(|| label.as_deref().map_or(lic.to_string(), license_title));
+    (has_more || text != license_dialog_title(lic)).then_some(LicenseNameRow { text, href })
+}
+
 /// The Creative Commons page for a short licence label with a version, as
 /// `parse_cc_license` gives it: "CC BY-NC 4.0" ->
 /// "https://creativecommons.org/licenses/by-nc/4.0/", "CC BY 3.0 AU" ->
@@ -602,6 +635,78 @@ mod tests {
             assert!(!label.is_cc, "{lic}");
         }
         assert_eq!(license_label("  "), None);
+    }
+
+    #[test]
+    fn dialog_name_rows() {
+        let row = |text: &str, href: Option<&str>| {
+            Some(LicenseNameRow {
+                text: text.to_string(),
+                href: href.map(str::to_string),
+            })
+        };
+        for (lic, url, title, name_row) in [
+            // Xeno-canto: the full name, linked.
+            (
+                "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                None,
+                "CC BY-NC-SA 4.0 license",
+                row(
+                    "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International",
+                    Some("https://creativecommons.org/licenses/by-nc-sa/4.0/"),
+                ),
+            ),
+            // GBIF's short name has no version, so no full name or link:
+            // the row would repeat the title.
+            (
+                "CC BY-NC (Attribution-Non-Commercial)",
+                None,
+                "CC BY-NC license",
+                None,
+            ),
+            ("cc-by-nc", None, "CC BY-NC license", None),
+            // An address without a version still gives a link.
+            (
+                "https://creativecommons.org/licenses/by-nc/",
+                None,
+                "CC BY-NC license",
+                row(
+                    "CC BY-NC license",
+                    Some("https://creativecommons.org/licenses/by-nc/"),
+                ),
+            ),
+            // Commons: CC0 with its License URL, the Public Domain Mark, GFDL.
+            (
+                "CC0",
+                Some("http://creativecommons.org/publicdomain/zero/1.0/deed.en"),
+                "CC0 1.0 license",
+                row(
+                    "CC0 1.0 Universal",
+                    Some("http://creativecommons.org/publicdomain/zero/1.0/deed.en"),
+                ),
+            ),
+            (
+                "Public Domain Mark 1.0",
+                None,
+                "Public Domain Mark 1.0",
+                row(
+                    "Public Domain Mark 1.0 Universal",
+                    Some("https://creativecommons.org/publicdomain/mark/1.0/"),
+                ),
+            ),
+            (
+                "GFDL",
+                Some("http://www.gnu.org/copyleft/fdl.html"),
+                "License",
+                row("GFDL", Some("http://www.gnu.org/copyleft/fdl.html")),
+            ),
+            // A Wikipedia's non-free file: the name differs from the title.
+            ("Fair use", None, "License", row("Fair use", None)),
+            ("", None, "License", None),
+        ] {
+            assert_eq!(license_dialog_title(lic), title, "{lic}");
+            assert_eq!(license_name_row(lic, url), name_row, "{lic}");
+        }
     }
 
     #[test]

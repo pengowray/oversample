@@ -2,9 +2,7 @@ use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_badges::{get_xc_field, FileBadgeData, FileBadgeRow};
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
-use crate::license::{
-    cc_license_full_name, license_label, license_link, license_title, parse_cc_license,
-};
+use crate::license::{license_dialog_title, license_label, license_name_row, parse_cc_license};
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, PlaybackMode, RecordReadyState, RightSidebarTab,
@@ -646,8 +644,9 @@ pub fn Toolbar() -> impl IntoView {
                 let attribution = field("Attribution").unwrap_or_default();
                 let url = field("URL").unwrap_or_default();
                 let lic = field("License").unwrap_or_default();
-                let cc_label = parse_cc_license(&lic).unwrap_or_default();
-                let lic_href = license_link(&lic, field("License URL").as_deref());
+                let is_cc = parse_cc_license(&lic).is_some();
+                let title = license_dialog_title(&lic);
+                let name_row = license_name_row(&lic, field("License URL").as_deref());
                 let device = field("Device").unwrap_or_default();
                 let mic = field("Microphone").unwrap_or_default();
                 let method = field("Method").unwrap_or_default();
@@ -683,10 +682,10 @@ pub fn Toolbar() -> impl IntoView {
                         <div class="modal-dialog cc-modal" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                             <div class="modal-header">
                                 <span class="modal-title">
-                                    {(!cc_label.is_empty()).then(|| view! {
+                                    {is_cc.then(|| view! {
                                         <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
                                     })}
-                                    {if cc_label.is_empty() { "License".to_string() } else { license_title(&cc_label) }}
+                                    {title}
                                 </span>
                                 <button class="modal-close" on:click=move |_| show_cc_modal.set(false)>{"\u{00D7}"}</button>
                             </div>
@@ -753,16 +752,14 @@ pub fn Toolbar() -> impl IntoView {
                                 })}
 
                                 // The licence's full name, linked to its text when
-                                // license_link finds an address for it.
-                                {(!lic.trim().is_empty()).then(|| {
-                                    let label = cc_license_full_name(&cc_label).unwrap_or_else(|| {
-                                        if cc_label.is_empty() { lic.trim().to_string() } else { license_title(&cc_label) }
-                                    });
-                                    let name = match lic_href {
+                                // license_link finds an address for it. Left out
+                                // when it would only repeat the title.
+                                {name_row.map(|row| {
+                                    let name = match row.href {
                                         Some(href) => view! {
-                                            <a href=href target="_blank" rel="noopener">{label}</a>
+                                            <a href=href target="_blank" rel="noopener">{row.text}</a>
                                         }.into_any(),
-                                        None => view! { <span>{label}</span> }.into_any(),
+                                        None => view! { <span>{row.text}</span> }.into_any(),
                                     };
                                     view! { <div class="cc-license-link">{name}</div> }
                                 })}
