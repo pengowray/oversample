@@ -7,6 +7,10 @@
 //! through `inner_html`: raw HTML in the source stays literal text, and only
 //! http and https links become links.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::ops::Range;
+
 use leptos::prelude::*;
 use leptos::tachys::view::any_view::AnyView;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, TextMergeStream};
@@ -68,10 +72,10 @@ const MAX_INLINE_DEPTH: usize = 8;
 /// kept as a line break, since Xeno-canto users break lines that way.
 pub fn parse(text: &str) -> Vec<MdBlock> {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let text = text.trim();
+    let text = escape_emphasis_in_bare_urls(text.trim());
     // No extensions: tables, strikethrough, math and smart punctuation would
     // change how `|`, `~`, `$` and quote marks in plain remarks look.
-    let events = TextMergeStream::new(Parser::new_ext(text, Options::empty()));
+    let events = TextMergeStream::new(Parser::new_ext(&text, Options::empty()));
     let mut b = TreeBuilder {
         stack: vec![Frame::Blocks(Vec::new())],
         skipped_blocks: 0,
@@ -374,6 +378,260 @@ impl TreeBuilder {
     }
 }
 
+/// `src` with a backslash before each `*` and `_` inside its bare URLs, so
+/// that the parser reads them as plain characters, not as emphasis. Without
+/// it, "https://en.wikipedia.org/wiki/A_(b)_c_(d)" parses as text, an
+/// emphasised "c" and more text, and only the text before the emphasis could
+/// become a link, which would go to the wrong address.
+///
+/// It parses `src` once to find where each bare URL starts, then finds where
+/// the URL ends in `src` with the rules of [`find_bare_url`]. A URL also ends
+/// where a code span, link, image, raw HTML or line break starts. So a URL's
+/// range holds only text and emphasis marks, and the backslashes change
+/// nothing outside the URLs. When the URL is inside emphasis, the `*` and `_`
+/// at its end that can close that emphasis are left out of the URL and keep
+/// no backslash, so "*see https://a.example/x_(y)_z*" stays emphasis.
+fn escape_emphasis_in_bare_urls(src: &str) -> Cow<'_, str> {
+    if !src.contains(['*', '_']) || !src.contains("://") {
+        return Cow::Borrowed(src);
+    }
+    let events: Vec<(Event, Range<usize>)> = Parser::new_ext(src, Options::empty())
+        .into_offset_iter()
+        .collect();
+    // Text that reads differently from its source, such as "&" from "&amp;",
+    // by the byte where its source starts: where the source ends, and the text.
+    let decoded: HashMap<usize, (usize, &str)> = events
+        .iter()
+        .filter_map(|(event, range)| match event {
+            Event::Text(s) if **s != src[range.clone()] => Some((range.start, (range.end, &**s))),
+            _ => None,
+        })
+        .collect();
+    let mut escapes = Vec::new();
+    // The bare URLs that start before this byte are done.
+    let mut done = 0;
+    // How many links, images and code blocks are open. Their text is not
+    // linked.
+    let mut unlinked_depth = 0usize;
+    // The opening `*`, `_`, `**` or `__` of each open emphasis and strong
+    // element, outermost first.
+    let mut open_marks: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        let (event, range) = &events[i];
+        match event {
+            Event::Start(Tag::Link { .. } | Tag::Image { .. } | Tag::CodeBlock(_)) => {
+                unlinked_depth += 1;
+            }
+            Event::End(TagEnd::Link | TagEnd::Image | TagEnd::CodeBlock) => {
+                unlinked_depth = unlinked_depth.saturating_sub(1);
+            }
+            Event::Start(Tag::Emphasis) => open_marks.push(&src[range.start..range.start + 1]),
+            Event::Start(Tag::Strong) => open_marks.push(&src[range.start..range.start + 2]),
+            Event::End(TagEnd::Emphasis | TagEnd::Strong) => {
+                open_marks.pop();
+            }
+            Event::Text(_) if unlinked_depth == 0 => {
+                // Text events in a row become one text in the tree.
+                let run_end = events[i..]
+                    .iter()
+                    .position(|(event, _)| !matches!(event, Event::Text(_)))
+                    .map_or(events.len(), |n| i + n);
+                let mut text = String::new();
+                // Where each event's text starts in `text`.
+                let mut starts = Vec::new();
+                for (event, _) in &events[i..run_end] {
+                    if let Event::Text(s) = event {
+                        starts.push(text.len());
+                        text.push_str(s);
+                    }
+                }
+                // The closing marks of the emphasis around this text, in the
+                // order they come in `src`. Only the innermost few are
+                // checked, so that emphasis nested thousands deep stays quick.
+                let closers: Vec<&str> = open_marks
+                    .iter()
+                    .rev()
+                    .take(MAX_INLINE_DEPTH)
+                    .copied()
+                    .collect();
+                let mut from = 0;
+                while let Some((start, end)) = find_bare_url(&text, from) {
+                    from = end;
+                    let n = starts.partition_point(|&s| s <= start) - 1;
+                    let range = &events[i + n].1;
+                    // A URL that starts inside an entity has no place in `src`.
+                    if decoded.contains_key(&range.start) {
+                        continue;
+                    }
+                    let at = range.start + (start - starts[n]);
+                    if at >= done {
+                        let url = UrlStart {
+                            text_event: i + n,
+                            at,
+                            closers: &closers,
+                        };
+                        done = escape_bare_url(src, &events, &url, &decoded, &mut escapes);
+                    }
+                }
+                i = run_end;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if escapes.is_empty() {
+        return Cow::Borrowed(src);
+    }
+    escapes.sort_unstable();
+    escapes.dedup();
+    let mut out = String::with_capacity(src.len() + escapes.len());
+    let mut copied = 0;
+    for at in escapes {
+        out.push_str(&src[copied..at]);
+        out.push('\\');
+        copied = at;
+    }
+    out.push_str(&src[copied..]);
+    Cow::Owned(out)
+}
+
+/// Where a bare URL starts, for [`escape_bare_url`].
+struct UrlStart<'a> {
+    /// The index in the events of the text event that the URL starts in.
+    text_event: usize,
+    /// The byte of the source where the URL starts.
+    at: usize,
+    /// The closing marks of the emphasis that is open where the URL starts,
+    /// innermost first: `*`, `_`, `**` or `__`.
+    closers: &'a [&'a str],
+}
+
+/// Find where the bare URL that starts at `url` ends in `src`. Add the byte
+/// of each `*` and `_` in the URL that has no backslash before it to
+/// `escapes`, and return the byte where the URL ends.
+fn escape_bare_url(
+    src: &str,
+    events: &[(Event, Range<usize>)],
+    url: &UrlStart,
+    decoded: &HashMap<usize, (usize, &str)>,
+    escapes: &mut Vec<usize>,
+) -> usize {
+    let limit = url_limit(src, events, url.text_event, url.at);
+    // The URL's characters as the reader sees them, each with the byte where
+    // its source starts and whether it is a `*` or `_` with no backslash.
+    let mut chars: Vec<(usize, char, bool)> = Vec::new();
+    let mut at = url.at;
+    while at < limit {
+        if let Some(&(end, text)) = decoded.get(&at) {
+            if text.contains(ends_url) {
+                break;
+            }
+            chars.extend(text.chars().map(|c| (at, c, false)));
+            at = end;
+            continue;
+        }
+        let Some(c) = src[at..].chars().next() else {
+            break;
+        };
+        // A backslash before ASCII punctuation makes that a plain character.
+        if c == '\\' {
+            if let Some(next) = src[at + 1..]
+                .chars()
+                .next()
+                .filter(char::is_ascii_punctuation)
+            {
+                if ends_url(next) {
+                    break;
+                }
+                chars.push((at, next, false));
+                at += 2;
+                continue;
+            }
+        }
+        if ends_url(c) {
+            break;
+        }
+        chars.push((at, c, matches!(c, '*' | '_')));
+        at += c.len_utf8();
+    }
+    let shown: String = chars.iter().map(|&(_, c, _)| c).collect();
+    // The number of characters that `trim_url_end` keeps of the first `n`.
+    let trim = |n: usize| {
+        let bytes = shown.char_indices().nth(n).map_or(shown.len(), |(b, _)| b);
+        trim_url_end(&shown[..bytes]).chars().count()
+    };
+    let mut kept = trim(chars.len());
+    // If the URL ends with the closing marks of the emphasis around it, such
+    // as the last "*" of "*see https://a.example/x_(y)_z*", leave them out.
+    // Look for the marks of all the open emphasis first, then drop the
+    // outermost one at a time, since the innermost emphasis closes first.
+    for count in (1..=url.closers.len()).rev() {
+        let mut end = kept;
+        let mut all_found = true;
+        // The outermost of these closes last, at the very end.
+        for closer in url.closers[..count].iter().rev() {
+            let n = closer.len();
+            let found = end >= n
+                && chars[end - n..end]
+                    .iter()
+                    .zip(closer.chars())
+                    .all(|(&(_, c, mark), want)| mark && c == want);
+            if !found {
+                all_found = false;
+                break;
+            }
+            end = trim(end - n);
+        }
+        if all_found {
+            kept = end;
+            break;
+        }
+    }
+    escapes.extend(
+        chars[..kept]
+            .iter()
+            .filter(|&&(_, _, mark)| mark)
+            .map(|&(at, _, _)| at),
+    );
+    chars.get(kept).map_or(at, |&(at, _, _)| at)
+}
+
+/// The byte of `src` where a bare URL that starts at byte `start`, in the
+/// text event `events[text_event]`, ends at the latest: at the next character
+/// that [`ends_url`] accepts, or where a code span, link, image, raw HTML or
+/// line break starts.
+fn url_limit(
+    src: &str,
+    events: &[(Event, Range<usize>)],
+    text_event: usize,
+    start: usize,
+) -> usize {
+    let stop = src[start..].find(ends_url).map_or(src.len(), |n| start + n);
+    // How far in `src` the events read so far reach.
+    let mut reached = events[text_event].1.end;
+    for (event, range) in &events[text_event + 1..] {
+        if reached >= stop {
+            break;
+        }
+        reached = match event {
+            Event::Text(_) => range.end,
+            // The range of an emphasis element runs from its opening `*` or
+            // `_` to the end of its closing one, and strong has two of each.
+            Event::Start(Tag::Emphasis) => range.start + 1,
+            Event::Start(Tag::Strong) => range.start + 2,
+            Event::End(TagEnd::Emphasis | TagEnd::Strong) => range.end,
+            // The end of a paragraph, heading or list item.
+            Event::End(_) => return stop.min(reached),
+            // A code span, link, image, raw HTML, line break or any other
+            // element.
+            _ => return stop.min(range.start),
+        };
+    }
+    stop
+}
+
 /// Turn the bare http and https URLs in the text of `blocks` into links, as
 /// Xeno-canto's own pages do. Remarks such as "See here
 /// https://observation.org/observation/286354922/" rely on it. Text inside a
@@ -394,9 +652,16 @@ fn link_bare_urls(blocks: &mut [MdBlock]) {
 }
 
 fn link_bare_urls_in(items: &mut Vec<MdInline>) {
-    for item in std::mem::take(items) {
+    let mut old = std::mem::take(items).into_iter().peekable();
+    while let Some(item) = old.next() {
         match item {
-            MdInline::Text(text) => push_text_with_links(&text, items),
+            MdInline::Text(text) => {
+                let before_emphasis = matches!(
+                    old.peek(),
+                    Some(MdInline::Emphasis(_) | MdInline::Strong(_))
+                );
+                push_text_with_links(&text, before_emphasis, items)
+            }
             MdInline::Emphasis(mut children) => {
                 link_bare_urls_in(&mut children);
                 items.push(MdInline::Emphasis(children));
@@ -415,7 +680,14 @@ fn link_bare_urls_in(items: &mut Vec<MdInline>) {
 
 /// Append `text` to `items`, with each bare URL in it as a link that shows
 /// the URL.
-fn push_text_with_links(text: &str, items: &mut Vec<MdInline>) {
+///
+/// `before_emphasis` says that emphasis or strong text comes straight after
+/// `text`. A URL that runs to the end of `text` then stays plain text: the
+/// emphasis may have cut it, and a link to the part before the cut would
+/// go to the wrong address. [`escape_emphasis_in_bare_urls`] stops that for
+/// almost every URL, so this only catches the ones it cannot see, such as a
+/// URL in the text of a link that is not shown as a link.
+fn push_text_with_links(text: &str, before_emphasis: bool, items: &mut Vec<MdInline>) {
     let mut done = 0;
     let mut from = 0;
     while let Some((start, end)) = find_bare_url(text, from) {
@@ -424,6 +696,9 @@ fn push_text_with_links(text: &str, items: &mut Vec<MdInline>) {
         let Some(href) = web_href(url) else {
             continue;
         };
+        if before_emphasis && !text[end..].contains(ends_url) {
+            continue;
+        }
         if start > done {
             items.push(MdInline::Text(text[done..start].to_string()));
         }
@@ -444,12 +719,9 @@ fn push_text_with_links(text: &str, items: &mut Vec<MdInline>) {
 /// A URL starts with "http://" or "https://", in any case, at the start of
 /// the text or after a character that is not an ASCII letter or digit, and a
 /// letter or digit must follow the "//". Chinese and Japanese text has no
-/// spaces, so a URL straight after it still counts. It ends before a space, a control
-/// character, `<`, `>` or `"`. Trailing punctuation is left out, as GitHub
-/// does: any of `. , ; : ! ? ' * _ ~`, and a `)` or `]` that has no opening
-/// partner in the URL. So "(see https://a.example/x)." gives
-/// "https://a.example/x", and "https://en.wikipedia.org/wiki/Bat_(animal)" is
-/// kept whole.
+/// spaces, so a URL straight after it still counts. It ends before a
+/// character that [`ends_url`] accepts, such as a space. Trailing punctuation
+/// is left out, as [`trim_url_end`] describes.
 fn find_bare_url(text: &str, from: usize) -> Option<(usize, usize)> {
     let mut search = from;
     while let Some(pos) = text[search..].find(|c: char| c == 'h' || c == 'H') {
@@ -474,9 +746,7 @@ fn find_bare_url(text: &str, from: usize) -> Option<(usize, usize)> {
         if !text[start + scheme_len..].starts_with(char::is_alphanumeric) {
             continue;
         }
-        let len = text[start..]
-            .find(|c: char| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"'))
-            .unwrap_or(text.len() - start);
+        let len = text[start..].find(ends_url).unwrap_or(text.len() - start);
         // Trimming stops at the letter or digit after the "//" at the latest.
         let url = trim_url_end(&text[start..start + len]);
         return Some((start, start + url.len()));
@@ -488,7 +758,20 @@ fn starts_with_ignore_ascii_case(bytes: &[u8], prefix: &[u8]) -> bool {
     bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
-/// `url` without the trailing punctuation that [`find_bare_url`] leaves out.
+/// Whether `c` ends a bare URL: a space, a control character, `<`, `>`, `"`
+/// or a backtick.
+fn ends_url(c: char) -> bool {
+    c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"' | '`')
+}
+
+/// `url` without its trailing punctuation, as GitHub leaves it out: any of
+/// `. , ; : ! ? ' ~`, and a `)` or `]` that has no opening partner in the URL.
+/// So "(see https://a.example/x)." gives "https://a.example/x", and
+/// "https://en.wikipedia.org/wiki/Bat_(animal)" is kept whole.
+///
+/// A trailing `*` or `_` stays. One that marks emphasis is not in the text,
+/// and [`escape_emphasis_in_bare_urls`] makes the others plain characters,
+/// as in "https://web.archive.org/web/*/example.com/*".
 fn trim_url_end(url: &str) -> &str {
     let open_parens = url.matches('(').count();
     let mut close_parens = url.matches(')').count();
@@ -497,7 +780,7 @@ fn trim_url_end(url: &str) -> &str {
     let mut end = url.len();
     while let Some(last) = url[..end].chars().next_back() {
         match last {
-            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '*' | '_' | '~' => {}
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '~' => {}
             ')' if close_parens > open_parens => close_parens -= 1,
             ']' if close_brackets > open_brackets => close_brackets -= 1,
             _ => break,
@@ -1098,6 +1381,141 @@ mod tests {
         assert_eq!(
             parse("```\nhttps://a.example\n```"),
             vec![Literal("https://a.example".into())]
+        );
+    }
+
+    #[test]
+    fn bare_urls_with_emphasis_marks_are_linked_whole() {
+        // Each of these has a pair of `_` or `*` that the parser would read
+        // as emphasis, which cut the link short.
+        for url in [
+            "https://en.wikipedia.org/wiki/A_(b)_c_(d)",
+            "https://a.example/rec_(1)_x_(2).wav",
+            "https://a.example/x/__init__.py",
+            "https://www.biodiversitylibrary.org/page/_12345_",
+            "https://web.archive.org/web/*/example.com/*",
+            "https://a.example/?a=_b_&c=1",
+        ] {
+            assert_eq!(parse(url), vec![Paragraph(vec![link(url)])], "{url}");
+            assert_eq!(
+                parse(&format!("See {url}. Next")),
+                vec![Paragraph(vec![text("See "), link(url), text(". Next")])],
+                "{url}"
+            );
+            assert_eq!(
+                parse(&format!("*see {url}*")),
+                vec![Paragraph(vec![Emphasis(vec![text("see "), link(url)])])],
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn emphasis_around_a_bare_url_stays_emphasis() {
+        assert_eq!(
+            parse("_see https://a.example/a_b_ and **https://b.example/c_(d)_e**"),
+            vec![Paragraph(vec![
+                Emphasis(vec![text("see "), link("https://a.example/a_b")]),
+                text(" and "),
+                Strong(vec![link("https://b.example/c_(d)_e")]),
+            ])]
+        );
+        // The parser closes the emphasis at "Bat_(" unless the `_` there is
+        // escaped.
+        assert_eq!(
+            parse("_https://en.wikipedia.org/wiki/Bat_(animal)_."),
+            vec![Paragraph(vec![
+                Emphasis(vec![link("https://en.wikipedia.org/wiki/Bat_(animal)")]),
+                text("."),
+            ])]
+        );
+        assert_eq!(
+            parse("***https://a.example/x_(y)_z***"),
+            vec![Paragraph(vec![Emphasis(vec![Strong(vec![link(
+                "https://a.example/x_(y)_z"
+            )])])])]
+        );
+        // Emphasis that starts inside a URL and ends after it is lost.
+        assert_eq!(
+            parse("https://a.example/?q=*foo bar*"),
+            vec![Paragraph(vec![
+                link("https://a.example/?q=*foo"),
+                text(" bar*")
+            ])]
+        );
+    }
+
+    #[test]
+    fn bare_url_escapes_change_nothing_else() {
+        // A code span, link or autolink straight after a URL keeps its `_`.
+        assert_eq!(
+            parse("https://a.example/_x_`a_b_`"),
+            vec![Paragraph(vec![
+                link("https://a.example/_x_"),
+                Code("a_b_".into())
+            ])]
+        );
+        assert_eq!(
+            parse("https://a.example/_x_[t_*u*](https://b.example/_y_)"),
+            vec![Paragraph(vec![
+                link("https://a.example/_x_"),
+                Link {
+                    href: "https://b.example/_y_".into(),
+                    children: vec![text("t_"), Emphasis(vec![text("u")])],
+                },
+            ])]
+        );
+        assert_eq!(
+            parse("https://a.example/_x_<https://b.example/_y_>"),
+            vec![Paragraph(vec![
+                link("https://a.example/_x_"),
+                link("https://b.example/_y_")
+            ])]
+        );
+        assert_eq!(
+            parse("`https://a.example/_x_`\n\n```\nhttps://a.example/*y*\n```"),
+            vec![
+                Paragraph(vec![Code("https://a.example/_x_".into())]),
+                Literal("https://a.example/*y*".into()),
+            ]
+        );
+        // `_` that the source already escapes, an escaped backslash, and an
+        // entity.
+        assert_eq!(
+            parse(r"https://a.example/\_x\_ https://b.example/\\_y_"),
+            vec![Paragraph(vec![
+                link("https://a.example/_x_"),
+                text(" "),
+                link(r"https://b.example/\_y_"),
+            ])]
+        );
+        assert_eq!(
+            parse("https://a.example/?a=1&amp;b=_c_"),
+            vec![Paragraph(vec![link("https://a.example/?a=1&b=_c_")])]
+        );
+        // Raw HTML around a URL stays as it was typed.
+        assert_eq!(
+            parse("<b>https://a.example/_x_</b>"),
+            vec![Paragraph(vec![
+                text("<b>"),
+                link("https://a.example/_x_"),
+                text("</b>")
+            ])]
+        );
+    }
+
+    #[test]
+    fn a_bare_url_cut_by_emphasis_stays_text() {
+        // The text of a link that is not shown as a link is parsed with
+        // emphasis, and the URL in it is cut. It must not link to the part
+        // before the cut.
+        assert_eq!(
+            parse("[https://a.example/A_(b)_c_(d)](javascript:x)"),
+            vec![Paragraph(vec![
+                text("https://a.example/A_(b)"),
+                Emphasis(vec![text("c")]),
+                text("(d)"),
+            ])]
         );
     }
 
