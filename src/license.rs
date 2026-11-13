@@ -486,7 +486,7 @@ mod tests {
                 "CC BY-NC-ND 1.0 FI",
                 Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 FI"),
             ),
-            // So do the 2.0 Japan licences.
+            // The 2.0 Japan port also has licences without BY.
             (
                 "CC NC 2.0 JP",
                 Some("Creative Commons NonCommercial 2.0 JP"),
