@@ -181,6 +181,22 @@ pub fn draw_solid_shield(
     ctx.stroke_rect(x + 0.5, y_top + 0.5, w - 1.0, h - 1.0);
 }
 
+/// Height of a frequency label's dark background box.
+const FREQ_LABEL_BOX_H: f64 = 14.0;
+/// Height of a 9 px minor frequency label's text.
+const MINOR_LABEL_H: f64 = 10.0;
+
+/// The y of a frequency label's bottom edge (the text baseline is "bottom")
+/// for a division line at `y`: 2 px above the line, or 2 px below it when a
+/// label `height` px tall would run past the canvas top.
+fn freq_label_bottom(y: f64, height: f64) -> f64 {
+    if y - 2.0 - height < 0.0 {
+        y + 2.0 + height
+    } else {
+        y - 2.0
+    }
+}
+
 /// Draw horizontal frequency marker lines with subtle, interactive UI.
 /// Labels are white; colored range bars indicate the resistor-band color.
 pub fn draw_freq_markers(
@@ -235,6 +251,9 @@ pub fn draw_freq_markers(
         0.0
     };
     let hide_topmost_for_nyquist = is_nyquist_top && topmost_div_y_frac > 0.95;
+    // The bottom edge of each main label drawn, so a minor label that would
+    // overlap one is left out.
+    let mut label_bottoms: Vec<f64> = Vec::new();
 
     for &freq in &divisions {
         let y = freq_to_y(freq, min_freq, max_freq, canvas_height);
@@ -323,9 +342,12 @@ pub fn draw_freq_markers(
             }
         }
 
-        // --- White text label (drawn ABOVE the division line) ---
+        // --- White text label (drawn ABOVE the division line, or below it
+        // when there is no room above) ---
+        let label_y = freq_label_bottom(y, FREQ_LABEL_BOX_H);
+        label_bottoms.push(label_y);
         ctx.set_font("11px sans-serif");
-        ctx.set_text_baseline("bottom"); // text sits above the line
+        ctx.set_text_baseline("bottom"); // the text's bottom edge is at label_y
         let base_label = freq_marker_label(freq);
         let label_alpha = base_alpha;
 
@@ -394,7 +416,7 @@ pub fn draw_freq_markers(
             };
             let bg_metrics = ctx.measure_text(&full_label_for_measure).unwrap();
             let bg_w = bg_metrics.width() + 4.0;
-            let bg_h = 14.0;
+            let bg_h = FREQ_LABEL_BOX_H;
             let text_x = if labels_on_right {
                 label_x - bg_metrics.width()
             } else {
@@ -402,21 +424,21 @@ pub fn draw_freq_markers(
             };
             let bg_x = text_x - 2.0;
             ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-            ctx.fill_rect(bg_x, y - 2.0 - bg_h, bg_w, bg_h);
+            ctx.fill_rect(bg_x, label_y - bg_h, bg_w, bg_h);
 
             ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
-            let _ = ctx.fill_text(&base_label, text_x, y - 2.0);
+            let _ = ctx.fill_text(&base_label, text_x, label_y);
             let khz_alpha = label_alpha * khz_fade;
             if khz_alpha > 0.002 {
                 let metrics = ctx.measure_text(&base_label).unwrap();
                 let num_w = metrics.width();
                 ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
-                let _ = ctx.fill_text(&suffix, text_x + num_w, y - 2.0);
+                let _ = ctx.fill_text(&suffix, text_x + num_w, label_y);
             }
         } else {
             let bg_metrics = ctx.measure_text(&label).unwrap();
             let bg_w = bg_metrics.width() + 4.0;
-            let bg_h = 14.0;
+            let bg_h = FREQ_LABEL_BOX_H;
             let text_x = if labels_on_right {
                 label_x - bg_metrics.width()
             } else {
@@ -424,10 +446,10 @@ pub fn draw_freq_markers(
             };
             let bg_x = text_x - 2.0;
             ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-            ctx.fill_rect(bg_x, y - 2.0 - bg_h, bg_w, bg_h);
+            ctx.fill_rect(bg_x, label_y - bg_h, bg_w, bg_h);
 
             ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
-            let _ = ctx.fill_text(&label, text_x, y - 2.0);
+            let _ = ctx.fill_text(&label, text_x, label_y);
         }
 
         // --- Short left tick line (lightly colored, under the label) ---
@@ -500,8 +522,13 @@ pub fn draw_freq_markers(
                 ctx.line_to(canvas_width, y);
                 ctx.stroke();
 
-                // Small label (only when hovering label area)
-                if ms.label_hover_opacity > 0.01 {
+                // Small label (only when hovering label area), left out where
+                // it would overlap a main label: both start at the same x.
+                let mlabel_y = freq_label_bottom(y, MINOR_LABEL_H);
+                let hits_main_label = label_bottoms.iter().any(|&bottom| {
+                    mlabel_y > bottom - FREQ_LABEL_BOX_H && mlabel_y - MINOR_LABEL_H < bottom
+                });
+                if ms.label_hover_opacity > 0.01 && !hits_main_label {
                     let mlabel = freq_marker_label(mf);
                     ctx.set_font("9px sans-serif");
                     ctx.set_text_baseline("bottom");
@@ -513,7 +540,7 @@ pub fn draw_freq_markers(
                     } else {
                         label_x
                     };
-                    let _ = ctx.fill_text(&mlabel, text_x, y - 2.0);
+                    let _ = ctx.fill_text(&mlabel, text_x, mlabel_y);
                 }
             }
 
@@ -2178,4 +2205,19 @@ pub fn draw_time_marker_lines(
 
     let _ = ctx.set_line_dash(&js_sys::Array::new());
     ctx.restore();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn freq_labels_near_the_top_go_below_their_line() {
+        assert_eq!(freq_label_bottom(100.0, FREQ_LABEL_BOX_H), 98.0);
+        // Exactly room above the line.
+        assert_eq!(freq_label_bottom(16.0, FREQ_LABEL_BOX_H), 14.0);
+        // One pixel short: below the line instead.
+        assert_eq!(freq_label_bottom(15.0, FREQ_LABEL_BOX_H), 31.0);
+        assert_eq!(freq_label_bottom(5.0, MINOR_LABEL_H), 17.0);
+    }
 }
