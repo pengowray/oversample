@@ -165,17 +165,20 @@ pub(crate) fn license_title(label: &str) -> String {
     }
 }
 
-/// A licence's country or IGO port in a Creative Commons address: "au", "igo".
+/// A licence's country or IGO port in a Creative Commons address: "au",
+/// "igo", or "scotland" (the 2.5 port for Scotland).
 fn is_cc_port(part: &str) -> bool {
     (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
         || part.eq_ignore_ascii_case("igo")
+        || part.eq_ignore_ascii_case("scotland")
 }
 
 /// The name of a Creative Commons licence from its short code.
 /// e.g. "CC BY-NC 4.0" -> "Creative Commons Attribution-NonCommercial 4.0 International".
 /// Versions before 4.0 end in "Unported" (3.0) or "Generic" (1.0 to 2.5), as
 /// Creative Commons names them; a ported licence ends in its port code
-/// ("CC BY 3.0 AU" -> "... Attribution 3.0 AU"). Version 1.0 names
+/// ("CC BY 3.0 AU" -> "... Attribution 3.0 AU"), or "UK: Scotland" for
+/// Scotland's. Version 2.1 has only ported licences. Version 1.0 names
 /// NoDerivs before NonCommercial, as its pages do: "CC BY-NC-ND 1.0" ->
 /// "... Attribution-NoDerivs-NonCommercial 1.0 Generic". "CC0 1.0" is "CC0 1.0
 /// Universal" and the Public Domain Mark is "Public Domain Mark 1.0
@@ -200,7 +203,7 @@ struct CcLicense {
     elements: String,
     /// "4.0".
     version: String,
-    /// "au", "igo", or `None` for a licence without a port.
+    /// "au", "igo", "scotland", or `None` for a licence without a port.
     port: Option<String>,
 }
 
@@ -215,11 +218,15 @@ impl CcLicense {
         }
         let (elements, version) = (words.next()?, words.next()?);
         let port = words.next();
-        if words.next().is_some() || !["1.0", "2.0", "2.5", "3.0", "4.0"].contains(&version) {
+        if words.next().is_some() || !["1.0", "2.0", "2.1", "2.5", "3.0", "4.0"].contains(&version)
+        {
             return None;
         }
-        // 4.0 licences have no ports.
-        if port.is_some_and(|p| !is_cc_port(p) || version == "4.0") {
+        // 4.0 licences have no ports, and 2.1 licences all have one
+        // ("jp", "es", "au", ...).
+        if port.is_some_and(|p| !is_cc_port(p) || version == "4.0")
+            || (version == "2.1" && port.is_none())
+        {
             return None;
         }
         // Version 1.0's addresses put ND before NC ("by-nd-nc", "nd-nc"), and
@@ -251,7 +258,8 @@ impl CcLicense {
                 _ => "NoDerivs",
             })
             .collect();
-        let suffix = match (&self.port, version) {
+        let suffix = match (self.port.as_deref(), version) {
+            (Some("scotland"), _) => "UK: Scotland".to_string(),
             (Some(p), _) => p.to_uppercase(),
             (None, "4.0") => "International".to_string(),
             (None, "3.0") => "Unported".to_string(),
@@ -421,6 +429,18 @@ mod tests {
                 "CC BY-SA 3.0 igo",
                 Some("Creative Commons Attribution-ShareAlike 3.0 IGO"),
             ),
+            // Scotland's port is named as on its Creative Commons page.
+            (
+                "CC BY-SA 2.5 SCOTLAND",
+                Some("Creative Commons Attribution-ShareAlike 2.5 UK: Scotland"),
+            ),
+            // Version 2.1 licences all have a port.
+            ("CC BY 2.1 JP", Some("Creative Commons Attribution 2.1 JP")),
+            (
+                "CC BY-NC-SA 2.1 es",
+                Some("Creative Commons Attribution-NonCommercial-ShareAlike 2.1 ES"),
+            ),
+            ("CC BY 2.1", None),
             ("CC BY 4.0 AU", None),
             ("CC BY 3.0 legalcode", None),
             ("CC BY-XX 4.0", None),
@@ -532,6 +552,14 @@ mod tests {
                 "https://creativecommons.org/licenses/nc/2.0/jp/",
                 Some("CC NC 2.0 JP"),
             ),
+            (
+                "http://creativecommons.org/licenses/by-sa/2.5/scotland/",
+                Some("CC BY-SA 2.5 SCOTLAND"),
+            ),
+            (
+                "https://creativecommons.org/licenses/by/2.1/jp/",
+                Some("CC BY 2.1 JP"),
+            ),
             ("https://creativecommons.org/about/", None),
             // An address with a page name where the version would be.
             (
@@ -543,6 +571,7 @@ mod tests {
             (" CC BY-SA 3.0 de ", Some("CC BY-SA 3.0 DE")),
             ("cc by-sa 4.0", Some("CC BY-SA 4.0")),
             ("CC BY-SA 3.0 igo", Some("CC BY-SA 3.0 IGO")),
+            ("cc by-sa 2.5 scotland", Some("CC BY-SA 2.5 SCOTLAND")),
             // A 1.0 licence keeps its spelling here; only its full name and
             // page address use the order creativecommons.org uses.
             ("CC BY-NC-ND 1.0", Some("CC BY-NC-ND 1.0")),
@@ -770,6 +799,25 @@ mod tests {
                     Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
                 ),
             ),
+            // The Scotland port, and a 2.1 licence.
+            (
+                "http://creativecommons.org/licenses/by-sa/2.5/scotland/",
+                None,
+                "CC BY-SA 2.5 SCOTLAND license",
+                row(
+                    "Creative Commons Attribution-ShareAlike 2.5 UK: Scotland",
+                    Some("http://creativecommons.org/licenses/by-sa/2.5/scotland/"),
+                ),
+            ),
+            (
+                "https://creativecommons.org/licenses/by/2.1/jp/",
+                None,
+                "CC BY 2.1 JP license",
+                row(
+                    "Creative Commons Attribution 2.1 JP",
+                    Some("https://creativecommons.org/licenses/by/2.1/jp/"),
+                ),
+            ),
             // GBIF's short name has no version, so no full name or link:
             // the row would repeat the title.
             (
@@ -940,7 +988,16 @@ mod tests {
                 "CC NC-SA 2.0 JP",
                 Some("https://creativecommons.org/licenses/nc-sa/2.0/jp/"),
             ),
+            (
+                "CC BY-SA 2.5 SCOTLAND",
+                Some("https://creativecommons.org/licenses/by-sa/2.5/scotland/"),
+            ),
+            (
+                "CC BY 2.1 JP",
+                Some("https://creativecommons.org/licenses/by/2.1/jp/"),
+            ),
             // No version, or a name Creative Commons doesn't have.
+            ("CC BY 2.1", None),
             ("CC NC-SA 4.0", None),
             ("CC NC 2.0", None),
             ("CC BY-SA-NC 2.5", None),
