@@ -13,7 +13,7 @@ use std::ops::Range;
 
 use leptos::prelude::*;
 use leptos::tachys::view::any_view::AnyView;
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, TextMergeStream};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, TagEnd, TextMergeStream};
 
 /// A block-level element.
 #[derive(Clone, Debug, PartialEq)]
@@ -423,21 +423,20 @@ impl TreeBuilder {
 /// only when the definition's label is written the same way, backslashes
 /// included. With a backslash before each `_`, that text would match a
 /// definition "[https://a.example/\_x\_]: ..." and become a link that the
-/// source does not have. So `src` is returned unchanged when a reference
-/// definition has a backslash in its label.
+/// source does not have. So when a reference definition has a backslash in
+/// its label, the escaped text is parsed again, and `src` is returned
+/// unchanged if the escaped text's links and images differ from those of
+/// `src`.
 fn escape_emphasis_in_bare_urls(src: &str) -> Cow<'_, str> {
     if !src.contains(['*', '_']) || !src.contains("://") {
         return Cow::Borrowed(src);
     }
     let parser = Parser::new_ext(src, Options::empty());
     // The parser reads the reference definitions when it is made.
-    if parser
+    let label_has_backslash = parser
         .reference_definitions()
         .iter()
-        .any(|(label, _)| label.contains('\\'))
-    {
-        return Cow::Borrowed(src);
-    }
+        .any(|(label, _)| label.contains('\\'));
     let events: Vec<(Event, Range<usize>)> = parser.into_offset_iter().collect();
     // Text that reads differently from its source, such as "&" from "&amp;",
     // by the byte where its source starts: where the source ends, and the text.
@@ -535,7 +534,28 @@ fn escape_emphasis_in_bare_urls(src: &str) -> Cow<'_, str> {
         copied = at;
     }
     out.push_str(&src[copied..]);
+    // With a backslash in a reference label, the escaped text could match
+    // that label and gain a link or image, as described above.
+    if label_has_backslash {
+        let escaped_dests = link_and_image_dests(Parser::new_ext(&out, Options::empty()));
+        let src_dests = link_and_image_dests(events.into_iter().map(|(event, _)| event));
+        if escaped_dests != src_dests {
+            return Cow::Borrowed(src);
+        }
+    }
     Cow::Owned(out)
+}
+
+/// The address of each link and image in `events`, in order, with `true`
+/// for an image.
+fn link_and_image_dests<'a>(events: impl Iterator<Item = Event<'a>>) -> Vec<(bool, CowStr<'a>)> {
+    events
+        .filter_map(|event| match event {
+            Event::Start(Tag::Link { dest_url, .. }) => Some((false, dest_url)),
+            Event::Start(Tag::Image { dest_url, .. }) => Some((true, dest_url)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Where a bare URL starts, for [`escape_bare_url`].
@@ -1845,11 +1865,44 @@ mod tests {
             link_hrefs(&parse(&format!("[t][https://a.example/_x_]{def}"))),
             Vec::<&str>::new()
         );
+        // Nor an image.
+        assert_eq!(
+            parse(&format!("![https://a.example/_x_]{def}")),
+            vec![Paragraph(vec![
+                text("![https://a.example/"),
+                Emphasis(vec![text("x")]),
+                text("]"),
+            ])]
+        );
         // A definition with no backslash in its label leaves the escapes on.
         assert_eq!(
             parse("see https://a.example/_x_\n\n[a]: https://b.example"),
             vec![Paragraph(vec![text("see "), link("https://a.example/_x_")])]
         );
+    }
+
+    #[test]
+    fn bare_url_escapes_stay_on_when_they_make_no_reference_links() {
+        // A backslash in a reference label turns the escapes off only when
+        // they would change the links.
+        let def = "\n\n[a\\b]: https://z.example";
+        assert_eq!(
+            parse(&format!("see https://a.example/_x_{def}")),
+            vec![Paragraph(vec![text("see "), link("https://a.example/_x_")])]
+        );
+        // Past the depth limit, emphasis gets no element and its text joins
+        // the text around it, so the cut rule in `push_text_with_links`
+        // cannot see it. Only the escapes keep the marks in the address.
+        let open = "*a **b *c **d *e **f *g **h *i ";
+        let close = " i* h** g* f** e* d** c* b** a*";
+        for url in [
+            "https://a.example/_x_/y",
+            "https://a.example/*x*/y",
+            "https://a.example/__(*a",
+        ] {
+            let blocks = parse(&format!("{open}{url}{close}{def}"));
+            assert_eq!(link_hrefs(&blocks), [url], "{url}");
+        }
     }
 
     #[test]
