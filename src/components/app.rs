@@ -1149,6 +1149,10 @@ pub fn App() -> impl IntoView {
                     state_kb.bat_book.ref_open().set(false);
                     return;
                 }
+                if state_kb.dialogs.find_recordings_open().get_untracked() {
+                    state_kb.dialogs.find_recordings_open().set(false);
+                    return;
+                }
                 if state_kb.dialogs.xc_browser_open().get_untracked() {
                     state_kb.dialogs.xc_browser_open().set(false);
                     return;
@@ -1627,6 +1631,9 @@ pub fn App() -> impl IntoView {
             <RightSidebar />
             {move || state.dialogs.xc_browser_open().get().then(|| view! { <XcBrowser /> })}
             {move || state.dialogs.wiki_browser_open().get().then(|| view! { <WikiBrowser /> })}
+            {move || state.dialogs.find_recordings_open().get().then(|| view! {
+                <crate::components::find_recordings::FindRecordings />
+            })}
             <crate::components::surface_3d::Surface3dDialog />
             {cfg!(debug_assertions).then(|| view! {
                 <div class="debug-build-banner"

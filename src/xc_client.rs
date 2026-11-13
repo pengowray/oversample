@@ -537,7 +537,7 @@ pub async fn name_language_list() -> Option<Vec<String>> {
 
 /// A reply from one of the server's index endpoints.
 #[derive(Debug, PartialEq)]
-enum ServerReply {
+pub(crate) enum ServerReply {
     /// HTTP 200 with this body.
     Ready(String),
     /// HTTP 202: the group is still being indexed. Ask again after
@@ -649,6 +649,30 @@ pub async fn search(src: &XcSource, query: &str, page: u32) -> Result<XcSearchRe
         .map_err(XcError::Other),
         _ => web_search(src, query, page, PER_PAGE).await,
     }
+}
+
+/// One recording by its XC number, from whichever source the user chose.
+/// The proxy answers from its index (`/xc/recording/{id}`) and asks XC only
+/// for recordings it has not indexed; the other sources search `nr:{id}`.
+pub async fn recording_by_id(src: &XcSource, id: u64) -> Result<XcRecording, XcError> {
+    if matches!(src, XcSource::Proxy) {
+        let url = format!("{}/xc/recording/{id}", proxy_base());
+        if let ServerReply::Ready(body) = server_get(&url, false).await? {
+            let value: serde_json::Value = serde_json::from_str(&body)
+                .map_err(|e| XcError::Other(format!("unexpected response: {e}")))?;
+            return xc_lib::api::parse_recording(&value)
+                .ok_or_else(|| XcError::Other(format!("XC{id}: unexpected record")));
+        }
+    }
+    search(src, &format!("nr:{id}"), 1)
+        .await?
+        .recordings
+        .into_iter()
+        .next()
+        .ok_or_else(|| XcError::Http {
+            status: 404,
+            message: Some(format!("XC{id} was not found on Xeno-canto")),
+        })
 }
 
 /// One page of recordings of a species in `group`.
@@ -979,7 +1003,7 @@ async fn server_taxonomy(
 /// own key a slow server does not hold up the local build for long.
 ///
 /// `throttled` waits for the shared request slot first, as XC requests do.
-async fn server_get(url: &str, throttled: bool) -> Result<ServerReply, XcError> {
+pub(crate) async fn server_get(url: &str, throttled: bool) -> Result<ServerReply, XcError> {
     use wasm_bindgen::closure::Closure;
 
     if throttled {

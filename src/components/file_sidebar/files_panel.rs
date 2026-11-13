@@ -16,10 +16,7 @@ use web_sys::{
     CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlInputElement, ImageData, MouseEvent,
 };
 
-use super::loading::{
-    fetch_demo_index, find_open_demo, load_native_file, load_single_demo, read_and_load_file,
-    DemoEntry,
-};
+use super::loading::{load_native_file, read_and_load_file, DemoEntry};
 use super::suggestions::BatsForYou;
 
 /// Reconcile the index-keyed state that `Vec::remove(removed)` invalidates,
@@ -235,35 +232,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
     };
 
     let demo_entries: RwSignal<Vec<DemoEntry>> = RwSignal::new(Vec::new());
-    let demo_picker_open = RwSignal::new(false);
-    let demo_loading = RwSignal::new(false);
     // Default suggestions panel to expanded when the file list starts empty so
     // first-run users see "Bats For You"; collapse when files are present so
     // the panel doesn't push the file list off-screen.
     let bats_expanded = RwSignal::new(state.library.files().with_untracked(|f| f.is_empty()));
-
-    let on_demo_click = move |_: web_sys::MouseEvent| {
-        if demo_picker_open.get_untracked() {
-            demo_picker_open.set(false);
-            return;
-        }
-        if !demo_entries.get_untracked().is_empty() {
-            demo_picker_open.set(true);
-            return;
-        }
-        // Fetch the index
-        demo_loading.set(true);
-        spawn_local(async move {
-            match fetch_demo_index().await {
-                Ok(entries) => {
-                    demo_entries.set(entries);
-                    demo_picker_open.set(true);
-                }
-                Err(e) => log::error!("Failed to fetch demo index: {e}"),
-            }
-            demo_loading.set(false);
-        });
-    };
 
     let state_for_drop = state;
     let on_drop = move |ev: DragEvent| {
@@ -775,101 +747,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         }
                                     >"+ New live recording"</button>
                                 })}
-                                <button class="upload-btn add-files-btn" on:click=on_demo_click>
-                                    {move || if demo_loading.get() { "Loading\u{2026}" } else { "Load demo" }}
-                                </button>
-                                <button class="upload-btn add-files-btn" on:click=move |_| {
-                                    state.dialogs.xc_browser_open().set(true);
-                                }>"Explore XC"</button>
                                 <button
                                     class="upload-btn add-files-btn"
-                                    title="Load a WAV or other recording from Wikimedia Commons or Wikipedia, correcting any declared time expansion factor"
-                                    on:click=move |_| {
-                                        state.dialogs.wiki_browser_open().set(true);
-                                    }
-                                >"From Wikipedia"</button>
+                                    on:click=move |_| state.dialogs.find_recordings_open().set(true)
+                                >"Find recordings"</button>
                             </div>
-                            // Demo picker (inline, when triggered)
-                            {move || demo_picker_open.get().then(|| {
-                                let entries = demo_entries.get();
-                                let bat_entries: Vec<DemoEntry> = entries.iter()
-                                    .filter(|e| e.is_bat())
-                                    .cloned()
-                                    .collect();
-                                let has_bats = !bat_entries.is_empty();
-                                let random_bat_btn = has_bats.then(|| view! {
-                                    <button
-                                        class="demo-item demo-random-bat"
-                                        on:click=move |_| {
-                                            // Prefer a bat that isn't already open; if all are
-                                            // open, fall back to the full pool and jump-to-existing.
-                                            let unopened: Vec<DemoEntry> = bat_entries.iter()
-                                                .filter(|e| find_open_demo(state, &e.filename).is_none())
-                                                .cloned()
-                                                .collect();
-                                            let pool = if unopened.is_empty() { bat_entries.clone() } else { unopened };
-                                            let idx = (js_sys::Math::random() * pool.len() as f64) as usize;
-                                            let entry = pool[idx.min(pool.len() - 1)].clone();
-                                            if let Some(open_idx) = find_open_demo(state, &entry.filename) {
-                                                state.library.current_index().set(Some(open_idx));
-                                                return;
-                                            }
-                                            let label = entry.en.clone()
-                                                .unwrap_or_else(|| entry.filename.clone());
-                                            let load_id = state.loading_start(&format!("Random bat: {label}"));
-                                            spawn_local(async move {
-                                                match load_single_demo(&entry, state, load_id).await {
-                                                    Ok(()) => {}
-                                                    Err(e) => log::error!("Failed to load random bat: {e}"),
-                                                }
-                                                state.loading_done(load_id);
-                                            });
-                                        }
-                                    >
-                                        "Random bat"
-                                    </button>
-                                });
-                                let demo_items: Vec<_> = entries.iter().map(|entry| {
-                                    let entry_clone = entry.clone();
-                                    let display_name = entry.en.clone().unwrap_or_else(|| {
-                                        entry.filename
-                                            .trim_end_matches(".wav")
-                                            .trim_end_matches(".w4v")
-                                            .trim_end_matches(".flac")
-                                            .trim_end_matches(".mp3")
-                                            .to_string()
-                                    });
-                                    view! {
-                                        <button
-                                            class="demo-item"
-                                            on:click=move |_| {
-                                                let entry = entry_clone.clone();
-                                                if let Some(idx) = find_open_demo(state, &entry.filename) {
-                                                    state.library.current_index().set(Some(idx));
-                                                    demo_picker_open.set(false);
-                                                    return;
-                                                }
-                                                let load_id = state.loading_start(&entry.filename);
-                                                spawn_local(async move {
-                                                    match load_single_demo(&entry, state, load_id).await {
-                                                        Ok(()) => {}
-                                                        Err(e) => log::error!("Failed to load demo sound: {e}"),
-                                                    }
-                                                    state.loading_done(load_id);
-                                                });
-                                            }
-                                        >
-                                            {display_name}
-                                        </button>
-                                    }
-                                }).collect();
-                                view! {
-                                    <div class="demo-picker">
-                                        {random_bat_btn}
-                                        {demo_items}
-                                    </div>
-                                }
-                            })}
                         </div>
                     }.into_any()
             }}

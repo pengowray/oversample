@@ -22,7 +22,7 @@ type Snap = {
 async function loadDemoBat(page: Page) {
   await page.goto("/");
   await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
-  const loadDemo = page.locator("button.add-files-btn", { hasText: "Load demo" });
+  const loadDemo = page.locator("button.add-files-btn", { hasText: "Find recordings" });
   await expect(loadDemo).toBeVisible({ timeout: 15_000 });
   await loadDemo.click();
   const randomBat = page.locator(".demo-random-bat").first();

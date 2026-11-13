@@ -487,7 +487,7 @@ enum ErrorActions {
 
 /// Text for an error, worded for the source that produced it. Server
 /// details for Busy, Upstream and BadKey go to the log, not the message.
-fn error_text(e: &XcError, src: &XcSource) -> String {
+pub(crate) fn error_text(e: &XcError, src: &XcSource) -> String {
     let is_proxy = *src == XcSource::Proxy;
     match e {
         XcError::Network if is_proxy => ERR_NETWORK_PROXY.to_string(),

@@ -128,8 +128,8 @@ test.describe("Oversample web smoke", () => {
     await page.goto("/");
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
 
-    // Open the demo picker, then load a random bat.
-    const loadDemo = page.locator("button.add-files-btn", { hasText: "Load demo" });
+    // Open Find recordings (it opens on the demo list), then load a random bat.
+    const loadDemo = page.locator("button.add-files-btn", { hasText: "Find recordings" });
     await expect(loadDemo).toBeVisible({ timeout: 15_000 });
     await loadDemo.click();
     const randomBat = page.locator(".demo-random-bat").first();
@@ -171,7 +171,7 @@ test.describe("Oversample web smoke", () => {
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
 
     // Load a demo bat — any bat file drives all the caches.
-    const loadDemo = page.locator("button.add-files-btn", { hasText: "Load demo" });
+    const loadDemo = page.locator("button.add-files-btn", { hasText: "Find recordings" });
     await expect(loadDemo).toBeVisible({ timeout: 15_000 });
     await loadDemo.click();
     const randomBat = page.locator(".demo-random-bat").first();

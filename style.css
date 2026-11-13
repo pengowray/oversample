@@ -6716,6 +6716,381 @@ button.toolbar-overflow-btn {
     font-size: 11px;
 }
 
+/* ── Find recordings (combined species search) ─────────────────────────────
+   One dialog for every source: species list on the left, the selected
+   entry's recordings on the right. Reuses the .xc-* controls so it looks like
+   the Xeno-canto browser it replaces. Below 760 px the panes show one at a
+   time (.show-detail swaps them). */
+
+.find-modal {
+    width: min(96vw, 1100px);
+    height: min(88vh, 900px);
+    max-height: none;
+}
+
+.find-controls {
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.find-search {
+    width: 100%;
+    font-size: 14px;
+    padding: 7px 10px;
+}
+
+.find-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+}
+
+.find-filters label {
+    color: #aaa;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.find-filters .xc-select {
+    max-width: 220px;
+}
+
+.find-locating {
+    color: #aaa;
+    font-size: 12px;
+}
+
+.find-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(240px, 340px) 1fr;
+}
+
+.find-species {
+    overflow-y: auto;
+    border-right: 1px solid #333;
+    min-height: 0;
+}
+
+.find-detail {
+    overflow-y: auto;
+    min-height: 0;
+    padding-bottom: 8px;
+}
+
+/* Species rows: name and count on the first line, scientific name and group
+   under the name. The selected row gets a background, not bold, so text
+   doesn't rewrap. */
+.find-species-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0 8px;
+    width: 100%;
+    padding: 6px 16px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid #2a2a3a;
+    color: #ddd;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.find-species-row:hover {
+    background: #2a2a4a;
+}
+
+.find-species-row.selected {
+    background: #33335a;
+}
+
+.find-fixed-row {
+    color: #e8e8e8;
+    background: #222233;
+}
+
+.find-sp-name {
+    overflow-wrap: anywhere;
+}
+
+.find-sp-count {
+    color: #a0a0a0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.find-sp-sci {
+    grid-column: 1 / -1;
+    color: #a0a0a0;
+    font-size: 11px;
+}
+
+/* A species found by name with no recordings: its name is muted and its
+   count is 0; the row still opens its Wikipedia and BeastieBot links. */
+.find-no-recordings .find-sp-name {
+    color: #a0a0a0;
+}
+
+.find-zero {
+    color: #888;
+}
+
+.find-link-row {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: #2a3a5a;
+    border: none;
+    border-bottom: 1px solid #333;
+    color: #e8e8e8;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.find-link-row:hover {
+    background: #34466a;
+}
+
+.find-notice {
+    padding: 12px 16px;
+    color: #ccc;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.find-notice-small {
+    padding: 8px 16px;
+    background: #2a2a1e;
+    color: #d8d0a0;
+    border-bottom: 1px solid #333;
+}
+
+.find-notice-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.find-empty {
+    padding: 10px 16px;
+    color: #a0a0a0;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.find-more {
+    display: block;
+    margin: 8px auto;
+    background: none;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.find-more:hover {
+    background: #2a2a4a;
+}
+
+.find-detail-head {
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid #333;
+}
+
+.find-detail-head h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e8e8e8;
+}
+
+.find-detail-sci {
+    font-weight: 400;
+    color: #a0a0a0;
+    font-size: 13px;
+}
+
+.find-detail-sub {
+    margin-top: 3px;
+    color: #aaa;
+    font-size: 12px;
+}
+
+.find-detail-sub a, .find-rec-source {
+    color: #6ea8fe;
+    text-decoration: none;
+}
+
+.find-detail-sub a:hover, .find-rec-source:hover {
+    text-decoration: underline;
+}
+
+.find-detail-head .demo-random-bat {
+    margin-top: 8px;
+}
+
+/* Recordings: one grid row per recording, recordist and licence on a second
+   line. Numbers are right-aligned with tabular figures so a column can be
+   scanned. */
+.find-rec-head, .find-rec-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 84px 52px 72px 64px 84px 58px;
+    gap: 2px 8px;
+    padding: 5px 16px;
+    font-size: 12px;
+    align-items: center;
+}
+
+.find-rec-head.with-species, .find-rec-row.with-species {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 84px 52px 72px 64px 84px 58px;
+}
+
+.find-rec-head {
+    color: #888;
+    border-bottom: 1px solid #333;
+    position: sticky;
+    top: 0;
+    background: #1e1e2e;
+    font-size: 11px;
+}
+
+.find-rec-row {
+    border-bottom: 1px solid #2a2a3a;
+    color: #ccc;
+}
+
+.find-rec-row:hover {
+    background: #26263e;
+}
+
+.find-rec-place {
+    overflow-wrap: anywhere;
+}
+
+.find-rec-dist {
+    margin-left: 6px;
+    color: #a0a0a0;
+    white-space: nowrap;
+}
+
+.find-rec-date, .find-rec-num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.find-rec-num {
+    text-align: right;
+}
+
+.find-rec-detail {
+    grid-column: 1 / -1;
+    color: #999;
+    font-size: 11px;
+}
+
+.find-rec-load {
+    justify-self: end;
+    min-height: 24px;
+}
+
+.find-demo-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0 8px;
+    padding: 6px 16px;
+    border-bottom: 1px solid #2a2a3a;
+    font-size: 13px;
+    align-items: center;
+}
+
+.find-demo-row .find-sp-sci {
+    grid-column: 1;
+    grid-row: 2;
+}
+
+.find-demo-row .find-rec-load {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+}
+
+.find-back {
+    display: none;
+}
+
+.find-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 16px;
+    border-top: 1px solid #333;
+    color: #888;
+    font-size: 11px;
+}
+
+@media (max-width: 760px) {
+    .find-modal {
+        width: 100vw;
+        height: 100dvh;
+        border-radius: 0;
+    }
+
+    .find-body {
+        grid-template-columns: 1fr;
+    }
+
+    .find-species {
+        border-right: none;
+    }
+
+    .find-body.show-detail .find-species,
+    .find-body:not(.show-detail) .find-detail {
+        display: none;
+    }
+
+    .find-back {
+        display: inline-block;
+        margin: 8px 16px 0;
+    }
+
+    /* Phone: place takes the first line; date, length, rate, quality and
+       source share the second; Load stays at the right of the first line. */
+    .find-rec-head {
+        display: none;
+    }
+
+    .find-rec-row, .find-rec-row.with-species {
+        grid-template-columns: repeat(4, auto) 1fr;
+        justify-content: start;
+    }
+
+    .find-rec-row .find-rec-species {
+        grid-column: 1 / -2;
+        font-weight: 600;
+    }
+
+    .find-rec-row .find-rec-place {
+        grid-column: 1 / -2;
+    }
+
+    .find-rec-row .find-rec-load {
+        grid-column: -2 / -1;
+        grid-row: 1;
+    }
+
+    .find-rec-row .find-rec-num {
+        text-align: left;
+    }
+}
+
 /* ── Bat Book ─────────────────────────────────────────────────────────────── */
 
 /* Tab handle on the right edge; hidden while strip is open */

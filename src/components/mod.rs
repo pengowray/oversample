@@ -11,6 +11,7 @@ pub mod combo_button;
 pub mod debug_panel;
 pub mod display_filter_button;
 pub mod file_sidebar;
+pub mod find_recordings;
 pub mod freq_range_button;
 pub mod gutter;
 pub mod hear_sheet;

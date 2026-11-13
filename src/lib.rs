@@ -15,6 +15,7 @@ pub mod opfs;
 pub mod project;
 pub mod project_store;
 pub mod scope;
+pub mod search_client;
 pub mod settings;
 pub mod state;
 pub mod tauri_bridge;
