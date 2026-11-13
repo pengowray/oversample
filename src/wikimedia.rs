@@ -202,7 +202,7 @@ pub fn parse_input(input: &str) -> Result<WikiTarget, String> {
                 .find(|s| has_audio_ext(s))
                 .ok_or("That upload.wikimedia.org link doesn't point at an audio file")?;
             let api_host = match segments.as_slice() {
-                ["wikipedia", lang, ..] if is_language_code(lang) => {
+                ["wikipedia", lang, ..] if is_wikipedia_org_folder(lang) => {
                     format!("{lang}.wikipedia.org")
                 }
                 _ => COMMONS.to_string(),
@@ -257,22 +257,23 @@ fn normalise_file_title(title: &str) -> String {
     format!("File:{}", strip_namespace(title))
 }
 
-/// Whether a folder under upload.wikimedia.org/wikipedia/ is a Wikipedia's
-/// language code: "en", "simple", "zh-yue", "zh-min-nan". A code is 2 or 3
-/// letters, optionally followed by hyphenated parts, or "simple". The
-/// folders of other wikis stored there (commons, meta, species, mediawiki,
-/// foundation, sources, incubator, test, test2, wikimania2014, ...) don't
-/// have that form, except the three listed in `NOT_WIKIPEDIAS`. Checked
-/// against the 364 Wikipedias and the special wikis in Wikimedia's site
-/// matrix on 2026-11-14.
-fn is_language_code(s: &str) -> bool {
-    const NOT_WIKIPEDIAS: [&str; 3] = ["fdc", "ten", "wg-en"];
+/// Whether a folder under upload.wikimedia.org/wikipedia/ holds the uploads
+/// of the wiki at <folder>.wikipedia.org. Those folders are a Wikipedia's
+/// language code ("en", "simple", "zh-yue", "zh-min-nan") or have the same
+/// form: 2 or 3 letters, optionally followed by hyphenated parts. ten
+/// (ten.wikipedia.org) and wg-en (wg-en.wikipedia.org) are wikis of that form
+/// that are not a Wikipedia in one language. The folders of other wikis
+/// (commons, meta, species, mediawiki, foundation, sources, incubator, test,
+/// test2, wikimania2014, ...) don't have that form, except fdc, whose wiki is
+/// fdc.wikimedia.org. Checked against the 364 Wikipedias and the special
+/// wikis in Wikimedia's site matrix on 2026-11-14.
+fn is_wikipedia_org_folder(s: &str) -> bool {
     let letters = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase());
     let mut parts = s.split('-');
     let first = parts.next().unwrap_or_default();
     let code_form =
         s == "simple" || ((2..=3).contains(&first.len()) && letters(first) && parts.all(letters));
-    code_form && !NOT_WIKIPEDIAS.contains(&s)
+    code_form && s != "fdc"
 }
 
 fn classify(host: String, title: String) -> WikiTarget {
@@ -770,9 +771,7 @@ mod tests {
             "test",
             "test2",
             "wikimania2014",
-            "ten",
             "fdc",
-            "wg-en",
             "arbcom-en",
             "En",
         ] {
@@ -797,6 +796,9 @@ mod tests {
             "zh-classical",
             "be-tarask",
             "bat-smg",
+            // Wikis at ten.wikipedia.org and wg-en.wikipedia.org.
+            "ten",
+            "wg-en",
         ] {
             assert_eq!(
                 parse_input(&format!(
@@ -810,6 +812,19 @@ mod tests {
                 "{lang}"
             );
         }
+    }
+
+    #[test]
+    fn direct_upload_url_of_the_ten_wiki_names_that_wiki() {
+        // Commons reports this file missing; ten.wikipedia.org has it.
+        assert_eq!(
+            parse_input("https://upload.wikimedia.org/wikipedia/ten/a/a5/The_Wikipedia_Song.ogg")
+                .unwrap(),
+            WikiTarget::File {
+                api_host: "ten.wikipedia.org".to_string(),
+                title: "File:The Wikipedia Song.ogg".to_string(),
+            }
+        );
     }
 
     /// A file page as an API returns it, with `imagerepository` when given.
