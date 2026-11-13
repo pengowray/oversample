@@ -137,7 +137,7 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
             ),
         ],
         HeterodyneLevel::HeterodyneOnlyDetector => {
-            let detector = hint.detector.unwrap_or(hint.matched.as_str());
+            let detector = detector_name(hint).unwrap_or_else(|| hint.matched.clone());
             vec![
                 warning("Recorded from a heterodyne bat detector's audio output.".into()),
                 evidence,
@@ -160,7 +160,7 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
             // Level C also comes from a heterodyne-only detector named beside
             // time-expansion or full-spectrum wording, so the detector line
             // follows the rule that named it.
-            match (hint.source, hint.detector) {
+            match (hint.source, detector_name(hint)) {
                 (HeterodyneSource::DualModeDetector, Some(detector)) => {
                     lines.push(detail(format!(
                         "The {detector} has a heterodyne mode and other modes."
@@ -179,6 +179,46 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
             lines
         }
     }
+}
+
+/// The detector to name in the note. The core labels some detectors as a
+/// group ("Magenta Bat4/Bat5", "Pettersson D230/D240x/D980/D1000X"); when the
+/// quoted text names one model of the group, the note names that model
+/// ("Magenta Bat5"), so it never lists models the recordist didn't mention.
+/// A group label stays as it is when the text names none of its models.
+fn detector_name(hint: &HeterodyneHint) -> Option<String> {
+    let label = hint.detector?;
+    let Some(slash) = label.find('/') else {
+        return Some(label.to_string());
+    };
+    // "Magenta Bat4/Bat5" -> maker "Magenta", models ["Bat4", "Bat5"].
+    let maker_end = label[..slash].rfind(' ')?;
+    let maker = &label[..maker_end];
+    let models = label[maker_end + 1..].split('/');
+    // Letters and digits only, lower case, so "Bat 5" matches "Bat5".
+    let key = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    // Read from the matched words on, so a model named earlier in the
+    // excerpt doesn't count.
+    let from = hint.excerpt.find(hint.matched.as_str()).unwrap_or(0);
+    let text = key(&hint.excerpt[from..]);
+    // The model named first; the longer name wins at the same position
+    // ("D1000X" over "D1000").
+    let model = models
+        .filter_map(|m| {
+            text.find(&key(m))
+                .map(|at| (at, std::cmp::Reverse(m.len()), m))
+        })
+        .min()
+        .map(|(_, _, m)| m);
+    Some(match model {
+        Some(m) => format!("{maker} {m}"),
+        None => label.to_string(),
+    })
 }
 
 /// The badge tooltip: the note's lines, one per line.
@@ -251,7 +291,7 @@ mod tests {
             [
                 "Recorded from a heterodyne bat detector's audio output.",
                 "Remarks: \"Recording with Magenta Bat5\"",
-                "The Magenta Bat4/Bat5 is a heterodyne-only detector.",
+                "The Magenta Bat5 is a heterodyne-only detector.",
                 "Frequencies are not the bat's call frequencies and can't be corrected.",
             ]
         );
@@ -282,7 +322,7 @@ mod tests {
         let hint = file_hint(&rows(&[("Device", "Pettersson D980")]), None, 44_100).unwrap();
         assert_eq!(hint.level, HeterodyneLevel::MayBeHeterodyne);
         assert!(!shows_badge(&hint));
-        let detector = hint.detector.expect("a dual-mode detector label");
+        assert!(hint.detector.is_some(), "a dual-mode detector label");
         assert_eq!(
             texts(&hint),
             [
@@ -290,7 +330,7 @@ mod tests {
                  (heterodyne, time expansion or frequency division)."
                     .to_string(),
                 "Device: \"Pettersson D980\"".to_string(),
-                format!("The {detector} has a heterodyne mode and other modes."),
+                "The Pettersson D980 has a heterodyne mode and other modes.".to_string(),
                 "If so, frequencies are not the bat's call frequencies.".to_string(),
             ]
         );
@@ -331,9 +371,41 @@ mod tests {
         assert_eq!(hint.source, HeterodyneSource::HeterodyneOnlyDetector);
         assert_eq!(
             texts(&hint)[2],
-            "The Magenta Bat4/Bat5 is a heterodyne-only detector."
+            "The Magenta Bat5 is a heterodyne-only detector."
         );
         assert_eq!(roles(&hint), [Detail; 4]);
+    }
+
+    #[test]
+    fn the_note_names_the_model_the_text_names() {
+        let line = |field: &str, value: &str, rate: u32| {
+            let hint = file_hint(&rows(&[(field, value)]), None, rate).unwrap();
+            texts(&hint)
+                .into_iter()
+                .find(|t| t.starts_with("The "))
+                .unwrap()
+        };
+        assert_eq!(
+            line("Device", "Pettersson D980", 44_100),
+            "The Pettersson D980 has a heterodyne mode and other modes."
+        );
+        assert_eq!(
+            line("Device", "Pettersson D1000X", 44_100),
+            "The Pettersson D1000X has a heterodyne mode and other modes."
+        );
+        assert_eq!(
+            line("Microphone", "Magenta Bat 4 …", 48_000),
+            "The Magenta Bat4 is a heterodyne-only detector."
+        );
+        assert_eq!(
+            line("Device", "SSF BAT3", 48_000),
+            "The SSF BAT3 is a heterodyne-only detector."
+        );
+        // No model of the group in the text: the group label stays.
+        assert_eq!(
+            line("Remarks", "Recorded with a Magenta bat detector", 48_000),
+            "The Magenta Bat4/Bat5 is a heterodyne-only detector."
+        );
     }
 
     #[test]

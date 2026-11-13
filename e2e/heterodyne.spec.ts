@@ -130,9 +130,9 @@ test.describe("heterodyne badge and note", () => {
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
     await expect(badge).toHaveText("Heterodyne recording");
     await expect(badge).toHaveAttribute("title", lines.join("\n"));
-    // Right after the sample-rate badge.
+    // After the duration, so it doesn't split the rate, bit depth and duration.
     const prev = await badge.evaluate((e) => e.previousElementSibling?.className ?? "");
-    expect(prev).toContain("badge-sample-rate");
+    expect(prev).toContain("badge-duration");
     await expect(page.locator(".file-item .file-badge-heterodyne")).toHaveText(
       "Heterodyne recording",
     );
@@ -155,7 +155,7 @@ test.describe("heterodyne badge and note", () => {
     const lines = [
       HEADLINE,
       'Remarks: "Recording with Magenta Bat5"',
-      "The Magenta Bat4/Bat5 is a heterodyne-only detector.",
+      "The Magenta Bat5 is a heterodyne-only detector.",
       CONSEQUENCE,
     ];
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
@@ -198,6 +198,36 @@ test.describe("heterodyne badge and note", () => {
     await expect(page.locator(".heterodyne-note")).toBeVisible();
   });
 
+  test("a Ctrl-click on the badge only selects the row", async ({ page }) => {
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await page
+      .locator('input[type="file"]')
+      .first()
+      .setInputFiles({ name: "plain-local.wav", mimeType: "audio/wav", buffer: wav(44_100, 1) });
+    await expect(page.locator(".file-item.active .file-item-name")).toHaveText("plain-local.wav");
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+
+    await page.locator(".file-item .file-badge-heterodyne").click({ modifiers: ["Control"] });
+    await expect(page.locator(".file-item.active .file-item-name")).toHaveText("plain-local.wav");
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+  });
+
+  test("Data analysis names Xeno-canto as the source of the device claim", async ({ page }) => {
+    await openCase(page, {
+      fields: { dvc: "Zoom H1n", mic: "Magenta Bat5 speaker" },
+      rate: 48_000,
+    });
+    await showInfo(page);
+    await page.locator(".right-sidebar .sidebar-tab-dropdown").click();
+    await page.getByRole("button", { name: "Data analysis" }).click();
+    // The generated tone looks like a 12-bit recorder, so the claim is shown
+    // as a mismatch ("⚠ Xeno-canto says … — but analysis suggests: …").
+    await expect(page.locator(".right-sidebar")).toContainText(
+      /Xeno-canto says:? Zoom H1n \(Magenta Bat5 speaker\)/,
+      { timeout: 30_000 },
+    );
+  });
+
   test("level C: a dual-mode detector gets a muted note and no badge", async ({ page }) => {
     await openCase(page, { fields: { dvc: "Pettersson D980" }, rate: 44_100 });
     await showInfo(page);
@@ -208,7 +238,7 @@ test.describe("heterodyne badge and note", () => {
           "(heterodyne, time expansion or frequency division).",
       ],
       [DETAIL, 'Device: "Pettersson D980"'],
-      [DETAIL, "The Pettersson D230/D240x/D980/D1000X has a heterodyne mode and other modes."],
+      [DETAIL, "The Pettersson D980 has a heterodyne mode and other modes."],
       [DETAIL, "If so, frequencies are not the bat's call frequencies."],
     ]);
     await expect(page.locator(".file-badge-heterodyne")).toHaveCount(0);

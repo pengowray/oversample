@@ -814,6 +814,12 @@ pub(crate) fn open_info_panel(state: AppState) {
         {
             let opts = web_sys::ScrollIntoViewOptions::new();
             opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            // The note annotates the Sample rate row above it, so bring that
+            // row into view first. Then the note: "nearest" leaves it alone
+            // when the first scroll already showed it.
+            if let Some(row) = el.previous_element_sibling() {
+                row.scroll_into_view_with_scroll_into_view_options(&opts);
+            }
             el.scroll_into_view_with_scroll_into_view_options(&opts);
         }
     });

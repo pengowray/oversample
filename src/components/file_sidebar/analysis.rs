@@ -8,7 +8,7 @@ use crate::state::{AppState, RightSidebarTab};
 use leptos::prelude::*;
 use oversample_core::bit_depth_certainty::{self, BitDepthCertainty, CertaintyLevel};
 use oversample_core::device_hint::{
-    self, DeviceHint, HintConfidence, MetadataMatch, PIPISTRELLE_FAMILY,
+    self, ClaimSource, DeviceHint, HintConfidence, MetadataMatch, PIPISTRELLE_FAMILY,
 };
 use oversample_core::dsp::audiomoth::{self, AudioMothResult};
 use oversample_core::dsp::effective_nyquist::{self, EffectiveNyquistResult};
@@ -690,6 +690,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             let guano = f.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
             let xc = f.site_metadata.as_ref().map(|m| m.fields.as_slice());
             let m = device_hint::compare_to_metadata(&hints, xc, guano.as_deref());
+            let site_name = f.site_metadata.as_ref().map(|m| m.site.name().to_string());
             if !hints.is_empty() || !matches!(m, MetadataMatch::NoClaim) {
                 report.push_str("\nDevice hints\n");
                 for h in &hints {
@@ -708,28 +709,35 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 }
                 match m {
                     MetadataMatch::NoClaim => {}
-                    MetadataMatch::ClaimNoAnalysis { claim } => {
+                    MetadataMatch::ClaimNoAnalysis { claim, source } => {
                         report.push_str(&format!(
-                            "  metadata says: {} (no analysis hints to compare)\n",
+                            "  {}: {} (no analysis hints to compare)\n",
+                            claim_source_says(source, site_name.as_deref()),
                             claim
                         ));
                     }
                     MetadataMatch::Match {
                         claim,
+                        source,
                         matched_candidate,
                     } => {
                         report.push_str(&format!(
-                            "  metadata: {} \u{2014} matches ({})\n",
-                            claim, matched_candidate
+                            "  {}: {} \u{2014} matches ({})\n",
+                            claim_source_says(source, site_name.as_deref()),
+                            claim,
+                            matched_candidate
                         ));
                     }
                     MetadataMatch::Mismatch {
                         claim,
+                        source,
                         hint_summary,
                     } => {
                         report.push_str(&format!(
-                            "  ! metadata: {} \u{2014} does NOT match analysis ({})\n",
-                            claim, hint_summary
+                            "  ! {}: {} \u{2014} does NOT match analysis ({})\n",
+                            claim_source_says(source, site_name.as_deref()),
+                            claim,
+                            hint_summary
                         ));
                     }
                 }
@@ -1319,7 +1327,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 if hints.is_empty() && matches!(metadata_match, MetadataMatch::NoClaim) {
                     return view! { <span></span> }.into_any();
                 }
-                render_device_hints_section(hints, metadata_match).into_any()
+                let site_name = file.site_metadata.as_ref().map(|m| m.site.name().to_string());
+                render_device_hints_section(hints, metadata_match, site_name).into_any()
             }}
         </div>
     }
@@ -1710,10 +1719,23 @@ fn render_pipistrelle_section(p: &PipistrelleResult) -> impl IntoView {
     }
 }
 
+/// Who a device claim comes from, as the start of its line: "GUANO says" for
+/// the file's GUANO Make and Model, "Xeno-canto says" (the site's name) for the
+/// rows of the site the file came from.
+fn claim_source_says(source: ClaimSource, site_name: Option<&str>) -> String {
+    match (source, site_name) {
+        (ClaimSource::Guano, _) => "GUANO says".to_string(),
+        (ClaimSource::Site, Some(site)) => format!("{site} says"),
+        (ClaimSource::Site, None) => "Metadata says".to_string(),
+    }
+}
+
 fn render_device_hints_section(
     hints: Vec<DeviceHint>,
     metadata_match: MetadataMatch,
+    site_name: Option<String>,
 ) -> impl IntoView {
+    let says = |source: ClaimSource| claim_source_says(source, site_name.as_deref());
     // Skip the section entirely if there's literally nothing to show.
     let any_strong_or_likely_hint = hints.iter().any(|h| {
         matches!(
@@ -1764,24 +1786,24 @@ fn render_device_hints_section(
 
     let metadata_view = match metadata_match {
         MetadataMatch::NoClaim => view! { <span></span> }.into_any(),
-        MetadataMatch::ClaimNoAnalysis { claim } => view! {
+        MetadataMatch::ClaimNoAnalysis { claim, source } => view! {
             <div class="wsnr-detail">
-                {format!("File metadata says: {}", claim)}
+                {format!("{}: {}", says(source), claim)}
                 " — analysis did not produce any device fingerprints to compare against."
             </div>
         }.into_any(),
-        MetadataMatch::Match { claim, matched_candidate } => view! {
+        MetadataMatch::Match { claim, source, matched_candidate } => view! {
             <div class="bit-depth-stat" title="Metadata-claimed device matches one of the analysis candidates.">
-                "\u{2713} Metadata says "
+                "\u{2713} "{says(source)}" "
                 <strong>{claim}</strong>
                 " — matches analysis ("
                 {matched_candidate}
                 ")"
             </div>
         }.into_any(),
-        MetadataMatch::Mismatch { claim, hint_summary } => view! {
+        MetadataMatch::Mismatch { claim, source, hint_summary } => view! {
             <div class="bit-warning" title="Metadata-claimed device does NOT match what the analysis suggests. The file may have been mis-tagged, post-processed, or the analysis hint may be wrong.">
-                "\u{26A0} Metadata says "
+                "\u{26A0} "{says(source)}" "
                 <strong>{claim}</strong>
                 " — but analysis suggests: "
                 {hint_summary}

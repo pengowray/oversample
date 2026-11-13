@@ -61,7 +61,7 @@ fn format_sample_rate(sr: u32) -> String {
 
 /// Shared badge row component used by both file menu items and toolbar heading.
 ///
-/// Renders: [sample_rate] [Heterodyne recording] [bit_depth] duration [~] #seq [track] [💾] [CC]
+/// Renders: [sample_rate] [bit_depth] duration [Heterodyne recording] [~] #seq [track] [💾] [CC]
 #[component]
 pub fn FileBadgeRow(
     data: FileBadgeData,
@@ -116,23 +116,6 @@ pub fn FileBadgeRow(
         // 1. Sample rate badge (always)
         <span class="file-badge badge-sample-rate">{sr_label}</span>
 
-        // 1a. Heterodyne badge, beside the rate it qualifies. On another file's
-        // row the click goes on to the row, which makes that file current, so
-        // the Info panel shows it. On the current file's row it stops here: a
-        // row click also clears the view history and bookmarks.
-        {heterodyne_tooltip.map(|tooltip| view! {
-            <button
-                class="file-badge file-badge-heterodyne"
-                title=tooltip
-                on:click=move |e: web_sys::MouseEvent| {
-                    if state.library.current_index().get_untracked() == Some(file_index) {
-                        e.stop_propagation();
-                    }
-                    open_info_panel(state);
-                }
-            >"Heterodyne recording"</button>
-        })}
-
         // 2. Bit depth badge (only > 16)
         {bit_badge.map(|label| view! {
             <span class="file-badge badge-bit-depth">{label}</span>
@@ -140,6 +123,29 @@ pub fn FileBadgeRow(
 
         // 3. Duration (plain text)
         <span class="badge-duration">{dur_label}</span>
+
+        // 3a. Heterodyne badge, after the rate, bit depth and duration, so it
+        // doesn't split those related values when the row wraps. On another
+        // file's row the click goes on to the row, which makes that file
+        // current, so the Info panel shows it. On the current file's row it
+        // stops here: a row click also clears the view history and bookmarks.
+        // A Ctrl, Cmd or Shift click is a selection gesture: the row handles
+        // it and the current file doesn't change, so Info is not opened.
+        {heterodyne_tooltip.map(|tooltip| view! {
+            <button
+                class="file-badge file-badge-heterodyne"
+                title=tooltip
+                on:click=move |e: web_sys::MouseEvent| {
+                    if e.ctrl_key() || e.meta_key() || e.shift_key() {
+                        return;
+                    }
+                    if state.library.current_index().get_untracked() == Some(file_index) {
+                        e.stop_propagation();
+                    }
+                    open_info_panel(state);
+                }
+            >"Heterodyne recording"</button>
+        })}
 
         // 4. Streaming badge
         {is_streaming.then(|| view! {

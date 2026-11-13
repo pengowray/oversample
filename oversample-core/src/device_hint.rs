@@ -435,14 +435,29 @@ pub enum MetadataMatch {
     /// No claim found in metadata.
     NoClaim,
     /// A claim was found, but the analysis didn't produce any device hints.
-    ClaimNoAnalysis { claim: String },
+    ClaimNoAnalysis { claim: String, source: ClaimSource },
     /// Claim and at least one hint candidate share a recognisable substring.
     Match {
         claim: String,
+        source: ClaimSource,
         matched_candidate: String,
     },
     /// Claim is present and conflicts with all hint candidates.
-    Mismatch { claim: String, hint_summary: String },
+    Mismatch {
+        claim: String,
+        source: ClaimSource,
+        hint_summary: String,
+    },
+}
+
+/// Where a device claim was read from, so the UI can name its source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimSource {
+    /// The file's GUANO `Make` and `Model`.
+    Guano,
+    /// The rows of the site the file came from, such as Xeno-canto's Device
+    /// and Microphone.
+    Site,
 }
 
 /// Best-effort device claim from metadata. Prefers GUANO `Make`+`Model`
@@ -455,6 +470,14 @@ pub fn extract_device_claim(
     xc_metadata: Option<&[(String, String)]>,
     guano: Option<&[(String, String)]>,
 ) -> Option<String> {
+    extract_device_claim_with_source(xc_metadata, guano).map(|(claim, _)| claim)
+}
+
+/// [`extract_device_claim`], with where the claim was read from.
+pub fn extract_device_claim_with_source(
+    xc_metadata: Option<&[(String, String)]>,
+    guano: Option<&[(String, String)]>,
+) -> Option<(String, ClaimSource)> {
     if let Some(g) = guano {
         let make = g
             .iter()
@@ -473,7 +496,7 @@ pub fn extract_device_claim(
             (true, true) => String::new(),
         };
         if !combined.is_empty() {
-            return Some(combined);
+            return Some((combined, ClaimSource::Guano));
         }
     }
     if let Some(xc) = xc_metadata {
@@ -487,12 +510,15 @@ pub fn extract_device_claim(
         };
         let dvc = field(["Device", "dvc"]);
         let mic = field(["Microphone", "mic"]);
-        if !dvc.is_empty() && !mic.is_empty() && !mic_subsumed_by_dvc(dvc, mic) {
-            return Some(format!("{} ({})", dvc, mic));
+        let claim = if !dvc.is_empty() && !mic.is_empty() && !mic_subsumed_by_dvc(dvc, mic) {
+            format!("{} ({})", dvc, mic)
         } else if !dvc.is_empty() {
-            return Some(dvc.to_string());
-        } else if !mic.is_empty() {
-            return Some(mic.to_string());
+            dvc.to_string()
+        } else {
+            mic.to_string()
+        };
+        if !claim.is_empty() {
+            return Some((claim, ClaimSource::Site));
         }
     }
     None
@@ -509,11 +535,11 @@ pub fn compare_to_metadata(
     xc_metadata: Option<&[(String, String)]>,
     guano: Option<&[(String, String)]>,
 ) -> MetadataMatch {
-    let Some(claim) = extract_device_claim(xc_metadata, guano) else {
+    let Some((claim, source)) = extract_device_claim_with_source(xc_metadata, guano) else {
         return MetadataMatch::NoClaim;
     };
     if hints.is_empty() {
-        return MetadataMatch::ClaimNoAnalysis { claim };
+        return MetadataMatch::ClaimNoAnalysis { claim, source };
     }
     let claim_l = claim.to_lowercase();
     let claim_keywords: Vec<&str> = claim_l
@@ -527,6 +553,7 @@ pub fn compare_to_metadata(
             if matches_candidate(&claim_l, &claim_keywords, candidate) {
                 return MetadataMatch::Match {
                     claim,
+                    source,
                     matched_candidate: candidate.clone(),
                 };
             }
@@ -543,7 +570,7 @@ pub fn compare_to_metadata(
         .filter(|h| h.confidence == HintConfidence::Strong)
         .collect();
     if strong_hints.is_empty() {
-        return MetadataMatch::ClaimNoAnalysis { claim };
+        return MetadataMatch::ClaimNoAnalysis { claim, source };
     }
     let hint_summary = strong_hints
         .iter()
@@ -552,6 +579,7 @@ pub fn compare_to_metadata(
         .join("; ");
     MetadataMatch::Mismatch {
         claim,
+        source,
         hint_summary,
     }
 }
@@ -672,11 +700,18 @@ mod tests {
             detail: String::new(),
         }];
         match compare_to_metadata(&hints, Some(&x), None) {
-            MetadataMatch::Match { claim, .. } => {
-                assert_eq!(claim, "Pettersson D500x (Advanced electret)")
+            MetadataMatch::Match { claim, source, .. } => {
+                assert_eq!(claim, "Pettersson D500x (Advanced electret)");
+                assert_eq!(source, ClaimSource::Site);
             }
             other => panic!("expected match, got {:?}", other),
         }
+        // GUANO Make and Model win over the site rows, and say so.
+        let g = claim("Pettersson", "D500x");
+        assert_eq!(
+            extract_device_claim_with_source(Some(&x), Some(&g)),
+            Some(("Pettersson D500x".to_string(), ClaimSource::Guano)),
+        );
     }
 
     #[test]
