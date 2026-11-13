@@ -1792,6 +1792,9 @@ body.sidebar-resizing {
     user-select: text;
     -webkit-user-select: text;
 }
+.metadata-value-block.metadata-value-lines {
+    white-space: pre-line;
+}
 .metadata-value-block.metadata-hash {
     font-family: monospace;
     font-size: 11px;

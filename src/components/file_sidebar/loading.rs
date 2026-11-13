@@ -511,53 +511,6 @@ pub(crate) async fn fetch_text(url: &str) -> Result<String, String> {
     text.as_string().ok_or("Not a string".to_string())
 }
 
-fn parse_xc_metadata(json: &serde_json::Value) -> Vec<(String, String)> {
-    let mut fields = Vec::new();
-    let s = |key: &str| json[key].as_str().unwrap_or("").to_string();
-
-    let en = s("en");
-    if !en.is_empty() {
-        fields.push(("Species".into(), en));
-    }
-    let genus = s("gen");
-    let sp = s("sp");
-    if !genus.is_empty() && !sp.is_empty() {
-        fields.push(("Scientific name".into(), format!("{} {}", genus, sp)));
-    }
-    for (key, label) in [
-        ("rec", "Recordist"),
-        ("lic", "License"),
-        ("attribution", "Attribution"),
-        ("cnt", "Country"),
-        ("loc", "Location"),
-    ] {
-        let v = s(key);
-        if !v.is_empty() {
-            fields.push((label.into(), v));
-        }
-    }
-    let lat = s("lat");
-    let lon = s("lon");
-    if !lat.is_empty() && !lon.is_empty() {
-        fields.push(("Coordinates".into(), format!("{}, {}", lat, lon)));
-    }
-    for (key, label) in [
-        ("date", "Date"),
-        ("type", "Sound type"),
-        ("q", "Quality"),
-        ("dvc", "Device"),
-        ("mic", "Microphone"),
-        ("method", "Method"),
-        ("url", "URL"),
-    ] {
-        let v = s(key);
-        if !v.is_empty() {
-            fields.push((label.into(), v));
-        }
-    }
-    fields
-}
-
 /// Extract hash data from an XC sidecar JSON.
 /// Tries `json["_app"]` first (new format), then falls back to top-level keys (legacy).
 fn extract_sidecar_hashes(json: &serde_json::Value) -> crate::state::SidecarHashes {
@@ -764,7 +717,7 @@ pub(crate) async fn load_single_demo(
                     } else {
                         Some(hashes)
                     };
-                    let fields = parse_xc_metadata(&json);
+                    let fields = xc_lib::metadata::parse_xc_json_metadata(&json);
                     (
                         Some(SiteMetadata::new(SourceSite::XenoCanto, fields)),
                         hashes,

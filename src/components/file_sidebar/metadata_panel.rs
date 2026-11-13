@@ -419,9 +419,15 @@ fn render_value_body(
     kind: FieldKind,
     view_mode: MetadataView,
 ) -> leptos::tachys::view::any_view::AnyView {
+    // Values with line breaks (Xeno-canto remarks) keep them.
+    let raw_class = if value.contains('\n') {
+        "metadata-value-block metadata-value-lines"
+    } else {
+        "metadata-value-block"
+    };
     let raw = || {
         view! {
-            <div class="metadata-value-block" title=value.to_string()>{value.to_string()}</div>
+            <div class=raw_class title=value.to_string()>{value.to_string()}</div>
         }
         .into_any()
     };

@@ -46,6 +46,7 @@ pub fn recording_to_metadata(rec: &XcRecording) -> Vec<(String, String)> {
             fields.push((label.into(), val.clone()));
         }
     }
+    push_remarks(&mut fields, &rec.rmk);
     if !rec.url.is_empty() {
         fields.push(("URL".into(), rec.url.clone()));
     } else {
@@ -96,12 +97,47 @@ pub fn parse_xc_json_metadata(json: &serde_json::Value) -> Vec<(String, String)>
         ("dvc", "Device"),
         ("mic", "Microphone"),
         ("method", "Method"),
-        ("url", "URL"),
     ] {
         let v = s(key);
         if !v.is_empty() {
             fields.push((label.into(), v));
         }
     }
+    push_remarks(&mut fields, &s("rmk"));
+    let url = s("url");
+    if !url.is_empty() {
+        fields.push(("URL".into(), url));
+    }
     fields
+}
+
+/// The recordist's remarks ("Remarks from the Recordist" on the Xeno-canto
+/// page). They often say how the sound was made or changed, such as a
+/// heterodyne detector or a high-pass filter. Some start with stray tabs and
+/// line breaks.
+fn push_remarks(fields: &mut Vec<(String, String)>, rmk: &str) {
+    let rmk = rmk.trim();
+    if !rmk.is_empty() {
+        fields.push(("Remarks".into(), rmk.into()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_remarks_are_trimmed_and_come_before_the_url() {
+        let json = serde_json::json!({
+            "method": "hand-release",
+            "rmk": "\t\r\nRecording with Magenta Bat5\r\n",
+            "url": "https://xeno-canto.org/924726",
+        });
+        let fields = parse_xc_json_metadata(&json);
+        let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["Method", "Remarks", "URL"]);
+        assert_eq!(fields[1].1, "Recording with Magenta Bat5");
+        let blank = serde_json::json!({ "rmk": " \r\n" });
+        assert!(parse_xc_json_metadata(&blank).is_empty());
+    }
 }
