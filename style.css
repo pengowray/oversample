@@ -4943,6 +4943,54 @@ a.open-link-btn {
     color: #fc8;
     background: #332200;
 }
+/* "Heterodyne recording" (heterodyne.rs): the recording is a heterodyne bat
+   detector's output, so its frequencies are not the bat's. A solid fill with no
+   border, like the track, sequence and streaming badges, in the warning amber of
+   .analysis-warning. The same colours in every file list row, since it is a
+   warning about the file rather than a selection state. It is a button (it opens
+   the Info panel), so this rule also undoes `.toolbar button`. */
+.file-badge.file-badge-heterodyne {
+    font: inherit;
+    font-size: 10px;
+    line-height: inherit;
+    padding: 0 3px;
+    border: none;
+    border-radius: 2px;
+    color: #fc8;
+    background: #3a2700;
+    cursor: pointer;
+}
+.file-badge.file-badge-heterodyne:hover {
+    background: #4d3400;
+}
+/* On a touch screen the 14 px tall badge is hard to tap, so an invisible strip
+   above and below makes it 24 px tall without changing how it looks. */
+@media (pointer: coarse) {
+    .file-badge.file-badge-heterodyne {
+        position: relative;
+    }
+    .file-badge.file-badge-heterodyne::after {
+        content: "";
+        position: absolute;
+        inset: -5px 0;
+    }
+}
+
+/* The heterodyne note under the Info panel's Sample rate row. The container is
+   a .metadata-note, so detail lines are muted; the finding and its consequence
+   take the .analysis-warning amber. The quoted evidence can be one long word
+   (a URL, a model number run), so it may break anywhere to stay in the panel. */
+.heterodyne-note {
+    overflow-wrap: anywhere;
+}
+/* Each line is one statement and most wrap in the panel, so a small gap shows
+   where one ends and the next begins. */
+.heterodyne-note > div + div {
+    margin-top: 2px;
+}
+.heterodyne-note-warning {
+    color: #fc8;
+}
 
 /* Sequence gap indicators */
 .seq-gap-row {

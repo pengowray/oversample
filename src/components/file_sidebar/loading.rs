@@ -292,6 +292,10 @@ pub(crate) async fn load_named_bytes(
         sample_rate: audio.sample_rate,
     };
 
+    let heterodyne_hint = site_metadata.as_ref().and_then(|m| {
+        crate::heterodyne::file_hint(&m.fields, audio.metadata.time_expansion, audio.sample_rate)
+    });
+
     let new_id = crate::state::next_file_id();
     let file_index;
     {
@@ -306,6 +310,7 @@ pub(crate) async fn load_named_bytes(
                 preview: Some(preview),
                 overview_image: None,
                 site_metadata,
+                heterodyne_hint,
                 xc_hashes,
                 is_demo,
                 is_recording: false,

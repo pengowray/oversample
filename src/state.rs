@@ -294,6 +294,12 @@ pub struct LoadedFile {
     /// Commons, ...) with the label/value metadata it gave. `None` for local
     /// files, recordings, and demos that have no metadata sidecar.
     pub site_metadata: Option<crate::source_site::SiteMetadata>,
+    /// Whether `site_metadata` says the audio is a heterodyne bat detector's
+    /// output (`crate::heterodyne::file_hint`). Computed once when the file is
+    /// built, since the file list rebuilds every row on any file change. Neither
+    /// `site_metadata` nor the time expansion changes after that; recompute
+    /// this if either ever does.
+    pub heterodyne_hint: Option<crate::heterodyne::HeterodyneHint>,
     /// Hash data from XC sidecar (for verification against computed identity).
     pub xc_hashes: Option<SidecarHashes>,
     /// Loaded from the bat-demo-sounds archive (not directly from XC or user's disk).

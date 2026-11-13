@@ -1,7 +1,9 @@
 use super::file_groups::{SequenceInfo, TrackInfo};
+use super::metadata_panel::open_info_panel;
 use crate::components::icons::Icon;
 use crate::format_time::format_duration_compact;
 use crate::license::license_title;
+use crate::state::{AppState, LoadedFile};
 use leptos::prelude::*;
 
 /// Get XC metadata field value by key.
@@ -25,7 +27,18 @@ pub struct FileBadgeData {
     pub sequence: Option<SequenceInfo>,
     pub cc_license: Option<String>,
     pub cc_tooltip: Option<String>,
+    /// The "Heterodyne recording" badge's tooltip, when the file has one
+    /// (see [`heterodyne_tooltip`]).
+    pub heterodyne_tooltip: Option<String>,
     pub file_index: usize,
+}
+
+/// The tooltip for a file's "Heterodyne recording" badge, or `None` when the
+/// file gets no badge: no hint, or a level C hint, which only the Info panel
+/// shows.
+pub(crate) fn heterodyne_tooltip(file: &LoadedFile) -> Option<String> {
+    let hint = file.heterodyne_hint.as_ref()?;
+    crate::heterodyne::shows_badge(hint).then(|| crate::heterodyne::tooltip(hint))
 }
 
 /// Format sample rate for display: 44100 → "44.1kHz", 192000 → "192kHz", 48000 → "48kHz"
@@ -47,7 +60,7 @@ fn format_sample_rate(sr: u32) -> String {
 
 /// Shared badge row component used by both file menu items and toolbar heading.
 ///
-/// Renders: [sample_rate] [bit_depth] duration [~] #seq [track] [💾] [CC]
+/// Renders: [sample_rate] [Heterodyne recording] [bit_depth] duration [~] #seq [track] [💾] [CC]
 #[component]
 pub fn FileBadgeRow(
     data: FileBadgeData,
@@ -94,10 +107,23 @@ pub fn FileBadgeRow(
     let is_file_menu = context == "file-menu";
     let cc_license = data.cc_license.clone();
     let cc_tooltip = data.cc_tooltip.clone();
+    let heterodyne_tooltip = data.heterodyne_tooltip.clone();
+    let state = expect_context::<AppState>();
 
     view! {
         // 1. Sample rate badge (always)
         <span class="file-badge badge-sample-rate">{sr_label}</span>
+
+        // 1a. Heterodyne badge, beside the rate it qualifies. The click is left
+        // to reach the file list row too, so the row selects this file and the
+        // Info panel opens on it.
+        {heterodyne_tooltip.map(|tooltip| view! {
+            <button
+                class="file-badge file-badge-heterodyne"
+                title=tooltip
+                on:click=move |_| open_info_panel(state)
+            >"Heterodyne recording"</button>
+        })}
 
         // 2. Bit depth badge (only > 16)
         {bit_badge.map(|label| view! {

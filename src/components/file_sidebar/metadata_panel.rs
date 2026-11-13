@@ -1,5 +1,6 @@
+use crate::heterodyne::{HeterodyneHint, LineRole};
 use crate::state::store_fields::*;
-use crate::state::{AppState, MetadataView};
+use crate::state::{AppState, MetadataView, RightSidebarTab};
 use crate::types::AudioFormat;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -776,6 +777,46 @@ fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
         crate::wikimedia::format_factor(te.factor),
         sample_rate_khz(te.stored_rate)
     ))
+}
+
+/// The note under the Sample rate row of a file whose site metadata says, or
+/// suggests, that it was recorded from a heterodyne bat detector's audio output
+/// (`crate::heterodyne`). The finding and its consequence are in the warning
+/// colour; the evidence, and every line of a level C hint, are muted.
+fn heterodyne_note(hint: &HeterodyneHint) -> impl IntoView {
+    let lines = crate::heterodyne::note_lines(hint)
+        .into_iter()
+        .map(|line| {
+            let class = match line.role {
+                LineRole::Warning => "heterodyne-note-warning",
+                LineRole::Detail => "heterodyne-note-detail",
+            };
+            view! { <div class=class>{line.text}</div> }
+        })
+        .collect_view();
+    view! { <div class="metadata-note heterodyne-note">{lines}</div> }
+}
+
+/// Open the right sidebar on the Info tab, as the "Heterodyne recording" badge
+/// does. On a phone the two sidebars are overlays, so the Files sidebar is
+/// closed, as the toolbar's Show info panel button does. If the panel is
+/// scrolled down, the heterodyne note is scrolled into view once drawn.
+pub(crate) fn open_info_panel(state: AppState) {
+    state.panels.right_tab().set(RightSidebarTab::Metadata);
+    state.panels.right_collapsed().set(false);
+    if state.status.is_mobile().get_untracked() {
+        state.panels.left_collapsed().set(true);
+    }
+    request_animation_frame(|| {
+        if let Some(el) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.query_selector(".heterodyne-note").ok().flatten())
+        {
+            let opts = web_sys::ScrollIntoViewOptions::new();
+            opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            el.scroll_into_view_with_scroll_into_view_options(&opts);
+        }
+    });
 }
 
 /// Format row: the container name, plus RF64 when the file uses 64-bit sizes.
@@ -1584,6 +1625,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {time_expansion_note(meta).map(|note| view! {
                                     <div class="metadata-note">{note}</div>
                                 })}
+                                {f.heterodyne_hint.as_ref().map(heterodyne_note)}
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}

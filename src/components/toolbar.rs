@@ -1,5 +1,7 @@
 use crate::audio::streaming_source;
-use crate::components::file_sidebar::file_badges::{get_xc_field, FileBadgeData, FileBadgeRow};
+use crate::components::file_sidebar::file_badges::{
+    self, get_xc_field, FileBadgeData, FileBadgeRow,
+};
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
 use crate::license::{license_dialog_title, license_label, license_name_row, parse_cc_license};
@@ -96,6 +98,7 @@ pub fn Toolbar() -> impl IntoView {
             sequence: gi.sequence.clone(),
             cc_license: cc_info,
             cc_tooltip: None, // toolbar renders CC separately
+            heterodyne_tooltip: file_badges::heterodyne_tooltip(f),
             file_index: idx,
         })
     });

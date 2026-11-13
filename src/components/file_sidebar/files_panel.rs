@@ -361,6 +361,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             sequence: seq_badge,
                             cc_license: cc_info.as_ref().map(|(l, _)| l.clone()),
                             cc_tooltip: cc_info.map(|(_, t)| t),
+                            heterodyne_tooltip: file_badges::heterodyne_tooltip(f),
                             file_index: i,
                         };
 
