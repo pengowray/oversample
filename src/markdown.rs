@@ -53,11 +53,13 @@ pub enum MdInline {
     LineBreak,
 }
 
-/// The most block quotes, lists and list items that can be open at once.
-/// The parser makes no element for a deeper one, and its content goes into
-/// the deepest element that is open. Without a limit, a remark of 2,000 ">"
-/// characters nests 2,000 block quotes, and building or dropping the views
-/// for it overflows the stack, which crashes the page.
+/// The most levels of block quotes and lists that can be nested, counted the
+/// way a reader sees them: a list and its items are one level, and a block
+/// quote is one level. So eight lists can nest, or a quote with seven lists
+/// in it. The parser makes no element for a deeper level, and its content
+/// goes into the deepest element that is open. Without a limit, a remark of
+/// 2,000 ">" characters nests 2,000 block quotes, and building or dropping
+/// the views for it overflows the stack, which crashes the page.
 const MAX_BLOCK_DEPTH: usize = 8;
 
 /// The most emphasis, strong, link and image elements that can be open at
@@ -126,8 +128,9 @@ enum InlineKind {
 }
 
 enum Frame {
-    /// The document, a list item or a block quote.
+    /// The document or a list item.
     Blocks(Vec<MdBlock>),
+    Quote(Vec<MdBlock>),
     List {
         start: Option<u64>,
         items: Vec<Vec<MdBlock>>,
@@ -173,19 +176,19 @@ impl TreeBuilder {
             Tag::Strong => self.open_inline(InlineKind::Strong),
             Tag::Link { dest_url, .. } => self.open_inline(InlineKind::Link(web_href(&dest_url))),
             Tag::Image { .. } => self.open_inline(InlineKind::Image),
-            // A list needs room for one of its items as well.
-            Tag::List(start) => self.open_container(
-                Frame::List {
-                    start,
-                    items: Vec::new(),
-                },
-                2,
-            ),
-            Tag::BlockQuote(_) => self.open_container(Frame::Blocks(Vec::new()), 1),
+            Tag::List(start) => self.open_level(Frame::List {
+                start,
+                items: Vec::new(),
+            }),
+            Tag::BlockQuote(_) => self.open_level(Frame::Quote(Vec::new())),
+            // An item is on its list's level. It has a frame when its list
+            // has one.
             Tag::Item => {
-                self.open_container(Frame::Blocks(Vec::new()), 1);
                 if self.skipped_blocks > 0 {
+                    self.skipped_blocks += 1;
                     self.break_before_text = true;
+                } else {
+                    self.stack.push(Frame::Blocks(Vec::new()));
                 }
             }
             Tag::CodeBlock(_) | Tag::HtmlBlock => self.stack.push(Frame::Literal(String::new())),
@@ -195,17 +198,15 @@ impl TreeBuilder {
         }
     }
 
-    /// Push a block quote, list or list item frame, or skip it when `slots`
-    /// more frames would go past [`MAX_BLOCK_DEPTH`].
-    fn open_container(&mut self, frame: Frame, slots: usize) {
+    /// Push a block quote or list frame, or skip it when it would go past
+    /// [`MAX_BLOCK_DEPTH`] levels.
+    fn open_level(&mut self, frame: Frame) {
         let depth = self
             .stack
             .iter()
-            .filter(|f| matches!(f, Frame::Blocks(_) | Frame::List { .. }))
-            .count()
-            // The document frame is not counted.
-            .saturating_sub(1);
-        if self.skipped_blocks > 0 || depth + slots > MAX_BLOCK_DEPTH {
+            .filter(|f| matches!(f, Frame::Quote(_) | Frame::List { .. }))
+            .count();
+        if self.skipped_blocks > 0 || depth >= MAX_BLOCK_DEPTH {
             self.skipped_blocks += 1;
         } else {
             self.stack.push(frame);
@@ -269,7 +270,7 @@ impl TreeBuilder {
                 }
             }
             TagEnd::BlockQuote(_) => {
-                if let Some(Frame::Blocks(blocks)) = self.pop() {
+                if let Some(Frame::Quote(blocks)) = self.pop() {
                     self.add_block(MdBlock::Quote(blocks));
                 }
             }
@@ -338,7 +339,7 @@ impl TreeBuilder {
         match self.stack.last_mut() {
             Some(Frame::Inlines { items, .. }) => push_inline(items, inline),
             // Text straight inside a tight list item.
-            Some(Frame::Blocks(blocks)) => match blocks.last_mut() {
+            Some(Frame::Blocks(blocks) | Frame::Quote(blocks)) => match blocks.last_mut() {
                 Some(MdBlock::Plain(items)) => {
                     if std::mem::take(&mut self.break_before_text) {
                         items.push(MdInline::LineBreak);
@@ -365,7 +366,7 @@ impl TreeBuilder {
         // Blocks only arrive where a block container is on top, but look down
         // the stack anyway so no text is lost.
         for frame in self.stack.iter_mut().rev() {
-            if let Frame::Blocks(blocks) = frame {
+            if let Frame::Blocks(blocks) | Frame::Quote(blocks) = frame {
                 blocks.push(block);
                 return;
             }
@@ -382,6 +383,7 @@ impl TreeBuilder {
                         self.add_block(block);
                     }
                 }
+                Some(Frame::Quote(blocks)) => self.add_block(MdBlock::Quote(blocks)),
                 Some(Frame::List { start, items }) => {
                     self.add_block(MdBlock::List { start, items })
                 }
@@ -1071,20 +1073,15 @@ mod tests {
         assert_eq!(parse("[ref]: https://example.org"), Vec::<MdBlock>::new());
     }
 
-    /// How many block quotes, lists and list items are nested in `blocks`,
-    /// counted the way `TreeBuilder` counts its frames.
+    /// How many levels of block quotes and lists are nested in `blocks`,
+    /// counted as [`MAX_BLOCK_DEPTH`] counts them: a list and its items are
+    /// one level.
     fn block_nesting(blocks: &[MdBlock]) -> usize {
         blocks
             .iter()
             .map(|block| match block {
                 Quote(inner) => 1 + block_nesting(inner),
-                List { items, .. } => {
-                    1 + items
-                        .iter()
-                        .map(|i| 1 + block_nesting(i))
-                        .max()
-                        .unwrap_or(0)
-                }
+                List { items, .. } => 1 + items.iter().map(|i| block_nesting(i)).max().unwrap_or(0),
                 _ => 0,
             })
             .max()
@@ -1157,7 +1154,7 @@ mod tests {
     fn deep_block_quotes_are_capped() {
         on_small_stack(|| {
             let blocks = parse(&format!("{}x", ">".repeat(50_000)));
-            assert!(block_nesting(&blocks) <= MAX_BLOCK_DEPTH);
+            assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH);
             assert_eq!(plain_text(&blocks), "x");
             // Dropping a tree recurses once per level too.
             drop(blocks);
@@ -1168,15 +1165,39 @@ mod tests {
     fn deep_lists_are_capped() {
         on_small_stack(|| {
             let blocks = parse(&format!("{}x", "- ".repeat(50_000)));
-            assert!(block_nesting(&blocks) <= MAX_BLOCK_DEPTH);
+            assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH);
             assert_eq!(plain_text(&blocks), "x");
             drop(blocks);
 
             let blocks = parse(&format!("{}x", "> 1. ".repeat(20_000)));
-            assert!(block_nesting(&blocks) <= MAX_BLOCK_DEPTH);
+            assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH);
+            assert_eq!(plain_text(&blocks), "x");
+            drop(blocks);
+
+            let blocks = parse(&format!("{}x", ">".repeat(2_000)));
+            assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH);
             assert_eq!(plain_text(&blocks), "x");
             drop(blocks);
         });
+    }
+
+    #[test]
+    fn eight_levels_of_lists_are_kept() {
+        // Eight lists, each inside an item of the one before, and a quote
+        // with seven lists in it: every item keeps its own level.
+        let lists: String = (0..8)
+            .map(|level| format!("{}- item{level}\n", "  ".repeat(level)))
+            .collect();
+        let in_quote: String = (0..7)
+            .map(|level| format!("> {}- item{level}\n", "  ".repeat(level)))
+            .collect();
+        for src in [lists, in_quote] {
+            let blocks = parse(&src);
+            assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH, "{src}");
+            // No item text was joined to another item's on a new line.
+            let text = plain_text(&blocks);
+            assert!(!text.contains('\n'), "{text}");
+        }
     }
 
     #[test]
@@ -1231,18 +1252,17 @@ mod tests {
 
     #[test]
     fn items_past_the_depth_limit_keep_their_text_apart() {
-        // Twelve levels of list: the deepest items go into the deepest list
-        // that is kept, one per line.
+        // Twelve levels of list: eight are kept, and the items of the deeper
+        // lists go into the deepest item that is kept, one per line.
         let src: String = (0..12)
             .map(|level| format!("{}- item{level}\n", "  ".repeat(level)))
             .collect();
         let blocks = parse(&src);
-        assert!(block_nesting(&blocks) <= MAX_BLOCK_DEPTH);
-        let text = plain_text(&blocks);
-        for level in 0..12 {
-            assert!(text.contains(&format!("item{level}")), "{text}");
-        }
-        assert!(text.contains("item10\nitem11"), "{text}");
+        assert_eq!(block_nesting(&blocks), MAX_BLOCK_DEPTH);
+        assert_eq!(
+            plain_text(&blocks),
+            "item0item1item2item3item4item5item6item7\nitem8\nitem9\nitem10\nitem11"
+        );
     }
 
     #[test]
