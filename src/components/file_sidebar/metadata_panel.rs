@@ -375,6 +375,18 @@ fn spacious_row(
     label_title: Option<String>,
     view_mode: MetadataView,
 ) -> impl IntoView {
+    let open = open_link(classify(&label), &value, None);
+    spacious_row_with_link(label, value, label_title, view_mode, open)
+}
+
+/// A spacious row whose open-in-new-tab button opens `open`.
+fn spacious_row_with_link(
+    label: String,
+    value: String,
+    label_title: Option<String>,
+    view_mode: MetadataView,
+    open: Option<String>,
+) -> impl IntoView {
     let kind = classify(&label);
     let value_for_copy = value.clone();
     let on_copy = move |ev: web_sys::MouseEvent| {
@@ -383,7 +395,7 @@ fn spacious_row(
     };
 
     let body = render_value_body(&label, &value, kind, view_mode);
-    let open = web_link(&value).map(|href| {
+    let open = open.map(|href| {
         view! {
             <a class="copy-btn copy-btn-spacious open-link-btn" href=href target="_blank"
                 rel="noopener noreferrer" title="Open in new tab">{"\u{2197}"}</a>
@@ -399,6 +411,17 @@ fn spacious_row(
             </div>
             {body}
         </div>
+    }
+}
+
+/// The address a row's open-in-new-tab button opens: the value, when it is
+/// one web address. A License row opens the licence's page from
+/// `license_link`, so Xeno-canto's "//creativecommons.org/..." values, short
+/// CC names and Commons' "License URL" field get a button too.
+fn open_link(kind: FieldKind, value: &str, license_url: Option<&str>) -> Option<String> {
+    match kind {
+        FieldKind::License => crate::license::license_link(value, license_url),
+        _ => web_link(value),
     }
 }
 
@@ -460,7 +483,12 @@ fn render_value_body(
             }
         }
         FieldKind::License => {
-            if let Some(short) = super::file_badges::parse_cc_license(value) {
+            // The short label, with the value as sent below it when it differs
+            // by more than letter case ("CC0 1.0" over "CC0"; "CC BY-SA 4.0"
+            // and "CC BY-SA 3.0 de" once).
+            let short = crate::license::parse_cc_license(value)
+                .filter(|s| !s.eq_ignore_ascii_case(value.trim()));
+            if let Some(short) = short {
                 view! {
                     <div class="metadata-value-block">{short}</div>
                     <div class="metadata-value-subtle" title=value.to_string()>{value.to_string()}</div>
@@ -1543,11 +1571,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             {chime_section(chime_search.get(), f, view_mode)}
                             {zc_header_section(f, view_mode)}
                             {if has_xc {
+                                let license_url = super::file_badges::get_xc_field(&xc_fields, "License URL");
                                 let items: Vec<_> = xc_fields.into_iter().map(|(key, value)| {
                                     let label = site.as_ref()
                                         .map_or(key.as_str(), |s| s.field_label(&key))
                                         .to_string();
-                                    spacious_row(label, value, None, view_mode).into_any()
+                                    let open = open_link(classify(&label), &value, license_url.as_deref());
+                                    spacious_row_with_link(label, value, None, view_mode, open).into_any()
                                 }).collect();
                                 view! {
                                     <div class="setting-group">
@@ -1627,9 +1657,51 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 mod tests {
     use super::{
         channel_list, date_from_filename, extract_tz_offset_minutes, file_position,
-        format_tz_offset, sample_rate_khz, time_expansion_note,
+        format_tz_offset, open_link, sample_rate_khz, time_expansion_note, FieldKind,
     };
     use crate::types::{FileMetadata, TimeExpansion};
+
+    #[test]
+    fn license_rows_link_to_the_licence() {
+        let gnu = "http://www.gnu.org/copyleft/fdl.html";
+        for (value, license_url, href) in [
+            // Xeno-canto sends addresses without "https:".
+            (
+                "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                None,
+                Some("https://creativecommons.org/licenses/by-nc-sa/4.0/"),
+            ),
+            // Short CC names from the search server and Commons.
+            (
+                "CC BY-SA 4.0",
+                None,
+                Some("https://creativecommons.org/licenses/by-sa/4.0/"),
+            ),
+            // Commons' License URL field.
+            ("GFDL", Some(gnu), Some(gnu)),
+            ("Fair use", None, None),
+        ] {
+            assert_eq!(
+                open_link(FieldKind::License, value, license_url).as_deref(),
+                href,
+                "{value}"
+            );
+        }
+        // Other rows open only a value that is a web address.
+        assert_eq!(
+            open_link(FieldKind::None, "https://xeno-canto.org/1064993", None).as_deref(),
+            Some("https://xeno-canto.org/1064993")
+        );
+        assert_eq!(
+            open_link(
+                FieldKind::None,
+                "//creativecommons.org/licenses/by/4.0/",
+                None
+            ),
+            None
+        );
+        assert_eq!(open_link(FieldKind::None, "CC BY-SA 4.0", Some(gnu)), None);
+    }
 
     #[test]
     fn sample_rates_keep_the_tenth_of_a_kilohertz() {

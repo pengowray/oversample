@@ -226,30 +226,18 @@ fn detect_link(text: &str) -> Option<Link> {
     }
 }
 
-/// "CC BY-NC-SA 4.0" from a Creative Commons licence URL; the input otherwise.
-fn licence_short(licence: &str) -> String {
-    let l = licence.trim();
-    if let Some(idx) = l.find("creativecommons.org/") {
-        let rest = &l[idx + "creativecommons.org/".len()..];
-        let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
-        return match parts.as_slice() {
-            ["publicdomain", "zero", v, ..] => format!("CC0 {v}"),
-            ["publicdomain", "mark", ..] => "Public domain".to_string(),
-            ["licenses", kind, v, ..] => format!("CC {} {v}", kind.to_ascii_uppercase()),
-            ["licenses", kind] => format!("CC {}", kind.to_ascii_uppercase()),
-            _ => l.to_string(),
-        };
-    }
-    match l.to_ascii_lowercase().as_str() {
-        "cc0" => "CC0".into(),
-        "cc-by" => "CC BY".into(),
-        "cc-by-nc" => "CC BY-NC".into(),
-        "cc-by-sa" => "CC BY-SA".into(),
-        "cc-by-nc-sa" => "CC BY-NC-SA".into(),
-        "cc-by-nd" => "CC BY-ND".into(),
-        "cc-by-nc-nd" => "CC BY-NC-ND".into(),
-        _ => l.to_string(),
-    }
+/// A result row's second line: the recordist and the licence label, the
+/// same label the toolbar badge shows once the recording is loaded.
+fn recordist_and_licence(item: &RecordingItem) -> String {
+    let licence = crate::license::license_label(&item.licence).map(|l| l.text);
+    [
+        Some(item.recordist.clone()).filter(|r| !r.is_empty()),
+        licence,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" \u{00B7} ")
 }
 
 fn quality_label(q: &str) -> String {
@@ -1504,16 +1492,7 @@ pub fn FindRecordings() -> impl IntoView {
             .map(|r| format!("{} kHz", (r as f64 / 1000.0).round() as i64))
             .unwrap_or_default();
         let source = search::source_label(&item.source).to_string();
-        let detail = {
-            let mut parts = Vec::new();
-            if !item.recordist.is_empty() {
-                parts.push(item.recordist.clone());
-            }
-            if !item.licence.is_empty() {
-                parts.push(licence_short(&item.licence));
-            }
-            parts.join(" \u{00B7} ")
-        };
+        let detail = recordist_and_licence(&item);
         let species_cell = show_species.then(|| {
             let name = if item.en.is_empty() {
                 format!("{} {}", item.gen, item.sp)
@@ -1734,7 +1713,7 @@ pub fn FindRecordings() -> impl IntoView {
                             NO_RECORDINGS_FILTERS.to_string()
                         } else {
                             let sources = sources_in(&status.get(), &["ready", "indexing"])
-                                .unwrap_or_else(|| vec!["Xeno-canto".to_string()]);
+                                .unwrap_or_else(|| vec![SourceSite::XenoCanto.name().to_string()]);
                             fill(NO_RECORDINGS_SPECIES, &[("sources", &join_list(&sources, "or"))])
                         };
                         view! { <p class="find-empty">{text}</p> }
@@ -1869,16 +1848,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn short_licences() {
-        assert_eq!(
-            licence_short("//creativecommons.org/licenses/by-nc-sa/4.0/"),
-            "CC BY-NC-SA 4.0"
-        );
-        assert_eq!(
-            licence_short("http://creativecommons.org/publicdomain/zero/1.0/legalcode"),
-            "CC0 1.0"
-        );
-        assert_eq!(licence_short("cc-by"), "CC BY");
+    fn result_rows_show_the_licence_label() {
+        let item = |source: &str, recordist: &str, licence: &str| -> RecordingItem {
+            serde_json::from_value(serde_json::json!({
+                "id": "x/0", "source": source, "gen": "Myotis", "sp": "daubentonii",
+                "en": "", "audio_url": "https://example.org/a.wav",
+                "recordist": recordist, "licence": licence,
+            }))
+            .unwrap()
+        };
+        for (source, recordist, licence, detail) in [
+            (
+                "xc",
+                "Ann",
+                "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                "Ann \u{00B7} CC BY-NC-SA 4.0",
+            ),
+            (
+                "gbif",
+                "Bo",
+                "CC BY-NC (Attribution-Non-Commercial)",
+                "Bo \u{00B7} CC BY-NC",
+            ),
+            (
+                "gbif",
+                "",
+                "http://creativecommons.org/publicdomain/zero/1.0/legalcode",
+                "CC0 1.0",
+            ),
+            ("inat", "Cy", "cc-by-nc", "Cy \u{00B7} CC BY-NC"),
+            ("commons", "Di", "GFDL", "Di \u{00B7} GFDL"),
+            ("rbins", "Ed", "", "Ed"),
+        ] {
+            assert_eq!(
+                recordist_and_licence(&item(source, recordist, licence)),
+                detail,
+                "{licence}"
+            );
+        }
     }
 
     #[test]

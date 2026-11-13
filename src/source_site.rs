@@ -14,6 +14,10 @@ pub enum SourceSite {
     BorrorLab,
     HumboldtInstitute,
     WikimediaCommons,
+    /// A file stored on a Wikipedia itself rather than on Commons, loaded
+    /// through the Wikimedia import. The search server has no Wikipedia
+    /// source, so it has no search key.
+    Wikipedia,
     Gbif,
     OversampleDemos,
     /// A search source this build doesn't know, by its search key.
@@ -49,15 +53,16 @@ impl SourceSite {
             .unwrap_or_else(|| SourceSite::Other(key.to_string()))
     }
 
-    /// The key the search server uses for this site.
-    pub fn search_key(&self) -> &str {
+    /// The key the search server uses for this site. `None` for Wikipedia,
+    /// which is not a search source.
+    pub fn search_key(&self) -> Option<&str> {
         match self {
-            SourceSite::Other(key) => key,
+            SourceSite::Other(key) => Some(key),
+            SourceSite::Wikipedia => None,
             known => KNOWN
                 .iter()
                 .find(|(site, _, _)| site == known)
-                .map(|(_, key, _)| *key)
-                .unwrap_or_default(),
+                .map(|(_, key, _)| *key),
         }
     }
 
@@ -66,6 +71,7 @@ impl SourceSite {
     pub fn name(&self) -> &str {
         match self {
             SourceSite::Other(key) => key,
+            SourceSite::Wikipedia => "Wikipedia",
             known => KNOWN
                 .iter()
                 .find(|(site, _, _)| site == known)
@@ -113,6 +119,18 @@ impl SiteMetadata {
         self.site == SourceSite::XenoCanto
     }
 
+    /// The person the licence dialog credits, with the label to show:
+    /// "Recordist" from Xeno-canto and the search sources, or "Author" from
+    /// Wikimedia. `None` when the file has neither field.
+    pub fn credited_person(&self) -> Option<(&'static str, String)> {
+        ["Recordist", "Author"].into_iter().find_map(|key| {
+            self.fields
+                .iter()
+                .find(|(k, v)| k == key && !v.trim().is_empty())
+                .map(|(_, v)| (key, v.clone()))
+        })
+    }
+
     /// Xeno-canto's A to E quality rating. Other sites' "Quality"
     /// (iNaturalist's "Research grade") rates the identification, not the
     /// sound, so it gives `None`.
@@ -158,10 +176,56 @@ mod tests {
         for (key, _) in EXPECTED {
             let site = SourceSite::from_search_key(key);
             assert!(!matches!(site, SourceSite::Other(_)), "{key} is unknown");
-            assert_eq!(site.search_key(), key);
+            assert_eq!(site.search_key(), Some(key));
         }
         for (site, key, _) in KNOWN.iter() {
             assert_eq!(&SourceSite::from_search_key(key), site);
+        }
+    }
+
+    #[test]
+    fn credits_the_recordist_or_the_author() {
+        let meta = |site: SourceSite, fields: &[(&str, &str)]| {
+            SiteMetadata::new(
+                site,
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            meta(SourceSite::XenoCanto, &[("Recordist", "Ann Bee")]).credited_person(),
+            Some(("Recordist", "Ann Bee".to_string()))
+        );
+        assert_eq!(
+            meta(
+                SourceSite::WikimediaCommons,
+                &[("Description", "A bat"), ("Author", "Cy Dee")]
+            )
+            .credited_person(),
+            Some(("Author", "Cy Dee".to_string()))
+        );
+        assert_eq!(
+            meta(
+                SourceSite::Gbif,
+                &[("Recordist", "  "), ("Author", "Ed Fox")]
+            )
+            .credited_person(),
+            Some(("Author", "Ed Fox".to_string()))
+        );
+        assert_eq!(meta(SourceSite::Wikipedia, &[]).credited_person(), None);
+    }
+
+    #[test]
+    fn wikipedia_has_a_name_and_no_search_key() {
+        assert_eq!(SourceSite::Wikipedia.name(), "Wikipedia");
+        assert_eq!(SourceSite::Wikipedia.search_key(), None);
+        for key in ["wikipedia", "Wikipedia", "enwiki"] {
+            assert_eq!(
+                SourceSite::from_search_key(key),
+                SourceSite::Other(key.to_string())
+            );
         }
     }
 
@@ -175,7 +239,7 @@ mod tests {
             let site = SourceSite::from_search_key(key);
             assert_eq!(site, SourceSite::Other(key.to_string()));
             assert_eq!(site.name(), key);
-            assert_eq!(site.search_key(), key);
+            assert_eq!(site.search_key(), Some(key));
             assert_eq!(SourceSite::name_for_key(key), key);
         }
     }

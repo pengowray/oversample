@@ -1,9 +1,8 @@
 use crate::audio::streaming_source;
-use crate::components::file_sidebar::file_badges::{
-    cc_license_full_name, get_xc_field, license_href, parse_cc_license, FileBadgeData, FileBadgeRow,
-};
+use crate::components::file_sidebar::file_badges::{get_xc_field, FileBadgeData, FileBadgeRow};
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
+use crate::license::{license_dialog_title, license_label, license_name_row, parse_cc_license};
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, PlaybackMode, RecordReadyState, RightSidebarTab,
@@ -53,11 +52,13 @@ pub fn Toolbar() -> impl IntoView {
         files.get(idx).and_then(|f| f.site_metadata.clone())
     });
 
-    // Derived: CC license info (short label)
-    let cc_license = Memo::new(move |_| {
+    // Derived: the licence badge's label, the same one the search results
+    // show. Licences that are not Creative Commons (GFDL, "Public domain",
+    // "Fair use" from Wikimedia) show their name as sent, so their licence
+    // dialog can be opened too.
+    let license_badge = Memo::new(move |_| {
         let meta = site_metadata.get()?;
-        let lic = get_xc_field(&meta.fields, "License")?;
-        parse_cc_license(&lic)
+        license_label(&get_xc_field(&meta.fields, "License")?)
     });
 
     // Derived: is current file unsaved (recording not yet saved by user)
@@ -413,7 +414,7 @@ pub fn Toolbar() -> impl IntoView {
                         }
 
                         let badge_data = current_badge_data.get();
-                        let cc = cc_license.get();
+                        let license = license_badge.get();
                         let unsaved = is_unsaved.get();
 
                         Some(view! {
@@ -456,9 +457,11 @@ pub fn Toolbar() -> impl IntoView {
                                 }
                             })}
 
-                            // CC badge — subtle text, opens license modal on click
-                            {cc.map(|cc_label| {
-                                let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
+                            // Licence badge — subtle text, opens license modal on click.
+                            // CC licences show the CC icon and drop "CC " from the label.
+                            {license.map(|label| {
+                                let is_cc = label.is_cc;
+                                let short_label = label.badge_text().to_string();
                                 view! {
                                     <button
                                         class="toolbar-cc-badge"
@@ -468,7 +471,11 @@ pub fn Toolbar() -> impl IntoView {
                                             show_cc_modal.set(true);
                                         }
                                     >
-                                        <span class="toolbar-cc-icon"></span>
+                                        {if is_cc {
+                                            view! { <span class="toolbar-cc-icon"></span> }.into_any()
+                                        } else {
+                                            view! { <Icon kind=Icon::Document class="toolbar-license-icon" /> }.into_any()
+                                        }}
                                         <span class="toolbar-cc-label">{short_label}</span>
                                     </button>
                                 }
@@ -627,19 +634,23 @@ pub fn Toolbar() -> impl IntoView {
 
             // CC License modal
             {move || show_cc_modal.get().then(|| {
-                let (meta, site) = match site_metadata.get() {
+                let site_meta = site_metadata.get();
+                // Xeno-canto's Recordist, or Wikimedia's Author, in the same row.
+                let person = site_meta.as_ref().and_then(|m| m.credited_person());
+                let (meta, site) = match site_meta {
                     Some(m) => (m.fields, Some(m.site)),
                     None => (Vec::new(), None),
                 };
                 let field = |key: &str| get_xc_field(&meta, key);
                 let species = field("Species").unwrap_or_default();
                 let sci_name = field("Scientific name").unwrap_or_default();
-                let recordist = field("Recordist").unwrap_or_default();
                 let date = field("Date").unwrap_or_default();
                 let attribution = field("Attribution").unwrap_or_default();
                 let url = field("URL").unwrap_or_default();
-                let lic_url = field("License").unwrap_or_default();
-                let cc_label = parse_cc_license(&lic_url).unwrap_or_default();
+                let lic = field("License").unwrap_or_default();
+                let is_cc = parse_cc_license(&lic).is_some();
+                let title = license_dialog_title(&lic);
+                let name_row = license_name_row(&lic, field("License URL").as_deref());
                 let device = field("Device").unwrap_or_default();
                 let mic = field("Microphone").unwrap_or_default();
                 let method = field("Method").unwrap_or_default();
@@ -675,8 +686,14 @@ pub fn Toolbar() -> impl IntoView {
                         <div class="modal-dialog cc-modal" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                             <div class="modal-header">
                                 <span class="modal-title">
-                                    <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
-                                    {if cc_label.is_empty() { "License".to_string() } else { format!("{cc_label} license") }}
+                                    {if is_cc {
+                                        view! {
+                                            <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
+                                        }.into_any()
+                                    } else {
+                                        view! { <Icon kind=Icon::Document class="cc-modal-license-icon" /> }.into_any()
+                                    }}
+                                    {title}
                                 </span>
                                 <button class="modal-close" on:click=move |_| show_cc_modal.set(false)>{"\u{00D7}"}</button>
                             </div>
@@ -693,10 +710,10 @@ pub fn Toolbar() -> impl IntoView {
 
                                 // Key fields
                                 <div class="cc-fields">
-                                    {(!recordist.is_empty()).then(|| view! {
+                                    {person.map(|(label, name)| view! {
                                         <div class="cc-row">
-                                            <span class="cc-label">"Recordist"</span>
-                                            <span class="cc-value">{recordist}</span>
+                                            <span class="cc-label">{label}</span>
+                                            <span class="cc-value">{name}</span>
                                         </div>
                                     })}
                                     {(!date.is_empty()).then(|| view! {
@@ -742,17 +759,17 @@ pub fn Toolbar() -> impl IntoView {
                                     <div class="cc-attribution">{attribution}</div>
                                 })}
 
-                                // License link, only when License is a web address
-                                // (Wikimedia Commons gives a short name instead).
-                                {license_href(&lic_url).map(|href| {
-                                    let label = cc_license_full_name(&cc_label).unwrap_or_else(|| {
-                                        if cc_label.is_empty() { lic_url.clone() } else { format!("{cc_label} license") }
-                                    });
-                                    view! {
-                                        <div class="cc-license-link">
-                                            <a href=href target="_blank" rel="noopener">{label}</a>
-                                        </div>
-                                    }
+                                // The licence's full name, linked to its text when
+                                // license_link finds an address for it. Left out
+                                // when it would only repeat the title.
+                                {name_row.map(|row| {
+                                    let name = match row.href {
+                                        Some(href) => view! {
+                                            <a href=href target="_blank" rel="noopener">{row.text}</a>
+                                        }.into_any(),
+                                        None => view! { <span>{row.text}</span> }.into_any(),
+                                    };
+                                    view! { <div class="cc-license-link">{name}</div> }
                                 })}
 
                                 // Links row
