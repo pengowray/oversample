@@ -139,6 +139,12 @@ pub enum HeterodyneSource {
 pub struct HeterodyneHint {
     pub level: HeterodyneLevel,
     pub source: HeterodyneSource,
+    /// The detector model the quote names, when `source` is
+    /// [`HeterodyneSource::HeterodyneOnlyDetector`] or
+    /// [`HeterodyneSource::DualModeDetector`], such as "Magenta Bat4/Bat5"
+    /// or "Pettersson D200". Some labels name a group of models, such as
+    /// "Pettersson D230/D240x/D980/D1000X". `None` for the other sources.
+    pub detector: Option<&'static str>,
     /// The field the quote is from.
     pub field: TextField,
     /// The clause around the match, in its original case, at most
@@ -191,6 +197,7 @@ pub fn infer_heterodyne_hint(
     Some(HeterodyneHint {
         level,
         source: evidence.source,
+        detector: evidence.detector,
         field: evidence.field,
         excerpt: excerpt(field_text, clause, matched),
         matched: field_text[matched.0..matched.1].to_string(),
@@ -818,6 +825,8 @@ struct Evidence {
     /// script written without spaces, where the whole word would be the
     /// whole run of text.
     widen: bool,
+    /// The model's label, for R3 and R4 evidence.
+    detector: Option<&'static str>,
     /// What matched, written the way the Python reference writes it: the
     /// lowercase token or tokens, or "label [sequence]" for a model. The
     /// cross-check against the reference compares this.
@@ -1071,7 +1080,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
     for f in &fields {
         for (ci, clause) in f.clauses.iter().enumerate() {
             let toks = &clause.words;
-            let mut push = |level, source, span, widen, key| {
+            let mut push = |level, source, span, widen, detector, key| {
                 evidence.push(Evidence {
                     level,
                     source,
@@ -1079,6 +1088,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     clause: ci,
                     span,
                     widen,
+                    detector,
                     key,
                 })
             };
@@ -1101,6 +1111,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         Src::HeterodyneWord,
                         hit.span,
                         widen,
+                        None,
                         hit.key,
                     );
                 }
@@ -1115,6 +1126,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         Src::TuningPhrase,
                         token_span(clause, i, end),
                         true,
+                        None,
                         toks[i..=k].join(" "),
                     );
                 }
@@ -1142,6 +1154,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     Src::HeterodyneOnlyDetector,
                     token_span(clause, m.index, m.index + seq_len(m.seq) - 1),
                     true,
+                    Some(m.label),
                     format!("{} [{}]", m.label, m.seq),
                 );
             }
@@ -1160,6 +1173,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     Src::DualModeDetector,
                     token_span(clause, m.index, m.index + seq_len(m.seq) - 1),
                     true,
+                    Some(m.label),
                     format!("{} [{}]", m.label, m.seq),
                 );
             }
@@ -1188,6 +1202,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         Src::DetectorOutput,
                         token_span(clause, i, i + n - 1),
                         true,
+                        None,
                         key,
                     );
                 }
@@ -2186,6 +2201,7 @@ mod tests {
             HeterodyneHint {
                 level: SaysHeterodyne,
                 source: HeterodyneSource::HeterodyneWord,
+                detector: None,
                 field: TextField::Remarks,
                 excerpt:
                     "The sound was recordet from a handheld hetrodyne detector set at 31,9 kHz"
@@ -2211,6 +2227,45 @@ mod tests {
         };
         let hint = infer_heterodyne_hint(&t, Some(48000)).unwrap();
         assert_eq!(hint.matched, "Magenta Bat5");
+    }
+
+    #[test]
+    fn hint_names_the_detector_only_for_model_evidence() {
+        let hint = |t: RecordingText| infer_heterodyne_hint(&t, Some(44100)).unwrap();
+
+        // R3: a heterodyne-only model from the model table, and a bare
+        // model number.
+        let h = hint(RecordingText {
+            device: Some("Magenta Bat5"),
+            ..Default::default()
+        });
+        assert_eq!(h.source, HeterodyneSource::HeterodyneOnlyDetector);
+        assert_eq!(h.detector, Some("Magenta Bat4/Bat5"));
+        let h = hint(RecordingText {
+            device: Some("D200"),
+            remarks: Some("Bat detector on a tripod"),
+            ..Default::default()
+        });
+        assert_eq!(h.source, HeterodyneSource::HeterodyneOnlyDetector);
+        assert_eq!(h.detector, Some("Pettersson D200"));
+
+        // R4: a dual-mode model.
+        let h = hint(RecordingText {
+            device: Some("Pettersson D980"),
+            ..Default::default()
+        });
+        assert_eq!(h.source, HeterodyneSource::DualModeDetector);
+        assert_eq!(h.detector, Some("Pettersson D230/D240x/D980/D1000X"));
+
+        // R1: the heterodyne word is quoted instead of the model, so the
+        // hint names no detector.
+        let h = hint(RecordingText {
+            device: Some("Magenta Bat5"),
+            remarks: Some("Heterodyne"),
+            ..Default::default()
+        });
+        assert_eq!(h.source, HeterodyneSource::HeterodyneWord);
+        assert_eq!(h.detector, None);
     }
 
     #[test]
