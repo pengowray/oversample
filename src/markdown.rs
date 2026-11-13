@@ -243,9 +243,15 @@ impl TreeBuilder {
                 if !self.skipped_inlines.is_empty() =>
             {
                 // A link with no text shows its address, as in `close_inlines`.
+                // It is added as a link, not as text: text would join the
+                // text around it and be linked by the bare URL rules, which
+                // can give a different address.
                 if let Some(Some((href, added))) = self.skipped_inlines.pop() {
                     if added == self.inlines_added {
-                        self.add_inline(MdInline::Text(href));
+                        self.add_inline(MdInline::Link {
+                            children: vec![MdInline::Text(href.clone())],
+                            href,
+                        });
                     }
                 }
             }
@@ -1220,13 +1226,13 @@ mod tests {
         out
     }
 
-    /// The address of every link in `blocks`, in order.
-    fn link_hrefs(blocks: &[MdBlock]) -> Vec<String> {
-        fn of_inlines(items: &[MdInline], out: &mut Vec<String>) {
+    /// Every link in `blocks`, in order.
+    fn links(blocks: &[MdBlock]) -> Vec<&MdInline> {
+        fn of_inlines<'a>(items: &'a [MdInline], out: &mut Vec<&'a MdInline>) {
             for item in items {
                 match item {
-                    Link { href, children } => {
-                        out.push(href.clone());
+                    Link { children, .. } => {
+                        out.push(item);
                         of_inlines(children, out);
                     }
                     Emphasis(c) | Strong(c) => of_inlines(c, out),
@@ -1234,7 +1240,7 @@ mod tests {
                 }
             }
         }
-        fn of_blocks(blocks: &[MdBlock], out: &mut Vec<String>) {
+        fn of_blocks<'a>(blocks: &'a [MdBlock], out: &mut Vec<&'a MdInline>) {
             for block in blocks {
                 match block {
                     Paragraph(items) | Plain(items) => of_inlines(items, out),
@@ -1247,6 +1253,17 @@ mod tests {
         let mut out = Vec::new();
         of_blocks(blocks, &mut out);
         out
+    }
+
+    /// The address of every link in `blocks`, in order.
+    fn link_hrefs(blocks: &[MdBlock]) -> Vec<&str> {
+        links(blocks)
+            .into_iter()
+            .filter_map(|link| match link {
+                Link { href, .. } => Some(href.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Run `f` on a thread with a 256 KB stack, so that code which recurses
@@ -1351,13 +1368,33 @@ mod tests {
             plain_text(&blocks),
             "a b c d e f g h i https://a.example i h g f e d c b a"
         );
-        // The address becomes a link as a bare URL, one level past the limit.
+        // The link is one level past the limit, and holds only its address.
         assert_eq!(inline_nesting(&blocks), MAX_INLINE_DEPTH + 1);
         // A skipped link that has text shows only its text.
         let blocks = parse(
             "*a **b *c **d *e **f *g **h *i [x](https://a.example) i* h** g* f** e* d** c* b** a*",
         );
         assert_eq!(plain_text(&blocks), "a b c d e f g h i x i h g f e d c b a");
+    }
+
+    #[test]
+    fn an_empty_link_past_the_depth_limit_keeps_its_own_address() {
+        // Nine levels of emphasis around the link, as in the test above.
+        let open = "*a **b *c **d *e **f *g **h *i ";
+        let close = " i* h** g* f** e* d** c* b** a*";
+        for (src, href) in [
+            // The "x" after the link is not added to its address.
+            ("[](https://a.example)x", "https://a.example"),
+            // A bare URL would end at the space.
+            ("[](<https://a.example/a b>)", "https://a.example/a b"),
+            // A bare URL would leave out the "." at the end.
+            ("[](https://a.example/x.)", "https://a.example/x."),
+        ] {
+            let blocks = parse(&format!("{open}{src}{close}"));
+            assert_eq!(link_hrefs(&blocks), [href], "{src}");
+            // The same link as when there is no emphasis around it.
+            assert_eq!(links(&blocks), links(&parse(src)), "{src}");
+        }
     }
 
     #[test]
