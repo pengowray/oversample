@@ -61,6 +61,10 @@ async function openCase(page: Page, c: Case) {
     cnt: "Brazil",
     method: "field recording",
     rmk: "",
+    // Myotis fimbriatus calls at 35-80 kHz, above these files' limits. A
+    // sound type that names no echolocation keeps the species call-range
+    // note (species_range.spec.ts) out of these tests.
+    type: "social call",
     url: "https://xeno-canto.org/815138",
     ...c.fields,
   };
