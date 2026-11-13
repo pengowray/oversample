@@ -3,6 +3,7 @@ use super::metadata_panel::open_info_panel;
 use crate::components::icons::Icon;
 use crate::format_time::format_duration_compact;
 use crate::license::license_title;
+use crate::state::store_fields::*;
 use crate::state::{AppState, LoadedFile};
 use leptos::prelude::*;
 
@@ -108,20 +109,27 @@ pub fn FileBadgeRow(
     let cc_license = data.cc_license.clone();
     let cc_tooltip = data.cc_tooltip.clone();
     let heterodyne_tooltip = data.heterodyne_tooltip.clone();
+    let file_index = data.file_index;
     let state = expect_context::<AppState>();
 
     view! {
         // 1. Sample rate badge (always)
         <span class="file-badge badge-sample-rate">{sr_label}</span>
 
-        // 1a. Heterodyne badge, beside the rate it qualifies. The click is left
-        // to reach the file list row too, so the row selects this file and the
-        // Info panel opens on it.
+        // 1a. Heterodyne badge, beside the rate it qualifies. On another file's
+        // row the click goes on to the row, which makes that file current, so
+        // the Info panel shows it. On the current file's row it stops here: a
+        // row click also clears the view history and bookmarks.
         {heterodyne_tooltip.map(|tooltip| view! {
             <button
                 class="file-badge file-badge-heterodyne"
                 title=tooltip
-                on:click=move |_| open_info_panel(state)
+                on:click=move |e: web_sys::MouseEvent| {
+                    if state.library.current_index().get_untracked() == Some(file_index) {
+                        e.stop_propagation();
+                    }
+                    open_info_panel(state);
+                }
             >"Heterodyne recording"</button>
         })}
 

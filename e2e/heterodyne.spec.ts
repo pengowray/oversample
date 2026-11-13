@@ -170,6 +170,34 @@ test.describe("heterodyne badge and note", () => {
     ]);
   });
 
+  test("decomposed accents are normalised before matching", async ({ page }) => {
+    // "hétérodyne" with each accent as a separate combining mark (NFD). The
+    // word lists hold precomposed letters, so this only matches after NFC.
+    const nfd = "détecteur hétérodyne";
+    await openCase(page, { fields: { rmk: nfd }, rate: 44_100 });
+    const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
+    await expect(badge).toHaveText("Heterodyne recording");
+    await expect(badge).toHaveAttribute(
+      "title",
+      [HEADLINE, `Remarks: "${nfd.normalize("NFC")}"`, CONSEQUENCE].join("\n"),
+    );
+  });
+
+  test("the badge on another file's row makes that file current", async ({ page }) => {
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await page
+      .locator('input[type="file"]')
+      .first()
+      .setInputFiles({ name: "plain-local.wav", mimeType: "audio/wav", buffer: wav(44_100, 1) });
+    await expect(page.locator(".file-item.active .file-item-name")).toHaveText("plain-local.wav");
+    await expect(page.locator(".toolbar-badge-row .file-badge-heterodyne")).toHaveCount(0);
+
+    await page.locator(".file-item .file-badge-heterodyne").click();
+    await expect(page.locator(".file-item.active .file-item-name")).toHaveText("XC815138 demo.wav");
+    await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
+    await expect(page.locator(".heterodyne-note")).toBeVisible();
+  });
+
   test("level C: a dual-mode detector gets a muted note and no badge", async ({ page }) => {
     await openCase(page, { fields: { dvc: "Pettersson D980" }, rate: 44_100 });
     await showInfo(page);

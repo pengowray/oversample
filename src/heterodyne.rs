@@ -12,7 +12,7 @@
 //! (all levels).
 
 use crate::types::TimeExpansion;
-use oversample_core::heterodyne_hint::{infer_heterodyne_hint, RecordingText};
+use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
 pub use oversample_core::heterodyne_hint::{HeterodyneHint, HeterodyneLevel, TextField};
 
 /// The site metadata label each text field is read from. The Info panel shows
@@ -157,10 +157,21 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
                 ),
                 evidence,
             ];
-            if let Some(detector) = hint.detector {
-                lines.push(detail(format!(
-                    "The {detector} has a heterodyne mode and other modes."
-                )));
+            // Level C also comes from a heterodyne-only detector named beside
+            // time-expansion or full-spectrum wording, so the detector line
+            // follows the rule that named it.
+            match (hint.source, hint.detector) {
+                (HeterodyneSource::DualModeDetector, Some(detector)) => {
+                    lines.push(detail(format!(
+                        "The {detector} has a heterodyne mode and other modes."
+                    )));
+                }
+                (HeterodyneSource::HeterodyneOnlyDetector, Some(detector)) => {
+                    lines.push(detail(format!(
+                        "The {detector} is a heterodyne-only detector."
+                    )));
+                }
+                _ => {}
             }
             lines.push(detail(
                 "If so, frequencies are not the bat's call frequencies.".into(),
@@ -182,7 +193,6 @@ pub fn tooltip(hint: &HeterodyneHint) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oversample_core::heterodyne_hint::HeterodyneSource;
 
     fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -306,6 +316,36 @@ mod tests {
                 "If so, frequencies are not the bat's call frequencies.",
             ]
         );
+    }
+
+    #[test]
+    fn level_c_from_a_heterodyne_only_detector_does_not_call_it_dual_mode() {
+        // Time-expansion wording lowers a heterodyne-only detector to level C.
+        let hint = file_hint(
+            &rows(&[("Remarks", "Recorded with a Magenta Bat5, time expanded 10x")]),
+            None,
+            44_100,
+        )
+        .unwrap();
+        assert_eq!(hint.level, HeterodyneLevel::MayBeHeterodyne);
+        assert_eq!(hint.source, HeterodyneSource::HeterodyneOnlyDetector);
+        assert_eq!(
+            texts(&hint)[2],
+            "The Magenta Bat4/Bat5 is a heterodyne-only detector."
+        );
+        assert_eq!(roles(&hint), [Detail; 4]);
+    }
+
+    #[test]
+    fn level_c_from_a_heterodyne_word_has_no_detector_line() {
+        let hint = file_hint(
+            &rows(&[("Remarks", "Heterodyne, time-expanded")]),
+            None,
+            44_100,
+        )
+        .unwrap();
+        assert_eq!(hint.level, HeterodyneLevel::MayBeHeterodyne);
+        assert_eq!(texts(&hint).len(), 3);
     }
 
     #[test]
