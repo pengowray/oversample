@@ -30,7 +30,10 @@ export default defineConfig({
   // Trunk's first --release build is slow (several minutes on a cold cache);
   // launch with a generous timeout and reuse any server you already have running.
   webServer: {
-    command: `trunk serve --release --port ${PORT} --no-autoreload`,
+    // Trunk.toml tells trunk to ignore test-results/ and playwright-report/, and trunk
+    // refuses to start if an ignored path is missing. Playwright deletes test-results/
+    // before it starts this command, so create both first.
+    command: `mkdir -p test-results playwright-report && trunk serve --release --port ${PORT} --no-autoreload`,
     url: BASE_URL,
     reuseExistingServer: true,
     timeout: 600_000,
