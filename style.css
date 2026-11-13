@@ -4987,8 +4987,9 @@ a.open-link-btn {
    rate is too low for its species' echolocation calls and which has no
    heterodyne hint (src/species_check.rs), and is styled the same way. Its
    lines are muted, except that a probable x10 time expansion takes the amber:
-   all 10 such Xeno-canto files were time-expanded. Its text has no long
-   words, so it wraps normally. */
+   all 10 Xeno-canto records at a x10 header rate were time-expanded (2 of
+   them the app corrects from their GUANO, so they show no note). Its text
+   has no long words, so it wraps normally. */
 /* Each line is one statement and most wrap in the panel, so a small gap shows
    where one ends and the next begins. */
 .heterodyne-note > div + div,

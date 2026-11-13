@@ -64,8 +64,11 @@ pub enum RangeCase {
     /// get when they are saved at one tenth of their real rate (19.2, 25,
     /// 25.6, 30, 31.25, 38.4 or 50 kHz), the app didn't correct it, and at ten
     /// times the rate the file would reach the species' calls. All 10 such
-    /// Xeno-canto recordings were time-expanded ×10 (256 or 384 kHz
-    /// recordings).
+    /// Xeno-canto records (judged from their header rate) were time-expanded
+    /// ×10 (256 or 384 kHz recordings). Two of them (XC892810, XC892815)
+    /// state TE 10 in their GUANO, so the app corrects them when it loads
+    /// them and they never reach this case: the count is not of the files
+    /// this case is shown for.
     TenfoldHeaderRate,
     /// Any other file below the species' calls: a bat detector's output
     /// (heterodyne, frequency division, or time expansion by a factor the rate

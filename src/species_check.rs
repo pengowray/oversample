@@ -147,8 +147,9 @@ const OTHER_LINE: &str = "This file may be a bat detector's output (heterodyne, 
 /// The lines of the species note, for a file with no heterodyne hint.
 ///
 /// - At a ×10 header rate, the finding first, in the warning colour, then
-///   the species line. All 10 such Xeno-canto files were time-expanded ×10.
-///   The note says how to read the file, since the app has no control to
+///   the species line. All 10 such Xeno-canto records were time-expanded
+///   ×10, though the app corrects 2 of them from their GUANO (see
+///   [`RangeCase::TenfoldHeaderRate`]). The note says how to read the file, since the app has no control to
 ///   correct it after loading.
 /// - At any other rate, the species line, then the possibilities, all muted.
 pub fn note_lines(f: &SpeciesRangeFinding) -> Vec<NoteLine> {
