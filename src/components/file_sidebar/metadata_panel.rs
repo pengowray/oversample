@@ -462,7 +462,7 @@ fn render_value_body(
         FieldKind::License => {
             // The short label, with the value as sent below it when it differs
             // ("CC0 1.0" over "CC0"; "CC BY-SA 4.0" once).
-            let short = super::file_badges::parse_cc_license(value).filter(|s| s != value.trim());
+            let short = crate::license::parse_cc_license(value).filter(|s| s != value.trim());
             if let Some(short) = short {
                 view! {
                     <div class="metadata-value-block">{short}</div>

@@ -1,10 +1,8 @@
 use crate::audio::streaming_source;
-use crate::components::file_sidebar::file_badges::{
-    cc_license_full_name, get_xc_field, license_link, license_title, parse_cc_license,
-    FileBadgeData, FileBadgeRow,
-};
+use crate::components::file_sidebar::file_badges::{get_xc_field, FileBadgeData, FileBadgeRow};
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
+use crate::license::{cc_license_full_name, license_link, license_title, parse_cc_license};
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, PlaybackMode, RecordReadyState, RightSidebarTab,

@@ -11,6 +11,7 @@ pub mod dsp;
 pub mod file_identity;
 pub mod focus_stack;
 pub mod format_time;
+pub mod license;
 pub mod opfs;
 pub mod project;
 pub mod project_store;

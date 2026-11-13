@@ -340,9 +340,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         // Build badge data
                         let cc_info = f.site_metadata.as_ref().and_then(|meta| {
                             let lic = file_badges::get_xc_field(&meta.fields, "License")?;
-                            let label = file_badges::parse_cc_license(&lic)?;
+                            let label = crate::license::parse_cc_license(&lic)?;
                             let attr = file_badges::get_xc_field(&meta.fields, "Attribution");
-                            let title = file_badges::license_title(&label);
+                            let title = crate::license::license_title(&label);
                             let tooltip = if let Some(attr_text) = attr {
                                 format!("{title}\n{attr_text}")
                             } else {
