@@ -1,6 +1,6 @@
 use super::country_map::country_to_region;
-use super::data::{get_manifest, species};
-use super::types::{AutoResolved, BatBookRegion, PlaceSource, RecordingPlace};
+use super::data::{get_manifest, species, species_by_scientific_name, NameQuery};
+use super::types::{AutoResolved, BatBookRegion, BatSpecies, PlaceSource, RecordingPlace};
 use crate::state::LoadedFile;
 
 /// Search all regional bat books for a species by scientific name.
@@ -11,20 +11,8 @@ fn find_species_across_books(
     scientific_name: &str,
     preferred_region: Option<BatBookRegion>,
 ) -> Option<(BatBookRegion, String)> {
-    let query = scientific_name.trim().to_lowercase();
-    if query.is_empty() {
-        return None;
-    }
-
-    // Also try binomial (first two words) for trinomials like "Myotis lucifugus alascensis"
-    let binomial: Option<String> = {
-        let parts: Vec<&str> = query.split_whitespace().collect();
-        if parts.len() > 2 {
-            Some(format!("{} {}", parts[0], parts[1]))
-        } else {
-            None
-        }
-    };
+    // Also matches the binomial of a trinomial ("Myotis lucifugus alascensis").
+    let query = NameQuery::new(scientific_name)?;
 
     let mut best: Option<(BatBookRegion, String)> = None;
 
@@ -34,12 +22,7 @@ fn find_species_across_books(
         }
         let manifest = get_manifest(region);
         for entry in &manifest.entries {
-            let synonyms = species(entry.id).map_or(&[][..], |s| s.synonyms.as_slice());
-            let matches = std::iter::once(entry.scientific_name)
-                .chain(synonyms.iter().map(String::as_str))
-                .map(str::to_lowercase)
-                .any(|sci| sci == query || binomial.as_deref() == Some(sci.as_str()));
-            if matches {
+            if species(entry.id).is_some_and(|s| query.matches(s)) {
                 // Exact match in this region
                 if preferred_region == Some(region) {
                     // Best possible: species is in the country's own region
@@ -55,9 +38,30 @@ fn find_species_across_books(
     best
 }
 
+/// The bat book species of a recording labelled `scientific_name`: the
+/// typical-calls strip's match, which prefers the entry in the book of the
+/// recording's region (`preferred_region`), or else the first regional book
+/// that has it. A species in no regional book (`Pipistrellus hanaki`) is
+/// looked up among every species instead.
+pub(crate) fn find_species(
+    scientific_name: &str,
+    preferred_region: Option<BatBookRegion>,
+) -> Option<&'static BatSpecies> {
+    find_species_across_books(scientific_name, preferred_region)
+        .and_then(|(_, id)| species(&id))
+        .or_else(|| species_by_scientific_name(scientific_name))
+}
+
+/// The region of the recording's country (source site or GPS position), if
+/// the region map knows it.
+pub(crate) fn country_region(file: &LoadedFile) -> Option<BatBookRegion> {
+    let place = get_country(file)?;
+    country_to_region(&place.country).map(|m| m.region)
+}
+
 /// Extract species scientific name from file metadata.
 /// Tries XC "Scientific name" first, then GUANO Species|Manual, then Species|Auto.
-fn get_scientific_name(file: &LoadedFile) -> Option<String> {
+pub(crate) fn get_scientific_name(file: &LoadedFile) -> Option<String> {
     // Source-site metadata
     if let Some(meta) = &file.site_metadata {
         if let Some(val) = meta

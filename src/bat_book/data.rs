@@ -44,6 +44,65 @@ pub fn species(id: &str) -> Option<&'static BatSpecies> {
         .copied()
 }
 
+/// A scientific name to look up in the bat book: trimmed and lower-cased,
+/// with the binomial of a trinomial as a second form, so "Myotis lucifugus
+/// alascensis" also matches "Myotis lucifugus".
+pub struct NameQuery {
+    full: String,
+    binomial: Option<String>,
+}
+
+impl NameQuery {
+    /// `None` for a blank name.
+    pub fn new(name: &str) -> Option<Self> {
+        let full = name.trim().to_lowercase();
+        if full.is_empty() {
+            return None;
+        }
+        let parts: Vec<&str> = full.split_whitespace().collect();
+        let binomial = (parts.len() > 2).then(|| format!("{} {}", parts[0], parts[1]));
+        Some(Self { full, binomial })
+    }
+
+    /// The species' scientific name and synonyms, lower-cased.
+    fn names(s: &BatSpecies) -> impl Iterator<Item = String> + '_ {
+        std::iter::once(s.scientific_name.as_str())
+            .chain(s.synonyms.iter().map(String::as_str))
+            .map(str::to_lowercase)
+    }
+
+    /// Whether the species' scientific name or a synonym is the whole name.
+    pub fn matches_full(&self, s: &BatSpecies) -> bool {
+        Self::names(s).any(|n| n == self.full)
+    }
+
+    /// Whether the species' scientific name or a synonym is the whole name,
+    /// or the binomial of a trinomial.
+    pub fn matches(&self, s: &BatSpecies) -> bool {
+        Self::names(s).any(|n| n == self.full || self.binomial.as_deref() == Some(n.as_str()))
+    }
+}
+
+/// The species with this scientific name or synonym, from every species in
+/// the bat book, including those in no regional book (`Pipistrellus
+/// hanaki`). A match on the whole name wins over a trinomial's binomial. Two
+/// species can share a name (`eptesicus_nilssonii` and its Japanese entry
+/// `eptesicus_nilssonii_jp`); then the one with the lowest call frequency
+/// wins, so the order of the bundle doesn't matter.
+///
+/// Callers that know the recording's region use
+/// `auto_resolve::find_species`, which prefers the region's own entry.
+pub fn species_by_scientific_name(name: &str) -> Option<&'static BatSpecies> {
+    let query = NameQuery::new(name)?;
+    let lowest = |matching: &dyn Fn(&BatSpecies) -> bool| {
+        all_species()
+            .iter()
+            .filter(|s| matching(s))
+            .min_by(|a, b| a.freq_lo_hz.total_cmp(&b.freq_lo_hz))
+    };
+    lowest(&|s| query.matches_full(s)).or_else(|| lowest(&|s| query.matches(s)))
+}
+
 /// Materialized entries for each region key, with non-echolocating species
 /// sorted to the end. Built once.
 fn books() -> &'static HashMap<&'static str, Vec<BatBookEntry>> {
@@ -167,6 +226,32 @@ mod tests {
                 );
                 assert!(seen.insert(d.id.as_str()), "{key}: {} listed twice", d.id);
             }
+        }
+    }
+
+    #[test]
+    fn species_by_scientific_name_reads_every_species() {
+        let id = |name: &str| species_by_scientific_name(name).map(|s| s.id.as_str());
+        // In no regional book.
+        assert_eq!(id("Pipistrellus hanaki"), Some("pipistrellus_hanaki"));
+        // A synonym, any case, with spaces around it.
+        assert_eq!(id("  lasiurus CINEREUS "), Some("aeorestes_cinereus"));
+        // A trinomial in the book matches itself, not its binomial; one that
+        // isn't matches its binomial.
+        assert_eq!(
+            id("Rhinolophus ferrumequinum nippon"),
+            Some("rhinolophus_ferrumequinum_nippon")
+        );
+        assert_eq!(
+            id("Rhinolophus ferrumequinum"),
+            Some("rhinolophus_ferrumequinum")
+        );
+        assert_eq!(id("Myotis lucifugus alascensis"), Some("myotis_lucifugus"));
+        // Two species share the name: the lower call frequency wins.
+        assert_eq!(id("Eptesicus nilssonii"), Some("eptesicus_nilssonii_jp"));
+        // Codes and placeholders match nothing.
+        for name in ["PIPPIP", "Mystery mystery", "Myotis", "", "  "] {
+            assert_eq!(id(name), None, "{name:?}");
         }
     }
 
