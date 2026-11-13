@@ -60,6 +60,9 @@ enum FieldKind {
     Temperature,
     GpsPosition,
     License,
+    /// Markdown text (Xeno-canto remarks). `classify` never returns this: the
+    /// caller picks it for the one field it knows is Markdown.
+    Markdown,
     None,
 }
 
@@ -376,6 +379,17 @@ fn spacious_row(
     view_mode: MetadataView,
 ) -> impl IntoView {
     let kind = classify(&label);
+    spacious_row_as(label, value, label_title, view_mode, kind)
+}
+
+/// A spacious row whose value is formatted as `kind`, whatever its label.
+fn spacious_row_as(
+    label: String,
+    value: String,
+    label_title: Option<String>,
+    view_mode: MetadataView,
+    kind: FieldKind,
+) -> impl IntoView {
     let value_for_copy = value.clone();
     let on_copy = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
@@ -468,6 +482,22 @@ fn render_value_body(
             } else {
                 raw()
             }
+        }
+        // Markdown is turned into elements, never inserted as HTML, so raw
+        // HTML in the text shows as text and only http(s) links are links.
+        FieldKind::Markdown => {
+            let blocks = crate::markdown::parse(value);
+            // Text with nothing to show once parsed (only a link reference
+            // definition, say) keeps its raw form rather than a blank row.
+            if blocks.is_empty() {
+                return raw();
+            }
+            view! {
+                <div class="metadata-value-block metadata-markdown">
+                    {crate::markdown::markdown_view(&blocks)}
+                </div>
+            }
+            .into_any()
         }
         FieldKind::None => {
             // Try JSON expansion (e.g. Wildlife Acoustics "Audio settings")
@@ -1502,6 +1532,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             ("0 B".to_string(), "File size".to_string())
                         };
                         let site = f.site_metadata.as_ref().map(|m| m.site.clone());
+                        let is_xc = f.site_metadata.as_ref().is_some_and(|m| m.is_xeno_canto());
                         let (xc_fields, source_label) = f.site_metadata.as_ref()
                             .map(|m| (m.fields.clone(), m.site.name().to_string()))
                             .unwrap_or_default();
@@ -1547,7 +1578,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                     let label = site.as_ref()
                                         .map_or(key.as_str(), |s| s.field_label(&key))
                                         .to_string();
-                                    spacious_row(label, value, None, view_mode).into_any()
+                                    // Xeno-canto recordists write their remarks in Markdown.
+                                    let kind = if is_xc && key == "Remarks" {
+                                        FieldKind::Markdown
+                                    } else {
+                                        classify(&label)
+                                    };
+                                    spacious_row_as(label, value, None, view_mode, kind).into_any()
                                 }).collect();
                                 view! {
                                     <div class="setting-group">

@@ -1795,6 +1795,71 @@ body.sidebar-resizing {
 .metadata-value-block.metadata-value-lines {
     white-space: pre-line;
 }
+/* Xeno-canto remarks rendered from Markdown (markdown.rs). Remarks can run to
+   several paragraphs and a reference list, so the gaps are small to keep them
+   compact in the narrow panel. Long URLs in the text wrap anywhere, so the
+   panel never scrolls sideways at 375 px. */
+.metadata-markdown {
+    overflow-wrap: anywhere;
+}
+.metadata-markdown p,
+.metadata-markdown ul,
+.metadata-markdown ol,
+.metadata-markdown pre,
+.metadata-markdown blockquote,
+.metadata-markdown hr {
+    margin-bottom: 6px;
+}
+/* A block quote (lines starting with ">") is indented, as on Xeno-canto, so
+   it does not read as ordinary text. Indent only, no bar down the side. */
+.metadata-markdown blockquote {
+    padding-left: 12px;
+    color: #bbb;
+}
+.metadata-markdown li > p {
+    margin-bottom: 3px;
+}
+.metadata-markdown > :last-child,
+.metadata-markdown li > :last-child,
+.metadata-markdown blockquote > :last-child {
+    margin-bottom: 0;
+}
+/* The global reset removes list padding, which would put the markers outside
+   the row. */
+.metadata-markdown ul,
+.metadata-markdown ol {
+    padding-left: 18px;
+}
+.metadata-markdown li + li {
+    margin-top: 3px;
+}
+/* Same link style as the map links under GPS positions. */
+.metadata-markdown a {
+    color: #8cf;
+    text-decoration: none;
+}
+.metadata-markdown a:hover {
+    text-decoration: underline;
+}
+.metadata-markdown code,
+.metadata-markdown pre {
+    font-family: monospace;
+    font-size: 12px;
+}
+/* Code blocks and raw XML (some recorders' headers) keep their line breaks
+   and tabs, and wrap long lines. break-all wraps at the panel edge: without it
+   a long tab-indented line breaks after its tab, which looks like a blank line
+   followed by an unindented one. Tabs are 2 wide to fit nested XML at 375 px. */
+.metadata-markdown pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    tab-size: 2;
+    color: #bbb;
+}
+.metadata-markdown hr {
+    border: 0;
+    border-top: 1px solid #333;
+}
 .metadata-value-block.metadata-hash {
     font-family: monospace;
     font-size: 11px;
