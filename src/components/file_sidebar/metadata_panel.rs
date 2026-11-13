@@ -782,7 +782,9 @@ fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
 /// The note under the Sample rate row of a file whose site metadata says, or
 /// suggests, that it was recorded from a heterodyne bat detector's audio output
 /// (`crate::heterodyne`). The finding and its consequence are in the warning
-/// colour; the evidence, and every line of a level C hint, are muted.
+/// colour; the evidence, and every line of a level C hint, are muted. When the
+/// detector's tuning is known, the line on how to read the frequencies is in
+/// the panel's normal text colour.
 fn heterodyne_note(hint: &HeterodyneHint) -> impl IntoView {
     let lines = crate::heterodyne::note_lines(hint)
         .into_iter()
@@ -790,6 +792,7 @@ fn heterodyne_note(hint: &HeterodyneHint) -> impl IntoView {
             let class = match line.role {
                 LineRole::Warning => "heterodyne-note-warning",
                 LineRole::Detail => "heterodyne-note-detail",
+                LineRole::Plain => "heterodyne-note-plain",
             };
             view! { <div class=class>{line.text}</div> }
         })

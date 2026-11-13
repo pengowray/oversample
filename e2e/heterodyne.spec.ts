@@ -114,18 +114,27 @@ async function noteLines(page: Page) {
 
 const HEADLINE = "Recorded from a heterodyne bat detector's audio output.";
 const CONSEQUENCE = "Frequencies are not the bat's call frequencies and can't be corrected.";
+/** The consequence line when the remark gives the detector's tuning. */
+const CONSEQUENCE_TUNED = "Frequencies are not the bat's call frequencies.";
 const WARN = "heterodyne-note-warning";
 const DETAIL = "heterodyne-note-detail";
+const PLAIN = "heterodyne-note-plain";
 
 test.describe("heterodyne badge and note", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("level A: the remark says heterodyne", async ({ page }) => {
+  test("level A: the remark says heterodyne and gives the tuning", async ({ page }) => {
     await openCase(page, {
       fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
       rate: 44_100,
     });
-    const lines = [HEADLINE, 'Remarks: "handheld hetrodyne detector set at 31,9 kHz"', CONSEQUENCE];
+    const lines = [
+      HEADLINE,
+      'Remarks: "handheld hetrodyne detector set at 31,9 kHz"',
+      CONSEQUENCE_TUNED,
+      "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
+        "at either 21.9 or 41.9 kHz.",
+    ];
 
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
     await expect(badge).toHaveText("Heterodyne recording");
@@ -147,6 +156,20 @@ test.describe("heterodyne badge and note", () => {
       [WARN, lines[0]],
       [DETAIL, lines[1]],
       [WARN, lines[2]],
+      [PLAIN, lines[3]],
+    ]);
+  });
+
+  test("level A without a tuning keeps the can't-be-corrected line", async ({ page }) => {
+    await openCase(page, {
+      fields: { rmk: "Recorded with a handheld hetrodyne detector" },
+      rate: 44_100,
+    });
+    await showInfo(page);
+    expect(await noteLines(page)).toEqual([
+      [WARN, HEADLINE],
+      [DETAIL, 'Remarks: "Recorded with a handheld hetrodyne detector"'],
+      [WARN, CONSEQUENCE],
     ]);
   });
 

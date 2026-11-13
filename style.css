@@ -4991,6 +4991,12 @@ a.open-link-btn {
 .heterodyne-note-warning {
     color: #fc8;
 }
+/* With the detector's tuning known, the last line says how to read the file's
+   frequencies. It is a reading rule, not a second warning, so it takes the
+   app's normal text colour (body #ccc) instead of amber or the muted grey. */
+.heterodyne-note-plain {
+    color: #ccc;
+}
 
 /* Sequence gap indicators */
 .seq-gap-row {

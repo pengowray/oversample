@@ -10,6 +10,11 @@
 //! [`note_lines`] turns a hint into the lines shown in two places: the badge
 //! tooltip (levels A and B) and the note under the Info panel's Sample rate row
 //! (all levels).
+//!
+//! When the text gives the detector's tuning frequency
+//! ([`HeterodyneHint::tuned_hz`]), the note says how to read the file's
+//! frequencies, and [`axis_call_suffix`] gives the frequency axis's hover text:
+//! the two call frequencies a sound at each label came from.
 
 use crate::types::TimeExpansion;
 use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
@@ -107,6 +112,9 @@ pub enum LineRole {
     Warning,
     /// The evidence, muted.
     Detail,
+    /// How to read the file's frequencies when the tuning is known, in the
+    /// panel's normal text colour: it is a reading rule, not another warning.
+    Plain,
 }
 
 /// One line of the heterodyne note.
@@ -128,24 +136,43 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
         role: LineRole::Detail,
     };
     let evidence = detail(format!("{}: \"{}\"", field_label(hint.field), hint.excerpt));
+    // With the tuning known, the call frequencies can be worked out (one of
+    // two per sound), so "can't be corrected" is left out and a line saying
+    // how to read the file follows.
+    let consequence = || match hint.tuned_hz {
+        Some(_) => warning("Frequencies are not the bat's call frequencies.".into()),
+        None => {
+            warning("Frequencies are not the bat's call frequencies and can't be corrected.".into())
+        }
+    };
+    let reading = || {
+        hint.tuned_hz.map(|tuned| NoteLine {
+            text: tuned_line(tuned),
+            role: LineRole::Plain,
+        })
+    };
     match hint.level {
-        HeterodyneLevel::SaysHeterodyne => vec![
-            warning("Recorded from a heterodyne bat detector's audio output.".into()),
-            evidence,
-            warning(
-                "Frequencies are not the bat's call frequencies and can't be corrected.".into(),
-            ),
-        ],
+        HeterodyneLevel::SaysHeterodyne => {
+            let mut lines = vec![
+                warning("Recorded from a heterodyne bat detector's audio output.".into()),
+                evidence,
+                consequence(),
+            ];
+            lines.extend(reading());
+            lines
+        }
+        // The core gives a tuning only at level A, but a level B hint with
+        // one would read the same way.
         HeterodyneLevel::HeterodyneOnlyDetector => {
             let detector = detector_name(hint).unwrap_or_else(|| hint.matched.clone());
-            vec![
+            let mut lines = vec![
                 warning("Recorded from a heterodyne bat detector's audio output.".into()),
                 evidence,
                 detail(format!("The {detector} is a heterodyne-only detector.")),
-                warning(
-                    "Frequencies are not the bat's call frequencies and can't be corrected.".into(),
-                ),
-            ]
+                consequence(),
+            ];
+            lines.extend(reading());
+            lines
         }
         // Level C is a possibility, not a finding, so every line is muted.
         HeterodyneLevel::MayBeHeterodyne => {
@@ -232,6 +259,75 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
     })
 }
 
+/// The note's line for a detector tuned to `tuned_hz`, with a worked example
+/// at 10 kHz: "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came
+/// from a call at either 21.9 or 41.9 kHz." 10 kHz is also a frequency axis
+/// label, so its hover text shows the same numbers. A detector tuned to 10 kHz
+/// or lower uses 5 kHz, so the lower call frequency stays above 0.
+pub fn tuned_line(tuned_hz: u32) -> String {
+    let tuned = i64::from(tuned_hz);
+    let example = if tuned <= 10_000 { 5_000 } else { 10_000 };
+    // Two decimals, so a tuning given as "31,95 kHz" is shown as written.
+    let khz = |hz: i64| format_khz(hz, 2);
+    format!(
+        "Detector tuned to {} kHz: a sound at {} kHz in this file came from a call at \
+         either {} or {} kHz.",
+        khz(tuned),
+        khz(example),
+        khz(tuned - example),
+        khz(tuned + example),
+    )
+}
+
+/// Longest frequency axis hover label, in characters, that keeps its " kHz".
+/// "10 → 21.9 or 41.9 kHz" is 21 characters; a longer label, such as
+/// "15 → 97.5 or 127.5", drops the unit so it stays about as wide.
+const AXIS_LABEL_MAX_CHARS: usize = 21;
+
+/// The hover text after a frequency axis label when the file was recorded
+/// from a heterodyne detector tuned to `tuned_hz`: the call frequencies that a
+/// sound at the label's frequency (`freq_hz`) came from. Tuned to 31.9 kHz,
+/// the 10 kHz label gets " → 21.9 or 41.9 kHz". The lower call frequency is
+/// left out when it is 0 or less ("35 → 66.9 kHz"), and the unit is left out
+/// when the whole label would be longer than [`AXIS_LABEL_MAX_CHARS`]. The
+/// label itself is [`freq_marker_label`], which the renderer draws first.
+///
+/// [`freq_marker_label`]: crate::canvas::colors::freq_marker_label
+pub fn axis_call_suffix(freq_hz: f64, tuned_hz: u32) -> String {
+    let freq = freq_hz.round() as i64;
+    let tuned = i64::from(tuned_hz);
+    let khz = |hz: i64| format_khz(hz, 1);
+    // A value that shows as 0 kHz is left out with the negative ones.
+    let lower = (tuned - freq >= 50).then(|| tuned - freq);
+    let upper = tuned + freq;
+    let values = match lower {
+        Some(lower) if lower != upper => format!("{} or {}", khz(lower), khz(upper)),
+        _ => khz(upper),
+    };
+    let label = crate::canvas::colors::freq_marker_label(freq_hz);
+    let with_unit = format!(" \u{2192} {values} kHz");
+    if label.chars().count() + with_unit.chars().count() <= AXIS_LABEL_MAX_CHARS {
+        with_unit
+    } else {
+        format!(" \u{2192} {values}")
+    }
+}
+
+/// A positive frequency in Hz as kHz, rounded to at most `decimals` (1 or 2)
+/// decimal places, with no trailing zeros: 21_900 gives "21.9", 40_000 gives
+/// "40" and, with 2 decimals, 31_950 gives "31.95".
+fn format_khz(hz: i64, decimals: u32) -> String {
+    let step = 10_i64.pow(3 - decimals);
+    let units = (hz.max(0) + step / 2) / step;
+    let per_khz = 10_i64.pow(decimals);
+    let (whole, frac) = (units / per_khz, units % per_khz);
+    if frac == 0 {
+        return whole.to_string();
+    }
+    let frac = format!("{frac:0width$}", width = decimals as usize);
+    format!("{whole}.{}", frac.trim_end_matches('0'))
+}
+
 /// The badge tooltip: the note's lines, one per line.
 pub fn tooltip(hint: &HeterodyneHint) -> String {
     note_lines(hint)
@@ -260,28 +356,145 @@ mod tests {
         note_lines(hint).into_iter().map(|l| l.role).collect()
     }
 
-    use LineRole::{Detail, Warning};
+    use LineRole::{Detail, Plain, Warning};
 
     #[test]
     fn level_a_lines() {
+        let hint = file_hint(
+            &rows(&[("Remarks", "Recorded with a handheld hetrodyne detector")]),
+            None,
+            44_100,
+        )
+        .unwrap();
+        assert_eq!(hint.level, HeterodyneLevel::SaysHeterodyne);
+        assert_eq!(hint.tuned_hz, None);
+        assert!(shows_badge(&hint));
+        assert_eq!(
+            texts(&hint),
+            [
+                "Recorded from a heterodyne bat detector's audio output.",
+                "Remarks: \"Recorded with a handheld hetrodyne detector\"",
+                "Frequencies are not the bat's call frequencies and can't be corrected.",
+            ]
+        );
+        assert_eq!(roles(&hint), [Warning, Detail, Warning]);
+        assert_eq!(tooltip(&hint), texts(&hint).join("\n"));
+    }
+
+    #[test]
+    fn level_a_lines_with_the_tuning() {
         let hint = file_hint(
             &rows(&[("Remarks", "handheld hetrodyne detector set at 31,9 kHz")]),
             None,
             44_100,
         )
         .unwrap();
-        assert_eq!(hint.level, HeterodyneLevel::SaysHeterodyne);
-        assert!(shows_badge(&hint));
+        assert_eq!(hint.tuned_hz, Some(31_900));
         assert_eq!(
             texts(&hint),
             [
                 "Recorded from a heterodyne bat detector's audio output.",
                 "Remarks: \"handheld hetrodyne detector set at 31,9 kHz\"",
-                "Frequencies are not the bat's call frequencies and can't be corrected.",
+                "Frequencies are not the bat's call frequencies.",
+                "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call \
+                 at either 21.9 or 41.9 kHz.",
             ]
         );
-        assert_eq!(roles(&hint), [Warning, Detail, Warning]);
+        assert_eq!(roles(&hint), [Warning, Detail, Warning, Plain]);
         assert_eq!(tooltip(&hint), texts(&hint).join("\n"));
+    }
+
+    #[test]
+    fn level_b_lines_with_a_tuning_keep_the_detector_line() {
+        // The core gives a tuning only at level A; this hint is built by hand.
+        let hint = HeterodyneHint {
+            level: HeterodyneLevel::HeterodyneOnlyDetector,
+            source: HeterodyneSource::HeterodyneOnlyDetector,
+            detector: Some("Magenta Bat4/Bat5"),
+            field: TextField::Remarks,
+            excerpt: "Recording with Magenta Bat5".into(),
+            matched: "Magenta Bat5".into(),
+            tuned_hz: Some(45_000),
+        };
+        assert_eq!(
+            texts(&hint),
+            [
+                "Recorded from a heterodyne bat detector's audio output.",
+                "Remarks: \"Recording with Magenta Bat5\"",
+                "The Magenta Bat5 is a heterodyne-only detector.",
+                "Frequencies are not the bat's call frequencies.",
+                "Detector tuned to 45 kHz: a sound at 10 kHz in this file came from a call \
+                 at either 35 or 55 kHz.",
+            ]
+        );
+        assert_eq!(roles(&hint), [Warning, Detail, Detail, Warning, Plain]);
+    }
+
+    #[test]
+    fn tuned_line_examples() {
+        assert_eq!(
+            tuned_line(23_500),
+            "Detector tuned to 23.5 kHz: a sound at 10 kHz in this file came from a call \
+             at either 13.5 or 33.5 kHz."
+        );
+        // Two decimals, as the remark gave them.
+        assert_eq!(
+            tuned_line(31_950),
+            "Detector tuned to 31.95 kHz: a sound at 10 kHz in this file came from a call \
+             at either 21.95 or 41.95 kHz."
+        );
+        // Tuned to 10 kHz or lower: a 5 kHz example keeps both calls above 0.
+        assert_eq!(
+            tuned_line(10_000),
+            "Detector tuned to 10 kHz: a sound at 5 kHz in this file came from a call \
+             at either 5 or 15 kHz."
+        );
+        assert!(tuned_line(10_500).contains("a sound at 10 kHz"));
+    }
+
+    #[test]
+    fn axis_labels_give_the_call_frequencies() {
+        let label = |freq_khz: f64, tuned_hz: u32| {
+            let freq = freq_khz * 1000.0;
+            format!(
+                "{}{}",
+                crate::canvas::colors::freq_marker_label(freq),
+                axis_call_suffix(freq, tuned_hz)
+            )
+        };
+        // Below the tuning: both call frequencies, lower first.
+        assert_eq!(label(5.0, 31_900), "5 \u{2192} 26.9 or 36.9 kHz");
+        assert_eq!(label(10.0, 31_900), "10 \u{2192} 21.9 or 41.9 kHz");
+        assert_eq!(label(15.0, 31_900), "15 \u{2192} 16.9 or 46.9 kHz");
+        assert_eq!(label(20.0, 31_900), "20 \u{2192} 11.9 or 51.9 kHz");
+        assert_eq!(label(30.0, 31_900), "30 \u{2192} 1.9 or 61.9 kHz");
+        assert_eq!(label(5.0, 45_000), "5 \u{2192} 40 or 50 kHz");
+        // At or above the tuning: only the upper call frequency.
+        assert_eq!(label(35.0, 31_900), "35 \u{2192} 66.9 kHz");
+        assert_eq!(label(45.0, 45_000), "45 \u{2192} 90 kHz");
+        assert_eq!(label(50.0, 45_000), "50 \u{2192} 95 kHz");
+        // 0 kHz came from a call at the tuning frequency.
+        assert_eq!(label(0.0, 31_900), "0 \u{2192} 31.9 kHz");
+        // "10 → 21.9 or 41.9 kHz" (21 characters) keeps the unit; a longer
+        // label drops it.
+        assert_eq!(label(10.0, 31_900).chars().count(), AXIS_LABEL_MAX_CHARS);
+        assert_eq!(label(15.0, 112_500), "15 \u{2192} 97.5 or 127.5");
+        // One decimal at most: 31.95 kHz rounds to 32.
+        assert_eq!(label(10.0, 31_950), "10 \u{2192} 22 or 42 kHz");
+        // A lower call frequency that rounds to 0 is left out.
+        assert_eq!(label(31.0, 31_040), "31 \u{2192} 62 kHz");
+    }
+
+    #[test]
+    fn khz_formatting() {
+        assert_eq!(format_khz(21_900, 1), "21.9");
+        assert_eq!(format_khz(40_000, 1), "40");
+        assert_eq!(format_khz(1_900, 1), "1.9");
+        assert_eq!(format_khz(31_950, 1), "32");
+        assert_eq!(format_khz(31_950, 2), "31.95");
+        assert_eq!(format_khz(31_905, 2), "31.91");
+        assert_eq!(format_khz(31_050, 2), "31.05");
+        assert_eq!(format_khz(31_900, 2), "31.9");
     }
 
     #[test]
