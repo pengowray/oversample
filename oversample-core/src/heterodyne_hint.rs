@@ -646,8 +646,10 @@ const FS_RECORDERS: &[&str] = &[
 ];
 
 /// Header rates of full-spectrum or time-expanded files saved with a rate
-/// one tenth of the real one.
-const TE_HEADER_RATES: &[u32] = &[19_200, 25_000, 25_600, 30_000, 31_250, 38_400, 50_000];
+/// one tenth of the real one. The species call-range check
+/// ([`crate::species_range`]) uses the same list.
+pub(crate) const TE_HEADER_RATES: &[u32] =
+    &[19_200, 25_000, 25_600, 30_000, 31_250, 38_400, 50_000];
 
 // ---------------------------------------------------------------- tokenising
 
