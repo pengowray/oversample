@@ -288,7 +288,8 @@ const AXIS_LABEL_MAX_CHARS: usize = 21;
 /// The hover text after a frequency axis label when the file was recorded
 /// from a heterodyne detector tuned to `tuned_hz`: the call frequencies that a
 /// sound at the label's frequency (`freq_hz`) came from. Tuned to 31.9 kHz,
-/// the 10 kHz label gets " → 21.9 or 41.9 kHz". The lower call frequency is
+/// the 10 kHz label gets " → 21.9 or 41.9 kHz". Values have one decimal, or
+/// two when the tuning has two, as in the note. The lower call frequency is
 /// left out when it is 0 or less ("35 → 66.9 kHz"), and the unit is left out
 /// when the whole label would be longer than [`AXIS_LABEL_MAX_CHARS`]. The
 /// label itself is [`freq_marker_label`], which the renderer draws first.
@@ -297,9 +298,13 @@ const AXIS_LABEL_MAX_CHARS: usize = 21;
 pub fn axis_call_suffix(freq_hz: f64, tuned_hz: u32) -> String {
     let freq = freq_hz.round() as i64;
     let tuned = i64::from(tuned_hz);
-    let khz = |hz: i64| format_khz(hz, 1);
+    // One decimal, or two when the tuning has two ("31,95 kHz"), so the
+    // 10 kHz label shows the same numbers as the note's example.
+    let decimals = if tuned_hz % 100 == 0 { 1 } else { 2 };
+    let khz = |hz: i64| format_khz(hz, decimals);
     // A value that shows as 0 kHz is left out with the negative ones.
-    let lower = (tuned - freq >= 50).then(|| tuned - freq);
+    let step = 10_i64.pow(3 - decimals);
+    let lower = ((tuned - freq) * 2 >= step).then(|| tuned - freq);
     let upper = tuned + freq;
     let values = match lower {
         Some(lower) if lower != upper => format!("{} or {}", khz(lower), khz(upper)),
@@ -497,10 +502,12 @@ mod tests {
         // label drops it.
         assert_eq!(label(10.0, 31_900).chars().count(), AXIS_LABEL_MAX_CHARS);
         assert_eq!(label(15.0, 112_500), "15 \u{2192} 97.5 or 127.5");
-        // One decimal at most: 31.95 kHz rounds to 32.
-        assert_eq!(label(10.0, 31_950), "10 \u{2192} 22 or 42 kHz");
-        // A lower call frequency that rounds to 0 is left out.
-        assert_eq!(label(31.0, 31_040), "31 \u{2192} 62 kHz");
+        // A tuning with two decimals keeps them, as the note does; the
+        // label is then too long for its unit.
+        assert_eq!(label(10.0, 31_950), "10 \u{2192} 21.95 or 41.95");
+        assert!(tuned_line(31_950).contains("21.95 or 41.95"));
+        // A small lower call frequency is still shown when it is above 0.
+        assert_eq!(label(31.0, 31_040), "31 \u{2192} 0.04 or 62.04");
     }
 
     #[test]

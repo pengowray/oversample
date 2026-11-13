@@ -401,6 +401,26 @@ test.describe("frequency axis of a heterodyne recording", () => {
     expect(drawn).not.toContain(" kHz");
   });
 
+  test("in HET playback the labels show what you hear instead", async ({ page }) => {
+    // 96 kHz: switching to HET hangs the page for a 44.1 or 48 kHz file of
+    // this generated tone, on main too.
+    await page.addInitScript(recordCanvasText);
+    await openCase(page, {
+      fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
+      rate: 96_000,
+    });
+    await page.locator('button[title^="HET"]').first().click();
+    await hoverZoomedFreqAxis(page);
+    // HET playback labels are drawn whole ("10 kHz" or "10 kHz → 5 kHz").
+    await expect
+      .poll(async () => (await canvasText(page)).some((t) => /^\d+ kHz/.test(t)), {
+        timeout: 5_000,
+      })
+      .toBe(true);
+    const drawn = await canvasText(page);
+    expect(drawn.filter((t) => t.includes(" or "))).toEqual([]);
+  });
+
   test("hovered labels show only the unit without a tuning", async ({ page }) => {
     // The remark of XC924726, which names the detector but no tuning.
     await page.addInitScript(recordCanvasText);
