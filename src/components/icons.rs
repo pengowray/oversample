@@ -55,6 +55,9 @@ pub enum Icon {
     MapPin,
     /// Flag on a pole (something marked for attention).
     Flag,
+    /// Page with a folded corner and lines of text (a licence or other
+    /// document).
+    Document,
 }
 
 impl Icon {
@@ -118,6 +121,9 @@ impl Icon {
             }
             Icon::Window => r#"<rect x="3" y="6" width="18" height="12" rx="2"/>"#,
             Icon::ChevronRight => r#"<path d="M9 6l6 6-6 6"/>"#,
+            Icon::Document => {
+                r#"<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/>"#
+            }
         }
     }
 }

@@ -2910,6 +2910,23 @@ a.open-link-btn {
     text-overflow: ellipsis;
 }
 
+/* Document icon for licences that are not Creative Commons (GFDL, Fair use),
+   so their badge reads as a button like the CC one. Same box as the CC icon;
+   the icon would otherwise be 1em, which is 10px in the badge. */
+.toolbar-license-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+/* The same icon in the licence dialog title, sized like the CC icon there. */
+.cc-modal-license-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-right: 6px;
+}
+
 /* Mode group — radio-style buttons */
 .mode-group {
     display: flex;

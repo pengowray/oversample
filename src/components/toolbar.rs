@@ -471,7 +471,11 @@ pub fn Toolbar() -> impl IntoView {
                                             show_cc_modal.set(true);
                                         }
                                     >
-                                        {is_cc.then(|| view! { <span class="toolbar-cc-icon"></span> })}
+                                        {if is_cc {
+                                            view! { <span class="toolbar-cc-icon"></span> }.into_any()
+                                        } else {
+                                            view! { <Icon kind=Icon::Document class="toolbar-license-icon" /> }.into_any()
+                                        }}
                                         <span class="toolbar-cc-label">{short_label}</span>
                                     </button>
                                 }
@@ -682,9 +686,13 @@ pub fn Toolbar() -> impl IntoView {
                         <div class="modal-dialog cc-modal" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                             <div class="modal-header">
                                 <span class="modal-title">
-                                    {is_cc.then(|| view! {
-                                        <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
-                                    })}
+                                    {if is_cc {
+                                        view! {
+                                            <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
+                                        }.into_any()
+                                    } else {
+                                        view! { <Icon kind=Icon::Document class="cc-modal-license-icon" /> }.into_any()
+                                    }}
                                     {title}
                                 </span>
                                 <button class="modal-close" on:click=move |_| show_cc_modal.set(false)>{"\u{00D7}"}</button>
