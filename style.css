@@ -1830,6 +1830,19 @@ body.sidebar-resizing {
 .metadata-row-spacious:hover .copy-btn-spacious {
     display: inline-block;
 }
+/* Open-link button beside Copy on URL rows: same box as Copy, and the copy
+   button's colour rather than link blue or an underline. A fixed width keeps
+   the two the same size, since their glyphs differ in width. */
+a.open-link-btn {
+    text-decoration: none;
+}
+.copy-btn-spacious {
+    width: 20px;
+    padding-left: 0;
+    padding-right: 0;
+    text-align: center;
+    box-sizing: border-box;
+}
 
 /* Inline match/mismatch indicator in the key line. */
 .hash-indicator-inline {

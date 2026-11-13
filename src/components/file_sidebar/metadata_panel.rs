@@ -383,16 +383,32 @@ fn spacious_row(
     };
 
     let body = render_value_body(&label, &value, kind, view_mode);
+    let open = web_link(&value).map(|href| {
+        view! {
+            <a class="copy-btn copy-btn-spacious open-link-btn" href=href target="_blank"
+                rel="noopener noreferrer" title="Open in new tab">{"\u{2197}"}</a>
+        }
+    });
 
     view! {
         <div class="metadata-row metadata-row-spacious">
             <div class="metadata-key-line">
                 <span class="metadata-key" title=label_title.unwrap_or_default()>{label}</span>
+                {open}
                 <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
             </div>
             {body}
         </div>
     }
+}
+
+/// The value as a link to open, when the whole value is one http or https URL.
+fn web_link(value: &str) -> Option<String> {
+    let v = value.trim();
+    let lower = v.to_ascii_lowercase();
+    ((lower.starts_with("https://") || lower.starts_with("http://"))
+        && !v.contains(char::is_whitespace))
+    .then(|| v.to_string())
 }
 
 /// Render the value portion of a spacious row according to view mode
