@@ -318,6 +318,7 @@ mod tests {
             field: TextField::Device,
             excerpt: "Bat5 detector".into(),
             matched: "Bat5".into(),
+            tuned_hz: None,
         };
         assert_eq!(
             texts(&hint)[1..3],
@@ -357,6 +358,7 @@ mod tests {
             field: TextField::Remarks,
             excerpt: "detectors speaker with mobilphone".into(),
             matched: "speaker".into(),
+            tuned_hz: None,
         };
         assert_eq!(
             texts(&hint),

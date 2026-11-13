@@ -161,6 +161,18 @@ pub struct HeterodyneHint {
     /// length around the matched tokens. When the tokens themselves are
     /// longer than that, the cut is around the heterodyne word in them.
     pub matched: String,
+    /// The frequency the detector was tuned to, in Hz, from R2 tuning
+    /// phrases such as "set at 31,9 kHz" (31 900). Only at level A, and only
+    /// when every tuning phrase outside other-mode clauses gives one clear
+    /// value. `None` when the text has no tuning phrase, when phrases
+    /// disagree, or when a phrase may be a range ("set to 40-50 kHz", "tuned
+    /// from 40 to 50 kHz") or names a second frequency right after the unit.
+    ///
+    /// A frequency beside an R1 heterodyne word ("heterodyne at 45 kHz",
+    /// "het 45 kHz") does not count. R1 reads the number after "het" only to
+    /// tell the Dutch word "het" from heterodyne, so the rules never treat it
+    /// as a tuning value.
+    pub tuned_hz: Option<u32>,
 }
 
 /// Longest excerpt, in characters, not counting the `…` marks. A longer match
@@ -201,6 +213,7 @@ pub fn infer_heterodyne_hint(
         field: evidence.field,
         excerpt: excerpt(field_text, clause, matched),
         matched: field_text[matched.0..matched.1].to_string(),
+        tuned_hz: analysis.tuned_hz(),
     })
 }
 
@@ -827,6 +840,9 @@ struct Evidence {
     widen: bool,
     /// The model's label, for R3 and R4 evidence.
     detector: Option<&'static str>,
+    /// For R2 evidence, the tuning frequency in Hz when the clause gives one
+    /// clear value (see [`tuned_hz`]). Always `None` for other rules.
+    tuned_hz: Option<u32>,
     /// What matched, written the way the Python reference writes it: the
     /// lowercase token or tokens, or "label [sequence]" for a model. The
     /// cross-check against the reference compares this.
@@ -871,6 +887,23 @@ impl Analysis<'_> {
         let mut top = self.evidence.iter().filter(|e| e.level == raw);
         let first = top.clone().next()?;
         Some(top.find(|e| !self.in_other_mode_clause(e)).unwrap_or(first))
+    }
+
+    /// The detector's tuning frequency for [`HeterodyneHint::tuned_hz`]: the
+    /// value every R2 tuning phrase outside other-mode clauses agrees on, at
+    /// level A only.
+    fn tuned_hz(&self) -> Option<u32> {
+        if self.level != Some(HeterodyneLevel::SaysHeterodyne) {
+            return None;
+        }
+        let mut values = self
+            .evidence
+            .iter()
+            .filter(|e| e.source == HeterodyneSource::TuningPhrase)
+            .filter(|e| !self.in_other_mode_clause(e))
+            .map(|e| e.tuned_hz);
+        let first = values.next()??;
+        values.all(|v| v == Some(first)).then_some(first)
     }
 }
 
@@ -966,12 +999,59 @@ fn upper_het(clause: &str) -> Option<usize> {
     None
 }
 
+/// Token positions of an R2 tuning phrase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TuningMatch {
+    /// The tuning verb.
+    verb: usize,
+    /// The whole number, 10 to 150.
+    number: usize,
+    /// The 1-2 digit token after the number, read as its decimal part.
+    decimal: Option<usize>,
+    /// The "khz" token, or the "k" of "k hz".
+    unit: usize,
+}
+
+impl TuningMatch {
+    /// The last token of the unit: "khz", or the "hz" of "k hz".
+    fn unit_end(&self, toks: &[String]) -> usize {
+        if toks[self.unit] == "k" {
+            self.unit + 1
+        } else {
+            self.unit
+        }
+    }
+}
+
+/// Whether a "khz" or "k" "hz" unit starts at token `k`.
+fn khz_at(toks: &[String], k: usize) -> bool {
+    toks.get(k).is_some_and(|t| t == "khz")
+        || (toks.get(k).is_some_and(|t| t == "k") && toks.get(k + 1).is_some_and(|t| t == "hz"))
+}
+
 /// R2: a tuning verb, then within 5 tokens a number from 10 to 150, an
 /// optional 1-2 digit decimal ("31,9"), and "khz" or "k" "hz". Returns the
-/// positions of the verb and of the "khz" or "k" token.
-fn tuning_phrase(toks: &[String]) -> Option<(usize, usize)> {
+/// first match in the clause.
+fn tuning_phrase(toks: &[String]) -> Option<TuningMatch> {
+    tuning_from(toks, 0)
+}
+
+/// Every R2 tuning phrase in the clause, in text order. The search for the
+/// next one starts after the previous one's unit.
+fn tuning_phrases(toks: &[String]) -> Vec<TuningMatch> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(m) = tuning_from(toks, from) {
+        from = m.unit_end(toks) + 1;
+        out.push(m);
+    }
+    out
+}
+
+/// The first R2 tuning phrase whose verb is at token `from` or later.
+fn tuning_from(toks: &[String], from: usize) -> Option<TuningMatch> {
     let len = toks.len();
-    for (i, t) in toks.iter().enumerate() {
+    for (i, t) in toks.iter().enumerate().skip(from) {
         if !in_list(TUNE_VERBS, t) {
             continue;
         }
@@ -987,18 +1067,71 @@ fn tuning_phrase(toks: &[String]) -> Option<(usize, usize)> {
             if !in_range {
                 continue;
             }
-            let mut k = j + 1;
-            if k < len && is_num(&toks[k]) && toks[k].len() <= 2 {
-                k += 1;
-            }
-            if k < len
-                && (toks[k] == "khz" || (toks[k] == "k" && k + 1 < len && toks[k + 1] == "hz"))
-            {
-                return Some((i, k));
+            let decimal =
+                (j + 1 < len && is_num(&toks[j + 1]) && toks[j + 1].len() <= 2).then_some(j + 1);
+            let k = decimal.map_or(j + 1, |d| d + 1);
+            if khz_at(toks, k) {
+                return Some(TuningMatch {
+                    verb: i,
+                    number: j,
+                    decimal,
+                    unit: k,
+                });
             }
         }
     }
     None
+}
+
+/// The frequency a clause's tuning phrases give, in Hz, or `None` when they
+/// do not give one clear value. A phrase gives no clear value when:
+/// - another number comes between the verb and the frequency ("tuned from
+///   40 to 50 kHz", "set between 40 and 50 kHz");
+/// - the two numbers are joined by anything but one "," or "." ("40-50 kHz",
+///   "40 50 kHz"), since tokens do not keep the separator;
+/// - another frequency in kHz follows the unit within two tokens ("45 kHz
+///   to 50 kHz", "45 kHz, 44 kHz sample rate").
+///
+/// Two phrases in the clause must give the same value.
+fn tuned_hz(text: &str, clause: &Clause) -> Option<u32> {
+    let toks = &clause.words;
+    let mut values = tuning_phrases(toks)
+        .into_iter()
+        .map(|m| phrase_hz(text, clause, m));
+    let first = values.next()??;
+    values.all(|v| v == Some(first)).then_some(first)
+}
+
+/// The frequency one tuning phrase gives, in Hz. See [`tuned_hz`].
+fn phrase_hz(text: &str, clause: &Clause, m: TuningMatch) -> Option<u32> {
+    let toks = &clause.words;
+    if toks[m.verb + 1..m.number].iter().any(|t| is_num(t)) {
+        return None;
+    }
+    let after = m.unit_end(toks) + 1;
+    let second_frequency =
+        (after..after + 2).any(|n| toks.get(n).is_some_and(|t| is_num(t)) && khz_at(toks, n + 1));
+    if second_frequency {
+        return None;
+    }
+    let whole: u32 = toks[m.number].parse().ok()?;
+    let fraction = match m.decimal {
+        None => 0,
+        Some(d) => {
+            let between = &text[clause.spans[m.number].1..clause.spans[d].0];
+            if between != "," && between != "." {
+                return None;
+            }
+            let digits: u32 = toks[d].parse().ok()?;
+            // "31,9" is 900 Hz and "31,95" is 950 Hz.
+            if toks[d].len() == 1 {
+                digits * 100
+            } else {
+                digits * 10
+            }
+        }
+    };
+    Some(whole * 1000 + fraction)
 }
 
 /// A model match: its label, token position and the sequence that matched.
@@ -1080,7 +1213,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
     for f in &fields {
         for (ci, clause) in f.clauses.iter().enumerate() {
             let toks = &clause.words;
-            let mut push = |level, source, span, widen, detector, key| {
+            let mut push = |level, source, span, widen, detector, key, tuned_hz| {
                 evidence.push(Evidence {
                     level,
                     source,
@@ -1090,6 +1223,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     widen,
                     detector,
                     key,
+                    tuned_hz,
                 })
             };
 
@@ -1113,21 +1247,23 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         widen,
                         None,
                         hit.key,
+                        None,
                     );
                 }
             }
 
             // R2: a tuning phrase, with a detector word anywhere in the record.
-            if let Some((i, k)) = tuning_phrase(toks) {
+            if let Some(m) = tuning_phrase(toks) {
                 if detector_word_anywhere {
-                    let end = if toks[k] == "k" { k + 1 } else { k };
+                    let (i, k) = (m.verb, m.unit);
                     push(
                         SaysHeterodyne,
                         Src::TuningPhrase,
-                        token_span(clause, i, end),
+                        token_span(clause, i, m.unit_end(toks)),
                         true,
                         None,
                         toks[i..=k].join(" "),
+                        tuned_hz(f.text, clause),
                     );
                 }
             }
@@ -1156,6 +1292,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     true,
                     Some(m.label),
                     format!("{} [{}]", m.label, m.seq),
+                    None,
                 );
             }
 
@@ -1175,6 +1312,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                     true,
                     Some(m.label),
                     format!("{} [{}]", m.label, m.seq),
+                    None,
                 );
             }
 
@@ -1204,6 +1342,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         true,
                         None,
                         key,
+                        None,
                     );
                 }
             }
@@ -2207,6 +2346,7 @@ mod tests {
                     "The sound was recordet from a handheld hetrodyne detector set at 31,9 kHz"
                         .into(),
                 matched: "hetrodyne".into(),
+                tuned_hz: Some(31_900),
             }
         );
 
@@ -2266,6 +2406,87 @@ mod tests {
         });
         assert_eq!(h.source, HeterodyneSource::HeterodyneWord);
         assert_eq!(h.detector, None);
+    }
+
+    #[test]
+    fn tuning_frequency_comes_from_the_tuning_phrase() {
+        let tuned = |s: &str| {
+            let hint = infer_heterodyne_hint(&remarks(s), Some(44100)).unwrap();
+            assert_eq!(hint.level, SaysHeterodyne, "{s}");
+            hint.tuned_hz
+        };
+        // The quote is the heterodyne word, but the frequency still comes
+        // from the tuning phrase.
+        assert_eq!(
+            tuned("handheld hetrodyne detector set at 31,9 kHz"),
+            Some(31_900)
+        );
+        assert_eq!(tuned("bat detector tuned to 45 k Hz"), Some(45_000));
+        assert_eq!(
+            tuned("Pettersson ultrasound detector D200, which was set to 23,5 kHz"),
+            Some(23_500)
+        );
+        assert_eq!(tuned("bat detector set at 31.9 KHz"), Some(31_900));
+        assert_eq!(tuned("bat detector set at 31,95 kHz"), Some(31_950));
+        assert_eq!(tuned("bat detector set to 10 kHz"), Some(10_000));
+        assert_eq!(tuned("bat detector set to 150 kHz"), Some(150_000));
+        assert_eq!(
+            tuned("Aufnahme mit Heterodyn-Detektor, eingestellt auf 40 kHz"),
+            Some(40_000)
+        );
+        // The same frequency twice is still one clear value.
+        assert_eq!(
+            tuned("bat detector set to 45 kHz. Still set to 45 kHz"),
+            Some(45_000)
+        );
+        // No tuning phrase.
+        assert_eq!(tuned("handheld heterodyne detector"), None);
+        // A frequency beside a heterodyne word is not a tuning phrase.
+        assert_eq!(tuned("heterodyne at 45 kHz"), None);
+        assert_eq!(tuned("het 45 kHz"), None);
+    }
+
+    #[test]
+    fn tuning_frequency_is_none_when_the_text_is_unclear() {
+        for s in [
+            // Ranges.
+            "bat detector set to 40-50 kHz",
+            "bat detector set to 40 50 kHz",
+            "bat detector tuned from 40 to 50 kHz",
+            "bat detector tuned between 40 and 50 kHz",
+            "bat detector set to 40 kHz to 50 kHz",
+            // A second frequency right after the unit.
+            "bat detector set to 40 kHz and 50 kHz",
+            // Two tuning phrases that disagree, in one clause or two.
+            "bat detector set to 40 kHz, then set to 50 kHz",
+            "bat detector set to 40 kHz. Later set to 50 kHz",
+            // The only tuning phrase is in a clause with time-expansion
+            // wording; level A comes from the other clause.
+            "Heterodyne. Bat detector tuned to 45 kHz, time expanded 10x",
+        ] {
+            let hint = infer_heterodyne_hint(&remarks(s), Some(44100)).unwrap();
+            assert_eq!(hint.level, SaysHeterodyne, "{s}");
+            assert_eq!(hint.tuned_hz, None, "{s}");
+        }
+        // Below level A there is no frequency.
+        let hint = infer_heterodyne_hint(
+            &remarks("bat detector tuned to 45 kHz, time expanded"),
+            Some(44100),
+        )
+        .unwrap();
+        assert_eq!(hint.level, MayBeHeterodyne);
+        assert_eq!(hint.tuned_hz, None);
+    }
+
+    #[test]
+    fn tuning_phrases_finds_each_phrase_in_a_clause() {
+        let toks = words("set to 40 kHz then tuned to 45 k Hz");
+        let found: Vec<(usize, usize)> = tuning_phrases(&toks)
+            .iter()
+            .map(|m| (m.verb, m.unit_end(&toks)))
+            .collect();
+        assert_eq!(found, [(0, 3), (5, 9)]);
+        assert_eq!(tuning_phrase(&toks).map(|m| m.verb), Some(0));
     }
 
     #[test]
