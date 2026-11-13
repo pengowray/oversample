@@ -17,7 +17,8 @@ use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::AppState;
 
 /// Host used for structured data and as the default for bare file titles.
-/// Files uploaded to a local wiki are handled by falling back to that wiki.
+/// A file link from another wiki is looked up on that wiki first, in case the
+/// wiki has its own upload under that title (see `fetch_file`).
 const COMMONS: &str = "commons.wikimedia.org";
 
 /// Wikidata property id for "time expansion factor" (quantity).
@@ -51,7 +52,9 @@ const AUDIO_EXTS: &[&str] = &[
 /// What the user's pasted text resolved to.
 #[derive(Clone, Debug, PartialEq)]
 pub enum WikiTarget {
-    /// A single media file, e.g. `File:Bat feeding buzz.wav`.
+    /// A single media file, e.g. `File:Bat feeding buzz.wav`. `api_host` is
+    /// the wiki the link came from, which may store its own file under that
+    /// title; Commons for a bare title.
     File { api_host: String, title: String },
     /// An article — list the audio files it uses.
     Page { api_host: String, title: String },
@@ -78,9 +81,22 @@ pub struct WikiFile {
     pub time_expansion: Option<f64>,
     /// Label/value rows for the metadata panel.
     pub fields: Vec<(String, String)>,
+    /// The wiki that stores the file: Commons, or the wiki that has its own
+    /// upload under this title (see [`stored_on`]).
+    pub host: String,
 }
 
 impl WikiFile {
+    /// The site to show as the file's source.
+    pub fn site(&self) -> SourceSite {
+        site_for_host(&self.host)
+    }
+
+    /// Whether the file is stored on Commons, where its structured data
+    /// (P14424) is.
+    fn on_commons(&self) -> bool {
+        self.host == COMMONS
+    }
     /// Playing time once a time-expansion correction is applied.
     pub fn corrected_duration_secs(&self) -> Option<f64> {
         let d = self.duration_secs?;
@@ -168,19 +184,30 @@ pub fn parse_input(input: &str) -> Result<WikiTarget, String> {
                 "{host} isn't a Wikimedia site \u{2014} paste a Wikipedia or Wikimedia Commons link"
             ));
         }
+        // Mobile links (en.m.wikipedia.org, commons.m.wikimedia.org) name the
+        // same wiki as the desktop host.
+        let host = host.replacen(".m.", ".", 1);
         let (path, _query) = path.split_once('?').unwrap_or((path, ""));
         let path = path.split('#').next().unwrap_or(path);
 
         // Direct media URL: .../wikipedia/commons/e/e7/Bat_feeding_buzz.wav
-        // and its /thumb/ variant, which appends a rendition filename.
+        // and its /thumb/ variant, which appends a rendition filename. A
+        // Wikipedia's own uploads are under its language code instead of
+        // "commons": .../wikipedia/en/2/2b/Foo.ogg.
         if host == "upload.wikimedia.org" {
-            let file = path
-                .split('/')
-                .filter(|s| !s.is_empty())
+            let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            let file = segments
+                .iter()
                 .find(|s| has_audio_ext(s))
                 .ok_or("That upload.wikimedia.org link doesn't point at an audio file")?;
+            let api_host = match segments.as_slice() {
+                ["wikipedia", lang, ..] if *lang != "commons" && is_language_code(lang) => {
+                    format!("{lang}.wikipedia.org")
+                }
+                _ => COMMONS.to_string(),
+            };
             return Ok(WikiTarget::File {
-                api_host: COMMONS.to_string(),
+                api_host,
                 title: format!("File:{}", decode_component(file)),
             });
         }
@@ -229,12 +256,18 @@ fn normalise_file_title(title: &str) -> String {
     format!("File:{}", strip_namespace(title))
 }
 
+/// A Wikipedia language code as it appears in upload paths and host names:
+/// "en", "simple", "zh-yue".
+fn is_language_code(s: &str) -> bool {
+    (2..=12).contains(&s.len()) && s.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+}
+
 fn classify(host: String, title: String) -> WikiTarget {
     if is_file_title(&title) {
-        // Structured data for a file lives on Commons even when the link came
-        // from a local wiki, so resolve there and let the caller fall back.
+        // Keep the wiki the link came from: it may have its own upload under
+        // this title, which `fetch_file` checks for before asking Commons.
         WikiTarget::File {
-            api_host: COMMONS.to_string(),
+            api_host: host,
             title: normalise_file_title(&title),
         }
     } else {
@@ -346,7 +379,31 @@ fn strip_html(s: &str) -> String {
         .join(" ")
 }
 
-fn parse_file_page(page: &serde_json::Value) -> Option<WikiFile> {
+/// The wiki that stores a file, from a page `api_host`'s API returned. A wiki
+/// other than Commons flags each file page with `imagerepository`: "local"
+/// for its own upload, "shared" for a Commons file it shows. Commons flags its
+/// own files "local".
+fn stored_on(api_host: &str, page: &serde_json::Value) -> String {
+    if page["imagerepository"].as_str() == Some("local") {
+        api_host.to_string()
+    } else {
+        COMMONS.to_string()
+    }
+}
+
+/// The site to show for a file stored on `host`. Local uploads on the other
+/// sister wikis (Wikibooks, Wikisource, ...) are rare and keep the Wikimedia
+/// Commons label.
+fn site_for_host(host: &str) -> SourceSite {
+    if host.ends_with(".wikipedia.org") {
+        SourceSite::Wikipedia
+    } else {
+        SourceSite::WikimediaCommons
+    }
+}
+
+/// One file page from `api_host`'s API.
+fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile> {
     let title = page["title"].as_str()?.to_string();
     // Don't test `missing` here: a local wiki marks every Commons-hosted file
     // missing (it has no local description page) while still returning full
@@ -407,6 +464,7 @@ fn parse_file_page(page: &serde_json::Value) -> Option<WikiFile> {
         description_url,
         time_expansion,
         fields,
+        host: stored_on(api_host, page),
     })
 }
 
@@ -426,58 +484,75 @@ fn pages_of(json: &serde_json::Value) -> Vec<serde_json::Value> {
         .unwrap_or_default()
 }
 
-/// Look up one file. Structured data lives on Commons, so try there first and
-/// fall back to the originating wiki for files uploaded locally.
+/// Look up one file. When the link came from another wiki, ask that wiki
+/// first: its own upload takes the title's place there, even when Commons has
+/// a different file of the same name. A Commons file is fetched from Commons,
+/// which also returns its structured data (P14424).
 pub async fn fetch_file(api_host: &str, title: &str) -> Result<WikiFile, String> {
-    let json = api_get(COMMONS, &params_for(COMMONS, &[("titles", title)])).await?;
-    if let Some(file) = pages_of(&json).first().and_then(parse_file_page) {
-        return Ok(file);
-    }
     if api_host != COMMONS {
         let json = api_get(api_host, &params_for(api_host, &[("titles", title)])).await?;
-        if let Some(file) = pages_of(&json).first().and_then(parse_file_page) {
+        let file = pages_of(&json)
+            .first()
+            .and_then(|p| parse_file_page(p, api_host));
+        if let Some(file) = file.filter(|f| !f.on_commons()) {
             return Ok(file);
         }
     }
-    Err(format!("{title} isn't on Wikimedia Commons"))
+    let json = api_get(COMMONS, &params_for(COMMONS, &[("titles", title)])).await?;
+    if let Some(file) = pages_of(&json)
+        .first()
+        .and_then(|p| parse_file_page(p, COMMONS))
+    {
+        return Ok(file);
+    }
+    Err(if api_host == COMMONS {
+        format!("{title} isn't on Wikimedia Commons")
+    } else {
+        format!("{title} isn't on {api_host} or Wikimedia Commons")
+    })
 }
 
 /// How many titles one `titles=` query may name.
 const TITLE_BATCH: usize = 50;
 
-/// Re-query Commons for `files` listed by another wiki, so they pick up the
-/// structured data (P14424 above all) that only Commons serves. Files Commons
-/// doesn't have — local uploads — keep the description they came with.
+/// Re-query Commons for the Commons files in `files`, listed by another wiki,
+/// so they pick up the structured data (P14424 above all) that only Commons
+/// serves. The wiki's own uploads keep the description they came with, and so
+/// does any file the Commons lookup misses.
 async fn enrich_from_commons(files: Vec<WikiFile>) -> Vec<WikiFile> {
-    let mut enriched = Vec::with_capacity(files.len());
-    for chunk in files.chunks(TITLE_BATCH) {
+    let shared: Vec<&WikiFile> = files.iter().filter(|f| f.on_commons()).collect();
+    let mut looked_up = Vec::new();
+    for chunk in shared.chunks(TITLE_BATCH) {
         let titles = chunk
             .iter()
             .map(|f| f.title.as_str())
             .collect::<Vec<_>>()
             .join("|");
-        let looked_up = match api_get(COMMONS, &params_for(COMMONS, &[("titles", &titles)])).await {
-            Ok(json) => pages_of(&json)
-                .iter()
-                .filter_map(parse_file_page)
-                .collect::<Vec<_>>(),
-            Err(e) => {
-                log::warn!("Commons lookup for article files failed: {e}");
-                Vec::new()
-            }
-        };
-        for file in chunk {
-            let better = looked_up.iter().find(|c| c.title == file.title).cloned();
-            enriched.push(better.unwrap_or_else(|| file.clone()));
+        match api_get(COMMONS, &params_for(COMMONS, &[("titles", &titles)])).await {
+            Ok(json) => looked_up.extend(
+                pages_of(&json)
+                    .iter()
+                    .filter_map(|p| parse_file_page(p, COMMONS)),
+            ),
+            Err(e) => log::warn!("Commons lookup for article files failed: {e}"),
         }
     }
-    enriched
+    files
+        .iter()
+        .map(|file| {
+            file.on_commons()
+                .then(|| looked_up.iter().find(|c| c.title == file.title))
+                .flatten()
+                .cloned()
+                .unwrap_or_else(|| file.clone())
+        })
+        .collect()
 }
 
-fn collect_audio(json: &serde_json::Value) -> Vec<WikiFile> {
+fn collect_audio(json: &serde_json::Value, api_host: &str) -> Vec<WikiFile> {
     let mut files: Vec<WikiFile> = pages_of(json)
         .iter()
-        .filter_map(parse_file_page)
+        .filter_map(|p| parse_file_page(p, api_host))
         .filter(|f| f.mime.starts_with("audio/") || has_audio_ext(&f.name))
         .collect();
     files.sort_by(|a, b| a.name.cmp(&b.name));
@@ -495,7 +570,7 @@ pub async fn list_page_audio(api_host: &str, title: &str) -> Result<Vec<WikiFile
         ],
     );
     let json = api_get(api_host, &params).await?;
-    let files = collect_audio(&json);
+    let files = collect_audio(&json, api_host);
     if api_host == COMMONS || files.is_empty() {
         return Ok(files);
     }
@@ -515,7 +590,7 @@ pub async fn search_audio(query: &str) -> Result<Vec<WikiFile>, String> {
         ],
     );
     let json = api_get(COMMONS, &params).await?;
-    Ok(collect_audio(&json))
+    Ok(collect_audio(&json, COMMONS))
 }
 
 /// Resolve whatever the user typed. A file resolves to a single-entry list;
@@ -553,10 +628,7 @@ async fn load_file_inner(state: AppState, file: &WikiFile, load_id: u64) -> Resu
     crate::components::file_sidebar::load_named_bytes(
         file.name.clone(),
         &bytes,
-        Some(SiteMetadata::new(
-            SourceSite::WikimediaCommons,
-            file.fields.clone(),
-        )),
+        Some(SiteMetadata::new(file.site(), file.fields.clone())),
         None,
         file.time_expansion,
         state,
@@ -606,9 +678,24 @@ mod tests {
     }
 
     #[test]
-    fn file_page_on_a_local_wiki_still_resolves_against_commons() {
+    fn file_page_on_a_local_wiki_keeps_that_wiki() {
+        let target = WikiTarget::File {
+            api_host: "en.wikipedia.org".to_string(),
+            title: "File:Bat out of Hell - chorus.ogg".to_string(),
+        };
+        for link in [
+            "https://en.wikipedia.org/wiki/File:Bat_out_of_Hell_-_chorus.ogg",
+            "https://en.m.wikipedia.org/wiki/File:Bat_out_of_Hell_-_chorus.ogg",
+            "https://en.wikipedia.org/w/index.php?title=File:Bat_out_of_Hell_-_chorus.ogg",
+        ] {
+            assert_eq!(parse_input(link).unwrap(), target, "{link}");
+        }
+    }
+
+    #[test]
+    fn mobile_commons_links_name_commons() {
         assert_eq!(
-            parse_input("https://en.wikipedia.org/wiki/File:Bat_feeding_buzz.wav").unwrap(),
+            parse_input("https://commons.m.wikimedia.org/wiki/File:Bat_feeding_buzz.wav").unwrap(),
             WikiTarget::File {
                 api_host: COMMONS.to_string(),
                 title: "File:Bat feeding buzz.wav".to_string(),
@@ -626,6 +713,102 @@ mod tests {
                 title: "File:Bat feeding buzz.wav".to_string(),
             }
         );
+        assert_eq!(
+            parse_input(
+                "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Bat_feeding_buzz.wav/x.wav"
+            )
+            .unwrap(),
+            WikiTarget::File {
+                api_host: COMMONS.to_string(),
+                title: "File:Bat feeding buzz.wav".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn direct_upload_url_of_a_wikipedia_file_names_that_wikipedia() {
+        assert_eq!(
+            parse_input(
+                "https://upload.wikimedia.org/wikipedia/en/1/1d/Bat_out_of_Hell_-_chorus.ogg"
+            )
+            .unwrap(),
+            WikiTarget::File {
+                api_host: "en.wikipedia.org".to_string(),
+                title: "File:Bat out of Hell - chorus.ogg".to_string(),
+            }
+        );
+    }
+
+    /// A file page as an API returns it, with `imagerepository` when given.
+    fn file_page(repository: Option<&str>, description_url: &str) -> serde_json::Value {
+        let mut page = serde_json::json!({
+            "title": "File:Bat out of Hell - chorus.ogg",
+            "imageinfo": [{
+                "url": "https://upload.wikimedia.org/x.ogg",
+                "descriptionurl": description_url,
+                "extmetadata": { "LicenseShortName": { "value": "Fair use" } }
+            }]
+        });
+        if let Some(r) = repository {
+            page["imagerepository"] = r.into();
+        }
+        page
+    }
+
+    #[test]
+    fn a_wikis_own_upload_is_stored_on_that_wiki() {
+        let page = file_page(
+            Some("local"),
+            "https://en.wikipedia.org/wiki/File:Bat_out_of_Hell_-_chorus.ogg",
+        );
+        let file = parse_file_page(&page, "en.wikipedia.org").unwrap();
+        assert_eq!(file.host, "en.wikipedia.org");
+        assert!(!file.on_commons());
+        assert_eq!(file.site(), SourceSite::Wikipedia);
+        assert_eq!(file.site().name(), "Wikipedia");
+    }
+
+    #[test]
+    fn a_commons_file_shown_on_a_wiki_is_stored_on_commons() {
+        let page = file_page(
+            Some("shared"),
+            "https://commons.wikimedia.org/wiki/File:Bat_feeding_buzz.wav",
+        );
+        let file = parse_file_page(&page, "en.wikipedia.org").unwrap();
+        assert_eq!(file.host, COMMONS);
+        assert!(file.on_commons());
+        assert_eq!(file.site(), SourceSite::WikimediaCommons);
+    }
+
+    #[test]
+    fn commons_own_files_are_stored_on_commons() {
+        // Commons calls its own files "local".
+        let page = file_page(
+            Some("local"),
+            "https://commons.wikimedia.org/wiki/File:Bat_feeding_buzz.wav",
+        );
+        let file = parse_file_page(&page, COMMONS).unwrap();
+        assert_eq!(file.host, COMMONS);
+        assert_eq!(file.site(), SourceSite::WikimediaCommons);
+    }
+
+    #[test]
+    fn a_file_without_a_repository_is_stored_on_commons() {
+        let page = file_page(None, "");
+        assert_eq!(
+            parse_file_page(&page, "en.wikipedia.org").unwrap().host,
+            COMMONS
+        );
+        assert_eq!(parse_file_page(&page, COMMONS).unwrap().host, COMMONS);
+    }
+
+    #[test]
+    fn other_sister_wikis_keep_the_commons_label() {
+        let page = file_page(Some("local"), "");
+        let file = parse_file_page(&page, "en.wikibooks.org").unwrap();
+        assert_eq!(file.host, "en.wikibooks.org");
+        assert!(!file.on_commons());
+        assert_eq!(file.site(), SourceSite::WikimediaCommons);
     }
 
     #[test]
@@ -724,7 +907,7 @@ mod tests {
                 }
             }]
         });
-        let file = parse_file_page(&page).unwrap();
+        let file = parse_file_page(&page, COMMONS).unwrap();
         let field = |key: &str| {
             file.fields
                 .iter()
@@ -758,6 +941,7 @@ mod tests {
             description_url: String::new(),
             time_expansion: Some(10.0),
             fields: Vec::new(),
+            host: COMMONS.to_string(),
         };
         assert_eq!(f.corrected_duration_secs(), Some(3.0));
         f.time_expansion = None;
