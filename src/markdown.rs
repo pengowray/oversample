@@ -79,7 +79,8 @@ pub fn parse(text: &str) -> Vec<MdBlock> {
     let mut b = TreeBuilder {
         stack: vec![Frame::Blocks(Vec::new())],
         skipped_blocks: 0,
-        skipped_inlines: 0,
+        skipped_inlines: Vec::new(),
+        inlines_added: 0,
         break_before_text: false,
     };
     for event in events {
@@ -146,9 +147,16 @@ struct TreeBuilder {
     /// item start is skipped too, and the next ends of those kinds belong to
     /// skipped starts.
     skipped_blocks: usize,
-    /// The same for emphasis, strong, link and image starts, with
-    /// [`MAX_INLINE_DEPTH`].
-    skipped_inlines: usize,
+    /// Emphasis, strong, link and image starts that got no frame because of
+    /// [`MAX_INLINE_DEPTH`], and whose ends have not arrived yet, innermost
+    /// last. Events nest properly, so while this is not empty, every start of
+    /// those kinds is skipped too, and the next end of those kinds belongs to
+    /// the last entry. A link to an http or https address keeps its address
+    /// and the value of `inlines_added` at its start. If nothing was added
+    /// by its end, it shows its address, as a link that is kept does.
+    skipped_inlines: Vec<Option<(String, usize)>>,
+    /// How many inline elements have been added so far.
+    inlines_added: usize,
     /// A list item start was skipped. The next text in a tight list item goes
     /// on a new line, so that it does not run into the previous item's text.
     break_before_text: bool,
@@ -214,8 +222,12 @@ impl TreeBuilder {
                 matches!(f, Frame::Inlines { kind, .. } if !matches!(kind, InlineKind::Paragraph))
             })
             .count();
-        if self.skipped_inlines > 0 || depth >= MAX_INLINE_DEPTH {
-            self.skipped_inlines += 1;
+        if !self.skipped_inlines.is_empty() || depth >= MAX_INLINE_DEPTH {
+            let link = match kind {
+                InlineKind::Link(Some(href)) => Some((href, self.inlines_added)),
+                _ => None,
+            };
+            self.skipped_inlines.push(link);
         } else {
             self.stack.push(Frame::Inlines {
                 kind,
@@ -227,9 +239,14 @@ impl TreeBuilder {
     fn end(&mut self, end: TagEnd) {
         match end {
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Link | TagEnd::Image
-                if self.skipped_inlines > 0 =>
+                if !self.skipped_inlines.is_empty() =>
             {
-                self.skipped_inlines -= 1;
+                // A link with no text shows its address, as in `close_inlines`.
+                if let Some(Some((href, added))) = self.skipped_inlines.pop() {
+                    if added == self.inlines_added {
+                        self.add_inline(MdInline::Text(href));
+                    }
+                }
             }
             TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item if self.skipped_blocks > 0 => {
                 self.skipped_blocks -= 1;
@@ -317,6 +334,7 @@ impl TreeBuilder {
     }
 
     fn add_inline(&mut self, inline: MdInline) {
+        self.inlines_added += 1;
         match self.stack.last_mut() {
             Some(Frame::Inlines { items, .. }) => push_inline(items, inline),
             // Text straight inside a tight list item.
@@ -1184,6 +1202,31 @@ mod tests {
             assert!(inline_nesting(&blocks) <= MAX_INLINE_DEPTH);
             drop(blocks);
         });
+    }
+
+    #[test]
+    fn an_empty_link_past_the_depth_limit_shows_its_address() {
+        // A link with no text shows its address.
+        assert_eq!(
+            parse("[](https://a.example)"),
+            vec![Paragraph(vec![link("https://a.example")])]
+        );
+        // Nine levels of emphasis: the ninth and the link in it get no
+        // element, but the address is still shown.
+        let blocks = parse(
+            "*a **b *c **d *e **f *g **h *i [](https://a.example) i* h** g* f** e* d** c* b** a*",
+        );
+        assert_eq!(
+            plain_text(&blocks),
+            "a b c d e f g h i https://a.example i h g f e d c b a"
+        );
+        // The address becomes a link as a bare URL, one level past the limit.
+        assert_eq!(inline_nesting(&blocks), MAX_INLINE_DEPTH + 1);
+        // A skipped link that has text shows only its text.
+        let blocks = parse(
+            "*a **b *c **d *e **f *g **h *i [x](https://a.example) i* h** g* f** e* d** c* b** a*",
+        );
+        assert_eq!(plain_text(&blocks), "a b c d e f g h i x i h g f e d c b a");
     }
 
     #[test]
