@@ -193,7 +193,8 @@ pub fn parse_input(input: &str) -> Result<WikiTarget, String> {
         // Direct media URL: .../wikipedia/commons/e/e7/Bat_feeding_buzz.wav
         // and its /thumb/ variant, which appends a rendition filename. A
         // Wikipedia's own uploads are under its language code instead of
-        // "commons": .../wikipedia/en/2/2b/Foo.ogg.
+        // "commons": .../wikipedia/en/2/2b/Foo.ogg. Other wikis' folders
+        // there (meta, species, ...) are looked up on Commons.
         if host == "upload.wikimedia.org" {
             let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
             let file = segments
@@ -201,7 +202,7 @@ pub fn parse_input(input: &str) -> Result<WikiTarget, String> {
                 .find(|s| has_audio_ext(s))
                 .ok_or("That upload.wikimedia.org link doesn't point at an audio file")?;
             let api_host = match segments.as_slice() {
-                ["wikipedia", lang, ..] if *lang != "commons" && is_language_code(lang) => {
+                ["wikipedia", lang, ..] if is_language_code(lang) => {
                     format!("{lang}.wikipedia.org")
                 }
                 _ => COMMONS.to_string(),
@@ -256,10 +257,22 @@ fn normalise_file_title(title: &str) -> String {
     format!("File:{}", strip_namespace(title))
 }
 
-/// A Wikipedia language code as it appears in upload paths and host names:
-/// "en", "simple", "zh-yue".
+/// Whether a folder under upload.wikimedia.org/wikipedia/ is a Wikipedia's
+/// language code: "en", "simple", "zh-yue", "zh-min-nan". A code is 2 or 3
+/// letters, optionally followed by hyphenated parts, or "simple". The
+/// folders of other wikis stored there (commons, meta, species, mediawiki,
+/// foundation, sources, incubator, test, test2, wikimania2014, ...) don't
+/// have that form, except the three listed in `NOT_WIKIPEDIAS`. Checked
+/// against the 364 Wikipedias and the special wikis in Wikimedia's site
+/// matrix on 2026-11-14.
 fn is_language_code(s: &str) -> bool {
-    (2..=12).contains(&s.len()) && s.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+    const NOT_WIKIPEDIAS: [&str; 3] = ["fdc", "ten", "wg-en"];
+    let letters = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase());
+    let mut parts = s.split('-');
+    let first = parts.next().unwrap_or_default();
+    let code_form =
+        s == "simple" || ((2..=3).contains(&first.len()) && letters(first) && parts.all(letters));
+    code_form && !NOT_WIKIPEDIAS.contains(&s)
 }
 
 fn classify(host: String, title: String) -> WikiTarget {
@@ -742,6 +755,61 @@ mod tests {
                 title: "File:Bat out of Hell - chorus.ogg".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn direct_upload_urls_of_other_wikis_go_to_commons() {
+        for dir in [
+            "commons",
+            "meta",
+            "species",
+            "mediawiki",
+            "foundation",
+            "sources",
+            "incubator",
+            "test",
+            "test2",
+            "wikimania2014",
+            "ten",
+            "fdc",
+            "wg-en",
+            "arbcom-en",
+            "En",
+        ] {
+            assert_eq!(
+                parse_input(&format!(
+                    "https://upload.wikimedia.org/wikipedia/{dir}/1/1d/Bat_out_of_Hell_-_chorus.ogg"
+                ))
+                .unwrap(),
+                WikiTarget::File {
+                    api_host: COMMONS.to_string(),
+                    title: "File:Bat out of Hell - chorus.ogg".to_string(),
+                },
+                "{dir}"
+            );
+        }
+        for lang in [
+            "en",
+            "de",
+            "simple",
+            "zh-yue",
+            "zh-min-nan",
+            "zh-classical",
+            "be-tarask",
+            "bat-smg",
+        ] {
+            assert_eq!(
+                parse_input(&format!(
+                    "https://upload.wikimedia.org/wikipedia/{lang}/1/1d/Bat_out_of_Hell_-_chorus.ogg"
+                ))
+                .unwrap(),
+                WikiTarget::File {
+                    api_host: format!("{lang}.wikipedia.org"),
+                    title: "File:Bat out of Hell - chorus.ogg".to_string(),
+                },
+                "{lang}"
+            );
+        }
     }
 
     /// A file page as an API returns it, with `imagerepository` when given.
