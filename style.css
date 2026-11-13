@@ -1826,9 +1826,17 @@ body.sidebar-resizing {
 }
 /* The global reset removes list padding, which would put the markers outside
    the row. */
-.metadata-markdown ul,
-.metadata-markdown ol {
+.metadata-markdown ul {
     padding-left: 18px;
+}
+/* A numbered list's numbers sit in its indent, so the indent grows with the
+   widest number: markdown.rs sets --marker-digits to the digit count of the
+   last item's number. A remark line starting "2019. " is a list that starts at
+   2019, and an 18px indent cut off its first digit at 375 px. 1ch is the width
+   of a digit; the extra 1.5ch is for the "." and the gap. One digit gives
+   about the same indent as a bullet list. */
+.metadata-markdown ol {
+    padding-left: calc((var(--marker-digits, 1) + 1.5) * 1ch);
 }
 .metadata-markdown li + li {
     margin-top: 3px;

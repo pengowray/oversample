@@ -396,13 +396,28 @@ fn block_view(block: &MdBlock) -> AnyView {
         MdBlock::List {
             start: Some(n),
             items,
-        } => view! { <ol start=n.to_string()>{list_items_view(items)}</ol> }.into_any(),
+        } => view! {
+            <ol start=n.to_string() style=numbered_list_style(*n, items.len())>
+                {list_items_view(items)}
+            </ol>
+        }
+        .into_any(),
         MdBlock::Literal(s) => view! { <pre>{s.clone()}</pre> }.into_any(),
         MdBlock::Quote(blocks) => {
             view! { <blockquote>{markdown_view(blocks)}</blockquote> }.into_any()
         }
         MdBlock::Rule => view! { <hr /> }.into_any(),
     }
+}
+
+/// The `style` attribute of a numbered list that starts at `start` and has
+/// `items` items. It sets `--marker-digits` to the number of digits in the
+/// list's largest number, and style.css sizes the list's indent from it, so
+/// that a wide number such as "2019." is not cut off at the panel's edge.
+fn numbered_list_style(start: u64, items: usize) -> String {
+    let last = start.saturating_add((items as u64).saturating_sub(1));
+    let digits = last.checked_ilog10().unwrap_or(0) + 1;
+    format!("--marker-digits: {digits}")
 }
 
 fn list_items_view(items: &[Vec<MdBlock>]) -> Vec<AnyView> {
@@ -747,6 +762,18 @@ mod tests {
             assert!(text.contains(&format!("item{level}")), "{text}");
         }
         assert!(text.contains("item10\nitem11"), "{text}");
+    }
+
+    #[test]
+    fn numbered_list_indent_fits_the_largest_number() {
+        assert_eq!(numbered_list_style(1, 9), "--marker-digits: 1");
+        // 8 to 11
+        assert_eq!(numbered_list_style(8, 4), "--marker-digits: 2");
+        // A year at the start of a line parses as a numbered list.
+        assert_eq!(numbered_list_style(2019, 1), "--marker-digits: 4");
+        assert_eq!(numbered_list_style(0, 1), "--marker-digits: 1");
+        assert_eq!(numbered_list_style(123_456_789, 1), "--marker-digits: 9");
+        assert_eq!(numbered_list_style(u64::MAX, 3), "--marker-digits: 20");
     }
 
     #[test]
