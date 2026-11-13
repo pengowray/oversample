@@ -81,7 +81,7 @@ pub fn format_time_display(seconds: f64, precision: u8) -> String {
             sign,
             mins,
             secs,
-            width = 3 + precision as usize, // "00." = 3 chars + decimals
+            width = seconds_width(precision),
             prec = precision as usize
         )
     } else {
@@ -95,9 +95,19 @@ pub fn format_time_display(seconds: f64, precision: u8) -> String {
             hours,
             mins,
             secs,
-            width = 3 + precision as usize,
+            width = seconds_width(precision),
             prec = precision as usize
         )
+    }
+}
+
+/// Width of the zero-padded seconds after minutes: "05" with no decimals, "05.250"
+/// (3 + decimals) with them.
+fn seconds_width(precision: u8) -> usize {
+    if precision == 0 {
+        2
+    } else {
+        3 + precision as usize
     }
 }
 
@@ -275,6 +285,15 @@ fn format_hours_minutes_seconds_adaptive(seconds: f64, interval: f64) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_seconds_pad_to_two_digits() {
+        assert_eq!(format_duration(134.0, 0), "2m14s");
+        assert_eq!(format_duration(65.0, 0), "1m05s");
+        assert_eq!(format_duration(8364.0, 0), "2h19m24s");
+        assert_eq!(format_duration(65.25, 3), "1m05.250s");
+        assert_eq!(format_duration(9.0, 0), "9s");
+    }
 
     #[test]
     fn offset_axis_starts_with_recording_time() {

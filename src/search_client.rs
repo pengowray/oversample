@@ -1,7 +1,7 @@
 //! Client for oversample-api's combined search (`/search/species`, `/search/recordings`,
 //! `/search/facets`): species and recordings from every source the server indexes
-//! (Xeno-canto now; GBIF, Wikimedia Commons and iNaturalist later), filtered by group,
-//! country and distance from a point.
+//! (Xeno-canto and GBIF's sound datasets; Wikimedia Commons and iNaturalist directly
+//! later), filtered by group, country, sample rate and distance from a point.
 //!
 //! The JSON shapes are fixed by the server's contract (batchi-backend DESIGN.md,
 //! "Combined search"), so a new source adds values, not fields.
@@ -27,6 +27,10 @@ pub const GROUPS: [(&str, &str); 7] = [
     ("other", "Other animals"),
 ];
 
+/// Sample-rate filter choices, in Hz: recordings at this rate or more. 96 kHz holds
+/// sound up to 48 kHz, 192 kHz up to 96 kHz (most bat calls).
+pub const MIN_RATES: [u32; 2] = [96_000, 192_000];
+
 /// The filters every search request takes.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Filter {
@@ -37,6 +41,10 @@ pub struct Filter {
     /// Latitude and longitude, already rounded by [`round_point`].
     pub near: Option<(f64, f64)>,
     pub km: u32,
+    /// Only recordings at this sample rate (Hz) or more, one of [`MIN_RATES`]. Sent only
+    /// to a server whose facets list `rates` (see [`Facets::supports_sorting`]); older
+    /// servers reject the parameter.
+    pub min_smp: Option<u32>,
 }
 
 impl Filter {
@@ -51,7 +59,64 @@ impl Filter {
             push(url, "near", &format!("{lat:.1},{lon:.1}"));
             push(url, "km", &self.km.to_string());
         }
+        if let Some(r) = self.min_smp {
+            push(url, "min_smp", &r.to_string());
+        }
     }
+}
+
+/// Order of the recordings list. The server sorts, since the list arrives a page at a
+/// time; [`RecSort::Default`] is best first, or nearest first with `near`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RecSort {
+    #[default]
+    Default,
+    /// Quality, then newest (the server's `ord`).
+    Best,
+    Nearest,
+    Newest,
+    Oldest,
+    Longest,
+    Shortest,
+    RateHigh,
+    RateLow,
+}
+
+impl RecSort {
+    /// The `sort` parameter; `None` for the server's default order, which older
+    /// servers also give.
+    pub fn param(self) -> Option<&'static str> {
+        match self {
+            RecSort::Default => None,
+            RecSort::Best => Some("best"),
+            RecSort::Nearest => Some("nearest"),
+            RecSort::Newest => Some("newest"),
+            RecSort::Oldest => Some("oldest"),
+            RecSort::Longest => Some("longest"),
+            RecSort::Shortest => Some("shortest"),
+            RecSort::RateHigh => Some("rate_high"),
+            RecSort::RateLow => Some("rate_low"),
+        }
+    }
+
+    /// The order the server applies: [`RecSort::Default`] resolved.
+    pub fn resolved(self, near: bool) -> RecSort {
+        match (self, near) {
+            (RecSort::Default, true) => RecSort::Nearest,
+            (RecSort::Default, false) | (RecSort::Nearest, false) => RecSort::Best,
+            (other, _) => other,
+        }
+    }
+}
+
+/// Order of the species list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SpeciesSort {
+    /// Most recordings first; with a name search, exact name matches first.
+    #[default]
+    Count,
+    /// By scientific name, A to Z.
+    Name,
 }
 
 /// A position rounded to 0.1 degree (about 11 km), so the server never sees the user's
@@ -256,6 +321,10 @@ pub struct RecordingsPage {
     pub items: Vec<RecordingItem>,
     #[serde(default)]
     pub status: BTreeMap<String, String>,
+    /// With `min_smp`: recordings left out because their source gives no sample rate,
+    /// per source, under the other filters.
+    #[serde(default)]
+    pub no_rate: BTreeMap<String, u64>,
 }
 
 fn yes() -> bool {
@@ -285,6 +354,15 @@ pub struct SourceCount {
     pub n: u64,
 }
 
+/// Recordings at `min_smp` Hz or more, under the other filters.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct RateCount {
+    pub min_smp: u32,
+    pub n: u64,
+    #[serde(default)]
+    pub species: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Facets {
     #[serde(default)]
@@ -293,8 +371,18 @@ pub struct Facets {
     pub countries: Vec<CountryCount>,
     #[serde(default)]
     pub sources: Vec<SourceCount>,
+    /// Absent from servers without the sample-rate filter and sorting.
+    #[serde(default)]
+    pub rates: Option<Vec<RateCount>>,
     #[serde(default)]
     pub status: BTreeMap<String, String>,
+}
+
+impl Facets {
+    /// Whether the server takes `min_smp` and `sort`.
+    pub fn supports_sorting(&self) -> bool {
+        self.rates.is_some()
+    }
 }
 
 /// Why a search request gave no result.
@@ -337,10 +425,11 @@ fn base(path: &str) -> String {
 }
 
 /// Species matching `q` (any name, any language), or with no `q` the species with
-/// recordings under `filter`, most recordings first.
+/// recordings under `filter`; most recordings first, or by name.
 pub async fn species(
     q: &str,
     filter: &Filter,
+    sort: SpeciesSort,
     cursor: Option<&str>,
 ) -> Result<SpeciesPage, SearchError> {
     let mut url = base("species");
@@ -348,6 +437,9 @@ pub async fn species(
         push(&mut url, "q", q.trim());
     }
     filter.push_params(&mut url);
+    if sort == SpeciesSort::Name {
+        push(&mut url, "sort", "name");
+    }
     let langs = xc_client::names_language().codes();
     if !langs.is_empty() {
         push(&mut url, "lang", &langs.join(","));
@@ -363,6 +455,7 @@ pub async fn species(
 pub async fn recordings(
     species: Option<&str>,
     filter: &Filter,
+    sort: RecSort,
     cursor: Option<&str>,
 ) -> Result<RecordingsPage, SearchError> {
     let mut url = base("recordings");
@@ -370,13 +463,17 @@ pub async fn recordings(
         push(&mut url, "species", s);
     }
     filter.push_params(&mut url);
+    if let Some(s) = sort.param() {
+        push(&mut url, "sort", s);
+    }
     if let Some(c) = cursor {
         push(&mut url, "cursor", c);
     }
     get(&url).await
 }
 
-/// Counts per group, country and source under `filter`, for the filter menus.
+/// Counts per group, country, source and sample rate under `filter`, for the filter
+/// menus.
 pub async fn facets(filter: &Filter) -> Result<Facets, SearchError> {
     let mut url = base("facets");
     filter.push_params(&mut url);
@@ -440,10 +537,29 @@ mod tests {
         assert_eq!(species.species[0].n, 0);
         assert_eq!(species.species[0].scientific(), "Pipistrellus pipistrellus");
 
+        let facets: Facets = serde_json::from_str(
+            r#"{"groups":[],"countries":[],"sources":[],"rates":[{"min_smp":96000,"n":12,"species":3}],"status":{}}"#,
+        )
+        .unwrap();
+        assert!(facets.supports_sorting());
+        let old: Facets = serde_json::from_str(r#"{"groups":[],"status":{}}"#).unwrap();
+        assert!(!old.supports_sorting());
+
         let recs: RecordingsPage = serde_json::from_str(
             r#"{"total":1,"total_exact":true,"by_source":{"xc":1},"cursor":null,"truncated":false,"items":[{"id":"xc:928094","source":"xc","gen":"Pipistrellus","sp":"pipistrellus","en":"Common Pipistrelle","cc":"GB","country":"United Kingdom","place":"Kew","lat":51.48,"lon":-0.29,"km":12.3,"smp":384000,"len_s":9.6,"date":"2024-06-01","recordist":"A","licence":"x","attribution":null,"quality":"A","demo":false,"time_expansion":null,"page_url":"p","audio_url":"a","audio_via":"xc"}],"status":{"xc":"ready"}}"#,
         )
         .unwrap();
         assert_eq!(recs.items[0].xc_number(), Some(928094));
+        assert!(recs.no_rate.is_empty());
+    }
+
+    #[test]
+    fn sorts_resolve_to_what_the_server_applies() {
+        assert_eq!(RecSort::Default.resolved(false), RecSort::Best);
+        assert_eq!(RecSort::Default.resolved(true), RecSort::Nearest);
+        assert_eq!(RecSort::Nearest.resolved(false), RecSort::Best);
+        assert_eq!(RecSort::Newest.resolved(true), RecSort::Newest);
+        assert_eq!(RecSort::Default.param(), None);
+        assert_eq!(RecSort::RateHigh.param(), Some("rate_high"));
     }
 }

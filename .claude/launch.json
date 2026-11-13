@@ -41,7 +41,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd ../batchi-backend && INDEX_GROUPS= CORS_ORIGINS=http://localhost:21347,http://localhost:21259 cargo run --release"
+        "cd ../batchi-backend && INDEX_GROUPS= CORS_ORIGINS=http://localhost:21347,http://localhost:21259,http://localhost:21262 cargo run --release"
       ],
       "port": 8787,
       "url": "http://127.0.0.1:8787"

@@ -5,12 +5,15 @@
 //! older Xeno-canto and Commons browsers stay reachable from the footer, and take over
 //! when the server has no combined search (an older server, or offline).
 //!
-//! Layout: search box, filter row (group, country, near + radius), then a species list
-//! (left) and the selected entry's recordings (right). On a phone the two panes show one
-//! at a time.
+//! Layout: search box, filter row (group, country, sample rate, near + radius), then a
+//! species list (left) and the selected entry's recordings (right). On a phone the two
+//! panes show one at a time. Both lists load their next page as they are scrolled near
+//! the end; the server sorts them (column headings), since it sends them a page at a time.
 
 use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
 
+use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -18,8 +21,8 @@ use crate::components::file_sidebar::{
     fetch_bytes, fetch_demo_index, find_open_demo, load_named_bytes, load_single_demo, DemoEntry,
 };
 use crate::search_client::{
-    self as search, Facets, Filter, RecordingItem, SearchError, SpeciesHit, DEFAULT_KM, GROUPS,
-    RADII_KM,
+    self as search, Facets, Filter, RecSort, RecordingItem, SearchError, SpeciesHit, SpeciesSort,
+    DEFAULT_KM, GROUPS, MIN_RATES, RADII_KM,
 };
 use crate::state::store_fields::*;
 use crate::state::AppState;
@@ -47,8 +50,7 @@ const INDEXING: &str =
     "Incomplete results. The search server is adding {sources} recordings, which can take hours.";
 const NO_SPECIES_MATCH: &str = "No species match \u{201C}{query}\u{201D}.";
 const NO_RECORDINGS_SPECIES: &str = "No recordings of this species found on {sources}.";
-const NO_RECORDINGS_FILTERS: &str =
-    "No recordings match the current filters. Change the Group, Country or Near filter.";
+const NO_RECORDINGS_FILTERS: &str = "No recordings match the filters above.";
 const LOCATION_DENIED: &str = "Location access denied. Near filter set to Anywhere.";
 const LOCATION_FAILED: &str = "Could not get your location: {reason}. Near filter set to Anywhere. Choose \u{201C}Me\u{201D} to try again.";
 const TRUNCATED: &str =
@@ -56,11 +58,21 @@ const TRUNCATED: &str =
 const APPROX_TIP: &str =
     "Approximate count. It may include some recordings outside the {km} km radius.";
 const LOAD_FAILED: &str = "Could not load recording: {name} ({reason})";
-const MORE_SPECIES: &str = "Show more species ({remaining} not shown)";
-const MORE_RECORDINGS: &str = "Show more recordings ({remaining} not shown)";
-/// When the server only estimates the total, so the number left is unknown.
-const MORE_RECORDINGS_PLAIN: &str = "Show more recordings";
+/// End of a list that has more pages: "100 of 848 species".
+const SHOWN_OF: &str = "{shown} of {total}";
+/// When the server only estimated the total.
+const SHOWN_OF_ABOUT: &str = "{shown} of about {total}";
+const LOADING_MORE: &str = "Loading more\u{2026}";
+const MORE_FAILED: &str = "Couldn't load more: {reason}";
 const TRY_AGAIN: &str = "Try again";
+const RATE_LABEL: &str = "Sample rate";
+const RATE_ANY: &str = "Any";
+/// A sample-rate menu entry: "96 kHz or more".
+const RATE_OPTION: &str = "{khz} kHz or more";
+/// Under the recordings heading when the sample-rate filter is on.
+const NO_RATE_NOTE: &str = "Left out: {count} with an unknown sample rate ({sources}).";
+/// Before the sort buttons on a phone, where the column headings are hidden.
+const SORT_BY: &str = "Sort by";
 const LIST_HEAD_SPECIES: &str = "Species";
 const LIST_HEAD_COUNT: &str = "Recordings";
 const NO_RECORDINGS_HEADING: &str = "Species with no recordings";
@@ -173,6 +185,9 @@ struct Memory {
     near_mode: NearMode,
     near_point: Option<(f64, f64)>,
     km: u32,
+    min_smp: Option<u32>,
+    rec_sort: RecSort,
+    species_sort: SpeciesSort,
     selected: Selected,
 }
 
@@ -242,6 +257,53 @@ fn quality_label(q: &str) -> String {
         "needs_id" => "Needs ID".into(),
         other => other.to_string(),
     }
+}
+
+/// "96 kHz or more".
+fn rate_label(min_smp: u32) -> String {
+    fill(RATE_OPTION, &[("khz", &(min_smp / 1000).to_string())])
+}
+
+/// What a click on a recordings column heading does, as its tooltip. On the sorted
+/// heading that is the other direction.
+fn sort_tip(sort: RecSort) -> &'static str {
+    match sort {
+        RecSort::Default | RecSort::Best => "Sort: best quality first",
+        RecSort::Nearest => "Sort: nearest first",
+        RecSort::Newest => "Sort: newest first",
+        RecSort::Oldest => "Sort: oldest first",
+        RecSort::Longest => "Sort: longest first",
+        RecSort::Shortest => "Sort: shortest first",
+        RecSort::RateHigh => "Sort: highest sample rate first",
+        RecSort::RateLow => "Sort: lowest sample rate first",
+    }
+}
+
+/// The heading arrow of an order: up for smallest first.
+fn sort_arrow(sort: RecSort) -> &'static str {
+    match sort {
+        RecSort::Oldest | RecSort::Shortest | RecSort::RateLow | RecSort::Nearest => "\u{25B2}",
+        _ => "\u{25BC}",
+    }
+}
+
+/// Why a later page did not load, after "Couldn't load more: ".
+fn failure_text(e: SearchError) -> String {
+    match e {
+        SearchError::Unavailable => "the search server can't be reached".into(),
+        SearchError::Indexing => "the search server is updating its index".into(),
+        SearchError::Other(m) => m,
+    }
+}
+
+/// How far from the end of a pane (px) the next page starts loading: about ten rows.
+const LOAD_AHEAD_PX: i32 = 600;
+
+/// Whether a pane is scrolled near its end, so its next page should load. A hidden pane
+/// (the other pane on a phone) has no height and never asks.
+fn near_end(el: &web_sys::Element) -> bool {
+    let h = el.client_height();
+    h > 0 && el.scroll_top() + h >= el.scroll_height() - LOAD_AHEAD_PX
 }
 
 fn group_label(grp: &str) -> &str {
@@ -423,6 +485,127 @@ fn select_last_file(state: AppState) -> usize {
     count
 }
 
+// ── Paged lists ─────────────────────────────────────────────────────────────
+
+/// A list the server sends a page at a time: species, or recordings.
+struct Pages<T: Send + Sync + 'static> {
+    items: RwSignal<Vec<T>>,
+    total: RwSignal<u64>,
+    cursor: RwSignal<Option<String>>,
+    /// The first page is loading.
+    loading: RwSignal<bool>,
+    /// A later page is loading.
+    loading_more: RwSignal<bool>,
+    /// Why the last later page failed to load; the list end offers Try again.
+    more_error: RwSignal<Option<String>>,
+    /// Bumped each time the list is replaced, so its rows are built again rather than
+    /// reused: a species keeps its key under new filters, but not its count.
+    epoch: RwSignal<u64>,
+    /// Request generation: an answer to an older request is dropped.
+    gen: StoredValue<u64>,
+}
+
+impl<T: Send + Sync + 'static> Clone for Pages<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Send + Sync + 'static> Copy for Pages<T> {}
+
+impl<T: Clone + Send + Sync + 'static> Pages<T> {
+    fn new() -> Self {
+        Pages {
+            items: RwSignal::new(Vec::new()),
+            total: RwSignal::new(0),
+            cursor: RwSignal::new(None),
+            loading: RwSignal::new(false),
+            loading_more: RwSignal::new(false),
+            more_error: RwSignal::new(None),
+            epoch: RwSignal::new(0),
+            gen: StoredValue::new(0),
+        }
+    }
+
+    /// Starts a request for a new first page; returns its generation.
+    fn start(&self) -> u64 {
+        self.gen.update_value(|g| *g += 1);
+        self.loading.set(true);
+        self.loading_more.set(false);
+        self.more_error.set(None);
+        self.gen.get_value()
+    }
+
+    fn is_current(&self, gen: u64) -> bool {
+        self.gen.try_get_value() == Some(gen)
+    }
+
+    /// Empties the list, for a request whose old rows no longer apply.
+    fn clear(&self) {
+        self.epoch.update(|e| *e += 1);
+        self.items.set(Vec::new());
+        self.total.set(0);
+        self.cursor.set(None);
+    }
+
+    /// Replaces the list with a first page.
+    fn replace(&self, items: Vec<T>, total: u64, cursor: Option<String>) {
+        self.epoch.try_update(|e| *e += 1);
+        self.total.try_set(total);
+        self.cursor.try_set(cursor);
+        self.items.try_set(items);
+    }
+
+    /// Adds a later page, leaving out rows already listed: species pages are offsets,
+    /// which repeat a species when the server's counts change between pages.
+    fn extend(&self, more: Vec<T>, cursor: Option<String>, key: impl Fn(&T) -> &str) {
+        self.cursor.try_set(cursor);
+        self.items.try_update(|items| {
+            let seen: HashSet<String> = items.iter().map(|i| key(i).to_string()).collect();
+            items.extend(more.into_iter().filter(|i| !seen.contains(key(i))));
+        });
+    }
+
+    /// Whether a later page can be asked for now.
+    fn can_load_more(&self) -> bool {
+        self.gen.try_get_value().is_some()
+            && self.cursor.with_untracked(Option::is_some)
+            && !self.loading.get_untracked()
+            && !self.loading_more.get_untracked()
+            && self.more_error.with_untracked(Option::is_none)
+    }
+
+    /// The text at the end of the list: "100 of 848 species", or "848 species" when
+    /// every row is listed.
+    fn end_text(&self, one: &str, many: &str, exact: bool) -> Option<String> {
+        let shown = self.items.with(Vec::len) as u64;
+        let total = self.total.get();
+        if shown == 0 {
+            return None;
+        }
+        let more = self.cursor.with(Option::is_some);
+        Some(if !more || (exact && shown >= total) {
+            plural(shown, one, many)
+        } else if total <= shown {
+            // An estimated total the list has already passed.
+            format!("{} so far", plural(shown, one, many))
+        } else {
+            let template = if exact { SHOWN_OF } else { SHOWN_OF_ABOUT };
+            format!(
+                "{} {}",
+                fill(
+                    template,
+                    &[
+                        ("shown", &with_commas(shown)),
+                        ("total", &with_commas(total)),
+                    ],
+                ),
+                if total == 1 { one } else { many }
+            )
+        })
+    }
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 #[component]
@@ -441,6 +624,14 @@ pub fn FindRecordings() -> impl IntoView {
     );
     let near_point = RwSignal::new(memory.as_ref().and_then(|m| m.near_point));
     let km = RwSignal::new(memory.as_ref().map(|m| m.km).unwrap_or(DEFAULT_KM));
+    let min_smp = RwSignal::new(memory.as_ref().and_then(|m| m.min_smp));
+    let rec_sort = RwSignal::new(memory.as_ref().map(|m| m.rec_sort).unwrap_or_default());
+    let species_sort = RwSignal::new(
+        memory
+            .as_ref()
+            .map(|m| m.species_sort)
+            .unwrap_or_default(),
+    );
     let selected = RwSignal::new(
         memory
             .as_ref()
@@ -451,28 +642,21 @@ pub fn FindRecordings() -> impl IntoView {
     let show_detail = RwSignal::new(false);
 
     let availability = RwSignal::new(Availability::Unknown);
-    let status: RwSignal<std::collections::BTreeMap<String, String>> =
-        RwSignal::new(Default::default());
+    let status: RwSignal<BTreeMap<String, String>> = RwSignal::new(Default::default());
     let error: RwSignal<Option<String>> = RwSignal::new(None);
     let locating = RwSignal::new(false);
     // Bumped by "Try again" to repeat the requests after the server was unavailable.
     let retry = RwSignal::new(0u32);
 
-    let species: RwSignal<Vec<SpeciesHit>> = RwSignal::new(Vec::new());
-    let species_total = RwSignal::new(0u64);
-    let species_cursor: RwSignal<Option<String>> = RwSignal::new(None);
-    let species_loading = RwSignal::new(false);
+    let species: Pages<SpeciesHit> = Pages::new();
     let species_approx = RwSignal::new(false);
-    let species_gen = StoredValue::new(0u64);
 
-    let recs: RwSignal<Vec<RecordingItem>> = RwSignal::new(Vec::new());
-    let recs_total = RwSignal::new(0u64);
+    let recs: Pages<RecordingItem> = Pages::new();
     // False when the server estimated the total (dense "near" searches).
     let recs_exact = RwSignal::new(true);
-    let recs_cursor: RwSignal<Option<String>> = RwSignal::new(None);
-    let recs_loading = RwSignal::new(false);
     let recs_truncated = RwSignal::new(false);
-    let recs_gen = StoredValue::new(0u64);
+    // With the sample-rate filter: recordings left out for having no known rate.
+    let no_rate: RwSignal<BTreeMap<String, u64>> = RwSignal::new(BTreeMap::new());
 
     let facets: RwSignal<Option<Facets>> = RwSignal::new(None);
     let facets_gen = StoredValue::new(0u64);
@@ -481,6 +665,10 @@ pub fn FindRecordings() -> impl IntoView {
     let demos_error: RwSignal<Option<String>> = RwSignal::new(None);
     // Id of the recording (or demo file name) being loaded, so its button shows progress.
     let loading: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // The two scrolling panes, watched for their end.
+    let species_el = NodeRef::<html::Div>::new();
+    let detail_el = NodeRef::<html::Div>::new();
 
     // "Current recording" from the last time the dialog was open may be another file
     // now: take its position again, or go back to Anywhere if it has none.
@@ -503,6 +691,30 @@ pub fn FindRecordings() -> impl IntoView {
             near_point.get()
         },
         km: km.get(),
+        min_smp: min_smp.get(),
+    });
+    let near_on = move || filter.with(|f| f.near.is_some());
+
+    // Servers before the sample-rate filter refuse `sort` and `min_smp`; their facets have
+    // no `rates`. Until the facets arrive the controls stay hidden.
+    let supports_sort =
+        Memo::new(move |_| facets.with(|f| f.as_ref().is_some_and(Facets::supports_sorting)));
+    // The orders sent: the server's default order goes without a `sort` parameter.
+    let species_sort_sent = Memo::new(move |_| {
+        if supports_sort.get() {
+            species_sort.get()
+        } else {
+            SpeciesSort::Count
+        }
+    });
+    let rec_sort_sent = Memo::new(move |_| {
+        if !supports_sort.get() {
+            return RecSort::Default;
+        }
+        match (rec_sort.get(), near_on()) {
+            (RecSort::Default | RecSort::Nearest, _) | (RecSort::Best, false) => RecSort::Default,
+            (s, _) => s,
+        }
     });
 
     // Remember the choices on every change, so closing by Escape or the overlay keeps them.
@@ -514,6 +726,9 @@ pub fn FindRecordings() -> impl IntoView {
             near_mode: near_mode.get(),
             near_point: near_point.get(),
             km: km.get(),
+            min_smp: min_smp.get(),
+            rec_sort: rec_sort.get(),
+            species_sort: species_sort.get(),
             selected: selected.get(),
         };
         MEMORY.with(|m| *m.borrow_mut() = Some(mem));
@@ -521,67 +736,66 @@ pub fn FindRecordings() -> impl IntoView {
 
     let close = move || state.dialogs.find_recordings_open().set(false);
 
-    let note_status = move |s: &std::collections::BTreeMap<String, String>| {
+    let note_status = move |s: &BTreeMap<String, String>| {
         status.try_set(s.clone());
     };
 
-    // Species list: runs on every change of the query or filters; typing waits 250 ms.
+    // Species list: runs on every change of the query, filters or order; typing waits
+    // 250 ms.
     Effect::new(move |_| {
         retry.track();
         let q = query.get();
         let f = filter.get();
+        let sort = species_sort_sent.get();
         // Near with no point yet (still locating) has nothing to search.
         if near_mode.get() != NearMode::Anywhere && f.near.is_none() {
             return;
         }
-        species_gen.update_value(|g| *g += 1);
-        let my = species_gen.get_value();
+        let my = species.start();
         if detect_link(&q).is_some() {
-            species.set(Vec::new());
-            species_total.set(0);
-            species_cursor.set(None);
-            species_loading.set(false);
+            species.clear();
+            species.loading.set(false);
             return;
         }
-        species_loading.set(true);
         spawn_local(async move {
             if !q.trim().is_empty() {
                 sleep_ms(250).await;
             }
-            if species_gen.try_get_value() != Some(my) {
+            if !species.is_current(my) {
                 return;
             }
-            let result = search::species(&q, &f, None).await;
-            if species_gen.try_get_value() != Some(my) {
+            let result = search::species(&q, &f, sort, None).await;
+            if !species.is_current(my) {
                 return;
             }
             match result {
                 Ok(page) => {
                     availability.try_set(Availability::Ready);
                     note_status(&page.status);
-                    species_total.try_set(page.total);
-                    species_cursor.try_set(page.cursor);
                     species_approx.try_set(page.approx);
-                    species.try_set(page.species);
+                    species.replace(page.species, page.total, page.cursor);
+                    if let Some(el) = species_el.try_get_untracked().flatten() {
+                        el.set_scroll_top(0);
+                    }
                 }
                 Err(SearchError::Unavailable) => {
                     availability.try_set(Availability::Unavailable);
-                    species.try_set(Vec::new());
+                    species.replace(Vec::new(), 0, None);
                 }
                 Err(SearchError::Indexing) => {
                     availability.try_set(Availability::Ready);
                     status.try_set([("xc".to_string(), "indexing".to_string())].into());
-                    species.try_set(Vec::new());
+                    species.replace(Vec::new(), 0, None);
                 }
                 Err(SearchError::Other(m)) => {
                     error.try_set(Some(m));
                 }
             }
-            species_loading.try_set(false);
+            species.loading.try_set(false);
         });
     });
 
-    // Facets for the Group and Country menus.
+    // Facets for the Group, Country and Sample rate menus.
     Effect::new(move |_| {
         retry.track();
         let f = filter.get();
@@ -602,11 +816,13 @@ pub fn FindRecordings() -> impl IntoView {
     Effect::new(move |_| {
         let sel = selected.get();
         let f = filter.get();
-        recs_gen.update_value(|g| *g += 1);
-        let my = recs_gen.get_value();
+        let sort = rec_sort_sent.get();
+        let my = recs.start();
+        recs.clear();
+        no_rate.set(BTreeMap::new());
         let key = match &sel {
             Selected::Demos => {
-                recs.set(Vec::new());
+                recs.loading.set(false);
                 return;
             }
             Selected::All => None,
@@ -617,22 +833,20 @@ pub fn FindRecordings() -> impl IntoView {
         if near_mode.get_untracked() != NearMode::Anywhere && f.near.is_none() {
             return;
         }
-        recs_loading.set(true);
-        recs.set(Vec::new());
-        recs_total.set(0);
-        recs_cursor.set(None);
+        if let Some(el) = detail_el.get_untracked() {
+            el.set_scroll_top(0);
+        }
         spawn_local(async move {
-            let result = search::recordings(key.as_deref(), &f, None).await;
-            if recs_gen.try_get_value() != Some(my) {
+            let result = search::recordings(key.as_deref(), &f, sort, None).await;
+            if !recs.is_current(my) {
                 return;
             }
             match result {
                 Ok(page) => {
-                    recs_total.try_set(page.total);
                     recs_exact.try_set(page.total_exact);
-                    recs_cursor.try_set(page.cursor);
                     recs_truncated.try_set(page.truncated);
-                    recs.try_set(page.items);
+                    no_rate.try_set(page.no_rate);
+                    recs.replace(page.items, page.total, page.cursor);
                 }
                 Err(SearchError::Unavailable) => {
                     availability.try_set(Availability::Unavailable);
@@ -642,7 +856,7 @@ pub fn FindRecordings() -> impl IntoView {
                     error.try_set(Some(m));
                 }
             }
-            recs_loading.try_set(false);
+            recs.loading.try_set(false);
         });
     });
 
@@ -668,50 +882,99 @@ pub fn FindRecordings() -> impl IntoView {
     });
 
     let more_species = move || {
-        let Some(cursor) = species_cursor.get_untracked() else {
+        if !species.can_load_more() {
+            return;
+        }
+        let Some(cursor) = species.cursor.get_untracked() else {
             return;
         };
         let q = query.get_untracked();
         let f = filter.get_untracked();
-        let my = species_gen.get_value();
-        species_loading.set(true);
+        let sort = species_sort_sent.get_untracked();
+        let my = species.gen.get_value();
+        species.loading_more.set(true);
         spawn_local(async move {
-            let result = search::species(&q, &f, Some(&cursor)).await;
-            if species_gen.try_get_value() != Some(my) {
+            let result = search::species(&q, &f, sort, Some(&cursor)).await;
+            if !species.is_current(my) {
                 return;
             }
-            if let Ok(page) = result {
-                species_cursor.try_set(page.cursor);
-                species.try_update(|s| s.extend(page.species));
+            match result {
+                Ok(page) => species.extend(page.species, page.cursor, |h| h.key.as_str()),
+                Err(e) => {
+                    species.more_error.try_set(Some(failure_text(e)));
+                }
             }
-            species_loading.try_set(false);
+            species.loading_more.try_set(false);
         });
     };
 
     let more_recs = move || {
-        let Some(cursor) = recs_cursor.get_untracked() else {
+        if !recs.can_load_more() {
+            return;
+        }
+        let Some(cursor) = recs.cursor.get_untracked() else {
             return;
         };
         let key = match selected.get_untracked() {
             Selected::Species(hit) => Some(hit.key),
-            _ => None,
+            Selected::All => None,
+            Selected::Demos => return,
         };
         let f = filter.get_untracked();
-        let my = recs_gen.get_value();
-        recs_loading.set(true);
+        let sort = rec_sort_sent.get_untracked();
+        let my = recs.gen.get_value();
+        recs.loading_more.set(true);
         spawn_local(async move {
-            let result = search::recordings(key.as_deref(), &f, Some(&cursor)).await;
-            if recs_gen.try_get_value() != Some(my) {
+            let result = search::recordings(key.as_deref(), &f, sort, Some(&cursor)).await;
+            if !recs.is_current(my) {
                 return;
             }
-            if let Ok(page) = result {
-                recs_cursor.try_set(page.cursor);
-                recs_truncated.try_set(page.truncated);
-                recs.try_update(|r| r.extend(page.items));
+            match result {
+                Ok(page) => {
+                    recs_truncated.try_set(page.truncated);
+                    recs.extend(page.items, page.cursor, |r| r.id.as_str());
+                }
+                Err(e) => {
+                    recs.more_error.try_set(Some(failure_text(e)));
+                }
             }
-            recs_loading.try_set(false);
+            recs.loading_more.try_set(false);
         });
     };
+
+    // The next page loads when a pane is scrolled near its end.
+    let check_species_end = move || {
+        if let Some(el) = species_el.try_get_untracked().flatten() {
+            if near_end(&el) {
+                more_species();
+            }
+        }
+    };
+    let check_recs_end = move || {
+        if let Some(el) = detail_el.try_get_untracked().flatten() {
+            if near_end(&el) {
+                more_recs();
+            }
+        }
+    };
+    // After a page lands (or the phone swaps panes), the pane may still end within view: a
+    // tall window, or a short page. Check again once the rows are drawn.
+    Effect::new(move |_| {
+        species.items.track();
+        show_detail.track();
+        spawn_local(async move {
+            sleep_ms(50).await;
+            check_species_end();
+        });
+    });
+    Effect::new(move |_| {
+        recs.items.track();
+        show_detail.track();
+        spawn_local(async move {
+            sleep_ms(50).await;
+            check_recs_end();
+        });
+    });
 
     let set_near_mode = move |mode: NearMode| {
         error.set(None);
@@ -913,18 +1176,120 @@ pub fn FindRecordings() -> impl IntoView {
         }
     };
 
+    // Rates with no recordings under the other filters are left out, as in the Group menu.
+    let rate_menu = move || {
+        let counts = facets.with(|f| {
+            f.as_ref()
+                .and_then(|f| f.rates.clone())
+                .unwrap_or_default()
+        });
+        let current = min_smp.get();
+        let options = MIN_RATES
+            .iter()
+            .filter_map(|r| {
+                let n = counts.iter().find(|c| c.min_smp == *r).map(|c| c.n);
+                if n == Some(0) && current != Some(*r) {
+                    return None;
+                }
+                let text = match n {
+                    Some(n) => format!("{} ({})", rate_label(*r), with_commas(n)),
+                    None => rate_label(*r),
+                };
+                Some(view! {
+                    <option value=r.to_string() selected=current == Some(*r)>{text}</option>
+                })
+            })
+            .collect::<Vec<_>>();
+        view! {
+            <option value="" selected=current.is_none()>{RATE_ANY}</option>
+            {options}
+        }
+    };
+
     let file_point = Memo::new(move |_| open_file_point(state));
 
     // ── Species pane ────────────────────────────────────────────────────
 
-    let species_pane = move || {
-        let q = query.get();
-        let link = detect_link(&q);
-        let avail = availability.get();
-        let sel = selected.get();
-        let approx = species_approx.get() && filter.get().near.is_some();
+    // Name matches with no recordings come last; a subheading marks where they start.
+    let first_zero = Memo::new(move |_| {
+        species
+            .items
+            .with(|l| l.iter().find(|h| h.n == 0).map(|h| h.key.clone()))
+    });
 
-        let link_row = link.clone().map(|l| {
+    let species_row = move |hit: SpeciesHit| {
+        let key = hit.key.clone();
+        let key_sel = key.clone();
+        let name = hit.display_name();
+        let sci = hit.scientific();
+        let grp = group_label(&hit.grp).to_string();
+        let n = hit.n;
+        let approx = species_approx.get_untracked() && filter.with_untracked(|f| f.near.is_some());
+        let count = if n == 0 {
+            view! { <span class="find-sp-count find-zero">"0"</span> }.into_any()
+        } else if approx {
+            view! { <span class="find-sp-count" title=fill(APPROX_TIP, &[("km", &km.get_untracked().to_string())])>{format!("~{}", with_commas(n))}</span> }.into_any()
+        } else {
+            view! { <span class="find-sp-count">{with_commas(n)}</span> }.into_any()
+        };
+        // Sorted by scientific name, the row leads with it, so the order can be read.
+        let (first, second) = if species_sort_sent.get_untracked() == SpeciesSort::Name {
+            let rest = if name == sci {
+                grp
+            } else {
+                format!("{name} \u{00B7} {grp}")
+            };
+            (
+                view! { <i>{sci}</i> }.into_any(),
+                view! { {rest} }.into_any(),
+            )
+        } else {
+            (
+                view! { {name} }.into_any(),
+                view! { <i>{sci}</i>" \u{00B7} "{grp} }.into_any(),
+            )
+        };
+        let for_click = hit.clone();
+        view! {
+            {move || (first_zero.get().as_deref() == Some(key.as_str())).then(|| view! {
+                <div class="find-list-subhead">{NO_RECORDINGS_HEADING}</div>
+            })}
+            <button
+                class="find-species-row"
+                class:selected=move || selected.with(|s| matches!(s, Selected::Species(h) if h.key == key_sel))
+                class:find-no-recordings=n == 0
+                on:click=move |_| select(Selected::Species(for_click.clone()))
+            >
+                <span class="find-sp-name">{first}</span>
+                {count}
+                <span class="find-sp-sci">{second}</span>
+            </button>
+        }
+    };
+
+    // A column heading that sorts the species list.
+    let species_sort_button = move |label: &'static str, sort: SpeciesSort| {
+        move || {
+            if !supports_sort.get() {
+                return view! { <span>{label}</span> }.into_any();
+            }
+            let active = species_sort_sent.get() == sort;
+            let (arrow, tip) = match sort {
+                SpeciesSort::Name => ("\u{25B2}", "Sort: by scientific name"),
+                SpeciesSort::Count => ("\u{25BC}", "Sort: most recordings first"),
+            };
+            view! {
+                <button class="find-sort" class:active=active title=tip on:click=move |_| species_sort.set(sort)>
+                    {label}
+                    {active.then(|| view! { <span class="find-sort-arrow">{arrow}</span> })}
+                </button>
+            }
+            .into_any()
+        }
+    };
+
+    let link_row = move || {
+        detect_link(&query.get()).map(|l| {
             let text = match &l {
                 Link::Xc(n) => format!("Load XC{n}"),
                 Link::Wikimedia(_) => "Load from Wikimedia".to_string(),
@@ -935,27 +1300,28 @@ pub fn FindRecordings() -> impl IntoView {
                     {move || if loading.get().as_deref() == Some("link") { "Loading\u{2026}".to_string() } else { text.clone() }}
                 </button>
             }
-        });
+        })
+    };
 
-        let fixed_rows = q.trim().is_empty().then(|| {
-            let demos_n = demos.get().len();
+    let fixed_rows = move || {
+        query.with(|q| q.trim().is_empty()).then(|| {
+            let demos_n = demos.with(Vec::len);
             let all_n = facets
-                .get()
-                .map(|f| f.sources.iter().map(|s| s.n).sum::<u64>())
+                .with(|f| f.as_ref().map(|f| f.sources.iter().map(|s| s.n).sum::<u64>()))
                 .filter(|n| *n > 0);
             view! {
                 <button
                     class="find-species-row find-fixed-row"
-                    class:selected=sel == Selected::Demos
+                    class:selected=move || selected.with(|s| *s == Selected::Demos)
                     on:click=move |_| select(Selected::Demos)
                 >
                     <span class="find-sp-name">{DEMOS_HEADING}</span>
                     <span class="find-sp-count">{(demos_n > 0).then(|| with_commas(demos_n as u64))}</span>
                 </button>
-                {(avail != Availability::Unavailable).then(|| view! {
+                {(availability.get() != Availability::Unavailable).then(|| view! {
                     <button
                         class="find-species-row find-fixed-row"
-                        class:selected=sel == Selected::All
+                        class:selected=move || selected.with(|s| *s == Selected::All)
                         on:click=move |_| select(Selected::All)
                     >
                         <span class="find-sp-name">{ALL_RECORDINGS}</span>
@@ -963,207 +1329,248 @@ pub fn FindRecordings() -> impl IntoView {
                     </button>
                 })}
             }
-        });
+        })
+    };
 
-        let body = match avail {
-            Availability::Unavailable => view! {
-                <div class="find-notice">
-                    <p>{UNAVAILABLE}</p>
-                    <div class="find-notice-actions">
-                        <button class="xc-btn" on:click=move |_| {
-                            availability.set(Availability::Unknown);
-                            show_detail.set(false);
-                            retry.update(|r| *r += 1);
-                        }>{TRY_AGAIN}</button>
-                        <button class="xc-btn" on:click=move |_| open_xc_browser()>{XC_BROWSER}</button>
-                        <button class="xc-btn" on:click=move |_| open_wiki_browser()>{COMMONS_BROWSER}</button>
-                    </div>
+    let unavailable_notice = move || {
+        (availability.get() == Availability::Unavailable).then(|| view! {
+            <div class="find-notice">
+                <p>{UNAVAILABLE}</p>
+                <div class="find-notice-actions">
+                    <button class="xc-btn" on:click=move |_| {
+                        availability.set(Availability::Unknown);
+                        show_detail.set(false);
+                        retry.update(|r| *r += 1);
+                    }>{TRY_AGAIN}</button>
+                    <button class="xc-btn" on:click=move |_| open_xc_browser()>{XC_BROWSER}</button>
+                    <button class="xc-btn" on:click=move |_| open_wiki_browser()>{COMMONS_BROWSER}</button>
+                </div>
+            </div>
+        })
+    };
+
+    // The end of a list: how many rows are listed out of how many, and the state of the
+    // next page.
+    let list_end = move |text: Option<String>,
+                          loading_more: RwSignal<bool>,
+                          more_error: RwSignal<Option<String>>,
+                          retry_more: Box<dyn Fn() + Send + Sync>| {
+        text.map(|text| {
+            view! {
+                <div class="find-list-end">
+                    <span>{text}</span>
+                    {move || loading_more.get().then(|| view! { <span>{LOADING_MORE}</span> })}
+                    {more_error.get().map(|reason| view! {
+                        <span class="find-more-error">{fill(MORE_FAILED, &[("reason", &reason)])}</span>
+                        <button class="find-more" on:click=move |_| retry_more()>{TRY_AGAIN}</button>
+                    })}
                 </div>
             }
-            .into_any(),
-            _ => {
-                let list = species.get();
-                let empty = list.is_empty() && !species_loading.get() && link.is_none();
-                // Name matches with no recordings come last; a subheading marks where they start.
-                let first_zero = list.iter().position(|h| h.n == 0);
-                let rows = list
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, hit)| {
-                        let subhead = (Some(i) == first_zero).then(|| view! {
-                            <div class="find-list-subhead">{NO_RECORDINGS_HEADING}</div>
-                        });
-                        let is_sel = matches!(&sel, Selected::Species(s) if s.key == hit.key);
-                        let name = hit.display_name();
-                        let sci = hit.scientific();
-                        let grp = group_label(&hit.grp).to_string();
-                        let n = hit.n;
-                        let count = if n == 0 {
-                            view! { <span class="find-sp-count find-zero">"0"</span> }.into_any()
-                        } else if approx {
-                            view! { <span class="find-sp-count" title=fill(APPROX_TIP, &[("km", &km.get_untracked().to_string())])>{format!("~{}", with_commas(n))}</span> }.into_any()
-                        } else {
-                            view! { <span class="find-sp-count">{with_commas(n)}</span> }.into_any()
-                        };
-                        let for_click = hit.clone();
-                        let row = view! {
-                            <button
-                                class="find-species-row"
-                                class:selected=is_sel
-                                class:find-no-recordings=n == 0
-                                on:click=move |_| select(Selected::Species(for_click.clone()))
-                            >
-                                <span class="find-sp-name">{name}</span>
-                                {count}
-                                <span class="find-sp-sci"><i>{sci}</i>" \u{00B7} "{grp}</span>
-                            </button>
-                        };
-                        view! { {subhead}{row} }
-                    })
-                    .collect::<Vec<_>>();
-                let remaining = species_total.get().saturating_sub(species.with(|s| s.len() as u64));
-                let has_rows = !rows.is_empty();
-                view! {
-                    {has_rows.then(|| view! {
-                        <div class="find-list-head">
-                            <span>{LIST_HEAD_SPECIES}</span>
-                            <span>{LIST_HEAD_COUNT}</span>
-                        </div>
-                    })}
-                    {rows}
-                    {empty.then(|| (!q.trim().is_empty()).then(|| view! {
-                        <p class="find-empty">{fill(NO_SPECIES_MATCH, &[("query", q.trim())])}</p>
-                    }))}
-                    {(species_cursor.get().is_some() && remaining > 0).then(|| view! {
-                        <button class="find-more" disabled=move || species_loading.get() on:click=move |_| more_species()>
-                            {fill(MORE_SPECIES, &[("remaining", &with_commas(remaining))])}
-                        </button>
-                    })}
-                }
-                .into_any()
-            }
-        };
+        })
+    };
 
-        view! {
-            {sources_in(&status.get(), &["indexing"]).map(|names| view! {
-                <p class="find-notice find-notice-small">{fill(INDEXING, &[("sources", &join_list(&names, "and"))])}</p>
-            })}
-            {link_row}
-            {fixed_rows}
-            {body}
-        }
+    let species_end = move || {
+        list_end(
+            species.end_text("species", "species", true),
+            species.loading_more,
+            species.more_error,
+            Box::new(move || {
+                species.more_error.set(None);
+                more_species();
+            }),
+        )
+    };
+
+    let species_empty = move || {
+        let q = query.get();
+        (species.items.with(Vec::is_empty)
+            && !species.loading.get()
+            && !q.trim().is_empty()
+            && detect_link(&q).is_none()
+            && availability.get() != Availability::Unavailable)
+            .then(|| view! {
+                <p class="find-empty">{fill(NO_SPECIES_MATCH, &[("query", q.trim())])}</p>
+            })
+    };
+
+    let species_pane = view! {
+        {move || sources_in(&status.get(), &["indexing"]).map(|names| view! {
+            <p class="find-notice find-notice-small">{fill(INDEXING, &[("sources", &join_list(&names, "and"))])}</p>
+        })}
+        {link_row}
+        {fixed_rows}
+        {unavailable_notice}
+        {move || species.items.with(|l| !l.is_empty()).then(|| view! {
+            <div class="find-list-head">
+                {species_sort_button(LIST_HEAD_SPECIES, SpeciesSort::Name)}
+                {species_sort_button(LIST_HEAD_COUNT, SpeciesSort::Count)}
+            </div>
+        })}
+        <For
+            each=move || {
+                let e = species.epoch.get();
+                species.items.get().into_iter().map(move |h| (e, h)).collect::<Vec<_>>()
+            }
+            key=|(e, h)| (*e, h.key.clone())
+            children=move |(_, hit)| species_row(hit)
+        />
+        {species_empty}
+        {species_end}
+        {move || species.loading.get().then(|| view! { <p class="xc-loading">"Searching\u{2026}"</p> })}
     };
 
     // ── Detail pane ─────────────────────────────────────────────────────
 
-    let recordings_table = move |show_species: bool| {
-        let items = recs.get();
-        let near_on = filter.get().near.is_some();
-        let rows = items
-            .into_iter()
-            .map(|item| {
-                let id = item.id.clone();
-                let id_for_btn = id.clone();
-                let for_click = item.clone();
-                let place = {
-                    let mut parts = Vec::new();
-                    if !item.country.is_empty() {
-                        parts.push(item.country.clone());
-                    }
-                    if !item.place.is_empty() {
-                        parts.push(item.place.clone());
-                    }
-                    parts.join(", ")
-                };
-                let place_title = place.clone();
-                let dist = item.km.filter(|_| near_on).map(|k| {
-                    if k < 10.0 {
-                        format!("{k:.1} km")
-                    } else {
-                        format!("{} km", k.round() as i64)
-                    }
-                });
-                let length = item
-                    .len_s
-                    .map(|s| crate::format_time::format_duration(s, 0))
-                    .unwrap_or_default();
-                let rate = item
-                    .smp
-                    .map(|r| format!("{} kHz", (r as f64 / 1000.0).round() as i64))
-                    .unwrap_or_default();
-                let source = search::source_label(&item.source).to_string();
-                let detail = {
-                    let mut parts = Vec::new();
-                    if !item.recordist.is_empty() {
-                        parts.push(item.recordist.clone());
-                    }
-                    if !item.licence.is_empty() {
-                        parts.push(licence_short(&item.licence));
-                    }
-                    parts.join(" \u{00B7} ")
-                };
-                let species_cell = show_species.then(|| {
-                    let name = if item.en.is_empty() {
-                        format!("{} {}", item.gen, item.sp)
-                    } else {
-                        item.en.clone()
-                    };
-                    view! { <span class="find-rec-species">{name}</span> }
-                });
-                view! {
-                    <div class="find-rec-row" class:with-species=show_species>
-                        {species_cell}
-                        <span class="find-rec-place-cell">
-                            {dist.map(|d| view! { <span class="find-rec-dist">{d}</span> })}
-                            <span class="find-rec-place" title=place_title>{place}</span>
-                        </span>
-                        <span class="find-rec-date">{item.date.clone()}</span>
-                        <span class="find-rec-num">{length}</span>
-                        <span class="find-rec-num">{rate}</span>
-                        <span class="find-rec-q">{quality_label(&item.quality)}</span>
-                        <a class="find-rec-source" href=item.page_url.clone() target="_blank" rel="noopener">{source}</a>
-                        <button
-                            class="xc-btn xc-btn-small find-rec-load"
-                            disabled=move || loading.get().is_some()
-                            on:click=move |_| start_load(id_for_btn.clone(), for_click.clone())
-                        >
-                            {move || if loading.get().as_deref() == Some(id.as_str()) { "Loading\u{2026}" } else { "Load" }}
-                        </button>
-                        <span class="find-rec-detail">{detail}</span>
-                    </div>
-                }
-            })
-            .collect::<Vec<_>>();
-        let remaining = recs_total
-            .get()
-            .saturating_sub(recs.with(|r| r.len() as u64));
+    // A column heading that sorts the recordings: the first click gives `first`, a click
+    // on the sorted heading gives `second` (the other direction).
+    let rec_sort_button = move |label: &'static str, first: RecSort, second: RecSort| {
+        move || {
+            if !supports_sort.get() {
+                return view! { <span>{label}</span> }.into_any();
+            }
+            let current = rec_sort_sent.get().resolved(near_on());
+            let active = current == first || current == second;
+            let next = if active && current == first {
+                second
+            } else {
+                first
+            };
+            view! {
+                <button class="find-sort" class:active=active title=sort_tip(next) on:click=move |_| rec_sort.set(next)>
+                    {label}
+                    {active.then(|| view! { <span class="find-sort-arrow">{sort_arrow(current)}</span> })}
+                </button>
+            }
+            .into_any()
+        }
+    };
+
+    let rec_head = move |show_species: bool| {
         view! {
-            <div class="find-rec-head" class:with-species=show_species>
-                {show_species.then(|| view! { <span>"Species"</span> })}
-                <span>{if near_on { "Distance, place" } else { "Place" }}</span>
-                <span>"Date"</span>
-                <span class="find-rec-num">"Length"</span>
-                <span class="find-rec-num">"Sample rate"</span>
-                <span>"Quality"</span>
-                <span>"Source"</span>
-                <span></span>
+            <div class="find-rec-head" class:with-species=show_species class:sortable=move || supports_sort.get()>
+                <span class="find-sort-label">{SORT_BY}</span>
+                {show_species.then(|| view! { <span class="find-head-plain">"Species"</span> })}
+                <span class="find-head-place">
+                    {move || if near_on() {
+                        view! {
+                            {rec_sort_button("Distance", RecSort::Nearest, RecSort::Nearest)}
+                            <span class="find-head-plain">", place"</span>
+                        }
+                        .into_any()
+                    } else {
+                        view! { <span class="find-head-plain">"Place"</span> }.into_any()
+                    }}
+                </span>
+                <span>{rec_sort_button("Date", RecSort::Newest, RecSort::Oldest)}</span>
+                <span class="find-rec-num">{rec_sort_button("Length", RecSort::Longest, RecSort::Shortest)}</span>
+                <span class="find-rec-num">{rec_sort_button("Sample rate", RecSort::RateHigh, RecSort::RateLow)}</span>
+                <span>{rec_sort_button("Quality", RecSort::Best, RecSort::Best)}</span>
+                <span class="find-head-plain">"Source"</span>
+                <span class="find-head-plain"></span>
             </div>
-            {rows}
-            {(recs_truncated.get() && near_on).then(|| view! {
+        }
+    };
+
+    let rec_row = move |item: RecordingItem, show_species: bool| {
+        let id = item.id.clone();
+        let id_for_btn = id.clone();
+        let for_click = item.clone();
+        let place = {
+            let mut parts = Vec::new();
+            if !item.country.is_empty() {
+                parts.push(item.country.clone());
+            }
+            if !item.place.is_empty() {
+                parts.push(item.place.clone());
+            }
+            parts.join(", ")
+        };
+        let place_title = place.clone();
+        let dist = item.km.map(|k| {
+            if k < 10.0 {
+                format!("{k:.1} km")
+            } else {
+                format!("{} km", k.round() as i64)
+            }
+        });
+        let length = item
+            .len_s
+            .map(|s| crate::format_time::format_duration(s, 0))
+            .unwrap_or_default();
+        let rate = item
+            .smp
+            .map(|r| format!("{} kHz", (r as f64 / 1000.0).round() as i64))
+            .unwrap_or_default();
+        let source = search::source_label(&item.source).to_string();
+        let detail = {
+            let mut parts = Vec::new();
+            if !item.recordist.is_empty() {
+                parts.push(item.recordist.clone());
+            }
+            if !item.licence.is_empty() {
+                parts.push(licence_short(&item.licence));
+            }
+            parts.join(" \u{00B7} ")
+        };
+        let species_cell = show_species.then(|| {
+            let name = if item.en.is_empty() {
+                format!("{} {}", item.gen, item.sp)
+            } else {
+                item.en.clone()
+            };
+            view! { <span class="find-rec-species">{name}</span> }
+        });
+        view! {
+            <div class="find-rec-row" class:with-species=show_species>
+                {species_cell}
+                <span class="find-rec-place-cell">
+                    {move || near_on().then(|| dist.clone().map(|d| view! { <span class="find-rec-dist">{d}</span> }))}
+                    <span class="find-rec-place" title=place_title>{place}</span>
+                </span>
+                <span class="find-rec-date">{item.date.clone()}</span>
+                <span class="find-rec-num">{length}</span>
+                <span class="find-rec-num">{rate}</span>
+                <span class="find-rec-q">{quality_label(&item.quality)}</span>
+                <a class="find-rec-source" href=item.page_url.clone() target="_blank" rel="noopener">{source}</a>
+                <button
+                    class="xc-btn xc-btn-small find-rec-load"
+                    disabled=move || loading.get().is_some()
+                    on:click=move |_| start_load(id_for_btn.clone(), for_click.clone())
+                >
+                    {move || if loading.get().as_deref() == Some(id.as_str()) { "Loading\u{2026}" } else { "Load" }}
+                </button>
+                <span class="find-rec-detail">{detail}</span>
+            </div>
+        }
+    };
+
+    let recs_end = move || {
+        list_end(
+            recs.end_text("recording", "recordings", recs_exact.get()),
+            recs.loading_more,
+            recs.more_error,
+            Box::new(move || {
+                recs.more_error.set(None);
+                more_recs();
+            }),
+        )
+    };
+
+    let recordings_table = move |show_species: bool| {
+        view! {
+            {rec_head(show_species)}
+            <For
+                each=move || {
+                    let e = recs.epoch.get();
+                    recs.items.get().into_iter().map(move |i| (e, i)).collect::<Vec<_>>()
+                }
+                key=|(e, i)| (*e, i.id.clone())
+                children=move |(_, item)| rec_row(item, show_species)
+            />
+            {move || (recs_truncated.get() && near_on()).then(|| view! {
                 <p class="find-empty">{fill(TRUNCATED, &[("km", &km.get().to_string())])}</p>
             })}
-            {recs_cursor.get().is_some().then(|| {
-                let text = if recs_exact.get() && remaining > 0 {
-                    fill(MORE_RECORDINGS, &[("remaining", &with_commas(remaining))])
-                } else {
-                    MORE_RECORDINGS_PLAIN.to_string()
-                };
-                view! {
-                    <button class="find-more" disabled=move || recs_loading.get() on:click=move |_| more_recs()>
-                        {text}
-                    </button>
-                }
-            })}
+            {recs_end}
         }
     };
 
@@ -1181,6 +1588,9 @@ pub fn FindRecordings() -> impl IntoView {
             };
             s.push_str(&format!(" in {the}{}", search::country_name(c)));
         }
+        if let Some(r) = f.min_smp {
+            s.push_str(&format!(" at {}", rate_label(r)));
+        }
         if f.near.is_some() {
             let whom = match near_mode.get() {
                 NearMode::Me => "you",
@@ -1189,6 +1599,30 @@ pub fn FindRecordings() -> impl IntoView {
             s.push_str(&format!(" within {} km of {whom}", f.km));
         }
         s
+    };
+
+    // With the sample-rate filter on, the recordings it left out for having no known rate.
+    let no_rate_note = move || {
+        no_rate.with(|nr| {
+            let n: u64 = nr.values().sum();
+            (n > 0).then(|| {
+                let sources: Vec<String> = nr
+                    .keys()
+                    .map(|k| search::source_label(k).to_string())
+                    .collect();
+                view! {
+                    <p class="find-detail-sub">
+                        {fill(
+                            NO_RATE_NOTE,
+                            &[
+                                ("count", &plural(n, "recording", "recordings")),
+                                ("sources", &join_list(&sources, "and")),
+                            ],
+                        )}
+                    </p>
+                }
+            })
+        })
     };
 
     let detail_pane = move || {
@@ -1253,22 +1687,20 @@ pub fn FindRecordings() -> impl IntoView {
                 }
                 .into_any()
             }
-            Selected::All => {
-                let n = recs_total.get();
-                view! {
-                    {back}
-                    <div class="find-detail-head">
-                        <h3>{ALL_RECORDINGS}</h3>
-                        <p class="find-detail-sub">
-                            {move || format!("{}{}", count_text(recs_total.get(), recs_exact.get()), filter_summary())}
-                        </p>
-                    </div>
-                    {(n == 0 && !recs_loading.get()).then(|| view! { <p class="find-empty">{NO_RECORDINGS_FILTERS}</p> })}
-                    {recordings_table(true)}
-                    {move || recs_loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
-                }
-                .into_any()
+            Selected::All => view! {
+                {back}
+                <div class="find-detail-head">
+                    <h3>{ALL_RECORDINGS}</h3>
+                    <p class="find-detail-sub">
+                        {move || format!("{}{}", count_text(recs.total.get(), recs_exact.get()), filter_summary())}
+                    </p>
+                    {no_rate_note}
+                </div>
+                {move || (recs.total.get() == 0 && !recs.loading.get()).then(|| view! { <p class="find-empty">{NO_RECORDINGS_FILTERS}</p> })}
+                {recordings_table(true)}
+                {move || recs.loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
             }
+            .into_any(),
             Selected::Species(hit) => {
                 let name = hit.display_name();
                 let sci = hit.scientific();
@@ -1276,14 +1708,14 @@ pub fn FindRecordings() -> impl IntoView {
                 let bb = hit.beastiebot_url();
                 let any_filter = move || {
                     let f = filter.get();
-                    f.group.is_some() || f.country.is_some() || f.near.is_some()
+                    f.group.is_some() || f.country.is_some() || f.near.is_some() || f.min_smp.is_some()
                 };
                 view! {
                     {back}
                     <div class="find-detail-head">
                         <h3>{name}" "<i class="find-detail-sci">{sci}</i></h3>
                         <p class="find-detail-sub">
-                            {move || match recs_total.get() {
+                            {move || match recs.total.get() {
                                 0 => String::new(),
                                 t => format!("{}{} \u{00B7} ", count_text(t, recs_exact.get()), filter_summary()),
                             }}
@@ -1291,10 +1723,11 @@ pub fn FindRecordings() -> impl IntoView {
                             " \u{00B7} "
                             <a href=bb target="_blank" rel="noopener">"BeastieBot"</a>
                         </p>
+                        {no_rate_note}
                     </div>
                     // With a filter set, no recordings may only mean none under the
                     // filter; without one, the species has none in any indexed source.
-                    {move || (recs_total.get() == 0 && !recs_loading.get()).then(|| {
+                    {move || (recs.total.get() == 0 && !recs.loading.get()).then(|| {
                         let text = if any_filter() {
                             NO_RECORDINGS_FILTERS.to_string()
                         } else {
@@ -1304,8 +1737,8 @@ pub fn FindRecordings() -> impl IntoView {
                         };
                         view! { <p class="find-empty">{text}</p> }
                     })}
-                    {move || (recs_total.get() > 0).then(|| recordings_table(false))}
-                    {move || recs_loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
+                    {move || (recs.total.get() > 0).then(|| recordings_table(false))}
+                    {move || recs.loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
                 }
                 .into_any()
             }
@@ -1350,6 +1783,15 @@ pub fn FindRecordings() -> impl IntoView {
                                 country.set((!v.is_empty()).then_some(v));
                             }>{country_menu}</select>
                         </label>
+                        // Before Near, whose radius menu comes and goes beside it.
+                        {move || (supports_sort.get() || min_smp.get().is_some()).then(|| view! {
+                            <label>
+                                {RATE_LABEL}" "
+                                <select class="xc-select find-rate-select" on:change=move |ev| {
+                                    min_smp.set(event_target_value(&ev).parse::<u32>().ok());
+                                }>{rate_menu}</select>
+                            </label>
+                        })}
                         <label>
                             "Near "
                             <select class="xc-select" on:change=move |ev| {
@@ -1400,11 +1842,12 @@ pub fn FindRecordings() -> impl IntoView {
                 })}
 
                 <div class="find-body" class:show-detail=move || show_detail.get()>
-                    <div class="find-species">
+                    <div class="find-species" node_ref=species_el on:scroll=move |_| check_species_end()>
                         {species_pane}
-                        {move || species_loading.get().then(|| view! { <p class="xc-loading">"Searching\u{2026}"</p> })}
                     </div>
-                    <div class="find-detail">{detail_pane}</div>
+                    <div class="find-detail" node_ref=detail_el on:scroll=move |_| check_recs_end()>
+                        {detail_pane}
+                    </div>
                 </div>
 
                 // The unavailable notice shows the same two buttons, so the footer hides then.

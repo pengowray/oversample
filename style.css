@@ -6796,14 +6796,76 @@ button.toolbar-overflow-btn {
     padding-bottom: 8px;
 }
 
-/* Column labels over the species list, so its numbers read as recordings. */
+/* Column labels over the species list, so its numbers read as recordings.
+   They sort the list (.find-sort). */
 .find-list-head {
     display: flex;
     justify-content: space-between;
-    padding: 4px 16px;
+    align-items: center;
+    padding: 0 16px;
+    min-height: 24px;
     color: #a0a0a0;
     font-size: 11px;
     border-bottom: 1px solid #333;
+}
+
+/* Column headings that sort their list, the usual way for a table: plain text
+   like the other headings, the sorted one brighter with an arrow. The server
+   sorts, since the lists arrive a page at a time. 24 px tall for the minimum
+   target size. */
+.find-sort {
+    background: none;
+    border: none;
+    padding: 0;
+    min-height: 24px;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.find-sort:hover {
+    color: #ddd;
+    text-decoration: underline;
+}
+
+.find-sort.active {
+    color: #e8e8e8;
+}
+
+.find-sort-arrow {
+    margin-left: 3px;
+    font-size: 8px;
+    vertical-align: 1px;
+}
+
+/* "Sort by" shows only on a phone, where the column headings are hidden and
+   the sortable ones stand alone. */
+.find-sort-label {
+    display: none;
+}
+
+/* End of a list, where the next page loads as it scrolls into view: how many
+   rows are listed of how many, and the next page's state. */
+.find-list-end {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 10px 16px;
+    color: #a0a0a0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.find-list-end .find-more {
+    margin: 0;
+}
+
+.find-more-error {
+    color: #e8a0a0;
 }
 
 /* Starts the name matches that have no recordings, after those that have some. */
@@ -7005,6 +7067,9 @@ button.toolbar-overflow-btn {
     top: 0;
     background: #1e1e2e;
     font-size: 11px;
+    padding-top: 0;
+    padding-bottom: 0;
+    min-height: 24px;
 }
 
 .find-rec-row {
@@ -7122,10 +7187,31 @@ button.toolbar-overflow-btn {
         max-width: 140px;
     }
 
+    /* Wide enough for "96 kHz or more (11,230)"; it sits on a line of its own. */
+    .find-filters .find-rate-select {
+        max-width: 200px;
+    }
+
     /* Phone: place takes the first line; date, length, rate, quality and
-       source share the second; Load stays at the right of the first line. */
+       source share the second; Load stays at the right of the first line.
+       The heading row keeps only its sort buttons, after "Sort by". */
     .find-rec-head {
         display: none;
+    }
+
+    .find-rec-head.sortable {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0 14px;
+    }
+
+    .find-rec-head .find-head-plain {
+        display: none;
+    }
+
+    .find-rec-head .find-sort-label {
+        display: inline;
     }
 
     .find-rec-row, .find-rec-row.with-species {
