@@ -44,7 +44,7 @@ const LOCATING: &str = "Finding your location\u{2026}";
 const UNAVAILABLE: &str =
     "Species search is unavailable: the search server cannot be reached or is out of date.";
 const INDEXING: &str =
-    "Incomplete results. The search server is adding Xeno-canto recordings, which can take hours.";
+    "Incomplete results. The search server is adding {sources} recordings, which can take hours.";
 const NO_SPECIES_MATCH: &str = "No species match \u{201C}{query}\u{201D}.";
 const NO_RECORDINGS_SPECIES: &str = "No recordings of this species found on {sources}.";
 const NO_RECORDINGS_FILTERS: &str =
@@ -76,13 +76,27 @@ const COUNTRIES_WITH_THE: [&str; 14] = [
     "US", "GB", "NL", "PH", "BS", "GM", "CZ", "DO", "CF", "CD", "AE", "MV", "MH", "SB",
 ];
 
-/// "Xeno-canto", "Xeno-canto or iNaturalist", "A, B or C".
-fn join_or(items: &[String]) -> String {
+/// "Xeno-canto", "Xeno-canto or iNaturalist", "A, B or C" (or "and").
+fn join_list(items: &[String], word: &str) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),
-        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+        [rest @ .., last] => format!("{} {word} {last}", rest.join(", ")),
     }
+}
+
+/// The names of the sources whose status is one of `states`, or None if there are none.
+/// The server also lists sources it does not index ("off").
+fn sources_in(
+    status: &std::collections::BTreeMap<String, String>,
+    states: &[&str],
+) -> Option<Vec<String>> {
+    let names: Vec<String> = status
+        .iter()
+        .filter(|(_, s)| states.contains(&s.as_str()))
+        .map(|(k, _)| search::source_label(k).to_string())
+        .collect();
+    (!names.is_empty()).then_some(names)
 }
 
 fn fill(template: &str, pairs: &[(&str, &str)]) -> String {
@@ -292,13 +306,7 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
                 item.audio_url.clone()
             };
             let bytes = fetch_bytes(&url).await?;
-            let name = item
-                .audio_url
-                .rsplit('/')
-                .next()
-                .map(|s| s.split('?').next().unwrap_or(s).to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| item.id.replace([':', '/'], "_"));
+            let name = file_name(&item);
             let load_id = state.loading_start(&label);
             let result = load_named_bytes(
                 name,
@@ -318,6 +326,29 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// "Nathusius's Pipistrelle - Pipistrellus nathusii (RBINS).wav": the same shape as
+/// Xeno-canto's names, since the sources' own file names are often codes. The
+/// extension comes from the file URL; RBINS's ".raw" files are WAV.
+fn file_name(item: &RecordingItem) -> String {
+    let path = item.audio_url.split(['?', '#']).next().unwrap_or("");
+    let ext = path
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .filter(|e| (2..=4).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(|e| if e == "raw" { "wav".to_string() } else { e })
+        .unwrap_or_else(|| "wav".to_string());
+    let sci = format!("{} {}", item.gen, item.sp).trim().to_string();
+    let source = search::source_label(&item.source);
+    let base = if item.en.is_empty() {
+        format!("{sci} ({source})")
+    } else {
+        format!("{} - {sci} ({source})", item.en)
+    };
+    format!("{}.{ext}", base.replace(['/', '\\'], "-"))
 }
 
 /// Label/value rows for a recording from a source other than Xeno-canto. The labels
@@ -1014,8 +1045,8 @@ pub fn FindRecordings() -> impl IntoView {
         };
 
         view! {
-            {(status.get().values().any(|s| s == "indexing")).then(|| view! {
-                <p class="find-notice find-notice-small">{INDEXING}</p>
+            {sources_in(&status.get(), &["indexing"]).map(|names| view! {
+                <p class="find-notice find-notice-small">{fill(INDEXING, &[("sources", &join_list(&names, "and"))])}</p>
             })}
             {link_row}
             {fixed_rows}
@@ -1267,13 +1298,9 @@ pub fn FindRecordings() -> impl IntoView {
                         let text = if any_filter() {
                             NO_RECORDINGS_FILTERS.to_string()
                         } else {
-                            let sources: Vec<String> = status
-                                .get()
-                                .keys()
-                                .map(|k| search::source_label(k).to_string())
-                                .collect();
-                            let sources = if sources.is_empty() { vec!["Xeno-canto".to_string()] } else { sources };
-                            fill(NO_RECORDINGS_SPECIES, &[("sources", &join_or(&sources))])
+                            let sources = sources_in(&status.get(), &["ready", "indexing"])
+                                .unwrap_or_else(|| vec!["Xeno-canto".to_string()]);
+                            fill(NO_RECORDINGS_SPECIES, &[("sources", &join_list(&sources, "or"))])
                         };
                         view! { <p class="find-empty">{text}</p> }
                     })}
@@ -1407,6 +1434,23 @@ mod tests {
             "CC0 1.0"
         );
         assert_eq!(licence_short("cc-by"), "CC BY");
+    }
+
+    #[test]
+    fn readable_file_names() {
+        let item: RecordingItem = serde_json::from_str(
+            r#"{"id":"rbins:x/0","source":"rbins","gen":"Pipistrellus","sp":"nathusii","en":"Nathusius's Pipistrelle","audio_url":"https://dasa.naturalsciences.be/a/b/2024.raw?x=1"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            file_name(&item),
+            "Nathusius's Pipistrelle - Pipistrellus nathusii (RBINS).wav"
+        );
+        let item: RecordingItem = serde_json::from_str(
+            r#"{"id":"inat:1/0","source":"inat","gen":"Myotis","sp":"","en":"","audio_url":"https://static.inaturalist.org/sounds/1.m4a?17"}"#,
+        )
+        .unwrap();
+        assert_eq!(file_name(&item), "Myotis (iNaturalist).m4a");
     }
 
     #[test]
