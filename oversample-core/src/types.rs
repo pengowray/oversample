@@ -17,6 +17,16 @@ pub struct RecorderBlock {
     pub fields: Vec<(String, String)>,
 }
 
+/// How a file's sample rate was corrected when it was loaded, for recordings stored
+/// time-expanded (slowed down). See [`AudioData::apply_time_expansion`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeExpansion {
+    /// What the recording was slowed down by: 10 for a file played 10 times slower.
+    pub factor: f64,
+    /// The sample rate the file itself states, before the correction.
+    pub stored_rate: u32,
+}
+
 /// WAV-specific facts beyond rate, channels and sample width.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WavDetails {
@@ -139,9 +149,23 @@ pub struct FileMetadata {
     pub zc_data: Option<Arc<ZcData>>,
     /// WAV-only details. None for other formats.
     pub wav: Option<WavDetails>,
+    /// Set when the file was stored time-expanded and its rate was corrected on load;
+    /// `sample_rate` is then the corrected rate. `None` for a real-time recording.
+    pub time_expansion: Option<TimeExpansion>,
 }
 
 impl FileMetadata {
+    /// The time expansion factor the file itself states: GUANO's `TE` field, else the
+    /// `Time Expansion` field of a Wildlife Acoustics `wamd` chunk. `None` for a file
+    /// that states none, or states 1 (recorded in real time).
+    pub fn declared_time_expansion(&self) -> Option<f64> {
+        declared_time_expansion(
+            self.format,
+            self.guano.as_ref(),
+            self.wav.as_ref().and_then(|w| w.wamd.as_ref()),
+        )
+    }
+
     /// `bits_per_sample` of a file decoded from a lossy codec.
     pub const LOSSY_BITS: u16 = 0;
 
@@ -161,6 +185,49 @@ impl FileMetadata {
             None => "Lossy".to_string(),
         }
     }
+}
+
+/// A time expansion factor that is worth applying: a number from 0.01 to 100, and not
+/// 1, which means the recording was made in real time.
+fn usable_factor(factor: f64) -> Option<f64> {
+    (factor.is_finite() && (0.01..=100.0).contains(&factor) && (factor - 1.0).abs() > 1e-9)
+        .then_some(factor)
+}
+
+/// The time expansion factor a file states, from the metadata read from it: GUANO's
+/// `TE` field, else a Wildlife Acoustics `wamd` chunk's. Only WAV and W4V files are
+/// read, since `guano` also holds an M4A file's own tags.
+///
+/// SonoBat writes an empty `TE`, and a recorder that records in real time writes 1;
+/// both give `None`.
+pub fn declared_time_expansion(
+    format: AudioFormat,
+    guano: Option<&GuanoMetadata>,
+    wamd: Option<&RecorderBlock>,
+) -> Option<f64> {
+    if !matches!(format, AudioFormat::Wav | AudioFormat::W4v) {
+        return None;
+    }
+    let field = |fields: &[(String, String)], key: &str| {
+        fields
+            .iter()
+            .find(|(k, _)| k.trim() == key)
+            .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+    };
+    guano
+        .and_then(|g| field(&g.fields, "TE"))
+        .or_else(|| wamd.and_then(|w| field(&w.fields, "Time Expansion")))
+        .and_then(usable_factor)
+}
+
+/// The factor to apply when a file is loaded: the one the source it came from gave
+/// (Wikimedia Commons, the recording search), else the one the file itself states. The
+/// source's wins, so a file is never corrected twice when the source read the same
+/// header.
+pub fn time_expansion_to_apply(source: Option<f64>, meta: &FileMetadata) -> Option<f64> {
+    source
+        .and_then(usable_factor)
+        .or_else(|| meta.declared_time_expansion())
 }
 
 #[derive(Clone)]
@@ -200,6 +267,17 @@ impl AudioData {
             return false;
         }
         let corrected = corrected as u32;
+        self.metadata.time_expansion = Some(TimeExpansion {
+            // Two corrections in a row multiply; the stored rate stays the file's own.
+            factor: self
+                .metadata
+                .time_expansion
+                .map_or(factor, |t| t.factor * factor),
+            stored_rate: self
+                .metadata
+                .time_expansion
+                .map_or(self.sample_rate, |t| t.stored_rate),
+        });
         self.sample_rate = corrected;
         self.duration_secs /= factor;
         // Keep the source's own rate in step. Only an in-memory source can be
@@ -422,6 +500,114 @@ mod tests {
         assert_eq!(FileMetadata::default().format, AudioFormat::Unknown);
         // Padding works as it does for a &str.
         assert_eq!(format!("[{:>4}]", AudioFormat::Zc), "[  ZC]");
+    }
+
+    fn guano(fields: &[(&str, &str)]) -> GuanoMetadata {
+        let mut g = GuanoMetadata::new();
+        for (k, v) in fields {
+            g.add(k, v);
+        }
+        g
+    }
+
+    fn wamd(te: &str) -> RecorderBlock {
+        RecorderBlock {
+            recorder: "Wildlife Acoustics",
+            fields: vec![("Time Expansion".into(), te.into())],
+        }
+    }
+
+    fn file(
+        format: AudioFormat,
+        g: Option<GuanoMetadata>,
+        w: Option<RecorderBlock>,
+    ) -> FileMetadata {
+        FileMetadata {
+            format,
+            guano: g,
+            wav: w.map(|wamd| WavDetails {
+                wamd: Some(wamd),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Which factor a file is loaded with: the one its source gave, else its own.
+    #[test]
+    fn time_expansion_a_file_states() {
+        let te10 = || Some(guano(&[("Samplerate", "384000"), ("TE", "10")]));
+        // GUANO, a `wamd` chunk, or both.
+        assert_eq!(
+            file(AudioFormat::Wav, te10(), None).declared_time_expansion(),
+            Some(10.0)
+        );
+        assert_eq!(
+            file(AudioFormat::Wav, None, Some(wamd("10"))).declared_time_expansion(),
+            Some(10.0)
+        );
+        assert_eq!(
+            file(AudioFormat::W4v, te10(), Some(wamd("4"))).declared_time_expansion(),
+            Some(10.0)
+        );
+        // Recorded in real time, or no value at all: SonoBat writes "TE:  ".
+        for g in [
+            vec![("TE", "1")],
+            vec![("TE", "")],
+            vec![("Samplerate", "500000")],
+        ] {
+            let meta = file(AudioFormat::Wav, Some(guano(&g)), None);
+            assert_eq!(meta.declared_time_expansion(), None, "{g:?}");
+        }
+        assert_eq!(
+            file(AudioFormat::Wav, None, Some(wamd("1"))).declared_time_expansion(),
+            None
+        );
+        // `guano` also holds an M4A file's own tags, which are not GUANO.
+        assert_eq!(
+            file(AudioFormat::M4a, te10(), None).declared_time_expansion(),
+            None
+        );
+
+        // The source's factor wins, so a file is corrected once, not twice.
+        let meta = file(AudioFormat::Wav, te10(), None);
+        assert_eq!(time_expansion_to_apply(Some(10.0), &meta), Some(10.0));
+        assert_eq!(time_expansion_to_apply(Some(0.5), &meta), Some(0.5));
+        assert_eq!(time_expansion_to_apply(None, &meta), Some(10.0));
+        // A source that gives 1, or nonsense, falls back to the file.
+        assert_eq!(time_expansion_to_apply(Some(1.0), &meta), Some(10.0));
+        assert_eq!(time_expansion_to_apply(Some(f64::NAN), &meta), Some(10.0));
+        assert_eq!(
+            time_expansion_to_apply(None, &FileMetadata::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn time_expansion_is_recorded_for_the_panel() {
+        let mut audio = dummy_audio(38_400);
+        assert!(audio.apply_time_expansion(10.0));
+        assert_eq!(
+            audio.metadata.time_expansion,
+            Some(TimeExpansion {
+                factor: 10.0,
+                stored_rate: 38_400
+            })
+        );
+        // A second correction multiplies; the stored rate stays the file's own.
+        assert!(audio.apply_time_expansion(2.0));
+        assert_eq!(
+            audio.metadata.time_expansion,
+            Some(TimeExpansion {
+                factor: 20.0,
+                stored_rate: 38_400
+            })
+        );
+        assert_eq!(audio.sample_rate, 768_000);
+        // A rejected factor records nothing.
+        let mut audio = dummy_audio(44_100);
+        assert!(!audio.apply_time_expansion(1.0));
+        assert_eq!(audio.metadata.time_expansion, None);
     }
 
     #[test]

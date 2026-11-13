@@ -110,6 +110,7 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -208,6 +209,7 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -458,6 +460,7 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -1810,6 +1813,7 @@ async fn finalize_in_memory_recording(
             data_offset: Some(crate::audio::wav::WRITE_HEADER_LEN as u64),
             data_size: Some(audio_data_size),
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -2003,6 +2007,7 @@ async fn finalize_streaming_tauri_recording(
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            time_expansion: None,
             wav: Some(header.details.clone()),
         },
     };

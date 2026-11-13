@@ -99,6 +99,7 @@ pub async fn decode_via_audio_context(
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     })

@@ -158,7 +158,8 @@ pub(super) async fn read_and_load_file(
 /// metadata panel (Xeno-Canto, Wikimedia Commons, ...) and `source_label` is
 /// the heading it appears under; `None` means Xeno-Canto, the original source.
 /// `time_expansion` reinterprets the decoded samples at their true rate for
-/// recordings stored time-expanded (see `AudioData::apply_time_expansion`).
+/// recordings stored time-expanded (see `AudioData::apply_time_expansion`); `None`
+/// uses the factor the file itself states, if any.
 pub(crate) async fn load_named_bytes(
     name: String,
     bytes: &[u8],
@@ -217,8 +218,10 @@ pub(crate) async fn load_named_bytes(
         }
     }
     // Correct the rate before anything derived from it - preview, silence
-    // scan, spectrogram geometry - is computed below.
-    if let Some(te) = time_expansion {
+    // scan, spectrogram geometry - is computed below. The factor is the one the
+    // source gave, else the one the file itself states (a bat detector's GUANO
+    // `TE` field or `wamd` chunk).
+    if let Some(te) = crate::types::time_expansion_to_apply(time_expansion, &audio.metadata) {
         if audio.apply_time_expansion(te) {
             log::info!(
                 "{name}: time expansion {te}x applied, true rate {} Hz",

@@ -344,6 +344,33 @@ pub(super) async fn try_streaming_wav(
         }
     }
 
+    // A file stored time-expanded is read at its true rate: same bytes, a different
+    // rate, so the correction is the header's rate times the factor. Correcting the
+    // header before the source is built gives the source, the duration and every
+    // seek the same rate. The head samples are already decoded, so they cover less
+    // time than the 30 seconds asked for above, which costs only overview detail.
+    let mut header = header;
+    let time_expansion = crate::types::declared_time_expansion(
+        crate::types::AudioFormat::Wav,
+        guano.as_ref(),
+        details.wamd.as_ref(),
+    )
+    .and_then(|factor| {
+        let corrected = (header.sample_rate as f64 * factor).round();
+        (1.0..=crate::types::MAX_CORRECTED_SAMPLE_RATE)
+            .contains(&corrected)
+            .then_some((factor, corrected as u32))
+    });
+    let time_expansion = time_expansion.map(|(factor, corrected)| {
+        log::info!("{name}: time expansion {factor}x applied, true rate {corrected} Hz",);
+        let stored_rate = header.sample_rate;
+        header.sample_rate = corrected;
+        crate::types::TimeExpansion {
+            factor,
+            stored_rate,
+        }
+    });
+
     // Create StreamingWavSource
     let source = Arc::new(StreamingWavSource::new(
         FileHandle::WebFile(file.clone()),
@@ -374,6 +401,7 @@ pub(super) async fn try_streaming_wav(
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            time_expansion,
             wav: Some(details),
         },
     };
@@ -634,6 +662,7 @@ pub(super) async fn try_streaming_flac(
             data_offset: Some(header.first_frame_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.first_frame_offset)),
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -978,6 +1007,7 @@ pub(super) async fn try_streaming_mp3(
             data_offset: Some(header.data_offset),
             data_size: Some((file.size() as u64).saturating_sub(header.data_offset)),
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -1341,6 +1371,7 @@ pub(super) async fn try_streaming_ogg(
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };
@@ -2007,6 +2038,7 @@ pub(super) async fn try_streaming_m4a(
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     };

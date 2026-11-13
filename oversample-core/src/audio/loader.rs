@@ -243,6 +243,7 @@ fn load_zc(bytes: &[u8]) -> Result<AudioData, String> {
         data_offset: None,
         data_size: None,
         zc_data: Some(std::sync::Arc::new(zc)),
+        time_expansion: None,
         wav: None,
     };
     Ok(AudioData {
@@ -563,6 +564,7 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            time_expansion: None,
             wav: header.wamd.map(|wamd| crate::types::WavDetails {
                 wamd: Some(wamd),
                 ..Default::default()
@@ -596,6 +598,7 @@ fn load_wav(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
+            time_expansion: None,
             wav: Some(header.details),
         },
     })
@@ -644,6 +647,7 @@ fn load_flac(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: flac_data_offset,
             data_size: flac_data_size,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     })
@@ -754,6 +758,7 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: ogg_page_region(bytes).0,
             data_size: ogg_page_region(bytes).1,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     })
@@ -869,6 +874,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
                     .saturating_sub(mp3_trailer_size(bytes)),
             ),
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     })
@@ -1594,6 +1600,7 @@ fn load_m4a(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: None,
             data_size: None,
             zc_data: None,
+            time_expansion: None,
             wav: None,
         },
     })
