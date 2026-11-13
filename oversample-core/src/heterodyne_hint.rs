@@ -35,6 +35,12 @@
 
 /// Free-text fields that describe a recording. An absent or empty field
 /// counts as no text.
+///
+/// Callers must pass text in Unicode normalization form C (NFC). The word
+/// lists are written with precomposed letters, so a decomposed "é" (an "e"
+/// followed by a combining accent) does not match: "hétérodyne" in NFD
+/// misses the heterodyne word list. In the WASM frontend, normalize each
+/// field with JavaScript's `String.prototype.normalize("NFC")` first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RecordingText<'a> {
     /// Xeno-canto `rmk`.
@@ -681,6 +687,19 @@ fn clause_spans(text: &str) -> Vec<(usize, usize)> {
 /// where ASCII digits meet other characters: "Bat5" gives `bat 5`, "D240x"
 /// gives `d 240 x` and "31,9" gives `31 9`. Each character is lowercased
 /// before the tests, as the reference lowercases the whole text first.
+///
+/// Two differences from the Python reference are deliberate:
+/// - Rust's `char::is_alphanumeric` also accepts characters that Python's
+///   `str.isalnum` rejects: combining vowel signs (categories Mn and Mc,
+///   such as the Devanagari and Thai vowel signs) and circled letters
+///   (category So, such as "Ⓡ"). The reference splits Hindi "हेटेरोडाइन"
+///   (heterodyne) into 5 tokens at its vowel signs, while this port keeps
+///   it as one. Both split at a virama ("्") and at a Thai tone mark, which
+///   neither test accepts. "MagentaⓇ" is one token here, so it does not
+///   match "magenta".
+/// - `char::to_lowercase` lowercases each character alone, so a word-final
+///   "Σ" becomes "σ". Python's `str.lower` gives the final form "ς". No word
+///   list has Greek words, so only the evidence text differs.
 fn tokenize(text: &str, (start, end): (usize, usize)) -> (Vec<String>, Vec<(usize, usize)>) {
     let mut words = Vec::new();
     let mut spans = Vec::new();
@@ -905,6 +924,9 @@ fn het_words(text: &str, clause: &Clause) -> Vec<HetWord> {
 }
 
 /// Byte offset of the first original-case token that is exactly "HET".
+/// Tokens here split only at characters that are not alphanumeric, using
+/// the same Rust test as [`tokenize`], which accepts more characters than
+/// the Python reference.
 fn upper_het(clause: &str) -> Option<usize> {
     let mut start = None;
     for (i, ch) in clause.char_indices().chain([(clause.len(), ' ')]) {
@@ -1767,6 +1789,19 @@ mod tests {
         );
         // "²" is alphanumeric but not an ASCII digit, so it stays in the word.
         assert_eq!(words("x² Hétérodyne"), ["x²", "hétérodyne"]);
+    }
+
+    #[test]
+    fn tokens_differ_from_the_reference_on_purpose() {
+        // Vowel signs and circled letters stay in the word. The Python
+        // reference splits at them: "ह ट र ड इन" and "magenta bat 5".
+        assert_eq!(words("हेटेरोडाइन"), ["हेटेरोडाइन"]);
+        assert_eq!(words("MagentaⓇ Bat5"), ["magentaⓡ", "bat", "5"]);
+        // Both split at a Thai tone mark. The reference also drops the
+        // vowel sign before it: "เคร อง".
+        assert_eq!(words("เครื่อง"), ["เครื", "อง"]);
+        // A word-final capital sigma lowercases to "σ", not "ς".
+        assert_eq!(words("ΟΔΟΣ"), ["οδοσ"]);
     }
 
     #[test]
