@@ -41,6 +41,12 @@ pub struct FreqMarkerState {
     pub band_ff_handles_active: bool,
     /// Shield/flag color bar style
     pub shield_style: ShieldStyle,
+    /// The current file's heterodyne detector tuning in Hz, when its text
+    /// gives one (`HeterodyneHint::tuned_hz`). With `FreqShiftMode::None`,
+    /// hovered labels then show the call frequencies ("10 → 21.9 or 41.9 kHz")
+    /// instead of "10 kHz". `None` wherever the axis shows other frequencies
+    /// than the file's own.
+    pub tuned_hz: Option<u32>,
 }
 
 /// Returns true if two RGB colors are perceptually similar enough to need fimbriation.
@@ -374,9 +380,15 @@ pub fn draw_freq_markers(
         // kHz fade: use opacity^2 for faster visual fade
         let khz_fade = ms.label_hover_opacity * ms.label_hover_opacity;
         if matches!(shift_mode, FreqShiftMode::None) && ms.label_hover_opacity > 0.001 {
-            // Split rendering: number at full alpha, " kHz" suffix fading
+            // Split rendering: number at full alpha, suffix fading. The suffix
+            // is " kHz", or for a heterodyne detector recording with a known
+            // tuning, the call frequencies (" → 21.9 or 41.9 kHz").
+            let suffix = match ms.tuned_hz {
+                Some(tuned) => crate::heterodyne::axis_call_suffix(freq, tuned),
+                None => " kHz".to_string(),
+            };
             let full_label_for_measure = if khz_fade > 0.01 {
-                format!("{} kHz", base_label)
+                format!("{base_label}{suffix}")
             } else {
                 base_label.clone()
             };
@@ -399,7 +411,7 @@ pub fn draw_freq_markers(
                 let metrics = ctx.measure_text(&base_label).unwrap();
                 let num_w = metrics.width();
                 ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
-                let _ = ctx.fill_text(" kHz", text_x + num_w, y - 2.0);
+                let _ = ctx.fill_text(&suffix, text_x + num_w, y - 2.0);
             }
         } else {
             let bg_metrics = ctx.measure_text(&label).unwrap();

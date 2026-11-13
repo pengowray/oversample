@@ -1219,6 +1219,19 @@ pub fn Spectrogram() -> impl IntoView {
                 } else {
                     (0.0, 0.0)
                 };
+                let xform_on = state.display.transform().get_untracked()
+                    || state.display.xform_enabled().get_untracked();
+                // The current file's heterodyne detector tuning, for the
+                // axis hover labels. Not under XForm, whose display shows
+                // transformed audio, in timeline mode (no current file: `idx`
+                // is None) or over the live waterfall.
+                let tuned_hz = if xform_on || waterfall_active {
+                    None
+                } else {
+                    idx.and_then(|i| files.get(i))
+                        .and_then(|f| f.heterodyne_hint.as_ref())
+                        .and_then(|h| h.tuned_hz)
+                };
                 let marker_state = FreqMarkerState {
                     mouse_freq,
                     mouse_in_label_area: mouse_freq.is_some() && mouse_cx < LABEL_AREA_WIDTH,
@@ -1231,10 +1244,9 @@ pub fn Spectrogram() -> impl IntoView {
                     band_ff_hi: marker_band_ff_hi,
                     band_ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
                     shield_style: state.viewmode.shield_style().get_untracked(),
+                    tuned_hz,
                 };
 
-                let xform_on = state.display.transform().get_untracked()
-                    || state.display.xform_enabled().get_untracked();
                 // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
                 let marker_state = if xform_on || decim_effective > 0 {
                     FreqMarkerState {

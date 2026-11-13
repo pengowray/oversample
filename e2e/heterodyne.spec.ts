@@ -321,6 +321,94 @@ test.describe("heterodyne badge and note", () => {
   }
 });
 
+/**
+ * Records each distinct string drawn with fillText on any canvas, so a test
+ * can read the spectrogram's frequency axis labels. Runs in the page before
+ * the app loads.
+ */
+function recordCanvasText() {
+  const drawn = new Set<string>();
+  (window as any).__canvasText = drawn;
+  const fillText = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText = function (text: string, ...rest: any[]) {
+    drawn.add(String(text));
+    return (fillText as any).call(this, text, ...rest);
+  };
+}
+
+/** The strings drawn on canvases since the last `clearCanvasText`. */
+async function canvasText(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...((window as any).__canvasText as Set<string>)]);
+}
+
+async function clearCanvasText(page: Page) {
+  await page.evaluate(() => ((window as any).__canvasText as Set<string>).clear());
+}
+
+/**
+ * Zooms the spectrogram in vertically (Shift+wheel), which draws its own
+ * frequency axis, then hovers over the axis labels so they show their hover
+ * text.
+ */
+async function hoverZoomedFreqAxis(page: Page) {
+  const canvas = page.locator(".chart-stage canvas").first();
+  await expect(canvas).toBeVisible();
+  const box = (await canvas.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await canvas.evaluate((el, [x, y]) => {
+    for (let i = 0; i < 2; i++) {
+      el.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -120,
+          shiftKey: true,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+  }, [x, y]);
+  await clearCanvasText(page);
+  // The label area is the canvas's first 60 px.
+  await page.mouse.move(box.x + 20, y);
+}
+
+test.describe("frequency axis of a heterodyne recording", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("hovered labels give the call frequencies when the tuning is known", async ({
+    page,
+  }) => {
+    await page.addInitScript(recordCanvasText);
+    await openCase(page, {
+      fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
+      rate: 44_100,
+    });
+    await hoverZoomedFreqAxis(page);
+    // The number is drawn first and the call frequencies after it, fading in.
+    await expect
+      .poll(() => canvasText(page), { timeout: 5_000 })
+      .toContain(" \u2192 21.9 or 41.9 kHz");
+    // Every 5 kHz label gets its call frequencies, and none gets only " kHz".
+    const drawn = await canvasText(page);
+    expect(drawn).toContain(" \u2192 16.9 or 46.9 kHz");
+    expect(drawn).not.toContain(" kHz");
+  });
+
+  test("hovered labels show only the unit without a tuning", async ({ page }) => {
+    // The remark of XC924726, which names the detector but no tuning.
+    await page.addInitScript(recordCanvasText);
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await hoverZoomedFreqAxis(page);
+    await expect.poll(() => canvasText(page), { timeout: 5_000 }).toContain(" kHz");
+    const drawn = await canvasText(page);
+    expect(drawn.filter((t) => t.includes("\u2192"))).toEqual([]);
+  });
+});
+
 test.describe("heterodyne badge on a phone", () => {
   test.use({
     viewport: { width: 375, height: 812 },

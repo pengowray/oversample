@@ -722,6 +722,7 @@ fn render_frame(
         band_ff_hi: r.max_freq,
         band_ff_handles_active: false,
         shield_style: r.shield_style,
+        tuned_hz: None,
     };
     crate::canvas::overlays::draw_freq_markers(
         ctx,
