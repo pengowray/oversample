@@ -47,6 +47,17 @@ fn gutter_nyquist(state: AppState) -> f64 {
     }
 }
 
+/// Hover text for the two drag strips. The HFR tutorial calls them the
+/// "frequency strip" and "time strip"; UI text uses those names, not
+/// "gutter". Gestures listed most common first.
+const BAND_STRIP_TIP: &str = "Drag up or down: select a frequency band and turn on HFR\n\
+Shift+drag: extend the band\n\
+Click: turn off HFR, keep the band\n\
+Double-click: select all frequencies";
+const TIME_STRIP_TIP: &str = "Drag left or right: select a time range\n\
+Click: clear the time selection\n\
+Double-click: select the whole recording";
+
 /// True if the primary pointer is a finger — used to reserve the larger
 /// slop / explicit-dbltap paths for touch only, so mouse precision
 /// isn't degraded.
@@ -566,7 +577,7 @@ pub fn BandGutter() -> impl IntoView {
     };
 
     view! {
-        <div class="band-gutter">
+        <div class="band-gutter" title=BAND_STRIP_TIP>
             <canvas
                 node_ref=canvas_ref
                 on:pointerdown=on_pointerdown
@@ -946,7 +957,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
     };
 
     view! {
-        <div class="time-gutter">
+        <div class="time-gutter" title=TIME_STRIP_TIP>
             <canvas
                 node_ref=canvas_ref
                 on:pointerdown=on_pointerdown

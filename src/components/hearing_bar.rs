@@ -654,7 +654,7 @@ pub(crate) fn BandHfrCell() -> impl IntoView {
         if state.viewmode.hfr_enabled().get() {
             "High-frequency reception is ON — click to disable.".to_string()
         } else {
-            "Enable high-frequency reception — process and listen to the band selected on the gutter below.".to_string()
+            "Enable high-frequency reception — process and listen to the band selected on the frequency strip.".to_string()
         }
     });
 
