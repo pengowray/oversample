@@ -152,8 +152,8 @@ pub struct HeterodyneHint {
     /// Widening a match to whole words adds at most 30 characters on each
     /// side, so a match inside a long run of letters and digits ends inside
     /// that run. A match longer than [`EXCERPT_MAX_CHARS`] is cut to that
-    /// length, keeping the matched tokens in view, or the heterodyne word
-    /// when it is part of a longer token.
+    /// length around the matched tokens. When the tokens themselves are
+    /// longer than that, the cut is around the heterodyne word in them.
     pub matched: String,
 }
 
@@ -1273,10 +1273,10 @@ const WIDEN_MAX_CHARS: usize = 30;
 
 /// Byte range of the text to quote as the match. The evidence's tokens are
 /// widened to whole words when the evidence allows it. If that is longer
-/// than [`EXCERPT_MAX_CHARS`], it is cut to that length around the tokens,
-/// or around the heterodyne word when an R1 token is longer than the word.
-/// When the tokens alone are longer than the limit and hold no heterodyne
-/// word, the match is their first [`EXCERPT_MAX_CHARS`] characters.
+/// than [`EXCERPT_MAX_CHARS`], it is cut to that length around the tokens.
+/// When the tokens themselves are longer than the limit, the cut is around
+/// the heterodyne word in them, and tokens with no heterodyne word keep
+/// their first [`EXCERPT_MAX_CHARS`] characters.
 fn quoted_match(text: &str, evidence: &Evidence) -> (usize, usize) {
     let span = if evidence.widen {
         whole_words(text, evidence.span)
@@ -1286,8 +1286,9 @@ fn quoted_match(text: &str, evidence: &Evidence) -> (usize, usize) {
     if text[span.0..span.1].chars().count() <= EXCERPT_MAX_CHARS {
         return span;
     }
+    let tokens_fit = text[evidence.span.0..evidence.span.1].chars().count() <= EXCERPT_MAX_CHARS;
     let focus = match evidence.source {
-        HeterodyneSource::HeterodyneWord => stem_span(text, evidence.span),
+        HeterodyneSource::HeterodyneWord if !tokens_fit => stem_span(text, evidence.span),
         _ => None,
     };
     cut_around(
@@ -2292,6 +2293,17 @@ mod tests {
         let hint = bounded_hint(&s);
         assert_eq!(hint.matched.chars().count(), EXCERPT_MAX_CHARS);
         assert!(hint.matched.contains("heterodyne"), "{}", hint.matched);
+        assert_eq!(hint.excerpt, format!("…{}…", hint.matched));
+
+        // A token that fits in the limit is quoted whole, and the cut takes
+        // keeps the same number of widened digits on each side.
+        let token = format!("{}heterodyne", "x".repeat(50));
+        let s = format!("{}{token}{}", "1".repeat(30), "2".repeat(30));
+        let hint = bounded_hint(&s);
+        assert_eq!(
+            hint.matched,
+            format!("{}{token}{}", "1".repeat(10), "2".repeat(10))
+        );
         assert_eq!(hint.excerpt, format!("…{}…", hint.matched));
 
         // The cut follows the word, not the middle of the token.
