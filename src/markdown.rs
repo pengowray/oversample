@@ -758,10 +758,29 @@ fn starts_with_ignore_ascii_case(bytes: &[u8], prefix: &[u8]) -> bool {
     bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
-/// Whether `c` ends a bare URL: a space, a control character, `<`, `>`, `"`
-/// or a backtick.
+/// Whether `c` ends a bare URL: a space, a control character, `<`, `>`, `"`,
+/// a backtick, Chinese or Japanese punctuation such as "。" and "、",
+/// full-width punctuation such as "（" and "）", or a zero-width character.
+/// Chinese and Japanese text has no spaces, so its punctuation is often the
+/// only thing after a URL.
 fn ends_url(c: char) -> bool {
-    c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"' | '`')
+    c.is_whitespace()
+        || c.is_control()
+        || matches!(c,
+            '<' | '>' | '"' | '`'
+            // CJK symbols and punctuation
+            | '\u{3000}'..='\u{303F}'
+            // Full-width punctuation, but not full-width letters and digits
+            | '\u{FF01}'..='\u{FF0F}'
+            | '\u{FF1A}'..='\u{FF20}'
+            | '\u{FF3B}'..='\u{FF40}'
+            | '\u{FF5B}'..='\u{FF65}'
+            // Zero-width space, non-joiner and joiner, word joiner, and the
+            // byte order mark
+            | '\u{200B}'..='\u{200D}'
+            | '\u{2060}'
+            | '\u{FEFF}'
+        )
 }
 
 /// `url` without its trailing punctuation, as GitHub leaves it out: any of
@@ -1381,6 +1400,52 @@ mod tests {
         assert_eq!(
             parse("```\nhttps://a.example\n```"),
             vec![Literal("https://a.example".into())]
+        );
+    }
+
+    #[test]
+    fn cjk_punctuation_and_zero_width_characters_end_a_bare_url() {
+        assert_eq!(
+            parse("参考https://a.example/x。更多"),
+            vec![Paragraph(vec![
+                text("参考"),
+                link("https://a.example/x"),
+                text("。更多"),
+            ])]
+        );
+        assert_eq!(
+            parse("（https://a.example/x）"),
+            vec![Paragraph(vec![
+                text("（"),
+                link("https://a.example/x"),
+                text("）")
+            ])]
+        );
+        assert_eq!(
+            parse("see https://a.example/x、https://b.example/y"),
+            vec![Paragraph(vec![
+                text("see "),
+                link("https://a.example/x"),
+                text("、"),
+                link("https://b.example/y"),
+            ])]
+        );
+        for zero_width in ['\u{200B}', '\u{200C}', '\u{200D}', '\u{2060}', '\u{FEFF}'] {
+            let src = format!("https://a.example/x{zero_width}y");
+            assert_eq!(
+                parse(&src),
+                vec![Paragraph(vec![
+                    link("https://a.example/x"),
+                    text(&format!("{zero_width}y")),
+                ])],
+                "U+{:04X}",
+                zero_width as u32
+            );
+        }
+        // Full-width letters and digits are still part of a URL.
+        assert_eq!(
+            parse("https://a.example/ｘ１"),
+            vec![Paragraph(vec![link("https://a.example/ｘ１")])]
         );
     }
 
