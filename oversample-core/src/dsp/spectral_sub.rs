@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 /// A learned noise floor spectrum for spectral subtraction.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoiseFloor {
-    /// Per-bin mean magnitude (linear scale). Length = fft_size / 2 + 1.
+    /// Per-bin noise magnitude (linear scale). Length = fft_size / 2 + 1.
+    /// The median across frames, scaled so that steady noise gives the same
+    /// value as its mean magnitude.
     pub bin_magnitudes: Vec<f64>,
     /// FFT size used to compute this noise floor.
     pub fft_size: usize,
@@ -18,7 +20,7 @@ pub struct NoiseFloor {
     pub sample_rate: u32,
     /// Duration of audio analyzed (seconds).
     pub analysis_duration_secs: f64,
-    /// Number of STFT frames averaged.
+    /// Number of STFT frames the floor was taken from.
     pub frame_count: u64,
 }
 
@@ -33,7 +35,15 @@ fn fft_size_for_rate(sample_rate: u32) -> usize {
     }
 }
 
-/// Async version that yields periodically via a caller-supplied future.
+/// Most frames the floor is taken from.
+const MAX_FLOOR_FRAMES: usize = 1024;
+
+/// Mean magnitude over median magnitude for one FFT bin of steady noise
+/// (a Rayleigh distribution): sqrt(pi / 2) / sqrt(2 ln 2).
+const RAYLEIGH_MEAN_OVER_MEDIAN: f64 = 1.064_467;
+
+/// Learns the noise floor from the first `analysis_duration_secs` of `samples`.
+/// The stretch may contain calls. Yields periodically via a caller-supplied future.
 pub async fn learn_noise_floor_async<F, Fut>(
     samples: &[f32],
     sample_rate: u32,
@@ -61,15 +71,20 @@ where
     let mut input = fft.make_input_vec();
     let mut spectrum = fft.make_output_vec();
 
-    // Welford's online mean per bin
-    let mut mean = vec![0.0f64; num_bins];
-    let mut count = 0u64;
+    // Long stretches are thinned evenly to MAX_FLOOR_FRAMES frames.
+    let total_frames = (analysis.len() - fft_size) / hop_size + 1;
+    let stride = total_frames.div_ceil(MAX_FLOOR_FRAMES);
+    let kept = total_frames.div_ceil(stride);
+    if kept < 2 {
+        return None;
+    }
 
-    let mut pos = 0;
-    let mut frame_count = 0u32;
+    // Magnitudes of every kept frame, one run of `kept` values per bin.
+    let mut mags = vec![0.0f32; kept * num_bins];
     let yield_interval = 50;
 
-    while pos + fft_size <= analysis.len() {
+    for k in 0..kept {
+        let pos = k * stride * hop_size;
         for (inp, (&s, &w)) in input
             .iter_mut()
             .zip(analysis[pos..pos + fft_size].iter().zip(window.iter()))
@@ -79,27 +94,33 @@ where
 
         fft.process(&mut input, &mut spectrum).expect("FFT failed");
 
-        count += 1;
-        for (i, c) in spectrum.iter().enumerate() {
-            let mag = c.norm() as f64;
-            mean[i] += (mag - mean[i]) / count as f64;
+        for (bin, c) in spectrum.iter().enumerate() {
+            mags[bin * kept + k] = c.norm();
         }
 
-        pos += hop_size;
-        frame_count += 1;
-        if frame_count.is_multiple_of(yield_interval) {
+        if (k + 1) % yield_interval == 0 {
             yield_now().await;
         }
     }
 
-    if count < 2 {
-        return None;
-    }
+    // The median ignores calls and clicks as long as they fill fewer than half
+    // the frames of a bin. A mean is pulled up by every one of them.
+    let mid = kept / 2;
+    let floor: Vec<f64> = mags
+        .chunks_exact_mut(kept)
+        .map(|bin_mags| {
+            let (_, median, _) = bin_mags.select_nth_unstable_by(mid, f32::total_cmp);
+            *median as f64 * RAYLEIGH_MEAN_OVER_MEDIAN
+        })
+        .collect();
+
+    let count = kept as u64;
+    let pos = (total_frames - 1) * hop_size + fft_size;
 
     let actual_duration = pos as f64 / sample_rate as f64;
 
     Some(NoiseFloor {
-        bin_magnitudes: mean,
+        bin_magnitudes: floor,
         fft_size,
         sample_rate,
         analysis_duration_secs: actual_duration,
@@ -176,13 +197,20 @@ pub fn apply_spectral_subtraction(
     let mut spectrum = fft_fwd.make_output_vec();
     let mut time_out = fft_inv.make_output_vec();
 
-    let mut pos = 0;
-    while pos < len {
+    // Start one hop early so the first samples are covered by two frames, like
+    // the rest. Covered by one frame only, they are divided by a window value
+    // near zero, which turns the start of every block into a loud burst.
+    let in_range = |pos: isize, i: usize| {
+        let idx = pos + i as isize;
+        (idx >= 0 && (idx as usize) < len).then_some(idx as usize)
+    };
+    let mut pos = -(hop_size as isize);
+    while pos < len as isize {
         // Fill windowed frame
         frame.fill(0.0);
         for (i, &w) in window.iter().enumerate() {
-            if pos + i < len {
-                frame[i] = samples[pos + i] * w;
+            if let Some(idx) = in_range(pos, i) {
+                frame[i] = samples[idx] * w;
             }
         }
 
@@ -217,13 +245,13 @@ pub fn apply_spectral_subtraction(
         // Normalize + overlap-add
         let norm = 1.0 / fft_size as f32;
         for i in 0..fft_size {
-            if pos + i < len {
-                output[pos + i] += time_out[i] * norm * window[i];
-                window_sum[pos + i] += window[i] * window[i];
+            if let Some(idx) = in_range(pos, i) {
+                output[idx] += time_out[i] * norm * window[i];
+                window_sum[idx] += window[i] * window[i];
             }
         }
 
-        pos += hop_size;
+        pos += hop_size as isize;
     }
 
     // Normalize by window sum
@@ -239,6 +267,7 @@ pub fn apply_spectral_subtraction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
 
     fn synthetic_floor(fft_size: usize, sample_rate: u32, magnitude: f64) -> NoiseFloor {
         NoiseFloor {
@@ -248,6 +277,126 @@ mod tests {
             analysis_duration_secs: 0.5,
             frame_count: 1,
         }
+    }
+
+    /// Gaussian noise from a fixed seed (LCG + Box-Muller).
+    fn noise(n: usize, seed: u64) -> Vec<f32> {
+        let mut state = seed;
+        let mut uniform = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64 + 1.0) / (1u64 << 53) as f64
+        };
+        (0..n)
+            .map(|_| {
+                let (u1, u2) = (uniform(), uniform());
+                ((-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos() * 0.01) as f32
+            })
+            .collect()
+    }
+
+    fn learn(samples: &[f32], sample_rate: u32) -> NoiseFloor {
+        let fut = learn_noise_floor_async(samples, sample_rate, 1e9, || std::future::ready(()));
+        let mut fut = std::pin::pin!(fut);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        match fut.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(floor) => floor.expect("enough audio"),
+            std::task::Poll::Pending => panic!("learn did not finish"),
+        }
+    }
+
+    /// Mean magnitude per bin, the floor this module used before the median.
+    fn mean_floor(samples: &[f32], fft_size: usize) -> Vec<f64> {
+        let window = hann_window(fft_size);
+        let fft = plan_fft_forward(fft_size);
+        let (mut input, mut spectrum) = (fft.make_input_vec(), fft.make_output_vec());
+        let mut sum = vec![0.0f64; fft_size / 2 + 1];
+        let mut frames = 0.0;
+        for start in (0..=samples.len() - fft_size).step_by(fft_size / 2) {
+            for (i, x) in input.iter_mut().enumerate() {
+                *x = samples[start + i] * window[i];
+            }
+            fft.process(&mut input, &mut spectrum).unwrap();
+            for (acc, c) in sum.iter_mut().zip(&spectrum) {
+                *acc += c.norm() as f64;
+            }
+            frames += 1.0;
+        }
+        sum.iter().map(|s| s / frames).collect()
+    }
+
+    fn avg_db_ratio(a: &[f64], b: &[f64]) -> f64 {
+        // Skip DC and Nyquist, whose magnitudes are not Rayleigh distributed.
+        let n = a.len() - 2;
+        (1..=n).map(|i| 20.0 * (a[i] / b[i]).log10()).sum::<f64>() / n as f64
+    }
+
+    #[test]
+    fn steady_noise_floor_matches_the_mean_magnitude() {
+        // The strength setting was tuned against a mean floor, so steady noise
+        // must still give the same level.
+        let sr = 48_000;
+        let samples = noise(sr as usize * 4, 1);
+        let floor = learn(&samples, sr);
+        let mean = mean_floor(&samples, floor.fft_size);
+        let db = avg_db_ratio(&floor.bin_magnitudes, &mean);
+        assert!(
+            db.abs() < 0.15,
+            "median floor is {db:.2} dB from the mean floor"
+        );
+    }
+
+    #[test]
+    fn calls_in_the_learning_stretch_do_not_raise_the_floor() {
+        // A loud 12 kHz tone burst fills about a quarter of the frames. That
+        // moves the median to the 67th percentile of the noise, 2 dB up.
+        let sr = 48_000u32;
+        let quiet = noise(sr as usize * 4, 2);
+        let mut with_calls = quiet.clone();
+        for (i, s) in with_calls.iter_mut().enumerate() {
+            if i % 48_000 < 12_000 {
+                *s += 0.5 * (std::f32::consts::TAU * 12_000.0 * i as f32 / sr as f32).sin();
+            }
+        }
+        let clean = learn(&quiet, sr);
+        let floor = learn(&with_calls, sr);
+        let bin = 12_000 * floor.fft_size / sr as usize;
+        let rise = 20.0 * (floor.bin_magnitudes[bin] / clean.bin_magnitudes[bin]).log10();
+        assert!(rise.abs() < 4.0, "tone bin rose {rise:.1} dB");
+        let mean_rise = 20.0
+            * (mean_floor(&with_calls, floor.fft_size)[bin] / clean.bin_magnitudes[bin]).log10();
+        assert!(
+            mean_rise > 30.0,
+            "the test burst should swamp a mean floor, got {mean_rise:.1} dB"
+        );
+    }
+
+    #[test]
+    fn long_stretches_are_thinned_to_the_frame_cap() {
+        let sr = 48_000;
+        let samples = noise(2048 * (MAX_FLOOR_FRAMES * 3 + 5), 3);
+        let floor = learn(&samples, sr);
+        assert!(floor.frame_count as usize <= MAX_FLOOR_FRAMES);
+        assert!(floor.frame_count as usize > MAX_FLOOR_FRAMES / 2);
+    }
+
+    #[test]
+    fn block_start_is_no_louder_than_the_middle() {
+        // Playback runs this on separate blocks, so a block's first samples
+        // must come out at the same level as the rest.
+        let sr = 384_000u32;
+        let x = noise(96_000, 4);
+        let floor = learn(&x, sr);
+        let out = apply_spectral_subtraction(&x, sr, &floor, 0.6, 0.05, 0.0);
+        let rms = |v: &[f32]| {
+            (v.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+        };
+        let (start, middle) = (rms(&out[..512]), rms(&out[40_000..60_000]));
+        assert!(
+            start < middle * 1.5,
+            "start rms {start:.5}, middle rms {middle:.5}"
+        );
     }
 
     #[test]
