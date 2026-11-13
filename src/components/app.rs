@@ -1648,6 +1648,7 @@ pub fn App() -> impl IntoView {
                 <crate::components::find_recordings::FindRecordings />
             })}
             <crate::components::surface_3d::Surface3dDialog />
+            <crate::components::hfr_tour::HfrTour />
             {cfg!(debug_assertions).then(|| view! {
                 <div class="debug-build-banner"
                     title="This is an unoptimised WASM build. It runs slower and can hit spurious panics that don't happen in release builds. Rebuild with `trunk serve --release`."

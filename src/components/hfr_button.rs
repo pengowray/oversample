@@ -436,6 +436,11 @@ pub fn RangeButton() -> impl IntoView {
                     class=move || layer_opt_class(!state.viewmode.hfr_enabled().get(), false)
                     on:click=move |_| { clear_band(state); }
                 >"None"</button>
+
+                <hr/>
+                <button class="layer-panel-opt"
+                    on:click=move |_| crate::components::hfr_tour::start_tour(state)
+                >{crate::components::hfr_tour::TOUR_NAME}</button>
             </PopupPanel>
         </div>
     }

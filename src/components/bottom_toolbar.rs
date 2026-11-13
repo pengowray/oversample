@@ -98,11 +98,11 @@ pub fn BottomToolbar() -> impl IntoView {
             && state.timeline.active().get().is_none();
         let recording_and_listening = state.mic.recording().get() && state.mic.listening().get();
         if no_file || recording_and_listening {
-            "layer-btn combo-btn-left disabled"
+            "layer-btn combo-btn-left play-main-btn disabled"
         } else if state.playback.is_playing().get() {
-            "layer-btn combo-btn-left active"
+            "layer-btn combo-btn-left play-main-btn active"
         } else {
-            "layer-btn combo-btn-left"
+            "layer-btn combo-btn-left play-main-btn"
         }
     });
     let play_right_class = Signal::derive(move || {
@@ -516,6 +516,7 @@ pub fn BottomToolbar() -> impl IntoView {
             // (same amber underline as the warning on the 1:1 mode radio
             // button), reminding the user that pressing Play right now
             // won't produce anything audible.
+            <crate::components::hfr_tour::HfrNudge/>
             {move || has_file().then(|| view! {
                 <div class:inaudible-warning=move || play_inaudible.get() style="display: contents;">
                 <ComboButton

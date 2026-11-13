@@ -2213,6 +2213,15 @@ pub struct DialogsState {
     pub find_recordings_open: bool,
     /// Region shown in the 3D spectrogram dialog; `None` when it is closed.
     pub surface_3d: Option<Selection>,
+    /// The HFR tutorial step on screen; `None` when the tutorial is closed.
+    pub hfr_tour_step: Option<crate::components::hfr_tour::TourStep>,
+    /// The "play without HFR" card above the Play button is showing.
+    pub hfr_nudge: bool,
+    /// The card has been shown this session (it shows at most once).
+    pub hfr_nudge_shown: bool,
+    /// Persisted: the card may show (Settings > Bats). "Don't show again"
+    /// turns it off.
+    pub hfr_nudge_enabled: bool,
 }
 
 /// Loaded-file library + load queue.
@@ -2679,6 +2688,13 @@ impl AppState {
                 wiki_browser_open: false,
                 find_recordings_open: false,
                 surface_3d: None,
+                hfr_tour_step: None,
+                hfr_nudge: false,
+                hfr_nudge_shown: false,
+                hfr_nudge_enabled: crate::settings::get_bool(
+                    crate::settings::keys::HFR_NUDGE_ENABLED,
+                    true,
+                ),
             }),
             is_tauri: detect_tauri(),
             is_mobile_platform: detect_mobile_ua(),

@@ -9129,3 +9129,179 @@ button.canvas-overflow-action-btn.disabled {
     flex-wrap: wrap;
     column-gap: 12px;
 }
+
+/* ── HFR tutorial (src/components/hfr_tour.rs, js/hfr-tour.js) ─────────────
+   driver.js ships a white popover; these rules give it the app's dark panel
+   look (.layer-panel colours) so it reads as part of the app. The class is
+   doubled to win over driver.css, which loads later. */
+.driver-popover.oversample-tour.oversample-tour {
+    background: rgba(22, 22, 22, 0.98);
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    padding: 12px 14px;
+    min-width: 220px;
+    /* Narrow enough on a phone to sit beside the 64px frequency gutter. */
+    max-width: min(300px, calc(100vw - 96px));
+}
+/* White, not the amber that marks HFR as on. */
+.driver-popover.oversample-tour .driver-popover-title {
+    font-size: 15px;
+    color: #fff;
+}
+.driver-popover.oversample-tour .driver-popover-description {
+    font-size: 13px;
+    color: #ccc;
+}
+.driver-popover.oversample-tour .driver-popover-progress-text {
+    color: #999;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+/* Same fill as the app's primary button (.add-files-btn.primary-btn). 32px
+   tall so it is an easy tap on a phone. */
+.driver-popover.oversample-tour .driver-popover-footer-btn {
+    background: #2b3a6a;
+    border: 1px solid #3d4f8a;
+    color: #e6ecff;
+    font-size: 13px;
+    padding: 6px 14px;
+    min-height: 32px;
+    border-radius: 4px;
+    text-shadow: none;
+}
+.driver-popover.oversample-tour .driver-popover-footer-btn:hover,
+.driver-popover.oversample-tour .driver-popover-footer-btn:focus-visible {
+    background: #354a85;
+    border-color: #4a5fa0;
+    color: #fff;
+}
+.driver-popover.oversample-tour .driver-popover-close-btn {
+    color: #888;
+    width: 32px;
+    height: 32px;
+    font-size: 20px;
+}
+.driver-popover.oversample-tour .driver-popover-close-btn:hover,
+.driver-popover.oversample-tour .driver-popover-close-btn:focus-visible {
+    color: #fff;
+}
+/* The arrow takes its colour from the border on the popover's side. */
+.driver-popover.oversample-tour .driver-popover-arrow {
+    border-color: rgba(22, 22, 22, 0.98);
+}
+.driver-popover.oversample-tour .driver-popover-arrow-side-left {
+    border-top-color: transparent; border-bottom-color: transparent; border-right-color: transparent;
+}
+.driver-popover.oversample-tour .driver-popover-arrow-side-right {
+    border-top-color: transparent; border-bottom-color: transparent; border-left-color: transparent;
+}
+.driver-popover.oversample-tour .driver-popover-arrow-side-top {
+    border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent;
+}
+.driver-popover.oversample-tour .driver-popover-arrow-side-bottom {
+    border-top-color: transparent; border-left-color: transparent; border-right-color: transparent;
+}
+
+/* ── Card above Play: "playing at 1:1 without HFR" ─────────────────────────
+   A PopupPanel (portalled, position: fixed) anchored to .hfr-nudge-anchor:
+   an empty box at the toolbar's top edge, in line with Play's left edge
+   (the toolbar's 12px padding). Absolute, so it takes no room in the
+   toolbar's wrapping flex rows and Play does not move. */
+.hfr-nudge-anchor {
+    position: absolute;
+    left: 12px;
+    top: 0;
+    width: 0;
+    height: 0;
+}
+.layer-panel.hfr-nudge {
+    /* Under the phone Hear sheet (45) and its backdrop (44), so opening Hear
+       covers the card; menus (50) still open over it. */
+    z-index: 43;
+    padding: 10px 12px 10px;
+    /* 12px from each edge on a phone: the anchor is 12px from the left. */
+    width: min(400px, calc(100vw - 24px));
+    white-space: normal;
+}
+.hfr-nudge-text {
+    margin: 0 28px 10px 0;
+    text-wrap: balance;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #ddd;
+}
+.hfr-nudge-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+.hfr-nudge-btn {
+    font: inherit;
+    font-size: 13px;
+    min-height: 32px;
+    padding: 5px 12px;
+    border-radius: 4px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ddd;
+    cursor: pointer;
+}
+.hfr-nudge-btn:hover {
+    background: #333;
+    color: #fff;
+}
+.hfr-nudge-btn.primary {
+    background: #2b3a6a;
+    border-color: #3d4f8a;
+    color: #e6ecff;
+}
+.hfr-nudge-btn.primary:hover {
+    background: #354a85;
+    border-color: #4a5fa0;
+    color: #fff;
+}
+/* The rare choice: plain text, pushed to the far end of the row. */
+.hfr-nudge-link {
+    font: inherit;
+    font-size: 12px;
+    min-height: 32px;
+    margin-left: auto;
+    padding: 0 2px;
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+}
+.hfr-nudge-link:hover {
+    color: #ddd;
+    text-decoration: underline;
+}
+.hfr-nudge-close {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: #888;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+.hfr-nudge-close:hover {
+    color: #fff;
+    background: #2a2a2a;
+}
+/* Ring round the control a tutorial step points at: the dimming alone left
+   small grey targets such as HFR hard to find. Same blue as the primary
+   buttons in the popover. */
+.driver-active .driver-active-element {
+    outline: 2px solid #7f9cf5;
+    outline-offset: 2px;
+}

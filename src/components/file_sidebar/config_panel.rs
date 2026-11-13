@@ -167,6 +167,36 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         })}
                     }
                 })}
+                // Box first, as in "This recording only": the label is too
+                // long to share a line with a box at the right edge.
+                <div class="setting-row">
+                    <label class="setting-label">
+                        <input
+                            id="hfr-nudge-enabled"
+                            type="checkbox"
+                            class="setting-checkbox"
+                            prop:checked=move || state.dialogs.hfr_nudge_enabled().get()
+                            on:change=move |ev| {
+                                let on = event_target_checked(&ev);
+                                state.dialogs.hfr_nudge_enabled().set(on);
+                                crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, on);
+                            }
+                        />
+                        " "{crate::components::hfr_tour::NUDGE_SETTING}
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <button
+                        class="setting-button"
+                        disabled=move || !crate::components::hfr_tour::tour_available(state)
+                        title=move || if crate::components::hfr_tour::tour_available(state) {
+                            ""
+                        } else {
+                            crate::components::hfr_tour::TOUR_NEEDS_FILE
+                        }
+                        on:click=move |_| crate::components::hfr_tour::start_tour(state)
+                    >{crate::components::hfr_tour::TOUR_NAME}</button>
+                </div>
             </div>
 
             <div class="setting-group">

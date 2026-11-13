@@ -17,6 +17,7 @@ pub mod gutter;
 pub mod hear_sheet;
 pub mod hearing_bar;
 pub mod hfr_button;
+pub mod hfr_tour;
 pub mod icons;
 pub mod inertia;
 pub mod listen_button;
