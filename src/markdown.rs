@@ -2,6 +2,7 @@
 //!
 //! [`parse`] turns Markdown into an owned tree of the few elements the app
 //! shows: paragraphs, line breaks, emphasis, inline code, lists and links.
+//! Bare http and https URLs in the text become links too, as on Xeno-canto.
 //! [`markdown_view`] builds Leptos views from that tree. The text never goes
 //! through `inner_html`: raw HTML in the source stays literal text, and only
 //! http and https links become links.
@@ -95,7 +96,9 @@ pub fn parse(text: &str) -> Vec<MdBlock> {
             | Event::TaskListMarker(_) => {}
         }
     }
-    b.finish()
+    let mut blocks = b.finish();
+    link_bare_urls(&mut blocks);
+    blocks
 }
 
 /// The link address to use for a Markdown link destination, or `None` when
@@ -369,6 +372,139 @@ impl TreeBuilder {
             _ => Vec::new(),
         }
     }
+}
+
+/// Turn the bare http and https URLs in the text of `blocks` into links, as
+/// Xeno-canto's own pages do. Remarks such as "See here
+/// https://observation.org/observation/286354922/" rely on it. Text inside a
+/// link, inline code and code blocks stay as they are.
+fn link_bare_urls(blocks: &mut [MdBlock]) {
+    for block in blocks {
+        match block {
+            MdBlock::Paragraph(items) | MdBlock::Plain(items) => link_bare_urls_in(items),
+            MdBlock::List { items, .. } => {
+                for item in items {
+                    link_bare_urls(item);
+                }
+            }
+            MdBlock::Quote(inner) => link_bare_urls(inner),
+            MdBlock::Literal(_) | MdBlock::Rule => {}
+        }
+    }
+}
+
+fn link_bare_urls_in(items: &mut Vec<MdInline>) {
+    for item in std::mem::take(items) {
+        match item {
+            MdInline::Text(text) => push_text_with_links(&text, items),
+            MdInline::Emphasis(mut children) => {
+                link_bare_urls_in(&mut children);
+                items.push(MdInline::Emphasis(children));
+            }
+            MdInline::Strong(mut children) => {
+                link_bare_urls_in(&mut children);
+                items.push(MdInline::Strong(children));
+            }
+            // A link's text is not linked again.
+            other @ (MdInline::Link { .. } | MdInline::Code(_) | MdInline::LineBreak) => {
+                items.push(other)
+            }
+        }
+    }
+}
+
+/// Append `text` to `items`, with each bare URL in it as a link that shows
+/// the URL.
+fn push_text_with_links(text: &str, items: &mut Vec<MdInline>) {
+    let mut done = 0;
+    let mut from = 0;
+    while let Some((start, end)) = find_bare_url(text, from) {
+        from = end;
+        let url = &text[start..end];
+        let Some(href) = web_href(url) else {
+            continue;
+        };
+        if start > done {
+            items.push(MdInline::Text(text[done..start].to_string()));
+        }
+        items.push(MdInline::Link {
+            href,
+            children: vec![MdInline::Text(url.to_string())],
+        });
+        done = end;
+    }
+    if done < text.len() {
+        items.push(MdInline::Text(text[done..].to_string()));
+    }
+}
+
+/// The byte range of the first bare http or https URL in `text` that starts
+/// at or after byte `from`.
+///
+/// A URL starts with "http://" or "https://", in any case, at the start of
+/// the text or after a character that is not an ASCII letter or digit, and a
+/// letter or digit must follow the "//". Chinese and Japanese text has no
+/// spaces, so a URL straight after it still counts. It ends before a space, a control
+/// character, `<`, `>` or `"`. Trailing punctuation is left out, as GitHub
+/// does: any of `. , ; : ! ? ' * _ ~`, and a `)` or `]` that has no opening
+/// partner in the URL. So "(see https://a.example/x)." gives
+/// "https://a.example/x", and "https://en.wikipedia.org/wiki/Bat_(animal)" is
+/// kept whole.
+fn find_bare_url(text: &str, from: usize) -> Option<(usize, usize)> {
+    let mut search = from;
+    while let Some(pos) = text[search..].find(|c: char| c == 'h' || c == 'H') {
+        let start = search + pos;
+        // "h" is one byte, so the next search starts on a character boundary.
+        search = start + 1;
+        let rest = &text.as_bytes()[start..];
+        let scheme_len = if starts_with_ignore_ascii_case(rest, b"https://") {
+            8
+        } else if starts_with_ignore_ascii_case(rest, b"http://") {
+            7
+        } else {
+            continue;
+        };
+        if text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        if !text[start + scheme_len..].starts_with(char::is_alphanumeric) {
+            continue;
+        }
+        let len = text[start..]
+            .find(|c: char| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"'))
+            .unwrap_or(text.len() - start);
+        // Trimming stops at the letter or digit after the "//" at the latest.
+        let url = trim_url_end(&text[start..start + len]);
+        return Some((start, start + url.len()));
+    }
+    None
+}
+
+fn starts_with_ignore_ascii_case(bytes: &[u8], prefix: &[u8]) -> bool {
+    bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+/// `url` without the trailing punctuation that [`find_bare_url`] leaves out.
+fn trim_url_end(url: &str) -> &str {
+    let open_parens = url.matches('(').count();
+    let mut close_parens = url.matches(')').count();
+    let open_brackets = url.matches('[').count();
+    let mut close_brackets = url.matches(']').count();
+    let mut end = url.len();
+    while let Some(last) = url[..end].chars().next_back() {
+        match last {
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '*' | '_' | '~' => {}
+            ')' if close_parens > open_parens => close_parens -= 1,
+            ']' if close_brackets > open_brackets => close_brackets -= 1,
+            _ => break,
+        }
+        end -= last.len_utf8();
+    }
+    &url[..end]
 }
 
 /// Append an inline element, joining it to the text before it when both are
@@ -774,6 +910,195 @@ mod tests {
         assert_eq!(numbered_list_style(0, 1), "--marker-digits: 1");
         assert_eq!(numbered_list_style(123_456_789, 1), "--marker-digits: 9");
         assert_eq!(numbered_list_style(u64::MAX, 3), "--marker-digits: 20");
+    }
+
+    fn link(url: &str) -> MdInline {
+        Link {
+            href: url.into(),
+            children: vec![text(url)],
+        }
+    }
+
+    #[test]
+    fn bare_urls_become_links() {
+        // In the middle of text (XC827322).
+        assert_eq!(
+            parse("See here https://observation.org/observation/286354922/ for photos"),
+            vec![Paragraph(vec![
+                text("See here "),
+                link("https://observation.org/observation/286354922/"),
+                text(" for photos"),
+            ])]
+        );
+        // Several in one text, with any case, and non-ASCII text around them.
+        assert_eq!(
+            parse("João HTTPS://A.example/é, é http://b.example"),
+            vec![Paragraph(vec![
+                text("João "),
+                link("HTTPS://A.example/é"),
+                text(", é "),
+                link("http://b.example"),
+            ])]
+        );
+        // Straight after Chinese text, which has no spaces.
+        assert_eq!(
+            parse("参考https://a.example"),
+            vec![Paragraph(vec![text("参考"), link("https://a.example")])]
+        );
+        // At the very start and end of the text.
+        assert_eq!(
+            parse("https://a.example"),
+            vec![Paragraph(vec![link("https://a.example")])]
+        );
+    }
+
+    #[test]
+    fn trailing_punctuation_is_not_part_of_a_bare_url() {
+        // XC827655
+        assert_eq!(
+            parse("placed here: https://observation.org/observation/285825747/. Sonograms"),
+            vec![Paragraph(vec![
+                text("placed here: "),
+                link("https://observation.org/observation/285825747/"),
+                text(". Sonograms"),
+            ])]
+        );
+        for (src, url, after) in [
+            ("https://a.example/x?!", "https://a.example/x", "?!"),
+            ("https://a.example/x,", "https://a.example/x", ","),
+            ("https://a.example/x;", "https://a.example/x", ";"),
+            ("https://a.example/x:", "https://a.example/x", ":"),
+            ("https://a.example/x'", "https://a.example/x", "'"),
+            ("https://a.example/x...", "https://a.example/x", "..."),
+            // Inside the URL, the same marks are kept.
+            (
+                "https://a.example/a.b?c=d,e!",
+                "https://a.example/a.b?c=d,e",
+                "!",
+            ),
+        ] {
+            assert_eq!(
+                parse(src),
+                vec![Paragraph(vec![link(url), text(after)])],
+                "{src}"
+            );
+        }
+        // Quote marks around a URL.
+        assert_eq!(
+            parse("\"https://a.example/x\" and 'https://b.example/y'"),
+            vec![Paragraph(vec![
+                text("\""),
+                link("https://a.example/x"),
+                text("\" and '"),
+                link("https://b.example/y"),
+                text("'"),
+            ])]
+        );
+    }
+
+    #[test]
+    fn closing_brackets_are_part_of_a_bare_url_only_when_balanced() {
+        // XC1037974
+        assert_eq!(
+            parse("BatDetect2 (https://github.com/macaodha/batdetect2) automatically"),
+            vec![Paragraph(vec![
+                text("BatDetect2 ("),
+                link("https://github.com/macaodha/batdetect2"),
+                text(") automatically"),
+            ])]
+        );
+        assert_eq!(
+            parse("https://en.wikipedia.org/wiki/Bat_(disambiguation)"),
+            vec![Paragraph(vec![link(
+                "https://en.wikipedia.org/wiki/Bat_(disambiguation)"
+            )])]
+        );
+        assert_eq!(
+            parse("(see https://en.wikipedia.org/wiki/Bat_(animal))."),
+            vec![Paragraph(vec![
+                text("(see "),
+                link("https://en.wikipedia.org/wiki/Bat_(animal)"),
+                text(")."),
+            ])]
+        );
+        assert_eq!(
+            parse("[https://a.example/x]"),
+            vec![Paragraph(vec![
+                text("["),
+                link("https://a.example/x"),
+                text("]")
+            ])]
+        );
+    }
+
+    #[test]
+    fn text_that_only_looks_like_a_url_stays_text() {
+        for src in [
+            "https:// and http://.",
+            "xhttps://a.example",
+            "ftp://a.example",
+            "javascript:alert(1)",
+            "https://(a)",
+        ] {
+            assert_eq!(parse(src), vec![Paragraph(vec![text(src)])], "{src}");
+        }
+    }
+
+    #[test]
+    fn bare_urls_in_lists_quotes_and_emphasis() {
+        // A source list, as in XC909905.
+        assert_eq!(
+            parse("Used sources:\r\n\r\n- https://a.example/x\r\n- see https://b.example/y"),
+            vec![
+                Paragraph(vec![text("Used sources:")]),
+                List {
+                    start: None,
+                    items: vec![
+                        vec![Plain(vec![link("https://a.example/x")])],
+                        vec![Plain(vec![text("see "), link("https://b.example/y")])],
+                    ],
+                },
+            ]
+        );
+        assert_eq!(
+            parse("> see https://a.example"),
+            vec![Quote(vec![Paragraph(vec![
+                text("see "),
+                link("https://a.example")
+            ])])]
+        );
+        assert_eq!(
+            parse("*https://a.example* and **https://b.example**"),
+            vec![Paragraph(vec![
+                Emphasis(vec![link("https://a.example")]),
+                text(" and "),
+                Strong(vec![link("https://b.example")]),
+            ])]
+        );
+    }
+
+    #[test]
+    fn link_text_and_code_are_not_linked_again() {
+        // XC817761 links a URL to itself.
+        assert_eq!(
+            parse("[https://a.example/x](https://a.example/x)"),
+            vec![Paragraph(vec![link("https://a.example/x")])]
+        );
+        assert_eq!(
+            parse("[see *https://a.example*](https://b.example)"),
+            vec![Paragraph(vec![Link {
+                href: "https://b.example".into(),
+                children: vec![text("see "), Emphasis(vec![text("https://a.example")])],
+            }])]
+        );
+        assert_eq!(
+            parse("`https://a.example`"),
+            vec![Paragraph(vec![Code("https://a.example".into())])]
+        );
+        assert_eq!(
+            parse("```\nhttps://a.example\n```"),
+            vec![Literal("https://a.example".into())]
+        );
     }
 
     #[test]
