@@ -659,7 +659,7 @@ fn url_limit(
 fn link_bare_urls(blocks: &mut [MdBlock]) {
     for block in blocks {
         match block {
-            MdBlock::Paragraph(items) | MdBlock::Plain(items) => link_bare_urls_in(items),
+            MdBlock::Paragraph(items) | MdBlock::Plain(items) => link_bare_urls_in_paragraph(items),
             MdBlock::List { items, .. } => {
                 for item in items {
                     link_bare_urls(item);
@@ -671,23 +671,55 @@ fn link_bare_urls(blocks: &mut [MdBlock]) {
     }
 }
 
-fn link_bare_urls_in(items: &mut Vec<MdInline>) {
-    let mut old = std::mem::take(items).into_iter().peekable();
-    while let Some(item) = old.next() {
+/// Link the bare URLs in the inline elements of one paragraph.
+fn link_bare_urls_in_paragraph(items: &mut Vec<MdInline>) {
+    // The paragraph's text as it reads, with a line break for each line
+    // break, code span and link, and where each text element ends in it.
+    let mut shown = String::new();
+    let mut text_ends = Vec::new();
+    collect_shown_text(items, &mut shown, &mut text_ends);
+    let mut texts_done = 0;
+    link_bare_urls_in(items, &shown, &text_ends, &mut texts_done);
+}
+
+fn collect_shown_text(items: &[MdInline], shown: &mut String, text_ends: &mut Vec<usize>) {
+    for item in items {
+        match item {
+            MdInline::Text(s) => {
+                shown.push_str(s);
+                text_ends.push(shown.len());
+            }
+            MdInline::Emphasis(children) | MdInline::Strong(children) => {
+                collect_shown_text(children, shown, text_ends)
+            }
+            // A URL does not go on into code, a link or the next line.
+            MdInline::Code(_) | MdInline::Link { .. } | MdInline::LineBreak => shown.push('\n'),
+        }
+    }
+}
+
+/// Link the bare URLs in `items`. `shown` and `text_ends` come from
+/// [`collect_shown_text`] for the whole paragraph, and `texts_done` counts
+/// the text elements already linked.
+fn link_bare_urls_in(
+    items: &mut Vec<MdInline>,
+    shown: &str,
+    text_ends: &[usize],
+    texts_done: &mut usize,
+) {
+    for item in std::mem::take(items) {
         match item {
             MdInline::Text(text) => {
-                let before_emphasis = matches!(
-                    old.peek(),
-                    Some(MdInline::Emphasis(_) | MdInline::Strong(_))
-                );
-                push_text_with_links(&text, before_emphasis, items)
+                let after = &shown[text_ends[*texts_done]..];
+                *texts_done += 1;
+                push_text_with_links(&text, after, items);
             }
             MdInline::Emphasis(mut children) => {
-                link_bare_urls_in(&mut children);
+                link_bare_urls_in(&mut children, shown, text_ends, texts_done);
                 items.push(MdInline::Emphasis(children));
             }
             MdInline::Strong(mut children) => {
-                link_bare_urls_in(&mut children);
+                link_bare_urls_in(&mut children, shown, text_ends, texts_done);
                 items.push(MdInline::Strong(children));
             }
             // A link's text is not linked again.
@@ -701,13 +733,14 @@ fn link_bare_urls_in(items: &mut Vec<MdInline>) {
 /// Append `text` to `items`, with each bare URL in it as a link that shows
 /// the URL.
 ///
-/// `before_emphasis` says that emphasis or strong text comes straight after
-/// `text`. A URL that runs to the end of `text` then stays plain text: the
-/// emphasis may have cut it, and a link to the part before the cut would
-/// go to the wrong address. [`escape_emphasis_in_bare_urls`] stops that for
-/// almost every URL, so this only catches the ones it cannot see, such as a
-/// URL in the text of a link that is not shown as a link.
-fn push_text_with_links(text: &str, before_emphasis: bool, items: &mut Vec<MdInline>) {
+/// `after` is the text that the paragraph shows after `text`. A URL that runs
+/// to the end of `text` and would go on into `after` stays plain text: the
+/// start or end of emphasis cut it, or text from an image or from a link that
+/// is not shown as a link joins it. A link to the part before the cut would
+/// go to the wrong address. [`escape_emphasis_in_bare_urls`] stops this for
+/// almost every URL, so this only catches the ones it cannot see.
+fn push_text_with_links(text: &str, after: &str, items: &mut Vec<MdInline>) {
+    let after = &after[..after.find(ends_url).unwrap_or(after.len())];
     let mut done = 0;
     let mut from = 0;
     while let Some((start, end)) = find_bare_url(text, from) {
@@ -716,7 +749,12 @@ fn push_text_with_links(text: &str, before_emphasis: bool, items: &mut Vec<MdInl
         let Some(href) = web_href(url) else {
             continue;
         };
-        if before_emphasis && !text[end..].contains(ends_url) {
+        // Only punctuation that `trim_url_end` left out comes after the URL
+        // in `text`, and the URL would be longer with `after` added.
+        let cut = !after.is_empty()
+            && !text[end..].contains(ends_url)
+            && trim_url_end(&format!("{}{after}", &text[start..])).len() > url.len();
+        if cut {
             continue;
         }
         if start > done {
@@ -1645,6 +1683,53 @@ mod tests {
                 text("(d)"),
             ])]
         );
+        // The cut can be where the emphasis around the URL ends, too: in the
+        // text of such a link, in an image's text, and where "\/" hides the
+        // URL from the first parse.
+        let cut = vec![Paragraph(vec![
+            Emphasis(vec![text("https://en.wikipedia.org/wiki/Bat")]),
+            text("(animal)_"),
+        ])];
+        for src in [
+            "[_https://en.wikipedia.org/wiki/Bat_(animal)_](javascript:x)",
+            "![_https://en.wikipedia.org/wiki/Bat_(animal)_](https://a.example/p.png)",
+            r"_https:\/\/en.wikipedia.org/wiki/Bat_(animal)_",
+        ] {
+            assert_eq!(parse(src), cut, "{src}");
+        }
+        assert_eq!(
+            parse("[**https://a.example/A_(b)_c**x](javascript:x)"),
+            vec![Paragraph(vec![
+                Strong(vec![text("https://a.example/A_(b)_c")]),
+                text("x"),
+            ])]
+        );
+        // The URL goes on through "," and into the next emphasis.
+        assert_eq!(
+            parse("[**https://a.example/A_(b)_c**,*d*](javascript:x)"),
+            vec![Paragraph(vec![
+                Strong(vec![text("https://a.example/A_(b)_c")]),
+                text(","),
+                Emphasis(vec![text("d")]),
+            ])]
+        );
+        // Text after the emphasis that does not go on with the URL leaves
+        // the link as it is.
+        for (src, after) in [
+            ("[*https://a.example/x* y](javascript:z)", " y"),
+            ("[*https://a.example/x*.](javascript:z)", "."),
+            ("[(*https://a.example/x*)](javascript:z)", ")"),
+        ] {
+            let blocks = parse(src);
+            let Paragraph(items) = &blocks[0] else {
+                panic!("{blocks:?}");
+            };
+            assert_eq!(
+                &items[items.len() - 2..],
+                [Emphasis(vec![link("https://a.example/x")]), text(after)],
+                "{src}"
+            );
+        }
     }
 
     #[test]
