@@ -413,17 +413,32 @@ impl TreeBuilder {
 /// It parses `src` once to find where each bare URL starts, then finds where
 /// the URL ends in `src` with the rules of [`find_bare_url`]. A URL also ends
 /// where a code span, link, image, raw HTML or line break starts. So a URL's
-/// range holds only text and emphasis marks, and the backslashes change
-/// nothing outside the URLs. When the URL is inside emphasis, the `*` and `_`
-/// at its end that can close that emphasis are left out of the URL and keep
-/// no backslash, so "*see https://a.example/x_(y)_z*" stays emphasis.
+/// range holds only text and emphasis marks. When the URL is inside emphasis,
+/// the `*` and `_` at its end that can close that emphasis are left out of
+/// the URL and keep no backslash, so "*see https://a.example/x_(y)_z*" stays
+/// emphasis.
+///
+/// The backslashes change no other element, with one exception: a link in
+/// brackets, such as "[https://a.example/_x_]", uses a reference definition
+/// only when the definition's label is written the same way, backslashes
+/// included. With a backslash before each `_`, that text would match a
+/// definition "[https://a.example/\_x\_]: ..." and become a link that the
+/// source does not have. So `src` is returned unchanged when a reference
+/// definition has a backslash in its label.
 fn escape_emphasis_in_bare_urls(src: &str) -> Cow<'_, str> {
     if !src.contains(['*', '_']) || !src.contains("://") {
         return Cow::Borrowed(src);
     }
-    let events: Vec<(Event, Range<usize>)> = Parser::new_ext(src, Options::empty())
-        .into_offset_iter()
-        .collect();
+    let parser = Parser::new_ext(src, Options::empty());
+    // The parser reads the reference definitions when it is made.
+    if parser
+        .reference_definitions()
+        .iter()
+        .any(|(label, _)| label.contains('\\'))
+    {
+        return Cow::Borrowed(src);
+    }
+    let events: Vec<(Event, Range<usize>)> = parser.into_offset_iter().collect();
     // Text that reads differently from its source, such as "&" from "&amp;",
     // by the byte where its source starts: where the source ends, and the text.
     let decoded: HashMap<usize, (usize, &str)> = events
@@ -1776,6 +1791,32 @@ mod tests {
                 link("https://a.example/_x_"),
                 text("</b>")
             ])]
+        );
+    }
+
+    #[test]
+    fn bare_url_escapes_make_no_reference_links() {
+        // "https://a.example/_x_" does not match the label
+        // "https://a.example/\_x\_", so the brackets stay text. With a
+        // backslash added before each `_`, it would match and link to
+        // evil.example.
+        let def = "\n\n[https://a.example/\\_x\\_]: https://evil.example";
+        assert_eq!(
+            parse(&format!("[https://a.example/_x_]{def}")),
+            vec![Paragraph(vec![
+                text("[https://a.example/"),
+                Emphasis(vec![text("x")]),
+                text("]"),
+            ])]
+        );
+        assert_eq!(
+            link_hrefs(&parse(&format!("[t][https://a.example/_x_]{def}"))),
+            Vec::<&str>::new()
+        );
+        // A definition with no backslash in its label leaves the escapes on.
+        assert_eq!(
+            parse("see https://a.example/_x_\n\n[a]: https://b.example"),
+            vec![Paragraph(vec![text("see "), link("https://a.example/_x_")])]
         );
     }
 
