@@ -1734,7 +1734,7 @@ pub fn FindRecordings() -> impl IntoView {
                             NO_RECORDINGS_FILTERS.to_string()
                         } else {
                             let sources = sources_in(&status.get(), &["ready", "indexing"])
-                                .unwrap_or_else(|| vec!["Xeno-canto".to_string()]);
+                                .unwrap_or_else(|| vec![SourceSite::XenoCanto.name().to_string()]);
                             fill(NO_RECORDINGS_SPECIES, &[("sources", &join_list(&sources, "or"))])
                         };
                         view! { <p class="find-empty">{text}</p> }
