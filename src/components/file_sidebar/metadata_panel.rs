@@ -1495,6 +1495,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                         } else {
                             ("0 B".to_string(), "File size".to_string())
                         };
+                        let site = f.site_metadata.as_ref().map(|m| m.site.clone());
                         let (xc_fields, source_label) = f.site_metadata.as_ref()
                             .map(|m| (m.fields.clone(), m.site.name().to_string()))
                             .unwrap_or_default();
@@ -1536,7 +1537,10 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             {chime_section(chime_search.get(), f, view_mode)}
                             {zc_header_section(f, view_mode)}
                             {if has_xc {
-                                let items: Vec<_> = xc_fields.into_iter().map(|(label, value)| {
+                                let items: Vec<_> = xc_fields.into_iter().map(|(key, value)| {
+                                    let label = site.as_ref()
+                                        .map_or(key.as_str(), |s| s.field_label(&key))
+                                        .to_string();
                                     spacious_row(label, value, None, view_mode).into_any()
                                 }).collect();
                                 view! {

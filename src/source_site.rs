@@ -82,6 +82,17 @@ impl SourceSite {
             .map(|(_, _, name)| *name)
             .unwrap_or(key)
     }
+
+    /// The label to show for a metadata key from this site. iNaturalist
+    /// calls its "Quality" value ("Research grade", "Needs ID") a quality
+    /// grade. Only the shown label changes: code still looks the field up by
+    /// its key.
+    pub fn field_label<'a>(&self, key: &'a str) -> &'a str {
+        match (self, key) {
+            (SourceSite::INaturalist, "Quality") => "Quality grade",
+            _ => key,
+        }
+    }
 }
 
 /// Label/value rows from the site a file came from. Keys are human-readable
@@ -167,6 +178,17 @@ mod tests {
             assert_eq!(site.search_key(), key);
             assert_eq!(SourceSite::name_for_key(key), key);
         }
+    }
+
+    #[test]
+    fn inaturalist_quality_is_a_quality_grade() {
+        assert_eq!(
+            SourceSite::INaturalist.field_label("Quality"),
+            "Quality grade"
+        );
+        assert_eq!(SourceSite::INaturalist.field_label("License"), "License");
+        assert_eq!(SourceSite::XenoCanto.field_label("Quality"), "Quality");
+        assert_eq!(SourceSite::Gbif.field_label("Quality"), "Quality");
     }
 
     #[test]

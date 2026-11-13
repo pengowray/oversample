@@ -26,6 +26,57 @@ pub(crate) fn parse_cc_license(lic: &str) -> Option<String> {
     None
 }
 
+/// The official name of a Creative Commons licence from its short code.
+/// e.g. "CC BY-NC 4.0" -> "Creative Commons Attribution-NonCommercial 4.0 International".
+/// `None` when the code has no version, an unknown element or anything after
+/// the version (such as a country port).
+pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
+    let mut words = code.split_whitespace();
+    if !words.next()?.eq_ignore_ascii_case("cc") {
+        return None;
+    }
+    let (elements, version) = (words.next()?, words.next()?);
+    if words.next().is_some() || !["1.0", "2.0", "2.5", "3.0", "4.0"].contains(&version) {
+        return None;
+    }
+    let names = elements
+        .split('-')
+        .map(|e| match e.to_ascii_uppercase().as_str() {
+            "BY" => Some("Attribution"),
+            "NC" => Some("NonCommercial"),
+            "SA" => Some("ShareAlike"),
+            "ND" if version == "4.0" => Some("NoDerivatives"),
+            "ND" => Some("NoDerivs"),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let suffix = if version == "4.0" {
+        " International"
+    } else {
+        ""
+    };
+    Some(format!(
+        "Creative Commons {} {version}{suffix}",
+        names.join("-")
+    ))
+}
+
+/// The web address to link a License value to. An address that starts with
+/// "//" (as Xeno-canto sends) gets "https:". `None` for anything else, such as
+/// Wikimedia Commons' short names ("CC BY-SA 4.0").
+pub(crate) fn license_href(lic: &str) -> Option<String> {
+    let v = lic.trim();
+    let url = if v.starts_with("//") {
+        format!("https:{v}")
+    } else {
+        v.to_string()
+    };
+    let lower = url.to_ascii_lowercase();
+    ((lower.starts_with("https://") || lower.starts_with("http://"))
+        && !url.contains(char::is_whitespace))
+    .then_some(url)
+}
+
 /// Get XC metadata field value by key.
 pub(crate) fn get_xc_field(metadata: &[(String, String)], key: &str) -> Option<String> {
     metadata
@@ -224,5 +275,84 @@ pub fn FileBadgeRow(
                 </span>
             }
         })}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_licence_names() {
+        for (code, name) in [
+            (
+                "CC BY-NC 4.0",
+                Some("Creative Commons Attribution-NonCommercial 4.0 International"),
+            ),
+            (
+                "CC BY-SA 4.0",
+                Some("Creative Commons Attribution-ShareAlike 4.0 International"),
+            ),
+            (
+                "CC BY-NC-ND 3.0",
+                Some("Creative Commons Attribution-NonCommercial-NoDerivs 3.0"),
+            ),
+            (
+                "CC BY-NC-ND 4.0",
+                Some("Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International"),
+            ),
+            (
+                "CC BY-ND 2.5",
+                Some("Creative Commons Attribution-NoDerivs 2.5"),
+            ),
+            ("CC BY 1.0", Some("Creative Commons Attribution 1.0")),
+            (
+                "cc by-sa 2.0",
+                Some("Creative Commons Attribution-ShareAlike 2.0"),
+            ),
+            ("CC BY-XX 4.0", None),
+            ("CC BY", None),
+            ("CC BY 5.0", None),
+            ("CC BY 3.0 de", None),
+            ("CC0 1.0", None),
+            ("CC BY-NC (Attribution-Non-Commercial)", None),
+            ("Public domain", None),
+            ("", None),
+        ] {
+            assert_eq!(cc_license_full_name(code).as_deref(), name, "{code}");
+        }
+    }
+
+    #[test]
+    fn full_name_of_parsed_url() {
+        let code = parse_cc_license("//creativecommons.org/licenses/by-nc-nd/3.0/").unwrap();
+        assert_eq!(
+            cc_license_full_name(&code).as_deref(),
+            Some("Creative Commons Attribution-NonCommercial-NoDerivs 3.0")
+        );
+    }
+
+    #[test]
+    fn license_links() {
+        for (lic, href) in [
+            (
+                "//creativecommons.org/licenses/by-nc-sa/4.0/",
+                Some("https://creativecommons.org/licenses/by-nc-sa/4.0/"),
+            ),
+            (
+                "http://creativecommons.org/licenses/by/4.0/",
+                Some("http://creativecommons.org/licenses/by/4.0/"),
+            ),
+            (
+                " https://creativecommons.org/licenses/by-nc/4.0/ ",
+                Some("https://creativecommons.org/licenses/by-nc/4.0/"),
+            ),
+            ("CC BY-SA 4.0", None),
+            ("Public domain", None),
+            ("cc-by-nc", None),
+            ("", None),
+        ] {
+            assert_eq!(license_href(lic).as_deref(), href, "{lic}");
+        }
     }
 }

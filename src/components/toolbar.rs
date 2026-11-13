@@ -1,6 +1,6 @@
 use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_badges::{
-    get_xc_field, parse_cc_license, FileBadgeData, FileBadgeRow,
+    cc_license_full_name, get_xc_field, license_href, parse_cc_license, FileBadgeData, FileBadgeRow,
 };
 use crate::components::file_sidebar::file_groups;
 use crate::components::icons::Icon;
@@ -644,6 +644,9 @@ pub fn Toolbar() -> impl IntoView {
                 let mic = field("Microphone").unwrap_or_default();
                 let method = field("Method").unwrap_or_default();
                 let quality = field("Quality").unwrap_or_default();
+                let quality_label = site
+                    .as_ref()
+                    .map_or("Quality", |s| s.field_label("Quality"));
                 let location = field("Location").unwrap_or_default();
                 let country = field("Country").unwrap_or_default();
                 let loc_display = if !location.is_empty() && !country.is_empty() {
@@ -673,7 +676,7 @@ pub fn Toolbar() -> impl IntoView {
                             <div class="modal-header">
                                 <span class="modal-title">
                                     <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
-                                    {if cc_label.is_empty() { "License".to_string() } else { format!("Creative Commons {cc_label}") }}
+                                    {if cc_label.is_empty() { "License".to_string() } else { format!("{cc_label} license") }}
                                 </span>
                                 <button class="modal-close" on:click=move |_| show_cc_modal.set(false)>{"\u{00D7}"}</button>
                             </div>
@@ -728,7 +731,7 @@ pub fn Toolbar() -> impl IntoView {
                                     })}
                                     {(!quality.is_empty()).then(|| view! {
                                         <div class="cc-row">
-                                            <span class="cc-label">"Quality"</span>
+                                            <span class="cc-label">{quality_label}</span>
                                             <span class="cc-value">{quality}</span>
                                         </div>
                                     })}
@@ -739,12 +742,15 @@ pub fn Toolbar() -> impl IntoView {
                                     <div class="cc-attribution">{attribution}</div>
                                 })}
 
-                                // License link
-                                {(!lic_url.is_empty()).then(|| {
-                                    let label = if cc_label.is_empty() { lic_url.clone() } else { format!("Creative Commons {cc_label}") };
+                                // License link, only when License is a web address
+                                // (Wikimedia Commons gives a short name instead).
+                                {license_href(&lic_url).map(|href| {
+                                    let label = cc_license_full_name(&cc_label).unwrap_or_else(|| {
+                                        if cc_label.is_empty() { lic_url.clone() } else { format!("Creative Commons {cc_label}") }
+                                    });
                                     view! {
                                         <div class="cc-license-link">
-                                            <a href=lic_url target="_blank" rel="noopener">{label}</a>
+                                            <a href=href target="_blank" rel="noopener">{label}</a>
                                         </div>
                                     }
                                 })}
