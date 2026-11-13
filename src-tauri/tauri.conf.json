@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "oversample",
-  "version": "0.5.143",
+  "version": "0.5.144",
   "identifier": "com.oversample.app",
   "build": {
     "beforeDevCommand": "trunk serve --port 21259",
     "devUrl": "http://localhost:21259",
-    "beforeBuildCommand": "trunk build --release",
+    "beforeBuildCommand": "bash scripts/trunk-release.sh",
     "frontendDist": "../dist"
   },
   "app": {

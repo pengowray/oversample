@@ -27,22 +27,9 @@ jobs:
         with:
           version: latest
 
-      # Link the wasm with --strip-all to drop the `name` section (function
-      # names): 48 MB of the app's 60 MB wasm and 6.6 MB of the BirdNET
-      # worker's 23 MB. Panic messages keep their file:line, but stack frames
-      # show as wasm-function[N]. To find the function behind N, build the
-      # same commit locally without these flags: it has the same functions in
-      # the same order, with names.
-      # --strip-all also drops `target_features`, which wasm-bindgen reads to
-      # turn on externref and multivalue, so that section is kept.
-      # This variable adds to the flags in .cargo/config.toml (simd128);
-      # RUSTFLAGS would replace them.
-      # CARGO_PROFILE_RELEASE_STRIP would not reach birdnet-worker: Cargo
-      # ignores the base profile's strip for a package with its own override.
+      # The script strips function names from the wasm (see its comments).
       - name: Build
-        env:
-          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C link-arg=--strip-all -C link-arg=--keep-section=target_features
-        run: trunk build --release --public-url / --dist docs
+        run: bash scripts/trunk-release.sh --public-url / --dist docs
 
       - name: Bypass Jekyll
         run: touch docs/.nojekyll
