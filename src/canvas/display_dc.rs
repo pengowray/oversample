@@ -16,7 +16,7 @@ use crate::audio::streaming_source;
 use crate::canvas::tile_cache::yield_to_browser;
 use crate::state::LoadedFile;
 use crate::types::{AudioData, AudioFormat};
-use oversample_core::dsp::dc_offset::{mean_outside_silence, offset_window_len};
+use oversample_core::dsp::dc_offset::{offset_window_len, recording_offset};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -72,7 +72,7 @@ thread_local! {
 /// use the same number.
 pub fn head_offset(audio: &AudioData) -> f32 {
     let len = offset_window_len(audio.sample_rate).min(audio.samples.len());
-    mean_outside_silence(&audio.samples[..len])
+    recording_offset(&audio.samples[..len], audio.sample_rate)
 }
 
 /// Record the mono-mix offset measured at load ([`head_offset`]).
@@ -145,7 +145,7 @@ pub async fn offset(target: DcTarget, source: &dyn AudioSource, view: ChannelVie
     guard.done = true;
     match samples {
         Some(samples) => {
-            let dc = mean_outside_silence(&samples);
+            let dc = recording_offset(&samples, source.sample_rate());
             OFFSETS.with(|m| m.borrow_mut().insert(key, Entry::Known(dc)));
             Some(dc)
         }

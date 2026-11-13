@@ -52,17 +52,19 @@ fn zero_run_end(samples: &[f32], start: usize) -> usize {
         .map_or(samples.len(), |n| start + n)
 }
 
-/// The offset of `samples`: their mean, leaving out digital silence
-/// ([`MIN_SILENT_RUN`]), which has no offset and would pull the mean towards
-/// zero. 0 when it is all silence.
-pub fn mean_outside_silence(samples: &[f32]) -> f32 {
+/// Sum and count of `samples`, leaving out digital silence
+/// ([`MIN_SILENT_RUN`]) and samples that are not finite numbers (a corrupt
+/// float file), either of which would spoil the mean.
+fn sum_outside_silence(samples: &[f32]) -> (f64, usize) {
     let len = samples.len();
     let (mut sum, mut count) = (0.0f64, 0usize);
     let mut i = 0;
     while i < len {
         if samples[i] != 0.0 {
-            sum += samples[i] as f64;
-            count += 1;
+            if samples[i].is_finite() {
+                sum += samples[i] as f64;
+                count += 1;
+            }
             i += 1;
             continue;
         }
@@ -72,10 +74,38 @@ pub fn mean_outside_silence(samples: &[f32]) -> f32 {
         }
         i = end;
     }
-    if count == 0 {
-        0.0
+    (sum, count)
+}
+
+/// The offset of `samples`: their mean, leaving out digital silence
+/// ([`MIN_SILENT_RUN`]), which has no offset and would pull the mean towards
+/// zero. 0 when it is all silence.
+pub fn mean_outside_silence(samples: &[f32]) -> f32 {
+    match sum_outside_silence(samples) {
+        (_, 0) => 0.0,
+        (sum, count) => (sum / count as f64) as f32,
+    }
+}
+
+/// Seconds of sound (samples outside digital silence) that a measurement
+/// needs. With less, a short sound at the end of a silent stretch would set
+/// the offset by itself, and subtracting its mean would add a line instead of
+/// removing one.
+pub const MIN_SOUND_SECS: f64 = 0.25;
+
+/// The offset to remove from a recording, measured from its first
+/// [`OFFSET_WINDOW_SECS`] (`samples`): [`mean_outside_silence`], or 0 when
+/// they hold less than [`MIN_SOUND_SECS`] of sound.
+pub fn recording_offset(samples: &[f32], sample_rate: u32) -> f32 {
+    let (sum, count) = sum_outside_silence(samples);
+    if (count as f64) < MIN_SOUND_SECS * sample_rate as f64 {
+        return 0.0;
+    }
+    let dc = (sum / count as f64) as f32;
+    if dc.is_finite() {
+        dc
     } else {
-        (sum / count as f64) as f32
+        0.0
     }
 }
 
@@ -83,7 +113,7 @@ pub fn mean_outside_silence(samples: &[f32]) -> f32 {
 /// ([`MIN_SILENT_RUN`]), which stays at zero so it stays black in a
 /// spectrogram.
 pub fn subtract_dc(samples: &mut [f32], dc: f32) {
-    if dc == 0.0 {
+    if dc == 0.0 || !dc.is_finite() {
         return;
     }
     let len = samples.len();
@@ -229,5 +259,33 @@ mod tests {
         assert!(floor_without_offset(&floor, 1024, 1e-6).is_none());
         assert!(floor_without_offset(&floor, 1024, 0.0).is_none());
         assert!(floor_without_offset(&floor[..3], 1024, 1.0).is_none());
+    }
+
+    #[test]
+    fn offset_ignores_samples_that_are_not_numbers() {
+        let mut samples = vec![0.1f32; 48_000];
+        samples[1000] = f32::NAN;
+        samples[2000] = f32::INFINITY;
+        assert!((recording_offset(&samples, 48_000) - 0.1).abs() < 1e-6);
+        let mut tile = vec![0.3f32; 4];
+        subtract_dc(&mut tile, f32::NAN);
+        assert_eq!(tile, vec![0.3; 4]);
+    }
+
+    #[test]
+    fn offset_is_zero_with_too_little_sound() {
+        // 5 ms of sound at the end of an otherwise silent window.
+        let sr = 48_000;
+        let mut samples = vec![0.0f32; 3 * sr as usize];
+        let n = samples.len();
+        for s in &mut samples[n - 240..] {
+            *s = 0.5;
+        }
+        assert_eq!(recording_offset(&samples, sr), 0.0);
+        // A quarter of a second is enough.
+        for s in &mut samples[n - sr as usize / 4..] {
+            *s = 0.5;
+        }
+        assert!((recording_offset(&samples, sr) - 0.5).abs() < 1e-6);
     }
 }
