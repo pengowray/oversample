@@ -438,7 +438,15 @@ pub fn RangeButton() -> impl IntoView {
                 >"None"</button>
 
                 <hr/>
-                <button class="layer-panel-opt"
+                // Dimmed like other unavailable menu items while the mic is
+                // live (the tutorial ends on pressing Play).
+                <button
+                    class=move || if crate::components::hfr_tour::tour_available(state) {
+                        "layer-panel-opt"
+                    } else {
+                        "layer-panel-opt disabled"
+                    }
+                    disabled=move || !crate::components::hfr_tour::tour_available(state)
                     on:click=move |_| crate::components::hfr_tour::start_tour(state)
                 >{crate::components::hfr_tour::TOUR_NAME}</button>
             </PopupPanel>

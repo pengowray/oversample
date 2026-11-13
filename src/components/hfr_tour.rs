@@ -28,8 +28,10 @@ use wasm_bindgen::{JsCast, JsValue};
 
 /// Label of the buttons and menu items that start the tutorial.
 pub const TOUR_NAME: &str = "HFR tutorial";
-/// Tooltip on the Settings button while no recording is open.
-pub const TOUR_NEEDS_FILE: &str = "Open a recording first";
+/// Tooltips on the tutorial buttons while the tutorial can't run.
+const TOUR_NEEDS_FILE: &str = "Open a recording first";
+const TOUR_STOP_LISTENING: &str = "Stop listening first";
+const TOUR_STOP_RECORDING: &str = "Stop recording first";
 
 const T_HFR: &str = "Turn on HFR";
 const D_HFR: &str = "HFR lowers the pitch of bat calls into the range you can hear.";
@@ -39,8 +41,7 @@ const T_BAND: &str = "Choose frequencies";
 const D_BAND: &str = "Bat calls show as bright marks in the spectrogram. \
     Drag up or down the frequency strip to select their frequencies.";
 const T_TIME: &str = "Choose a time range";
-const D_TIME: &str = "Drag along the time strip to choose the part of the recording to play. \
-    To skip this step, press Next.";
+const D_TIME: &str = "Drag along the time strip to choose the part of the recording to play.";
 const T_PLAY: &str = "Press Play";
 const D_PLAY: &str = "The frequency band you chose plays at a lower pitch.";
 
@@ -56,7 +57,7 @@ const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Bats";
 const NUDGE_CLOSE: &str = "Close";
 
 /// Settings > Bats checkbox that allows the card.
-pub const NUDGE_SETTING: &str = "Suggest HFR when playing 1:1";
+pub const NUDGE_SETTING: &str = "Suggest HFR when playing\u{a0}1:1";
 
 // ── Steps ───────────────────────────────────────────────────────────────
 
@@ -150,9 +151,25 @@ fn set(obj: &Object, key: &str, val: &JsValue) {
     let _ = Reflect::set(obj, &JsValue::from_str(key), val);
 }
 
-/// Whether the tutorial can run now: it needs an open recording.
+/// Why the tutorial can't run now, or None when it can. It needs an open
+/// recording, and its last step (press Play) has no meaning while the mic
+/// is live.
+pub fn tour_unavailable_reason(state: AppState) -> Option<&'static str> {
+    if state.mic.recording().get() {
+        Some(TOUR_STOP_RECORDING)
+    } else if state.mic.listening().get() {
+        Some(TOUR_STOP_LISTENING)
+    } else if state.library.current_index().get().is_none()
+        || state.timeline.active().get().is_some()
+    {
+        Some(TOUR_NEEDS_FILE)
+    } else {
+        None
+    }
+}
+
 pub fn tour_available(state: AppState) -> bool {
-    state.library.current_index().get().is_some() && state.timeline.active().get().is_none()
+    tour_unavailable_reason(state).is_none()
 }
 
 /// Start (or restart) the tutorial.
@@ -357,6 +374,30 @@ fn playing_ultrasound_at_1_1(state: AppState) -> bool {
     rate.is_some_and(crate::dsp::ultrasonic::is_ultrasonic_rate)
 }
 
+/// True while live listening sends the mic to the speakers unchanged and the
+/// mic's sample rate can hold sound above hearing range.
+fn listening_ultrasound_at_1_1(state: AppState) -> bool {
+    state.mic.listening().get_untracked()
+        && !state.mic.mute_output().get_untracked()
+        && !state.viewmode.hfr_enabled().get_untracked()
+        // Time expansion also plays live audio 1:1, but it has its own toast.
+        && state.playback.mode().get_untracked() == PlaybackMode::Normal
+        && crate::dsp::ultrasonic::is_ultrasonic_rate(state.mic.sample_rate().get_untracked())
+}
+
+/// Whether the card may show now: turned on, not shown yet this session,
+/// and no tutorial running.
+fn nudge_allowed(state: AppState) -> bool {
+    state.dialogs.hfr_nudge_enabled().get_untracked()
+        && !state.dialogs.hfr_nudge_shown().get_untracked()
+        && state.dialogs.hfr_tour_step().get_untracked().is_none()
+}
+
+fn show_nudge(state: AppState) {
+    state.dialogs.hfr_nudge_shown().set(true);
+    state.dialogs.hfr_nudge().set(true);
+}
+
 fn hide_nudge(state: AppState) {
     state.dialogs.hfr_nudge().set(false);
 }
@@ -369,24 +410,36 @@ pub fn HfrNudge() -> impl IntoView {
     // Show on the start of playback, once per session.
     Effect::new(move |was_playing: Option<bool>| {
         let playing = state.playback.is_playing().get();
-        if playing
-            && was_playing == Some(false)
-            && state.dialogs.hfr_nudge_enabled().get_untracked()
-            && !state.dialogs.hfr_nudge_shown().get_untracked()
-            && state.dialogs.hfr_tour_step().get_untracked().is_none()
-            && playing_ultrasound_at_1_1(state)
+        if playing && was_playing == Some(false) && nudge_allowed(state) && playing_ultrasound_at_1_1(state)
         {
-            state.dialogs.hfr_nudge_shown().set(true);
-            state.dialogs.hfr_nudge().set(true);
+            show_nudge(state);
         }
         playing
     });
 
-    // HFR turned on some other way, or another recording opened.
+    // Live listening: show when the speakers start getting the mic (Listen
+    // pressed, or unmuted), once per session; hide when that stops. The
+    // sample rate is part of the edge in case it arrives after the flag.
+    Effect::new(move |was_out: Option<bool>| {
+        let out = state.mic.listening().get()
+            && !state.mic.mute_output().get()
+            && state.mic.sample_rate().get() > 0;
+        if out && was_out == Some(false) && nudge_allowed(state) && listening_ultrasound_at_1_1(state) {
+            show_nudge(state);
+        } else if !out && was_out == Some(true) {
+            hide_nudge(state);
+        }
+        out
+    });
+
+    // HFR turned on some other way, or another recording opened. Starting
+    // to listen opens the live recording after the card shows, so a switch
+    // to the live recording leaves the card up.
     Effect::new(move |prev_idx: Option<Option<usize>>| {
         let idx = state.library.current_index().get();
         let hfr = state.viewmode.hfr_enabled().get();
-        if hfr || prev_idx.is_some_and(|p| p != idx) {
+        let to_live = idx.is_some() && idx == state.mic.live_file_idx().get_untracked();
+        if hfr || (prev_idx.is_some_and(|p| p != idx) && !to_live) {
             hide_nudge(state);
         }
         idx
@@ -433,7 +486,9 @@ pub fn HfrNudge() -> impl IntoView {
                 <p class="hfr-nudge-text">{NUDGE_TEXT}</p>
                 <div class="hfr-nudge-actions">
                     <button class="hfr-nudge-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
-                    <button class="hfr-nudge-btn" on:click=show_me>{TOUR_NAME}</button>
+                    <Show when=move || tour_available(state)>
+                        <button class="hfr-nudge-btn" on:click=show_me>{TOUR_NAME}</button>
+                    </Show>
                     <button class="hfr-nudge-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
                 </div>
             </div>

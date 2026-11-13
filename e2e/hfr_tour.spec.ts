@@ -84,6 +84,35 @@ test.describe("HFR card and tutorial", () => {
     await expect(card).toHaveCount(0);
   });
 
+  test("card shows during 1:1 live listening, without the tutorial", async ({ page }) => {
+    await page.addInitScript(() => localStorage.removeItem("oversample_hfr_nudge_enabled"));
+    // Synthetic mic at 256 kHz: the real listen pipeline, no hardware.
+    await page.goto("/#synthtest-pulses-256");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    const card = page.locator(".hfr-nudge");
+    await expect(card).toBeVisible({ timeout: 25_000 });
+    await expect(card).toContainText("Playing 1:1");
+    // The tutorial ends on pressing Play, so it is unavailable while listening.
+    await expect(card.getByRole("button", { name: "HFR tutorial" })).toHaveCount(0);
+    await page.getByTitle("Settings", { exact: true }).click();
+    const tutorial = page.locator(".setting-button", { hasText: "HFR tutorial" });
+    await expect(tutorial).toBeDisabled();
+    await expect(tutorial).toHaveAttribute("title", "Stop listening first");
+
+    await card.getByRole("button", { name: "Turn on HFR" }).click();
+    await expect(card).toHaveCount(0);
+    await expect(hfrOn(page)).toHaveCount(1);
+  });
+
+  test("live card closes when listening stops", async ({ page }) => {
+    await page.addInitScript(() => localStorage.removeItem("oversample_hfr_nudge_enabled"));
+    await page.goto("/#synthtest-pulses-256");
+    const card = page.locator(".hfr-nudge");
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await page.evaluate(() => (window as unknown as { __synthStop: () => void }).__synthStop());
+    await expect(card).toHaveCount(0);
+  });
+
   test("no card for a 48 kHz recording", async ({ page }) => {
     await openWav(page, 48_000);
     await page.locator(".play-main-btn").click();

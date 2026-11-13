@@ -9463,3 +9463,17 @@ button.canvas-overflow-action-btn.disabled {
     outline: 2px solid #7f9cf5;
     outline-offset: 2px;
 }
+
+/* Settings: a checkbox label long enough to wrap. Wrapping keeps the box at
+   the right edge, in line with the other Settings checkboxes. */
+.setting-label.wraps {
+    flex-shrink: 1;
+    min-width: 0;
+    text-wrap: balance;
+}
+/* Settings: a value shown just left of its checkbox ("This recording only"). */
+.setting-value-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}

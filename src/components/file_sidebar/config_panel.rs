@@ -127,10 +127,18 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                 {move || state.library.current_index().get().map(|idx| {
                     let own = state.current_file_lowest_bat_hz().is_some();
                     view! {
+                        // Label left, box right, like the other checkboxes; the
+                        // recording's own value sits beside the box.
                         <div class="setting-row" title=FILE_BAT_TIP>
-                            <label class="setting-label">
+                            <label class="setting-label" for="file-bat-own">{FILE_BAT_LABEL}</label>
+                            <span class="setting-value-check">
+                                <span class="setting-value">
+                                    {move || own.then(|| format!("{:.0} kHz", file_bat_khz.get()))}
+                                </span>
                                 <input
+                                    id="file-bat-own"
                                     type="checkbox"
+                                    class="setting-checkbox"
                                     prop:checked=own
                                     on:change=move |ev| {
                                         let on = event_target_checked(&ev);
@@ -138,10 +146,6 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                                         state.set_file_lowest_bat_hz(idx, hz);
                                     }
                                 />
-                                " "{FILE_BAT_LABEL}
-                            </label>
-                            <span class="setting-value">
-                                {move || own.then(|| format!("{:.0} kHz", file_bat_khz.get()))}
                             </span>
                         </div>
                         {own.then(|| view! {
@@ -167,33 +171,29 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         })}
                     }
                 })}
-                // Box first, as in "This recording only": the label is too
-                // long to share a line with a box at the right edge.
+                // The label wraps (see .setting-label.wraps) so the box can
+                // stay at the right edge in a narrow sidebar.
                 <div class="setting-row">
-                    <label class="setting-label">
-                        <input
-                            id="hfr-nudge-enabled"
-                            type="checkbox"
-                            class="setting-checkbox"
-                            prop:checked=move || state.dialogs.hfr_nudge_enabled().get()
-                            on:change=move |ev| {
-                                let on = event_target_checked(&ev);
-                                state.dialogs.hfr_nudge_enabled().set(on);
-                                crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, on);
-                            }
-                        />
-                        " "{crate::components::hfr_tour::NUDGE_SETTING}
+                    <label class="setting-label wraps" for="hfr-nudge-enabled">
+                        {crate::components::hfr_tour::NUDGE_SETTING}
                     </label>
+                    <input
+                        id="hfr-nudge-enabled"
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.dialogs.hfr_nudge_enabled().get()
+                        on:change=move |ev| {
+                            let on = event_target_checked(&ev);
+                            state.dialogs.hfr_nudge_enabled().set(on);
+                            crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, on);
+                        }
+                    />
                 </div>
                 <div class="setting-row">
                     <button
                         class="setting-button"
                         disabled=move || !crate::components::hfr_tour::tour_available(state)
-                        title=move || if crate::components::hfr_tour::tour_available(state) {
-                            ""
-                        } else {
-                            crate::components::hfr_tour::TOUR_NEEDS_FILE
-                        }
+                        title=move || crate::components::hfr_tour::tour_unavailable_reason(state).unwrap_or("")
                         on:click=move |_| crate::components::hfr_tour::start_tour(state)
                     >{crate::components::hfr_tour::TOUR_NAME}</button>
                 </div>
