@@ -644,10 +644,17 @@ fn field_index(field: TextField) -> usize {
     TextField::ALL.iter().position(|&f| f == field).unwrap_or(0)
 }
 
+/// Whitespace as the Python reference's `str.isspace` sees it: Unicode white
+/// space plus the ASCII information separators U+001C to U+001F, which
+/// Rust's `char::is_whitespace` does not count.
+fn is_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
 /// Splits text into clauses at line breaks, `;`, `!`, `?`, and at `.` when
-/// whitespace or the end of the text follows it. "44.100 Hz" and "31,9 kHz"
-/// stay in one clause. Blank clauses are dropped, so clause numbers count
-/// only clauses with text.
+/// whitespace (as [`is_space`] defines it) or the end of the text follows it.
+/// "44.100 Hz" and "31,9 kHz" stay in one clause. Blank clauses are dropped,
+/// so clause numbers count only clauses with text.
 fn clause_spans(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -655,7 +662,7 @@ fn clause_spans(text: &str) -> Vec<(usize, usize)> {
     while let Some((i, ch)) = chars.next() {
         let split = match ch {
             '\r' | '\n' | ';' | '!' | '?' => true,
-            '.' => chars.peek().is_none_or(|&(_, next)| next.is_whitespace()),
+            '.' => chars.peek().is_none_or(|&(_, next)| is_space(next)),
             _ => false,
         };
         if split {
@@ -664,7 +671,7 @@ fn clause_spans(text: &str) -> Vec<(usize, usize)> {
         }
     }
     out.push((start, text.len()));
-    out.retain(|&(s, e)| !text[s..e].trim().is_empty());
+    out.retain(|&(s, e)| !text[s..e].chars().all(is_space));
     out
 }
 
@@ -1779,6 +1786,18 @@ mod tests {
             clauses,
             ["Set at 31,9 kHz", "Rate 44.100 Hz", " next", " ok", " end"]
         );
+    }
+
+    #[test]
+    fn ascii_separators_count_as_whitespace_in_clauses() {
+        // U+001C after "." ends the clause, as in the Python reference, so
+        // the time-expansion wording is in another clause and level A stays.
+        let s = "Heterodyne.\u{1c}Time expansion x10";
+        let clauses: Vec<&str> = clause_spans(s).iter().map(|&(a, b)| &s[a..b]).collect();
+        assert_eq!(clauses, ["Heterodyne", "\u{1c}Time expansion x10"]);
+        assert_eq!(analyze(&remarks(s), Some(44100)).level, A);
+        // A clause of only these separators is blank.
+        assert_eq!(clause_spans("a;\u{1d}\u{1f} ;b").len(), 2);
     }
 
     #[test]
