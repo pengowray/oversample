@@ -1361,12 +1361,14 @@ fn cut_around(
 }
 
 /// The clause around `span`, cut to at most [`EXCERPT_MAX_CHARS`] characters
-/// at word boundaries, with `…` where text was cut. `span` must be at most
-/// [`EXCERPT_MAX_CHARS`] characters, as [`quoted_match`] makes it.
+/// at word boundaries, with `…` where text was cut. White space at either
+/// end, as [`is_space`] defines it, is left out, and cuts snap to the same
+/// white space. `span` must be at most [`EXCERPT_MAX_CHARS`] characters, as
+/// [`quoted_match`] makes it.
 fn excerpt(text: &str, clause: (usize, usize), span: (usize, usize)) -> String {
     let raw = &text[clause.0..clause.1];
-    let start = clause.0 + (raw.len() - raw.trim_start().len());
-    let end = clause.0 + raw.trim_end().len();
+    let start = clause.0 + (raw.len() - raw.trim_start_matches(is_space).len());
+    let end = clause.0 + raw.trim_end_matches(is_space).len();
     if text[start..end].chars().count() <= EXCERPT_MAX_CHARS {
         return text[start..end].to_string();
     }
@@ -1395,29 +1397,26 @@ fn excerpt(text: &str, clause: (usize, usize), span: (usize, usize)) -> String {
 /// starts within [`SNAP_CHARS`] and no later than `limit`.
 fn snap_forward(text: &str, at: usize, limit: usize) -> usize {
     let region = &text[at..limit];
-    let at_word_start = text[..at]
-        .chars()
-        .next_back()
-        .is_some_and(char::is_whitespace);
+    let at_word_start = text[..at].chars().next_back().is_some_and(is_space);
     let from = if at_word_start {
         0
     } else {
         match region
             .char_indices()
             .take(SNAP_CHARS + 1)
-            .find(|&(_, c)| c.is_whitespace())
+            .find(|&(_, c)| is_space(c))
         {
             Some((o, _)) => o,
             None => return at,
         }
     };
-    limit - region[from..].trim_start().len()
+    limit - region[from..].trim_start_matches(is_space).len()
 }
 
 /// Moves an end cut at `at` back to the end of the previous word, if one ends
 /// within [`SNAP_CHARS`] and after `limit`.
 fn snap_back(text: &str, at: usize, limit: usize) -> usize {
-    let next_is_space = text[at..].chars().next().is_some_and(char::is_whitespace);
+    let next_is_space = text[at..].chars().next().is_some_and(is_space);
     let region = &text[limit..at];
     let to = if next_is_space {
         region.len()
@@ -1426,13 +1425,13 @@ fn snap_back(text: &str, at: usize, limit: usize) -> usize {
             .char_indices()
             .rev()
             .take(SNAP_CHARS + 1)
-            .find(|&(_, c)| c.is_whitespace())
+            .find(|&(_, c)| is_space(c))
         {
             Some((o, _)) => o,
             None => return at,
         }
     };
-    limit + region[..to].trim_end().len()
+    limit + region[..to].trim_end_matches(is_space).len()
 }
 
 /// Widens a token span to the whole run of alphanumeric characters around
@@ -1951,6 +1950,31 @@ mod tests {
         assert_eq!(analyze(&remarks(s), Some(44100)).level, A);
         // A clause of only these separators is blank.
         assert_eq!(clause_spans("a;\u{1d}\u{1f} ;b").len(), 2);
+    }
+
+    #[test]
+    fn excerpts_leave_out_ascii_separators_at_their_ends() {
+        // The excerpt leaves out the U+001F that starts the clause after
+        // ".", and a U+001E at the end.
+        let hint = infer_heterodyne_hint(&remarks("Note.\x1fHeterodyne"), None).unwrap();
+        assert_eq!(hint.excerpt, "Heterodyne");
+        let hint = infer_heterodyne_hint(&remarks("Heterodyne 45 kHz\x1e"), None).unwrap();
+        assert_eq!(hint.excerpt, "Heterodyne 45 kHz");
+
+        // A long clause with U+001F between its words is cut between words,
+        // with no U+001F next to the `…`.
+        let s = format!("{}heterodyne", "words\x1f".repeat(30));
+        let hint = infer_heterodyne_hint(&remarks(&s), None).unwrap();
+        assert_eq!(
+            hint.excerpt,
+            format!("…{}heterodyne", "words\x1f".repeat(11))
+        );
+        let s = format!("heterodyne{}", "\x1fwords".repeat(30));
+        let hint = infer_heterodyne_hint(&remarks(&s), None).unwrap();
+        assert_eq!(
+            hint.excerpt,
+            format!("heterodyne{}…", "\x1fwords".repeat(11))
+        );
     }
 
     #[test]
