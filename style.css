@@ -1838,6 +1838,24 @@ body.sidebar-resizing {
 .metadata-markdown ol {
     padding-left: calc((var(--marker-digits, 1) + 1.5) * 1ch);
 }
+/* From the fourth list level down, each level is indented only 8px and its
+   markers sit at the start of the item's first line, so the indent no longer
+   grows with the marker. markdown.rs keeps up to eight levels, and eight
+   levels of "2019." with their own indents need about 320px, which ran off
+   the panel's 247px at 375 px. Wrapped lines start under the marker, not
+   under the text. A loose item's first paragraph is inline, so that its text
+   stays on the marker's line, and the block after it gets the gap that the
+   paragraph's margin gives on the first three levels. */
+.metadata-markdown li li li :is(ul, ol) {
+    list-style-position: inside;
+    padding-left: 8px;
+}
+.metadata-markdown li li li :is(ul, ol) > li > p:first-child {
+    display: inline;
+}
+.metadata-markdown li li li :is(ul, ol) > li > p:first-child + * {
+    margin-top: 3px;
+}
 .metadata-markdown li + li {
     margin-top: 3px;
 }
