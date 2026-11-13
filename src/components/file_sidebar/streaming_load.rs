@@ -146,40 +146,45 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         display_dc,
     } = f;
     let id = crate::state::next_file_id();
+    let mut new_file = LoadedFile {
+        id,
+        name,
+        audio,
+        spectrogram,
+        preview: Some(preview),
+        overview_image: None,
+        site_metadata: None,
+        heterodyne_hint: None,
+        species_range: None,
+        xc_hashes: None,
+        is_demo: false,
+        is_recording: false,
+        is_live_listen: false,
+        settings: FileSettings::default(),
+        add_order: 0,
+        last_modified_ms: None,
+        identity: None,
+        file_handle: Some(FileHandle::WebFile(file)),
+        cached_peak_db,
+        cached_full_peak_db: None,
+        read_only: false,
+        had_sidecar: false,
+        verify_outcome: crate::state::VerifyOutcome::Pending,
+        all_hashes_verified: false,
+        wav_markers,
+        loading_id: Some(load_id),
+        min_display_freq: None,
+        max_display_freq: None,
+    };
+    // A local file's GUANO can name the species.
+    new_file.species_range = crate::species_check::file_finding(&new_file);
     let file_index;
     {
         let mut idx = 0;
         state.library.files().update(|files| {
             idx = files.len();
-            files.push(LoadedFile {
-                id,
-                name,
-                audio,
-                spectrogram,
-                preview: Some(preview),
-                overview_image: None,
-                site_metadata: None,
-                heterodyne_hint: None,
-                xc_hashes: None,
-                is_demo: false,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: Some(FileHandle::WebFile(file)),
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers,
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
+            new_file.add_order = idx;
+            files.push(new_file);
         });
         // Set current_index OUTSIDE the files().update() closure — they are
         // siblings in the `library` store; an inner set can't acquire the write

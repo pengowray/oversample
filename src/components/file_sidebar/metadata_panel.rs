@@ -1,4 +1,4 @@
-use crate::heterodyne::{HeterodyneHint, LineRole};
+use crate::heterodyne::{LineRole, NoteLine};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
 use crate::types::AudioFormat;
@@ -779,25 +779,44 @@ fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
     ))
 }
 
-/// The note under the Sample rate row of a file whose site metadata says, or
-/// suggests, that it was recorded from a heterodyne bat detector's audio output
-/// (`crate::heterodyne`). The finding and its consequence are in the warning
-/// colour; the evidence, and every line of a level C hint, are muted. When the
-/// detector's tuning is known, the line on how to read the frequencies is in
-/// the panel's normal text colour.
-fn heterodyne_note(hint: &HeterodyneHint) -> impl IntoView {
-    let lines = crate::heterodyne::note_lines(hint)
-        .into_iter()
-        .map(|line| {
-            let class = match line.role {
-                LineRole::Warning => "heterodyne-note-warning",
-                LineRole::Detail => "heterodyne-note-detail",
-                LineRole::Plain => "heterodyne-note-plain",
-            };
-            view! { <div class=class>{line.text}</div> }
+/// The notes under the Sample rate row, after the time-expansion note
+/// (`crate::species_check::sample_rate_notes`):
+/// - the heterodyne note, for a file whose site metadata says, or suggests,
+///   that it was recorded from a heterodyne bat detector's audio output
+///   (`crate::heterodyne`), with a species line added at level C;
+/// - otherwise the species note, for a file whose sample rate is too low for
+///   its species' echolocation calls.
+///
+/// A finding and its consequence are in the warning colour; evidence, and
+/// every line of a level C hint or of a species note that names only
+/// possibilities, are muted. When the detector's tuning is known, the line on
+/// how to read the frequencies is in the panel's normal text colour.
+fn sample_rate_notes(f: &crate::state::LoadedFile) -> impl IntoView {
+    let notes = crate::species_check::sample_rate_notes(
+        f.heterodyne_hint.as_ref(),
+        f.species_range.as_ref(),
+    );
+    // `class` is the note's class; each line's class adds its role to it.
+    let note = |class: &'static str, lines: Vec<NoteLine>| {
+        (!lines.is_empty()).then(|| {
+            let lines = lines
+                .into_iter()
+                .map(|line| {
+                    let role = match line.role {
+                        LineRole::Warning => "warning",
+                        LineRole::Detail => "detail",
+                        LineRole::Plain => "plain",
+                    };
+                    view! { <div class=format!("{class}-{role}")>{line.text}</div> }
+                })
+                .collect_view();
+            view! { <div class=format!("metadata-note {class}")>{lines}</div> }
         })
-        .collect_view();
-    view! { <div class="metadata-note heterodyne-note">{lines}</div> }
+    };
+    view! {
+        {note("heterodyne-note", notes.heterodyne)}
+        {note("species-range-note", notes.species)}
+    }
 }
 
 /// Open the right sidebar on the Info tab, as the "Heterodyne recording" badge
@@ -1634,7 +1653,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {time_expansion_note(meta).map(|note| view! {
                                     <div class="metadata-note">{note}</div>
                                 })}
-                                {f.heterodyne_hint.as_ref().map(heterodyne_note)}
+                                {sample_rate_notes(f)}
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}

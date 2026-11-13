@@ -297,40 +297,46 @@ pub(crate) async fn load_named_bytes(
     });
 
     let new_id = crate::state::next_file_id();
+    let mut file = LoadedFile {
+        id: new_id,
+        name,
+        audio,
+        spectrogram: placeholder_spec,
+        preview: Some(preview),
+        overview_image: None,
+        site_metadata,
+        heterodyne_hint,
+        species_range: None,
+        xc_hashes,
+        is_demo,
+        is_recording: false,
+        is_live_listen: false,
+        settings: FileSettings::default(),
+        add_order: 0,
+        last_modified_ms: None,
+        identity: None,
+        file_handle: None,
+        cached_peak_db,
+        cached_full_peak_db: None,
+        read_only: false,
+        had_sidecar: false,
+        verify_outcome: crate::state::VerifyOutcome::Pending,
+        all_hashes_verified: false,
+        wav_markers,
+        loading_id: Some(load_id),
+        min_display_freq: None,
+        max_display_freq: None,
+    };
+    // Needs the built file: the species is looked up as the typical-calls
+    // strip does, by the recording's country as well as its name.
+    file.species_range = crate::species_check::file_finding(&file);
     let file_index;
     {
         let mut idx = 0;
         state.library.files().update(|files| {
             idx = files.len();
-            files.push(LoadedFile {
-                id: new_id,
-                name,
-                audio,
-                spectrogram: placeholder_spec,
-                preview: Some(preview),
-                overview_image: None,
-                site_metadata,
-                heterodyne_hint,
-                xc_hashes,
-                is_demo,
-                is_recording: false,
-                is_live_listen: false,
-                settings: FileSettings::default(),
-                add_order: idx,
-                last_modified_ms: None,
-                identity: None,
-                file_handle: None,
-                cached_peak_db,
-                cached_full_peak_db: None,
-                read_only: false,
-                had_sidecar: false,
-                verify_outcome: crate::state::VerifyOutcome::Pending,
-                all_hashes_verified: false,
-                wav_markers,
-                loading_id: Some(load_id),
-                min_display_freq: None,
-                max_display_freq: None,
-            });
+            file.add_order = idx;
+            files.push(file);
         });
         // NB: must be OUTSIDE the files().update() closure — current_index and
         // files are siblings in the `library` store, so setting one while the

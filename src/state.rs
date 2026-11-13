@@ -300,6 +300,10 @@ pub struct LoadedFile {
     /// `site_metadata` nor the time expansion changes after that; recompute
     /// this if either ever does.
     pub heterodyne_hint: Option<crate::heterodyne::HeterodyneHint>,
+    /// Whether the file's sample rate is too low for the echolocation calls
+    /// of the species it is labelled with (`crate::species_check::file_finding`).
+    /// Computed once when the file is built, like `heterodyne_hint`.
+    pub species_range: Option<crate::species_check::SpeciesRangeFinding>,
     /// Hash data from XC sidecar (for verification against computed identity).
     pub xc_hashes: Option<SidecarHashes>,
     /// Loaded from the bat-demo-sounds archive (not directly from XC or user's disk).

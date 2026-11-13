@@ -322,7 +322,7 @@ pub fn axis_call_suffix(freq_hz: f64, tuned_hz: u32) -> String {
 /// A positive frequency in Hz as kHz, rounded to at most `decimals` (1 or 2)
 /// decimal places, with no trailing zeros: 21_900 gives "21.9", 40_000 gives
 /// "40" and, with 2 decimals, 31_950 gives "31.95".
-fn format_khz(hz: i64, decimals: u32) -> String {
+pub(crate) fn format_khz(hz: i64, decimals: u32) -> String {
     let step = 10_i64.pow(3 - decimals);
     let units = (hz.max(0) + step / 2) / step;
     let per_khz = 10_i64.pow(decimals);

@@ -4983,12 +4983,20 @@ a.open-link-btn {
 .heterodyne-note {
     overflow-wrap: anywhere;
 }
+/* The species note takes the heterodyne note's place for a file whose sample
+   rate is too low for its species' echolocation calls and which has no
+   heterodyne hint (src/species_check.rs), and is styled the same way. Its
+   lines are muted, except that a probable x10 time expansion takes the amber:
+   all 10 such Xeno-canto files were time-expanded. Its text has no long
+   words, so it wraps normally. */
 /* Each line is one statement and most wrap in the panel, so a small gap shows
    where one ends and the next begins. */
-.heterodyne-note > div + div {
+.heterodyne-note > div + div,
+.species-range-note > div + div {
     margin-top: 2px;
 }
-.heterodyne-note-warning {
+.heterodyne-note-warning,
+.species-range-note-warning {
     color: #fc8;
 }
 /* With the detector's tuning known, the last line says how to read the file's
