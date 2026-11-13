@@ -46,17 +46,17 @@ pub fn Toolbar() -> impl IntoView {
         files.get(idx).map(|f| f.name.clone())
     });
 
-    // Derived: XC metadata of current file
-    let xc_metadata = Memo::new(move |_| {
+    // Derived: source-site metadata of current file
+    let site_metadata = Memo::new(move |_| {
         let files = state.library.files().get();
         let idx = state.library.current_index().get()?;
-        files.get(idx).and_then(|f| f.xc_metadata.clone())
+        files.get(idx).and_then(|f| f.site_metadata.clone())
     });
 
     // Derived: CC license info (short label)
     let cc_license = Memo::new(move |_| {
-        let meta = xc_metadata.get()?;
-        let lic = get_xc_field(&meta, "License")?;
+        let meta = site_metadata.get()?;
+        let lic = get_xc_field(&meta.fields, "License")?;
         parse_cc_license(&lic)
     });
 
@@ -78,8 +78,8 @@ pub fn Toolbar() -> impl IntoView {
         let groups = file_groups::compute_all_groups(&names, &files);
         let gi = groups.get(idx)?;
 
-        let cc_info = f.xc_metadata.as_ref().and_then(|meta| {
-            let lic = get_xc_field(meta, "License")?;
+        let cc_info = f.site_metadata.as_ref().and_then(|meta| {
+            let lic = get_xc_field(&meta.fields, "License")?;
             let label = parse_cc_license(&lic)?;
             Some(label)
         });
@@ -627,7 +627,10 @@ pub fn Toolbar() -> impl IntoView {
 
             // CC License modal
             {move || show_cc_modal.get().then(|| {
-                let meta = xc_metadata.get().unwrap_or_default();
+                let (meta, site) = match site_metadata.get() {
+                    Some(m) => (m.fields, Some(m.site)),
+                    None => (Vec::new(), None),
+                };
                 let field = |key: &str| get_xc_field(&meta, key);
                 let species = field("Species").unwrap_or_default();
                 let sci_name = field("Scientific name").unwrap_or_default();
@@ -650,15 +653,19 @@ pub fn Toolbar() -> impl IntoView {
                 } else {
                     country
                 };
-                let (is_demo, source) = {
+                let is_demo = {
                     let files = state.library.files().get();
                     let idx = state.library.current_index().get();
                     idx.and_then(|i| files.get(i))
-                        .map(|f| (f.is_demo, f.metadata_source().to_string()))
-                        .unwrap_or_else(|| (false, crate::state::XC_SOURCE_NAME.to_string()))
+                        .map(|f| f.is_demo)
+                        .unwrap_or(false)
                 };
+                // The "Open on <site>" link, when the file has a page URL.
                 // Non-breaking hyphen, so "Xeno-canto" stays on one line.
-                let open_label = format!("Open on {} \u{2197}", source.replace('-', "\u{2011}"));
+                let open_link = site.filter(|_| !url.is_empty()).map(|site| {
+                    let label = format!("Open on {} \u{2197}", site.name().replace('-', "\u{2011}"));
+                    (url, label)
+                });
 
                 view! {
                     <div class="modal-overlay" on:click=move |_| show_cc_modal.set(false)>
@@ -744,7 +751,7 @@ pub fn Toolbar() -> impl IntoView {
 
                                 // Links row
                                 <div class="cc-links">
-                                    {(!url.is_empty()).then(|| view! {
+                                    {open_link.map(|(url, open_label)| view! {
                                         <a class="cc-link-btn" href=url target="_blank" rel="noopener">{open_label}</a>
                                     })}
                                     <button class="cc-link-btn" on:click=move |e: web_sys::MouseEvent| {

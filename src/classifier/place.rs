@@ -84,7 +84,7 @@ pub fn file_place(file: &LoadedFile) -> Option<Place> {
         .guano
         .as_ref()
         .map(|g| g.fields.as_slice());
-    let xc = file.xc_metadata.as_deref();
+    let xc = file.site_metadata.as_ref().map(|m| m.fields.as_slice());
     let from_guano = guano.and_then(|g| {
         field(g, "Loc Position")
             .and_then(parse_lat_lon)
@@ -118,7 +118,7 @@ pub fn file_week(file: &LoadedFile) -> u32 {
         .guano
         .as_ref()
         .map(|g| g.fields.as_slice());
-    let xc = file.xc_metadata.as_deref();
+    let xc = file.site_metadata.as_ref().map(|m| m.fields.as_slice());
     guano
         .and_then(|g| field(g, "Timestamp"))
         .and_then(week_of_date)

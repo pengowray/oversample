@@ -13,6 +13,7 @@
 //! The `#XC<id>` URL-hash deep-link (app.rs) is separate: it searches the
 //! curated demo index, not the live API.
 
+use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::store_fields::*;
 use crate::state::AppState;
 use crate::xc_client::{
@@ -1394,9 +1395,8 @@ pub fn XcBrowser() -> impl IntoView {
                 let load_result = crate::components::file_sidebar::load_named_bytes(
                     dl.filename.clone(),
                     &dl.bytes,
-                    Some(dl.metadata),
+                    Some(SiteMetadata::new(SourceSite::XenoCanto, dl.metadata)),
                     dl.hashes,
-                    None,
                     None,
                     state,
                     load_id,

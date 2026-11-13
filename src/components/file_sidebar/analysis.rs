@@ -254,14 +254,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
         let file = idx.and_then(|i| files.get(i))?;
-        if !file.metadata_is_xc() {
-            return None;
-        }
-        file.xc_metadata
-            .as_ref()?
-            .iter()
-            .find(|(k, _)| k == "Quality")
-            .and_then(|(_, v)| xc_rating_letter(v))
+        file.site_metadata.as_ref()?.xc_rating()
     });
 
     let report_text = Memo::new(move |_| {
@@ -695,8 +688,8 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 &float_grid_results.get(),
             );
             let guano = f.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
-            let xc = f.xc_metadata.clone();
-            let m = device_hint::compare_to_metadata(&hints, xc.as_deref(), guano.as_deref());
+            let xc = f.site_metadata.as_ref().map(|m| m.fields.as_slice());
+            let m = device_hint::compare_to_metadata(&hints, xc, guano.as_deref());
             if !hints.is_empty() || !matches!(m, MetadataMatch::NoClaim) {
                 report.push_str("\nDevice hints\n");
                 for h in &hints {
@@ -1317,10 +1310,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     &float_grid_results.get(),
                 );
                 let guano = file.audio.metadata.guano.as_ref().map(|g| g.fields.clone());
-                let xc = file.xc_metadata.clone();
+                let xc = file.site_metadata.as_ref().map(|m| m.fields.as_slice());
                 let metadata_match = device_hint::compare_to_metadata(
                     &hints,
-                    xc.as_deref(),
+                    xc,
                     guano.as_deref(),
                 );
                 if hints.is_empty() && matches!(metadata_match, MetadataMatch::NoClaim) {
@@ -1817,27 +1810,4 @@ async fn yield_to_browser() {
         let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 0);
     });
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-}
-
-/// Xeno-canto's quality rating as a letter, when it is one of A to E.
-/// Xeno-canto sends "no score" for unrated recordings.
-fn xc_rating_letter(quality: &str) -> Option<char> {
-    let mut chars = quality.trim().chars();
-    let c = chars.next()?.to_ascii_uppercase();
-    (chars.next().is_none() && ('A'..='E').contains(&c)).then_some(c)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::xc_rating_letter;
-
-    #[test]
-    fn rating_letter_is_a_to_e_only() {
-        assert_eq!(xc_rating_letter("A"), Some('A'));
-        assert_eq!(xc_rating_letter(" e "), Some('E'));
-        assert_eq!(xc_rating_letter("no score"), None);
-        assert_eq!(xc_rating_letter("Research grade"), None);
-        assert_eq!(xc_rating_letter("F"), None);
-        assert_eq!(xc_rating_letter(""), None);
-    }
 }

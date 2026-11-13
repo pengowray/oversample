@@ -61,9 +61,10 @@ pub fn XcAnnotationExport(on_close: Callback<()>) -> impl IntoView {
         .get_untracked()
         .and_then(|idx| {
             state.library.files().with_untracked(|files| {
-                files
-                    .get(idx)
-                    .map(|f| (f.name.clone(), f.xc_metadata.clone()))
+                files.get(idx).map(|f| {
+                    let fields = f.site_metadata.as_ref().map(|m| m.fields.clone());
+                    (f.name.clone(), fields)
+                })
             })
         })
         .unwrap_or_default();

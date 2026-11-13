@@ -13,6 +13,7 @@
 //! it reads ten times too low. When a file carries P14424 we hand the factor
 //! to the loader, which reinterprets the samples at the true rate.
 
+use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::AppState;
 
 /// Host used for structured data and as the default for bare file titles.
@@ -547,10 +548,12 @@ async fn load_file_inner(state: AppState, file: &WikiFile, load_id: u64) -> Resu
     crate::components::file_sidebar::load_named_bytes(
         file.name.clone(),
         &bytes,
-        Some(file.fields.clone()),
+        Some(SiteMetadata::new(
+            SourceSite::WikimediaCommons,
+            file.fields.clone(),
+        )),
         None,
         file.time_expansion,
-        Some("Wikimedia Commons".to_string()),
         state,
         load_id,
         false,

@@ -338,10 +338,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             .unwrap_or(false);
 
                         // Build badge data
-                        let cc_info = f.xc_metadata.as_ref().and_then(|meta| {
-                            let lic = file_badges::get_xc_field(meta, "License")?;
+                        let cc_info = f.site_metadata.as_ref().and_then(|meta| {
+                            let lic = file_badges::get_xc_field(&meta.fields, "License")?;
                             let label = file_badges::parse_cc_license(&lic)?;
-                            let attr = file_badges::get_xc_field(meta, "Attribution");
+                            let attr = file_badges::get_xc_field(&meta.fields, "Attribution");
                             let tooltip = if let Some(attr_text) = attr {
                                 format!("Creative Commons {} \u{2014} {}", label, attr_text)
                             } else {

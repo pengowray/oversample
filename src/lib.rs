@@ -17,6 +17,7 @@ pub mod project_store;
 pub mod scope;
 pub mod search_client;
 pub mod settings;
+pub mod source_site;
 pub mod state;
 pub mod tauri_bridge;
 pub mod test_hook;

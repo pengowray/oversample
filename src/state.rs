@@ -290,14 +290,10 @@ pub struct LoadedFile {
     /// Higher-resolution overview image computed after full spectrogram is ready.
     /// Falls back to `preview` when not yet available.
     pub overview_image: Option<PreviewImage>,
-    /// Label/value metadata from whichever external source this file came
-    /// from - Xeno-Canto originally, now Wikimedia Commons too. Keys are
-    /// human-readable labels ("Species", "License", ...) and are matched by
-    /// name by the metadata panel, device hinting, and bat-book auto-resolve.
-    pub xc_metadata: Option<Vec<(String, String)>>,
-    /// Heading `xc_metadata` is shown under. `None` means Xeno-Canto; read it
-    /// through `metadata_source()`.
-    pub source_label: Option<String>,
+    /// The site this file was loaded from (Xeno-canto, iNaturalist, Wikimedia
+    /// Commons, ...) with the label/value metadata it gave. `None` for local
+    /// files, recordings, and demos that have no metadata sidecar.
+    pub site_metadata: Option<crate::source_site::SiteMetadata>,
     /// Hash data from XC sidecar (for verification against computed identity).
     pub xc_hashes: Option<SidecarHashes>,
     /// Loaded from the bat-demo-sounds archive (not directly from XC or user's disk).
@@ -341,19 +337,10 @@ pub struct LoadedFile {
     pub max_display_freq: Option<f64>,
 }
 
-/// Name of the source a file's `xc_metadata` came from when `source_label` is unset.
-pub const XC_SOURCE_NAME: &str = "Xeno-canto";
-
 impl LoadedFile {
-    /// Name of the site or archive `xc_metadata` came from ("Xeno-canto",
-    /// "iNaturalist", "Wikimedia Commons", ...).
-    pub fn metadata_source(&self) -> &str {
-        self.source_label.as_deref().unwrap_or(XC_SOURCE_NAME)
-    }
-
-    /// True when `xc_metadata` came from Xeno-canto.
-    pub fn metadata_is_xc(&self) -> bool {
-        self.metadata_source() == XC_SOURCE_NAME
+    /// The site this file was loaded from, when it came from one.
+    pub fn site(&self) -> Option<&crate::source_site::SourceSite> {
+        self.site_metadata.as_ref().map(|m| &m.site)
     }
 
     /// Get the recording start time as milliseconds since Unix epoch, if available.

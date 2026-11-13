@@ -24,6 +24,7 @@ use crate::search_client::{
     self as search, Facets, Filter, RecSort, RecordingItem, SearchError, SpeciesHit, SpeciesSort,
     DEFAULT_KM, GROUPS, MIN_RATES, RADII_KM,
 };
+use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::store_fields::*;
 use crate::state::AppState;
 use crate::web_util::sleep_ms;
@@ -370,13 +371,13 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
             let bytes = fetch_bytes(&url).await?;
             let name = file_name(&item);
             let load_id = state.loading_start(&label);
+            let site = SourceSite::from_search_key(&item.source);
             let result = load_named_bytes(
                 name,
                 &bytes,
-                Some(item_metadata(&item)),
+                Some(SiteMetadata::new(site, item_metadata(&item))),
                 None,
                 item.time_expansion,
-                Some(search::source_label(&item.source).to_string()),
                 state,
                 load_id,
                 false,
@@ -456,9 +457,8 @@ async fn load_xc(state: AppState, id: u64) -> Result<(), String> {
     let result = load_named_bytes(
         dl.filename.clone(),
         &dl.bytes,
-        Some(dl.metadata),
+        Some(SiteMetadata::new(SourceSite::XenoCanto, dl.metadata)),
         dl.hashes,
-        None,
         None,
         state,
         load_id,

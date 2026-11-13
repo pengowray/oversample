@@ -1,3 +1,4 @@
+use crate::source_site::SourceSite;
 use serde::Deserialize;
 
 /// How common a species is in a given region.
@@ -359,9 +360,8 @@ pub struct AutoResolved {
 pub enum PlaceSource {
     /// Its GPS position (GUANO or source-site coordinates), looked up offline.
     Gps { lat: f32, lon: f32 },
-    /// The "Country" field of the site the recording came from, named by
-    /// `source` ("Xeno-canto", "iNaturalist", ...).
-    Metadata { source: String },
+    /// The "Country" field of the site the recording came from.
+    Metadata { site: SourceSite },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -382,7 +382,9 @@ impl RecordingPlace {
             &PlaceSource::Gps { lat, lon } => {
                 format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
             }
-            PlaceSource::Metadata { source } => format!("From {source} country: {}", self.country),
+            PlaceSource::Metadata { site } => {
+                format!("From {} country: {}", site.name(), self.country)
+            }
         }
     }
 }

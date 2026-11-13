@@ -1,6 +1,7 @@
 use crate::audio::loader::load_audio;
 use crate::canvas::spectral_store;
 use crate::dsp::fft::compute_preview;
+use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::store_fields::*;
 use crate::state::{AppState, FileSettings, LoadedFile};
 use crate::types::{AudioFormat, SpectrogramData};
@@ -144,8 +145,7 @@ pub(super) async fn read_and_load_file(
         return Err(msg);
     }
     let bytes = read_file_bytes(&file).await?;
-    let result =
-        load_named_bytes(name, &bytes, None, None, None, None, state, load_id, false).await;
+    let result = load_named_bytes(name, &bytes, None, None, None, state, load_id, false).await;
     if result.is_ok() {
         finalize_loaded_file(state, last_modified_ms);
     }
@@ -154,19 +154,17 @@ pub(super) async fn read_and_load_file(
 
 /// Decode `bytes` and add them to the library as a new file.
 ///
-/// `xc_metadata` is the generic external-source label/value bag shown in the
-/// metadata panel (Xeno-Canto, Wikimedia Commons, ...) and `source_label` is
-/// the heading it appears under; `None` means Xeno-Canto, the original source.
+/// `site_metadata` is the site the file came from (Xeno-canto, Wikimedia
+/// Commons, ...) with its label/value rows for the metadata panel.
 /// `time_expansion` reinterprets the decoded samples at their true rate for
 /// recordings stored time-expanded (see `AudioData::apply_time_expansion`); `None`
 /// uses the factor the file itself states, if any.
 pub(crate) async fn load_named_bytes(
     name: String,
     bytes: &[u8],
-    xc_metadata: Option<Vec<(String, String)>>,
+    site_metadata: Option<SiteMetadata>,
     xc_hashes: Option<crate::state::SidecarHashes>,
     time_expansion: Option<f64>,
-    source_label: Option<String>,
     state: AppState,
     load_id: u64,
     is_demo: bool,
@@ -305,8 +303,7 @@ pub(crate) async fn load_named_bytes(
                 spectrogram: placeholder_spec,
                 preview: Some(preview),
                 overview_image: None,
-                xc_metadata,
-                source_label,
+                site_metadata,
                 xc_hashes,
                 is_demo,
                 is_recording: false,
@@ -748,7 +745,7 @@ pub(crate) async fn load_single_demo(
     load_id: u64,
 ) -> Result<(), String> {
     // Fetch XC metadata sidecar if available
-    let (xc_metadata, xc_hashes) = if let Some(meta_file) = &entry.metadata_file {
+    let (site_metadata, xc_hashes) = if let Some(meta_file) = &entry.metadata_file {
         let encoded = js_sys::encode_uri_component(meta_file);
         let meta_url = format!(
             "{}/sounds/{}",
@@ -764,7 +761,11 @@ pub(crate) async fn load_single_demo(
                     } else {
                         Some(hashes)
                     };
-                    (Some(parse_xc_metadata(&json)), hashes)
+                    let fields = parse_xc_metadata(&json);
+                    (
+                        Some(SiteMetadata::new(SourceSite::XenoCanto, fields)),
+                        hashes,
+                    )
                 }
                 Err(e) => {
                     log::warn!("Failed to parse XC metadata for {}: {}", entry.filename, e);
@@ -791,9 +792,8 @@ pub(crate) async fn load_single_demo(
     load_named_bytes(
         entry.filename.clone(),
         &bytes,
-        xc_metadata,
+        site_metadata,
         xc_hashes,
-        None,
         None,
         state,
         load_id,
@@ -873,7 +873,6 @@ pub(crate) async fn load_native_file(
     load_named_bytes(
         name.clone(),
         &bytes,
-        None,
         None,
         None,
         None,

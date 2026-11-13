@@ -1215,7 +1215,10 @@ fn import_annota_json(state: AppState, text: &str) {
     let (name, metadata) = state.library.files().with_untracked(|files| {
         files
             .get(file_idx)
-            .map(|f| (f.name.clone(), f.xc_metadata.clone()))
+            .map(|f| {
+                let fields = f.site_metadata.as_ref().map(|m| m.fields.clone());
+                (f.name.clone(), fields)
+            })
             .unwrap_or_default()
     });
     let open_nr = crate::components::file_sidebar::xc_annotation_export::xc_number_of(

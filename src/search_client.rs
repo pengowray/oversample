@@ -504,18 +504,7 @@ pub fn country_name(code: &str) -> String {
 
 /// The short name of a source, for the source column.
 pub fn source_label(source: &str) -> &str {
-    match source {
-        "xc" => "Xeno-canto",
-        "inat" => "iNaturalist",
-        "rbins" => "RBINS",
-        "obsorg" => "Observation.org",
-        "borror" => "Borror Lab",
-        "humboldt" => "Humboldt Institute",
-        "commons" => "Wikimedia Commons",
-        "gbif" => "GBIF",
-        "demo" => "Oversample demos",
-        other => other,
-    }
+    crate::source_site::SourceSite::name_for_key(source)
 }
 
 #[cfg(test)]

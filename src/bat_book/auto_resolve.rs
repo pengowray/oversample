@@ -58,9 +58,10 @@ fn find_species_across_books(
 /// Extract species scientific name from file metadata.
 /// Tries XC "Scientific name" first, then GUANO Species|Manual, then Species|Auto.
 fn get_scientific_name(file: &LoadedFile) -> Option<String> {
-    // XC metadata
-    if let Some(meta) = &file.xc_metadata {
+    // Source-site metadata
+    if let Some(meta) = &file.site_metadata {
         if let Some(val) = meta
+            .fields
             .iter()
             .find(|(k, _)| k == "Scientific name")
             .map(|(_, v)| v.clone())
@@ -95,19 +96,20 @@ fn get_scientific_name(file: &LoadedFile) -> Option<String> {
 /// looked up offline. Of a country's name variants, the one the region map
 /// knows is used.
 fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
-    let xc = file
-        .xc_metadata
-        .as_ref()
-        .and_then(|m| m.iter().find(|(k, _)| k == "Country"))
-        .map(|(_, v)| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+    let from_site = file.site_metadata.as_ref().and_then(|m| {
+        let country = m
+            .fields
+            .iter()
+            .find(|(k, _)| k == "Country")
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())?;
+        Some((m.site.clone(), country))
+    });
     // A source-site country the region map doesn't know falls through to the
     // coordinates.
-    if let Some(country) = xc.filter(|c| country_to_region(c).is_some()) {
+    if let Some((site, country)) = from_site.filter(|(_, c)| country_to_region(c).is_some()) {
         return Some(RecordingPlace {
-            source: PlaceSource::Metadata {
-                source: file.metadata_source().to_string(),
-            },
+            source: PlaceSource::Metadata { site },
             country,
         });
     }

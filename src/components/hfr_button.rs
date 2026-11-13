@@ -155,12 +155,13 @@ fn file_species_source(state: AppState) -> Option<String> {
     let files = state.library.files().get_untracked();
     let idx = state.library.current_index().get_untracked()?;
     let file = files.get(idx)?;
-    if let Some(meta) = &file.xc_metadata {
+    if let Some(meta) = &file.site_metadata {
         if meta
+            .fields
             .iter()
             .any(|(k, v)| k == "Scientific name" && !v.is_empty())
         {
-            return Some(format!("{}: species", file.metadata_source()));
+            return Some(format!("{}: species", meta.site.name()));
         }
     }
     if let Some(guano) = &file.audio.metadata.guano {

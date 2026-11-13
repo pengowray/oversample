@@ -821,16 +821,18 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
         }
     }
 
-    // 3. Recording date (+ time) and upload date from the external source the
-    // file came from — Xeno-Canto, Wikimedia Commons, …
-    if let Some(xc) = &f.xc_metadata {
+    // 3. Recording date (+ time) and upload date from the site the file came
+    // from (Xeno-canto, Wikimedia Commons, ...).
+    if let Some(site_meta) = &f.site_metadata {
         let get = |key: &str| {
-            xc.iter()
+            site_meta
+                .fields
+                .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case(key))
                 .map(|(_, v)| v.clone())
                 .filter(|v| !v.trim().is_empty())
         };
-        let date_label = format!("{} date", f.metadata_source());
+        let date_label = format!("{} date", site_meta.site.name());
         match (get("Date"), get("Time")) {
             (Some(d), Some(t)) => rows.push((date_label, format!("{d}T{t}"))),
             (Some(d), None) => rows.push((date_label, d)),
@@ -1493,8 +1495,9 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                         } else {
                             ("0 B".to_string(), "File size".to_string())
                         };
-                        let xc_fields: Vec<_> = f.xc_metadata.clone().unwrap_or_default();
-                        let source_label = f.metadata_source().to_string();
+                        let (xc_fields, source_label) = f.site_metadata.as_ref()
+                            .map(|m| (m.fields.clone(), m.site.name().to_string()))
+                            .unwrap_or_default();
                         let has_xc = !xc_fields.is_empty();
                         let guano_fields: Vec<_> = meta.guano.as_ref()
                             .map(|g| g.fields.clone())
