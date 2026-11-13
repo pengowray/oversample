@@ -746,7 +746,7 @@ pub fn Toolbar() -> impl IntoView {
                                 // (Wikimedia Commons gives a short name instead).
                                 {license_href(&lic_url).map(|href| {
                                     let label = cc_license_full_name(&cc_label).unwrap_or_else(|| {
-                                        if cc_label.is_empty() { lic_url.clone() } else { format!("Creative Commons {cc_label}") }
+                                        if cc_label.is_empty() { lic_url.clone() } else { format!("{cc_label} license") }
                                     });
                                     view! {
                                         <div class="cc-license-link">

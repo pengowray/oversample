@@ -343,9 +343,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             let label = file_badges::parse_cc_license(&lic)?;
                             let attr = file_badges::get_xc_field(&meta.fields, "Attribution");
                             let tooltip = if let Some(attr_text) = attr {
-                                format!("Creative Commons {} \u{2014} {}", label, attr_text)
+                                format!("{label} license\n{attr_text}")
                             } else {
-                                format!("Creative Commons {}", label)
+                                format!("{label} license")
                             };
                             Some((label, tooltip))
                         });
