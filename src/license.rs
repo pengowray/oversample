@@ -200,12 +200,7 @@ pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     if port.is_some_and(|p| !is_cc_port(p) || version == "4.0") {
         return None;
     }
-    let published = if version == "1.0" {
-        CC_ELEMENTS_1_0
-    } else {
-        CC_ELEMENTS
-    };
-    if !published.contains(&elements.to_ascii_lowercase().as_str()) {
+    if !is_published(&elements.to_ascii_lowercase(), version, port) {
         return None;
     }
     let names = elements
@@ -231,9 +226,27 @@ pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     ))
 }
 
+/// Whether Creative Commons published the licence with these elements, in
+/// lower case as its addresses spell them ("by-nc"), in this version and port.
+fn is_published(elements: &str, version: &str, port: Option<&str>) -> bool {
+    match version {
+        "1.0" => CC_ELEMENTS_1_0.contains(&elements),
+        "2.0" if port.is_some_and(|p| p.eq_ignore_ascii_case("jp")) => {
+            CC_ELEMENTS.contains(&elements) || CC_ELEMENTS_2_0_JP.contains(&elements)
+        }
+        _ => CC_ELEMENTS.contains(&elements),
+    }
+}
+
 /// The licences Creative Commons published from version 2.0, by their
-/// elements as its addresses spell them. Each one starts with BY.
+/// elements as its addresses spell them. Each one starts with BY, except the
+/// 2.0 Japan licences in `CC_ELEMENTS_2_0_JP`.
 const CC_ELEMENTS: &[&str] = &["by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"];
+
+/// The 2.0 Japan licences without BY, which no other 2.0 port or later
+/// version has: ".../licenses/nc/2.0/jp/". Its NoDerivs-NonCommercial
+/// licence is "nd-nc"; there is no "nc-nd" page for it.
+const CC_ELEMENTS_2_0_JP: &[&str] = &["nc", "nd", "sa", "nc-sa", "nd-nc"];
 
 /// The version 1.0 licences, which include some without BY. Their
 /// NoDerivs-NonCommercial licences are "nd-nc" and "by-nd-nc";
@@ -379,6 +392,9 @@ mod tests {
             ("CC NC-SA 4.0", None),
             ("CC SA 3.0", None),
             ("CC NC 2.0", None),
+            ("CC NC 2.0 DE", None),
+            ("CC NC 2.5 JP", None),
+            ("CC NC-ND 2.0 JP", None),
             ("CC NC-BY 4.0", None),
             ("CC BY-SA-NC 4.0", None),
             ("CC BY-ND-SA 3.0", None),
@@ -390,6 +406,19 @@ mod tests {
                 Some("Creative Commons NonCommercial-ShareAlike 1.0 Generic"),
             ),
             ("CC SA 1.0", Some("Creative Commons ShareAlike 1.0 Generic")),
+            // So do the 2.0 Japan licences.
+            (
+                "CC NC 2.0 JP",
+                Some("Creative Commons NonCommercial 2.0 JP"),
+            ),
+            (
+                "CC NC-SA 2.0 JP",
+                Some("Creative Commons NonCommercial-ShareAlike 2.0 JP"),
+            ),
+            (
+                "cc nd-nc 2.0 jp",
+                Some("Creative Commons NoDerivs-NonCommercial 2.0 JP"),
+            ),
             (
                 "CC BY-ND-NC 1.0",
                 Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic"),
@@ -442,6 +471,10 @@ mod tests {
             (
                 "https://creativecommons.org/publicdomain/mark/1.0/",
                 Some("Public Domain Mark 1.0"),
+            ),
+            (
+                "https://creativecommons.org/licenses/nc/2.0/jp/",
+                Some("CC NC 2.0 JP"),
             ),
             ("https://creativecommons.org/about/", None),
             // An address with a page name where the version would be.
@@ -656,6 +689,16 @@ mod tests {
                     Some("https://creativecommons.org/licenses/by-nc-sa/4.0/"),
                 ),
             ),
+            // A 2.0 Japan licence without BY.
+            (
+                "https://creativecommons.org/licenses/nc/2.0/jp/",
+                None,
+                "CC NC 2.0 JP license",
+                row(
+                    "Creative Commons NonCommercial 2.0 JP",
+                    Some("https://creativecommons.org/licenses/nc/2.0/jp/"),
+                ),
+            ),
             // GBIF's short name has no version, so no full name or link:
             // the row would repeat the title.
             (
@@ -806,8 +849,17 @@ mod tests {
                 "CC BY-ND-NC 1.0",
                 Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
             ),
+            (
+                "CC NC 2.0 JP",
+                Some("https://creativecommons.org/licenses/nc/2.0/jp/"),
+            ),
+            (
+                "CC NC-SA 2.0 JP",
+                Some("https://creativecommons.org/licenses/nc-sa/2.0/jp/"),
+            ),
             // No version, or a name Creative Commons doesn't have.
             ("CC NC-SA 4.0", None),
+            ("CC NC 2.0", None),
             ("CC BY-SA-NC 2.5", None),
             ("CC BY", None),
             ("CC BY-NC (Attribution-Non-Commercial)", None),
