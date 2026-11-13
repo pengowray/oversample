@@ -176,14 +176,16 @@ fn is_cc_port(part: &str) -> bool {
 /// Versions before 4.0 end in "Unported" (3.0) or "Generic" (1.0 to 2.5), as
 /// Creative Commons names them; a ported licence ends in its port code
 /// ("CC BY 3.0 AU" -> "... Attribution 3.0 AU"). "CC0 1.0" is "CC0 1.0
-/// Universal", and the Public Domain Mark keeps its label. `None` when the code
-/// has no version or has an unknown element.
+/// Universal" and the Public Domain Mark is "Public Domain Mark 1.0
+/// Universal", the titles of their Creative Commons pages. `None` when the
+/// code has no version, or names a licence Creative Commons never published
+/// ("CC NC-SA 4.0", "CC BY-XX 4.0").
 pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     if code.eq_ignore_ascii_case(CC0_LABEL) {
         return Some("CC0 1.0 Universal".to_string());
     }
     if code.eq_ignore_ascii_case(PD_MARK_LABEL) {
-        return Some(PD_MARK_LABEL.to_string());
+        return Some("Public Domain Mark 1.0 Universal".to_string());
     }
     let mut words = code.split_whitespace();
     if !words.next()?.eq_ignore_ascii_case("cc") {
@@ -196,6 +198,14 @@ pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     }
     // 4.0 licences have no ports.
     if port.is_some_and(|p| !is_cc_port(p) || version == "4.0") {
+        return None;
+    }
+    let published = if version == "1.0" {
+        CC_ELEMENTS_1_0
+    } else {
+        CC_ELEMENTS
+    };
+    if !published.contains(&elements.to_ascii_lowercase().as_str()) {
         return None;
     }
     let names = elements
@@ -220,6 +230,18 @@ pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
         names.join("-")
     ))
 }
+
+/// The licences Creative Commons published from version 2.0, by their
+/// elements as its addresses spell them. Each one starts with BY.
+const CC_ELEMENTS: &[&str] = &["by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"];
+
+/// The version 1.0 licences, which include some without BY. Their
+/// NoDerivs-NonCommercial licences are "nd-nc" and "by-nd-nc";
+/// creativecommons.org redirects "nc-nd" and "by-nc-nd" to them.
+const CC_ELEMENTS_1_0: &[&str] = &[
+    "by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nd-nc", "by-nc-nd", "sa", "nd", "nc", "nc-sa",
+    "nd-nc", "nc-nd",
+];
 
 /// The web address to link a License value to. An address that starts with
 /// "//" (as Xeno-canto sends) gets "https:". `None` for anything else, such as
@@ -254,7 +276,8 @@ pub(crate) fn license_link(license: &str, license_url: Option<&str>) -> Option<S
 /// `parse_cc_license` gives it: "CC BY-NC 4.0" ->
 /// "https://creativecommons.org/licenses/by-nc/4.0/", "CC BY 3.0 AU" ->
 /// ".../licenses/by/3.0/au/", "CC0 1.0" -> ".../publicdomain/zero/1.0/".
-/// `None` for a label without a version or with an unknown element.
+/// `None` for a label without a version, or for a licence Creative Commons
+/// never published (see `cc_license_full_name`).
 fn cc_license_page(label: &str) -> Option<String> {
     const BASE: &str = "https://creativecommons.org/";
     if label.eq_ignore_ascii_case(CC0_LABEL) {
@@ -319,10 +342,32 @@ mod tests {
             ("CC BY-XX 4.0", None),
             ("CC BY", None),
             ("CC BY 5.0", None),
+            // Combinations Creative Commons never published.
+            ("CC NC-SA 4.0", None),
+            ("CC SA 3.0", None),
+            ("CC NC 2.0", None),
+            ("CC NC-BY 4.0", None),
+            ("CC BY-SA-NC 4.0", None),
+            ("CC BY-ND-SA 3.0", None),
+            ("CC BY-SA-NC 1.0", None),
+            ("CC BY-ND-NC 4.0", None),
+            // Version 1.0 has licences without BY.
+            (
+                "CC NC-SA 1.0",
+                Some("Creative Commons NonCommercial-ShareAlike 1.0 Generic"),
+            ),
+            ("CC SA 1.0", Some("Creative Commons ShareAlike 1.0 Generic")),
+            (
+                "CC BY-ND-NC 1.0",
+                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic"),
+            ),
             ("CC0 1.0", Some("CC0 1.0 Universal")),
             ("cc0 1.0", Some("CC0 1.0 Universal")),
             ("CC0", None),
-            ("Public Domain Mark 1.0", Some("Public Domain Mark 1.0")),
+            (
+                "Public Domain Mark 1.0",
+                Some("Public Domain Mark 1.0 Universal"),
+            ),
             ("CC BY-NC (Attribution-Non-Commercial)", None),
             ("Public domain", None),
             ("", None),
@@ -648,7 +693,17 @@ mod tests {
                 "Public Domain Mark 1.0",
                 Some("https://creativecommons.org/publicdomain/mark/1.0/"),
             ),
+            (
+                "CC NC-SA 1.0",
+                Some("https://creativecommons.org/licenses/nc-sa/1.0/"),
+            ),
+            (
+                "CC BY-ND-NC 1.0",
+                Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
+            ),
             // No version, or a name Creative Commons doesn't have.
+            ("CC NC-SA 4.0", None),
+            ("CC BY-SA-NC 2.5", None),
             ("CC BY", None),
             ("CC BY-NC (Attribution-Non-Commercial)", None),
             ("CC BY 4.0 AU", None),
