@@ -54,11 +54,20 @@ pub fn Toolbar() -> impl IntoView {
         files.get(idx).and_then(|f| f.site_metadata.clone())
     });
 
-    // Derived: CC license info (short label)
-    let cc_license = Memo::new(move |_| {
+    // Derived: the licence badge's label, and whether the licence is a Creative
+    // Commons one, which gets the CC icon. Other licences (GFDL, "Public
+    // domain", "Fair use" from Wikimedia) show their name as sent, so their
+    // licence dialog can be opened too.
+    let license_badge = Memo::new(move |_| {
         let meta = site_metadata.get()?;
         let lic = get_xc_field(&meta.fields, "License")?;
-        parse_cc_license(&lic)
+        match parse_cc_license(&lic) {
+            Some(label) => Some((label, true)),
+            None => {
+                let lic = lic.trim();
+                (!lic.is_empty()).then(|| (lic.to_string(), false))
+            }
+        }
     });
 
     // Derived: is current file unsaved (recording not yet saved by user)
@@ -414,7 +423,7 @@ pub fn Toolbar() -> impl IntoView {
                         }
 
                         let badge_data = current_badge_data.get();
-                        let cc = cc_license.get();
+                        let license = license_badge.get();
                         let unsaved = is_unsaved.get();
 
                         Some(view! {
@@ -457,9 +466,14 @@ pub fn Toolbar() -> impl IntoView {
                                 }
                             })}
 
-                            // CC badge — subtle text, opens license modal on click
-                            {cc.map(|cc_label| {
-                                let short_label = cc_label.strip_prefix("CC ").unwrap_or(&cc_label).to_string();
+                            // Licence badge — subtle text, opens license modal on click.
+                            // CC licences show the CC icon and drop "CC " from the label.
+                            {license.map(|(label, is_cc)| {
+                                let short_label = if is_cc {
+                                    label.strip_prefix("CC ").unwrap_or(&label).to_string()
+                                } else {
+                                    label.clone()
+                                };
                                 view! {
                                     <button
                                         class="toolbar-cc-badge"
@@ -469,7 +483,7 @@ pub fn Toolbar() -> impl IntoView {
                                             show_cc_modal.set(true);
                                         }
                                     >
-                                        <span class="toolbar-cc-icon"></span>
+                                        {is_cc.then(|| view! { <span class="toolbar-cc-icon"></span> })}
                                         <span class="toolbar-cc-label">{short_label}</span>
                                     </button>
                                 }
@@ -677,7 +691,9 @@ pub fn Toolbar() -> impl IntoView {
                         <div class="modal-dialog cc-modal" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                             <div class="modal-header">
                                 <span class="modal-title">
-                                    <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
+                                    {(!cc_label.is_empty()).then(|| view! {
+                                        <span class="toolbar-cc-icon" style="width: 16px; height: 16px; margin-right: 6px;"></span>
+                                    })}
                                     {if cc_label.is_empty() { "License".to_string() } else { license_title(&cc_label) }}
                                 </span>
                                 <button class="modal-close" on:click=move |_| show_cc_modal.set(false)>{"\u{00D7}"}</button>

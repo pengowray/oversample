@@ -271,7 +271,7 @@ const FILE_PARAMS: &[(&str, &str)] = &[
     ("iiprop", "url|size|mime|extmetadata"),
     (
         "iiextmetadatafilter",
-        "ImageDescription|Artist|LicenseShortName|DateTimeOriginal|Credit",
+        "ImageDescription|Artist|LicenseShortName|LicenseUrl|DateTimeOriginal|Credit",
     ),
 ];
 
@@ -381,6 +381,11 @@ fn parse_file_page(page: &serde_json::Value) -> Option<WikiFile> {
     }
     if let Some(v) = ext("LicenseShortName") {
         fields.push(("License".to_string(), v));
+    }
+    // The licence dialog links to this when License is a short name, so
+    // licences that are not Creative Commons (GFDL, ...) get a link too.
+    if let Some(v) = ext("LicenseUrl") {
+        fields.push(("License URL".to_string(), v));
     }
     if let Some(te) = time_expansion {
         fields.push((
@@ -703,6 +708,34 @@ mod tests {
             r#"{"statements":{"P14424":[{"mainsnak":{"snaktype":"somevalue"},"rank":"normal"}]}}"#
         }}}] });
         assert_eq!(time_expansion_from_mediainfo(&somevalue), None);
+    }
+
+    #[test]
+    fn keeps_the_license_url() {
+        let page = serde_json::json!({
+            "title": "File:Bat feeding buzz.wav",
+            "imagerepository": "local",
+            "imageinfo": [{
+                "url": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Bat_feeding_buzz.wav",
+                "descriptionurl": "https://commons.wikimedia.org/wiki/File:Bat_feeding_buzz.wav",
+                "extmetadata": {
+                    "LicenseShortName": { "value": "CC0" },
+                    "LicenseUrl": { "value": "http://creativecommons.org/publicdomain/zero/1.0/deed.en" }
+                }
+            }]
+        });
+        let file = parse_file_page(&page).unwrap();
+        let field = |key: &str| {
+            file.fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(field("License"), Some("CC0"));
+        assert_eq!(
+            field("License URL"),
+            Some("http://creativecommons.org/publicdomain/zero/1.0/deed.en")
+        );
     }
 
     #[test]
