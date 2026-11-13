@@ -650,6 +650,56 @@ fn date_row(label: String, value: String, view_mode: MetadataView) -> impl IntoV
     }
 }
 
+/// A recorder's own metadata block (a D500X header, a Wildlife Acoustics `wamd`
+/// chunk) as a section titled "<recorder> metadata". Kaleidoscope copies most `wamd`
+/// fields into the file's GUANO block, so rows with the same value as `guano` are
+/// folded into one closed "Same values as Guano metadata (N fields)" row, which keeps
+/// each value on screen once and still lets the user check the chunk's full contents.
+fn recorder_section(
+    block: Option<crate::types::RecorderBlock>,
+    guano: &[(String, String)],
+    view_mode: MetadataView,
+) -> impl IntoView {
+    let Some(block) = block else {
+        return view! { <span></span> }.into_any();
+    };
+    let (same, differ): (Vec<_>, Vec<_>) = block
+        .fields
+        .into_iter()
+        .partition(|(k, v)| crate::audio::wamd::same_in_guano(k, v, guano));
+    let items: Vec<_> = differ
+        .into_iter()
+        .map(|(k, v)| spacious_row(k, v, None, view_mode).into_any())
+        .collect();
+    let folded = (!same.is_empty()).then(|| {
+        let n = same.len();
+        let label = format!(
+            "Same values as Guano metadata ({n} field{})",
+            if n == 1 { "" } else { "s" }
+        );
+        let rows: Vec<_> = same
+            .into_iter()
+            .map(|(k, v)| spacious_row(k, v, None, view_mode).into_any())
+            .collect();
+        view! {
+            <details class="metadata-same">
+                <summary>{label}</summary>
+                {rows}
+            </details>
+        }
+    });
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title setting-group-title-major">
+                {format!("{} metadata", block.recorder)}
+            </div>
+            {items}
+            {folded}
+        </div>
+    }
+    .into_any()
+}
+
 /// Format row: the container name, plus RF64 when the file uses 64-bit sizes.
 fn format_text(meta: &crate::types::FileMetadata) -> String {
     match &meta.wav {
@@ -725,6 +775,26 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
         if let Some((_, v)) = block.fields.iter().find(|(k, _)| k == "File Time") {
             let value = d500x_time_iso(v).unwrap_or_else(|| v.clone());
             rows.push((format!("{} file time", block.recorder), value));
+        }
+    }
+
+    // 2c. Wildlife Acoustics timestamp ("2019-08-15 22:12:11-05:00"), unless the
+    // GUANO timestamp above is the same.
+    if let Some(wamd) = f.audio.metadata.wav.as_ref().and_then(|w| w.wamd.as_ref()) {
+        let guano = f
+            .audio
+            .metadata
+            .guano
+            .as_ref()
+            .map(|g| g.fields.as_slice())
+            .unwrap_or_default();
+        if let Some((_, v)) = wamd.fields.iter().find(|(k, _)| k == "Timestamp") {
+            if !crate::audio::wamd::same_in_guano("Timestamp", v, guano) {
+                rows.push((
+                    format!("{} timestamp", wamd.recorder),
+                    v.replacen(' ', "T", 1),
+                ));
+            }
         }
     }
 
@@ -1418,6 +1488,8 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
                         }).collect();
                         let recorder_block = wav.recorder_block.clone();
+                        let wamd = wav.wamd.clone();
+                        let guano_fields_all = guano_fields.clone();
 
                         view! {
                             <div class="setting-group">
@@ -1497,22 +1569,8 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             } else {
                                 view! { <span></span> }.into_any()
                             }}
-                            {match recorder_block {
-                                Some(block) => {
-                                    let items: Vec<_> = block.fields.into_iter().map(|(k, v)| {
-                                        spacious_row(k, v, None, view_mode).into_any()
-                                    }).collect();
-                                    view! {
-                                        <div class="setting-group">
-                                            <div class="setting-group-title setting-group-title-major">
-                                                {format!("{} metadata", block.recorder)}
-                                            </div>
-                                            {items}
-                                        </div>
-                                    }.into_any()
-                                }
-                                None => view! { <span></span> }.into_any(),
-                            }}
+                            {recorder_section(recorder_block, &[], view_mode)}
+                            {recorder_section(wamd, &guano_fields_all, view_mode)}
                             {if !f.is_recording {
                                 file_identity_section(f).into_any()
                             } else {

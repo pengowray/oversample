@@ -32,6 +32,8 @@ pub struct WavDetails {
     /// Speaker positions from an extensible header, when non-zero.
     pub channel_mask: Option<u32>,
     pub recorder_block: Option<RecorderBlock>,
+    /// Wildlife Acoustics metadata from a `wamd` chunk (see [`crate::audio::wamd`]).
+    pub wamd: Option<RecorderBlock>,
     /// Problems found in the file's structure and how they were handled,
     /// written for the user.
     pub notes: Vec<WavNote>,

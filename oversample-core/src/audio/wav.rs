@@ -126,6 +126,7 @@ pub fn parse_wav_header_with_file_size(
     let mut wave_list = false;
     let mut ds64_data_size: Option<u64> = None;
     let mut guano: Option<GuanoMetadata> = None;
+    let mut wamd = None;
     let mut cue_points: Vec<(u32, u64)> = Vec::new();
     let mut labels: Vec<(u32, String)> = Vec::new();
     let mut notes_adtl: Vec<(u32, String)> = Vec::new();
@@ -233,6 +234,7 @@ pub fn parse_wav_header_with_file_size(
                 }
             }
             b"guan" if fits => guano = guano::parse_guano_chunk(body),
+            b"wamd" if fits => wamd = super::wamd::parse_wamd_chunk(body),
             b"cue " if fits && body.len() >= 4 => parse_cue(body, &mut cue_points),
             b"LIST" if fits && body.len() >= 4 && &body[0..4] == b"adtl" => {
                 parse_adtl_subchunks(&body[4..], &mut labels, &mut notes_adtl);
@@ -372,6 +374,7 @@ pub fn parse_wav_header_with_file_size(
             wave_list,
             channel_mask: fmt.channel_mask,
             recorder_block: data.recorder_block,
+            wamd,
             notes,
         },
     })

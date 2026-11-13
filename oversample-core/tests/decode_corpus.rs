@@ -207,3 +207,51 @@ fn golden_snapshot_stable() {
          If this change is intentional, regenerate with UPDATE_GOLDEN=1."
     );
 }
+
+/// Every corpus WAV and W4V file with a Wildlife Acoustics `wamd` chunk keeps the
+/// chunk's fields in its metadata (header only, so this stays fast).
+#[test]
+fn wildlife_acoustics_metadata_is_read() {
+    use oversample_core::audio::{loader::parse_w4v_header, wamd, wav};
+    let files: Vec<PathBuf> = read_audio_dir(&corpus_dir())
+        .into_iter()
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("wav") || e.eq_ignore_ascii_case("w4v"))
+        })
+        .collect();
+    if files.is_empty() {
+        eprintln!(
+            "SKIP wildlife_acoustics_metadata_is_read: no corpus at {:?}",
+            corpus_dir()
+        );
+        return;
+    }
+    let (mut chunks, mut shown) = (0, 0);
+    for path in &files {
+        let bytes = std::fs::read(path).unwrap();
+        let Some(chunk) = wav::riff_chunks(&bytes, 12).find(|c| c.id == b"wamd") else {
+            continue;
+        };
+        chunks += 1;
+        let expected = wamd::parse_wamd_chunk(chunk.body);
+        let got = match parse_w4v_header(&bytes) {
+            Ok(h) => h.wamd,
+            Err(_) => wav::parse_wav_header(&bytes).unwrap().details.wamd,
+        };
+        assert_eq!(got, expected, "{path:?}");
+        if let Some(block) = got {
+            shown += 1;
+            assert!(
+                block.fields.iter().all(|(k, v)| !k.is_empty()
+                    && !v.is_empty()
+                    && !v.chars().any(|c| c.is_control() && c != '\n')),
+                "{path:?}: {:?}",
+                block.fields
+            );
+        }
+    }
+    eprintln!("{chunks} corpus files have a wamd chunk; {shown} show a Wildlife Acoustics section");
+    assert!(shown > 0);
+}

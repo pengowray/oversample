@@ -4,9 +4,10 @@
 //!
 //! Sources, first found wins:
 //! - Place: GUANO `Loc Position` ("lat lon"), or `Loc|Lat` with `Loc|Lon`;
-//!   then Xeno-Canto's "Coordinates" ("lat, lon").
-//! - Date: GUANO `Timestamp`, then Xeno-Canto's "Date" (both start
-//!   "YYYY-MM-DD"). Without a date the whole year is used (week 0). A file's
+//!   then a Wildlife Acoustics `wamd` chunk's GPS position; then Xeno-Canto's
+//!   "Coordinates" ("lat, lon").
+//! - Date: GUANO `Timestamp`, then the `wamd` timestamp, then Xeno-Canto's
+//!   "Date" (all start "YYYY-MM-DD"). Without a date the whole year is used (week 0). A file's
 //!   modified time is not used: copying a file changes it.
 
 use crate::state::LoadedFile;
@@ -68,6 +69,13 @@ fn field<'a>(fields: &'a [(String, String)], key: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
+/// The fields of the file's Wildlife Acoustics `wamd` chunk, as the metadata
+/// panel shows them ("GPS Position" is "lat, lon").
+fn wamd_fields(file: &LoadedFile) -> Option<&[(String, String)]> {
+    let wav = file.audio.metadata.wav.as_ref()?;
+    wav.wamd.as_ref().map(|b| b.fields.as_slice())
+}
+
 /// The recording's place and week from its own metadata, if it has a place.
 pub fn file_place(file: &LoadedFile) -> Option<Place> {
     let guano = file
@@ -86,7 +94,12 @@ pub fn file_place(file: &LoadedFile) -> Option<Place> {
                 parse_lat_lon(&format!("{lat} {lon}"))
             })
     });
-    let (lat, lon) = from_guano.or_else(|| {
+    let from_wamd = || {
+        wamd_fields(file)
+            .and_then(|w| field(w, "GPS Position"))
+            .and_then(parse_lat_lon)
+    };
+    let (lat, lon) = from_guano.or_else(from_wamd).or_else(|| {
         xc.and_then(|x| field(x, "Coordinates"))
             .and_then(parse_lat_lon)
     })?;
@@ -109,6 +122,11 @@ pub fn file_week(file: &LoadedFile) -> u32 {
     guano
         .and_then(|g| field(g, "Timestamp"))
         .and_then(week_of_date)
+        .or_else(|| {
+            wamd_fields(file)
+                .and_then(|w| field(w, "Timestamp"))
+                .and_then(week_of_date)
+        })
         .or_else(|| xc.and_then(|x| field(x, "Date")).and_then(week_of_date))
         .unwrap_or(0)
 }

@@ -357,6 +357,52 @@ fn written_files_read_back() {
 }
 
 #[test]
+fn wildlife_acoustics_metadata_after_the_data_is_read() {
+    // fmt, data, wamd, guan: Kaleidoscope's layout.
+    let data_bytes = 22u64;
+    let mut wamd = Vec::new();
+    for (id, value) in [
+        (0x01u16, &b"SM4BAT-FS"[..]),
+        (0x08, &b"Kaleidoscope 5.6.0c"[..]),
+        (0x0F, &10u16.to_le_bytes()[..]),
+    ] {
+        wamd.extend(id.to_le_bytes());
+        wamd.extend((value.len() as u32).to_le_bytes());
+        wamd.extend(value);
+    }
+    let guano = b"GUANO|Version:1.0\nTE:10\n";
+    let after = 8 + wamd.len() as u64 + (wamd.len() as u64 & 1) + 8 + guano.len() as u64;
+    let mut f = header_bytes(&MONO16, data_bytes, after);
+    f.extend(ramp(data_bytes as usize / 2));
+    f.extend_from_slice(b"wamd");
+    f.extend((wamd.len() as u32).to_le_bytes());
+    f.extend(&wamd);
+    if wamd.len() % 2 == 1 {
+        f.push(0);
+    }
+    f.extend_from_slice(b"guan");
+    f.extend((guano.len() as u32).to_le_bytes());
+    f.extend(guano);
+
+    let h = parse_wav_header(&f).unwrap();
+    let block = h.details.wamd.expect("wamd chunk");
+    assert_eq!(block.recorder, "Wildlife Acoustics");
+    assert_eq!(
+        block.fields,
+        [
+            ("Model".to_string(), "SM4BAT-FS".to_string()),
+            ("Software".to_string(), "Kaleidoscope 5.6.0c".to_string()),
+            ("Time Expansion".to_string(), "10".to_string()),
+        ]
+    );
+    assert!(h.guano.is_some());
+
+    // The full loader keeps it in the file's metadata.
+    let audio = load_audio(&f).unwrap();
+    assert!(audio.metadata.wav.unwrap().wamd.is_some());
+}
+
+#[test]
 fn over_4gb_is_written_as_rf64() {
     let data_bytes = 5_000_000_000u64;
     let h = header_bytes(&MONO16, data_bytes, 40);

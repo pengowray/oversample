@@ -322,6 +322,8 @@ pub struct W4vHeader {
     pub data_size: u64,
     pub total_frames: u64,
     pub guano: Option<GuanoMetadata>,
+    /// Wildlife Acoustics metadata from a `wamd` chunk.
+    pub wamd: Option<crate::types::RecorderBlock>,
 }
 
 /// Parse W4V (Wildlife Acoustics compressed WAV) header.
@@ -335,6 +337,7 @@ pub fn parse_w4v_header(bytes: &[u8]) -> Result<W4vHeader, String> {
     let mut data_size: Option<u64> = None;
     let mut fact_samples: Option<u64> = None;
     let mut guano: Option<GuanoMetadata> = None;
+    let mut wamd = None;
 
     for chunk in super::wav::riff_chunks(bytes, 12) {
         let body = chunk.body;
@@ -361,6 +364,7 @@ pub fn parse_w4v_header(bytes: &[u8]) -> Result<W4vHeader, String> {
                 data_size = Some(chunk.size);
             }
             b"guan" if chunk.complete() => guano = guano::parse_guano_chunk(body),
+            b"wamd" if chunk.complete() => wamd = super::wamd::parse_wamd_chunk(body),
             _ => {}
         }
     }
@@ -398,6 +402,7 @@ pub fn parse_w4v_header(bytes: &[u8]) -> Result<W4vHeader, String> {
         data_size,
         total_frames,
         guano,
+        wamd,
     })
 }
 
@@ -558,7 +563,10 @@ fn load_w4v(bytes: &[u8]) -> Result<AudioData, String> {
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
-            wav: None,
+            wav: header.wamd.map(|wamd| crate::types::WavDetails {
+                wamd: Some(wamd),
+                ..Default::default()
+            }),
         },
     })
 }

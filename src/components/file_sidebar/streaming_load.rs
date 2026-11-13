@@ -321,10 +321,11 @@ pub(super) async fn try_streaming_wav(
         (mono, Some(head_interleaved))
     };
 
-    // Try to get GUANO metadata if not already in header
+    // GUANO and Wildlife Acoustics metadata are often after the data chunk,
+    // past the header bytes read so far: read the file's tail for them.
     let mut guano = header.guano.clone();
-    if guano.is_none() {
-        // GUANO might be after the data chunk — read tail of file
+    let mut details = header.details.clone();
+    if guano.is_none() || details.wamd.is_none() {
         let file_size = file.size();
         let data_end = header.data_offset + header.data_size;
         if (data_end as f64) < file_size {
@@ -332,7 +333,13 @@ pub(super) async fn try_streaming_wav(
             // Read up to 64KB from after the data chunk
             let tail_end = file_size.min(tail_start + 65536.0);
             if let Ok(tail_bytes) = read_blob_range(file, tail_start, tail_end).await {
-                guano = scan_tail_for_guano(&tail_bytes, header.data_size);
+                if guano.is_none() {
+                    guano = scan_tail_for_guano(&tail_bytes, header.data_size);
+                }
+                if details.wamd.is_none() {
+                    details.wamd =
+                        crate::audio::wamd::parse_wamd_after_data(&tail_bytes, header.data_size);
+                }
             }
         }
     }
@@ -367,7 +374,7 @@ pub(super) async fn try_streaming_wav(
             data_offset: Some(header.data_offset),
             data_size: Some(header.data_size),
             zc_data: None,
-            wav: Some(header.details.clone()),
+            wav: Some(details),
         },
     };
 

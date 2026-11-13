@@ -385,6 +385,20 @@ body.sidebar-resizing {
     color: #999;
 }
 
+/* Recorder metadata rows that repeat the GUANO block's values, folded into one
+   closed row so each value is on screen once (metadata_panel.rs recorder_section).
+   Link colour, as the map links use, so the row reads as something that opens
+   rather than a caption. */
+.metadata-same > summary {
+    padding: 4px 12px;
+    font-size: 11px;
+    color: #8cf;
+    cursor: pointer;
+}
+.metadata-same > summary:hover {
+    text-decoration: underline;
+}
+
 .analysis-scope-row {
     display: flex;
     align-items: center;
