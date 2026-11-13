@@ -175,7 +175,9 @@ fn is_cc_port(part: &str) -> bool {
 /// e.g. "CC BY-NC 4.0" -> "Creative Commons Attribution-NonCommercial 4.0 International".
 /// Versions before 4.0 end in "Unported" (3.0) or "Generic" (1.0 to 2.5), as
 /// Creative Commons names them; a ported licence ends in its port code
-/// ("CC BY 3.0 AU" -> "... Attribution 3.0 AU"). "CC0 1.0" is "CC0 1.0
+/// ("CC BY 3.0 AU" -> "... Attribution 3.0 AU"). Version 1.0 names
+/// NoDerivs before NonCommercial, as its pages do: "CC BY-NC-ND 1.0" ->
+/// "... Attribution-NoDerivs-NonCommercial 1.0 Generic". "CC0 1.0" is "CC0 1.0
 /// Universal" and the Public Domain Mark is "Public Domain Mark 1.0
 /// Universal", the titles of their Creative Commons pages. `None` when the
 /// code has no version, or names a licence Creative Commons never published
@@ -187,43 +189,85 @@ pub(crate) fn cc_license_full_name(code: &str) -> Option<String> {
     if code.eq_ignore_ascii_case(PD_MARK_LABEL) {
         return Some("Public Domain Mark 1.0 Universal".to_string());
     }
-    let mut words = code.split_whitespace();
-    if !words.next()?.eq_ignore_ascii_case("cc") {
-        return None;
-    }
-    let (elements, version) = (words.next()?, words.next()?);
-    let port = words.next();
-    if words.next().is_some() || !["1.0", "2.0", "2.5", "3.0", "4.0"].contains(&version) {
-        return None;
-    }
-    // 4.0 licences have no ports.
-    if port.is_some_and(|p| !is_cc_port(p) || version == "4.0") {
-        return None;
-    }
-    if !is_published(&elements.to_ascii_lowercase(), version, port) {
-        return None;
-    }
-    let names = elements
-        .split('-')
-        .map(|e| match e.to_ascii_uppercase().as_str() {
-            "BY" => Some("Attribution"),
-            "NC" => Some("NonCommercial"),
-            "SA" => Some("ShareAlike"),
-            "ND" if version == "4.0" => Some("NoDerivatives"),
-            "ND" => Some("NoDerivs"),
-            _ => None,
+    CcLicense::from_label(code).map(|l| l.full_name())
+}
+
+/// A licence Creative Commons published, read from a short label such as
+/// "CC BY-NC 4.0" or "CC BY 3.0 AU". Each part is in lower case, as the
+/// licence's address spells it.
+struct CcLicense {
+    /// "by-nc", "nd-nc".
+    elements: String,
+    /// "4.0".
+    version: String,
+    /// "au", "igo", or `None` for a licence without a port.
+    port: Option<String>,
+}
+
+impl CcLicense {
+    /// `None` when the label has no version, or names a licence Creative
+    /// Commons never published ("CC NC-SA 4.0", "CC BY-XX 4.0").
+    fn from_label(label: &str) -> Option<Self> {
+        let lower = label.to_ascii_lowercase();
+        let mut words = lower.split_whitespace();
+        if words.next()? != "cc" {
+            return None;
+        }
+        let (elements, version) = (words.next()?, words.next()?);
+        let port = words.next();
+        if words.next().is_some() || !["1.0", "2.0", "2.5", "3.0", "4.0"].contains(&version) {
+            return None;
+        }
+        // 4.0 licences have no ports.
+        if port.is_some_and(|p| !is_cc_port(p) || version == "4.0") {
+            return None;
+        }
+        // Version 1.0's addresses put ND before NC ("by-nd-nc", "nd-nc"), and
+        // creativecommons.org redirects "by-nc-nd" and "nc-nd" to them.
+        let elements = match (version, elements) {
+            ("1.0", "by-nc-nd") => "by-nd-nc",
+            ("1.0", "nc-nd") => "nd-nc",
+            _ => elements,
+        };
+        is_published(elements, version, port).then(|| Self {
+            elements: elements.to_string(),
+            version: version.to_string(),
+            port: port.map(str::to_string),
         })
-        .collect::<Option<Vec<_>>>()?;
-    let suffix = match (port, version) {
-        (Some(p), _) => format!(" {}", p.to_uppercase()),
-        (None, "4.0") => " International".to_string(),
-        (None, "3.0") => " Unported".to_string(),
-        (None, _) => " Generic".to_string(),
-    };
-    Some(format!(
-        "Creative Commons {} {version}{suffix}",
-        names.join("-")
-    ))
+    }
+
+    /// "Creative Commons Attribution-NonCommercial 4.0 International".
+    fn full_name(&self) -> String {
+        let version = self.version.as_str();
+        // The published licences have only these four elements.
+        let names: Vec<&str> = self
+            .elements
+            .split('-')
+            .map(|e| match e {
+                "by" => "Attribution",
+                "nc" => "NonCommercial",
+                "sa" => "ShareAlike",
+                _ if version == "4.0" => "NoDerivatives",
+                _ => "NoDerivs",
+            })
+            .collect();
+        let suffix = match (&self.port, version) {
+            (Some(p), _) => p.to_uppercase(),
+            (None, "4.0") => "International".to_string(),
+            (None, "3.0") => "Unported".to_string(),
+            (None, _) => "Generic".to_string(),
+        };
+        format!("Creative Commons {} {version} {suffix}", names.join("-"))
+    }
+
+    /// "https://creativecommons.org/licenses/by/3.0/au/".
+    fn page(&self) -> String {
+        let (elements, version) = (&self.elements, &self.version);
+        match &self.port {
+            Some(port) => format!("{CC_BASE}licenses/{elements}/{version}/{port}/"),
+            None => format!("{CC_BASE}licenses/{elements}/{version}/"),
+        }
+    }
 }
 
 /// Whether Creative Commons published the licence with these elements, in
@@ -250,11 +294,13 @@ const CC_ELEMENTS_2_0_JP: &[&str] = &["nc", "nd", "sa", "nc-sa", "nd-nc"];
 
 /// The version 1.0 licences, which include some without BY. Their
 /// NoDerivs-NonCommercial licences are "nd-nc" and "by-nd-nc";
-/// creativecommons.org redirects "nc-nd" and "by-nc-nd" to them.
+/// `CcLicense::from_label` turns "nc-nd" and "by-nc-nd" into these, as
+/// creativecommons.org redirects them.
 const CC_ELEMENTS_1_0: &[&str] = &[
-    "by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nd-nc", "by-nc-nd", "sa", "nd", "nc", "nc-sa",
-    "nd-nc", "nc-nd",
+    "by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nd-nc", "sa", "nd", "nc", "nc-sa", "nd-nc",
 ];
+
+const CC_BASE: &str = "https://creativecommons.org/";
 
 /// The web address to link a License value to. An address that starts with
 /// "//" (as Xeno-canto sends) gets "https:". `None` for anything else, such as
@@ -321,26 +367,18 @@ pub(crate) fn license_name_row(license: &str, license_url: Option<&str>) -> Opti
 /// The Creative Commons page for a short licence label with a version, as
 /// `parse_cc_license` gives it: "CC BY-NC 4.0" ->
 /// "https://creativecommons.org/licenses/by-nc/4.0/", "CC BY 3.0 AU" ->
-/// ".../licenses/by/3.0/au/", "CC0 1.0" -> ".../publicdomain/zero/1.0/".
-/// `None` for a label without a version, or for a licence Creative Commons
-/// never published (see `cc_license_full_name`).
+/// ".../licenses/by/3.0/au/", "CC BY-NC-ND 1.0" -> ".../licenses/by-nd-nc/1.0/",
+/// "CC0 1.0" -> ".../publicdomain/zero/1.0/". `None` for a label without a
+/// version, or for a licence Creative Commons never published (see
+/// `cc_license_full_name`).
 fn cc_license_page(label: &str) -> Option<String> {
-    const BASE: &str = "https://creativecommons.org/";
     if label.eq_ignore_ascii_case(CC0_LABEL) {
-        return Some(format!("{BASE}publicdomain/zero/1.0/"));
+        return Some(format!("{CC_BASE}publicdomain/zero/1.0/"));
     }
     if label.eq_ignore_ascii_case(PD_MARK_LABEL) {
-        return Some(format!("{BASE}publicdomain/mark/1.0/"));
+        return Some(format!("{CC_BASE}publicdomain/mark/1.0/"));
     }
-    // Only labels with a known name have a page.
-    cc_license_full_name(label)?;
-    let lower = label.to_ascii_lowercase();
-    let mut words = lower.split_whitespace().skip(1);
-    let (elements, version) = (words.next()?, words.next()?);
-    Some(match words.next() {
-        Some(port) => format!("{BASE}licenses/{elements}/{version}/{port}/"),
-        None => format!("{BASE}licenses/{elements}/{version}/"),
-    })
+    CcLicense::from_label(label).map(|l| l.page())
 }
 
 #[cfg(test)]
@@ -406,6 +444,28 @@ mod tests {
                 Some("Creative Commons NonCommercial-ShareAlike 1.0 Generic"),
             ),
             ("CC SA 1.0", Some("Creative Commons ShareAlike 1.0 Generic")),
+            (
+                "CC BY-ND-NC 1.0",
+                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic"),
+            ),
+            // creativecommons.org redirects 1.0's "by-nc-nd" and "nc-nd" to
+            // "by-nd-nc" and "nd-nc", so they get the same names.
+            (
+                "CC BY-NC-ND 1.0",
+                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic"),
+            ),
+            (
+                "CC NC-ND 1.0",
+                Some("Creative Commons NoDerivs-NonCommercial 1.0 Generic"),
+            ),
+            (
+                "CC ND-NC 1.0",
+                Some("Creative Commons NoDerivs-NonCommercial 1.0 Generic"),
+            ),
+            (
+                "CC BY-NC-ND 1.0 FI",
+                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 FI"),
+            ),
             // So do the 2.0 Japan licences.
             (
                 "CC NC 2.0 JP",
@@ -418,10 +478,6 @@ mod tests {
             (
                 "cc nd-nc 2.0 jp",
                 Some("Creative Commons NoDerivs-NonCommercial 2.0 JP"),
-            ),
-            (
-                "CC BY-ND-NC 1.0",
-                Some("Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic"),
             ),
             ("CC0 1.0", Some("CC0 1.0 Universal")),
             ("cc0 1.0", Some("CC0 1.0 Universal")),
@@ -487,6 +543,10 @@ mod tests {
             (" CC BY-SA 3.0 de ", Some("CC BY-SA 3.0 DE")),
             ("cc by-sa 4.0", Some("CC BY-SA 4.0")),
             ("CC BY-SA 3.0 igo", Some("CC BY-SA 3.0 IGO")),
+            // A 1.0 licence keeps its spelling here; only its full name and
+            // page address use the order creativecommons.org uses.
+            ("CC BY-NC-ND 1.0", Some("CC BY-NC-ND 1.0")),
+            ("cc nc-nd 1.0", Some("CC NC-ND 1.0")),
             // GBIF's short name with a description.
             ("CC BY-NC (Attribution-Non-Commercial)", Some("CC BY-NC")),
             ("CC0 (Public Domain Dedication)", Some("CC0 1.0")),
@@ -699,6 +759,17 @@ mod tests {
                     Some("https://creativecommons.org/licenses/nc/2.0/jp/"),
                 ),
             ),
+            // A 1.0 licence: the title keeps the spelling sent, and the full
+            // name and link use the order creativecommons.org uses.
+            (
+                "CC BY-NC-ND 1.0",
+                None,
+                "CC BY-NC-ND 1.0 license",
+                row(
+                    "Creative Commons Attribution-NoDerivs-NonCommercial 1.0 Generic",
+                    Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
+                ),
+            ),
             // GBIF's short name has no version, so no full name or link:
             // the row would repeat the title.
             (
@@ -848,6 +919,18 @@ mod tests {
             (
                 "CC BY-ND-NC 1.0",
                 Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
+            ),
+            (
+                "CC BY-NC-ND 1.0",
+                Some("https://creativecommons.org/licenses/by-nd-nc/1.0/"),
+            ),
+            (
+                "CC NC-ND 1.0",
+                Some("https://creativecommons.org/licenses/nd-nc/1.0/"),
+            ),
+            (
+                "CC BY-NC-ND 1.0 FI",
+                Some("https://creativecommons.org/licenses/by-nd-nc/1.0/fi/"),
             ),
             (
                 "CC NC 2.0 JP",
