@@ -1378,8 +1378,8 @@ fn cut_around(
 
 /// The clause around `span`, cut to at most [`EXCERPT_MAX_CHARS`] characters
 /// at word boundaries, with `…` where text was cut. White space at either
-/// end, as [`is_space`] defines it, is left out, and cuts snap to the same
-/// white space. `span` must be at most [`EXCERPT_MAX_CHARS`] characters, as
+/// end is left out. Both that trim and the search for word boundaries use
+/// [`is_space`]. `span` must be at most [`EXCERPT_MAX_CHARS`] characters, as
 /// [`quoted_match`] makes it.
 fn excerpt(text: &str, clause: (usize, usize), span: (usize, usize)) -> String {
     let raw = &text[clause.0..clause.1];
