@@ -58,7 +58,7 @@ const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Bats";
 const NUDGE_CLOSE: &str = "Close";
 
 /// Settings > Bats checkbox that allows the card.
-pub const NUDGE_SETTING: &str = "Suggest HFR when playing\u{a0}1:1";
+pub const NUDGE_SETTING: &str = "Suggest HFR when playing or listening\u{a0}1:1";
 
 // ── Steps ───────────────────────────────────────────────────────────────
 
