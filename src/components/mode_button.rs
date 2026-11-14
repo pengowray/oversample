@@ -29,6 +29,8 @@ use leptos::prelude::*;
 
 /// Compute the best auto factor for shifting BandFF center into audible range.
 /// Prefers 8x, then other 2^n, then 10, then best integer, then exact ratio.
+/// Positive factors divide (shift down), negative factors multiply (shift
+/// up), and 1 leaves a band centred at 1-3 kHz where it is.
 fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
     let band_ff_center = (band_ff_lo + band_ff_hi) / 2.0;
     if band_ff_center <= 0.0 {
@@ -59,6 +61,13 @@ fn smart_auto_factor(band_ff_lo: f64, band_ff_hi: f64, max_factor: f64) -> f64 {
         }
         ideal.clamp(2.0, max_factor)
     } else {
+        // Raise only a band that is below hearing range, such as a whale's
+        // 10-200 Hz calls. A band centred at 1 kHz or more is already audible:
+        // raising it made TE speed playback up and PS raise the pitch. HFR
+        // gives an 8 kHz file the band 0-4 kHz, centred at 2 kHz.
+        if band_ff_center >= 1000.0 {
+            return 1.0;
+        }
         let ideal = target / band_ff_center;
         let preferred: &[f64] = &[8.0, 4.0, 16.0, 2.0, 32.0, 10.0];
         let comfortable = |f: f64| {
@@ -1146,5 +1155,34 @@ fn ModeSettingsBody() -> impl IntoView {
                 }
             }}
         </>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::smart_auto_factor;
+
+    #[test]
+    fn auto_factor_lowers_a_bat_band() {
+        // Myotis fimbriatus, 35-80 kHz: centre 57.5 kHz / 16 = 3.6 kHz.
+        assert_eq!(smart_auto_factor(35_000.0, 80_000.0, 40.0), 16.0);
+        // The whole of a 16 kHz file, 0-8 kHz: centre 4 kHz / 4 = 1 kHz.
+        assert_eq!(smart_auto_factor(0.0, 8_000.0, 40.0), 4.0);
+    }
+
+    #[test]
+    fn auto_factor_leaves_an_audible_band_where_it_is() {
+        // The whole of an 8 kHz file, 0-4 kHz. This gave -2, so TE played
+        // twice as fast and PS an octave higher.
+        assert_eq!(smart_auto_factor(0.0, 4_000.0, 40.0), 1.0);
+        assert_eq!(smart_auto_factor(0.0, 4_000.0, 20.0), 1.0);
+        assert_eq!(smart_auto_factor(1_000.0, 1_000.5, 40.0), 1.0);
+    }
+
+    #[test]
+    fn auto_factor_raises_a_band_below_hearing_range() {
+        // Blue whale, 10-200 Hz: centre 105 Hz x 16 = 1.7 kHz.
+        assert_eq!(smart_auto_factor(10.0, 200.0, 40.0), -16.0);
+        assert!(smart_auto_factor(500.0, 1_400.0, 20.0) < -1.0);
     }
 }
