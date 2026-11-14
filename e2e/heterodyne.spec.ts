@@ -139,16 +139,15 @@ test.describe("heterodyne badge and note", () => {
       fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
       rate: 44_100,
     });
+    // A no-break space before each "kHz" keeps the unit with its number, in
+    // the quoted remark too.
     const lines = [
       HEADLINE,
       'Remarks: "handheld hetrodyne detector set at 31,9 kHz"',
       CONSEQUENCE_TUNED,
-      // A no-break space before each "kHz" keeps the unit with its number.
-      (
-        "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
-        "at either 21.9 or 41.9 kHz."
-      ).replaceAll(" kHz", "\u00a0kHz"),
-    ];
+      "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
+        "at either 21.9 or 41.9 kHz.",
+    ].map((line) => line.replaceAll(" kHz", "\u00a0kHz"));
 
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
     await expect(badge).toHaveText("Heterodyne recording");
@@ -172,6 +171,46 @@ test.describe("heterodyne badge and note", () => {
       [WARN, lines[2]],
       [PLAIN, lines[3]],
     ]);
+  });
+
+  test("a quoted frequency keeps its kHz on the same line at any note width", async ({
+    page,
+  }) => {
+    // XC1034529's remark. At 1440 x 900 the Info panel's quote line used to
+    // wrap between "31,9" and "kHz".
+    await openCase(page, { fields: { rmk: "hetrodyne detector set at 31,9 kHz" }, rate: 48_000 });
+    await showInfo(page);
+    await expect(page.locator(HET_NOTE)).toBeVisible();
+    // Narrows the note from 380 to 120 px, 2 px at a time, and records the
+    // first characters of every wrapped line of every line of the note.
+    const wraps = await page.locator(HET_NOTE).evaluate((note: HTMLElement) => {
+      const out: { width: number; role: string; start: string }[] = [];
+      for (let width = 380; width >= 120; width -= 2) {
+        note.style.width = `${width}px`;
+        for (const line of Array.from(note.children)) {
+          const text = line.firstChild!;
+          const chars = text.textContent!;
+          const range = document.createRange();
+          let top: number | null = null;
+          for (let i = 0; i < chars.length; i++) {
+            range.setStart(text, i);
+            range.setEnd(text, i + 1);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0 && Math.round(rect.top) !== top) {
+              if (top !== null) {
+                out.push({ width, role: line.className, start: chars.slice(i, i + 5) });
+              }
+              top = Math.round(rect.top);
+            }
+          }
+        }
+      }
+      note.style.width = "";
+      return out;
+    });
+    // The quote line does wrap at these widths, so the check below covers it.
+    expect(wraps.some((w) => w.role === QUOTE)).toBe(true);
+    expect(wraps.filter((w) => /^k?\s?hz/i.test(w.start))).toEqual([]);
   });
 
   test("level A without a tuning keeps the can't-be-corrected line", async ({ page }) => {

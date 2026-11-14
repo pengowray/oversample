@@ -13,9 +13,10 @@
 //! "Heterodyne recording" badge's tooltip is the heterodyne note's lines
 //! ([`lines_text`]).
 //!
-//! Frequencies in a line come from [`crate::format_units`], which keeps each
-//! "kHz" on its number's line. A [`LineRole::Quote`] line is the exception:
-//! its text is the recordist's and is shown unchanged.
+//! Each "kHz" in a note stays on its number's line: the app writes its own
+//! frequencies with [`crate::format_units`], and a [`LineRole::Quote`] line's
+//! frequencies get a no-break space from
+//! [`crate::format_units::keep_units_with_numbers`].
 
 use crate::format_units::sample_rate_khz;
 use crate::heterodyne::{HeterodyneHint, HeterodyneLevel};
@@ -36,8 +37,12 @@ pub enum LineRole {
     Muted,
     /// The words of the recording's metadata that a finding is based on, with
     /// the name of their field: `Remarks: "Recording with Magenta Bat5"`.
-    /// Muted. The quoted words are the recordist's, so they are never
-    /// reformatted.
+    /// Muted. The words keep the recordist's spelling and spacing, with three
+    /// changes: a quote longer than
+    /// [`EXCERPT_MAX_CHARS`](oversample_core::heterodyne_hint::EXCERPT_MAX_CHARS)
+    /// characters is cut, with "…" at each cut; text that is not ASCII is in
+    /// Unicode normalization form C; and the space between a number and its
+    /// "kHz" or "Hz" is a no-break space.
     Quote,
 }
 
@@ -330,7 +335,9 @@ mod tests {
     }
 
     #[test]
-    fn a_quote_keeps_the_recordists_spacing() {
+    fn every_khz_follows_a_no_break_space() {
+        // XC1034529. The quote line is the recordist's words, with a no-break
+        // space before "kHz" so the unit wraps with "31,9".
         let hint_a = hint("Remarks", "hetrodyne detector set at 31,9 kHz", 48_000);
         let notes = rate_notes(None, Some(&hint_a), None);
         let quotes: Vec<&NoteLine> = notes[0]
@@ -341,12 +348,21 @@ mod tests {
         assert_eq!(
             quotes,
             [&NoteLine::quote(
-                "Remarks: \"hetrodyne detector set at 31,9 kHz\""
+                "Remarks: \"hetrodyne detector set at 31,9\u{a0}kHz\""
             )]
         );
-        // Every other "kHz" in the note follows a no-break space.
-        for line in notes[0].lines.iter().filter(|l| l.role != LineRole::Quote) {
+        for line in &notes[0].lines {
             assert!(!line.text.contains(" kHz"), "{:?}", line.text);
+        }
+        // The other spellings found in Xeno-canto remarks.
+        for (remark, quoted) in [
+            ("heterodyne detector set at 31.9 KHz", "31.9\u{a0}KHz"),
+            ("heterodyne detector tuned to 45 k Hz", "45\u{a0}k\u{a0}Hz"),
+        ] {
+            let hint = hint("Remarks", remark, 48_000);
+            let lines = rate_notes(None, Some(&hint), None).remove(0).lines;
+            let quote = lines.iter().find(|l| l.role == LineRole::Quote).unwrap();
+            assert!(quote.text.contains(quoted), "{:?}", quote.text);
         }
     }
 

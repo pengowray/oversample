@@ -16,7 +16,7 @@
 //! frequencies, and [`axis_call_suffixes`] gives the frequency axis's hover text:
 //! the two call frequencies a sound at each label came from.
 
-use crate::format_units::{khz, khz_value};
+use crate::format_units::{keep_units_with_numbers, khz, khz_value};
 use crate::rate_notes::{lines_text, NoteLine};
 use crate::types::TimeExpansion;
 use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
@@ -112,7 +112,11 @@ pub fn shows_badge(hint: &HeterodyneHint) -> bool {
 pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
     let warning = |text: &str| NoteLine::warning(text);
     let muted = |text: String| NoteLine::muted(text);
-    let evidence = NoteLine::quote(format!("{}: \"{}\"", field_label(hint.field), hint.excerpt));
+    let evidence = NoteLine::quote(format!(
+        "{}: \"{}\"",
+        field_label(hint.field),
+        keep_units_with_numbers(&hint.excerpt)
+    ));
     // With the tuning known, the call frequencies can be worked out (one of
     // two per sound), so "can't be corrected" is left out and a line saying
     // how to read the file follows.
@@ -371,7 +375,7 @@ mod tests {
             texts(&hint),
             [
                 "Recorded from a heterodyne bat detector's audio output.".to_string(),
-                "Remarks: \"handheld hetrodyne detector set at 31,9 kHz\"".to_string(),
+                nbsp("Remarks: \"handheld hetrodyne detector set at 31,9 kHz\""),
                 "Frequencies are not the bat's call frequencies.".to_string(),
                 nbsp(
                     "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a \
