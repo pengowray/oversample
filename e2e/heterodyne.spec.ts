@@ -246,6 +246,23 @@ test.describe("heterodyne badge and note", () => {
     ]);
   });
 
+  test("muted and quote lines follow the .metadata-note grey", async ({ page }) => {
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await showInfo(page);
+    await expect(page.locator(HET_NOTE)).toBeVisible();
+    // A later change to the Info panel's note colour reaches these lines too.
+    await page.addStyleTag({ content: ".metadata-note { color: rgb(1, 2, 3); }" });
+    const colours = await page
+      .locator(`${HET_NOTE} > div`)
+      .evaluateAll((els) => els.map((e) => [e.className, getComputedStyle(e).color]));
+    expect(colours).toEqual([
+      [WARN, "rgb(255, 204, 136)"],
+      [QUOTE, "rgb(1, 2, 3)"],
+      [MUTED, "rgb(1, 2, 3)"],
+      [WARN, "rgb(255, 204, 136)"],
+    ]);
+  });
+
   test("decomposed accents are normalised before matching", async ({ page }) => {
     // "hétérodyne" with each accent as a separate combining mark (NFD). The
     // word lists hold precomposed letters, so this only matches after NFC.

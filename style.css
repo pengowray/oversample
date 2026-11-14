@@ -5218,12 +5218,10 @@ a.open-link-btn {
 .rate-note-plain {
     color: #ccc;
 }
-/* Supporting detail and possibilities, and the line that quotes the
-   recording's metadata: the .metadata-note grey. */
-.rate-note-muted,
-.rate-note-quote {
-    color: #999;
-}
+/* .rate-note-muted (supporting detail and possibilities) and .rate-note-quote
+   (the line that quotes the recording's metadata) have no rule of their own:
+   they inherit the .metadata-note grey, so a change to that colour reaches
+   them too. */
 
 /* Sequence gap indicators */
 .seq-gap-row {
