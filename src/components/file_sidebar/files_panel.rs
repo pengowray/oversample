@@ -491,12 +491,12 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     <div class="file-item-name">
                                         {if is_tauri {
                                             Some(view! {
-                                                <span
-                                                    class="file-badge file-badge-batm"
-                                                    style="cursor: pointer;"
+                                                // A button, so the keyboard can reach it.
+                                                <button
+                                                    class="file-badge badge-btn file-badge-batm"
                                                     style:display=move || {
                                                         let (ro, sidecar) = batm_badge_state();
-                                                        if ro || sidecar { "inline" } else { "none" }
+                                                        if ro || sidecar { "inline-block" } else { "none" }
                                                     }
                                                     on:click=on_toggle_readonly
                                                     title=move || {
@@ -518,7 +518,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                             (false, false) => "",
                                                         }
                                                     }}
-                                                </span>
+                                                </button>
                                             })
                                         } else {
                                             None

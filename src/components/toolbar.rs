@@ -459,7 +459,8 @@ pub fn Toolbar() -> impl IntoView {
                                 }
                             })}
 
-                            // Unsaved badge + download button (toolbar-specific)
+                            // "* File unsaved" (a fact, amber text) and the
+                            // Download or Save button (a control, amber box).
                             {unsaved.then(|| {
                                 let (btn_label, btn_title) = if is_tauri {
                                     ("Save", "Save recording")
@@ -467,23 +468,29 @@ pub fn Toolbar() -> impl IntoView {
                                     ("Download", "Download WAV")
                                 };
                                 view! {
-                                    <span class="toolbar-unsaved-badge">"* File unsaved"</span>
+                                    <span class="badge-fact unsaved">"* File unsaved"</span>
                                     <button
-                                        class="toolbar-download-btn"
+                                        class="badge-btn unsaved"
                                         title=btn_title
                                         on:click=on_toolbar_download
                                     ><Icon kind=Icon::Download />" "{btn_label}</button>
                                 }
                             })}
 
-                            // Licence badge — subtle text, opens license modal on click.
+                            // Licence button: opens the licence dialog. It is a
+                            // box (badge-btn) like every other control in the
+                            // badge row, because on 2026-11-14 the user chose
+                            // badge style option A: anything that can be pressed
+                            // is a box, and every fact is plain text. As plain
+                            // text it looked like a fact, and on a phone, which
+                            // has no hover, nothing showed that it could be pressed.
                             // CC licences show the CC icon and drop "CC " from the label.
                             {license.map(|label| {
                                 let is_cc = label.is_cc;
                                 let short_label = label.badge_text().to_string();
                                 view! {
                                     <button
-                                        class="toolbar-cc-badge"
+                                        class="badge-btn toolbar-cc-badge"
                                         title="License details"
                                         on:click=move |e: web_sys::MouseEvent| {
                                             e.stop_propagation();
@@ -520,7 +527,7 @@ pub fn Toolbar() -> impl IntoView {
                                                 seq_dropdown_open.set(false);
                                             }
                                         >
-                                            <span class="file-badge file-badge-seq">{format!("#{}", seq_num)}</span>
+                                            <span class="file-badge badge-fact">{format!("#{}", seq_num)}</span>
                                             <span>{name}</span>
                                         </div>
                                     }
@@ -547,7 +554,7 @@ pub fn Toolbar() -> impl IntoView {
                                                 track_dropdown_open.set(false);
                                             }
                                         >
-                                            <span class="file-badge file-badge-track">{format!("[{}]", label)}</span>
+                                            <span class="file-badge badge-fact">{format!("[{}]", label)}</span>
                                             <span>{name}</span>
                                         </div>
                                     }

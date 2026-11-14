@@ -630,7 +630,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     }}
                     {filename}
                     {if from_tauri {
-                        Some(view! { <span class="file-badge file-badge-tauri" title="Metadata from desktop">"T"</span> })
+                        Some(view! { <span class="file-badge badge-fact file-badge-tauri" title="Metadata from desktop">"T"</span> })
                     } else {
                         None
                     }}

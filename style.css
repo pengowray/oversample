@@ -2893,14 +2893,17 @@ a.open-link-btn {
     overflow: hidden;
 }
 
-.toolbar-info-row,
+/* The heading's badge row: one text size (12px) for every fact and control.
+   See "File badges" for the facts and controls in it. */
 .toolbar-badge-row {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 4px 6px;
     position: relative;
     flex-wrap: wrap;
+    font-size: 12px;
+    color: #aaa;
 }
 
 .toolbar-status-icons {
@@ -2960,28 +2963,17 @@ a.open-link-btn {
     background: rgba(255, 255, 255, 0.1) !important;
 }
 
+/* The heading's licence button. Its box comes from .badge-btn ("File
+   badges"); this rule lays out the icon and label. A long licence name is
+   cut off with an ellipsis on the label, which clips itself, so the button
+   does not clip and the touch strip in .badge-btn::before stays tappable. */
 .toolbar-cc-badge {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 3px;
-    background: transparent !important;
-    border: 1px solid transparent !important;
-    color: #888;
-    font-size: 10px;
-    padding: 2px 6px !important;
-    cursor: pointer;
-    border-radius: 3px;
-    line-height: 1;
     white-space: nowrap;
-    overflow: hidden;
     max-width: 160px;
-}
-
-.toolbar-cc-badge:hover {
-    background: rgba(255, 255, 255, 0.08) !important;
-    border-color: rgba(255, 255, 255, 0.15) !important;
-    color: #ccc;
 }
 
 .toolbar-cc-icon {
@@ -3006,7 +2998,7 @@ a.open-link-btn {
 
 /* Document icon for licences that are not Creative Commons (GFDL, Fair use),
    so their badge reads as a button like the CC one. Same box as the CC icon;
-   the icon would otherwise be 1em, which is 10px in the badge. */
+   the icon would otherwise be 1em, which is 12px in the badge row. */
 .toolbar-license-icon {
     width: 14px;
     height: 14px;
@@ -3123,18 +3115,24 @@ a.open-link-btn {
     color: #fff;
 }
 
+/* A file row's badge line: one text size (11px) for every fact and control.
+   The 14px line height is the height the bordered sample rate chip gave each
+   line before the badges became plain text, so a row whose badges wrap onto
+   a second line (heterodyne badge, CC icon) is no taller than it was.
+   See "File badges" for the facts and controls in it. */
 .file-item-info {
     font-size: 11px;
-    color: #777;
+    line-height: 14px;
+    color: #999;
     margin-top: 2px;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 4px 6px;
     flex-wrap: wrap;
 }
 
 .file-item.active .file-item-info {
-    color: #99b;
+    color: #c0cfe0;
 }
 
 .file-preview-canvas {
@@ -5057,73 +5055,106 @@ a.open-link-btn {
     50% { background: rgba(220, 60, 60, 0.22); }
 }
 
-/* File badges (track groups, streaming) */
+/* File badges: the heading's badge row (.toolbar-badge-row) and each file
+   list row (.file-item-info, and the [.batm] toggle in .file-item-name).
+   Badge style option A, chosen by the user on 2026-11-14: anything that can
+   be pressed is a solid box (.badge-btn), and every fact is plain text
+   (.badge-fact). Before, a fill did not show whether a badge could be
+   pressed: the filled heterodyne badge was a button, but the filled sequence,
+   track and streaming badges in rows were not. */
 .file-badge {
-    font-size: 10px;
-    padding: 0 3px;
-    margin-right: 4px;
-    border-radius: 2px;
     white-space: nowrap;
     flex-shrink: 0;
 }
-.file-badge-track {
-    color: #668;
-    background: #222;
+.badge-fact {
+    white-space: nowrap;
 }
-.file-badge-track.highlighted {
-    color: #adf;
-    background: #1a3a5a;
+
+/* A middle dot between sample rate, bit depth and duration
+   ("192kHz · 24 bit · 0.9s"). There is no dot before the sequence and track
+   labels ("#59 [3]"), which have their own marks: a dot there made a 192 kHz
+   row wrap at the default sidebar width. The second content line gives the
+   dot empty alternative text, so screen readers skip it; a browser without
+   that syntax uses the first line. */
+.badge-bit-depth::before,
+.badge-duration::before {
+    content: "\00B7";
+    content: "\00B7" / "";
+    margin-right: 6px;
+    opacity: 0.6;
 }
-.file-item.active .file-badge-track {
-    color: #adf;
-    background: #255080;
-}
-.file-badge-seq {
-    color: #7a7;
-    background: #1a2a1a;
-}
-.file-item.active .file-badge-seq {
-    color: #afa;
-    background: #254025;
-}
-.file-badge-streaming {
-    color: #a90;
-    background: #221800;
-}
-.file-item.active .file-badge-streaming {
+
+/* "* File unsaved" in the heading: amber text, no box. */
+.badge-fact.unsaved {
     color: #fc8;
-    background: #332200;
 }
-/* "Heterodyne recording" (heterodyne.rs): the recording is a heterodyne bat
-   detector's output, so its frequencies are not the bat's. A solid fill with no
-   border, like the track, sequence and streaming badges, in the warning amber of
-   .analysis-warning. The same colours in every file list row, since it is a
-   warning about the file rather than a selection state. It is a button (it opens
-   the Info panel), so this rule also undoes `.toolbar button`. */
-.file-badge.file-badge-heterodyne {
+
+/* A control is a box: solid fill, no border. The :is() list gives these
+   rules more weight than `.toolbar button`, which would otherwise draw the
+   heading's controls as full-size 13px toolbar buttons. */
+:is(.toolbar-badge-row, .file-item-info, .file-item-name) .badge-btn {
     font: inherit;
-    font-size: 10px;
     line-height: inherit;
-    padding: 0 3px;
+    padding: 0 5px;
     border: none;
-    border-radius: 2px;
-    color: #fc8;
-    background: #3a2700;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.13);
+    color: #e6e6e6;
     cursor: pointer;
+    white-space: nowrap;
 }
-.file-badge.file-badge-heterodyne:hover {
+:is(.toolbar-badge-row, .file-item-info, .file-item-name) .badge-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+/* Amber means only "this file needs attention", in the warning amber of
+   .analysis-warning: the "Heterodyne recording" badge (heterodyne.rs; the
+   file is a heterodyne bat detector's output, so its frequencies are not the
+   bat's, and the badge opens the Info panel at the note), and Download or
+   Save for an unsaved recording. The same colours on the selected row, since
+   it is a warning about the file and not a selection state. */
+:is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved) {
+    background: #3a2700;
+    color: #fc8;
+}
+:is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved):hover {
     background: #4d3400;
 }
-/* On a touch screen the 14 px tall badge is hard to tap, so an invisible strip
-   above and below makes it 24 px tall without changing how it looks. */
+/* A saved recording's row download: grey text, since nothing needs doing. */
+.file-item-info .badge-btn.badge-download-btn.saved {
+    color: #aaa;
+}
+/* The row download sits at the right end of the row. */
+.badge-download-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+}
+/* Space between the [.batm] toggle and the file name after it. */
+.file-badge-batm {
+    margin-right: 4px;
+}
+/* Keyboard focus. The same blue as the tutorial's ring round its target
+   (.driver-active-element). */
+.badge-btn:focus-visible {
+    outline: 2px solid #7f9cf5;
+    outline-offset: 1px;
+}
+/* .file-item-name clips its overflow for the name's ellipsis, which would
+   cut off the [.batm] toggle's focus ring and touch strip. Padding moves the
+   clip edge 5px further out, and the negative margin keeps the row height. */
+.file-item-name:has(> .badge-btn) {
+    padding-block: 5px;
+    margin-block: -5px;
+}
+/* On a touch screen every control gets an invisible strip above and below,
+   so it is 24px tall to a finger without changing how it looks. */
 @media (pointer: coarse) {
-    .file-badge.file-badge-heterodyne {
+    .badge-btn {
         position: relative;
     }
-    .file-badge.file-badge-heterodyne::after {
+    .badge-btn::before {
         content: "";
         position: absolute;
-        inset: -5px 0;
+        inset: -5px -3px;
     }
 }
 
@@ -5188,67 +5219,6 @@ a.open-link-btn {
     flex-shrink: 0;
 }
 
-/* Sample rate badge (bordered) */
-.badge-sample-rate {
-    border: 1px solid #555;
-    border-radius: 3px;
-    color: #aaa;
-}
-.toolbar-badge-row .badge-sample-rate {
-    font-size: 11px;
-}
-.file-item.active .badge-sample-rate {
-    border-color: #6688aa;
-    color: #cde;
-}
-
-/* Bit depth badge (bordered) */
-.badge-bit-depth {
-    border: 1px solid #555;
-    border-radius: 3px;
-    color: #aaa;
-}
-.file-item.active .badge-bit-depth {
-    border-color: #6688aa;
-    color: #cde;
-}
-
-/* Duration text in badge row */
-.badge-duration {
-    color: #888;
-    white-space: nowrap;
-}
-.toolbar-badge-row .badge-duration {
-    color: #999;
-}
-.file-item.active .badge-duration {
-    color: #aac;
-}
-
-/* Download button in badge row (file menu) */
-.badge-download-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 12px;
-    padding: 0 2px;
-    line-height: 1;
-    margin-left: auto;
-    flex-shrink: 0;
-}
-.badge-download-btn.unsaved {
-    color: #fc8;
-    opacity: 1;
-}
-.badge-download-btn.saved {
-    color: #888;
-    opacity: 0.4;
-}
-.badge-download-btn:hover {
-    opacity: 1 !important;
-    color: #fc8;
-}
-
 /* CC mini badge (file menu, non-clickable) */
 .badge-cc-mini {
     display: inline-flex;
@@ -5262,50 +5232,13 @@ a.open-link-btn {
     height: 12px;
 }
 
-/* Clickable badges (toolbar dropdowns) */
-.badge-clickable {
-    cursor: pointer;
-    background: none;
-    border: none;
-    font-size: 10px;
-    padding: 0 3px;
-    border-radius: 2px;
-    white-space: nowrap;
-}
-.badge-clickable:hover {
-    filter: brightness(1.3);
-}
-
-/* Toolbar unsaved badge */
-.toolbar-unsaved-badge {
-    font-size: 10px;
-    color: #f80;
-    background: rgba(255, 136, 0, 0.12);
-    border: 1px solid rgba(255, 136, 0, 0.4);
-    border-radius: 3px;
-    padding: 0 5px;
-    white-space: nowrap;
-}
-
-/* Toolbar download button */
-.toolbar-download-btn {
-    font-size: 11px;
-    color: #fc8;
-    background: rgba(255, 200, 100, 0.1);
-    border: 1px solid rgba(255, 200, 100, 0.3);
-    border-radius: 3px;
-    padding: 1px 6px;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.toolbar-download-btn:hover {
-    background: rgba(255, 200, 100, 0.2);
-}
-
-/* Sequence/track dropdown panels */
+/* Sequence/track dropdown panels. On a phone, an open Files or Info sidebar
+   (.sidebar.mobile-overlay, z-index 200) lies under the heading, and at
+   z-index 50 it covered the menu. 201 draws the menu above the sidebars and
+   below modal dialogs (1000). */
 .badge-dropdown-panel {
     position: absolute;
-    z-index: 50;
+    z-index: 201;
     background: rgba(16, 16, 16, 0.97);
     border: 1px solid #3a3a3a;
     border-radius: 6px;
@@ -5335,6 +5268,13 @@ a.open-link-btn {
 .badge-dropdown-item.active {
     color: #fff;
     background: #1a3a5a;
+}
+/* The sequence and track labels ("#58", "[1-2]") in these menus. */
+.badge-dropdown-item .badge-fact {
+    color: #999;
+}
+.badge-dropdown-item.active .badge-fact {
+    color: #cde;
 }
 
 .unsaved-banner {
@@ -6343,13 +6283,12 @@ button.toolbar-overflow-btn {
     color: #f66;
 }
 
+/* "T" after a project file's name: its metadata came from the desktop app.
+   A fact, so plain text (see "File badges"), in the grey of the file rows'
+   facts so it doesn't read as part of the name. */
 .file-badge-tauri {
-    color: #a8d;
-    background: #2a1a3a;
-    font-size: 9px;
-    padding: 0 3px;
-    margin-left: 3px;
-    border-radius: 2px;
+    margin-left: 4px;
+    color: #999;
 }
 
 /* ── Right sidebar overrides ───────────────────────────────────────── */
