@@ -74,7 +74,7 @@ pub fn AnalysisPanel() -> impl IntoView {
     view! {
         <div class="analysis-panel">
             {move || {
-                let has_file = state.library.current_index().get().is_some() || state.timeline.active().get().is_some();
+                let has_file = !state.no_recording_open();
 
                 if !has_file {
                     return view! {

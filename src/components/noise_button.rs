@@ -9,6 +9,7 @@
 // Profile management (save/load Tauri presets) was dropped earlier; the
 // Tauri-side commands are still there if it's reinstated.
 
+use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::audio::source::ChannelView;
-use crate::components::switch_button::{toggle_panel, SwitchButton, SwitchRow};
+use crate::components::switch_button::{SwitchButton, SwitchRow};
 use crate::dsp::notch::{self, DetectionConfig};
 use crate::state::{AppState, LayerPanel};
 
@@ -253,9 +254,7 @@ pub fn NoiseButton() -> impl IntoView {
 
     let is_open =
         Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Noise));
-    let no_file = Signal::derive(move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    });
+    let no_file = Signal::derive(move || state.no_recording_open());
     let nr_on = Signal::derive(move || state.noise_reduce.enabled().get());
     let notch_on = Signal::derive(move || state.notch.enabled().get());
     let any_on = Signal::derive(move || nr_on.get() || notch_on.get());

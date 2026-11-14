@@ -4252,9 +4252,8 @@ a.open-link-btn {
     justify-content: space-between;
     gap: 6px;
     width: 100%;
-    /* 21px rows: the control is 44px tall, the hearing bar's own height, so
-       the two press targets are as tall as they can be without growing it. */
-    min-height: 21px;
+    /* 24px rows: each row is its own press target (WCAG 2.2 target size). */
+    min-height: 24px;
     margin: 0;
     padding: 2px 7px;
     border: none;
@@ -4368,12 +4367,7 @@ a.open-link-btn {
 .switch-row.on {
     color: #6da;
 }
-/* Touch: each row is its own target, so each gets 24px or more. */
 @media (pointer: coarse), (max-width: 640px) {
-    .switch-btn-top,
-    .switch-btn-value {
-        min-height: 24px;
-    }
     .switch-row {
         min-height: 40px;
     }

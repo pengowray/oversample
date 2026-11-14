@@ -2503,6 +2503,13 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// True when no recording is open: no file is selected and no timeline
+    /// is active. The bar controls are disabled while this holds. Reads the
+    /// signals with tracking, so a caller re-runs when a recording opens.
+    pub fn no_recording_open(&self) -> bool {
+        self.library.current_index().get().is_none() && self.timeline.active().get().is_none()
+    }
+
     pub fn new() -> Self {
         let s = Self {
             spect: Store::new(SpectState {

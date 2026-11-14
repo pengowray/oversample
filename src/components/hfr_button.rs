@@ -12,6 +12,7 @@
 // Replaces the previous `HfrButton` combo, whose left half (the HFR
 // toggle) has moved to the BAND cell — see [BandHfrCell] in hearing_bar.rs.
 
+use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
@@ -26,12 +27,6 @@ fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
     } else {
         "layer-panel-opt"
     }
-}
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
 }
 
 /// Format Hz as a kHz string for the Range button label: drop ".0" for
@@ -237,9 +232,7 @@ pub fn RangeButton() -> impl IntoView {
     let is_open = Signal::derive(move || {
         state.panels.layer_panel_open().get() == Some(LayerPanel::BandPresets)
     });
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
 
     let btn_class = Signal::derive(move || {
         let mut s = String::from("layer-btn range-btn lock-grow");

@@ -19,14 +19,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::popup::{Align, PopupPanel, Side};
-use crate::state::{AppState, LayerPanel};
-
-/// Open `panel`, or close it if it is the one open.
-pub fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
+use crate::state::AppState;
 
 #[component]
 pub fn SwitchButton(
