@@ -185,9 +185,16 @@ fn selected_species_info(state: AppState) -> Option<(String, f64, f64)> {
     } else {
         format!("{count} species")
     };
-    // Clipped like the file species preset, so the band fits the file.
+    Some((label, lo, hi))
+}
+
+/// The band the selected species preset applies: the selected species'
+/// range clipped to the file, like the file species preset. The label keeps
+/// the species' own range.
+fn selected_species_band(state: AppState) -> Option<(f64, f64)> {
+    let (_, lo, hi) = selected_species_info(state)?;
     let r = FocusRange::new(lo, hi).clip_to(nyquist_for_current(state));
-    Some((label, r.lo, r.hi))
+    Some((r.lo, r.hi))
 }
 
 /// True when HFR is on and the current BandFF range matches `(lo, hi)` — used
@@ -322,7 +329,7 @@ pub fn RangeButton() -> impl IntoView {
                         ),
                         None => ("Bat book: selected species".to_string(), None),
                     };
-                    let sel_range = info.as_ref().map(|(_, lo, hi)| (*lo, *hi));
+                    let sel_range = selected_species_band(state);
                     view! {
                         <button
                             class=move || layer_opt_class(
@@ -331,7 +338,7 @@ pub fn RangeButton() -> impl IntoView {
                             )
                             disabled=disabled
                             on:click=move |_| {
-                                if let Some((_, lo, hi)) = selected_species_info(state) {
+                                if let Some((lo, hi)) = selected_species_band(state) {
                                     apply_band(state, lo, hi);
                                 }
                             }
