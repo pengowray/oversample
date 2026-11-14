@@ -133,13 +133,44 @@ pub fn time_expansion_line(te: TimeExpansion) -> NoteLine {
     ))
 }
 
+/// Whether the app can change the rate a file is read at
+/// ([`crate::types::AudioData::can_set_time_expansion`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Correction {
+    /// The file's samples are all in memory.
+    Possible,
+    /// The file is streamed from disk: a large file, or one opened when the
+    /// files already open are large in total. The app says "Streaming large
+    /// file" or "Streaming file to keep total open files under control" as
+    /// it opens one.
+    Streamed,
+    /// Any other file: a zero-crossing (`.zc`) file.
+    NotPossible,
+}
+
+impl Correction {
+    pub fn of(audio: &crate::types::AudioData) -> Self {
+        if audio.can_set_time_expansion() {
+            Correction::Possible
+        } else if crate::audio::streaming_source::is_streaming(audio.source.as_ref()) {
+            Correction::Streamed
+        } else {
+            Correction::NotPossible
+        }
+    }
+}
+
+/// The species note's last line for a probably time-expanded file that the
+/// app streams from disk, in place of the button.
+pub const STREAMED_LINE: &str = "Streamed files can't be corrected for time expansion.";
+
 /// The notes under a file's Sample rate row, in the order they are shown.
 pub fn file_rate_notes(file: &LoadedFile) -> Vec<RateNote> {
     rate_notes(
         file.audio.metadata.time_expansion,
         file.heterodyne_hint.as_ref(),
         file.species_range.as_ref(),
-        file.audio.can_set_time_expansion(),
+        Correction::of(&file.audio),
     )
 }
 
@@ -149,11 +180,11 @@ pub fn file_rate_notes(file: &LoadedFile) -> Vec<RateNote> {
 /// - `time_expansion`: the correction applied to the file's rate. It gives
 ///   the time-expansion note, which comes first. When the user applied it,
 ///   the note has the "Remove ×10 correction" button.
-/// - `can_correct`: whether the app can change the rate the file is read at
-///   ([`crate::types::AudioData::can_set_time_expansion`]): false for a
-///   streamed file. When true, the species note of a file at a ×10 header
-///   rate ([`crate::species_check::RangeCase::TenfoldHeaderRate`]) has the
-///   "Correct for ×10 time expansion" button.
+/// - `correction`: whether the app can change the rate the file is read at.
+///   When it can, the species note of a file at a ×10 header rate
+///   ([`crate::species_check::RangeCase::TenfoldHeaderRate`]) has the
+///   "Correct for ×10 time expansion" button. For a streamed file, that
+///   note ends with [`STREAMED_LINE`] instead.
 /// - Heterodyne levels A and B: the heterodyne note without the species
 ///   line. The note already says the frequencies are not the bat's.
 /// - Heterodyne level C: the heterodyne note, then the species line, muted
@@ -165,7 +196,7 @@ pub fn rate_notes(
     time_expansion: Option<TimeExpansion>,
     hint: Option<&HeterodyneHint>,
     finding: Option<&SpeciesRangeFinding>,
-    can_correct: bool,
+    correction: Correction,
 ) -> Vec<RateNote> {
     let mut notes = Vec::new();
     if let Some(te) = time_expansion {
@@ -188,13 +219,19 @@ pub fn rate_notes(
                 action: None,
             });
         }
-        (None, Some(finding)) => notes.push(RateNote {
-            kind: NoteKind::Species,
-            lines: crate::species_check::note_lines(finding),
-            action: (can_correct
-                && finding.case == crate::species_check::RangeCase::TenfoldHeaderRate)
-                .then_some(NoteAction::CorrectTenfold),
-        }),
+        (None, Some(finding)) => {
+            let mut lines = crate::species_check::note_lines(finding);
+            let tenfold = finding.case == crate::species_check::RangeCase::TenfoldHeaderRate;
+            if tenfold && correction == Correction::Streamed {
+                lines.push(NoteLine::muted(STREAMED_LINE));
+            }
+            notes.push(RateNote {
+                kind: NoteKind::Species,
+                lines,
+                action: (tenfold && correction == Correction::Possible)
+                    .then_some(NoteAction::CorrectTenfold),
+            });
+        }
         (None, None) => {}
     }
     notes
@@ -227,14 +264,14 @@ mod tests {
 
     #[test]
     fn a_corrected_rate_says_what_the_file_holds() {
-        assert_eq!(rate_notes(None, None, None, true), []);
+        assert_eq!(rate_notes(None, None, None, Correction::Possible), []);
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 38_400,
             origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(
-            rate_notes(Some(te), None, None, true),
+            rate_notes(Some(te), None, None, Correction::Possible),
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
@@ -255,14 +292,22 @@ mod tests {
     #[test]
     fn a_probable_tenfold_file_gets_the_correct_button() {
         let species = case_t();
-        let notes = rate_notes(None, None, Some(&species), true);
+        let notes = rate_notes(None, None, Some(&species), Correction::Possible);
         assert_eq!(kinds(&notes), [NoteKind::Species]);
         assert_eq!(notes[0].action, Some(NoteAction::CorrectTenfold));
         // The button comes after the amber claim and the species evidence.
         assert_eq!(notes[0].lines, crate::species_check::note_lines(&species));
         assert_eq!(notes[0].lines[0].role, crate::note_line::LineRole::Warning);
-        // A streamed file keeps the note without the button.
-        let notes = rate_notes(None, None, Some(&species), false);
+        // A streamed file has no button, and its note says why.
+        let notes = rate_notes(None, None, Some(&species), Correction::Streamed);
+        assert_eq!(notes[0].action, None);
+        let mut expected = crate::species_check::note_lines(&species);
+        expected.push(NoteLine::muted(
+            "Streamed files can't be corrected for time expansion.",
+        ));
+        assert_eq!(notes[0].lines, expected);
+        // A zero-crossing file has neither.
+        let notes = rate_notes(None, None, Some(&species), Correction::NotPossible);
         assert_eq!(notes[0].action, None);
         assert_eq!(notes[0].lines, crate::species_check::note_lines(&species));
     }
@@ -272,14 +317,20 @@ mod tests {
         // Case "Other": the factor is unknown.
         let other = finding("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
         assert_eq!(other.case, crate::species_check::RangeCase::Other);
-        assert_eq!(rate_notes(None, None, Some(&other), true)[0].action, None);
+        let notes = rate_notes(None, None, Some(&other), Correction::Possible);
+        assert_eq!(notes[0].action, None);
+        // Nor the streamed line: there is nothing to correct.
+        assert_eq!(
+            rate_notes(None, None, Some(&other), Correction::Streamed),
+            notes
+        );
         // A heterodyne note never has one. At a x10 header rate only a
         // remark that says "heterodyne" gives a hint (level A), and its note
         // replaces the species note.
         let species = case_t();
         let hint_a = hint("Remarks", "hetrodyne detector set at 31,9 kHz", 25_600);
         assert_eq!(hint_a.level, HeterodyneLevel::SaysHeterodyne);
-        let notes = rate_notes(None, Some(&hint_a), Some(&species), true);
+        let notes = rate_notes(None, Some(&hint_a), Some(&species), Correction::Possible);
         assert_eq!(kinds(&notes), [NoteKind::Heterodyne]);
         assert_eq!(notes[0].action, None);
         // A correction from the file's metadata or its source has none.
@@ -289,7 +340,10 @@ mod tests {
                 stored_rate: 25_600,
                 origin,
             };
-            assert_eq!(rate_notes(Some(te), None, None, true)[0].action, None);
+            assert_eq!(
+                rate_notes(Some(te), None, None, Correction::Possible)[0].action,
+                None
+            );
         }
     }
 
@@ -309,7 +363,7 @@ mod tests {
             None
         );
         assert_eq!(
-            rate_notes(Some(te), None, None, true),
+            rate_notes(Some(te), None, None, Correction::Possible),
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
@@ -357,7 +411,7 @@ mod tests {
         let hint_b = hint("Remarks", "Recording with Magenta Bat5", 48_000);
         assert_eq!(hint_b.level, HeterodyneLevel::HeterodyneOnlyDetector);
         assert_eq!(
-            rate_notes(None, Some(&hint_b), Some(&species), true),
+            rate_notes(None, Some(&hint_b), Some(&species), Correction::Possible),
             [RateNote {
                 kind: NoteKind::Heterodyne,
                 lines: crate::heterodyne::note_lines(&hint_b),
@@ -369,7 +423,7 @@ mod tests {
         let hint_a = hint("Remarks", "hetrodyne detector set at 31,9 kHz", 48_000);
         assert_eq!(hint_a.level, HeterodyneLevel::SaysHeterodyne);
         assert_eq!(
-            rate_notes(None, Some(&hint_a), Some(&species), true),
+            rate_notes(None, Some(&hint_a), Some(&species), Correction::Possible),
             [RateNote {
                 kind: NoteKind::Heterodyne,
                 lines: crate::heterodyne::note_lines(&hint_a),
@@ -399,7 +453,7 @@ mod tests {
              file can only contain frequencies up to 22.1\u{a0}kHz.",
         ));
         assert_eq!(
-            rate_notes(None, Some(&hint_c), Some(&species), true),
+            rate_notes(None, Some(&hint_c), Some(&species), Correction::Possible),
             [RateNote {
                 kind: NoteKind::Heterodyne,
                 lines: expected,
@@ -411,7 +465,7 @@ mod tests {
         assert_eq!(finding("Myotis blythii", ECHO, 44_100), None);
         let hint_c = hint("Device", "Pettersson D980", 44_100);
         assert_eq!(
-            rate_notes(None, Some(&hint_c), None, true),
+            rate_notes(None, Some(&hint_c), None, Correction::Possible),
             [RateNote {
                 kind: NoteKind::Heterodyne,
                 lines: crate::heterodyne::note_lines(&hint_c),
@@ -424,7 +478,7 @@ mod tests {
     fn no_hint_gives_the_species_note() {
         let species = finding("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
         assert_eq!(
-            rate_notes(None, None, Some(&species), true),
+            rate_notes(None, None, Some(&species), Correction::Possible),
             [RateNote {
                 kind: NoteKind::Species,
                 lines: crate::species_check::note_lines(&species),
@@ -445,7 +499,7 @@ mod tests {
         let species =
             crate::species_check::finding("Pipistrellus pygmaeus", species, ECHO, Some(te), 51_200)
                 .unwrap();
-        let notes = rate_notes(Some(te), None, Some(&species), true);
+        let notes = rate_notes(Some(te), None, Some(&species), Correction::Possible);
         assert_eq!(kinds(&notes), [NoteKind::TimeExpansion, NoteKind::Species]);
         assert_eq!(
             notes[0].lines,
@@ -460,7 +514,7 @@ mod tests {
         // XC1034529. The quote line is the recordist's words, with a no-break
         // space before "kHz" so the unit wraps with "31,9".
         let hint_a = hint("Remarks", "hetrodyne detector set at 31,9 kHz", 48_000);
-        let notes = rate_notes(None, Some(&hint_a), None, true);
+        let notes = rate_notes(None, Some(&hint_a), None, Correction::Possible);
         let quotes: Vec<&NoteLine> = notes[0]
             .lines
             .iter()
@@ -481,7 +535,9 @@ mod tests {
             ("heterodyne detector tuned to 45 k Hz", "45\u{a0}k\u{a0}Hz"),
         ] {
             let hint = hint("Remarks", remark, 48_000);
-            let lines = rate_notes(None, Some(&hint), None, true).remove(0).lines;
+            let lines = rate_notes(None, Some(&hint), None, Correction::Possible)
+                .remove(0)
+                .lines;
             let quote = lines.iter().find(|l| l.role == LineRole::Quote).unwrap();
             assert!(quote.text.contains(quoted), "{:?}", quote.text);
         }
