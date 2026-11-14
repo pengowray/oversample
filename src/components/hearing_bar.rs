@@ -310,7 +310,7 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
         let lo = state.filter.freq_low().get();
         let hi = state.filter.freq_high().get();
         // "20–60 kHz", as the app's other frequency ranges are written.
-        let khz = |hz: f64| crate::heterodyne::format_khz(hz.round() as i64, 1);
+        let khz = |hz: f64| crate::format_units::khz_value(hz.round() as i64, 1);
         format!("{}\u{2013}{} kHz", khz(lo), khz(hi))
     });
     // Auto follows the HFR band, so it is the mode to turn on while HFR is on.
