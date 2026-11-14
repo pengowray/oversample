@@ -782,10 +782,11 @@ test.describe("a correction from the file's GUANO", () => {
     const apply = page.locator(`${TE_NOTE} ${APPLY}`);
     await expect(apply).toHaveText("Correct for ×10 time expansion");
     await expect(apply).toHaveAttribute("title", "Sets the sample rate to 384\u00a0kHz.");
-    // At 38.4 kHz the species note says the file is probably time-expanded.
-    // Its own button would apply the same correction, so it has none: the
-    // time-expansion note's button is the only one.
-    await expect(page.locator(SPECIES_NOTE)).toContainText("Probably time-expanded ×10");
+    // At 38.4 kHz the file is too low for its species' calls. The species
+    // note gives only the species' calls: the time-expansion note above it
+    // gives the factor in the GUANO, and its button is the only one.
+    await expect(page.locator(SPECIES_NOTE)).toContainText("Pipistrellus pipistrellus:");
+    await expect(page.locator(SPECIES_NOTE)).not.toContainText("Probably time-expanded");
     await expect(page.locator(".rate-note-action")).toHaveCount(1);
     await settle(page);
     await shot(page, "guano-1440-removed.png");

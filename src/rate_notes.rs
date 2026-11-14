@@ -316,11 +316,15 @@ pub fn file_rate_notes(file: &LoadedFile) -> Vec<RateNote> {
 /// - `correction`: whether the app can change the rate the file is read at.
 ///   When it can, the species note of a file at a ×10 header rate
 ///   ([`crate::species_check::RangeCase::TenfoldHeaderRate`]) has the
-///   "Correct for ×10 time expansion" button, unless the time-expansion
-///   note has its own button for the removed correction: both would read
-///   the file at ten times its rate, and the one shown makes the correction
-///   the file opens with. For a streamed file, that note ends with
-///   [`STREAMED_LINE`] instead.
+///   "Correct for ×10 time expansion" button. For a streamed file, that note
+///   ends with [`STREAMED_LINE`] instead.
+/// - While a correction from the file's metadata is removed, the species
+///   note is only the species line ([`crate::species_check::fact_line`]):
+///   the time-expansion note above it gives the factor the metadata states,
+///   with the button that applies it. The species note's other lines are
+///   guesses from the header rate ("Probably time-expanded ×10", or the list
+///   of bat detector outputs), which that statement replaces. With a factor
+///   other than 10, the ×10 guess and its button would contradict it.
 /// - Heterodyne levels A and B: the heterodyne note without the species
 ///   line. The note already says the frequencies are not the bat's.
 /// - Heterodyne level C: the heterodyne note, then the species line, muted
@@ -369,6 +373,11 @@ pub fn rate_notes(
                 action: None,
             });
         }
+        (None, Some(finding)) if removed.is_some() => notes.push(RateNote {
+            kind: NoteKind::Species,
+            lines: vec![crate::species_check::fact_line(finding)],
+            action: None,
+        }),
         (None, Some(finding)) => {
             let mut lines = crate::species_check::note_lines(finding);
             let tenfold = finding.case == crate::species_check::RangeCase::TenfoldHeaderRate;
@@ -378,7 +387,7 @@ pub fn rate_notes(
             notes.push(RateNote {
                 kind: NoteKind::Species,
                 lines,
-                action: (tenfold && correction == Correction::Possible && removed.is_none())
+                action: (tenfold && correction == Correction::Possible)
                     .then_some(NoteAction::CorrectTenfold),
             });
         }
@@ -682,22 +691,59 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_correction_has_the_only_correct_button() {
+    fn a_removed_correction_leaves_only_the_species_line() {
         // XC844459: Pipistrellus pipistrellus at 38.4 kHz is case T once its
-        // GUANO correction is removed. Both buttons would read it at
-        // 384 kHz; the time-expansion note's makes the correction from the
-        // GUANO again.
+        // GUANO correction is removed. The time-expansion note gives the
+        // factor in the GUANO and has the only button; the species note
+        // gives the species' calls, with no "Probably time-expanded ×10"
+        // guess, whatever the factor.
         let species = finding("Pipistrellus pipistrellus", ECHO, 38_400).unwrap();
         assert_eq!(
             species.case,
             crate::species_check::RangeCase::TenfoldHeaderRate
         );
+        for factor in [10.0, 8.0, 2.5] {
+            let mut o = opened(StatedIn::Guano);
+            o.te.factor = factor;
+            for correction in [Correction::Possible, Correction::Streamed] {
+                let notes = rate_notes(None, Some(&o), None, Some(&species), correction);
+                assert_eq!(kinds(&notes), [NoteKind::TimeExpansion, NoteKind::Species]);
+                assert_eq!(
+                    notes[0].action,
+                    (correction == Correction::Possible)
+                        .then_some(NoteAction::ApplyCorrection(o.te))
+                );
+                assert_eq!(
+                    notes[1],
+                    RateNote {
+                        kind: NoteKind::Species,
+                        lines: vec![crate::species_check::fact_line(&species)],
+                        action: None,
+                    },
+                    "x{factor} {correction:?}"
+                );
+            }
+        }
+        // At a rate that is not a tenth of a full-spectrum rate (case Other),
+        // the list of bat detector outputs goes too.
+        let other = finding("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
+        assert_eq!(other.case, crate::species_check::RangeCase::Other);
+        assert_eq!(crate::species_check::note_lines(&other).len(), 2);
         let o = opened(StatedIn::Guano);
-        let notes = rate_notes(None, Some(&o), None, Some(&species), Correction::Possible);
-        assert_eq!(kinds(&notes), [NoteKind::TimeExpansion, NoteKind::Species]);
-        assert_eq!(notes[0].action, Some(NoteAction::ApplyCorrection(o.te)));
-        assert_eq!(notes[1].action, None);
-        assert_eq!(notes[1].lines, crate::species_check::note_lines(&species));
+        let notes = rate_notes(None, Some(&o), None, Some(&other), Correction::Possible);
+        assert_eq!(notes[1].lines, [crate::species_check::fact_line(&other)]);
+        // A level C heterodyne note is unchanged: it already has only the
+        // species line.
+        let species = finding("Eptesicus nilssonii", ECHO, 44_100).unwrap();
+        let hint_c = hint("Device", "Pettersson D980", 44_100);
+        assert_eq!(hint_c.level, HeterodyneLevel::MayBeHeterodyne);
+        let with_hint = |o: Option<&OpenedCorrection>| {
+            rate_notes(None, o, Some(&hint_c), Some(&species), Correction::Possible)
+                .pop()
+                .unwrap()
+        };
+        assert_eq!(with_hint(Some(&o)), with_hint(None));
+        assert_eq!(with_hint(None).kind, NoteKind::Heterodyne);
     }
 
     #[test]

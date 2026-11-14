@@ -3,10 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
- * Time-expansion corrections the file was opened with, other than GUANO in
- * a file loaded in memory (te_correction.spec.ts has those): a factor from
- * Find recordings, a streamed WAV file, and the "Corrected ×10" badge in a
- * narrow Files sidebar.
+ * Time-expansion corrections the file was opened with, other than the GUANO
+ * ×10 file that te_correction.spec.ts opens: a factor from Find recordings, a
+ * Wildlife Acoustics `wamd` chunk, a GUANO factor other than 10, a streamed
+ * WAV file; what HFR does when one is removed; and the marks of a corrected
+ * rate in the heading and in a narrow Files sidebar.
  */
 
 const TE_NOTE = '.rate-note[data-note="time-expansion"]';
@@ -93,6 +94,8 @@ interface Snap {
   duration: number;
   scrollOffset: number;
   isPlaying: boolean;
+  hfrOn: boolean;
+  playbackMode: string;
 }
 
 async function snap(page: Page): Promise<Snap> {
@@ -385,4 +388,62 @@ test.describe('the "Corrected ×10" badge in a narrow Files sidebar', () => {
       }
     }
   });
+});
+
+/** Adds WAV files to the Files sidebar and waits for their rows. */
+async function addFiles(page: Page, files: { name: string; buffer: Buffer }[]) {
+  await page.goto("/");
+  await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForFunction(
+    () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+  );
+  await showFiles(page);
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles(files.map((f) => ({ ...f, mimeType: "audio/wav" })));
+  await expect(page.locator(".file-item:not(.loading)")).toHaveCount(files.length, {
+    timeout: 30_000,
+  });
+  await expect(page.locator(".file-item.loading")).toHaveCount(0);
+}
+
+const SPECIES_NOTE = '.rate-note[data-note="species"]';
+
+/** XC844459's species, Pipistrellus pipistrellus (42-51 kHz), at 38.4 kHz:
+ * read at the rate in its header, too low for its calls. */
+function pipistrelle(te: string): { name: string; buffer: Buffer } {
+  return {
+    name: `pipistrelle te${te}.wav`,
+    buffer: wav({
+      rate: 38_400,
+      frames: 76_800,
+      format: "16",
+      guano: `GUANO|Version: 1.0\nSpecies|Manual: Pipistrellus pipistrellus\nTE: ${te}\n`,
+    }),
+  };
+}
+
+test.describe("after a correction from the file's metadata is removed", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  // The metadata states the factor, so the species note gives only the
+  // species' call range: no "Probably time-expanded ×10" guess in amber, and
+  // no second button. With TE 8 that guess would contradict the metadata.
+  for (const te of ["10", "8"]) {
+    test(`TE ${te}: the species note gives only the species' calls`, async ({ page }) => {
+      await addFiles(page, [pipistrelle(te)]);
+      await showInfo(page);
+      await page.locator(REMOVE).click();
+      await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+      await expect(page.locator(SPECIES_NOTE)).toHaveCount(1);
+      await expect(page.locator(`${SPECIES_NOTE} > div`)).toHaveText([
+        /^Pipistrellus pipistrellus: echolocation calls at 42.+51 kHz, but this file can only contain frequencies up to 19.2 kHz\.$/,
+      ]);
+      await expect(page.locator(".rate-note .rate-note-warning")).toHaveCount(0);
+      await expect(page.locator(".rate-note-action")).toHaveText([
+        `Correct for ×${te} time expansion`,
+      ]);
+    });
+  }
 });
