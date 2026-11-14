@@ -4252,7 +4252,9 @@ a.open-link-btn {
     justify-content: space-between;
     gap: 6px;
     width: 100%;
-    min-height: 18px;
+    /* 21px rows: the control is 44px tall, the hearing bar's own height, so
+       the two press targets are as tall as they can be without growing it. */
+    min-height: 21px;
     margin: 0;
     padding: 2px 7px;
     border: none;
