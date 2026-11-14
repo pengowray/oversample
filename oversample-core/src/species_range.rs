@@ -62,7 +62,7 @@ pub fn is_bat_family(family: &str) -> bool {
 pub enum RangeCase {
     /// The header rate is a rate that full-spectrum and time-expanded files
     /// get when they are saved at one tenth of their real rate (19.2, 25,
-    /// 25.6, 30, 31.25, 38.4 or 50 kHz), the app didn't correct it, and at ten
+    /// 25.6, 30, 31.25, 38.4 or 50 kHz), the rate is not corrected, and at ten
     /// times the rate the file would reach the species' calls. All 10 such
     /// Xeno-canto records (judged from their header rate) were time-expanded
     /// ×10 (256 or 384 kHz recordings). Two of them (XC892810, XC892815)
@@ -90,13 +90,13 @@ pub struct SpeciesCallRange<'a> {
 /// A file's sample rate, before and after any time-expansion correction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileRate {
-    /// The rate as loaded, after any time-expansion correction.
+    /// The rate the file is read at, after any time-expansion correction.
     pub sample_rate: u32,
     /// The rate the file header states. Equal to `sample_rate` when no
     /// correction was applied.
     pub header_rate: u32,
-    /// Whether the app corrected the rate for time expansion when it loaded
-    /// the file (a factor other than 1).
+    /// Whether the rate was corrected for time expansion (a factor other
+    /// than 1), by the app when it loaded the file or by the user.
     pub time_expansion_applied: bool,
 }
 

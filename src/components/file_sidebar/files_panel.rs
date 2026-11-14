@@ -358,7 +358,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             bits_per_sample: f.audio.metadata.bits_per_sample,
                             is_float: f.audio.metadata.is_float,
                             duration_secs: f.audio.duration_secs,
-                            is_unsaved: is_rec && !is_tauri,
                             is_streaming,
                             track: track_badge,
                             sequence: seq_badge,
@@ -498,12 +497,12 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     <div class="file-item-name" title=name_title>
                                         {if is_tauri {
                                             Some(view! {
-                                                <span
-                                                    class="file-badge file-badge-batm"
-                                                    style="cursor: pointer;"
+                                                // A button, so the keyboard can reach it.
+                                                <button
+                                                    class="file-badge badge-btn file-badge-batm"
                                                     style:display=move || {
                                                         let (ro, sidecar) = batm_badge_state();
-                                                        if ro || sidecar { "inline" } else { "none" }
+                                                        if ro || sidecar { "inline-block" } else { "none" }
                                                     }
                                                     on:click=on_toggle_readonly
                                                     title=move || {
@@ -525,7 +524,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                             (false, false) => "",
                                                         }
                                                     }}
-                                                </span>
+                                                </button>
                                             })
                                         } else {
                                             None

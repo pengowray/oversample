@@ -1130,16 +1130,21 @@ fn export_annotations(state: AppState) {
             return;
         }
     };
-    let store = state.annotations.store().get_untracked();
-    let set = match store.get(id) {
-        Some(s) => s,
-        None => {
-            state.show_error_toast("No annotations to export");
-            return;
-        }
+    let Some(set) = state
+        .annotations
+        .store()
+        .with_untracked(|store| store.get(id).cloned())
+    else {
+        state.show_error_toast("No annotations to export");
+        return;
+    };
+    // Like autosave, the exported file uses the file's own seconds and Hz.
+    let set = match state.file_idx_for_id(id) {
+        Some(idx) => crate::te_correction::to_file_units_at(state, idx, set),
+        None => set,
     };
 
-    let yaml = match yaml_serde::to_string(set) {
+    let yaml = match yaml_serde::to_string(&set) {
         Ok(y) => y,
         Err(e) => {
             state.show_error_toast(format!("Serialize error: {e}"));
@@ -1226,6 +1231,8 @@ fn import_annota_json(state: AppState, text: &str) {
         metadata.as_deref(),
     );
     let set_nr = set.annotations.iter().find_map(|a| a.xc_nr.clone());
+    // Annota-JSON is in the file's own seconds and Hz, as Xeno-canto holds it.
+    let set = crate::te_correction::annota_from_file_units_at(state, file_idx, set);
 
     let existing: Vec<crate::annotations::Annotation> =
         state.annotations.store().with_untracked(|store| {
@@ -1331,6 +1338,13 @@ fn import_annotations(state: AppState) {
                             let Some(id) = state.current_file_id() else {
                                 state.show_error_toast("No file selected");
                                 return;
+                            };
+                            // A .batm is in the file's own seconds and Hz.
+                            let imported = match state.file_idx_for_id(id) {
+                                Some(idx) => {
+                                    crate::te_correction::from_file_units_at(state, idx, imported)
+                                }
+                                None => imported,
                             };
                             state.snapshot_annotations();
                             state.annotations.store().update(|store| {

@@ -251,6 +251,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         Some(s) => s.clone(),
         None => return,
     };
+    let set = crate::te_correction::to_file_units_at(state, file_idx, set);
 
     let key = opfs_key(&set.file_identity);
     let yaml = match yaml_serde::to_string(&set) {
@@ -370,6 +371,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         }
     };
 
+    let set = crate::te_correction::to_file_units_at(state, file_idx, set);
     let sidecar_yaml = sidecar_yaml_without_full_path(&set);
 
     // Mark had_sidecar so future auto-saves keep updating it
@@ -408,6 +410,9 @@ fn apply_loaded_sidecar(
     let Some(file_idx) = state.file_idx_for_id(file_id) else {
         return;
     };
+    // The file on disk is in the file's own seconds and Hz. If the user
+    // corrected the file's rate before it finished loading, convert it.
+    let loaded = crate::te_correction::from_file_units_at(state, file_idx, loaded);
 
     // If the sidecar has a noise profile, store it in the file's per-file settings.
     // Also restore cached peak values from sidecar metadata if not yet computed.

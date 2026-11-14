@@ -538,6 +538,9 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
     let Some(new_set) = new_set else {
         return;
     };
+    // Xeno-canto's times and frequencies are in the file's own seconds and
+    // Hz; convert them if the user corrected the file's time expansion.
+    let set = crate::te_correction::annota_from_file_units_at(state, file_idx, set);
     let existing: Vec<Annotation> = state.annotations.store().with_untracked(|store| {
         store
             .get(file_id)

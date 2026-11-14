@@ -2,6 +2,7 @@ use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::components::axis_drag::{apply_axis_drag, freq_snap};
 use crate::components::gutter::{BandGutter, TimeGutter};
 use crate::components::playhead::Playhead;
+use crate::components::spectrogram_events::apply_band_handle_drag;
 use crate::dsp::filters::{apply_eq_filter, apply_eq_filter_fast};
 use crate::dsp::zc_divide::zc_rate_per_bin;
 use crate::state::store_fields::*;
@@ -757,27 +758,8 @@ pub fn ZcDotChart() -> impl IntoView {
                             .unwrap_or(96_000.0)
                     };
 
-                    match handle {
-                        SpectrogramHandle::BandFfUpper => {
-                            let lo = state.filter.band_ff_freq_lo().get_untracked();
-                            state.set_band_ff_hi(freq_at_mouse.clamp(lo + 500.0, file_max_freq));
-                        }
-                        SpectrogramHandle::BandFfLower => {
-                            let hi = state.filter.band_ff_freq_hi().get_untracked();
-                            state.set_band_ff_lo(freq_at_mouse.clamp(0.0, hi - 500.0));
-                        }
-                        SpectrogramHandle::BandFfMiddle => {
-                            let lo = state.filter.band_ff_freq_lo().get_untracked();
-                            let hi = state.filter.band_ff_freq_hi().get_untracked();
-                            let bw = hi - lo;
-                            let mid = (lo + hi) / 2.0;
-                            let delta = freq_at_mouse - mid;
-                            let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
-                            let new_hi = new_lo + bw;
-                            state.set_band_ff_range(new_lo, new_hi);
-                        }
-                        _ => {} // No HET handles in ZC view
-                    }
+                    // No HET handles in ZC view, so only band handles move.
+                    apply_band_handle_drag(state, handle, freq_at_mouse, file_max_freq);
                     return;
                 }
 
@@ -1021,27 +1003,7 @@ pub fn ZcDotChart() -> impl IntoView {
                         .map(|f| f.spectrogram.max_freq)
                         .unwrap_or(96_000.0)
                 };
-                match handle {
-                    SpectrogramHandle::BandFfUpper => {
-                        let lo = state.filter.band_ff_freq_lo().get_untracked();
-                        state.set_band_ff_hi(freq_at_touch.clamp(lo + 500.0, file_max_freq));
-                    }
-                    SpectrogramHandle::BandFfLower => {
-                        let hi = state.filter.band_ff_freq_hi().get_untracked();
-                        state.set_band_ff_lo(freq_at_touch.clamp(0.0, hi - 500.0));
-                    }
-                    SpectrogramHandle::BandFfMiddle => {
-                        let lo = state.filter.band_ff_freq_lo().get_untracked();
-                        let hi = state.filter.band_ff_freq_hi().get_untracked();
-                        let bw = hi - lo;
-                        let mid = (lo + hi) / 2.0;
-                        let delta = freq_at_touch - mid;
-                        let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
-                        let new_hi = new_lo + bw;
-                        state.set_band_ff_range(new_lo, new_hi);
-                    }
-                    _ => {}
-                }
+                apply_band_handle_drag(state, handle, freq_at_touch, file_max_freq);
             }
             ev.prevent_default();
             return;

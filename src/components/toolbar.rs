@@ -12,6 +12,13 @@ use crate::state::{
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
+/// CSS selectors for the sequence and track menus and the heading buttons
+/// that open them. A press on one of these does not close an open menu; the
+/// element's own click handler decides what happens.
+const BADGE_MENU_PARTS: &str = ".badge-dropdown-panel, \
+     .toolbar-badge-row button.file-badge-seq, \
+     .toolbar-badge-row button.file-badge-track";
+
 #[component]
 pub fn Toolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -108,7 +115,6 @@ pub fn Toolbar() -> impl IntoView {
             bits_per_sample: f.audio.metadata.bits_per_sample,
             is_float: f.audio.metadata.is_float,
             duration_secs: f.audio.duration_secs,
-            is_unsaved: f.is_recording,
             is_streaming: streaming_source::is_streaming(f.audio.source.as_ref()),
             track: gi.track.clone(),
             sequence: gi.sequence.clone(),
@@ -306,13 +312,74 @@ pub fn Toolbar() -> impl IntoView {
         }
     });
 
-    // Close dropdowns on click-outside
+    // Close the sequence and track menus when the current file changes or a
+    // sidebar opens or closes. The menus draw above the phone sidebars
+    // (style.css, .badge-dropdown-panel), so a menu left open would cover a
+    // sidebar opened after it.
     Effect::new(move |_| {
-        // Close dropdowns when file changes
         let _ = state.library.current_index().get();
+        let _ = state.panels.left_collapsed().get();
+        let _ = state.panels.right_collapsed().get();
         seq_dropdown_open.set(false);
         track_dropdown_open.set(false);
     });
+
+    // Close the sequence and track menus on Escape, and on a press anywhere
+    // except the menu and the two buttons that open it. Pressing a button
+    // again still closes its menu, through the button's own click handler.
+    // Both listeners run in the capture phase, so they see the event before
+    // any element stops it. When a menu is open, the Escape key press is
+    // stopped here, because the window's Escape handler in app.rs would
+    // otherwise also stop listening or recording. The Toolbar is never
+    // unmounted, so the listeners stay for the life of the page;
+    // `try_get_untracked` keeps them from panicking if the signals are ever
+    // disposed.
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        let menu_open = move || {
+            seq_dropdown_open.try_get_untracked().unwrap_or(false)
+                || track_dropdown_open.try_get_untracked().unwrap_or(false)
+        };
+        let close_menus = move || {
+            seq_dropdown_open.set(false);
+            track_dropdown_open.set(false);
+        };
+        let on_key = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(
+            move |ev: web_sys::KeyboardEvent| {
+                if ev.key() == "Escape" && menu_open() {
+                    close_menus();
+                    ev.stop_propagation();
+                    ev.prevent_default();
+                }
+            },
+        );
+        let _ = doc.add_event_listener_with_callback_and_bool(
+            "keydown",
+            on_key.as_ref().unchecked_ref(),
+            true,
+        );
+        on_key.forget();
+        let on_press = wasm_bindgen::closure::Closure::<dyn Fn(web_sys::PointerEvent)>::new(
+            move |ev: web_sys::PointerEvent| {
+                if !menu_open() {
+                    return;
+                }
+                let on_menu_or_button = ev
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|el| el.closest(BADGE_MENU_PARTS).ok().flatten())
+                    .is_some();
+                if !on_menu_or_button {
+                    close_menus();
+                }
+            },
+        );
+        let _ = doc.add_event_listener_with_callback_and_bool(
+            "pointerdown",
+            on_press.as_ref().unchecked_ref(),
+            true,
+        );
+        on_press.forget();
+    }
 
     // Download/save handler for toolbar
     let on_toolbar_download = move |_: web_sys::MouseEvent| {
@@ -459,7 +526,8 @@ pub fn Toolbar() -> impl IntoView {
                                 }
                             })}
 
-                            // Unsaved badge + download button (toolbar-specific)
+                            // "* File unsaved" (a fact, amber text) and the
+                            // Download or Save button (a control, amber box).
                             {unsaved.then(|| {
                                 let (btn_label, btn_title) = if is_tauri {
                                     ("Save", "Save recording")
@@ -467,23 +535,29 @@ pub fn Toolbar() -> impl IntoView {
                                     ("Download", "Download WAV")
                                 };
                                 view! {
-                                    <span class="toolbar-unsaved-badge">"* File unsaved"</span>
+                                    <span class="badge-fact unsaved">"* File unsaved"</span>
                                     <button
-                                        class="toolbar-download-btn"
+                                        class="badge-btn unsaved"
                                         title=btn_title
                                         on:click=on_toolbar_download
                                     ><Icon kind=Icon::Download />" "{btn_label}</button>
                                 }
                             })}
 
-                            // Licence badge — subtle text, opens license modal on click.
+                            // Licence button: opens the licence dialog. It is a
+                            // box (badge-btn) like every other control in the
+                            // badge row, because on 2026-11-14 the user chose
+                            // badge style option A: anything that can be pressed
+                            // is a box, and every fact is plain text. As plain
+                            // text it looked like a fact, and on a phone, which
+                            // has no hover, nothing showed that it could be pressed.
                             // CC licences show the CC icon and drop "CC " from the label.
                             {license.map(|label| {
                                 let is_cc = label.is_cc;
                                 let short_label = label.badge_text().to_string();
                                 view! {
                                     <button
-                                        class="toolbar-cc-badge"
+                                        class="badge-btn toolbar-cc-badge"
                                         title="License details"
                                         on:click=move |e: web_sys::MouseEvent| {
                                             e.stop_propagation();
@@ -520,7 +594,7 @@ pub fn Toolbar() -> impl IntoView {
                                                 seq_dropdown_open.set(false);
                                             }
                                         >
-                                            <span class="file-badge file-badge-seq">{format!("#{}", seq_num)}</span>
+                                            <span class="file-badge badge-fact">{format!("#{}", seq_num)}</span>
                                             <span>{name}</span>
                                         </div>
                                     }
@@ -547,7 +621,7 @@ pub fn Toolbar() -> impl IntoView {
                                                 track_dropdown_open.set(false);
                                             }
                                         >
-                                            <span class="file-badge file-badge-track">{format!("[{}]", label)}</span>
+                                            <span class="file-badge badge-fact">{format!("[{}]", label)}</span>
                                             <span>{name}</span>
                                         </div>
                                     }

@@ -17,6 +17,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::popup::{Align, PopupPanel, Side};
+use crate::focus_stack::FocusRange;
 use crate::state::{ActiveFocus, AppState, LayerPanel};
 
 fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
@@ -43,7 +44,7 @@ fn fmt_khz(hz: f64) -> String {
 /// Nyquist for the *currently relevant* signal source. When listening or
 /// recording, the live waterfall has the most up-to-date sample rate (USB
 /// devices can re-negotiate after the AppState signal is first set).
-fn nyquist_for_current(state: AppState) -> f64 {
+pub(crate) fn nyquist_for_current(state: AppState) -> f64 {
     let is_mic_active =
         state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     if is_mic_active && crate::canvas::live_waterfall::is_active() {
@@ -83,37 +84,11 @@ fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
     if entry.freq_lo_hz <= 0.0 || entry.freq_hi_hz <= entry.freq_lo_hz {
         return None;
     }
-    let nyq = file.spectrogram.max_freq;
-    Some((
-        entry.name.to_string(),
-        entry.freq_lo_hz,
-        entry.freq_hi_hz.min(nyq),
-    ))
-}
-
-/// Range covering all currently-selected bat book species (min lo, max hi).
-fn selected_species_range(state: AppState) -> Option<(f64, f64)> {
-    let ids = state.bat_book.selected_ids().get_untracked();
-    if ids.is_empty() {
-        return None;
-    }
-    let mut lo = f64::MAX;
-    let mut hi = f64::MIN;
-    let mut found = false;
-    for id in &ids {
-        if let Some(entry) = crate::bat_book::auto_resolve::find_entry_any_book(id) {
-            if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
-                lo = lo.min(entry.freq_lo_hz);
-                hi = hi.max(entry.freq_hi_hz);
-                found = true;
-            }
-        }
-    }
-    if found && hi > lo {
-        Some((lo, hi))
-    } else {
-        None
-    }
+    // The range is empty when the species calls above the file's range.
+    // Applying an empty band makes HFR pick its default band
+    // (FocusRange::hfr_default).
+    let r = FocusRange::new(entry.freq_lo_hz, entry.freq_hi_hz).clip_to(file.spectrogram.max_freq);
+    Some((entry.name.to_string(), r.lo, r.hi))
 }
 
 /// Range from whichever of selection / annotation / frequency-focus is
@@ -211,6 +186,15 @@ fn selected_species_info(state: AppState) -> Option<(String, f64, f64)> {
         format!("{count} species")
     };
     Some((label, lo, hi))
+}
+
+/// The band the selected species preset applies: the selected species'
+/// range clipped to the file, like the file species preset. The label keeps
+/// the species' own range.
+fn selected_species_band(state: AppState) -> Option<(f64, f64)> {
+    let (_, lo, hi) = selected_species_info(state)?;
+    let r = FocusRange::new(lo, hi).clip_to(nyquist_for_current(state));
+    Some((r.lo, r.hi))
 }
 
 /// True when HFR is on and the current BandFF range matches `(lo, hi)` — used
@@ -345,7 +329,7 @@ pub fn RangeButton() -> impl IntoView {
                         ),
                         None => ("Bat book: selected species".to_string(), None),
                     };
-                    let sel_range = info.as_ref().map(|(_, lo, hi)| (*lo, *hi));
+                    let sel_range = selected_species_band(state);
                     view! {
                         <button
                             class=move || layer_opt_class(
@@ -354,7 +338,7 @@ pub fn RangeButton() -> impl IntoView {
                             )
                             disabled=disabled
                             on:click=move |_| {
-                                if let Some((lo, hi)) = selected_species_range(state) {
+                                if let Some((lo, hi)) = selected_species_band(state) {
                                     apply_band(state, lo, hi);
                                 }
                             }

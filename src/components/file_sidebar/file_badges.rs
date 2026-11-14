@@ -22,7 +22,6 @@ pub struct FileBadgeData {
     pub bits_per_sample: u16,
     pub is_float: bool,
     pub duration_secs: f64,
-    pub is_unsaved: bool,
     pub is_streaming: bool,
     pub track: Option<TrackInfo>,
     pub sequence: Option<SequenceInfo>,
@@ -61,7 +60,10 @@ fn format_sample_rate(sr: u32) -> String {
 
 /// Shared badge row component used by both file menu items and toolbar heading.
 ///
-/// Renders: [sample_rate] [bit_depth] duration [Heterodyne recording] [~] #seq [track] [💾] [CC]
+/// Renders, in order: sample rate, bit depth, duration, "Heterodyne recording",
+/// streaming `[~]`, sequence `#59`, track `[3]`, the download button and the
+/// CC icon. Facts get the `badge-fact` class and are plain text; controls get
+/// `badge-btn` and are drawn as boxes (style.css, "File badges").
 #[component]
 pub fn FileBadgeRow(
     data: FileBadgeData,
@@ -74,7 +76,9 @@ pub fn FileBadgeRow(
     /// Whether seq/track badges are clickable dropdown triggers (toolbar only)
     #[prop(default = false)]
     group_dropdowns: bool,
-    /// Whether to show the download button (file-menu recordings only)
+    /// Whether to show the download button: file-menu rows of browser
+    /// recordings that are not downloaded yet. A download clears the file's
+    /// recording flag, so the button is only ever shown for an unsaved file.
     #[prop(default = false)]
     show_download: bool,
     /// Download handler (required if show_download is true)
@@ -104,7 +108,6 @@ pub fn FileBadgeRow(
     let is_streaming = data.is_streaming;
     let seq = data.sequence.clone();
     let track = data.track.clone();
-    let is_unsaved = data.is_unsaved;
     let is_file_menu = context == "file-menu";
     let cc_license = data.cc_license.clone();
     let cc_tooltip = data.cc_tooltip.clone();
@@ -113,16 +116,16 @@ pub fn FileBadgeRow(
     let state = expect_context::<AppState>();
 
     view! {
-        // 1. Sample rate badge (always)
-        <span class="file-badge badge-sample-rate">{sr_label}</span>
+        // 1. Sample rate (always)
+        <span class="file-badge badge-fact badge-sample-rate">{sr_label}</span>
 
-        // 2. Bit depth badge (only > 16)
+        // 2. Bit depth (only > 16)
         {bit_badge.map(|label| view! {
-            <span class="file-badge badge-bit-depth">{label}</span>
+            <span class="file-badge badge-fact badge-bit-depth">{label}</span>
         })}
 
-        // 3. Duration (plain text)
-        <span class="badge-duration">{dur_label}</span>
+        // 3. Duration
+        <span class="badge-fact badge-duration">{dur_label}</span>
 
         // 3a. Heterodyne badge, after the rate, bit depth and duration, so it
         // doesn't split those related values when the row wraps. On another
@@ -133,7 +136,7 @@ pub fn FileBadgeRow(
         // it and the current file doesn't change, so Info is not opened.
         {heterodyne_tooltip.map(|tooltip| view! {
             <button
-                class="file-badge file-badge-heterodyne"
+                class="file-badge badge-btn badge-warn file-badge-heterodyne"
                 title=tooltip
                 on:click=move |e: web_sys::MouseEvent| {
                     if e.ctrl_key() || e.meta_key() || e.shift_key() {
@@ -149,7 +152,7 @@ pub fn FileBadgeRow(
 
         // 4. Streaming badge
         {is_streaming.then(|| view! {
-            <span class="file-badge file-badge-streaming" title="Streaming (large file)">"[~]"</span>
+            <span class="file-badge badge-fact file-badge-streaming" title="Streaming (large file)">"[~]"</span>
         })}
 
         // 5. Sequence badge (conditional on show_group_badges)
@@ -162,7 +165,7 @@ pub fn FileBadgeRow(
                 let on_click = on_seq_click.clone();
                 leptos::either::Either::Left(view! {
                     <button
-                        class="file-badge file-badge-seq badge-clickable"
+                        class="file-badge badge-btn file-badge-seq"
                         title=tooltip
                         on:click=move |e: web_sys::MouseEvent| {
                             e.stop_propagation();
@@ -175,7 +178,7 @@ pub fn FileBadgeRow(
             } else {
                 leptos::either::Either::Right(view! {
                     <span
-                        class="file-badge file-badge-seq"
+                        class="file-badge badge-fact file-badge-seq"
                         style:display=move || if show_group_badges.get() { "inline" } else { "none" }
                         title=tooltip
                     >{label}</span>
@@ -190,7 +193,7 @@ pub fn FileBadgeRow(
                 let on_click = on_track_click.clone();
                 leptos::either::Either::Left(view! {
                     <button
-                        class="file-badge file-badge-track badge-clickable"
+                        class="file-badge badge-btn file-badge-track"
                         title="Switch track"
                         on:click=move |e: web_sys::MouseEvent| {
                             e.stop_propagation();
@@ -203,7 +206,7 @@ pub fn FileBadgeRow(
             } else {
                 leptos::either::Either::Right(view! {
                     <span
-                        class="file-badge file-badge-track"
+                        class="file-badge badge-fact file-badge-track"
                         style:display=move || if show_group_badges.get() { "inline" } else { "none" }
                     >{label}</span>
                 })
@@ -213,16 +216,10 @@ pub fn FileBadgeRow(
         // 7. Download button (file-menu only, when show_download is true)
         {(is_file_menu && show_download).then(|| {
             let on_dl = on_download.clone();
-            let cls = if is_unsaved {
-                "badge-download-btn unsaved"
-            } else {
-                "badge-download-btn saved"
-            };
-            let title = if is_unsaved { "Download WAV (unsaved)" } else { "Download WAV" };
             view! {
                 <button
-                    class=cls
-                    title=title
+                    class="badge-btn badge-download-btn unsaved"
+                    title="Download WAV (unsaved)"
                     on:click=move |e: web_sys::MouseEvent| {
                         e.stop_propagation();
                         if let Some(cb) = &on_dl { cb.run(()); }

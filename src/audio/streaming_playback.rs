@@ -791,12 +791,20 @@ fn ps_post_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> 
         _ => return samples.to_vec(),
     }
     .magnitude();
-    // Cutoff just above the final output band (= bandpass upper edge / factor)
-    // with safety margin. The post-pitch signal already has its spectrum
-    // compressed by `factor`, so 20 kHz is usually plenty.
-    let nyquist = sample_rate as f64 * 0.5;
-    let cutoff = (params.filter_freq_high / factor + 5_000.0).clamp(20_000.0, nyquist * 0.9);
+    let cutoff = ps_post_shift_cutoff(params.filter_freq_high, factor, sample_rate);
     heterodyne_mix(samples, sample_rate, shift, cutoff)
+}
+
+/// Low-pass cutoff for [`ps_post_shift`]: just above the final output band
+/// (the bandpass upper edge / factor) with a safety margin, at least 20 kHz
+/// (the post-pitch signal already has its spectrum compressed by `factor`)
+/// and at most 90% of Nyquist. The Nyquist limit wins: at 44.1 kHz, 90% of
+/// Nyquist is 19.8 kHz, and `f64::clamp(20_000.0, 19_845.0)` panics.
+fn ps_post_shift_cutoff(filter_freq_high: f64, factor: f64, sample_rate: u32) -> f64 {
+    let nyquist = sample_rate as f64 * 0.5;
+    (filter_freq_high / factor + 5_000.0)
+        .max(20_000.0)
+        .min(nyquist * 0.9)
 }
 
 pub(crate) fn apply_dsp_mode(
@@ -905,6 +913,24 @@ async fn sleep(ms: u32) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ps_post_shift_cutoff_fits_under_nyquist() {
+        use super::ps_post_shift_cutoff;
+        // 192 kHz: 20 kHz floor, or the band edge / factor + 5 kHz.
+        let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+        assert!(near(
+            ps_post_shift_cutoff(60_000.0, 10.0, 192_000),
+            20_000.0
+        ));
+        assert!(near(
+            ps_post_shift_cutoff(400_000.0, 10.0, 192_000),
+            45_000.0
+        ));
+        // At 44.1 kHz and 16 kHz the 20 kHz floor is above 90% of Nyquist.
+        assert!(near(ps_post_shift_cutoff(22_050.0, 10.0, 44_100), 19_845.0));
+        assert!(near(ps_post_shift_cutoff(8_000.0, 2.0, 16_000), 7_200.0));
+    }
 
     #[test]
     fn time_only_selection_does_not_retune_het() {

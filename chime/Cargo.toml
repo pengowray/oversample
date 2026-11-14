@@ -16,6 +16,8 @@ std = []
 profile = []
 
 [dev-dependencies]
+# Checks `format`'s SipHash.
+siphasher = "1"
 hound = "3.5"
 # The integration tests and examples use the encoder.
 chime = { path = ".", features = ["std"] }

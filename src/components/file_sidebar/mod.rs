@@ -13,6 +13,7 @@ pub mod metadata_panel;
 pub mod mic_chooser;
 pub mod privacy_settings;
 pub mod psd_panel;
+mod rate_notes_view;
 pub mod settings_panel;
 pub(crate) mod streaming_load;
 mod suggestions;

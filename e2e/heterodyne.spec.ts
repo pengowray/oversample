@@ -109,10 +109,15 @@ async function showInfo(page: Page) {
   await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
 }
 
+/** The notes under the Sample rate row are `.rate-note` elements; `data-note`
+ * names each note's kind (src/rate_notes.rs). */
+const HET_NOTE = '.rate-note[data-note="heterodyne"]';
+const TE_NOTE = '.rate-note[data-note="time-expansion"]';
+
 /** The text and class of each line of the Info panel's heterodyne note. */
 async function noteLines(page: Page) {
   return page
-    .locator(".heterodyne-note > div")
+    .locator(`${HET_NOTE} > div`)
     .evaluateAll((els) => els.map((e) => [e.className, e.textContent]));
 }
 
@@ -120,9 +125,11 @@ const HEADLINE = "Recorded from a heterodyne bat detector's audio output.";
 const CONSEQUENCE = "Frequencies are not the bat's call frequencies and can't be corrected.";
 /** The consequence line when the remark gives the detector's tuning. */
 const CONSEQUENCE_TUNED = "Frequencies are not the bat's call frequencies.";
-const WARN = "heterodyne-note-warning";
-const DETAIL = "heterodyne-note-detail";
-const PLAIN = "heterodyne-note-plain";
+const WARN = "rate-note-warning";
+const MUTED = "rate-note-muted";
+/** The line that quotes the recording's metadata. It is drawn muted. */
+const QUOTE = "rate-note-quote";
+const PLAIN = "rate-note-plain";
 
 test.describe("heterodyne badge and note", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -132,16 +139,15 @@ test.describe("heterodyne badge and note", () => {
       fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
       rate: 44_100,
     });
+    // A no-break space before each "kHz" keeps the unit with its number, in
+    // the quoted remark too.
     const lines = [
       HEADLINE,
       'Remarks: "handheld hetrodyne detector set at 31,9 kHz"',
       CONSEQUENCE_TUNED,
-      // A no-break space before each "kHz" keeps the unit with its number.
-      (
-        "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
-        "at either 21.9 or 41.9 kHz."
-      ).replaceAll(" kHz", "\u00a0kHz"),
-    ];
+      "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a call " +
+        "at either 21.9 or 41.9 kHz.",
+    ].map((line) => line.replaceAll(" kHz", "\u00a0kHz"));
 
     const badge = page.locator(".toolbar-badge-row .file-badge-heterodyne");
     await expect(badge).toHaveText("Heterodyne recording");
@@ -158,13 +164,53 @@ test.describe("heterodyne badge and note", () => {
     await badge.click();
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
     await expect(page.locator(".right-sidebar .sidebar-tab-dropdown")).toContainText("Info");
-    await expect(page.locator(".heterodyne-note")).toBeVisible();
+    await expect(page.locator(HET_NOTE)).toBeVisible();
     expect(await noteLines(page)).toEqual([
       [WARN, lines[0]],
-      [DETAIL, lines[1]],
+      [QUOTE, lines[1]],
       [WARN, lines[2]],
       [PLAIN, lines[3]],
     ]);
+  });
+
+  test("a quoted frequency keeps its kHz on the same line at any note width", async ({
+    page,
+  }) => {
+    // XC1034529's remark. Its quote line wraps in the Info panel at 1440 x 900,
+    // just before "31,9 kHz".
+    await openCase(page, { fields: { rmk: "hetrodyne detector set at 31,9 kHz" }, rate: 48_000 });
+    await showInfo(page);
+    await expect(page.locator(HET_NOTE)).toBeVisible();
+    // Narrows the note from 380 to 120 px, 2 px at a time, and records the
+    // first characters of every wrapped line of every line of the note.
+    const wraps = await page.locator(HET_NOTE).evaluate((note: HTMLElement) => {
+      const out: { width: number; role: string; start: string }[] = [];
+      for (let width = 380; width >= 120; width -= 2) {
+        note.style.width = `${width}px`;
+        for (const line of Array.from(note.children)) {
+          const text = line.firstChild!;
+          const chars = text.textContent!;
+          const range = document.createRange();
+          let top: number | null = null;
+          for (let i = 0; i < chars.length; i++) {
+            range.setStart(text, i);
+            range.setEnd(text, i + 1);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0 && Math.round(rect.top) !== top) {
+              if (top !== null) {
+                out.push({ width, role: line.className, start: chars.slice(i, i + 5) });
+              }
+              top = Math.round(rect.top);
+            }
+          }
+        }
+      }
+      note.style.width = "";
+      return out;
+    });
+    // The quote line does wrap at these widths, so the check below covers it.
+    expect(wraps.some((w) => w.role === QUOTE)).toBe(true);
+    expect(wraps.filter((w) => /^k?\s?hz/i.test(w.start))).toEqual([]);
   });
 
   test("level A without a tuning keeps the can't-be-corrected line", async ({ page }) => {
@@ -175,7 +221,7 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [WARN, HEADLINE],
-      [DETAIL, 'Remarks: "Recorded with a handheld hetrodyne detector"'],
+      [QUOTE, 'Remarks: "Recorded with a handheld hetrodyne detector"'],
       [WARN, CONSEQUENCE],
     ]);
   });
@@ -194,9 +240,26 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [WARN, lines[0]],
-      [DETAIL, lines[1]],
-      [DETAIL, lines[2]],
+      [QUOTE, lines[1]],
+      [MUTED, lines[2]],
       [WARN, lines[3]],
+    ]);
+  });
+
+  test("muted and quote lines follow the .metadata-note grey", async ({ page }) => {
+    await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
+    await showInfo(page);
+    await expect(page.locator(HET_NOTE)).toBeVisible();
+    // A later change to the Info panel's note colour reaches these lines too.
+    await page.addStyleTag({ content: ".metadata-note { color: rgb(1, 2, 3); }" });
+    const colours = await page
+      .locator(`${HET_NOTE} > div`)
+      .evaluateAll((els) => els.map((e) => [e.className, getComputedStyle(e).color]));
+    expect(colours).toEqual([
+      [WARN, "rgb(255, 204, 136)"],
+      [QUOTE, "rgb(1, 2, 3)"],
+      [MUTED, "rgb(1, 2, 3)"],
+      [WARN, "rgb(255, 204, 136)"],
     ]);
   });
 
@@ -225,7 +288,7 @@ test.describe("heterodyne badge and note", () => {
     await page.locator(".file-item .file-badge-heterodyne").click();
     await expect(page.locator(".file-item.active .file-item-name")).toHaveText("XC815138 demo.wav");
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
-    await expect(page.locator(".heterodyne-note")).toBeVisible();
+    await expect(page.locator(HET_NOTE)).toBeVisible();
   });
 
   test("the badge scrolls the Info panel back to the Sample rate row and note", async ({
@@ -235,11 +298,11 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     const panel = page.locator(".right-sidebar .sidebar-panel");
     await panel.evaluate((el) => (el.scrollTop = el.scrollHeight));
-    const note = page.locator(".heterodyne-note");
+    const note = page.locator(HET_NOTE);
     const top = (sel: string) =>
       page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, sel);
     const panelBox = (await panel.boundingBox())!;
-    expect(await top(".heterodyne-note")).toBeLessThan(panelBox.y);
+    expect(await top(HET_NOTE)).toBeLessThan(panelBox.y);
 
     await page.locator(".toolbar-badge-row .file-badge-heterodyne").click();
     // The Sample rate row (just above the note) and the note are both in view.
@@ -290,13 +353,13 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [
-        DETAIL,
+        MUTED,
         "Possibly recorded from a bat detector's output " +
           "(heterodyne, time expansion or frequency division).",
       ],
-      [DETAIL, 'Device: "Pettersson D980"'],
-      [DETAIL, "The Pettersson D980 has a heterodyne mode and other modes."],
-      [DETAIL, "If so, frequencies are not the bat's call frequencies."],
+      [QUOTE, 'Device: "Pettersson D980"'],
+      [MUTED, "The Pettersson D980 has a heterodyne mode and other modes."],
+      [MUTED, "If so, frequencies are not the bat's call frequencies."],
     ]);
     await expect(page.locator(".file-badge-heterodyne")).toHaveCount(0);
   });
@@ -319,10 +382,10 @@ test.describe("heterodyne badge and note", () => {
       await showInfo(page);
       await expect(page.locator(".metadata-row-inline .setting-label", { hasText: /^Sample rate$/ })).toBeVisible();
       await expect(page.locator(".file-badge-heterodyne")).toHaveCount(0);
-      await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+      await expect(page.locator(HET_NOTE)).toHaveCount(0);
       if (c.guano) {
         // The app applied the file's time expansion, which is why there is no hint.
-        await expect(page.locator(".metadata-note", { hasText: /time expansion/ })).toBeVisible();
+        await expect(page.locator(TE_NOTE, { hasText: /time expansion/ })).toBeVisible();
       }
     });
   }
@@ -406,12 +469,10 @@ test.describe("frequency axis of a heterodyne recording", () => {
   });
 
   test("in HET playback the labels show what you hear instead", async ({ page }) => {
-    // 96 kHz: switching to HET hangs the page for a 44.1 or 48 kHz file of
-    // this generated tone, on main too.
     await page.addInitScript(recordCanvasText);
     await openCase(page, {
       fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
-      rate: 96_000,
+      rate: 44_100,
     });
     await page.locator('button[title^="HET"]').first().click();
     await hoverZoomedFreqAxis(page);
@@ -454,7 +515,7 @@ test.describe("heterodyne badge on a phone", () => {
     await page.locator(".file-item .file-badge-heterodyne").tap();
     await expect(left).toHaveClass(/collapsed/);
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
-    const note = page.locator(".heterodyne-note");
+    const note = page.locator(HET_NOTE);
     await expect(note).toBeVisible();
     // The note stays inside the panel.
     const panel = (await page.locator(".right-sidebar").boundingBox())!;

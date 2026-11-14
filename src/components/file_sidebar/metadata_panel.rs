@@ -1,4 +1,5 @@
-use crate::heterodyne::{LineRole, NoteLine};
+use super::rate_notes_view::{note_selector, RateNotes};
+use crate::rate_notes::{file_rate_notes, NoteKind};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
 use crate::types::AudioFormat;
@@ -756,69 +757,12 @@ fn recorder_section(
     .into_any()
 }
 
-/// A sample rate in kHz, with one decimal when the rate is not a whole number of kHz:
-/// "384 kHz", "44.1 kHz", "38.4 kHz". (`file_badges`, `suggestions` and `xc_browser`
-/// each have their own version; they differ in spacing and precision.)
-fn sample_rate_khz(hz: u32) -> String {
-    if hz.is_multiple_of(1000) {
-        format!("{} kHz", hz / 1000)
-    } else {
-        format!("{:.1} kHz", f64::from(hz) / 1000.0)
-    }
-}
-
-/// The note under the Sample rate row of a file that was stored time-expanded (a bat
-/// detector slowed the recording down so it can be heard), whose rate and duration the
-/// app corrected when it loaded the file. `None` for a recording made in real time.
-/// A no-break space before "kHz" keeps it on its number's line when the note wraps,
-/// as in the heterodyne and species notes.
-fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
-    let te = meta.time_expansion?;
-    Some(format!(
-        "Corrected for {} time expansion; the file says {}.",
-        crate::wikimedia::format_factor(te.factor),
-        sample_rate_khz(te.stored_rate).replace(' ', "\u{a0}")
-    ))
-}
-
-/// The notes under the Sample rate row, after the time-expansion note
-/// (`crate::species_check::sample_rate_notes`):
-/// - the heterodyne note, for a file whose site metadata says, or suggests,
-///   that it was recorded from a heterodyne bat detector's audio output
-///   (`crate::heterodyne`), with a species line added at level C;
-/// - otherwise the species note, for a file whose sample rate is too low for
-///   its species' echolocation calls.
-///
-/// A finding and its consequence are in the warning colour; evidence, and
-/// every line of a level C hint or of a species note that names only
-/// possibilities, are muted. When the detector's tuning is known, the line on
-/// how to read the frequencies is in the panel's normal text colour.
-fn sample_rate_notes(f: &crate::state::LoadedFile) -> impl IntoView {
-    let notes = crate::species_check::sample_rate_notes(
-        f.heterodyne_hint.as_ref(),
-        f.species_range.as_ref(),
-    );
-    // `class` is the note's class; each line's class adds its role to it.
-    let note = |class: &'static str, lines: Vec<NoteLine>| {
-        (!lines.is_empty()).then(|| {
-            let lines = lines
-                .into_iter()
-                .map(|line| {
-                    let role = match line.role {
-                        LineRole::Warning => "warning",
-                        LineRole::Detail => "detail",
-                        LineRole::Plain => "plain",
-                    };
-                    view! { <div class=format!("{class}-{role}")>{line.text}</div> }
-                })
-                .collect_view();
-            view! { <div class=format!("metadata-note {class}")>{lines}</div> }
-        })
-    };
-    view! {
-        {note("heterodyne-note", notes.heterodyne)}
-        {note("species-range-note", notes.species)}
-    }
+/// The Sample rate row's value: "384 kHz", "44.1 kHz", "38.4 kHz". The row never wraps,
+/// so the space is an ordinary one, and the row's Copy button copies it as shown.
+/// (`file_badges`, `suggestions` and `xc_browser` each have their own version; they
+/// differ in spacing and precision.)
+fn sample_rate_row_value(hz: u32) -> String {
+    format!("{} kHz", crate::format_units::sample_rate_khz_value(hz))
 }
 
 /// Open the right sidebar on the Info tab, as the "Heterodyne recording" badge
@@ -832,10 +776,11 @@ pub(crate) fn open_info_panel(state: AppState) {
         state.panels.left_collapsed().set(true);
     }
     request_animation_frame(|| {
-        if let Some(el) = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.query_selector(".heterodyne-note").ok().flatten())
-        {
+        if let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| {
+            d.query_selector(&note_selector(NoteKind::Heterodyne))
+                .ok()
+                .flatten()
+        }) {
             let opts = web_sys::ScrollIntoViewOptions::new();
             opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
             // The note annotates the Sample rate row above it, so bring that
@@ -1651,11 +1596,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Name".into(), f.name.clone(), None)}
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
-                                {inline_row("Sample rate".into(), sample_rate_khz(f.audio.sample_rate), None)}
-                                {time_expansion_note(meta).map(|note| view! {
-                                    <div class="metadata-note">{note}</div>
-                                })}
-                                {sample_rate_notes(f)}
+                                {inline_row("Sample rate".into(), sample_rate_row_value(f.audio.sample_rate), None)}
+                                <RateNotes
+                                    notes=file_rate_notes(f)
+                                    file_id=f.id
+                                    stored_rate=f.audio.stored_rate()
+                                    loading=f.loading_id.is_some()
+                                />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}
@@ -1757,9 +1704,8 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 mod tests {
     use super::{
         channel_list, date_from_filename, extract_tz_offset_minutes, file_position,
-        format_tz_offset, open_link, sample_rate_khz, time_expansion_note, FieldKind,
+        format_tz_offset, open_link, sample_rate_row_value, FieldKind,
     };
-    use crate::types::{FileMetadata, TimeExpansion};
 
     #[test]
     fn license_rows_link_to_the_licence() {
@@ -1804,28 +1750,11 @@ mod tests {
     }
 
     #[test]
-    fn sample_rates_keep_the_tenth_of_a_kilohertz() {
-        assert_eq!(sample_rate_khz(384_000), "384 kHz");
-        assert_eq!(sample_rate_khz(38_400), "38.4 kHz");
-        assert_eq!(sample_rate_khz(44_100), "44.1 kHz");
-        assert_eq!(sample_rate_khz(500_000), "500 kHz");
-    }
-
-    #[test]
-    fn a_corrected_rate_says_what_the_file_holds() {
-        let meta = |te| FileMetadata {
-            time_expansion: te,
-            ..Default::default()
-        };
-        assert_eq!(time_expansion_note(&meta(None)), None);
-        assert_eq!(
-            time_expansion_note(&meta(Some(TimeExpansion {
-                factor: 10.0,
-                stored_rate: 38_400,
-            })))
-            .as_deref(),
-            Some("Corrected for \u{d7}10 time expansion; the file says 38.4\u{a0}kHz."),
-        );
+    fn the_sample_rate_row_has_an_ordinary_space() {
+        assert_eq!(sample_rate_row_value(384_000), "384 kHz");
+        assert_eq!(sample_rate_row_value(38_400), "38.4 kHz");
+        assert_eq!(sample_rate_row_value(44_100), "44.1 kHz");
+        assert_eq!(sample_rate_row_value(500_000), "500 kHz");
     }
 
     #[test]

@@ -380,6 +380,7 @@ pub(super) async fn try_streaming_wav(
         crate::types::TimeExpansion {
             factor,
             stored_rate,
+            origin: crate::types::TimeExpansionOrigin::File,
         }
     });
 

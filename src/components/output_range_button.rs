@@ -493,6 +493,17 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
     }
 }
 
+/// A typed HET carrier limited to 0..`nyquist`, the frequencies the audio can
+/// hold. A carrier above Nyquist aliases. NaN gives 0.
+fn clamp_carrier_hz(hz: f64, nyquist: f64) -> f64 {
+    // `f64::max` and `f64::min` return the other value for NaN.
+    hz.max(0.0).min(nyquist.max(0.0))
+}
+
+fn format_carrier_khz(hz: f64) -> String {
+    format!("{:.1}", hz / 1000.0)
+}
+
 #[component]
 fn LinearShiftControls() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -501,9 +512,24 @@ fn LinearShiftControls() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(khz) = el.value().parse::<f64>() {
+            let nyquist = crate::components::hfr_button::nyquist_for_current(state);
             state.transform.het_freq_auto().set(false);
-            state.transform.het_frequency().set(khz * 1000.0);
+            state
+                .transform
+                .het_frequency()
+                .set(clamp_carrier_hz(khz * 1000.0, nyquist));
         }
+    };
+    // On Enter or when the field loses focus, write the carrier in use back
+    // into the field. `prop:value` does not update when the clamped carrier
+    // equals the previous one, so a typed 44.1 kHz would otherwise stay on
+    // screen for a 44.1 kHz file.
+    let on_change = move |ev: web_sys::Event| {
+        use wasm_bindgen::JsCast;
+        let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
+        el.set_value(&format_carrier_khz(
+            state.transform.het_frequency().get_untracked(),
+        ));
     };
 
     view! {
@@ -512,8 +538,9 @@ fn LinearShiftControls() -> impl IntoView {
             <input type="number"
                 class="output-range-num"
                 min="0" max="500" step="0.5"
-                prop:value=move || format!("{:.1}", state.transform.het_frequency().get() / 1000.0)
+                prop:value=move || format_carrier_khz(state.transform.het_frequency().get())
                 on:input=on_input
+                on:change=on_change
             />
             <span class="output-range-num-suffix">"kHz"</span>
             <button
@@ -796,5 +823,22 @@ fn OutputGutter() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_carrier_hz;
+
+    #[test]
+    fn typed_carrier_stays_inside_the_file() {
+        let nyq = 22_050.0;
+        assert_eq!(clamp_carrier_hz(19_000.0, nyq), 19_000.0);
+        assert_eq!(clamp_carrier_hz(44_100.0, nyq), nyq);
+        assert_eq!(clamp_carrier_hz(1e9, nyq), nyq);
+        assert_eq!(clamp_carrier_hz(f64::INFINITY, nyq), nyq);
+        assert_eq!(clamp_carrier_hz(-5_000.0, nyq), 0.0);
+        assert_eq!(clamp_carrier_hz(f64::NAN, nyq), 0.0);
+        assert_eq!(clamp_carrier_hz(80_000.0, 96_000.0), 80_000.0);
     }
 }

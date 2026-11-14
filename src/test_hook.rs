@@ -28,7 +28,7 @@ fn opt_f64(v: Option<f64>) -> JsValue {
 }
 
 /// Install `window.__oversample_test`, a zero-arg function returning a snapshot
-/// of view + live-capture state used by the e2e specs.
+/// of view, current-file and live-capture state used by the e2e specs.
 pub fn install(state: AppState) {
     crate::classifier::test_hook::install(state);
     let Some(window) = web_sys::window() else {
@@ -96,6 +96,84 @@ pub fn install(state: AppState) {
             .focus_stack()
             .with_untracked(|s| s.user_range());
         set(&o, "focusRange", JsValue::from_str(&format!("{focus:?}")));
+        // Playback mode and HET settings. HFR on/off and its band are
+        // `hfrOn`, `hfrBandLo` and `hfrBandHi`, further down.
+        set(
+            &o,
+            "playbackMode",
+            JsValue::from_str(&format!("{:?}", state.playback.mode().get_untracked())),
+        );
+        set(
+            &o,
+            "hetFreq",
+            JsValue::from_f64(state.transform.het_frequency().get_untracked()),
+        );
+        set(
+            &o,
+            "hetCutoff",
+            JsValue::from_f64(state.transform.het_cutoff().get_untracked()),
+        );
+        // The current file: its rate and duration, the top of its
+        // spectrogram's frequency axis, and what is drawn on it.
+        let current = state.library.current_index().get_untracked().and_then(|i| {
+            state.library.files().with_untracked(|files| {
+                files.get(i).map(|f| {
+                    (
+                        f.id,
+                        f.audio.sample_rate,
+                        f.audio.duration_secs,
+                        f.spectrogram.max_freq,
+                    )
+                })
+            })
+        });
+        if let Some((id, rate, duration, max_freq)) = current {
+            set(&o, "sampleRate", JsValue::from_f64(f64::from(rate)));
+            set(&o, "duration", JsValue::from_f64(duration));
+            set(&o, "fileMaxFreq", JsValue::from_f64(max_freq));
+            let lo = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
+            let hi = state
+                .view
+                .max_display_freq()
+                .get_untracked()
+                .unwrap_or(max_freq);
+            set(&o, "displayFreqLo", JsValue::from_f64(lo));
+            set(&o, "displayFreqHi", JsValue::from_f64(hi));
+            let anns = js_sys::Array::new();
+            state.annotations.store().with_untracked(|store| {
+                for a in store
+                    .get(id)
+                    .map(|s| s.annotations.as_slice())
+                    .unwrap_or(&[])
+                {
+                    if let crate::annotations::AnnotationKind::Region(r) = &a.kind {
+                        let ao = js_sys::Object::new();
+                        set(&ao, "timeStart", JsValue::from_f64(r.time_start));
+                        set(&ao, "timeEnd", JsValue::from_f64(r.time_end));
+                        set(&ao, "freqLow", opt_f64(r.freq_low));
+                        set(&ao, "freqHigh", opt_f64(r.freq_high));
+                        anns.push(&ao);
+                    }
+                }
+            });
+            set(&o, "regions", anns.into());
+        }
+        let selection = state.interaction.selection().get_untracked();
+        set(
+            &o,
+            "selection",
+            match selection {
+                Some(sel) => {
+                    let so = js_sys::Object::new();
+                    set(&so, "timeStart", JsValue::from_f64(sel.time_start));
+                    set(&so, "timeEnd", JsValue::from_f64(sel.time_end));
+                    set(&so, "freqLow", opt_f64(sel.freq_low));
+                    set(&so, "freqHigh", opt_f64(sel.freq_high));
+                    so.into()
+                }
+                None => JsValue::NULL,
+            },
+        );
         set(
             &o,
             "isPlaying",
@@ -111,6 +189,39 @@ pub fn install(state: AppState) {
             &o,
             "streamFile",
             name_of(crate::audio::playback::stream_file_id()),
+        );
+        // The HFR band in force (0 to 0 when HFR is off).
+        set(
+            &o,
+            "hfrBandLo",
+            JsValue::from_f64(state.filter.band_ff_freq_lo().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrBandHi",
+            JsValue::from_f64(state.filter.band_ff_freq_hi().get_untracked()),
+        );
+        // The PASS (bandpass) band, whether HFR is on, and whether the
+        // "Playing 1:1" card above Play is showing.
+        set(
+            &o,
+            "passBandLo",
+            JsValue::from_f64(state.filter.freq_low().get_untracked()),
+        );
+        set(
+            &o,
+            "passBandHi",
+            JsValue::from_f64(state.filter.freq_high().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrOn",
+            JsValue::from_bool(state.viewmode.hfr_enabled().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrNudge",
+            JsValue::from_bool(state.dialogs.hfr_nudge().get_untracked()),
         );
         // Live capture
         let listening = state.mic.listening().get_untracked();

@@ -9,13 +9,15 @@
 //!
 //! [`note_lines`] turns a hint into the lines shown in two places: the badge
 //! tooltip (levels A and B) and the note under the Info panel's Sample rate row
-//! (all levels).
+//! (all levels, see [`crate::rate_notes`]).
 //!
 //! When the text gives the detector's tuning frequency
 //! ([`HeterodyneHint::tuned_hz`]), the note says how to read the file's
 //! frequencies, and [`axis_call_suffixes`] gives the frequency axis's hover text:
 //! the two call frequencies a sound at each label came from.
 
+use crate::format_units::{keep_units_with_numbers, khz, khz_value};
+use crate::note_line::{lines_text, NoteLine};
 use crate::types::TimeExpansion;
 use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
 pub use oversample_core::heterodyne_hint::{HeterodyneHint, HeterodyneLevel, TextField};
@@ -43,10 +45,11 @@ pub fn field_label(field: TextField) -> &'static str {
 /// The heterodyne hint for a file, from its site metadata rows.
 ///
 /// - `fields`: the site metadata label/value rows (`SiteMetadata::fields`).
-/// - `time_expansion`: the correction the app applied when it loaded the file.
-///   A factor other than 1 gives `None`: the file is then known to be
-///   time-expanded, and the correction already accounts for its frequencies.
-/// - `sample_rate`: the file's rate as loaded. The rule needs the rate in the
+/// - `time_expansion`: the correction applied to the file's rate, by the app
+///   when it loaded the file or by the user. A factor other than 1 gives
+///   `None`: the file is then taken to be time-expanded, and the correction
+///   already accounts for its frequencies.
+/// - `sample_rate`: the rate the file is read at. The rule needs the rate in the
 ///   file header, which is `time_expansion.stored_rate` when a correction was
 ///   applied and `sample_rate` otherwise.
 pub fn file_hint(
@@ -105,56 +108,31 @@ pub fn shows_badge(hint: &HeterodyneHint) -> bool {
     hint.level >= HeterodyneLevel::HeterodyneOnlyDetector
 }
 
-/// How a line of the note is styled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LineRole {
-    /// The finding and its consequence, in the warning colour.
-    Warning,
-    /// The evidence, muted.
-    Detail,
-    /// How to read the file's frequencies when the tuning is known, in the
-    /// panel's normal text colour: it is a reading rule, not another warning.
-    Plain,
-}
-
-/// One line of the heterodyne note.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NoteLine {
-    pub text: String,
-    pub role: LineRole,
-}
-
 /// The lines that explain a hint. The badge tooltip joins them with newlines
 /// and the Info panel shows them as a note.
 pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
-    let warning = |text: String| NoteLine {
-        text,
-        role: LineRole::Warning,
-    };
-    let detail = |text: String| NoteLine {
-        text,
-        role: LineRole::Detail,
-    };
-    let evidence = detail(format!("{}: \"{}\"", field_label(hint.field), hint.excerpt));
+    let evidence = NoteLine::quote(format!(
+        "{}: \"{}\"",
+        field_label(hint.field),
+        keep_units_with_numbers(&hint.excerpt)
+    ));
     // With the tuning known, the call frequencies can be worked out (one of
     // two per sound), so "can't be corrected" is left out and a line saying
     // how to read the file follows.
     let consequence = || match hint.tuned_hz {
-        Some(_) => warning("Frequencies are not the bat's call frequencies.".into()),
-        None => {
-            warning("Frequencies are not the bat's call frequencies and can't be corrected.".into())
-        }
+        Some(_) => NoteLine::warning("Frequencies are not the bat's call frequencies."),
+        None => NoteLine::warning(
+            "Frequencies are not the bat's call frequencies and can't be corrected.",
+        ),
     };
     let reading = || {
-        hint.tuned_hz.map(|tuned| NoteLine {
-            text: tuned_line(tuned),
-            role: LineRole::Plain,
-        })
+        hint.tuned_hz
+            .map(|tuned| NoteLine::plain(tuned_line(tuned)))
     };
     match hint.level {
         HeterodyneLevel::SaysHeterodyne => {
             let mut lines = vec![
-                warning("Recorded from a heterodyne bat detector's audio output.".into()),
+                NoteLine::warning("Recorded from a heterodyne bat detector's audio output."),
                 evidence,
                 consequence(),
             ];
@@ -166,9 +144,9 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
         HeterodyneLevel::HeterodyneOnlyDetector => {
             let detector = detector_name(hint).unwrap_or_else(|| hint.matched.clone());
             let mut lines = vec![
-                warning("Recorded from a heterodyne bat detector's audio output.".into()),
+                NoteLine::warning("Recorded from a heterodyne bat detector's audio output."),
                 evidence,
-                detail(format!("The {detector} is a heterodyne-only detector.")),
+                NoteLine::muted(format!("The {detector} is a heterodyne-only detector.")),
                 consequence(),
             ];
             lines.extend(reading());
@@ -177,10 +155,9 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
         // Level C is a possibility, not a finding, so every line is muted.
         HeterodyneLevel::MayBeHeterodyne => {
             let mut lines = vec![
-                detail(
+                NoteLine::muted(
                     "Possibly recorded from a bat detector's output \
-                     (heterodyne, time expansion or frequency division)."
-                        .into(),
+                     (heterodyne, time expansion or frequency division).",
                 ),
                 evidence,
             ];
@@ -189,19 +166,19 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
             // follows the rule that named it.
             match (hint.source, detector_name(hint)) {
                 (HeterodyneSource::DualModeDetector, Some(detector)) => {
-                    lines.push(detail(format!(
+                    lines.push(NoteLine::muted(format!(
                         "The {detector} has a heterodyne mode and other modes."
                     )));
                 }
                 (HeterodyneSource::HeterodyneOnlyDetector, Some(detector)) => {
-                    lines.push(detail(format!(
+                    lines.push(NoteLine::muted(format!(
                         "The {detector} is a heterodyne-only detector."
                     )));
                 }
                 _ => {}
             }
-            lines.push(detail(
-                "If so, frequencies are not the bat's call frequencies.".into(),
+            lines.push(NoteLine::muted(
+                "If so, frequencies are not the bat's call frequencies.",
             ));
             lines
         }
@@ -267,16 +244,13 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
 pub fn tuned_line(tuned_hz: u32) -> String {
     let tuned = i64::from(tuned_hz);
     let example = if tuned < 20_000 { 5_000 } else { 10_000 };
-    // Two decimals, so a tuning given as "31,95 kHz" is shown as written. A
-    // no-break space before each "kHz" keeps it on the number's line when the
-    // note wraps in the narrow panel.
-    let khz = |hz: i64| format!("{}\u{a0}kHz", format_khz(hz, 2));
+    // Two decimals, so a tuning given as "31,95 kHz" is shown as written.
     format!(
         "Detector tuned to {}: a sound at {} in this file came from a call at either {} or {}.",
-        khz(tuned),
-        khz(example),
-        format_khz(tuned - example, 2),
-        khz(tuned + example),
+        khz(tuned, 2),
+        khz(example, 2),
+        khz_value(tuned - example, 2),
+        khz(tuned + example, 2),
     )
 }
 
@@ -323,7 +297,7 @@ fn call_frequencies(freq_hz: f64, tuned_hz: u32) -> String {
     // One decimal, or two when the tuning has two ("31,95 kHz"), so the
     // 10 kHz label shows the same numbers as the note's example.
     let decimals = if tuned_hz % 100 == 0 { 1 } else { 2 };
-    let khz = |hz: i64| format_khz(hz, decimals);
+    let khz = |hz: i64| khz_value(hz, decimals);
     // A value that shows as 0 kHz is left out with the negative ones.
     let step = 10_i64.pow(3 - decimals);
     let lower = ((tuned - freq) * 2 >= step).then(|| tuned - freq);
@@ -334,28 +308,9 @@ fn call_frequencies(freq_hz: f64, tuned_hz: u32) -> String {
     }
 }
 
-/// A positive frequency in Hz as kHz, rounded to at most `decimals` (1 or 2)
-/// decimal places, with no trailing zeros: 21_900 gives "21.9", 40_000 gives
-/// "40" and, with 2 decimals, 31_950 gives "31.95".
-pub(crate) fn format_khz(hz: i64, decimals: u32) -> String {
-    let step = 10_i64.pow(3 - decimals);
-    let units = (hz.max(0) + step / 2) / step;
-    let per_khz = 10_i64.pow(decimals);
-    let (whole, frac) = (units / per_khz, units % per_khz);
-    if frac == 0 {
-        return whole.to_string();
-    }
-    let frac = format!("{frac:0width$}", width = decimals as usize);
-    format!("{whole}.{}", frac.trim_end_matches('0'))
-}
-
 /// The badge tooltip: the note's lines, one per line.
 pub fn tooltip(hint: &HeterodyneHint) -> String {
-    note_lines(hint)
-        .into_iter()
-        .map(|line| line.text)
-        .collect::<Vec<_>>()
-        .join("\n")
+    lines_text(&note_lines(hint))
 }
 
 #[cfg(test)]
@@ -377,7 +332,7 @@ mod tests {
         note_lines(hint).into_iter().map(|l| l.role).collect()
     }
 
-    use LineRole::{Detail, Plain, Warning};
+    use crate::note_line::LineRole::{self, Muted, Plain, Quote, Warning};
 
     /// `s` with the no-break space the note puts before each "kHz".
     fn nbsp(s: &str) -> String {
@@ -403,7 +358,7 @@ mod tests {
                 "Frequencies are not the bat's call frequencies and can't be corrected.",
             ]
         );
-        assert_eq!(roles(&hint), [Warning, Detail, Warning]);
+        assert_eq!(roles(&hint), [Warning, Quote, Warning]);
         assert_eq!(tooltip(&hint), texts(&hint).join("\n"));
     }
 
@@ -420,7 +375,7 @@ mod tests {
             texts(&hint),
             [
                 "Recorded from a heterodyne bat detector's audio output.".to_string(),
-                "Remarks: \"handheld hetrodyne detector set at 31,9 kHz\"".to_string(),
+                nbsp("Remarks: \"handheld hetrodyne detector set at 31,9 kHz\""),
                 "Frequencies are not the bat's call frequencies.".to_string(),
                 nbsp(
                     "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came from a \
@@ -428,7 +383,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(roles(&hint), [Warning, Detail, Warning, Plain]);
+        assert_eq!(roles(&hint), [Warning, Quote, Warning, Plain]);
         assert_eq!(tooltip(&hint), texts(&hint).join("\n"));
     }
 
@@ -457,7 +412,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(roles(&hint), [Warning, Detail, Detail, Warning, Plain]);
+        assert_eq!(roles(&hint), [Warning, Quote, Muted, Warning, Plain]);
     }
 
     #[test]
@@ -560,18 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn khz_formatting() {
-        assert_eq!(format_khz(21_900, 1), "21.9");
-        assert_eq!(format_khz(40_000, 1), "40");
-        assert_eq!(format_khz(1_900, 1), "1.9");
-        assert_eq!(format_khz(31_950, 1), "32");
-        assert_eq!(format_khz(31_950, 2), "31.95");
-        assert_eq!(format_khz(31_905, 2), "31.91");
-        assert_eq!(format_khz(31_050, 2), "31.05");
-        assert_eq!(format_khz(31_900, 2), "31.9");
-    }
-
-    #[test]
     fn level_b_lines_name_the_detector() {
         let hint = file_hint(
             &rows(&[
@@ -593,7 +536,7 @@ mod tests {
                 "Frequencies are not the bat's call frequencies and can't be corrected.",
             ]
         );
-        assert_eq!(roles(&hint), [Warning, Detail, Detail, Warning]);
+        assert_eq!(roles(&hint), [Warning, Quote, Muted, Warning]);
     }
 
     #[test]
@@ -633,7 +576,7 @@ mod tests {
                 "If so, frequencies are not the bat's call frequencies.".to_string(),
             ]
         );
-        assert_eq!(roles(&hint), [Detail; 4]);
+        assert_eq!(roles(&hint), [Muted, Quote, Muted, Muted]);
     }
 
     #[test]
@@ -673,7 +616,7 @@ mod tests {
             texts(&hint)[2],
             "The Magenta Bat5 is a heterodyne-only detector."
         );
-        assert_eq!(roles(&hint), [Detail; 4]);
+        assert_eq!(roles(&hint), [Muted, Quote, Muted, Muted]);
     }
 
     #[test]
@@ -760,6 +703,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 44_100,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(file_hint(&fields, Some(te), 441_000), None);
     }
