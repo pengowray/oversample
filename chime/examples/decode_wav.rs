@@ -354,6 +354,12 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
                 Some(RemoteCommand::Start) => {
                     format!("Phone remote: start recording (deployment ID {hex}). ")
                 }
+                Some(RemoteCommand::StartWithMute(mute)) => {
+                    let mute = if mute { "on" } else { "off" };
+                    format!(
+                        "Phone remote: start recording with Mute while recording {mute} (deployment ID {hex}). "
+                    )
+                }
                 Some(RemoteCommand::Stop) => {
                     format!("Phone remote: stop recording (deployment ID {hex}). ")
                 }

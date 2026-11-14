@@ -48,9 +48,10 @@ impl FoundChime {
         RemoteMessage::from_deployment_id(self.deployment_id.as_ref()?)
     }
 
-    /// The X8 phone remote command in the deployment ID, if it is one this version knows.
+    /// The X8 phone remote command in the deployment ID, if it is one this version knows. A
+    /// command sent with a code (format version 2) counts too; its check is not looked at.
     pub fn remote_command(&self) -> Option<RemoteCommand> {
-        self.remote()?.known()
+        self.remote()?.command()
     }
 
     /// The phone's local time as ISO 8601 with its UTC offset, such as
