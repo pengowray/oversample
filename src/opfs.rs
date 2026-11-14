@@ -194,6 +194,24 @@ fn sync_noise_profile_from_state(
     })
 }
 
+/// `set` in the seconds and Hz of the rate file `file_idx` states, for saving.
+/// While the user's time-expansion correction is on, the set in memory is in
+/// the corrected units ([`crate::te_correction`]).
+fn in_file_units(
+    state: crate::state::AppState,
+    file_idx: usize,
+    set: crate::annotations::AnnotationSet,
+) -> crate::annotations::AnnotationSet {
+    use leptos::prelude::WithUntracked;
+    state
+        .library
+        .files()
+        .with_untracked(|files| match files.get(file_idx) {
+            Some(f) => crate::te_correction::to_file_units(&f.audio, set),
+            None => set,
+        })
+}
+
 /// Produce YAML for a file-adjacent sidecar with `file_path` stripped from the identity.
 /// The sidecar sits next to the audio file, so the full path is redundant (and `filename` already
 /// stores the basename). Central annotations keep the full path for re-finding.
@@ -251,6 +269,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         Some(s) => s.clone(),
         None => return,
     };
+    let set = in_file_units(state, file_idx, set);
 
     let key = opfs_key(&set.file_identity);
     let yaml = match yaml_serde::to_string(&set) {
@@ -370,6 +389,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         }
     };
 
+    let set = in_file_units(state, file_idx, set);
     let sidecar_yaml = sidecar_yaml_without_full_path(&set);
 
     // Mark had_sidecar so future auto-saves keep updating it
@@ -407,6 +427,18 @@ fn apply_loaded_sidecar(
     // whatever file now sits at the old index.
     let Some(file_idx) = state.file_idx_for_id(file_id) else {
         return;
+    };
+    // The file on disk is in the file's own seconds and Hz. If the user
+    // corrected the file's rate before it finished loading, convert it.
+    let loaded = {
+        use leptos::prelude::WithUntracked;
+        state
+            .library
+            .files()
+            .with_untracked(|files| match files.get(file_idx) {
+                Some(f) => crate::te_correction::from_file_units(&f.audio, loaded),
+                None => loaded,
+            })
     };
 
     // If the sidecar has a noise profile, store it in the file's per-file settings.

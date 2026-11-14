@@ -295,14 +295,15 @@ pub struct LoadedFile {
     /// files, recordings, and demos that have no metadata sidecar.
     pub site_metadata: Option<crate::source_site::SiteMetadata>,
     /// Whether `site_metadata` says the audio is a heterodyne bat detector's
-    /// output (`crate::heterodyne::file_hint`). Computed once when the file is
-    /// built, since the file list rebuilds every row on any file change. Neither
-    /// `site_metadata` nor the time expansion changes after that; recompute
-    /// this if either ever does.
+    /// output (`crate::heterodyne::file_hint`). Computed when the file is
+    /// built, since the file list rebuilds every row on any file change.
+    /// `site_metadata` does not change after that; the time expansion changes
+    /// when the user corrects it, and `crate::te_correction` recomputes this.
     pub heterodyne_hint: Option<crate::heterodyne::HeterodyneHint>,
     /// Whether the file's sample rate is too low for the echolocation calls
     /// of the species it is labelled with (`crate::species_check::file_finding`).
-    /// Computed once when the file is built, like `heterodyne_hint`.
+    /// Computed when the file is built and when its time expansion is
+    /// corrected, like `heterodyne_hint`.
     pub species_range: Option<crate::species_check::SpeciesRangeFinding>,
     /// Hash data from XC sidecar (for verification against computed identity).
     pub xc_hashes: Option<SidecarHashes>,

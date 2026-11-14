@@ -31,7 +31,10 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
     // One result per channel. Empty until computed, and for files that aren't 32-bit float.
     let float_grid_results: RwSignal<Vec<FloatGridResult>> = RwSignal::new(Vec::new());
     let is_computing = RwSignal::new(false);
-    let last_computed_idx: RwSignal<Option<usize>> = RwSignal::new(None);
+    // The file (by id) and the sample rate the results are for. The rate
+    // changes when the user corrects the file's time expansion, and results
+    // such as wSNR depend on it.
+    let last_computed: RwSignal<Option<(u64, u32)>> = RwSignal::new(None);
     let compute_gen = RwSignal::new(0u32);
     // Whether the last analysis used full file (true) or first 30s (false).
     let analysis_is_full = RwSignal::new(false);
@@ -55,7 +58,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
         audiomoth_result.set(None);
         float_grid_results.set(Vec::new());
         is_computing.set(true);
-        last_computed_idx.set(idx);
+        last_computed.set(Some((file.id, file.audio.sample_rate)));
         analysis_is_full.set(full_file);
         compute_gen.update(|g| *g += 1);
         let generation = compute_gen.get_untracked();
@@ -224,8 +227,15 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             return;
         }
 
-        // Already computed for this file
-        if idx == last_computed_idx.get_untracked() && analysis.get_untracked().is_some() {
+        // Already computed for this file at this rate
+        let key = state.library.files().with_untracked(|files| {
+            idx.and_then(|i| files.get(i))
+                .map(|f| (f.id, f.audio.sample_rate))
+        });
+        if key.is_some()
+            && key == last_computed.get_untracked()
+            && analysis.get_untracked().is_some()
+        {
             return;
         }
 
@@ -239,7 +249,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
             nyquist_result.set(None);
             audiomoth_result.set(None);
             float_grid_results.set(Vec::new());
-            last_computed_idx.set(None);
+            last_computed.set(None);
             is_computing.set(false);
             return;
         }

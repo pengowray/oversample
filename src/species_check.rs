@@ -40,8 +40,9 @@ pub struct SpeciesRangeFinding {
 /// its sound type, and its sample rate. `None` when the file has no species,
 /// the bat book doesn't have it, or the rate reaches its calls.
 ///
-/// Neither the metadata nor the time expansion changes after a file is
-/// built; recompute this if either ever does.
+/// The metadata does not change after a file is built. The time expansion
+/// changes when the user corrects it ([`crate::te_correction`]), which
+/// recomputes this.
 pub fn file_finding(file: &LoadedFile) -> Option<SpeciesRangeFinding> {
     let name = get_scientific_name(file)?;
     let species = find_species(&name, country_region(file))?;
@@ -143,8 +144,10 @@ const OTHER_LINE_MAX_HEADER_RATE: u32 = 96_000;
 /// - At a ×10 header rate, the finding first, in the warning colour, then
 ///   the species line. All 10 such Xeno-canto records were time-expanded
 ///   ×10, though the app corrects 2 of them from their GUANO (see
-///   [`RangeCase::TenfoldHeaderRate`]). The note says how to read the file, since the app has no control to
-///   correct it after loading.
+///   [`RangeCase::TenfoldHeaderRate`]). The note says how to read the file
+///   as it is, and its "Treat as time-expanded ×10" button
+///   ([`crate::rate_notes::NoteAction`]) corrects it. After the correction
+///   the file reaches the species' calls and the note is gone.
 /// - At any other rate, the species line, then the possibilities, all muted.
 ///   Above a 96 kHz header rate, the species line alone.
 pub fn note_lines(f: &SpeciesRangeFinding) -> Vec<NoteLine> {

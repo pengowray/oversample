@@ -28,6 +28,7 @@ pub mod source_site;
 pub mod species_check;
 pub mod state;
 pub mod tauri_bridge;
+pub mod te_correction;
 pub mod test_hook;
 pub mod timeline;
 pub mod types;

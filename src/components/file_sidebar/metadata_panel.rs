@@ -1597,7 +1597,12 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
                                 {inline_row("Sample rate".into(), sample_rate_row_value(f.audio.sample_rate), None)}
-                                <RateNotes notes=file_rate_notes(f) />
+                                <RateNotes
+                                    notes=file_rate_notes(f)
+                                    file_id=f.id
+                                    stored_rate=f.audio.stored_rate()
+                                    loading=f.loading_id.is_some()
+                                />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}

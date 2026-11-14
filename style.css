@@ -5223,6 +5223,23 @@ a.open-link-btn {
    they inherit the .metadata-note grey, so a change to that colour reaches
    them too. */
 
+/* A note's button ("Treat as time-expanded x10", "Use the file's sample
+   rate"), under the line it acts on. It has the look of .hash-calc-btn
+   ("Calculate all hashes"): grey and outlined, not filled, because changing
+   a file's rate is a rare action. That class is about 19 px tall, so this
+   one sets the 24 px minimum click target, and 36 px in the phone layout,
+   where it is pressed with a finger. */
+.rate-note-action {
+    display: block;
+    min-height: 24px;
+    margin: 4px 0 3px;
+    text-align: left;
+}
+.app.mobile .rate-note-action {
+    min-height: 36px;
+    padding: 4px 12px;
+}
+
 /* Sequence gap indicators */
 .seq-gap-row {
     font-size: 10px;

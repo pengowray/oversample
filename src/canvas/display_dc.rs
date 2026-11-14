@@ -83,6 +83,14 @@ pub fn seed_mono(file_id: u64, dc: f32) {
     });
 }
 
+/// Forget every offset of `file_id` and record the mono-mix offset `dc`, for a
+/// file now read at another rate ([`crate::te_correction`]): the offsets are
+/// measured over the first seconds of the file, which are other samples now.
+pub fn reseed_mono(file_id: u64, dc: f32) {
+    OFFSETS.with(|m| m.borrow_mut().retain(|(id, _), _| *id != file_id));
+    seed_mono(file_id, dc);
+}
+
 /// The offset if it is known now, without measuring: 0 for files that keep
 /// theirs, `None` while it is unmeasured.
 pub fn known_offset(target: DcTarget, view: ChannelView) -> Option<f32> {
