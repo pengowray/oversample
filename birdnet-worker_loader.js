@@ -1,0 +1,1 @@
+importScripts("./birdnet-worker.js");wasm_bindgen("./birdnet-worker_bg.wasm");
