@@ -29,7 +29,7 @@ CLAUDE.md
 .claude/scheduled_tasks.lock
 
 # Playwright / Node
-/node_modules/
+/node_modules
 /test-results/
 /playwright-report/
 /playwright/.cache/
