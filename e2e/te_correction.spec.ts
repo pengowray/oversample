@@ -902,8 +902,13 @@ test.describe('the "Corrected ×10" badge', () => {
 
     const heading = page.locator(`.toolbar-badge-row ${MARK}`);
     const fileRow = page.locator(`.file-item-info ${MARK}`);
+    await expect(heading).toHaveText("Corrected ×10");
+    // A file row has no room for the words: its sample rate is the box.
+    await expect(fileRow).toHaveText("256kHz");
+    expect(await fileRow.evaluate((e) => e.parentElement!.classList.contains("badge-sample-rate"))).toBe(
+      true,
+    );
     for (const mark of [heading, fileRow]) {
-      await expect(mark).toHaveText("Corrected ×10");
       // The tooltip is the time-expansion note.
       await expect(mark).toHaveAttribute(
         "title",

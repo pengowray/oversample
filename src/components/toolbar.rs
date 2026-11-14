@@ -19,6 +19,33 @@ const BADGE_MENU_PARTS: &str = ".badge-dropdown-panel, \
      .toolbar-badge-row button.file-badge-seq, \
      .toolbar-badge-row button.file-badge-track";
 
+/// Show the heading's licence label whole, or not at all, when the heading
+/// has the "Corrected ×10" badge. On a phone the badge leaves the licence
+/// button about 70px, and "BY-NC-SA 4.0" cut to "BY-NC…" reads as another
+/// licence. With the label hidden the button shows the licence icon, and
+/// opens the licence dialog as before. Other headings keep a long label cut
+/// with an ellipsis, which keeps a heterodyne file's heading on a phone at
+/// two badge lines (style.css, `.toolbar-cc-badge`).
+fn fit_licence_label(toolbar: &web_sys::Element) {
+    const ICON_ONLY: &str = "toolbar-cc-icon-only";
+    let Ok(Some(button)) = toolbar.query_selector(".toolbar-badge-row .toolbar-cc-badge") else {
+        return;
+    };
+    let classes = button.class_list();
+    let _ = classes.remove_1(ICON_ONLY);
+    let corrected = toolbar
+        .query_selector(".toolbar-badge-row .file-badge-corrected")
+        .ok()
+        .flatten()
+        .is_some();
+    let Ok(Some(label)) = button.query_selector(".toolbar-cc-label") else {
+        return;
+    };
+    if corrected && label.scroll_width() > label.client_width() {
+        let _ = classes.add_1(ICON_ONLY);
+    }
+}
+
 #[component]
 pub fn Toolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -53,7 +80,10 @@ pub fn Toolbar() -> impl IntoView {
         set_height(&el);
         let observed = el.clone();
         let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
-            move |_e: js_sys::Array| set_height(&observed),
+            move |_e: js_sys::Array| {
+                set_height(&observed);
+                fit_licence_label(&observed);
+            },
         );
         if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             obs.observe(&el);
@@ -124,6 +154,19 @@ pub fn Toolbar() -> impl IntoView {
             corrected_rate: file_badges::corrected_rate_badge(f),
             file_index: idx,
         })
+    });
+
+    // The badge row is drawn again when the current file, its badges or its
+    // licence change, which may not resize the toolbar, so the licence label
+    // is fitted again after each redraw too.
+    Effect::new(move |_| {
+        file_name.track();
+        current_badge_data.track();
+        license_badge.track();
+        is_unsaved.track();
+        if let Some(el) = toolbar_ref.get() {
+            request_animation_frame(move || fit_licence_label(&el));
+        }
     });
 
     // Derived: sequence group files (for dropdown)

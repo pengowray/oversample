@@ -56,6 +56,13 @@ pub struct CorrectedRateBadge {
 /// "Corrected ×10", not "TE ×10", which would read as the HEAR bar's TE
 /// (time expansion) playback mode, and not "×10" alone, which would read as
 /// a multiple of the rate before it.
+///
+/// The heading shows the badge after the duration. A file row shows the
+/// sample rate itself as the box, with the same tooltip and click: at the
+/// narrowest Files sidebar (140px) a row has about 20px to spare beside its
+/// facts and CC icon, which no words fit, and the user asked that a row wrap
+/// no earlier than before. The licence is shown in a similar way: a labelled
+/// box in the heading, an icon in a row.
 pub(crate) fn corrected_rate_badge(file: &LoadedFile) -> Option<CorrectedRateBadge> {
     let te = file.audio.metadata.time_expansion?;
     Some(CorrectedRateBadge {
@@ -91,7 +98,8 @@ fn format_sample_rate(sr: u32) -> String {
 
 /// Shared badge row component used by both file menu items and toolbar heading.
 ///
-/// Renders, in order: sample rate, bit depth, duration, "Corrected ×10",
+/// Renders, in order: sample rate, bit depth, duration, "Corrected ×10"
+/// (heading only; a file row boxes the sample rate instead),
 /// "Heterodyne recording", streaming `[~]`, sequence `#59`, track `[3]`, the
 /// download button and the CC icon. Facts get the `badge-fact` class and are
 /// plain text; controls get `badge-btn` and are drawn as boxes (style.css,
@@ -165,9 +173,34 @@ pub fn FileBadgeRow(
         }
     };
 
+    // In a file row, the sample rate of a corrected file is the
+    // "Corrected ×10" badge's box (see [`corrected_rate_badge`]). The span
+    // keeps the dot after the rate outside the box.
+    let (row_mark, heading_mark) = if is_file_menu {
+        (corrected_rate, None)
+    } else {
+        (None, corrected_rate)
+    };
+    let rate = match row_mark {
+        Some(badge) => view! {
+            <span class="file-badge badge-fact badge-sample-rate">
+                <button
+                    class="badge-btn file-badge-corrected"
+                    title=badge.tooltip
+                    on:click=open_note(NoteKind::TimeExpansion)
+                >{sr_label}</button>
+            </span>
+        }
+        .into_any(),
+        None => view! {
+            <span class="file-badge badge-fact badge-sample-rate">{sr_label}</span>
+        }
+        .into_any(),
+    };
+
     view! {
         // 1. Sample rate (always)
-        <span class="file-badge badge-fact badge-sample-rate">{sr_label}</span>
+        {rate}
 
         // 2. Bit depth (only > 16)
         {bit_badge.map(|label| view! {
@@ -177,10 +210,9 @@ pub fn FileBadgeRow(
         // 3. Duration
         <span class="badge-fact badge-duration">{dur_label}</span>
 
-        // 3a. "Corrected ×10", after the rate, bit depth and duration, so the
-        // facts line is the same as for any other file and wraps no earlier
-        // in a narrow Files sidebar: the badge moves to the next line instead.
-        {corrected_rate.map(|badge| view! {
+        // 3a. "Corrected ×10" in the heading, after the rate, bit depth and
+        // duration it applies to.
+        {heading_mark.map(|badge| view! {
             <button
                 class="file-badge badge-btn file-badge-corrected"
                 title=badge.tooltip

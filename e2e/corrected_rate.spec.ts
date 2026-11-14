@@ -330,66 +330,6 @@ async function setSidebarWidth(page: Page, width: number) {
     .toBe(width);
 }
 
-test.describe('the "Corrected ×10" badge in a narrow Files sidebar', () => {
-  test.use({ viewport: { width: 1440, height: 900 } });
-
-  test("moves to the next line and leaves the facts where they were", async ({ page }) => {
-    // The longest facts line: 384 kHz, 32-bit float.
-    const files = [
-      {
-        name: "corrected float.wav",
-        buffer: wav({ rate: 38_400, frames: 5_760, format: "float", guano: GUANO_TE10 }),
-      },
-      {
-        name: "corrected 16-bit.wav",
-        buffer: wav({ rate: 25_600, frames: 25_600, format: "16", guano: GUANO_TE10 }),
-      },
-    ];
-    await page.goto("/");
-    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
-    await showFiles(page);
-    await page
-      .locator('input[type="file"]')
-      .first()
-      .setInputFiles(files.map((f) => ({ ...f, mimeType: "audio/wav" })));
-    await expect(page.locator(`.file-item-info ${MARK}`)).toHaveCount(2, { timeout: 30_000 });
-    await expect(page.locator(".file-item-info .badge-sample-rate")).toHaveText([
-      "384kHz",
-      "256kHz",
-    ]);
-
-    for (const width of [140, 150, 160, 170, 180, 190, 200]) {
-      await setSidebarWidth(page, width);
-      const rows = await page.locator(".file-item-info").evaluateAll((infos) =>
-        infos.map((info) => {
-          const facts = [...info.querySelectorAll(".badge-fact")] as HTMLElement[];
-          const tops = () => facts.map((f) => Math.round(f.getBoundingClientRect().top));
-          const mark = info.querySelector(".file-badge-corrected") as HTMLElement;
-          const left = info.getBoundingClientRect().left;
-          const lineStarts = [...info.children]
-            .filter((k) => getComputedStyle(k).display !== "none")
-            .filter((k) => Math.abs(k.getBoundingClientRect().left - left) < 1)
-            .map((k) => getComputedStyle(k, "::before").content);
-          const withMark = tops();
-          const height = info.getBoundingClientRect().height;
-          mark.style.display = "none";
-          const without = tops();
-          const heightWithout = info.getBoundingClientRect().height;
-          mark.style.display = "";
-          return { withMark, without, height, heightWithout, lineStarts };
-        }),
-      );
-      for (const r of rows) {
-        // The facts are on the same lines with the badge as without it.
-        expect(r.withMark, `${width}px`).toEqual(r.without);
-        // At most one more 14px line, for the badge.
-        expect(r.height - r.heightWithout, `${width}px`).toBeLessThanOrEqual(14 + 4);
-        for (const content of r.lineStarts) expect(content).not.toContain("·");
-      }
-    }
-  });
-});
-
 /** Adds WAV files to the Files sidebar and waits for their rows. */
 async function addFiles(page: Page, files: { name: string; buffer: Buffer }[]) {
   await page.goto("/");
@@ -505,5 +445,179 @@ test.describe("HFR when a correction from the file's metadata is removed", () =>
     await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     await expect.poll(async () => (await snap(page)).hfrOn).toBe(false);
+  });
+});
+
+/** The local bat-demo-sounds checkout, if there is one: BAT_DEMO_SOUNDS_DIR,
+ * else ../batchi-extras/bat-demo-sounds beside the main checkout, seen from
+ * the main checkout or from a worktree under its .claude/worktrees/. */
+const DEMO_DIR = [
+  process.env.BAT_DEMO_SOUNDS_DIR,
+  "../batchi-extras/bat-demo-sounds",
+  "../../../../batchi-extras/bat-demo-sounds",
+]
+  .filter((d): d is string => !!d)
+  .map((d) => path.resolve(process.cwd(), d))
+  .find((d) => fs.existsSync(path.join(d, "index.json")));
+
+/** Opens a demo recording, served from the local checkout. XC892810 is
+ * stored at 38.4 kHz with GUANO that says TE 10, and has a CC BY-NC-SA 4.0
+ * licence. */
+async function openDemo(page: Page, xc: string) {
+  const serve = (route: Route) => {
+    const rel = decodeURIComponent(new URL(route.request().url()).pathname).replace(
+      /^\/gh\/pengowray\/bat-demo-sounds@main/,
+      "",
+    );
+    const file = path.join(DEMO_DIR!, rel);
+    if (!file.startsWith(DEMO_DIR!) || !fs.existsSync(file)) {
+      return route.fulfill({ status: 404, body: "" });
+    }
+    const type = file.endsWith(".json") ? "application/json" : "audio/wav";
+    return route.fulfill({ contentType: type, body: fs.readFileSync(file) });
+  };
+  await page.route("https://archive.oversample.com/**", serve);
+  await page.route("https://cdn.jsdelivr.net/gh/pengowray/bat-demo-sounds@main/**", serve);
+  await page.goto(`/#${xc}`);
+  await expect(page.locator(".toolbar-badge-row .badge-sample-rate")).toHaveText("384kHz", {
+    timeout: 60_000,
+  });
+}
+
+/** The number of lines the children of `selector` take. */
+function badgeLines(page: Page, selector: string) {
+  return page.locator(selector).evaluate((el) => {
+    const mids = [...el.children]
+      .filter((k) => getComputedStyle(k).display !== "none" && k.getBoundingClientRect().width)
+      .map((k) => {
+        const b = k.getBoundingClientRect();
+        return (b.top + b.bottom) / 2;
+      })
+      .sort((a, b) => a - b);
+    return mids.filter((m, i) => i === 0 || m - mids[i - 1] > 6).length;
+  });
+}
+
+test.describe("a corrected rate in a phone's heading", () => {
+  test.skip(!DEMO_DIR, "no local bat-demo-sounds checkout");
+  test.use({
+    viewport: { width: 375, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+  });
+
+  test("keeps the heading's height, and the licence label is whole or not shown", async ({
+    page,
+  }) => {
+    await openDemo(page, "XC892810");
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toBeVisible();
+    expect((await page.locator(".toolbar").boundingBox())!.height).toBe(49);
+    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(1);
+    const label = page.locator(".toolbar-cc-badge .toolbar-cc-label");
+    const cut = await label.evaluate(
+      (e) => getComputedStyle(e).display !== "none" && e.scrollWidth > e.clientWidth,
+    );
+    expect(cut).toBe(false);
+    // The licence button stays, and opens the licence dialog.
+    await expect(page.locator(".toolbar-cc-badge .toolbar-cc-icon")).toBeVisible();
+  });
+});
+
+test.describe("a corrected rate in a narrow Files sidebar", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("a corrected row wraps no earlier than a row of a file stored at that rate", async ({
+    page,
+  }) => {
+    // Each corrected file has a twin stored at its corrected rate, with the
+    // same bit depth and length, so both rows give the same facts.
+    await addFiles(page, [
+      {
+        name: "corrected float.wav",
+        buffer: wav({ rate: 38_400, frames: 5_760, format: "float", guano: GUANO_TE10 }),
+      },
+      { name: "native float.wav", buffer: wav({ rate: 384_000, frames: 5_760, format: "float" }) },
+      {
+        name: "corrected 16-bit.wav",
+        buffer: wav({ rate: 25_600, frames: 25_600, format: "16", guano: GUANO_TE10 }),
+      },
+      { name: "native 16-bit.wav", buffer: wav({ rate: 256_000, frames: 25_600, format: "16" }) },
+    ]);
+    const facts = (i: number) =>
+      page.locator(".file-item").nth(i).locator(".file-item-info .badge-fact");
+    for (const [c, n] of [
+      [0, 1],
+      [2, 3],
+    ]) {
+      expect(await facts(c).allInnerTexts()).toEqual(await facts(n).allInnerTexts());
+    }
+    for (const width of [140, 150, 160, 170, 180, 190, 200, 260]) {
+      await setSidebarWidth(page, width);
+      const heights = await page
+        .locator(".file-item-info")
+        .evaluateAll((infos) => infos.map((i) => Math.round(i.getBoundingClientRect().height)));
+      expect(heights[0], `float at ${width}px`).toBe(heights[1]);
+      expect(heights[2], `16-bit at ${width}px`).toBe(heights[3]);
+    }
+  });
+
+  test("a corrected row with a licence icon stays on one line", async ({ page }) => {
+    test.skip(!DEMO_DIR, "no local bat-demo-sounds checkout");
+    await openDemo(page, "XC892810");
+    await showFiles(page);
+    const info = ".file-item:has-text('XC892810') .file-item-info";
+    await expect(page.locator(`${info} .badge-cc-mini`)).toBeVisible();
+    await expect(page.locator(`${info} ${MARK}`)).toHaveCount(1);
+    for (const width of [140, 150, 160, 170, 180, 190, 200]) {
+      await setSidebarWidth(page, width);
+      expect(await badgeLines(page, info), `${width}px`).toBe(1);
+    }
+  });
+});
+
+test.describe("the boxed sample rate in a file row", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("opens the Info panel at the note of its file", async ({ page }) => {
+    await addFiles(page, [
+      {
+        name: "corrected.wav",
+        buffer: wav({ rate: 38_400, frames: 38_400, format: "16", guano: GUANO_TE10 }),
+      },
+      { name: "native.wav", buffer: wav({ rate: 384_000, frames: 38_400, format: "16" }) },
+    ]);
+    await selectFile(page, 1);
+    const hideInfo = page.locator('button[title="Hide info panel"]');
+    if (await hideInfo.count()) await hideInfo.click();
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+    const box = page.locator(".file-item").nth(0).locator(`.file-item-info ${MARK}`);
+    await expect(box).toHaveText("384kHz");
+    await expect(box).toHaveAttribute(
+      "title",
+      "Corrected for ×10 time expansion. Sample rate in the file header: 38.4 kHz.",
+    );
+    // Only the corrected file's rate is a box.
+    await expect(page.locator(".file-item").nth(1).locator(MARK)).toHaveCount(0);
+    await box.click();
+    await expect(page.locator(".file-item").nth(0)).toHaveClass(/\bactive\b/);
+    await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
+    await expect(page.locator(TE_NOTE)).toBeInViewport();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+  });
+});
+
+test.describe("a corrected rate in a desktop heading", () => {
+  test.skip(!DEMO_DIR, "no local bat-demo-sounds checkout");
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("keeps the whole licence label", async ({ page }) => {
+    await openDemo(page, "XC892810");
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toHaveText("Corrected ×10");
+    const label = page.locator(".toolbar-cc-badge .toolbar-cc-label");
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText("BY-NC-SA 4.0");
+    expect(await label.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
   });
 });
