@@ -1,19 +1,30 @@
 use super::country_map::country_to_region;
-use super::data::{get_manifest, species, species_by_scientific_name, NameQuery};
+use super::data::{get_manifest, species, species_matching, NameQuery};
 use super::types::{AutoResolved, BatBookRegion, BatSpecies, PlaceSource, RecordingPlace};
 use crate::state::LoadedFile;
 
 /// Search all regional bat books for a species by scientific name.
 /// Returns `(region, species_id)` for the best match.
 /// Prefers `preferred_region` if the species appears there; otherwise picks the
-/// first non-Global match.
+/// first non-Global match. A match on the whole name in any book wins over a
+/// trinomial's binomial ("Myotis lucifugus alascensis" matching "Myotis
+/// lucifugus"), so a subspecies with its own entry finds that entry.
 fn find_species_across_books(
     scientific_name: &str,
     preferred_region: Option<BatBookRegion>,
 ) -> Option<(BatBookRegion, String)> {
-    // Also matches the binomial of a trinomial ("Myotis lucifugus alascensis").
     let query = NameQuery::new(scientific_name)?;
+    find_in_books(|s| query.matches_full(s), preferred_region)
+        .or_else(|| find_in_books(|s| query.matches(s), preferred_region))
+}
 
+/// The first species in the regional books that `matching` accepts, as
+/// `(region, species_id)`: the one in `preferred_region` if that book has
+/// one, else the first non-Global book's.
+fn find_in_books(
+    matching: impl Fn(&BatSpecies) -> bool,
+    preferred_region: Option<BatBookRegion>,
+) -> Option<(BatBookRegion, String)> {
     let mut best: Option<(BatBookRegion, String)> = None;
 
     for &region in BatBookRegion::ALL {
@@ -22,8 +33,7 @@ fn find_species_across_books(
         }
         let manifest = get_manifest(region);
         for entry in &manifest.entries {
-            if species(entry.id).is_some_and(|s| query.matches(s)) {
-                // Exact match in this region
+            if species(entry.id).is_some_and(&matching) {
                 if preferred_region == Some(region) {
                     // Best possible: species is in the country's own region
                     return Some((region, entry.id.to_string()));
@@ -42,14 +52,22 @@ fn find_species_across_books(
 /// typical-calls strip's match, which prefers the entry in the book of the
 /// recording's region (`preferred_region`), or else the first regional book
 /// that has it. A species in no regional book (`Pipistrellus hanaki`) is
-/// looked up among every species instead.
+/// looked up among every species instead. A whole-name match anywhere wins
+/// over a trinomial's binomial.
 pub(crate) fn find_species(
     scientific_name: &str,
     preferred_region: Option<BatBookRegion>,
 ) -> Option<&'static BatSpecies> {
-    find_species_across_books(scientific_name, preferred_region)
-        .and_then(|(_, id)| species(&id))
-        .or_else(|| species_by_scientific_name(scientific_name))
+    let query = NameQuery::new(scientific_name)?;
+    let in_books = |matching: &dyn Fn(&BatSpecies) -> bool| {
+        find_in_books(matching, preferred_region).and_then(|(_, id)| species(&id))
+    };
+    let full = |s: &BatSpecies| query.matches_full(s);
+    let any = |s: &BatSpecies| query.matches(s);
+    in_books(&full)
+        .or_else(|| species_matching(full))
+        .or_else(|| in_books(&any))
+        .or_else(|| species_matching(any))
 }
 
 /// The region of the recording's country (source site or GPS position), if
@@ -302,6 +320,41 @@ mod tests {
             let found = find_species_across_books(name, None).map(|(_, id)| id);
             assert_eq!(found.as_deref(), Some(id), "{name}");
         }
+    }
+
+    /// A subspecies with its own entry finds that entry, not its species,
+    /// whichever region the recording is from.
+    #[test]
+    fn a_whole_name_match_beats_a_binomial_match() {
+        let name = "Rhinolophus ferrumequinum nippon";
+        for region in [
+            None,
+            Some(BatBookRegion::Europe),
+            Some(BatBookRegion::SoutheastAsia),
+            Some(BatBookRegion::Australia),
+            Some(BatBookRegion::Japan),
+        ] {
+            assert_eq!(
+                find_species(name, region).map(|s| s.id.as_str()),
+                Some("rhinolophus_ferrumequinum_nippon"),
+                "{region:?}"
+            );
+            assert_eq!(
+                find_species_across_books(name, region).map(|(_, id)| id),
+                Some("rhinolophus_ferrumequinum_nippon".to_string()),
+                "{region:?}"
+            );
+        }
+        // A trinomial with no entry of its own still finds its species.
+        assert_eq!(
+            find_species("Rhinolophus ferrumequinum creticum", None).map(|s| s.id.as_str()),
+            Some("rhinolophus_ferrumequinum")
+        );
+        // Extra spaces between the words don't matter.
+        assert_eq!(
+            find_species(" Pipistrellus  pipistrellus ", None).map(|s| s.id.as_str()),
+            Some("pipistrellus_pipistrellus")
+        );
     }
 
     #[test]

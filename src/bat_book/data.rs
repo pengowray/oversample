@@ -44,9 +44,9 @@ pub fn species(id: &str) -> Option<&'static BatSpecies> {
         .copied()
 }
 
-/// A scientific name to look up in the bat book: trimmed and lower-cased,
-/// with the binomial of a trinomial as a second form, so "Myotis lucifugus
-/// alascensis" also matches "Myotis lucifugus".
+/// A scientific name to look up in the bat book: lower-cased, with one
+/// space between words, and with the binomial of a trinomial as a second
+/// form, so "Myotis lucifugus alascensis" also matches "Myotis lucifugus".
 pub struct NameQuery {
     full: String,
     binomial: Option<String>,
@@ -55,13 +55,16 @@ pub struct NameQuery {
 impl NameQuery {
     /// `None` for a blank name.
     pub fn new(name: &str) -> Option<Self> {
-        let full = name.trim().to_lowercase();
-        if full.is_empty() {
+        let lower = name.to_lowercase();
+        let parts: Vec<&str> = lower.split_whitespace().collect();
+        if parts.is_empty() {
             return None;
         }
-        let parts: Vec<&str> = full.split_whitespace().collect();
         let binomial = (parts.len() > 2).then(|| format!("{} {}", parts[0], parts[1]));
-        Some(Self { full, binomial })
+        Some(Self {
+            full: parts.join(" "),
+            binomial,
+        })
     }
 
     /// The species' scientific name and synonyms, lower-cased.
@@ -83,24 +86,19 @@ impl NameQuery {
     }
 }
 
-/// The species with this scientific name or synonym, from every species in
-/// the bat book, including those in no regional book (`Pipistrellus
-/// hanaki`). A match on the whole name wins over a trinomial's binomial. Two
-/// species can share a name (`eptesicus_nilssonii` and its Japanese entry
-/// `eptesicus_nilssonii_jp`); then the one with the lowest call frequency
-/// wins, so the order of the bundle doesn't matter.
+/// Of every species in the bat book, including those in no regional book
+/// (`Pipistrellus hanaki`), the one `matching` accepts, such as a
+/// [`NameQuery`] match. Two species can share a name (`eptesicus_nilssonii`
+/// and its Japanese entry `eptesicus_nilssonii_jp`); then the one with the
+/// lowest call frequency wins, so the order of the bundle doesn't matter.
 ///
-/// Callers that know the recording's region use
-/// `auto_resolve::find_species`, which prefers the region's own entry.
-pub fn species_by_scientific_name(name: &str) -> Option<&'static BatSpecies> {
-    let query = NameQuery::new(name)?;
-    let lowest = |matching: &dyn Fn(&BatSpecies) -> bool| {
-        all_species()
-            .iter()
-            .filter(|s| matching(s))
-            .min_by(|a, b| a.freq_lo_hz.total_cmp(&b.freq_lo_hz))
-    };
-    lowest(&|s| query.matches_full(s)).or_else(|| lowest(&|s| query.matches(s)))
+/// `auto_resolve::find_species` looks a recording's species up in the
+/// regional books first, then here.
+pub fn species_matching(matching: impl Fn(&BatSpecies) -> bool) -> Option<&'static BatSpecies> {
+    all_species()
+        .iter()
+        .filter(|s| matching(s))
+        .min_by(|a, b| a.freq_lo_hz.total_cmp(&b.freq_lo_hz))
 }
 
 /// Materialized entries for each region key, with non-echolocating species
@@ -230,28 +228,32 @@ mod tests {
     }
 
     #[test]
-    fn species_by_scientific_name_reads_every_species() {
-        let id = |name: &str| species_by_scientific_name(name).map(|s| s.id.as_str());
+    fn name_queries_find_species_among_every_species() {
+        let full = |name: &str| {
+            let query = NameQuery::new(name)?;
+            species_matching(|s| query.matches_full(s)).map(|s| s.id.as_str())
+        };
+        let any = |name: &str| {
+            let query = NameQuery::new(name)?;
+            species_matching(|s| query.matches(s)).map(|s| s.id.as_str())
+        };
         // In no regional book.
-        assert_eq!(id("Pipistrellus hanaki"), Some("pipistrellus_hanaki"));
-        // A synonym, any case, with spaces around it.
-        assert_eq!(id("  lasiurus CINEREUS "), Some("aeorestes_cinereus"));
-        // A trinomial in the book matches itself, not its binomial; one that
-        // isn't matches its binomial.
+        assert_eq!(full("Pipistrellus hanaki"), Some("pipistrellus_hanaki"));
+        // A synonym, any case, with spaces around and between the words.
+        assert_eq!(full("  lasiurus  CINEREUS "), Some("aeorestes_cinereus"));
+        // A trinomial in the book matches itself in full; one that isn't
+        // matches only its binomial.
         assert_eq!(
-            id("Rhinolophus ferrumequinum nippon"),
+            full("Rhinolophus ferrumequinum nippon"),
             Some("rhinolophus_ferrumequinum_nippon")
         );
-        assert_eq!(
-            id("Rhinolophus ferrumequinum"),
-            Some("rhinolophus_ferrumequinum")
-        );
-        assert_eq!(id("Myotis lucifugus alascensis"), Some("myotis_lucifugus"));
+        assert_eq!(full("Myotis lucifugus alascensis"), None);
+        assert_eq!(any("Myotis lucifugus alascensis"), Some("myotis_lucifugus"));
         // Two species share the name: the lower call frequency wins.
-        assert_eq!(id("Eptesicus nilssonii"), Some("eptesicus_nilssonii_jp"));
+        assert_eq!(full("Eptesicus nilssonii"), Some("eptesicus_nilssonii_jp"));
         // Codes and placeholders match nothing.
         for name in ["PIPPIP", "Mystery mystery", "Myotis", "", "  "] {
-            assert_eq!(id(name), None, "{name:?}");
+            assert_eq!(any(name), None, "{name:?}");
         }
     }
 
