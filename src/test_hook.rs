@@ -59,6 +59,59 @@ pub fn install(state: AppState) {
             "maxFreq",
             opt_f64(state.view.max_display_freq().get_untracked()),
         );
+        // The open file, its per-file settings, and playback.
+        let files = state.library.files().get_untracked();
+        let name_of = |id: Option<u64>| {
+            id.and_then(|id| files.iter().find(|f| f.id == id))
+                .map_or(JsValue::NULL, |f| JsValue::from_str(&f.name))
+        };
+        let current = state
+            .library
+            .current_index()
+            .get_untracked()
+            .and_then(|i| files.get(i));
+        set(&o, "currentFile", name_of(current.map(|f| f.id)));
+        set(
+            &o,
+            "gainDb",
+            JsValue::from_f64(state.gain.db().get_untracked()),
+        );
+        set(
+            &o,
+            "gainMode",
+            JsValue::from_str(&format!("{:?}", state.gain.mode().get_untracked())),
+        );
+        set(
+            &o,
+            "notchEnabled",
+            JsValue::from_bool(state.notch.enabled().get_untracked()),
+        );
+        set(
+            &o,
+            "noiseReduceEnabled",
+            JsValue::from_bool(state.noise_reduce.enabled().get_untracked()),
+        );
+        let focus = state
+            .viewmode
+            .focus_stack()
+            .with_untracked(|s| s.user_range());
+        set(&o, "focusRange", JsValue::from_str(&format!("{focus:?}")));
+        set(
+            &o,
+            "isPlaying",
+            JsValue::from_bool(state.playback.is_playing().get_untracked()),
+        );
+        set(
+            &o,
+            "playheadTime",
+            JsValue::from_f64(state.playback.playhead_time().get_untracked()),
+        );
+        // The file the newest audio stream reads from.
+        set(
+            &o,
+            "streamFile",
+            name_of(crate::audio::playback::stream_file_id()),
+        );
         // Live capture
         let listening = state.mic.listening().get_untracked();
         let recording = state.mic.recording().get_untracked();

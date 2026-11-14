@@ -214,6 +214,27 @@ impl FileSettings {
     }
 }
 
+impl FileSettings {
+    /// Copy the gain fields from `other` and leave the rest
+    /// (`scope::Setting::Gain`).
+    pub fn set_gain_from(&mut self, other: &FileSettings) {
+        self.gain_mode = other.gain_mode;
+        self.gain_db = other.gain_db;
+        self.gain_db_stash = other.gain_db_stash;
+    }
+
+    /// Copy the notch, noise-reduction and bandpass-EQ fields from `other` and
+    /// leave the gain (`scope::Setting::NoiseFilters`).
+    pub fn set_noise_filters_from(&mut self, other: &FileSettings) {
+        *self = FileSettings {
+            gain_mode: self.gain_mode,
+            gain_db: self.gain_db,
+            gain_db_stash: self.gain_db_stash,
+            ..other.clone()
+        };
+    }
+}
+
 impl Default for FileSettings {
     fn default() -> Self {
         Self {
@@ -3147,6 +3168,121 @@ impl AppState {
     /// restart live playback with fresh parameters. The live-replay Effect (and
     /// any future consumer) calls this, so a new playback/DSP parameter is added
     /// in exactly ONE place — forgetting it can't silently break param-replay.
+    /// Relationship info (multitrack, sequence, denoised pair) for every
+    /// loaded file, from the file names. Does not subscribe.
+    pub fn file_groups_untracked(
+        &self,
+    ) -> Vec<crate::components::file_sidebar::file_groups::FileGroupInfo> {
+        self.library.files().with_untracked(|files| {
+            let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+            crate::components::file_sidebar::file_groups::compute_all_groups(&names, files)
+        })
+    }
+
+    /// Indices of the files that share `setting` with the file at `idx`,
+    /// including `idx` (see `scope::share_members`). Does not subscribe.
+    pub fn share_members(&self, setting: crate::scope::Setting, idx: usize) -> Vec<usize> {
+        crate::scope::share_members(setting, &self.file_groups_untracked(), idx)
+    }
+
+    /// For the open file, the index of the other file of its original +
+    /// denoised copy pair, if that file is loaded. Subscribes to the file
+    /// list and the open file.
+    pub fn denoise_partner(&self) -> Option<usize> {
+        let idx = self.library.current_index().get()?;
+        self.library.files().with(|files| {
+            let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+            let links = crate::components::file_sidebar::file_groups::compute_denoise_links(&names);
+            let links = links.get(idx)?;
+            links.original.or_else(|| links.copies.first().copied())
+        })
+    }
+
+    /// `denoise_partner` without subscribing. `None` while a timeline is
+    /// open, because the timeline is then what is shown and played.
+    pub fn denoise_partner_untracked(&self) -> Option<usize> {
+        if self.timeline.active().with_untracked(|t| t.is_some()) {
+            return None;
+        }
+        let idx = self.library.current_index().get_untracked()?;
+        crate::components::file_sidebar::file_groups::denoise_partner(
+            &self.file_groups_untracked(),
+            idx,
+        )
+    }
+
+    /// Switch between the open file and the other file of its original +
+    /// denoised copy pair. The pair shares the view, gain, focus selections
+    /// and playhead (`scope.rs`), so only the audio changes; while playing,
+    /// playback carries on in the other file. Does nothing when the open file
+    /// has no loaded partner or a timeline is open.
+    pub fn flip_denoise_pair(&self) {
+        if let Some(partner) = self.denoise_partner_untracked() {
+            self.library.current_index().set(Some(partner));
+        }
+    }
+
+    /// Give a file that was just added to the list (at `idx`) the settings
+    /// its original + denoised copy pair shares, taken from the other file of
+    /// the pair, so the new file opens on the same view. Call it before the
+    /// new file becomes the open file. Does nothing when the file has no
+    /// loaded partner.
+    ///
+    /// If the partner is the open file, its scroll, gain and focus are still
+    /// in the live signals; the file-switch Effect writes those to the pair
+    /// when the new file opens. The vertical range is only stored when it
+    /// changes, so it must be copied here.
+    pub fn adopt_denoise_pair_settings(&self, idx: usize) {
+        use crate::scope::{Relationship, Setting};
+        let groups = self.file_groups_untracked();
+        let Some(from) =
+            crate::components::file_sidebar::file_groups::denoise_partner(&groups, idx)
+        else {
+            return;
+        };
+        let pair_shares = |s: Setting| s.policy().1.contains(&Relationship::DenoisedPair);
+        let mut ids = None;
+        self.library.files().update(|files| {
+            let Some((src_id, src_min, src_max, src_settings)) = files.get(from).map(|s| {
+                (
+                    s.id,
+                    s.min_display_freq,
+                    s.max_display_freq,
+                    s.settings.clone(),
+                )
+            }) else {
+                return;
+            };
+            let Some(f) = files.get_mut(idx) else {
+                return;
+            };
+            if pair_shares(Setting::VerticalRange) {
+                f.min_display_freq = src_min;
+                f.max_display_freq = src_max;
+            }
+            if pair_shares(Setting::Gain) {
+                f.settings.set_gain_from(&src_settings);
+            }
+            ids = Some((src_id, f.id));
+        });
+        // Outside the `files` update: `per_file_view` is a sibling field of
+        // the same store.
+        if let Some((from_id, to_id)) = ids {
+            self.library.per_file_view().update(|m| {
+                let Some(src) = m.get(&from_id).cloned() else {
+                    return;
+                };
+                let entry = m.entry(to_id).or_default();
+                if pair_shares(Setting::HorizontalScroll) {
+                    entry.view = src.view;
+                }
+                if pair_shares(Setting::FocusSelections) {
+                    entry.focus = src.focus;
+                }
+            });
+        }
+    }
+
     pub fn track_replay_params(&self) {
         let _ = self.playback.mode().get();
         let _ = self.transform.te_factor().get();

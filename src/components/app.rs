@@ -548,14 +548,9 @@ pub fn App() -> impl IntoView {
                 // Vertical zoom is a VIEWPORT setting: it follows the MULTITRACK
                 // group (simultaneous channels of one recording → same frequency
                 // content of interest), so switching tracks keeps the same window.
+                // An original and its denoised copy share it too.
                 // [cross-file state-scoping model]
-                let mt_members = state.library.files().with_untracked(|files| {
-                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
-                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(
-                        &names, files,
-                    );
-                    crate::scope::share_members(crate::scope::Setting::VerticalRange, &groups, i)
-                });
+                let mt_members = state.share_members(crate::scope::Setting::VerticalRange, i);
                 state.library.files().update(|files| {
                     for &j in &mt_members {
                         if let Some(f) = files.get_mut(j) {
@@ -805,24 +800,29 @@ pub fn App() -> impl IntoView {
                     .with_untracked(|f| f.iter().position(|lf| lf.id == oid))
             });
 
-            // Save current settings (gain + denoise) to the outgoing file and its
-            // SEQUENTIAL group. These are AUDIO-CHARACTER settings: they follow
-            // consecutive recordings from the same mic/session, NOT the
+            // Save current settings (gain + noise settings) to the outgoing file
+            // and its SEQUENTIAL group. These are AUDIO-CHARACTER settings: they
+            // follow consecutive recordings from the same mic/session, NOT the
             // simultaneous channels of a multitrack recording (which have their
-            // own levels/noise). [cross-file state-scoping model]
+            // own levels/noise). An original and its denoised copy share the
+            // gain but not the noise settings, so the two halves are written to
+            // their own sets of files. [cross-file state-scoping model]
             if let Some(oi) = old_oi {
                 let settings = FileSettings::from_state(&state);
-                let seq_members = state.library.files().with_untracked(|files| {
-                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
-                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(
-                        &names, files,
-                    );
-                    crate::scope::share_members(crate::scope::Setting::AudioCharacter, &groups, oi)
-                });
+                let groups = state.file_groups_untracked();
+                let gain_members =
+                    crate::scope::share_members(crate::scope::Setting::Gain, &groups, oi);
+                let noise_members =
+                    crate::scope::share_members(crate::scope::Setting::NoiseFilters, &groups, oi);
                 state.library.files().update(|files| {
-                    for &i in &seq_members {
+                    for &i in &gain_members {
                         if let Some(f) = files.get_mut(i) {
-                            f.settings = settings.clone();
+                            f.settings.set_gain_from(&settings);
+                        }
+                    }
+                    for &i in &noise_members {
+                        if let Some(f) = files.get_mut(i) {
+                            f.settings.set_noise_filters_from(&settings);
                         }
                     }
                 });
@@ -837,8 +837,9 @@ pub fn App() -> impl IntoView {
                 crate::opfs::save_annotations(state, oi);
             }
 
-            // The user's MANUAL focus RANGE is PerFile (shares None): save the
-            // outgoing file's, restore the incoming file's. Override layers
+            // The user's MANUAL focus RANGE is PerFile, shared only between an
+            // original and its denoised copy: save the outgoing file's (to it
+            // and the files it shares with), restore the incoming file's. Override layers
             // (bat-book / annotation) are transient — they follow the live
             // selection — so they're cleared on switch, not persisted. The HFR
             // MODE (on/off + saved playback/bandpass) is GLOBAL and persists.
@@ -848,11 +849,22 @@ pub fn App() -> impl IntoView {
                     .viewmode
                     .focus_stack()
                     .with_untracked(|s| s.user_range());
-                state.library.per_file_view().update(|m| {
-                    m.entry(oid).or_default().focus = Some(crate::state::FocusSnapshot {
-                        user_range,
-                        overrides: Vec::new(),
+                // `oid` itself is saved even if the file was removed.
+                let mut focus_ids = vec![oid];
+                if let Some(oi) = old_oi {
+                    let members = state.share_members(crate::scope::Setting::FocusSelections, oi);
+                    state.library.files().with_untracked(|files| {
+                        focus_ids
+                            .extend(members.iter().filter_map(|&j| files.get(j).map(|f| f.id)));
                     });
+                }
+                state.library.per_file_view().update(|m| {
+                    for id in focus_ids {
+                        m.entry(id).or_default().focus = Some(crate::state::FocusSnapshot {
+                            user_range,
+                            overrides: Vec::new(),
+                        });
+                    }
                 });
             }
             let incoming_range = new_id.and_then(|nid| {
@@ -874,7 +886,8 @@ pub fn App() -> impl IntoView {
             state.sync_focus_outputs();
 
             // Horizontal scroll is a VIEWPORT setting: PerFile, shared across the
-            // MULTITRACK group (switch channels → stay at the same place). Save the
+            // MULTITRACK group (switch channels → stay at the same place) and
+            // between an original and its denoised copy. Save the
             // outgoing file's position to it + its multitrack members; restore the
             // incoming file's, or reset to the start for a fresh/unrelated file.
             // (zoom_level is snapshotted too but kept global for now — deferred.)
@@ -884,19 +897,12 @@ pub fn App() -> impl IntoView {
                     scroll_offset: state.view.scroll_offset().get_untracked(),
                     zoom_level: state.view.zoom_level().get_untracked(),
                 };
+                let members = state.share_members(crate::scope::Setting::HorizontalScroll, oi);
                 let mt_ids = state.library.files().with_untracked(|files| {
-                    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
-                    let groups = crate::components::file_sidebar::file_groups::compute_all_groups(
-                        &names, files,
-                    );
-                    crate::scope::share_members(
-                        crate::scope::Setting::HorizontalScroll,
-                        &groups,
-                        oi,
-                    )
-                    .iter()
-                    .filter_map(|&j| files.get(j).map(|f| f.id))
-                    .collect::<Vec<u64>>()
+                    members
+                        .iter()
+                        .filter_map(|&j| files.get(j).map(|f| f.id))
+                        .collect::<Vec<u64>>()
                 });
                 state.library.per_file_view().update(|m| {
                     for id in mt_ids {
@@ -927,6 +933,21 @@ pub fn App() -> impl IntoView {
                     .with_untracked(|files| files.get(ni).map(|f| f.settings.clone()));
                 if let Some(s) = settings {
                     s.apply_to_state(&state);
+                }
+            }
+
+            // The playhead is shared between an original and its denoised
+            // copy: if audio is playing, carry on from the same position in
+            // the incoming file, so the two can be compared by ear. (For any
+            // other switch the stream is left as it was.)
+            if state.playback.is_playing().get_untracked() {
+                if let (Some(oi), Some(ni)) = (old_oi, new_idx) {
+                    if state
+                        .share_members(crate::scope::Setting::Playhead, oi)
+                        .contains(&ni)
+                    {
+                        playback::schedule_replay_live(&state);
+                    }
                 }
             }
         });
@@ -1031,6 +1052,16 @@ pub fn App() -> impl IntoView {
             {
                 ev.prevent_default();
                 state_kb.bat_book.open().update(|v| *v = !*v);
+            }
+            // D = switch between a recording and its denoised copy.
+            if (ev.key() == "d" || ev.key() == "D")
+                && !ev.ctrl_key()
+                && !ev.meta_key()
+                && !ev.alt_key()
+                && state_kb.denoise_partner_untracked().is_some()
+            {
+                ev.prevent_default();
+                state_kb.flip_denoise_pair();
             }
             // M = drop a marker annotation at the current playhead position.
             if (ev.key() == "m" || ev.key() == "M")

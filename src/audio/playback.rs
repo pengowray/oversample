@@ -11,12 +11,24 @@ use std::sync::Arc;
 thread_local! {
     static PLAYHEAD_HANDLE: RefCell<Option<i32>> = const { RefCell::new(None) };
     static REPLAY_TIMER: RefCell<Option<i32>> = const { RefCell::new(None) };
+    /// `LoadedFile.id` of the file the newest audio stream reads from.
+    /// `None` for a timeline, or before anything has played.
+    static STREAM_FILE_ID: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// `LoadedFile.id` of the file the newest audio stream was started on (it may
+/// have finished since). For the e2e hook: after a switch between a recording
+/// and its denoised copy during playback, this shows which of the two is heard.
+pub fn stream_file_id() -> Option<u64> {
+    STREAM_FILE_ID.with(|c| c.get())
 }
 
 struct PlaybackTarget {
     source: Arc<dyn AudioSource>,
     sample_rate: u32,
     duration_secs: f64,
+    /// The file the source belongs to. `None` for a timeline.
+    file_id: Option<u64>,
 }
 
 fn timeline_selection(state: &AppState) -> Option<Selection> {
@@ -54,6 +66,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
             source,
             sample_rate: sr,
             duration_secs: timeline.total_duration_secs,
+            file_id: None,
         });
     }
 
@@ -63,6 +76,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
         source: file.audio.source.clone(),
         sample_rate: file.audio.sample_rate,
         duration_secs: file.audio.duration_secs,
+        file_id: Some(file.id),
     })
 }
 
@@ -238,6 +252,7 @@ pub fn replay_live(state: &AppState) {
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
+    STREAM_FILE_ID.with(|c| c.set(target.file_id));
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -377,6 +392,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
+    STREAM_FILE_ID.with(|c| c.set(target.file_id));
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -445,6 +461,7 @@ pub fn play(state: &AppState) {
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
+    STREAM_FILE_ID.with(|c| c.set(target.file_id));
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,

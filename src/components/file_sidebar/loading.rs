@@ -338,6 +338,8 @@ pub(crate) async fn load_named_bytes(
             file.add_order = idx;
             files.push(file);
         });
+        // A denoised copy (or its original) opens on its partner's view.
+        state.adopt_denoise_pair_settings(idx);
         // NB: must be OUTSIDE the files().update() closure — current_index and
         // files are siblings in the `library` store, so setting one while the
         // other's write guard is held silently no-ops (reactive_stores).
