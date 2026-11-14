@@ -8230,6 +8230,19 @@ button.toolbar-overflow-btn {
     cursor: help;
 }
 
+/* The line under the NR menu's denoise button: what the press does, why it
+   can't be pressed, or an error. Same size and tone as the menu's other
+   status lines. */
+.denoise-note {
+    padding: 0 8px 2px;
+    font-size: 11px;
+    opacity: 0.6;
+    line-height: 1.3;
+}
+.denoise-note.denoise-error {
+    color: #e88;
+    opacity: 1;
+}
 .export-progress {
     padding: 4px 16px;
 }

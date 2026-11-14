@@ -591,5 +591,101 @@ fn NrSettings() -> impl IntoView {
                 }.into_any()
             }
         }}
+
+        <DenoiseSection />
     }
+}
+
+// ─── The learned bat denoiser ───────────────────────────────────────────
+//
+// A second method, in the same menu: one button that makes a denoised copy of
+// the open recording (`crate::denoise`). The line under the button says what
+// the press will do, why it can't be pressed, or how far the work has got.
+
+#[component]
+fn DenoiseSection() -> impl IntoView {
+    use crate::denoise::{self, text};
+    use crate::state::{DenoiseStateStoreFields, DenoiseStatus};
+    let state = expect_context::<AppState>();
+    denoise::check_model_stored(state);
+
+    // Sample rate, length in samples and channels of the open recording.
+    let open = move || {
+        state.current_file().map(|f| {
+            (
+                f.audio.sample_rate,
+                f.audio.source.total_samples() as usize,
+                f.audio.channels,
+            )
+        })
+    };
+    let refusal = move || open().and_then(|(rate, samples, _)| denoise::refusal(rate, samples));
+    let busy = move || denoise::is_busy(state);
+
+    view! {
+        <hr />
+        <div class="layer-panel-title">{text::TITLE}</div>
+        <div style="display: flex; gap: 4px; padding: 0 6px 4px;">
+            {move || if busy() {
+                view! {
+                    <button class="layer-panel-opt" style="flex: 1;"
+                        on:click=move |_: web_sys::MouseEvent| denoise::cancel(state)
+                    >{text::CANCEL}</button>
+                }.into_any()
+            } else {
+                view! {
+                    <button class="layer-panel-opt" style="flex: 1;"
+                        title=text::TOOLTIP
+                        disabled=move || open().is_none() || refusal().is_some()
+                        on:click=move |_: web_sys::MouseEvent| denoise::start(state)
+                    >{text::BUTTON}</button>
+                }.into_any()
+            }}
+        </div>
+        {move || {
+            let muted = |line: String| view! {
+                <div class="denoise-note">{line}</div>
+            }.into_any();
+            match state.denoise.status().get() {
+                DenoiseStatus::Downloading(f) => progress(f, text::downloading(percent(f))),
+                DenoiseStatus::Starting => muted(text::STARTING.to_string()),
+                DenoiseStatus::Running(f) => progress(f, text::running(percent(f))),
+                DenoiseStatus::Failed(error) => view! {
+                    <div class="denoise-note denoise-error">{error}</div>
+                }.into_any(),
+                DenoiseStatus::Idle => match refusal() {
+                    Some(why) => muted(why),
+                    None => {
+                        let stored = state.denoise.model_stored().get().unwrap_or(true);
+                        let stereo = open().is_some_and(|(_, _, channels)| channels > 1);
+                        view! {
+                            <div class="denoise-note">
+                                {text::help(stored, &denoise::model_size_text())}
+                            </div>
+                            {stereo.then(|| view! {
+                                <div class="denoise-note">{text::STEREO}</div>
+                            })}
+                        }.into_any()
+                    }
+                },
+            }
+        }}
+    }
+}
+
+fn percent(fraction: f64) -> u32 {
+    (fraction * 100.0).round().clamp(0.0, 100.0) as u32
+}
+
+/// A progress bar with its line of text, in the export panel's style.
+fn progress(fraction: f64, line: String) -> AnyView {
+    view! {
+        <div class="export-progress" style="padding: 0 8px 2px;">
+            <div class="export-progress-bar">
+                <div class="export-progress-fill"
+                    style:width=format!("{:.1}%", fraction * 100.0)></div>
+            </div>
+            <div class="export-progress-text">{line}</div>
+        </div>
+    }.into_any()
 }

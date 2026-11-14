@@ -1641,6 +1641,8 @@ pub struct NoiseReduceState {
 #[derive(Clone, Debug, Store)]
 pub struct DenoiseState {
     pub status: DenoiseStatus,
+    /// Whether the model file is on this device. `None` until checked.
+    pub model_stored: Option<bool>,
 }
 
 /// Where the denoiser is with the recording it was asked for.
@@ -2770,6 +2772,7 @@ impl AppState {
 
             denoise: Store::new(DenoiseState {
                 status: DenoiseStatus::Idle,
+                model_stored: None,
             }),
             noise_reduce: Store::new(NoiseReduceState {
                 enabled: false,

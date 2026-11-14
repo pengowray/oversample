@@ -33,6 +33,46 @@ pub const MIN_RATE: u32 = 250_000;
 /// recording four times over while it works.
 pub const MAX_SAMPLES: usize = 24_000_000;
 
+/// The menu's strings, in one place. Drafted from a brief by a writer that
+/// had not seen the code (2026-11-14).
+pub mod text {
+    pub const TITLE: &str = "Bat Call Model";
+    pub const BUTTON: &str = "Make Denoised Copy";
+    pub const CANCEL: &str = "Cancel";
+    pub const STARTING: &str = "Loading recording and model\u{2026}";
+    pub const STEREO: &str = "The denoised copy will be mono.";
+    pub const ADDED: &str = "Denoised copy added to the file list";
+    pub const TOOLTIP: &str = "Keeps 10% of the original sound, so noise is lowered, not removed.";
+
+    pub fn help(model_stored: bool, size: &str) -> String {
+        if model_stored {
+            "Adds a new recording and keeps the original.".to_string()
+        } else {
+            format!("Adds a new recording. Downloads a {size} model first.")
+        }
+    }
+    pub fn downloading(percent: u32) -> String {
+        format!("Downloading model: {percent}%")
+    }
+    pub fn running(percent: u32) -> String {
+        format!("Denoising: {percent}%")
+    }
+    pub fn download_failed(error: &str) -> String {
+        format!("Model download failed: {error}")
+    }
+    pub fn failed(error: &str) -> String {
+        format!("Denoising failed: {error}")
+    }
+    pub fn rate_too_low(min_khz: u32, khz: u32) -> String {
+        format!("Needs a sample rate of {min_khz} kHz or more. This recording: {khz} kHz.")
+    }
+    pub fn too_long(seconds: f64, max_seconds: f64) -> String {
+        format!(
+            "Recording is too long: {seconds:.0} s. Maximum at this sample rate: {max_seconds:.0} s."
+        )
+    }
+}
+
 /// What the worker sent: a message and the samples that came with it.
 type Incoming = Result<(FromWorker, Option<js_sys::Float32Array>), String>;
 
@@ -159,6 +199,19 @@ fn stop_worker() {
     LINK.with(|l| *l.borrow_mut() = None);
 }
 
+/// Look up whether the model file is on this device, for the menu's help line.
+pub fn check_model_stored(state: AppState) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let stored = store::is_downloaded(&catalog::DENOISER).await;
+        state.denoise.model_stored().set(Some(stored));
+    });
+}
+
+/// The model file's size, as the menu shows it: "0.3 MB".
+pub fn model_size_text() -> String {
+    format!("{:.1} MB", catalog::DENOISER.size as f64 / 1e6)
+}
+
 /// True while a recording is being denoised (or its model downloaded).
 pub fn is_busy(state: AppState) -> bool {
     !matches!(
@@ -170,17 +223,12 @@ pub fn is_busy(state: AppState) -> bool {
 /// Why the open recording can't be denoised, or `None` when it can.
 pub fn refusal(sample_rate: u32, samples: usize) -> Option<String> {
     if sample_rate < MIN_RATE {
-        return Some(format!(
-            "Needs a recording at {} kHz or more. This one is {} kHz.",
-            MIN_RATE / 1000,
-            sample_rate / 1000
-        ));
+        return Some(text::rate_too_low(MIN_RATE / 1000, sample_rate / 1000));
     }
     if samples > MAX_SAMPLES {
-        return Some(format!(
-            "Takes recordings up to {:.0} s at this sample rate. This one is {:.0} s.",
+        return Some(text::too_long(
+            samples as f64 / sample_rate as f64,
             MAX_SAMPLES as f64 / sample_rate as f64,
-            samples as f64 / sample_rate as f64
         ));
     }
     None
@@ -223,7 +271,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
 
     let file = state
         .current_file()
-        .ok_or_else(|| "No recording is open.".to_string())?;
+        .ok_or_else(|| text::failed("no recording is open"))?;
     let sample_rate = file.audio.sample_rate;
     let total = file.audio.source.total_samples() as usize;
     if let Some(why) = refusal(sample_rate, total) {
@@ -245,14 +293,17 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
             }
         })
         .await
-        .map_err(|e: ClassifierError| e.to_string())?;
+        .map_err(|e: ClassifierError| text::download_failed(&e.to_string()))?;
+        state.denoise.model_stored().set(Some(true));
     }
     if !live() {
         return Err(cancelled());
     }
 
     state.denoise.status().set(DenoiseStatus::Starting);
-    let bytes = store::read_js(model).await.map_err(|e| e.to_string())?;
+    let bytes = store::read_js(model)
+        .await
+        .map_err(|e| text::failed(&e.to_string()))?;
     let samples = crate::audio::streaming_source::read_region_ready(
         &*file.audio.source,
         ChannelView::MonoMix,
@@ -260,12 +311,12 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         total,
     )
     .await
-    .ok_or_else(|| "The recording could not be read.".to_string())?;
+    .ok_or_else(|| text::failed("the recording could not be read"))?;
     if !live() {
         return Err(cancelled());
     }
 
-    start_worker().map_err(|e| format!("The denoiser could not start: {e}"))?;
+    start_worker().map_err(|e| text::failed(&format!("the worker could not start ({e})")))?;
     let key = model.id.to_string();
     let run_id = generation;
     let mut sent_model = false;
@@ -274,7 +325,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         let Some(item) = next().await else {
             return Err(cancelled());
         };
-        let (msg, attached) = item.map_err(|e| format!("The denoiser stopped: {e}"))?;
+        let (msg, attached) = item.map_err(|e| text::failed(&e))?;
         match msg {
             FromWorker::Ready if !sent_model => {
                 sent_model = true;
@@ -303,10 +354,10 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
             }
             FromWorker::Denoised { run } if run == run_id => {
                 break attached
-                    .ok_or_else(|| "The denoiser sent no audio.".to_string())?
+                    .ok_or_else(|| text::failed("the worker sent no audio"))?
                     .to_vec();
             }
-            FromWorker::Error { error, .. } => return Err(error.to_string()),
+            FromWorker::Error { error, .. } => return Err(text::failed(&error.to_string())),
             _ => {}
         }
     };
@@ -323,7 +374,9 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     )
     .await;
     state.loading_done(load_id);
-    loaded.map_err(|e| format!("The denoised recording could not be opened: {e}"))
+    loaded.map_err(|e| text::failed(&format!("the copy could not be opened ({e})")))?;
+    state.show_info_toast(text::ADDED);
+    Ok(())
 }
 
 /// `DenoiseStart` with the recording's samples, transferred.
