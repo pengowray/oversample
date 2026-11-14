@@ -110,8 +110,6 @@ pub fn shows_badge(hint: &HeterodyneHint) -> bool {
 /// The lines that explain a hint. The badge tooltip joins them with newlines
 /// and the Info panel shows them as a note.
 pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
-    let warning = |text: &str| NoteLine::warning(text);
-    let muted = |text: String| NoteLine::muted(text);
     let evidence = NoteLine::quote(format!(
         "{}: \"{}\"",
         field_label(hint.field),
@@ -121,8 +119,10 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
     // two per sound), so "can't be corrected" is left out and a line saying
     // how to read the file follows.
     let consequence = || match hint.tuned_hz {
-        Some(_) => warning("Frequencies are not the bat's call frequencies."),
-        None => warning("Frequencies are not the bat's call frequencies and can't be corrected."),
+        Some(_) => NoteLine::warning("Frequencies are not the bat's call frequencies."),
+        None => NoteLine::warning(
+            "Frequencies are not the bat's call frequencies and can't be corrected.",
+        ),
     };
     let reading = || {
         hint.tuned_hz
@@ -131,7 +131,7 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
     match hint.level {
         HeterodyneLevel::SaysHeterodyne => {
             let mut lines = vec![
-                warning("Recorded from a heterodyne bat detector's audio output."),
+                NoteLine::warning("Recorded from a heterodyne bat detector's audio output."),
                 evidence,
                 consequence(),
             ];
@@ -143,9 +143,9 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
         HeterodyneLevel::HeterodyneOnlyDetector => {
             let detector = detector_name(hint).unwrap_or_else(|| hint.matched.clone());
             let mut lines = vec![
-                warning("Recorded from a heterodyne bat detector's audio output."),
+                NoteLine::warning("Recorded from a heterodyne bat detector's audio output."),
                 evidence,
-                muted(format!("The {detector} is a heterodyne-only detector.")),
+                NoteLine::muted(format!("The {detector} is a heterodyne-only detector.")),
                 consequence(),
             ];
             lines.extend(reading());
@@ -154,10 +154,9 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
         // Level C is a possibility, not a finding, so every line is muted.
         HeterodyneLevel::MayBeHeterodyne => {
             let mut lines = vec![
-                muted(
+                NoteLine::muted(
                     "Possibly recorded from a bat detector's output \
-                     (heterodyne, time expansion or frequency division)."
-                        .into(),
+                     (heterodyne, time expansion or frequency division).",
                 ),
                 evidence,
             ];
@@ -166,19 +165,19 @@ pub fn note_lines(hint: &HeterodyneHint) -> Vec<NoteLine> {
             // follows the rule that named it.
             match (hint.source, detector_name(hint)) {
                 (HeterodyneSource::DualModeDetector, Some(detector)) => {
-                    lines.push(muted(format!(
+                    lines.push(NoteLine::muted(format!(
                         "The {detector} has a heterodyne mode and other modes."
                     )));
                 }
                 (HeterodyneSource::HeterodyneOnlyDetector, Some(detector)) => {
-                    lines.push(muted(format!(
+                    lines.push(NoteLine::muted(format!(
                         "The {detector} is a heterodyne-only detector."
                     )));
                 }
                 _ => {}
             }
-            lines.push(muted(
-                "If so, frequencies are not the bat's call frequencies.".into(),
+            lines.push(NoteLine::muted(
+                "If so, frequencies are not the bat's call frequencies.",
             ));
             lines
         }
