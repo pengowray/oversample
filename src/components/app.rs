@@ -35,6 +35,9 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
+/// How much of the file's start the display's automatic noise floor is learned from.
+const AUTO_FLOOR_SECS: f64 = 10.0;
+
 /// Recognise the Wikimedia forms of the URL hash: `#commons:File:Foo.wav`,
 /// `#wiki:<any wikimedia url>`, or a bare `#File:Foo.wav`. Returns the
 /// percent-decoded target for `wikimedia::load_from_input`.
@@ -714,10 +717,11 @@ pub fn App() -> impl IntoView {
 
             learning.set(true);
             let sample_rate = file.audio.sample_rate;
-            // Noise-floor learning only looks at the first 500ms — no need to
-            // clone the entire file. Reuse audio.samples (already in-memory
-            // mono-mix) and slice the head out of it.
-            let needed = (0.5 * sample_rate as f64).ceil() as usize;
+            // Learn from the first 10 s. The floor is a median, so calls in
+            // the stretch do not raise it unless they fill over half of it,
+            // which a 0.5 s stretch at the start of a bat pass often did.
+            // Reuse audio.samples (already in-memory mono-mix).
+            let needed = (AUTO_FLOOR_SECS * sample_rate as f64).ceil() as usize;
             let slice_len = needed.min(file.audio.samples.len());
             let mut samples = file.audio.samples[..slice_len].to_vec();
             let dc_target = crate::canvas::display_dc::DcTarget::of(&file);
@@ -739,7 +743,7 @@ pub fn App() -> impl IntoView {
                 let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
                     &samples,
                     sample_rate,
-                    0.5, // 500ms from file start
+                    AUTO_FLOOR_SECS,
                     crate::canvas::tile_cache::yield_to_browser,
                 )
                 .await;
