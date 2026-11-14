@@ -258,6 +258,35 @@ test.describe("species call-range note", () => {
     ]);
   });
 
+  test("a subspecies with its own entry uses its own range", async ({ page }) => {
+    // Rhinolophus ferrumequinum is 78-84 kHz; the nippon entry is only in
+    // the Japan book, and the recording is from Sweden.
+    await openCase(page, {
+      species: "Rhinolophus ferrumequinum",
+      type: "echolocation",
+      rate: 44_100,
+      fields: { sp: "ferrumequinum nippon" },
+    });
+    await showInfo(page);
+    expect(await lines(page, "species-range-note")).toEqual([
+      [DETAIL, fact("Rhinolophus ferrumequinum nippon", "58–77", "22.1")],
+      [DETAIL, OTHER],
+    ]);
+  });
+
+  test("above 96 kHz the note has only the species line", async ({ page }) => {
+    await openCase(page, {
+      species: "Rhinolophus hipposideros",
+      type: "echolocation",
+      rate: 192_000,
+      fields: { dvc: "AudioMoth" },
+    });
+    await showInfo(page);
+    expect(await lines(page, "species-range-note")).toEqual([
+      [DETAIL, fact("Rhinolophus hipposideros", "105–115", "96")],
+    ]);
+  });
+
   test("corrected for time expansion and still too low", async ({ page }) => {
     await openCase(page, {
       species: "Pipistrellus pygmaeus",

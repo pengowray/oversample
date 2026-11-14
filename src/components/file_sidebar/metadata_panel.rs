@@ -770,12 +770,14 @@ fn sample_rate_khz(hz: u32) -> String {
 /// The note under the Sample rate row of a file that was stored time-expanded (a bat
 /// detector slowed the recording down so it can be heard), whose rate and duration the
 /// app corrected when it loaded the file. `None` for a recording made in real time.
+/// A no-break space before "kHz" keeps it on its number's line when the note wraps,
+/// as in the heterodyne and species notes.
 fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
     let te = meta.time_expansion?;
     Some(format!(
         "Corrected for {} time expansion; the file says {}.",
         crate::wikimedia::format_factor(te.factor),
-        sample_rate_khz(te.stored_rate)
+        sample_rate_khz(te.stored_rate).replace(' ', "\u{a0}")
     ))
 }
 
@@ -1822,7 +1824,7 @@ mod tests {
                 stored_rate: 38_400,
             })))
             .as_deref(),
-            Some("Corrected for \u{d7}10 time expansion; the file says 38.4 kHz."),
+            Some("Corrected for \u{d7}10 time expansion; the file says 38.4\u{a0}kHz."),
         );
     }
 
