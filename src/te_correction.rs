@@ -27,7 +27,7 @@ use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
 use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
-use crate::state::{AppState, FileSettings, Selection, UndoStack};
+use crate::state::{AppState, BandpassRange, FileSettings, Selection, UndoStack};
 use crate::types::{AudioData, TimeExpansionOrigin};
 use oversample_ipc::annota::AnnotaSet;
 
@@ -177,6 +177,19 @@ impl RateChange {
         }
     }
 
+    /// The bandpass (PASS) band, `(low, high)` in Hz. Only a band the user
+    /// locked to a range of their own (`BandpassRange::Locked`) is converted.
+    /// A band that follows the HFR band takes the HFR band's range when PASS
+    /// is on, and the HFR band is converted, so its stored range stays: often
+    /// the app's 20 to 60 kHz default, which as 200 to 600 kHz would lie above
+    /// the corrected file's top frequency.
+    pub fn bandpass(self, range: BandpassRange, band: (f64, f64)) -> (f64, f64) {
+        match range {
+            BandpassRange::Locked => (self.freq(band.0), self.freq(band.1)),
+            BandpassRange::FollowFocus => band,
+        }
+    }
+
     /// A file's saved notch bands, bandpass band and noise floor. Gain and
     /// the other settings do not depend on the rate.
     pub fn file_settings(self, settings: &mut FileSettings) {
@@ -186,8 +199,9 @@ impl RateChange {
         if let Some(floor) = settings.noise_reduce_floor.as_mut() {
             self.noise_floor(floor);
         }
-        settings.filter.freq_low = self.freq(settings.filter.freq_low);
-        settings.filter.freq_high = self.freq(settings.filter.freq_high);
+        let filter = &mut settings.filter;
+        (filter.freq_low, filter.freq_high) =
+            self.bandpass(filter.bandpass_range, (filter.freq_low, filter.freq_high));
     }
 }
 
@@ -525,10 +539,15 @@ fn convert_current_file_signals(state: AppState, rc: RateChange) {
             rc.noise_floor(floor);
         }
     });
-    let lo = state.filter.freq_low().get_untracked();
-    let hi = state.filter.freq_high().get_untracked();
-    state.filter.freq_low().set(rc.freq(lo));
-    state.filter.freq_high().set(rc.freq(hi));
+    let (lo, hi) = rc.bandpass(
+        state.filter.bandpass_range().get_untracked(),
+        (
+            state.filter.freq_low().get_untracked(),
+            state.filter.freq_high().get_untracked(),
+        ),
+    );
+    state.filter.freq_low().set(lo);
+    state.filter.freq_high().set(hi);
 }
 
 #[cfg(test)]
@@ -726,6 +745,7 @@ mod tests {
             analysis_duration_secs: 0.5,
             frame_count: 6,
         });
+        settings.filter.bandpass_range = BandpassRange::Locked;
         settings.filter.freq_low = 2_000.0;
         settings.filter.freq_high = 6_000.0;
         TENFOLD_UP.file_settings(&mut settings);
@@ -749,6 +769,33 @@ mod tests {
         };
         TENFOLD_UP.noise_floor(&mut other);
         assert_eq!(other.sample_rate, 48_000);
+        // Converted back, the locked band is the user's 2 to 6 kHz again,
+        // although 20 to 60 kHz is also the app's default band.
+        TENFOLD_UP.inverse().file_settings(&mut settings);
+        assert_eq!(
+            (settings.filter.freq_low, settings.filter.freq_high),
+            (2_000.0, 6_000.0)
+        );
+    }
+
+    #[test]
+    fn a_pass_band_that_follows_the_hfr_band_stays() {
+        // The app's default band, which follows the HFR band.
+        let mut settings = FileSettings::default();
+        assert_eq!(settings.filter.bandpass_range, BandpassRange::FollowFocus);
+        TENFOLD_UP.file_settings(&mut settings);
+        assert_eq!(
+            (settings.filter.freq_low, settings.filter.freq_high),
+            (20_000.0, 60_000.0)
+        );
+        assert_eq!(
+            TENFOLD_UP.bandpass(BandpassRange::FollowFocus, (3_000.0, 5_000.0)),
+            (3_000.0, 5_000.0)
+        );
+        assert_eq!(
+            TENFOLD_UP.bandpass(BandpassRange::Locked, (3_000.0, 5_000.0)),
+            (30_000.0, 50_000.0)
+        );
     }
 
     #[test]

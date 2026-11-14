@@ -167,6 +167,12 @@ interface Snap {
   selection: Range | null;
   regions: Range[];
   isPlaying: boolean;
+  passBandLo: number;
+  passBandHi: number;
+  hfrOn: boolean;
+  hfrBandLo: number;
+  hfrBandHi: number;
+  hfrNudge: boolean;
 }
 
 async function snap(page: Page): Promise<Snap> {
@@ -622,6 +628,26 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expect(back.timeEnd).toBeCloseTo(corrected.timeEnd, 5);
     expect(Math.abs(back.freqLow! - corrected.freqLow!)).toBeLessThanOrEqual(10);
     expect(Math.abs(back.freqHigh! - corrected.freqHigh!)).toBeLessThanOrEqual(10);
+  });
+
+  test("the PASS band that follows the HFR band is not converted", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    const pass = (s: Snap) => [s.passBandLo, s.passBandHi];
+    expect(pass(await snap(page))).toEqual([20_000, 60_000]);
+    await page.locator(TREAT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    // The app's default band, as a file loaded at 256 kHz gets, inside the
+    // corrected file's 128 kHz.
+    expect(pass(await snap(page))).toEqual([20_000, 60_000]);
+    const passBtn = page.locator(".layer-btn", { hasText: "PASS" }).first();
+    await passBtn.click();
+    const caption = passBtn.locator("xpath=..");
+    await expect(caption).toContainText("20.0");
+    await expect(caption).not.toContainText("200.0");
+    await page.locator(USE_FILE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    expect(pass(await snap(page))).toEqual([20_000, 60_000]);
   });
 });
 

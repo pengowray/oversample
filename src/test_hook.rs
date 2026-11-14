@@ -167,6 +167,28 @@ pub fn install(state: AppState) {
             "hfrBandHi",
             JsValue::from_f64(state.filter.band_ff_freq_hi().get_untracked()),
         );
+        // The PASS (bandpass) band, whether HFR is on, and whether the
+        // "Playing 1:1" card above Play is showing.
+        set(
+            &o,
+            "passBandLo",
+            JsValue::from_f64(state.filter.freq_low().get_untracked()),
+        );
+        set(
+            &o,
+            "passBandHi",
+            JsValue::from_f64(state.filter.freq_high().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrOn",
+            JsValue::from_bool(state.viewmode.hfr_enabled().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrNudge",
+            JsValue::from_bool(state.dialogs.hfr_nudge().get_untracked()),
+        );
         // Live capture
         let listening = state.mic.listening().get_untracked();
         let recording = state.mic.recording().get_untracked();
