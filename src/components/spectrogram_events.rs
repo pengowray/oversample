@@ -241,6 +241,58 @@ pub fn reset_freq_axis_view(state: AppState) {
     state.view.max_display_freq().set(None);
 }
 
+/// Smallest width a drag of the band's top or bottom handle leaves the band.
+const MIN_DRAGGED_BAND_HZ: f64 = 500.0;
+
+/// The band (lo, hi) after one of its handles is dragged to `freq`, kept
+/// inside 0..`file_max_freq`. `None` for a handle that is not a band handle.
+///
+/// This uses `max` then `min` instead of `f64::clamp`, which panics when its
+/// lower bound is above its upper bound. Those bounds cross for a band that
+/// is narrower than `MIN_DRAGGED_BAND_HZ` or ends near the file's top, such
+/// as a 10-200 Hz whale band or 22.00-22.05 kHz in a 44.1 kHz file. The
+/// file's limits win over the minimum width.
+pub(crate) fn dragged_band(
+    handle: SpectrogramHandle,
+    lo: f64,
+    hi: f64,
+    freq: f64,
+    file_max_freq: f64,
+) -> Option<(f64, f64)> {
+    match handle {
+        SpectrogramHandle::BandFfUpper => {
+            let new_hi = freq.max(lo + MIN_DRAGGED_BAND_HZ).min(file_max_freq);
+            Some((lo, new_hi))
+        }
+        SpectrogramHandle::BandFfLower => {
+            let new_lo = freq.min(hi - MIN_DRAGGED_BAND_HZ).max(0.0);
+            Some((new_lo, hi))
+        }
+        SpectrogramHandle::BandFfMiddle => {
+            let bw = hi - lo;
+            let delta = freq - (lo + hi) / 2.0;
+            let new_lo = (lo + delta).min(file_max_freq - bw).max(0.0);
+            Some((new_lo, new_lo + bw))
+        }
+        _ => None,
+    }
+}
+
+/// Apply a drag of a band (BandFF) handle. Other handles are ignored. Shared
+/// by the spectrogram and the ZC chart.
+pub fn apply_band_handle_drag(
+    state: AppState,
+    handle: SpectrogramHandle,
+    freq_at_pointer: f64,
+    file_max_freq: f64,
+) {
+    let lo = state.filter.band_ff_freq_lo().get_untracked();
+    let hi = state.filter.band_ff_freq_hi().get_untracked();
+    if let Some((new_lo, new_hi)) = dragged_band(handle, lo, hi, freq_at_pointer, file_max_freq) {
+        state.set_band_ff_range(new_lo, new_hi);
+    }
+}
+
 /// Apply a frequency handle drag (BandFF or HET). Shared by mouse and touch handlers.
 pub fn apply_handle_drag(
     state: AppState,
@@ -249,29 +301,14 @@ pub fn apply_handle_drag(
     file_max_freq: f64,
 ) {
     match handle {
-        SpectrogramHandle::BandFfUpper => {
-            let lo = state.filter.band_ff_freq_lo().get_untracked();
-            let clamped = freq_at_pointer.clamp(lo + 500.0, file_max_freq);
-            state.set_band_ff_hi(clamped);
-        }
-        SpectrogramHandle::BandFfLower => {
-            let hi = state.filter.band_ff_freq_hi().get_untracked();
-            let clamped = freq_at_pointer.clamp(0.0, hi - 500.0);
-            state.set_band_ff_lo(clamped);
-        }
-        SpectrogramHandle::BandFfMiddle => {
-            let lo = state.filter.band_ff_freq_lo().get_untracked();
-            let hi = state.filter.band_ff_freq_hi().get_untracked();
-            let bw = hi - lo;
-            let mid = (lo + hi) / 2.0;
-            let delta = freq_at_pointer - mid;
-            let new_lo = (lo + delta).clamp(0.0, file_max_freq - bw);
-            let new_hi = new_lo + bw;
-            state.set_band_ff_range(new_lo, new_hi);
+        SpectrogramHandle::BandFfUpper
+        | SpectrogramHandle::BandFfLower
+        | SpectrogramHandle::BandFfMiddle => {
+            apply_band_handle_drag(state, handle, freq_at_pointer, file_max_freq);
         }
         SpectrogramHandle::HetCenter => {
             state.transform.het_freq_auto().set(false);
-            let clamped = freq_at_pointer.clamp(1000.0, file_max_freq);
+            let clamped = freq_at_pointer.max(1000.0).min(file_max_freq);
             state.transform.het_frequency().set(clamped);
         }
         SpectrogramHandle::HetBandUpper => {
@@ -1916,6 +1953,86 @@ pub fn on_wheel(ev: web_sys::WheelEvent, state: AppState) {
                     from_here_mode,
                 );
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dragged_band;
+    use crate::state::SpectrogramHandle::{self, *};
+
+    fn drag(h: SpectrogramHandle, lo: f64, hi: f64, freq: f64, max: f64) -> (f64, f64) {
+        dragged_band(h, lo, hi, freq, max).expect("a band handle")
+    }
+
+    #[test]
+    fn band_handles_move_inside_the_file() {
+        // An ordinary band in a 384 kHz file.
+        assert_eq!(
+            drag(BandFfUpper, 35_000.0, 80_000.0, 90_000.0, 192_000.0),
+            (35_000.0, 90_000.0)
+        );
+        assert_eq!(
+            drag(BandFfUpper, 35_000.0, 80_000.0, 300_000.0, 192_000.0),
+            (35_000.0, 192_000.0)
+        );
+        assert_eq!(
+            drag(BandFfUpper, 35_000.0, 80_000.0, 10_000.0, 192_000.0),
+            (35_000.0, 35_500.0)
+        );
+        assert_eq!(
+            drag(BandFfLower, 35_000.0, 80_000.0, 20_000.0, 192_000.0),
+            (20_000.0, 80_000.0)
+        );
+        assert_eq!(
+            drag(BandFfLower, 35_000.0, 80_000.0, -5.0, 192_000.0),
+            (0.0, 80_000.0)
+        );
+        assert_eq!(
+            drag(BandFfLower, 35_000.0, 80_000.0, 99_000.0, 192_000.0),
+            (79_500.0, 80_000.0)
+        );
+        assert_eq!(
+            drag(BandFfMiddle, 35_000.0, 80_000.0, 67_500.0, 192_000.0),
+            (45_000.0, 90_000.0)
+        );
+        assert_eq!(
+            drag(BandFfMiddle, 35_000.0, 80_000.0, 0.0, 192_000.0),
+            (0.0, 45_000.0)
+        );
+        assert_eq!(
+            drag(BandFfMiddle, 35_000.0, 80_000.0, 999_000.0, 192_000.0),
+            (147_000.0, 192_000.0)
+        );
+    }
+
+    /// These inputs panicked in `f64::clamp` (lower bound above upper bound).
+    #[test]
+    fn band_handles_on_a_thin_band_stay_inside_the_file() {
+        // 22.00-22.05 kHz in a 44.1 kHz file: the top handle cannot go 500 Hz
+        // above the bottom one.
+        let (lo, hi) = drag(BandFfUpper, 22_000.0, 22_050.0, 22_040.0, 22_050.0);
+        assert_eq!((lo, hi), (22_000.0, 22_050.0));
+        // A 10-200 Hz whale band: the bottom handle cannot go 500 Hz below the
+        // top one.
+        assert_eq!(
+            drag(BandFfLower, 10.0, 200.0, 100.0, 22_050.0),
+            (0.0, 200.0)
+        );
+        assert_eq!(
+            drag(BandFfUpper, 10.0, 200.0, 100.0, 22_050.0),
+            (10.0, 510.0)
+        );
+        // A band wider than the file's range.
+        let (lo, hi) = drag(BandFfMiddle, 0.0, 48_000.0, 30_000.0, 22_050.0);
+        assert_eq!((lo, hi), (0.0, 48_000.0));
+    }
+
+    #[test]
+    fn only_band_handles_give_a_band() {
+        for h in [HetCenter, HetBandUpper, HetBandLower] {
+            assert_eq!(dragged_band(h, 1.0, 2.0, 1.5, 10.0), None);
         }
     }
 }
