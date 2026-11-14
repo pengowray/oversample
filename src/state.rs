@@ -2857,12 +2857,15 @@ impl AppState {
                 normal_saved_eq: false,
                 normal_saved_noise_filter: false,
                 xform_enabled: false,
-                filter_eq: DisplayFilterMode::Off,
-                filter_notch: DisplayFilterMode::Off,
-                filter_nr: DisplayFilterMode::Auto,
-                filter_transform: DisplayFilterMode::Off,
-                filter_gain: DisplayFilterMode::Auto,
-                filter_decimate: DisplayFilterMode::Auto,
+                // Every stage starts on Same (mirror playback). The rows are
+                // only read while XForm is on, and switching XForm on or off
+                // leaves them as the user set them.
+                filter_eq: DisplayFilterMode::Same,
+                filter_notch: DisplayFilterMode::Same,
+                filter_nr: DisplayFilterMode::Same,
+                filter_transform: DisplayFilterMode::Same,
+                filter_gain: DisplayFilterMode::Same,
+                filter_decimate: DisplayFilterMode::Same,
                 gain_boost: 0.0,
                 decimate_rate: 48000,
                 decimate_effective: 0,
