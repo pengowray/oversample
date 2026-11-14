@@ -2966,14 +2966,17 @@ a.open-link-btn {
 /* The heading's licence button. Its box comes from .badge-btn ("File
    badges"); this rule lays out the icon and label. A long licence name is
    cut off with an ellipsis on the label, which clips itself, so the button
-   does not clip and the touch strip in .badge-btn::before stays tappable. */
+   does not clip and the touch strip in .badge-btn::before stays tappable.
+   16em is 192px at the badge row's 12px: the longest Creative Commons
+   labels ("Public Domain Mark 1.0", "BY-NC-SA 2.5 SCOTLAND") fit, as they
+   did in the old 160px cap at 10px. */
 .toolbar-cc-badge {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 3px;
     white-space: nowrap;
-    max-width: 160px;
+    max-width: 16em;
 }
 
 .toolbar-cc-icon {
