@@ -42,12 +42,25 @@ impl FocusRange {
         self.hi > self.lo
     }
 
+    /// This range limited to 0..`nyquist`, the frequencies a file can hold.
+    /// The result is empty when the range starts at or above `nyquist`.
+    pub fn clip_to(self, nyquist: f64) -> Self {
+        // `f64::max` and `f64::min` return the other value for NaN.
+        Self::new(self.lo.max(0.0), self.hi.min(nyquist))
+    }
+
     /// The band HFR starts with when it has none, for a file whose highest
-    /// frequency is `nyquist`. The first of these that still has a width once
-    /// clipped to 0..`nyquist`:
+    /// frequency is `nyquist`. The first of these that is usable once clipped
+    /// to 0..`nyquist`:
     /// 1. the file species' call range,
     /// 2. the lowest bat frequency up to `nyquist`,
     /// 3. the whole file, 0 to `nyquist`.
+    ///
+    /// A range that fits inside the file is usable at any width: some whale
+    /// call ranges in the bat book are under 200 Hz wide. A range that had
+    /// to be cut to fit must still be at least `MIN_CUT_BAND_HZ` wide.
+    /// Without that limit, Eptesicus serotinus (22-55 kHz) in a 44.1 kHz file
+    /// gets a 22.00-22.05 kHz band, and HET then plays only 0-25 Hz.
     ///
     /// The result always has `hi > lo`. It is `None` only when `nyquist` is
     /// not above 0. The caller must not write an empty band: the effect that
@@ -61,17 +74,25 @@ impl FocusRange {
         if !(nyquist > 0.0) {
             return None;
         }
-        // `f64::max` and `f64::min` return the other value for NaN.
-        let clip = |(lo, hi): (f64, f64)| {
-            let r = Self::new(lo.max(0.0), hi.min(nyquist));
-            r.is_active().then_some(r)
+        let usable = |lo: f64, hi: f64| {
+            let r = Self::new(lo, hi).clip_to(nyquist);
+            // `f64::min` returns MIN_CUT_BAND_HZ when the width is NaN.
+            let min_width = MIN_CUT_BAND_HZ.min(hi - lo);
+            (r.is_active() && r.hi - r.lo >= min_width).then_some(r)
         };
         species
-            .and_then(clip)
-            .or_else(|| clip((lowest_bat_hz, nyquist)))
-            .or_else(|| clip((0.0, nyquist)))
+            .and_then(|(lo, hi)| usable(lo, hi))
+            // The lowest bat frequency has no upper limit, so this range is
+            // always cut at `nyquist` and needs the full minimum width.
+            .or_else(|| usable(lowest_bat_hz, f64::INFINITY))
+            .or(Some(Self::new(0.0, nyquist)))
     }
 }
+
+/// Narrowest band that `FocusRange::hfr_default` picks from a range it had to
+/// cut at the file's Nyquist frequency. HET's automatic low-pass cutoff is
+/// half the band, so a 2 kHz band plays 0 to 1 kHz.
+pub const MIN_CUT_BAND_HZ: f64 = 2_000.0;
 
 /// A single layer in the focus stack.
 #[derive(Clone, Debug)]
@@ -318,6 +339,48 @@ mod tests {
             let r = assert_fits(r, nyquist);
             assert_eq!(r, FocusRange::new(16_000.0, nyquist));
         }
+    }
+
+    #[test]
+    fn hfr_default_skips_a_species_range_cut_to_a_sliver() {
+        // Eptesicus serotinus (22-55 kHz) in a 44.1 kHz file: the cut range,
+        // 22.00-22.05 kHz, gave a 25 Hz HET cutoff, so HET played nothing
+        // audible.
+        let r = FocusRange::hfr_default(Some((22_000.0, 55_000.0)), 16_000.0, 22_050.0);
+        assert_eq!(r, Some(FocusRange::new(16_000.0, 22_050.0)));
+        // Chalinolobus morio (46.5-56 kHz) in a 96 kHz file: 1.5 kHz is left.
+        let r = FocusRange::hfr_default(Some((46_500.0, 56_000.0)), 16_000.0, 48_000.0);
+        assert_eq!(r, Some(FocusRange::new(16_000.0, 48_000.0)));
+        // A range cut to exactly the minimum width is kept.
+        let r = FocusRange::hfr_default(Some((20_050.0, 55_000.0)), 16_000.0, 22_050.0);
+        assert_eq!(r, Some(FocusRange::new(20_050.0, 22_050.0)));
+    }
+
+    #[test]
+    fn hfr_default_keeps_a_narrow_species_range_that_fits() {
+        // Rhinolophus deckenii (84-88 kHz) in a 192 kHz file.
+        let r = FocusRange::hfr_default(Some((84_000.0, 88_000.0)), 16_000.0, 96_000.0);
+        assert_eq!(r, Some(FocusRange::new(84_000.0, 88_000.0)));
+        // Blue whale (10-200 Hz) in a 44.1 kHz file.
+        let r = FocusRange::hfr_default(Some((10.0, 200.0)), 16_000.0, 22_050.0);
+        assert_eq!(r, Some(FocusRange::new(10.0, 200.0)));
+    }
+
+    #[test]
+    fn hfr_default_skips_a_species_range_above_a_high_rate_file() {
+        // Rhinolophus hipposideros (105-115 kHz) in a 96 kHz or 192 kHz file:
+        // these hung the page too.
+        for nyquist in [48_000.0, 96_000.0] {
+            let r = FocusRange::hfr_default(Some((105_000.0, 115_000.0)), 16_000.0, nyquist);
+            assert_eq!(r, Some(FocusRange::new(16_000.0, nyquist)));
+        }
+    }
+
+    #[test]
+    fn hfr_default_skips_a_lowest_bat_frequency_just_under_nyquist() {
+        // A 33 kHz file: 16 kHz up to its 16.5 kHz limit is only 500 Hz wide.
+        let r = FocusRange::hfr_default(None, 16_000.0, 16_500.0);
+        assert_eq!(r, Some(FocusRange::new(0.0, 16_500.0)));
     }
 
     #[test]
