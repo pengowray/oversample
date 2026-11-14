@@ -35,8 +35,6 @@ const TOUR_STOP_RECORDING: &str = "Stop recording first";
 
 const T_HFR: &str = "Turn on HFR";
 const D_HFR: &str = "HFR lowers the pitch of bat calls into the range you can hear.";
-const T_HEAR: &str = "Open the Hear panel";
-const D_HEAR: &str = "Tap Hear. The HFR button is in the Hear panel.";
 const T_BAND: &str = "Choose frequencies";
 const D_BAND: &str = "Bat calls show as bright marks in the spectrogram. \
     Drag up or down the frequency strip to select their frequencies.";
@@ -64,12 +62,8 @@ pub const NUDGE_SETTING: &str = "Suggest HFR when playing or listening\u{a0}1:1"
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TourStep {
-    /// Desktop: the HFR button in the Hear bar.
+    /// The HFR button in the Hear bar.
     Hfr,
-    /// Phone: the Hear chip that opens the Hear sheet.
-    HearChip,
-    /// Phone: the HFR button inside the Hear sheet.
-    HfrInSheet,
     /// The frequency gutter beside the spectrogram.
     BandGutter,
     /// The time gutter under the spectrogram.
@@ -97,8 +91,6 @@ impl TourStep {
                 "bottom",
                 "start",
             ),
-            TourStep::HearChip => (".hear-chip", T_HEAR, D_HEAR, "bottom", "start"),
-            TourStep::HfrInSheet => (".hear-sheet .band-cell-hfr", T_HFR, D_HFR, "top", "start"),
             TourStep::BandGutter => (".band-gutter", T_BAND, D_BAND, "right", "start"),
             TourStep::TimeGutter => (".time-gutter", T_TIME, D_TIME, "top", "center"),
             TourStep::Play => (".play-main-btn", T_PLAY, D_PLAY, "top", "start"),
@@ -108,14 +100,9 @@ impl TourStep {
 
 /// The steps for this screen. The HFR steps are left out when HFR is on.
 fn plan(state: AppState) -> Vec<TourStep> {
-    let phone = state.status.is_mobile().get_untracked();
     let mut steps = Vec::new();
     if !state.viewmode.hfr_enabled().get_untracked() {
-        if phone {
-            steps.extend([TourStep::HearChip, TourStep::HfrInSheet]);
-        } else {
-            steps.push(TourStep::Hfr);
-        }
+        steps.push(TourStep::Hfr);
     }
     steps.extend([TourStep::BandGutter, TourStep::TimeGutter, TourStep::Play]);
     steps
@@ -256,14 +243,13 @@ pub fn start_tour(state: AppState) {
     }
 }
 
-/// Runs as a step comes on screen: record it, and open or close the phone
-/// Hear sheet so the highlighted control is visible.
+/// Runs as a step comes on screen: record it, and close any menu and the
+/// phone Hear sheet so the highlighted control is visible.
 fn enter_step(state: AppState, step: TourStep) {
     state.dialogs.hfr_tour_step().try_set(Some(step));
     state.panels.layer_panel_open().try_set(None);
-    let sheet_open = step == TourStep::HfrInSheet;
-    if state.panels.hear_sheet_open().try_get_untracked() != Some(sheet_open) {
-        state.panels.hear_sheet_open().try_set(sheet_open);
+    if state.panels.hear_sheet_open().try_get_untracked() == Some(true) {
+        state.panels.hear_sheet_open().try_set(false);
     }
 }
 
@@ -284,23 +270,12 @@ fn advance_from(state: AppState, step: TourStep) {
 pub fn HfrTour() -> impl IntoView {
     let state = expect_context::<AppState>();
 
-    // HFR turned on (desktop bar or phone sheet).
+    // HFR turned on.
     Effect::new(move || {
         let step = state.dialogs.hfr_tour_step().get();
         let on = state.viewmode.hfr_enabled().get();
-        if let Some(step @ (TourStep::Hfr | TourStep::HfrInSheet)) = step {
-            if on {
-                advance_from(state, step);
-            }
-        }
-    });
-
-    // Hear sheet opened.
-    Effect::new(move || {
-        let step = state.dialogs.hfr_tour_step().get();
-        let open = state.panels.hear_sheet_open().get();
-        if open && step == Some(TourStep::HearChip) {
-            advance_from(state, TourStep::HearChip);
+        if on && step == Some(TourStep::Hfr) {
+            advance_from(state, TourStep::Hfr);
         }
     });
 

@@ -5316,6 +5316,36 @@ a.open-link-btn {
     padding: 2px 8px 5px;
 }
 
+/* Tabs at the top of the View menu: the spectrogram kinds (Spectrogram,
+   Flow, Chromagram, Resonators). The selected tab is underlined in the
+   selection colour, as tabs are elsewhere, and the row's bottom rule joins
+   it to the settings under it. */
+.view-kind-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 4px 6px;
+    border-bottom: 1px solid #2c2c2c;
+}
+.view-kind-tab {
+    flex: 1 1 auto;
+    padding: 6px 8px 5px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    color: #999;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.view-kind-tab:hover {
+    color: #ddd;
+}
+.view-kind-tab.sel {
+    color: #6da;
+    border-bottom-color: #6da;
+}
+
 .layer-panel hr {
     border: none;
     border-top: 1px solid #2a2a2a;
@@ -8587,12 +8617,12 @@ button.canvas-overflow-action-btn.disabled {
     flex: none;
 }
 
-/* ── Hear chip + sheet (phone replacement for the Hearing Bar) ──────────
-   On narrow viewports the hearing bar collapses to one chip showing the
-   mode in effect; the sheet lists every mode with a full name and stacks
-   the band / output / bandpass / gain / NR / notch combos beneath it.
-   z-order: backdrop 44 < sheet 45 < .layer-panel 50, so popups opened
-   from rows inside the sheet still render above it. */
+/* ── Hear chip + sheet (phones) ─────────────────────────────────────────
+   On narrow viewports the hearing bar's mode radio group collapses to one
+   chip showing the mode in effect; the sheet lists every mode with a full
+   name. The bar's other controls stay in the bar beside the chip.
+   z-order: backdrop 44 < sheet 45 < .layer-panel 50, so a mode's settings
+   popup opened from the sheet still renders above it. */
 .hear-chip {
     display: flex;
     flex-direction: column;
@@ -8680,41 +8710,6 @@ button.canvas-overflow-action-btn.disabled {
     font-size: 15px;
     font-weight: 700;
     color: #eee;
-}
-
-.hear-sheet-hint {
-    font-size: 12px;
-    font-weight: 400;
-    color: #999;
-}
-
-.hear-sheet-sec {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    color: #777;
-    text-transform: uppercase;
-    padding: 14px 6px 4px;
-}
-
-.hear-sheet-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 48px;
-    padding: 2px 6px;
-}
-
-.hear-sheet-key {
-    font-size: 14px;
-    color: #ddd;
-}
-
-.hear-sheet-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
 }
 
 .hear-mode-list {

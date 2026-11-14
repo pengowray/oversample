@@ -181,15 +181,15 @@ test.describe("Oversample web smoke", () => {
       timeout: 30_000,
     });
 
-    // short_label() values from MainView. Cycle through the cache-backed views
-    // and end back on the plain spectrogram.
-    for (const label of ["Flow", "Chroma", "Reson", "Spec"]) {
-      const btn = page
-        .locator(".view-radio-group .mode-radio-btn", {
-          has: page.locator(".mode-radio-label", { hasText: new RegExp(`^${label}$`) }),
-        })
-        .first();
-      await expect(btn, `view button "${label}" present`).toBeVisible({ timeout: 10_000 });
+    // The spectrogram kinds are tabs in the menu of the View bar's first
+    // button (label() values from MainView). Open the menu, then cycle
+    // through the cache-backed kinds and end back on the plain spectrogram.
+    const specBtn = page.locator(".view-radio-group .mode-radio-btn").first();
+    await expect(specBtn).toBeVisible({ timeout: 10_000 });
+    await specBtn.click();
+    for (const label of ["Flow", "Chromagram", "Resonators", "Spectrogram"]) {
+      const btn = page.locator(".view-kind-tab", { hasText: new RegExp(`^${label}$`) });
+      await expect(btn, `view tab "${label}" present`).toBeVisible({ timeout: 10_000 });
       await btn.click();
       // Let the cache's schedule_* loop run several yield ticks and render tiles.
       await page.waitForTimeout(1200);

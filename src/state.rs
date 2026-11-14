@@ -836,6 +836,15 @@ impl MainView {
         Self::Chromagram,
         Self::Resonators,
     ];
+
+    /// The views drawn by the spectrogram renderer (`is_spectrogram`). The
+    /// View bar shows them as one button, and its menu lists them as tabs.
+    pub const SPECTROGRAM_KINDS: &'static [MainView] = &[
+        Self::Spectrogram,
+        Self::Flow,
+        Self::Chromagram,
+        Self::Resonators,
+    ];
 }
 
 // ── FFT mode ─────────────────────────────────────────────────────────────────
@@ -2324,6 +2333,9 @@ pub struct ViewModeState {
     /// Actual pixel width of the main spectrogram canvas.
     pub spectrogram_canvas_width: f64,
     pub main_view: MainView,
+    /// The spectrogram kind (`MainView::SPECTROGRAM_KINDS`) shown most
+    /// recently. The View bar's first button returns to it from Wave or Dots.
+    pub last_spectrogram_kind: MainView,
     /// Output frequency range to highlight (set by hover in HFR panel).
     pub output_freq_highlight: Option<(f64, f64)>,
     pub output_snap: OutputSnap,
@@ -2907,6 +2919,7 @@ impl AppState {
                 bg_preload_gen: 0,
                 spectrogram_canvas_width: 1000.0,
                 main_view: MainView::Spectrogram,
+                last_spectrogram_kind: MainView::Spectrogram,
                 output_freq_highlight: None,
                 output_snap: OutputSnap::Standard,
                 always_show_view_range: false,

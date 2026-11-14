@@ -696,17 +696,40 @@ pub fn HearingBar() -> impl IntoView {
         }
         s
     });
-    // Phones: the bar becomes one "Hear" chip plus a bottom sheet that
-    // carries every control the bar has (see hear_sheet.rs). Both the
-    // chip and the sheet are always mounted so the sheet's
-    // ModeRadioGroup effects keep running.
+    // Phones: the same bar, scrolled sideways, with the mode radio group
+    // replaced by the "Hear" chip. The chip opens a bottom sheet that lists
+    // the playback modes by full name (see hear_sheet.rs). The sheet is
+    // always mounted so its ModeRadioGroup effects keep running.
     let mobile = move || {
+        let bar_ref = NodeRef::<leptos::html::Div>::new();
+        let pan = crate::components::bar_pan::BarPan::new(bar_ref);
         view! {
             <div class="hearing-bar hearing-bar-mobile"
+                node_ref=bar_ref
+                class:panel-open=move || matches!(state.panels.layer_panel_open().get().map(LayerPanel::bar), Some(Bar::Hearing))
                 on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                 on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
+                on:pointerdown=move |ev| pan.on_pointerdown(ev)
+                on:pointermove=move |ev| pan.on_pointermove(ev)
+                on:pointerup=move |ev| pan.on_pointerup(ev)
+                on:pointercancel=move |ev| pan.on_pointerup(ev)
+                on:wheel=move |ev| pan.on_wheel(ev)
             >
-                <crate::components::hear_sheet::HearChip/>
+                <div class=move || overline_class.get()>
+                    <BandHfrCell/>
+                    <div class="bar-controls band-affected-controls">
+                        <RangeButton/>
+                        <crate::components::hear_sheet::HearChip/>
+                        <crate::components::output_range_button::OutputRangeCombo/>
+                        <BandpassCombo/>
+                    </div>
+                </div>
+                <div class="bar-sep"></div>
+                <div class="bar-controls">
+                    <GainCombo/>
+                    <NrCombo/>
+                    <NotchCombo/>
+                </div>
                 <crate::components::hear_sheet::HearSheet/>
             </div>
         }

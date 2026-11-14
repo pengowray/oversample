@@ -2149,28 +2149,63 @@ pub fn MainViewButton() -> impl IntoView {
         state.viewmode.main_view().set(new_view);
     };
 
-    // Click on a non-selected view: switch to it. Click on the
-    // already-selected view: toggle its settings popup. Mirrors the
-    // playback mode radio group's "click again to open settings".
-    let select_view = move |new_view: MainView| {
+    // The View bar has three buttons: the spectrogram kinds (Spectrogram,
+    // Flow, Chromagram, Resonators) share the first one, then Wave and Dots.
+    // `spec_kind` is the kind the first button names and switches to: the
+    // current view when it is a spectrogram kind, otherwise the kind shown
+    // most recently.
+    Effect::new(move |_| {
+        let view = state.viewmode.main_view().get();
+        if view.is_spectrogram() {
+            state.viewmode.last_spectrogram_kind().set(view);
+        }
+    });
+    let spec_kind = Signal::derive(move || {
+        let view = state.viewmode.main_view().get();
+        if view.is_spectrogram() {
+            return view;
+        }
+        let last = state.viewmode.last_spectrogram_kind().get();
+        if state.current_is_zc() && !last.is_sensible_for_zc() {
+            MainView::Spectrogram
+        } else {
+            last
+        }
+    });
+    let slot_selected = move |slot: MainView| {
+        let cur = state.viewmode.main_view().get();
+        if slot == MainView::Spectrogram {
+            cur.is_spectrogram()
+        } else {
+            cur == slot
+        }
+    };
+
+    // Click on a non-selected button: switch to its view. Click on the
+    // selected button: toggle its settings popup. Mirrors the playback
+    // mode radio group's "click again to open settings".
+    let select_slot = move |slot: MainView| {
         if no_file() {
             return;
         }
-        let cur = state.viewmode.main_view().get_untracked();
-        if cur == new_view {
+        if slot_selected(slot) {
             toggle_panel(&state, LayerPanel::MainView);
             return;
         }
-        switch_view(new_view);
+        switch_view(if slot == MainView::Spectrogram {
+            spec_kind.get_untracked()
+        } else {
+            slot
+        });
         state.panels.layer_panel_open().set(None);
     };
 
     let row_ref = NodeRef::<leptos::html::Div>::new();
 
-    // Per-view-button class (radio-group look, reused from .mode-radio-*).
-    let view_btn_class = move |view: MainView| {
+    // Per-button class (radio-group look, reused from .mode-radio-*).
+    let view_btn_class = move |slot: MainView| {
         Signal::derive(move || {
-            let is_sel = state.viewmode.main_view().get() == view;
+            let is_sel = slot_selected(slot);
             let mut s = String::from("layer-btn mode-radio-btn");
             if is_sel {
                 s.push_str(" selected has-settings");
@@ -2192,27 +2227,20 @@ pub fn MainViewButton() -> impl IntoView {
             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
             on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
         >
-            {move || {
-                // ZC files store dot-plot data; the synthesised waveform
-                // is only a reconstruction, so hide views whose DSP would
-                // measure the synth rather than the recording.
-                let is_zc = state.current_is_zc();
-                MainView::ALL.iter()
-                    .filter(move |m| !is_zc || m.is_sensible_for_zc())
-                    .map(|&view| {
-                        let class_sig = view_btn_class(view);
-                        let title = view.label();
-                        view! {
-                            <button class=move || class_sig.get()
-                                title=title
-                                on:click=move |_: web_sys::MouseEvent| select_view(view)
-                            >
-                                <span class="mode-radio-label">{view.short_label()}</span>
-                                <span class="mode-radio-corner">{"\u{25E2}"}</span>
-                            </button>
-                        }
-                    }).collect_view()
-            }}
+            {[MainView::Spectrogram, MainView::Waveform, MainView::ZcChart].into_iter().map(|slot| {
+                let class_sig = view_btn_class(slot);
+                // The first button names the spectrogram kind it shows.
+                let shown = move || if slot == MainView::Spectrogram { spec_kind.get() } else { slot };
+                view! {
+                    <button class=move || class_sig.get()
+                        title=move || shown().label()
+                        on:click=move |_: web_sys::MouseEvent| select_slot(slot)
+                    >
+                        <span class="mode-radio-label">{move || shown().short_label()}</span>
+                        <span class="mode-radio-corner">{"\u{25E2}"}</span>
+                    </button>
+                }
+            }).collect_view()}
 
             <PopupPanel
                 is_open=is_open
@@ -2221,7 +2249,36 @@ pub fn MainViewButton() -> impl IntoView {
                 preferred_align=Align::Start
                 extra_style="min-width: 240px;"
             >
-                <div class="layer-panel-title">{move || state.viewmode.main_view().get().label()}</div>
+            // Spectrogram kinds as tabs. A tab switches the view and leaves
+            // the menu open, so the settings under the tabs change in place.
+            // A plain title instead in Wave and Dots, and for ZC files, which
+            // offer one kind: they store dot-plot data, and the other kinds'
+            // DSP would measure the synthesised waveform, not the recording.
+            {move || {
+                let cur = state.viewmode.main_view().get();
+                let is_zc = state.current_is_zc();
+                let tabs: Vec<MainView> = MainView::SPECTROGRAM_KINDS
+                    .iter()
+                    .copied()
+                    .filter(|m| !is_zc || m.is_sensible_for_zc())
+                    .collect();
+                if cur.is_spectrogram() && tabs.len() > 1 {
+                    view! {
+                        <div class="view-kind-tabs" role="tablist">
+                            {tabs.into_iter().map(|kind| view! {
+                                <button
+                                    role="tab"
+                                    aria-selected=(cur == kind).to_string()
+                                    class=if cur == kind { "view-kind-tab sel" } else { "view-kind-tab" }
+                                    on:click=move |_: web_sys::MouseEvent| switch_view(kind)
+                                >{kind.label()}</button>
+                            }).collect_view()}
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div class="layer-panel-title">{cur.label()}</div> }.into_any()
+                }
+            }}
 
             // Waveform sub-view (when Waveform is the active main view)
             {move || (state.viewmode.main_view().get() == MainView::Waveform).then(|| {
@@ -2267,8 +2324,6 @@ pub fn MainViewButton() -> impl IntoView {
             // Resonator quick controls (shown only when Resonators view is active)
             {move || (state.viewmode.main_view().get() == MainView::Resonators).then(|| {
                 view! {
-                    <hr />
-                    <div class="layer-panel-title">"Resonators"</div>
                     <div class="dsp-custom-section">
                         <div class="dsp-custom-title">{move || {
                             let bw = state.resonator.bandwidth_hz().get().max(0.001);

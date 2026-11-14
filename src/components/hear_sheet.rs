@@ -1,31 +1,26 @@
-// Phone "Hear" sheet — the Hearing Bar's controls as a bottom sheet.
+// Phone "Hear" sheet: the playback modes as a bottom sheet.
 //
-// On narrow viewports the Hearing Bar (HFR · Range · modes · PASS · Gain ·
-// NR · Notch) scrolls sideways and clips, and its abbreviations have no room
-// to explain themselves. On mobile the bar is replaced by one chip showing
-// the current playback mode; tapping it opens this sheet, which lists every
-// mode with its full name and a one-line consequence, then stacks the
-// existing band / output / bandpass / gain / NR / notch combos underneath so
-// nothing is lost.
+// On narrow viewports the Hearing Bar's mode radio group (1:1 HET TE PS ZC)
+// has no room to say what each abbreviation means. On mobile it is replaced
+// by one chip showing the current playback mode; tapping it opens this
+// sheet, which lists every mode with its full name and a one-line
+// consequence. The bar's other controls (HFR, Range, Output range, PASS,
+// Gain, NR, Notch) stay in the bar beside the chip.
 //
 // The sheet is always mounted (hidden by CSS when closed) because
-// `ModeRadioGroup` owns effects that keep filter settings in sync — they
+// `ModeRadioGroup` owns effects that keep filter settings in sync. They
 // must run even while the sheet is closed.
 //
 // Open state is its own store field (`panels.hear_sheet_open`) rather than a
-// `LayerPanel` variant: the combos inside the sheet open their own layer
-// panels, and sharing the single `layer_panel_open` slot would close the
-// sheet the moment one of them opened.
+// `LayerPanel` variant: a mode's settings open as a layer panel, and sharing
+// the single `layer_panel_open` slot would close the sheet the moment one
+// of them opened.
 
 use crate::state::store_fields::*;
 use leptos::portal::Portal;
 use leptos::prelude::*;
 
-use crate::components::hearing_bar::{BandHfrCell, BandpassCombo, GainCombo};
-use crate::components::hfr_button::RangeButton;
 use crate::components::mode_button::{ModeBucket, ModeRadioGroup};
-use crate::components::noise_combos::{NotchCombo, NrCombo};
-use crate::components::output_range_button::OutputRangeCombo;
 use crate::state::AppState;
 
 fn close(state: &AppState) {
@@ -50,7 +45,7 @@ pub fn HearChip() -> impl IntoView {
     view! {
         <button
             class=move || if open() { "layer-btn hear-chip open" } else { "layer-btn hear-chip" }
-            title="Playback mode, band, gain and filters"
+            title="Playback mode"
             on:click=move |ev: web_sys::MouseEvent| {
                 ev.stop_propagation();
                 state.panels.hear_sheet_open().update(|o| *o = !*o);
@@ -81,44 +76,8 @@ pub fn HearSheet() -> impl IntoView {
                 on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
             >
                 <div class="hear-sheet-handle" on:click=move |_| close(&state)></div>
-                <div class="hear-sheet-title">
-                    <span>"Hear"</span>
-                    <span class="hear-sheet-hint">"How the recording is played back"</span>
-                </div>
-
-                <div class="hear-sheet-sec">"Playback mode"</div>
+                <div class="hear-sheet-title">"Playback mode"</div>
                 <ModeRadioGroup list_layout=true/>
-
-                <div class="hear-sheet-sec">"Frequency band"</div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Band"</span>
-                    <div class="hear-sheet-controls">
-                        <BandHfrCell/>
-                        <RangeButton/>
-                    </div>
-                </div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Output range"</span>
-                    <div class="hear-sheet-controls"><OutputRangeCombo/></div>
-                </div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Bandpass"</span>
-                    <div class="hear-sheet-controls"><BandpassCombo/></div>
-                </div>
-
-                <div class="hear-sheet-sec">"Level and filters"</div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Gain"</span>
-                    <div class="hear-sheet-controls"><GainCombo/></div>
-                </div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Noise reduction"</span>
-                    <div class="hear-sheet-controls"><NrCombo/></div>
-                </div>
-                <div class="hear-sheet-row">
-                    <span class="hear-sheet-key">"Notch filter"</span>
-                    <div class="hear-sheet-controls"><NotchCombo/></div>
-                </div>
             </div>
         </Portal>
     }
