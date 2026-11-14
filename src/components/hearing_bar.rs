@@ -4,7 +4,7 @@
 // Layout:
 //
 //   ┌─── band-affected overline ─────────────────────────────────┐ │
-//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [NR] [Notch]
+//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [Noise]
 //   └────────────────────────────────────────────────────────────┘ │
 //        ^band-cell HFR toggle (above the band gutter)
 //
@@ -26,21 +26,15 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
-use crate::components::combo_button::ComboButton;
 use crate::components::hfr_button::RangeButton;
 use crate::components::mode_button::ModeRadioGroup;
-use crate::components::noise_combos::{NotchCombo, NrCombo};
+use crate::components::noise_combos::NoiseButton;
+use crate::components::switch_button::{toggle_panel, SwitchButton};
 use crate::dsp::filters::BandMode;
 use crate::state::{
     AppState, BandpassMode, BandpassRange, Bar, FilterQuality, GainMode, LayerPanel, PeakSource,
     PlaybackMode,
 };
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 // Band presets and their helpers moved into `hfr_button.rs` — they're
 // the body of HfrButton's right-half dropdown now.
@@ -118,52 +112,23 @@ pub(crate) fn GainCombo() -> impl IntoView {
             && state.timeline.active().get().is_none()
     };
 
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left disabled"
-        } else if is_live() {
-            if state.gain.live_db().get().abs() > 0.001 {
-                "layer-btn combo-btn-left active"
-            } else {
-                "layer-btn combo-btn-left"
-            }
-        } else if state.gain.mode().get() != GainMode::Off {
-            "layer-btn combo-btn-left active"
+    let on = Signal::derive(move || {
+        if is_live() {
+            // Live gain is a plain slider that always applies.
+            true
         } else {
-            "layer-btn combo-btn-left no-annotation"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() {
-            return "layer-btn combo-btn-right disabled";
-        }
-        // While live, the mode label has no effect on the audio path — dim it.
-        let dim = if is_live() || state.gain.mode().get() == GainMode::Off {
-            " dim"
-        } else {
-            ""
-        };
-        if is_open.get() {
-            if dim.is_empty() {
-                "layer-btn combo-btn-right open"
-            } else {
-                "layer-btn combo-btn-right dim open"
-            }
-        } else if dim.is_empty() {
-            "layer-btn combo-btn-right"
-        } else {
-            "layer-btn combo-btn-right dim"
+            state.gain.mode().get() != GainMode::Off
         }
     });
 
-    let left_value = Signal::derive(move || {
+    fn db_text(db: f64) -> String {
+        format!("{:+.0} dB", db)
+    }
+    // The bottom row: the gain mode and the gain it gives. While gain is off
+    // it names the mode the switch turns on, so the text does not jump.
+    let value = Signal::derive(move || {
         if is_live() {
-            let db = state.gain.live_db().get();
-            return if db > 0.0 {
-                format!("+{:.0}dB", db)
-            } else {
-                format!("{:.0}dB", db)
-            };
+            return format!("Live {}", db_text(state.gain.live_db().get()));
         }
         let mode = state.gain.mode().get();
         let manual_db = state.gain.db().get();
@@ -173,24 +138,10 @@ pub(crate) fn GainCombo() -> impl IntoView {
             0.0
         };
         match mode {
-            GainMode::Off => {
-                if pv_boost > 0.0 {
-                    format!("+{:.0}dB", pv_boost)
-                } else {
-                    String::new()
-                }
-            }
-            GainMode::Manual => {
-                let total = manual_db + pv_boost;
-                if total > 0.0 {
-                    format!("+{:.0}dB", total)
-                } else {
-                    format!("{:.0}dB", total)
-                }
-            }
+            GainMode::Off => state.gain.mode_last_auto().get().label().to_string(),
+            GainMode::Manual => db_text(manual_db + pv_boost),
             GainMode::AutoPeak => {
-                let auto_db = state.compute_auto_gain();
-                let total = auto_db + manual_db + pv_boost;
+                let total = state.compute_auto_gain() + manual_db + pv_boost;
                 // "…" while the DSP peak is measured (the raw peak is used
                 // meanwhile); the Peak from row says "measuring…".
                 let pending = if state.processed_peak_measuring() {
@@ -198,32 +149,21 @@ pub(crate) fn GainCombo() -> impl IntoView {
                 } else {
                     ""
                 };
-                format!("+{:.0}dB{pending}", total)
+                format!("Peak {}{pending}", db_text(total))
             }
             GainMode::Adaptive => {
                 if manual_db > 0.0 || pv_boost > 0.0 {
-                    format!("A+{:.0}", manual_db + pv_boost)
+                    format!("AGC {}", db_text(manual_db + pv_boost))
                 } else {
-                    "Auto".to_string()
+                    "AGC".to_string()
                 }
             }
         }
     });
-    let right_value = Signal::derive(move || {
-        if is_live() {
-            return "LIVE".to_string();
-        }
-        match state.gain.mode().get() {
-            GainMode::Off => "OFF".to_string(),
-            mode => mode.label().to_string(),
-        }
-    });
 
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
+    let toggle = Callback::new(move |()| {
         if is_live() {
-            // In live mode, the left half just opens/closes the panel — the
-            // mode toggle is meaningless because live ignores gain_mode.
-            toggle_panel(&state, LayerPanel::Gain);
+            // Live ignores the gain mode, so there is nothing to turn off.
             return;
         }
         let mode = state.gain.mode().get_untracked();
@@ -244,19 +184,18 @@ pub(crate) fn GainCombo() -> impl IntoView {
     });
 
     view! {
-        <ComboButton
-            left_label="Gain"
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
+        <SwitchButton
+            name="Gain"
+            on=on
+            toggle=toggle
+            value=value
             is_open=is_open
             toggle_menu=toggle_menu
-            left_title="Toggle gain"
-            right_title="Gain mode"
-            menu_direction="below"
-            panel_align="left"
+            disabled=Signal::derive(no_file)
+            switch_locked=Signal::derive(is_live)
+            width="96px"
+            switch_title="Turn playback gain on or off"
+            menu_title="Gain settings"
             panel_style="min-width: 210px;"
         >
             <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Off)
@@ -331,7 +270,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
                     }
                 />
             </div>
-        </ComboButton>
+        </SwitchButton>
     }
 }
 
@@ -351,38 +290,10 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
 
     let active = Signal::derive(move || state.filter.bandpass_mode().get() != BandpassMode::Off);
 
-    let left_class = Signal::derive(move || {
-        if no_file() {
-            "layer-btn combo-btn-left disabled"
-        } else if active.get() {
-            "layer-btn combo-btn-left no-annotation active"
-        } else {
-            "layer-btn combo-btn-left no-annotation"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() {
-            return "layer-btn combo-btn-right disabled";
-        }
-        let dim = if !active.get() { " dim" } else { "" };
-        if is_open.get() {
-            if dim.is_empty() {
-                "layer-btn combo-btn-right open"
-            } else {
-                "layer-btn combo-btn-right dim open"
-            }
-        } else if dim.is_empty() {
-            "layer-btn combo-btn-right"
-        } else {
-            "layer-btn combo-btn-right dim"
-        }
-    });
-
-    // Left half just labels the button. Right half shows the bandpass
-    // mode (OFF/AUTO/ON); when the configured range *differs* from the
-    // FF/HFR band (i.e. locked to something else), the differing range
-    // appears as a small caption above the mode word.
-    let left_value = Signal::derive(|| "PASS".to_string());
+    // The bottom row shows the bandpass mode (Auto / On). When the range in
+    // use differs from the FF/HFR band (it is locked to something else), it
+    // shows that range instead. While PASS is off it names the mode the
+    // switch turns on.
 
     let range_differs = Signal::derive(move || {
         let lo = state.filter.freq_low().get();
@@ -397,8 +308,8 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
         } // no FF set, but bandpass has a range
         (lo - ff_lo).abs() > 50.0 || (hi - ff_hi).abs() > 50.0
     });
-    let right_label = Signal::derive(move || {
-        // Hide the range caption when:
+    let range_caption = Signal::derive(move || {
+        // No range caption when:
         //   (A) bandpass is off — nothing to describe,
         //   (B) the filter isn't actually active (e.g. Auto+HET, which
         //       leaves filter_enabled = false even though bandpass_mode
@@ -418,18 +329,35 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
         }
         let lo = state.filter.freq_low().get();
         let hi = state.filter.freq_high().get();
-        format!("{:.1}\u{2013}{:.1}", lo / 1000.0, hi / 1000.0)
+        // "20–60 kHz", as the app's other frequency ranges are written.
+        let khz = |hz: f64| crate::heterodyne::format_khz(hz.round() as i64, 1);
+        format!("{}\u{2013}{} kHz", khz(lo), khz(hi))
     });
-    let right_value = Signal::derive(move || match state.filter.bandpass_mode().get() {
-        BandpassMode::Off => "OFF".to_string(),
-        BandpassMode::Auto => "AUTO".to_string(),
-        BandpassMode::On => "ON".to_string(),
+    // Auto follows the HFR band, so it is the mode to turn on while HFR is on.
+    let mode_when_turned_on = move || {
+        if state.viewmode.focus_stack().get().hfr_enabled() {
+            BandpassMode::Auto
+        } else {
+            BandpassMode::On
+        }
+    };
+    let value = Signal::derive(move || {
+        let caption = range_caption.get();
+        if !caption.is_empty() {
+            return caption;
+        }
+        let mode = match state.filter.bandpass_mode().get() {
+            BandpassMode::Off => mode_when_turned_on(),
+            mode => mode,
+        };
+        match mode {
+            BandpassMode::Auto => "Auto",
+            _ => "On",
+        }
+        .to_string()
     });
 
-    let left_click = Callback::new(move |_: web_sys::MouseEvent| {
-        if no_file() {
-            return;
-        }
+    let toggle = Callback::new(move |()| {
         let mode = state.filter.bandpass_mode().get_untracked();
         if mode == BandpassMode::Off {
             // Turn on: prefer Auto when HFR is on (band-following), else On.
@@ -487,20 +415,17 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
     };
 
     view! {
-        <ComboButton
-            left_label=""
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
-            right_label=right_label
+        <SwitchButton
+            name="PASS"
+            on=active
+            toggle=toggle
+            value=value
             is_open=is_open
             toggle_menu=toggle_menu
-            left_title="Toggle bandpass / EQ"
-            right_title="Bandpass mode"
-            menu_direction="below"
-            panel_align="left"
+            disabled=Signal::derive(no_file)
+            width="96px"
+            switch_title="Turn the bandpass filter and EQ on or off"
+            menu_title="Bandpass settings"
             panel_style="min-width: 240px;"
         >
             <div class="layer-panel-title">"Bandpass"</div>
@@ -611,13 +536,13 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
                     <span>{move || format!("{:.0}", state.filter.db_below().get())}</span>
                 </div>
             </Show>
-        </ComboButton>
+        </SwitchButton>
     }
 }
 
-// NotchCombo and NrCombo live in `noise_combos.rs` — they contain the
-// Detect / Sensitivity / Bands / Learn / Strength controls migrated
-// from the deleted right-sidebar Noise Filter tab.
+// NoiseButton lives in `noise_combos.rs`: one switch button for noise
+// reduction and the notch filter, with the Detect / Sensitivity / Bands /
+// Learn / Strength controls in its menu.
 
 /// The BAND cell that sits above the band gutter is now an HFR on/off
 /// toggle. The cell's label is the literal "HFR" with per-letter brightness
@@ -727,8 +652,7 @@ pub fn HearingBar() -> impl IntoView {
                 <div class="bar-sep"></div>
                 <div class="bar-controls">
                     <GainCombo/>
-                    <NrCombo/>
-                    <NotchCombo/>
+                    <NoiseButton/>
                 </div>
                 <crate::components::hear_sheet::HearSheet/>
             </div>
@@ -767,8 +691,7 @@ pub fn HearingBar() -> impl IntoView {
             <div class="bar-sep"></div>
             <div class="bar-controls">
                 <GainCombo/>
-                <NrCombo/>
-                <NotchCombo/>
+                <NoiseButton/>
             </div>
         </div>
         }

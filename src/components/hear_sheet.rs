@@ -5,7 +5,7 @@
 // by one chip showing the current playback mode; tapping it opens this
 // sheet, which lists every mode with its full name and a one-line
 // consequence. The bar's other controls (HFR, Range, Output range, PASS,
-// Gain, NR, Notch) stay in the bar beside the chip.
+// Gain, Noise) stay in the bar beside the chip.
 //
 // The sheet is always mounted (hidden by CSS when closed) because
 // `ModeRadioGroup` owns effects that keep filter settings in sync. They

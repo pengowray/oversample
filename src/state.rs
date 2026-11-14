@@ -1140,10 +1140,8 @@ pub enum LayerPanel {
     ListenMode,
     /// Band presets dropdown in the Hearing bar.
     BandPresets,
-    /// Notch combo dropdown in the Hearing bar.
-    Notch,
-    /// Noise-reduction (spectral subtraction) combo in the Hearing bar.
-    NoiseReduce,
+    /// Noise button menu in the Hearing bar (noise reduction + notch).
+    Noise,
     /// Bandpass+EQ combo dropdown in the Hearing bar.
     Bandpass,
     /// Mic settings dropdown in the Transport bar (strategy + device + capture format).
@@ -1165,8 +1163,7 @@ impl LayerPanel {
             LayerPanel::HfrMode
             | LayerPanel::BandPresets
             | LayerPanel::Bandpass
-            | LayerPanel::Notch
-            | LayerPanel::NoiseReduce
+            | LayerPanel::Noise
             | LayerPanel::Gain
             | LayerPanel::ListenMode
             | LayerPanel::OutputRange => Bar::Hearing,

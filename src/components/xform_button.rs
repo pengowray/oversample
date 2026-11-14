@@ -1,5 +1,5 @@
-// XForm toggle — a standalone combo button in the View bar. The left half
-// toggles XForm display-processing on/off; the right half opens the "Display
+// XForm toggle — a switch button in the View bar. The top row turns XForm
+// display-processing on or off; the bottom row opens the "Display
 // Processing" panel (per-stage EQ / Notch / NR / Xform / Gain / Resam modes +
 // custom sub-controls + a dynamic blurb describing what's currently applied).
 //
@@ -13,15 +13,9 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::components::app::{disable_xform, enable_xform};
-use crate::components::combo_button::ComboButton;
 use crate::components::display_filter_button::DspFilterRow;
+use crate::components::switch_button::{toggle_panel, SwitchButton};
 use crate::state::{AppState, DisplayFilterMode, GainMode, LayerPanel, PlaybackMode};
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 #[component]
 pub fn XformButton() -> impl IntoView {
@@ -48,34 +42,9 @@ pub fn XformButton() -> impl IntoView {
         }
     };
 
-    // ── Combo-button chrome ──
-    let left_class = Signal::derive(move || {
-        if no_file() || !supported() {
-            "layer-btn combo-btn-left disabled"
-        } else if enabled.get() {
-            "layer-btn combo-btn-left active"
-        } else {
-            "layer-btn combo-btn-left"
-        }
-    });
-    let right_class = Signal::derive(move || {
-        if no_file() || !supported() {
-            return "layer-btn combo-btn-right disabled";
-        }
-        let dim = !enabled.get();
-        match (is_open.get(), dim) {
-            (true, false) => "layer-btn combo-btn-right open",
-            (true, true) => "layer-btn combo-btn-right dim open",
-            (false, false) => "layer-btn combo-btn-right",
-            (false, true) => "layer-btn combo-btn-right dim",
-        }
-    });
-
-    // Compact summary of the active stages, shown on the left value line.
-    let left_value = Signal::derive(move || {
-        if !enabled.get() || !supported() {
-            return String::new();
-        }
+    // Compact summary of the stages XForm applies, shown on the bottom row.
+    // "Raw" while XForm is off or applies nothing.
+    let value = Signal::derive(move || {
         let mut parts: Vec<&'static str> = Vec::new();
         if state.display.eq().get() {
             parts.push("EQ");
@@ -100,26 +69,14 @@ pub fn XformButton() -> impl IntoView {
             parts.push("RS");
         }
         if parts.is_empty() {
-            "raw".to_string()
+            "Raw".to_string()
         } else {
             parts.join("+")
         }
     });
-    let right_value = Signal::derive(move || {
-        if enabled.get() {
-            "ON".to_string()
-        } else {
-            "OFF".to_string()
-        }
-    });
-
-    let toggle_menu = Callback::new(move |()| {
-        if no_file() || !supported() {
-            return;
-        }
-        toggle_panel(&state, LayerPanel::Xform);
-    });
-    let left_click = Callback::new(move |_ev: web_sys::MouseEvent| toggle_xform());
+    let toggle_menu = Callback::new(move |()| toggle_panel(&state, LayerPanel::Xform));
+    let toggle = Callback::new(move |()| toggle_xform());
+    let disabled = Signal::derive(move || no_file() || !supported());
 
     // ── Playback-active indicators (drive the green dots on each DSP row) ──
     let eq_active = Signal::derive(move || state.filter.enabled().get());
@@ -250,17 +207,17 @@ pub fn XformButton() -> impl IntoView {
     });
 
     view! {
-        <ComboButton
-            left_label="XForm"
-            left_value=left_value
-            left_click=left_click
-            left_class=left_class
-            right_value=right_value
-            right_class=right_class
+        <SwitchButton
+            name="XForm"
+            on=enabled
+            toggle=toggle
+            value=value
             is_open=is_open
             toggle_menu=toggle_menu
-            left_title="Toggle XForm: view the spectrogram of the signal as transformed for playback"
-            right_title="Display Processing settings"
+            disabled=disabled
+            width="92px"
+            switch_title="XForm: show the spectrogram of the signal as transformed for playback"
+            menu_title="Display Processing settings"
             panel_style="min-width: 230px;"
         >
             <div class="xform-blurb">{move || blurb.get()}</div>
@@ -341,7 +298,7 @@ pub fn XformButton() -> impl IntoView {
                     </div>
                 }
             })}
-        </ComboButton>
+        </SwitchButton>
     }
 }
 

@@ -37,6 +37,7 @@ pub mod species_panel;
 pub mod spectrogram;
 pub mod spectrogram_events;
 pub mod surface_3d;
+pub mod switch_button;
 pub mod tool_button;
 pub mod toolbar;
 pub mod view_bar;
