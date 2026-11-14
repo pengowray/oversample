@@ -212,35 +212,51 @@ pub struct OpenedCorrection {
 pub fn opened_correction(file: &LoadedFile) -> Option<OpenedCorrection> {
     let te = file.opened_time_expansion?;
     let meta = &file.audio.metadata;
-    let gives_factor = |factor: Option<f64>| factor.is_some_and(|f| (f - te.factor).abs() < 1e-9);
     let wamd = meta.wav.as_ref().and_then(|w| w.wamd.as_ref());
-    let stated_in = if gives_factor(crate::types::declared_time_expansion(
-        meta.format,
-        meta.guano.as_ref(),
-        None,
-    )) {
+    let guano = crate::types::declared_time_expansion(meta.format, meta.guano.as_ref(), None);
+    let wamd = crate::types::declared_time_expansion(meta.format, None, wamd);
+    let site = file.site_metadata.as_ref().map(|m| {
+        let states_factor = m
+            .fields
+            .iter()
+            .any(|(label, _)| label == crate::wikimedia::TIME_EXPANSION_FIELD);
+        (m.site.name(), states_factor)
+    });
+    Some(OpenedCorrection {
+        te,
+        stated_in: stated_in(te, guano, wamd, site),
+    })
+}
+
+/// Where the factor of `te`, the correction a file was opened with, is
+/// stated.
+///
+/// - `guano`, `wamd`: the factors that GUANO's TE field and a Wildlife
+///   Acoustics `wamd` chunk in the file give, if any. The first that gives
+///   `te`'s factor is named, GUANO first, as the loader reads them.
+/// - `site`: the name of the site the file came from, and whether its
+///   metadata has a "Time expansion" row (Wikimedia Commons' P14424
+///   statement). A correction from the site that has no such row came from
+///   a Find recordings result.
+pub fn stated_in(
+    te: TimeExpansion,
+    guano: Option<f64>,
+    wamd: Option<f64>,
+    site: Option<(&str, bool)>,
+) -> StatedIn {
+    let gives_factor = |factor: Option<f64>| factor.is_some_and(|f| (f - te.factor).abs() < 1e-9);
+    if gives_factor(guano) {
         StatedIn::Guano
-    } else if gives_factor(crate::types::declared_time_expansion(
-        meta.format,
-        None,
-        wamd,
-    )) {
+    } else if gives_factor(wamd) {
         StatedIn::WildlifeAcoustics
     } else if te.origin == TimeExpansionOrigin::File {
         StatedIn::FileMetadata
     } else {
-        match file.site_metadata.as_ref() {
-            Some(m)
-                if m.fields
-                    .iter()
-                    .any(|(label, _)| label == crate::wikimedia::TIME_EXPANSION_FIELD) =>
-            {
-                StatedIn::Site(m.site.name().to_string())
-            }
+        match site {
+            Some((name, true)) => StatedIn::Site(name.to_string()),
             _ => StatedIn::FindRecordings,
         }
-    };
-    Some(OpenedCorrection { te, stated_in })
+    }
 }
 
 /// The time-expansion note's line after the user removed the correction
@@ -653,6 +669,58 @@ mod tests {
                 origin,
             },
             stated_in,
+        }
+    }
+
+    #[test]
+    fn the_note_names_where_the_factor_is_stated() {
+        let te = |factor: f64, origin| TimeExpansion {
+            factor,
+            stored_rate: 38_400,
+            origin,
+        };
+        let file = te(10.0, TimeExpansionOrigin::File);
+        let source = te(10.0, TimeExpansionOrigin::Source);
+        let commons = Some(("Wikimedia Commons", true));
+        let inat = Some(("iNaturalist", false));
+        for (te, guano, wamd, site, expected) in [
+            (file, Some(10.0), None, None, StatedIn::Guano),
+            (file, None, Some(10.0), None, StatedIn::WildlifeAcoustics),
+            // Both state it: GUANO, which the loader reads first.
+            (file, Some(10.0), Some(10.0), None, StatedIn::Guano),
+            // Only the wamd chunk gives the factor the file was opened with.
+            (
+                file,
+                Some(8.0),
+                Some(10.0),
+                None,
+                StatedIn::WildlifeAcoustics,
+            ),
+            (file, None, None, None, StatedIn::FileMetadata),
+            (
+                source,
+                None,
+                None,
+                commons,
+                StatedIn::Site("Wikimedia Commons".to_string()),
+            ),
+            (source, None, None, inat, StatedIn::FindRecordings),
+            (source, None, None, None, StatedIn::FindRecordings),
+            // A Find recordings result whose factor the file's GUANO gives too.
+            (source, Some(10.0), None, inat, StatedIn::Guano),
+            (
+                te(2.5, TimeExpansionOrigin::Source),
+                None,
+                Some(10.0),
+                commons,
+                StatedIn::Site("Wikimedia Commons".to_string()),
+            ),
+        ] {
+            assert_eq!(
+                stated_in(te, guano, wamd, site),
+                expected,
+                "{te:?} {guano:?} {wamd:?} {site:?}"
+            );
         }
     }
 

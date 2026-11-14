@@ -11,8 +11,10 @@ import * as path from "node:path";
  */
 
 const TE_NOTE = '.rate-note[data-note="time-expansion"]';
+const SPECIES_NOTE = '.rate-note[data-note="species"]';
 const REMOVE = 'button.rate-note-action[data-action="remove-correction"]';
 const APPLY = 'button.rate-note-action[data-action="apply-correction"]';
+const CORRECT = 'button.rate-note-action[data-action="correct-tenfold"]';
 const MARK = ".file-badge-corrected";
 /** Set TE_SHOT_DIR to save screenshots there. */
 const SHOT_DIR = process.env.TE_SHOT_DIR;
@@ -67,6 +69,35 @@ function wav(opts: {
 
 const GUANO_TE10 = "GUANO|Version: 1.0\nTE: 10\n";
 
+/** A 16-bit WAV file of 1 second at `rate` with a Wildlife Acoustics `wamd`
+ * chunk that gives the model (an SM4BAT-FS) and a Time Expansion field. */
+function withWamdTe(rate: number, te: number): Buffer {
+  const field = (id: number, value: Buffer) => {
+    const head = Buffer.alloc(6);
+    head.writeUInt16LE(id, 0);
+    head.writeUInt32LE(value.length, 2);
+    return Buffer.concat([head, value]);
+  };
+  const u16 = (v: number) => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16LE(v, 0);
+    return b;
+  };
+  let body = Buffer.concat([
+    field(0x00, u16(1)),
+    field(0x01, Buffer.from("SM4BAT-FS\0")),
+    field(0x0f, u16(te)),
+  ]);
+  if (body.length % 2) body = Buffer.concat([body, Buffer.alloc(1)]);
+  const head = Buffer.alloc(8);
+  head.write("wamd", 0);
+  head.writeUInt32LE(body.length, 4);
+  const audio = wav({ rate, frames: rate, format: "16" });
+  const out = Buffer.concat([audio, head, body]);
+  out.writeUInt32LE(out.length - 8, 4);
+  return out;
+}
+
 /** The value of the Info panel's File row labelled `label`. */
 function row(page: Page, label: string) {
   return page
@@ -96,12 +127,35 @@ interface Snap {
   isPlaying: boolean;
   hfrOn: boolean;
   playbackMode: string;
+  overviewReady: boolean;
 }
 
 async function snap(page: Page): Promise<Snap> {
   return page.evaluate(() =>
     (window as unknown as { __oversample_test: () => Snap }).__oversample_test(),
   );
+}
+
+/** The RMS of the current file's samples from frame `start` for `len`
+ * frames, read the way playback reads them (src/test_hook.rs). */
+function rms(page: Page, start: number, len: number): Promise<number | null> {
+  return page.evaluate(
+    ([s, l]) =>
+      (
+        window as unknown as { __oversample_read_rms: (s: number, l: number) => Promise<number | null> }
+      ).__oversample_read_rms(s, l),
+    [start, len],
+  );
+}
+
+/** Waits for the current file's overview image. A streamed file's overview
+ * is built from samples read across the whole file, so once it is built the
+ * file's chunk cache holds only the end of the file: samples read after that
+ * from the first minutes must be loaded from disk again. */
+async function waitForOverview(page: Page) {
+  await expect
+    .poll(async () => (await snap(page)).overviewReady, { timeout: 150_000 })
+    .toBe(true);
 }
 
 function json(route: Route, body: unknown) {
@@ -270,10 +324,16 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
       "Corrected for ×10 time expansion. Sample rate in the file header: 38.4 kHz.",
     );
     expect((await snap(page)).duration).toBeCloseTo(frames / 384_000, 6);
+    await waitForOverview(page);
 
     await page.locator(REMOVE).click({ timeout: 60_000 });
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     expect((await snap(page)).duration).toBeCloseTo(frames / 38_400, 6);
+    // The source made for the new rate loads samples past the first 30
+    // seconds from the file: the tone at 62.5 seconds, and silence at 39
+    // seconds. Neither is in the chunk cache it started with.
+    expect(await rms(page, 2_400_000, 38_400)).toBeGreaterThan(0.1);
+    expect(await rms(page, 1_500_000, 38_400)).toBeLessThan(0.01);
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
       "Correction for ×10 time expansion removed until you close the file or reload the page. " +
         "Time expansion in the file's GUANO metadata: ×10.",
@@ -296,7 +356,9 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
     await page.locator(".play-main-btn").click();
     await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
     await page.waitForTimeout(1500);
-    expect((await snap(page)).isPlaying).toBe(true);
+    const playing = await snap(page);
+    expect(playing.isPlaying).toBe(true);
+    expect(playing.scrollOffset).toBeGreaterThan(58);
     if (SHOT_DIR) {
       await page.screenshot({ path: path.join(SHOT_DIR, "streamed-1440-removed-60s.png") });
     }
@@ -308,6 +370,85 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
     expect((await snap(page)).duration).toBeCloseTo(frames / 384_000, 6);
     expect(errors).toEqual([]);
     fs.rmSync(file);
+  });
+});
+
+test.describe("a streamed WAV file at a x10 header rate", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.setTimeout(240_000);
+
+  test("can be corrected by the user and the correction removed", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    // XC1001172's species, Eptesicus nilssonii (25-45 kHz), at 25.6 kHz, as
+    // a 135 MB 8-bit file that the app streams. The tone is in the first 2
+    // seconds and from 60 to 70 seconds at 25.6 kHz.
+    const frames = 135_000_000;
+    const file = test.info().outputPath("streamed-case-t.wav");
+    fs.writeFileSync(
+      file,
+      wav({
+        rate: 25_600,
+        frames,
+        format: "u8",
+        guano: "GUANO|Version: 1.0\nSpecies|Manual: Eptesicus nilssonii\n",
+        tones: [
+          [0, 51_200],
+          [1_536_000, 1_792_000],
+        ],
+      }),
+    );
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await showFiles(page);
+    await page.locator('input[type="file"]').first().setInputFiles(file);
+    await expect(page.locator(".toolbar-badge-row .file-badge-streaming")).toBeVisible({
+      timeout: 60_000,
+    });
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect(page.locator(SPECIES_NOTE)).toContainText("Probably time-expanded ×10");
+    await waitForOverview(page);
+
+    await page.locator(CORRECT).click({ timeout: 60_000 });
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    expect((await snap(page)).duration).toBeCloseTo(frames / 256_000, 6);
+    await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
+      "Corrected for ×10 time expansion until you close the file or reload the page. " +
+        "Sample rate in the file header: 25.6\u00a0kHz.",
+    ]);
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toHaveText("Corrected ×10");
+    await expect(page.locator(".toolbar-badge-row .file-badge-streaming")).toBeVisible();
+    // The tone at 62.5 seconds (25.6 kHz frames) and silence at 39 seconds,
+    // loaded from the file by the source made for the new rate.
+    expect(await rms(page, 1_600_000, 25_600)).toBeGreaterThan(0.1);
+    expect(await rms(page, 1_000_000, 25_600)).toBeLessThan(0.01);
+
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    expect((await snap(page)).duration).toBeCloseTo(frames / 25_600, 6);
+    await expect(page.locator(CORRECT)).toBeVisible();
+    expect(errors).toEqual([]);
+    fs.rmSync(file);
+  });
+});
+
+test.describe("a correction from a Wildlife Acoustics wamd chunk", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("names the chunk, and can be removed and applied again", async ({ page }) => {
+    await addFiles(page, [{ name: "wamd te10.wav", buffer: withWamdTe(38_400, 10) }]);
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion.");
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
+      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+        "Time expansion in the file's Wildlife Acoustics metadata: ×10.",
+    ]);
+    await page.locator(APPLY).click();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
   });
 });
 
@@ -347,8 +488,6 @@ async function addFiles(page: Page, files: { name: string; buffer: Buffer }[]) {
   });
   await expect(page.locator(".file-item.loading")).toHaveCount(0);
 }
-
-const SPECIES_NOTE = '.rate-note[data-note="species"]';
 
 /** XC844459's species, Pipistrellus pipistrellus (42-51 kHz), at 38.4 kHz:
  * read at the rate in its header, too low for its calls. */

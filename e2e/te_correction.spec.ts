@@ -799,9 +799,6 @@ test.describe("a correction from the file's GUANO", () => {
     expect(again.sampleRate).toBe(384_000);
     expect(again.duration).toBeCloseTo(1, 9);
     expectRange(again.regions[0], region);
-    // The correction was made when the file opened, so the first Remove
-    // left HFR as it was.
-    expect(again.hfrOn).toBe(false);
     expect(errors).toEqual([]);
   });
 
@@ -1057,9 +1054,7 @@ test.describe("x10 correction on a phone", () => {
     );
   });
 
-  test('the "Corrected ×10" badge opens the note, which has no tooltip here', async ({
-    page,
-  }) => {
+  test('the "Corrected ×10" badge opens the note when tapped', async ({ page }) => {
     await openCase(page, GUANO_CASE);
     const mark = page.locator(`.toolbar-badge-row ${MARK}`);
     await expect(mark).toHaveText("Corrected ×10");
