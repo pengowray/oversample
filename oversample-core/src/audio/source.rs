@@ -200,6 +200,15 @@ pub trait AudioSource: Send + Sync {
 
     /// Downcast support for accessing implementation-specific methods (e.g. prefetch).
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// A source that reads the same samples as this one and gives `rate` as
+    /// its sample rate, for a time-expansion correction
+    /// ([`crate::types::AudioData::set_time_expansion`]). `None` for a source
+    /// whose rate can't be changed this way. Cheap: the samples are shared,
+    /// not copied.
+    fn with_sample_rate(&self, _rate: u32) -> Option<Arc<dyn AudioSource>> {
+        None
+    }
 }
 
 /// In-memory audio source wrapping `Arc<Vec<f32>>`.
@@ -294,6 +303,15 @@ impl AudioSource for InMemorySource {
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    fn with_sample_rate(&self, rate: u32) -> Option<Arc<dyn AudioSource>> {
+        Some(Arc::new(InMemorySource {
+            samples: self.samples.clone(),
+            raw_samples: self.raw_samples.clone(),
+            sample_rate: rate,
+            channels: self.channels,
+        }))
     }
 
     fn channel_count(&self) -> u32 {

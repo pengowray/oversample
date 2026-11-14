@@ -56,7 +56,9 @@ impl CachedChunk {
     }
 }
 
-/// LRU chunk cache for decoded audio regions.
+/// LRU chunk cache for decoded audio regions. A clone shares the decoded
+/// chunks (`Rc`) and has its own LRU order and byte count.
+#[derive(Clone)]
 pub(crate) struct ChunkCache {
     /// Decoded chunks keyed by chunk index (frame / CHUNK_FRAMES). `Rc` so a
     /// prefetch can hold its chunks while it awaits further reads, and put
@@ -544,6 +546,24 @@ impl AudioSource for StreamingWavSource {
 
     fn sample_rate(&self) -> u32 {
         self.info.sample_rate
+    }
+
+    /// The same file read at `rate`, for a time-expansion correction. Only
+    /// the rate changes: frames, byte offsets and decoded chunks are the
+    /// same, so the new source starts with this one's head and cached chunks.
+    fn with_sample_rate(&self, rate: u32) -> Option<Arc<dyn AudioSource>> {
+        Some(Arc::new(StreamingWavSource {
+            handle: self.handle.clone(),
+            info: WavFormatInfo {
+                sample_rate: rate,
+                ..self.info.clone()
+            },
+            total_frames: self.total_frames,
+            head_mono: self.head_mono.clone(),
+            head_raw: self.head_raw.clone(),
+            head_frames: self.head_frames,
+            cache: RefCell::new(self.cache.borrow().clone()),
+        }))
     }
 
     fn channel_count(&self) -> u32 {

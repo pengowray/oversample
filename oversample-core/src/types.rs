@@ -30,9 +30,20 @@ pub struct TimeExpansion {
     pub origin: TimeExpansionOrigin,
 }
 
+impl TimeExpansion {
+    /// The rate the file is read at with this correction: the stored rate
+    /// times the factor, rounded to whole Hz, as
+    /// [`AudioData::set_time_expansion`] and
+    /// [`AudioData::apply_time_expansion`] compute it.
+    pub fn corrected_rate(self) -> u32 {
+        (f64::from(self.stored_rate) * self.factor).round() as u32
+    }
+}
+
 /// What gave a [`TimeExpansion`] factor. The app shows the same note for each
-/// ("Corrected for ×10 time expansion; ..."), and only a correction the user
-/// applied can be taken back from that note.
+/// ("Corrected for ×10 time expansion. ..."). The user can remove any of
+/// them from that note, and apply one from the file's metadata or source
+/// again, until the file is closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeExpansionOrigin {
     /// The file's own metadata: GUANO's `TE` field or a `wamd` chunk's
@@ -333,10 +344,12 @@ impl AudioData {
     }
 
     /// Whether [`AudioData::set_time_expansion`] can change this file's rate:
-    /// its samples are all in memory, and it is not a zero-crossing (`.zc`)
-    /// file, whose duration does not come from its sample count.
+    /// its source can be read at another rate
+    /// ([`AudioSource::with_sample_rate`]: samples in memory, or a streamed
+    /// WAV file), and it is not a zero-crossing (`.zc`) file, whose duration
+    /// does not come from its sample count.
     pub fn can_set_time_expansion(&self) -> bool {
-        self.source.as_any().is::<InMemorySource>() && self.metadata.zc_data.is_none()
+        self.metadata.zc_data.is_none() && self.source.with_sample_rate(self.sample_rate).is_some()
     }
 
     /// Read the file at `factor` times the rate it states, or at that rate
@@ -373,15 +386,10 @@ impl AudioData {
                 (corrected as u32, Some(te))
             }
         };
-        let Some(mem) = self.source.as_any().downcast_ref::<InMemorySource>() else {
+        let Some(source) = self.source.with_sample_rate(rate) else {
             return false;
         };
-        self.source = Arc::new(InMemorySource {
-            samples: mem.samples.clone(),
-            raw_samples: mem.raw_samples.clone(),
-            sample_rate: rate,
-            channels: mem.channels,
-        });
+        self.source = source;
         self.sample_rate = rate;
         // Computed from the sample count, as the loader does, so going back to
         // the file's own rate gives the duration it was loaded with.
@@ -825,6 +833,77 @@ mod tests {
         assert_eq!(audio.metadata.time_expansion, None);
         assert!(audio.set_time_expansion(Some(10.0), USER));
         assert_eq!(audio.sample_rate, 384_000);
+    }
+
+    #[test]
+    fn a_load_time_correction_can_be_made_again() {
+        // Removed and then set again with the factor and origin it was
+        // loaded with, the file is as it was loaded.
+        let mut loaded = dummy_audio(38_400);
+        assert!(loaded.apply_time_expansion(10.0, FILE));
+        let opened = loaded.metadata.time_expansion.unwrap();
+        assert_eq!(opened.corrected_rate(), loaded.sample_rate);
+        let mut audio = loaded.clone();
+        assert!(audio.set_time_expansion(None, USER));
+        assert!(audio.set_time_expansion(Some(opened.factor), opened.origin));
+        assert_eq!(audio.sample_rate, loaded.sample_rate);
+        assert_eq!(audio.source.sample_rate(), loaded.sample_rate);
+        assert_eq!(audio.metadata.time_expansion, Some(opened));
+        assert!((audio.duration_secs - loaded.duration_secs).abs() < 1e-12);
+        // A factor that does not give a whole rate is rounded the same way.
+        let te = TimeExpansion {
+            factor: 2.5,
+            stored_rate: 38_401,
+            origin: FILE,
+        };
+        assert_eq!(te.corrected_rate(), 96_003);
+    }
+
+    /// A source whose rate can't be changed, like a streamed MP3.
+    struct FixedRateSource(InMemorySource);
+
+    impl AudioSource for FixedRateSource {
+        fn total_samples(&self) -> u64 {
+            self.0.total_samples()
+        }
+        fn sample_rate(&self) -> u32 {
+            self.0.sample_rate()
+        }
+        fn channel_count(&self) -> u32 {
+            self.0.channel_count()
+        }
+        fn read_samples(
+            &self,
+            channel: crate::audio::source::ChannelView,
+            start: u64,
+            buf: &mut [f32],
+        ) -> usize {
+            self.0.read_samples(channel, start, buf)
+        }
+        fn is_fully_loaded(&self) -> bool {
+            false
+        }
+        fn as_contiguous(&self) -> Option<&[f32]> {
+            None
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn a_source_that_keeps_its_rate_is_not_corrected() {
+        let mut audio = case_t_audio();
+        audio.source = Arc::new(FixedRateSource(InMemorySource {
+            samples: audio.samples.clone(),
+            raw_samples: None,
+            sample_rate: 25_600,
+            channels: 1,
+        }));
+        assert!(!audio.can_set_time_expansion());
+        assert!(!audio.set_time_expansion(Some(10.0), USER));
+        assert_eq!(audio.sample_rate, 25_600);
+        assert_eq!(audio.metadata.time_expansion, None);
     }
 
     #[test]
