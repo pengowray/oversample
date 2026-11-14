@@ -649,6 +649,22 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     expect(pass(await snap(page))).toEqual([20_000, 60_000]);
   });
+
+  test('the "Playing 1:1" card closes when the rate changes', async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await page.locator(TREAT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    // The corrected file holds sound above hearing range, so playing it at
+    // 1:1 shows the card.
+    expect((await snap(page)).hfrOn).toBe(false);
+    await page.locator(".play-main-btn").click();
+    await expect(page.locator(".hfr-nudge")).toBeVisible();
+    await page.locator(USE_FILE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect(page.locator(".hfr-nudge")).toHaveCount(0);
+    expect((await snap(page)).hfrNudge).toBe(false);
+  });
 });
 
 test.describe("no x10 button on other files", () => {

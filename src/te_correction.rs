@@ -308,9 +308,10 @@ pub fn annota_from_file_units_at(
 /// and changes nothing when the file is gone, still loading, streamed, or
 /// already at that rate.
 ///
-/// Playback stops. Annotations (and the copies undo would restore), the
-/// selection, the view, the HFR band, bookmarks and the filter bands are
-/// converted so they stay on the same samples. Call detection results for
+/// Playback stops, and the "Playing 1:1" card closes. Annotations (and the
+/// copies undo would restore), the selection, the view, the HFR band,
+/// bookmarks and the filter bands are converted so they stay on the same
+/// samples. Call detection results for
 /// the file are dropped, since the detector ran at the old rate.
 pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64>) -> bool {
     use crate::state::store_fields::*;
@@ -340,6 +341,11 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
     // before it is converted below.
     if is_current && state.playback.is_playing().get_untracked() {
         crate::audio::playback::stop(&state);
+    }
+    // The "Playing 1:1" card above Play says whether the file holds sound
+    // above hearing range, which the new rate changes.
+    if is_current {
+        state.dialogs.hfr_nudge().set(false);
     }
 
     const HOP_SIZE: usize = 512;
