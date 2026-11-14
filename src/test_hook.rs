@@ -59,22 +59,8 @@ pub fn install(state: AppState) {
             "maxFreq",
             opt_f64(state.view.max_display_freq().get_untracked()),
         );
-        // HFR band and playback mode
-        set(
-            &o,
-            "hfrEnabled",
-            JsValue::from_bool(state.viewmode.hfr_enabled().get_untracked()),
-        );
-        set(
-            &o,
-            "bandLo",
-            JsValue::from_f64(state.filter.band_ff_freq_lo().get_untracked()),
-        );
-        set(
-            &o,
-            "bandHi",
-            JsValue::from_f64(state.filter.band_ff_freq_hi().get_untracked()),
-        );
+        // Playback mode and HET settings. HFR on/off and its band are
+        // `hfrOn`, `hfrBandLo` and `hfrBandHi`, further down.
         set(
             &o,
             "playbackMode",

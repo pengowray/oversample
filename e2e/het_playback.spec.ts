@@ -189,10 +189,10 @@ async function passOn() {
 }
 
 type Snapshot = {
-  hfrEnabled: boolean;
+  hfrOn: boolean;
   playbackMode: string;
-  bandLo: number;
-  bandHi: number;
+  hfrBandLo: number;
+  hfrBandHi: number;
   hetFreq: number;
   hetCutoff: number;
 };
@@ -269,7 +269,7 @@ test.describe("HET on files with a species above Nyquist or below the bat range"
       if (c.via === "pass") {
         expect(await finishes(page, passOn, undefined), "PASS > ON finishes").toBe(true);
         expect(await answers(page), "page answers after PASS > ON").toBe(true);
-        expect((await snapshot(page)).hfrEnabled).toBe(true);
+        expect((await snapshot(page)).hfrOn).toBe(true);
       }
       expect(
         await finishes(page, clickIn, 'button[title^="HET"]'),
@@ -280,10 +280,10 @@ test.describe("HET on files with a species above Nyquist or below the bat range"
       // HFR is on with the expected band, and HET mixes below the file's
       // highest frequency.
       const s = await snapshot(page);
-      expect(s.hfrEnabled).toBe(true);
+      expect(s.hfrOn).toBe(true);
       expect(s.playbackMode).toBe("Heterodyne");
-      expect(s.bandLo).toBeCloseTo(c.band[0], 0);
-      expect(s.bandHi).toBeCloseTo(c.band[1], 0);
+      expect(s.hfrBandLo).toBeCloseTo(c.band[0], 0);
+      expect(s.hfrBandHi).toBeCloseTo(c.band[1], 0);
       expect(s.hetFreq).toBeGreaterThan(0);
       expect(s.hetFreq).toBeLessThan(nyquist);
       expect(s.hetCutoff).toBeGreaterThan(0);
@@ -336,9 +336,9 @@ test.describe("Band presets on a file below the species' range", () => {
     expect(await answers(page), "page answers after the preset").toBe(true);
 
     const s = await snapshot(page);
-    expect(s.hfrEnabled).toBe(true);
-    expect(s.bandLo).toBeCloseTo(c.band[0], 0);
-    expect(s.bandHi).toBeCloseTo(c.band[1], 0);
+    expect(s.hfrOn).toBe(true);
+    expect(s.hfrBandLo).toBeCloseTo(c.band[0], 0);
+    expect(s.hfrBandHi).toBeCloseTo(c.band[1], 0);
 
     await page.locator(".play-main-btn").click();
     await page.waitForFunction(
