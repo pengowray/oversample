@@ -185,6 +185,16 @@ const SPECIES_NOTE = '.rate-note[data-note="species"]';
 const TE_NOTE = '.rate-note[data-note="time-expansion"]';
 const CORRECT = 'button.rate-note-action[data-action="correct-tenfold"]';
 const REMOVE = 'button.rate-note-action[data-action="remove-correction"]';
+/** On the note of a correction from the file's metadata that the user removed. */
+const APPLY = 'button.rate-note-action[data-action="apply-correction"]';
+/** The heading's and file rows' mark for a rate corrected for time expansion. */
+const MARK = ".file-badge-corrected";
+
+/** Picks PS (pitch shift) in the HEAR bar, which turns HFR on. */
+async function choosePitchShift(page: Page) {
+  await page.locator('button[title^="PS"]').first().click();
+  await expect.poll(async () => (await snap(page)).hfrOn).toBe(true);
+}
 
 /** `r` with its times divided and its frequencies multiplied by `k`. */
 function scaled(r: Range, k: number): Range {
@@ -690,6 +700,254 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(page.locator(".hfr-nudge")).toHaveCount(0);
     expect((await snap(page)).hfrNudge).toBe(false);
   });
+
+  test("Remove turns HFR off when it was off before the correction", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    expect((await snap(page)).hfrOn).toBe(false);
+    await page.locator(CORRECT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await choosePitchShift(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect.poll(async () => (await snap(page)).hfrOn).toBe(false);
+  });
+
+  test("HFR that was on before the correction stays on after Remove", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await choosePitchShift(page);
+    const before = await snap(page);
+    await page.locator(CORRECT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    expect((await snap(page)).hfrOn).toBe(true);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    const after = await snap(page);
+    expect(after.hfrOn).toBe(true);
+    // The band is converted there and back.
+    expect(after.hfrBandLo).toBeCloseTo(before.hfrBandLo, 6);
+    expect(after.hfrBandHi).toBeCloseTo(before.hfrBandHi, 6);
+  });
+});
+
+/** XC844459's species at its 38.4 kHz rate, with GUANO that says TE 10, so
+ * the app corrects it to 384 kHz when it opens it. 10 seconds, so the
+ * selection drawn in `annotate` is long enough at either rate. */
+const GUANO_CASE: Case = {
+  species: "Pipistrellus pipistrellus",
+  type: "echolocation",
+  rate: 38_400,
+  seconds: 10,
+  guano: "GUANO|Version: 1.0\nTE: 10\n",
+};
+
+const GUANO_CORRECTED =
+  /^Corrected for ×10 time expansion\. Sample rate in the file header: 38\.4\u00a0kHz\.Remove ×10 correction$/;
+const GUANO_REMOVED =
+  "×10 correction removed until you close the file or reload the page. " +
+  "Time expansion in the file's GUANO metadata: ×10.";
+
+test.describe("a correction from the file's GUANO", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("can be removed and applied again", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    await expect(page.locator(TE_NOTE)).toHaveText(GUANO_CORRECTED);
+    // Only the user's correction lasts until the file is closed.
+    await expect(page.locator(TE_NOTE)).not.toContainText("until you close the file");
+    const remove = page.locator(`${TE_NOTE} ${REMOVE}`);
+    await expect(remove).toHaveAttribute(
+      "title",
+      "Sets the sample rate to 38.4\u00a0kHz until you close the file or reload the page. The audio file is not changed.",
+    );
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const loaded = await snap(page);
+    const region = loaded.regions[0];
+    await settle(page);
+    await shot(page, "guano-1440-corrected.png");
+
+    await remove.click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    const removed = await snap(page);
+    expect(removed.sampleRate).toBe(38_400);
+    expect(removed.duration).toBeCloseTo(10, 9);
+    expectRange(removed.regions[0], scaled(region, 0.1));
+    expect(removed.zoom).toBe(loaded.zoom);
+    await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([GUANO_REMOVED]);
+    const apply = page.locator(`${TE_NOTE} ${APPLY}`);
+    await expect(apply).toHaveText("Correct for ×10 time expansion");
+    await expect(apply).toHaveAttribute("title", "Sets the sample rate to 384\u00a0kHz.");
+    // At 38.4 kHz the species note says the file is probably time-expanded.
+    // Its own button would apply the same correction, so it has none: the
+    // time-expansion note's button is the only one.
+    await expect(page.locator(SPECIES_NOTE)).toContainText("Probably time-expanded ×10");
+    await expect(page.locator(".rate-note-action")).toHaveCount(1);
+    await settle(page);
+    await shot(page, "guano-1440-removed.png");
+
+    await apply.click();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    await expect(page.locator(TE_NOTE)).toHaveText(GUANO_CORRECTED);
+    await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
+    const again = await snap(page);
+    expect(again.sampleRate).toBe(384_000);
+    expect(again.duration).toBeCloseTo(1, 9);
+    expectRange(again.regions[0], region);
+    // The correction was made when the file opened, so the first Remove
+    // left HFR as it was.
+    expect(again.hfrOn).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test("Remove after applying it again turns HFR off when it was off", async ({ page }) => {
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await page.locator(APPLY).click();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    await choosePitchShift(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await expect.poll(async () => (await snap(page)).hfrOn).toBe(false);
+  });
+
+  test("the first Remove leaves HFR on", async ({ page }) => {
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    await choosePitchShift(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    expect((await snap(page)).hfrOn).toBe(true);
+  });
+
+  test("annotations saved while it is removed open on the same sounds", async ({ page }) => {
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const made = (await snap(page)).regions[0];
+    // Drawn on the file at 38.4 kHz (10 seconds), in its seconds and Hz.
+    expect(made.timeEnd).toBeGreaterThan(1);
+    expect(made.freqHigh!).toBeLessThan(19_200);
+
+    // Saved in the units the file opens in: corrected for time expansion.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+            for await (const [, handle] of (dir as any).entries()) {
+              const text = await (await (handle as FileSystemFileHandle).getFile()).text();
+              if (text.includes("Region")) return true;
+            }
+            return false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    await page.reload();
+    await expect(page.locator(".toolbar-badge-row .badge-sample-rate")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    const reopened = await snap(page);
+    expect(reopened.sampleRate).toBe(384_000);
+    expectRange(reopened.regions[0], scaled(made, 10));
+  });
+
+  test(".batm exported while it is removed uses the units the file opens in", async ({
+    page,
+  }) => {
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const region = (await snap(page)).regions[0];
+    await openTab(page, "Info");
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await openAnnotationFiles(page);
+    const exported = batmFields((await exportBatm(page, "removed.batm")).text);
+    expect(exported.sampleRate).toBe(384_000);
+    expect(exported.duration).toBeCloseTo(1, 9);
+    expectRange(exported.region, region);
+  });
+});
+
+/** Opens the Files sidebar, where the file rows are. */
+async function showFiles(page: Page) {
+  const tab = page.locator("button.toolbar-sidebar-tab-left");
+  if (!(await tab.evaluate((e) => e.classList.contains("active")))) await tab.click();
+  await expect(page.locator(".sidebar:not(.right-sidebar)")).not.toHaveClass(/collapsed/);
+}
+
+test.describe('the "Corrected ×10" badge', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("marks a rate the user corrected, in the heading and the file row", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await showFiles(page);
+    await expect(page.locator(MARK)).toHaveCount(0);
+    await page.locator(CORRECT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+
+    const heading = page.locator(`.toolbar-badge-row ${MARK}`);
+    const fileRow = page.locator(`.file-item-info ${MARK}`);
+    for (const mark of [heading, fileRow]) {
+      await expect(mark).toHaveText("Corrected ×10");
+      // The tooltip is the time-expansion note.
+      await expect(mark).toHaveAttribute(
+        "title",
+        "Corrected for ×10 time expansion until you close the file or reload the page. " +
+          "Sample rate in the file header: 25.6\u00a0kHz.",
+      );
+      // A control: a grey box, after the facts, which are unchanged.
+      expect(await mark.evaluate((e) => e.tagName)).toBe("BUTTON");
+      await expect(mark).toHaveClass(/badge-btn/);
+      await expect(mark).not.toHaveClass(/badge-warn/);
+    }
+    await expect(page.locator(".toolbar-badge-row .badge-sample-rate")).toHaveText("256kHz");
+    expect(
+      await heading.evaluate((e) => e.previousElementSibling!.classList.contains("badge-duration")),
+    ).toBe(true);
+
+    // It opens the Info panel at the time-expansion note.
+    await page.locator('button[title="Hide info panel"]').click();
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+    await heading.click();
+    await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
+    await expect(page.locator(TE_NOTE)).toBeInViewport();
+
+    // Gone with the correction.
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect(page.locator(MARK)).toHaveCount(0);
+  });
+
+  test("marks a rate corrected from the GUANO until the correction is removed", async ({
+    page,
+  }) => {
+    await openCase(page, GUANO_CASE);
+    await showInfo(page);
+    const heading = page.locator(`.toolbar-badge-row ${MARK}`);
+    await expect(heading).toHaveText("Corrected ×10");
+    await expect(heading).toHaveAttribute(
+      "title",
+      "Corrected for ×10 time expansion. Sample rate in the file header: 38.4\u00a0kHz.",
+    );
+    await page.locator(REMOVE).click();
+    await expect(page.locator(MARK)).toHaveCount(0);
+    await page.locator(APPLY).click();
+    await expect(heading).toHaveText("Corrected ×10");
+  });
 });
 
 test.describe("no x10 button on other files", () => {
@@ -731,8 +989,12 @@ test.describe("no x10 button on other files", () => {
         await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion");
         // Only the user's correction lasts until the file is closed.
         await expect(page.locator(TE_NOTE)).not.toContainText("until you close the file");
+        // Its only button removes the correction made from the GUANO.
+        await expect(page.locator(".rate-note-action")).toHaveCount(1);
+        await expect(page.locator(`${TE_NOTE} ${REMOVE}`)).toHaveCount(1);
+      } else {
+        await expect(page.locator(".rate-note-action")).toHaveCount(0);
       }
-      await expect(page.locator(".rate-note-action")).toHaveCount(0);
     });
   }
 });
@@ -784,6 +1046,33 @@ test.describe("x10 correction on a phone", () => {
     await settle(page);
     await shot(page, "phone-375-undo-after.png");
     // No horizontal page scroll.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      375,
+    );
+  });
+
+  test('the "Corrected ×10" badge opens the note, which has no tooltip here', async ({
+    page,
+  }) => {
+    await openCase(page, GUANO_CASE);
+    const mark = page.locator(`.toolbar-badge-row ${MARK}`);
+    await expect(mark).toHaveText("Corrected ×10");
+    // The heading keeps one line of badges.
+    expect((await page.locator(".toolbar").boundingBox())!.height).toBe(49);
+    await expect(page.locator(".right-sidebar")).toHaveClass(/collapsed/);
+    await mark.tap();
+    await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
+    await expect(page.locator(TE_NOTE)).toBeInViewport();
+    await settle(page);
+    await shot(page, "phone-375-badge-note.png");
+    const remove = page.locator(REMOVE);
+    expect((await remove.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+    await remove.tap();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    const apply = page.locator(APPLY);
+    expect((await apply.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+    await settle(page);
+    await shot(page, "phone-375-guano-removed.png");
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       375,
     );
