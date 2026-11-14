@@ -247,12 +247,13 @@ pub fn opened_correction(file: &LoadedFile) -> Option<OpenedCorrection> {
 /// file or reload the page. Time expansion in the file's GUANO metadata:
 /// ×10." The first sentence repeats the words of the "Remove ×10
 /// correction" button that was pressed. The Sample rate row above shows the
-/// rate in the file header.
+/// rate in the file header. A no-break space keeps the factor on the line of
+/// the words it ends.
 pub fn removed_line(opened: &OpenedCorrection) -> NoteLine {
     let factor = format_factor(opened.te.factor);
     NoteLine::muted(format!(
         "{factor} correction removed until you close the file or reload the page. \
-         Time expansion {}: {factor}.",
+         Time expansion {}:\u{a0}{factor}.",
         opened.stated_in.phrase()
     ))
 }
@@ -666,7 +667,7 @@ mod tests {
                     kind: NoteKind::TimeExpansion,
                     lines: vec![NoteLine::muted(format!(
                         "\u{d7}10 correction removed until you close the file or reload the \
-                         page. Time expansion {phrase}: \u{d7}10."
+                         page. Time expansion {phrase}:\u{a0}\u{d7}10."
                     ))],
                     action: Some(NoteAction::ApplyCorrection(o.te)),
                 }]
