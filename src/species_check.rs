@@ -84,7 +84,7 @@ fn finding(
     let case = range_case(range, sound_type, rate)?;
     Some(SpeciesRangeFinding {
         case,
-        name: name.trim().to_string(),
+        name: name.split_whitespace().collect::<Vec<_>>().join(" "),
         freq_lo_hz: species.freq_lo_hz,
         freq_hi_hz: species.freq_hi_hz,
         rate,
@@ -137,12 +137,19 @@ pub fn fact_line(f: &SpeciesRangeFinding) -> NoteLine {
 }
 
 /// The second line of the note for a file at any rate other than a ×10
-/// time-expansion rate. It names possibilities, not a finding: in the
-/// Xeno-canto data most such files were detector output, but some were
-/// real-time recordings of audible calls or of a lower harmonic.
+/// time-expansion rate, up to [`OTHER_LINE_MAX_HEADER_RATE`]. It names
+/// possibilities, not a finding: in the Xeno-canto data most such files were
+/// detector output, but some were real-time recordings of audible calls or
+/// of a lower harmonic.
 const OTHER_LINE: &str = "This file may be a bat detector's output (heterodyne, time expansion \
                           or frequency division), or contain only lower-frequency sounds such \
                           as social calls.";
+
+/// The highest header rate whose note gets [`OTHER_LINE`]. All 94
+/// Xeno-canto records below their species' calls were at 96 kHz or less, so
+/// there is no data on what a faster file like this is, and its note has
+/// only the species line.
+const OTHER_LINE_MAX_HEADER_RATE: u32 = 96_000;
 
 /// The lines of the species note, for a file with no heterodyne hint.
 ///
@@ -152,6 +159,7 @@ const OTHER_LINE: &str = "This file may be a bat detector's output (heterodyne, 
 ///   [`RangeCase::TenfoldHeaderRate`]). The note says how to read the file, since the app has no control to
 ///   correct it after loading.
 /// - At any other rate, the species line, then the possibilities, all muted.
+///   Above a 96 kHz header rate, the species line alone.
 pub fn note_lines(f: &SpeciesRangeFinding) -> Vec<NoteLine> {
     match f.case {
         RangeCase::TenfoldHeaderRate => vec![
@@ -165,7 +173,13 @@ pub fn note_lines(f: &SpeciesRangeFinding) -> Vec<NoteLine> {
             },
             fact_line(f),
         ],
-        RangeCase::Other => vec![fact_line(f), detail(OTHER_LINE.to_string())],
+        RangeCase::Other => {
+            let mut lines = vec![fact_line(f)];
+            if f.rate.header_rate <= OTHER_LINE_MAX_HEADER_RATE {
+                lines.push(detail(OTHER_LINE.to_string()));
+            }
+            lines
+        }
     }
 }
 
@@ -367,6 +381,25 @@ mod tests {
             96_000,
         );
         fact("Nyctalus leisleri", ECHO, 24_000);
+    }
+
+    /// The Xeno-canto data behind the second line has no file above 96 kHz.
+    #[test]
+    fn faster_files_get_only_the_species_line() {
+        for rate in [192_000, 200_000] {
+            let f = check("Rhinolophus hipposideros", ECHO, rate).unwrap();
+            assert_eq!(f.case, RangeCase::Other);
+            assert_eq!(texts(&note_lines(&f)), [fact_line(&f).text], "{rate}");
+        }
+        let f = check("Rhinolophus hipposideros", ECHO, 96_000).unwrap();
+        assert_eq!(texts(&note_lines(&f)).last(), Some(&OTHER_LINE.to_string()));
+        // A file corrected for time expansion goes by its header rate.
+        let te = TimeExpansion {
+            factor: 4.0,
+            stored_rate: 48_000,
+        };
+        let f = check_te("Rhinolophus hipposideros", ECHO, 192_000, Some(te)).unwrap();
+        assert_eq!(texts(&note_lines(&f)).len(), 2);
     }
 
     #[test]
