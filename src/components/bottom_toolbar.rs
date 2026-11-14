@@ -19,6 +19,7 @@ use crate::audio::source::ChannelView;
 use crate::audio::{microphone, playback};
 use crate::components::combo_button::ComboButton;
 use crate::components::icons::Icon;
+use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::components::listen_button::ListenButton;
 use crate::components::mode_button::ModeBucket;
 use crate::state::store_fields::*;
@@ -28,28 +29,12 @@ use crate::state::{
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
-fn layer_opt_class(active: bool) -> &'static str {
-    if active {
-        "layer-panel-opt sel"
-    } else {
-        "layer-panel-opt"
-    }
-}
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
-
 #[component]
 pub fn BottomToolbar() -> impl IntoView {
     let state = expect_context::<AppState>();
     // Always show all buttons; use has_file/is_file_disabled for enable/disable logic
     let has_file = move || true;
-    let is_file_disabled = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let is_file_disabled = move || state.no_recording_open();
 
     // ── Recording timer ──
     let interval_id: StoredValue<Option<i32>> = StoredValue::new(None);
@@ -94,8 +79,7 @@ pub fn BottomToolbar() -> impl IntoView {
     });
 
     let play_left_class = Signal::derive(move || {
-        let no_file = state.library.current_index().get().is_none()
-            && state.timeline.active().get().is_none();
+        let no_file = state.no_recording_open();
         let recording_and_listening = state.mic.recording().get() && state.mic.listening().get();
         if no_file || recording_and_listening {
             "layer-btn combo-btn-left play-main-btn disabled"

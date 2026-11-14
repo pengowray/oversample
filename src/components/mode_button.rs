@@ -17,6 +17,7 @@
 // live in this component because they're playback-mode-coupled. They
 // were previously inside `ModeButton`.
 
+use crate::components::layer_panel::toggle_panel;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::dsp::pitch_shift::PitchFactor;
 use crate::state::store_fields::*;
@@ -25,12 +26,6 @@ use crate::state::{
     SpectrogramHandle,
 };
 use leptos::prelude::*;
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 /// Compute the best auto factor for shifting BandFF center into audible range.
 /// Prefers 8x, then other 2^n, then 10, then best integer, then exact ratio.
@@ -453,9 +448,7 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
     // ── Settings popup state ──
     let settings_open =
         Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::HfrMode));
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
     let muting =
         Signal::derive(move || state.mic.listening().get() && state.mic.mute_output().get());
 

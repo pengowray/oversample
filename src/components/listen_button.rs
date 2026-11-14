@@ -12,25 +12,12 @@
 use crate::audio::microphone;
 use crate::components::combo_button::ComboButton;
 use crate::components::icons::Icon;
+use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, LayerPanel, MicAcquisitionState, MicStrategy, PlaybackMode, RecordReadyState,
 };
 use leptos::prelude::*;
-
-fn layer_opt_class(active: bool) -> &'static str {
-    if active {
-        "layer-panel-opt sel"
-    } else {
-        "layer-panel-opt"
-    }
-}
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 #[component]
 pub fn ListenButton() -> impl IntoView {

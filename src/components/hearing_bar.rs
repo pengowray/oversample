@@ -22,14 +22,15 @@
 // The Listen button lives in the bottom toolbar's capture group alongside
 // Record (and the Mic / New-recording bookends) — see `bottom_toolbar.rs`.
 
+use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::hfr_button::RangeButton;
 use crate::components::mode_button::ModeRadioGroup;
-use crate::components::noise_combos::NoiseButton;
-use crate::components::switch_button::{toggle_panel, SwitchButton};
+use crate::components::noise_button::NoiseButton;
+use crate::components::switch_button::SwitchButton;
 use crate::dsp::filters::BandMode;
 use crate::state::{
     AppState, BandpassMode, BandpassRange, Bar, FilterQuality, GainMode, LayerPanel, PeakSource,
@@ -85,14 +86,6 @@ pub fn PeakSourceRow() -> impl IntoView {
     }
 }
 
-fn layer_opt_class_simple(active: bool) -> &'static str {
-    if active {
-        "layer-panel-opt sel"
-    } else {
-        "layer-panel-opt"
-    }
-}
-
 /// Gain combo (migrated from the bottom toolbar). Controls the playback
 /// gain mode (Off / Manual / AutoPeak / Adaptive) plus a manual-boost dB
 /// slider that doubles as a quick override when in Auto modes.
@@ -106,11 +99,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
     // When live is active, the slider rebinds and the AGC/AutoPeak modes are
     // ignored — the user wanted a simple slider for monitoring.
     let is_live = move || state.mic.listening().get() || state.mic.recording().get();
-    let no_file = move || {
-        !is_live()
-            && state.library.current_index().get().is_none()
-            && state.timeline.active().get().is_none()
-    };
+    let no_file = move || !is_live() && state.no_recording_open();
 
     let on = Signal::derive(move || {
         if is_live() {
@@ -198,21 +187,14 @@ pub(crate) fn GainCombo() -> impl IntoView {
             menu_title="Gain settings"
             panel_style="min-width: 210px;"
         >
-            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Off)
-                on:click=move |_| {
-                    state.gain.mode().set(GainMode::Off);
-                    state.gain.auto().set(false);
-                    state.panels.layer_panel_open().set(None);
-                }
-            >"Off"</button>
-            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Manual)
+            <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::Manual)
                 on:click=move |_| {
                     state.gain.mode().set(GainMode::Manual);
                     state.gain.auto().set(false);
                     state.panels.layer_panel_open().set(None);
                 }
             >"Manual \u{2014} Slider boost only"</button>
-            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::AutoPeak)
+            <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::AutoPeak)
                 on:click=move |_| {
                     state.gain.mode().set(GainMode::AutoPeak);
                     state.gain.mode_last_auto().set(GainMode::AutoPeak);
@@ -220,7 +202,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
                     state.panels.layer_panel_open().set(None);
                 }
             >"Peak \u{2014} Normalize to peak"</button>
-            <button class=move || layer_opt_class_simple(state.gain.mode().get() == GainMode::Adaptive)
+            <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::Adaptive)
                 on:click=move |_| {
                     state.gain.mode().set(GainMode::Adaptive);
                     state.gain.mode_last_auto().set(GainMode::Adaptive);
@@ -284,9 +266,7 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
 
     let is_open =
         Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Bandpass));
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
 
     let active = Signal::derive(move || state.filter.bandpass_mode().get() != BandpassMode::Off);
 
@@ -431,14 +411,14 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
             <div class="layer-panel-title">"Bandpass"</div>
             <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
                 <Show when=move || state.viewmode.hfr_enabled().get()>
-                    <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::Auto)
+                    <button class=move || layer_opt_class(state.filter.bandpass_mode().get() == BandpassMode::Auto)
                         on:click=move |_| state.filter.bandpass_mode().set(BandpassMode::Auto)
                     >"AUTO"</button>
                 </Show>
-                <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::Off)
+                <button class=move || layer_opt_class(state.filter.bandpass_mode().get() == BandpassMode::Off)
                     on:click=move |_| state.filter.bandpass_mode().set(BandpassMode::Off)
                 >"OFF"</button>
-                <button class=move || layer_opt_class_simple(state.filter.bandpass_mode().get() == BandpassMode::On)
+                <button class=move || layer_opt_class(state.filter.bandpass_mode().get() == BandpassMode::On)
                     on:click=move |_| {
                         if !state.viewmode.focus_stack().get_untracked().hfr_enabled() {
                             state.viewmode.focus_stack().update(|s| s.set_saved_playback_mode(Some(PlaybackMode::Normal)));
@@ -454,11 +434,11 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
                     || (bp == BandpassMode::Auto && state.band_ff_range().is_some())
             }>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
-                    <button class=move || layer_opt_class_simple(state.filter.bandpass_range().get() == BandpassRange::FollowFocus)
+                    <button class=move || layer_opt_class(state.filter.bandpass_range().get() == BandpassRange::FollowFocus)
                         on:click=move |_| state.filter.bandpass_range().set(BandpassRange::FollowFocus)
                         title="Range tracks the active FF/HFR focus"
                     >"Follow"</button>
-                    <button class=move || layer_opt_class_simple(state.filter.bandpass_range().get() == BandpassRange::Locked)
+                    <button class=move || layer_opt_class(state.filter.bandpass_range().get() == BandpassRange::Locked)
                         on:click=move |_| state.filter.bandpass_range().set(BandpassRange::Locked)
                         title="Lock the range here \u{2014} won't track focus changes"
                     >"Locked"</button>
@@ -473,19 +453,19 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
                     </Show>
                 </div>
                 <div style="display: flex; gap: 2px; padding: 0 6px 2px;">
-                    <button class=move || layer_opt_class_simple(state.filter.quality().get() == FilterQuality::Fast)
+                    <button class=move || layer_opt_class(state.filter.quality().get() == FilterQuality::Fast)
                         on:click=on_quality_click(FilterQuality::Fast)
                         title="IIR band-split \u{2014} low latency, softer edges"
                     >"Fast"</button>
-                    <button class=move || layer_opt_class_simple(state.filter.quality().get() == FilterQuality::Spectral)
+                    <button class=move || layer_opt_class(state.filter.quality().get() == FilterQuality::Spectral)
                         on:click=on_quality_click(FilterQuality::Spectral)
                         title="FFT spectral EQ \u{2014} sharp edges, higher latency"
                     >"HQ"</button>
                     <span style="width: 8px;"></span>
-                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == BandMode::ThreeBand)
+                    <button class=move || layer_opt_class(state.filter.band_mode().get() == BandMode::ThreeBand)
                         on:click=on_band_click(BandMode::ThreeBand)
                     >"3"</button>
-                    <button class=move || layer_opt_class_simple(state.filter.band_mode().get() == BandMode::FourBand)
+                    <button class=move || layer_opt_class(state.filter.band_mode().get() == BandMode::FourBand)
                         on:click=on_band_click(BandMode::FourBand)
                     >"4"</button>
                 </div>
@@ -540,7 +520,7 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
     }
 }
 
-// NoiseButton lives in `noise_combos.rs`: one switch button for noise
+// NoiseButton lives in `noise_button.rs`: one switch button for noise
 // reduction and the notch filter, with the Detect / Sensitivity / Bands /
 // Learn / Strength controls in its menu.
 
@@ -551,9 +531,7 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
 #[component]
 pub(crate) fn BandHfrCell() -> impl IntoView {
     let state = expect_context::<AppState>();
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
 
     let cell_class = Signal::derive(move || {
         let on = state.viewmode.hfr_enabled().get();

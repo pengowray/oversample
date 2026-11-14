@@ -1,21 +1,8 @@
+use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::store_fields::*;
 use crate::state::{AppState, CanvasTool, LayerPanel};
 use leptos::prelude::*;
-
-fn layer_opt_class(active: bool) -> &'static str {
-    if active {
-        "layer-panel-opt sel"
-    } else {
-        "layer-panel-opt"
-    }
-}
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 #[component]
 pub fn ToolButton() -> impl IntoView {

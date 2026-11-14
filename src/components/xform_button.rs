@@ -8,13 +8,14 @@
 // spectro-like view (Spectrogram / Flow / Chromagram / Resonators): the
 // spectrogram settings stay in the Spectrogram menu and apply to both.
 
+use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::components::app::{disable_xform, enable_xform};
 use crate::components::display_filter_button::DspFilterRow;
-use crate::components::switch_button::{toggle_panel, SwitchButton};
+use crate::components::switch_button::SwitchButton;
 use crate::state::{AppState, DisplayFilterMode, GainMode, LayerPanel, PlaybackMode};
 
 #[component]
@@ -23,9 +24,7 @@ pub fn XformButton() -> impl IntoView {
 
     let is_open =
         Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Xform));
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
     // XForm only transforms the spectrogram, so it's inert on Wave / ZC views.
     let supported = move || state.viewmode.main_view().get().is_spectrogram();
     let enabled = Signal::derive(move || state.display.xform_enabled().get());

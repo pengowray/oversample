@@ -18,6 +18,7 @@
 // perspective. The Snap toggle constrains dragging to canonical stops
 // (powers of 2 / 10 for factors; multiples of 5 kHz for carriers).
 
+use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use std::cell::RefCell;
@@ -46,12 +47,6 @@ const CHROMA_FACTORS: [f64; 7] = [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
 
 /// Carrier snap step (Hz) for heterodyne mode when Snap is on.
 const HET_SNAP_STEP_HZ: f64 = 5_000.0;
-
-fn toggle_panel(state: &AppState, panel: LayerPanel) {
-    state.panels.layer_panel_open().update(|p| {
-        *p = if *p == Some(panel) { None } else { Some(panel) };
-    });
-}
 
 /// Logical style picked by the current playback mode.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,9 +295,7 @@ pub fn OutputRangeCombo() -> impl IntoView {
     let is_open = Signal::derive(move || {
         state.panels.layer_panel_open().get() == Some(LayerPanel::OutputRange)
     });
-    let no_file = move || {
-        state.library.current_index().get().is_none() && state.timeline.active().get().is_none()
-    };
+    let no_file = move || state.no_recording_open();
 
     let mode = Signal::derive(move || state.playback.mode().get());
     let anchor_ref = NodeRef::<leptos::html::Div>::new();
