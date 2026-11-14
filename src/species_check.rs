@@ -11,7 +11,8 @@
 
 use crate::bat_book::auto_resolve::{country_region, find_species, get_scientific_name};
 use crate::bat_book::types::BatSpecies;
-use crate::heterodyne::{format_khz, HeterodyneHint, HeterodyneLevel, LineRole, NoteLine};
+use crate::format_units;
+use crate::heterodyne::{HeterodyneHint, HeterodyneLevel, LineRole, NoteLine};
 use crate::state::LoadedFile;
 use crate::types::TimeExpansion;
 pub use oversample_core::species_range::RangeCase;
@@ -91,22 +92,15 @@ fn finding(
     })
 }
 
-/// A frequency in Hz as kHz, whole or with one decimal ("22.1", "12.8",
-/// "11"), followed by a no-break space and "kHz", so the unit stays on its
-/// number's line when the note wraps (as in the heterodyne note).
+/// A frequency in Hz as kHz, whole or with one decimal: "22.1 kHz",
+/// "12.8 kHz", "11 kHz".
 fn khz(hz: f64) -> String {
-    format!("{}\u{a0}kHz", format_khz(hz.round() as i64, 1))
+    format_units::khz(hz.round() as i64, 1)
 }
 
-/// A frequency range: "35–45 kHz", with an en dash as the app's other
-/// ranges have. A word joiner after the dash keeps the second number on the
-/// first one's line.
+/// A frequency range: "35–45 kHz".
 fn khz_range(lo_hz: f64, hi_hz: f64) -> String {
-    format!(
-        "{}\u{2013}\u{2060}{}",
-        format_khz(lo_hz.round() as i64, 1),
-        khz(hi_hz)
-    )
+    format_units::khz_range(lo_hz.round() as i64, hi_hz.round() as i64, 1)
 }
 
 fn detail(text: String) -> NoteLine {

@@ -756,28 +756,23 @@ fn recorder_section(
     .into_any()
 }
 
-/// A sample rate in kHz, with one decimal when the rate is not a whole number of kHz:
-/// "384 kHz", "44.1 kHz", "38.4 kHz". (`file_badges`, `suggestions` and `xc_browser`
-/// each have their own version; they differ in spacing and precision.)
-fn sample_rate_khz(hz: u32) -> String {
-    if hz.is_multiple_of(1000) {
-        format!("{} kHz", hz / 1000)
-    } else {
-        format!("{:.1} kHz", f64::from(hz) / 1000.0)
-    }
+/// The Sample rate row's value: "384 kHz", "44.1 kHz", "38.4 kHz". The row never wraps,
+/// so the space is an ordinary one, and the row's Copy button copies it as shown.
+/// (`file_badges`, `suggestions` and `xc_browser` each have their own version; they
+/// differ in spacing and precision.)
+fn sample_rate_row_value(hz: u32) -> String {
+    format!("{} kHz", crate::format_units::sample_rate_khz_value(hz))
 }
 
 /// The note under the Sample rate row of a file that was stored time-expanded (a bat
 /// detector slowed the recording down so it can be heard), whose rate and duration the
 /// app corrected when it loaded the file. `None` for a recording made in real time.
-/// A no-break space before "kHz" keeps it on its number's line when the note wraps,
-/// as in the heterodyne and species notes.
 fn time_expansion_note(meta: &crate::types::FileMetadata) -> Option<String> {
     let te = meta.time_expansion?;
     Some(format!(
         "Corrected for {} time expansion; the file says {}.",
         crate::wikimedia::format_factor(te.factor),
-        sample_rate_khz(te.stored_rate).replace(' ', "\u{a0}")
+        crate::format_units::sample_rate_khz(te.stored_rate)
     ))
 }
 
@@ -1651,7 +1646,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Name".into(), f.name.clone(), None)}
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
-                                {inline_row("Sample rate".into(), sample_rate_khz(f.audio.sample_rate), None)}
+                                {inline_row("Sample rate".into(), sample_rate_row_value(f.audio.sample_rate), None)}
                                 {time_expansion_note(meta).map(|note| view! {
                                     <div class="metadata-note">{note}</div>
                                 })}
@@ -1757,7 +1752,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
 mod tests {
     use super::{
         channel_list, date_from_filename, extract_tz_offset_minutes, file_position,
-        format_tz_offset, open_link, sample_rate_khz, time_expansion_note, FieldKind,
+        format_tz_offset, open_link, sample_rate_row_value, time_expansion_note, FieldKind,
     };
     use crate::types::{FileMetadata, TimeExpansion};
 
@@ -1804,11 +1799,11 @@ mod tests {
     }
 
     #[test]
-    fn sample_rates_keep_the_tenth_of_a_kilohertz() {
-        assert_eq!(sample_rate_khz(384_000), "384 kHz");
-        assert_eq!(sample_rate_khz(38_400), "38.4 kHz");
-        assert_eq!(sample_rate_khz(44_100), "44.1 kHz");
-        assert_eq!(sample_rate_khz(500_000), "500 kHz");
+    fn the_sample_rate_row_has_an_ordinary_space() {
+        assert_eq!(sample_rate_row_value(384_000), "384 kHz");
+        assert_eq!(sample_rate_row_value(38_400), "38.4 kHz");
+        assert_eq!(sample_rate_row_value(44_100), "44.1 kHz");
+        assert_eq!(sample_rate_row_value(500_000), "500 kHz");
     }
 
     #[test]

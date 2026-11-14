@@ -16,6 +16,7 @@
 //! frequencies, and [`axis_call_suffixes`] gives the frequency axis's hover text:
 //! the two call frequencies a sound at each label came from.
 
+use crate::format_units::{khz, khz_value};
 use crate::types::TimeExpansion;
 use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
 pub use oversample_core::heterodyne_hint::{HeterodyneHint, HeterodyneLevel, TextField};
@@ -267,16 +268,13 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
 pub fn tuned_line(tuned_hz: u32) -> String {
     let tuned = i64::from(tuned_hz);
     let example = if tuned < 20_000 { 5_000 } else { 10_000 };
-    // Two decimals, so a tuning given as "31,95 kHz" is shown as written. A
-    // no-break space before each "kHz" keeps it on the number's line when the
-    // note wraps in the narrow panel.
-    let khz = |hz: i64| format!("{}\u{a0}kHz", format_khz(hz, 2));
+    // Two decimals, so a tuning given as "31,95 kHz" is shown as written.
     format!(
         "Detector tuned to {}: a sound at {} in this file came from a call at either {} or {}.",
-        khz(tuned),
-        khz(example),
-        format_khz(tuned - example, 2),
-        khz(tuned + example),
+        khz(tuned, 2),
+        khz(example, 2),
+        khz_value(tuned - example, 2),
+        khz(tuned + example, 2),
     )
 }
 
@@ -323,7 +321,7 @@ fn call_frequencies(freq_hz: f64, tuned_hz: u32) -> String {
     // One decimal, or two when the tuning has two ("31,95 kHz"), so the
     // 10 kHz label shows the same numbers as the note's example.
     let decimals = if tuned_hz % 100 == 0 { 1 } else { 2 };
-    let khz = |hz: i64| format_khz(hz, decimals);
+    let khz = |hz: i64| khz_value(hz, decimals);
     // A value that shows as 0 kHz is left out with the negative ones.
     let step = 10_i64.pow(3 - decimals);
     let lower = ((tuned - freq) * 2 >= step).then(|| tuned - freq);
@@ -332,21 +330,6 @@ fn call_frequencies(freq_hz: f64, tuned_hz: u32) -> String {
         Some(lower) if lower != upper => format!("{} or {}", khz(lower), khz(upper)),
         _ => khz(upper),
     }
-}
-
-/// A positive frequency in Hz as kHz, rounded to at most `decimals` (1 or 2)
-/// decimal places, with no trailing zeros: 21_900 gives "21.9", 40_000 gives
-/// "40" and, with 2 decimals, 31_950 gives "31.95".
-pub(crate) fn format_khz(hz: i64, decimals: u32) -> String {
-    let step = 10_i64.pow(3 - decimals);
-    let units = (hz.max(0) + step / 2) / step;
-    let per_khz = 10_i64.pow(decimals);
-    let (whole, frac) = (units / per_khz, units % per_khz);
-    if frac == 0 {
-        return whole.to_string();
-    }
-    let frac = format!("{frac:0width$}", width = decimals as usize);
-    format!("{whole}.{}", frac.trim_end_matches('0'))
 }
 
 /// The badge tooltip: the note's lines, one per line.
@@ -557,18 +540,6 @@ mod tests {
             [" \u{2192} 12.5 or 212.5", " \u{2192} 252.5"]
         );
         assert!(axis_call_suffixes(&[], 31_900).is_empty());
-    }
-
-    #[test]
-    fn khz_formatting() {
-        assert_eq!(format_khz(21_900, 1), "21.9");
-        assert_eq!(format_khz(40_000, 1), "40");
-        assert_eq!(format_khz(1_900, 1), "1.9");
-        assert_eq!(format_khz(31_950, 1), "32");
-        assert_eq!(format_khz(31_950, 2), "31.95");
-        assert_eq!(format_khz(31_905, 2), "31.91");
-        assert_eq!(format_khz(31_050, 2), "31.05");
-        assert_eq!(format_khz(31_900, 2), "31.9");
     }
 
     #[test]
