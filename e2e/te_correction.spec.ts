@@ -528,6 +528,23 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expectRange(reopened.regions[0], scaled(made, 0.1));
   });
 
+  test("the correction lasts until the file is closed", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await page.locator(CORRECT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await expect(page.locator(TE_NOTE)).toContainText("until the file is closed");
+    await page.locator(".file-item-close").first().click();
+    await expect(page.locator(".file-item")).toHaveCount(0);
+    // Opened again from Today's bats: at the file's own rate, with the button.
+    await page.getByText("Test bat", { exact: true }).first().click();
+    await expect(page.locator(".file-item")).toHaveCount(1, { timeout: 30_000 });
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect(page.locator(`${SPECIES_NOTE} ${CORRECT}`)).toBeVisible();
+    await expect(page.locator(TE_NOTE)).toHaveCount(0);
+  });
+
   test(".batm files exported and imported while corrected use the file's seconds and Hz", async ({
     page,
   }) => {
