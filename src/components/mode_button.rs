@@ -254,9 +254,12 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
                 let lowest = state.lowest_bat_hz_untracked() as f64;
                 // Writing the focus stack runs this effect again. An empty band
                 // would leave the effective range inactive, so the effect would
-                // write it again forever: choosing HET hung the page for a
-                // 44.1 kHz file of a species that calls at 35-80 kHz.
-                // `hfr_default` gives a band that fits the file, or none.
+                // write it again forever and the page would stop responding.
+                // The old default was empty whenever its low edge was at or
+                // above the file's Nyquist frequency: a 44.1 kHz file of a
+                // species that calls at 35-80 kHz, or a 192 kHz file of one
+                // that calls at 105-115 kHz. `hfr_default` gives a band that
+                // fits the file, or none.
                 if let Some(range) =
                     crate::focus_stack::FocusRange::hfr_default(species_range, lowest, nyquist)
                 {

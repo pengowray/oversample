@@ -406,12 +406,10 @@ test.describe("frequency axis of a heterodyne recording", () => {
   });
 
   test("in HET playback the labels show what you hear instead", async ({ page }) => {
-    // 96 kHz: switching to HET hangs the page for a 44.1 or 48 kHz file of
-    // this generated tone, on main too.
     await page.addInitScript(recordCanvasText);
     await openCase(page, {
       fields: { rmk: "handheld hetrodyne detector set at 31,9 kHz" },
-      rate: 96_000,
+      rate: 44_100,
     });
     await page.locator('button[title^="HET"]').first().click();
     await hoverZoomedFreqAxis(page);
