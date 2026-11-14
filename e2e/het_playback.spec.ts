@@ -1,20 +1,18 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * HET playback of files whose highest frequency (half the sample rate) is
- * below the usual bat range.
+ * HET playback of files whose Nyquist frequency (half the sample rate) is
+ * below the usual bat range: 44.1 and 48 kHz files of Myotis fimbriatus,
+ * which calls at 35-80 kHz, and a 16 kHz file with no species, whose 8 kHz
+ * Nyquist is below the 16 kHz lowest bat frequency.
  *
- * Choosing HET turns on high-frequency mode (HFR), which picks a default band:
- * the file species' call range, or the lowest bat frequency (16 kHz) up to the
- * file's highest frequency. Before the fix, a band that lay wholly above the
- * file's highest frequency came out empty, and the effect that sets the
- * default band ran again on its own change forever, so the page stopped
- * responding. Myotis fimbriatus calls at 35-80 kHz, above 44.1 and 48 kHz
- * files; a 16 kHz file is below the lowest bat frequency even with no species.
- *
- * Each test opens one demo recording with a generated mono 4 kHz tone at the
- * case's sample rate, chooses HET, checks the page still answers and the band
- * fits the file, then presses Play and checks the app schedules finite audio.
+ * Choosing HET turns on high-frequency reception (HFR), which sets a default
+ * band from the file's species or the lowest bat frequency
+ * (FocusRange::hfr_default, used in mode_button.rs). An empty default band
+ * made the page stop responding, so each test checks the page still answers
+ * and the band fits the file, then presses Play and checks the app schedules
+ * finite audio. Each test opens one demo recording with a generated mono
+ * 4 kHz tone at the case's sample rate.
  */
 
 test.use({
