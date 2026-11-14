@@ -544,6 +544,41 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     for (const r of (await snap(page)).regions) expectRange(r, corrected);
   });
 
+  test("Annota-JSON imported while corrected lands on the file's seconds and Hz", async ({
+    page,
+  }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await page.locator(TREAT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    const file = test.info().outputPath("annota.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        set_name: "Test set",
+        annotations: [
+          {
+            xc_nr: "815138",
+            scientific_name: "Eptesicus nilssonii",
+            start_time: 10,
+            end_time: 12,
+            frequency_low: 3000,
+            frequency_high: 5000,
+          },
+        ],
+      }),
+    );
+    await openAnnotationFiles(page);
+    await importAnnotations(page, file);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(1);
+    expectRange((await snap(page)).regions[0], {
+      timeStart: 1,
+      timeEnd: 1.2,
+      freqLow: 30_000,
+      freqHigh: 50_000,
+    });
+  });
+
 });
 
 test.describe("no x10 button on other files", () => {

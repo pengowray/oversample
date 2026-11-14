@@ -1231,6 +1231,8 @@ fn import_annota_json(state: AppState, text: &str) {
         metadata.as_deref(),
     );
     let set_nr = set.annotations.iter().find_map(|a| a.xc_nr.clone());
+    // Annota-JSON is in the file's own seconds and Hz, as Xeno-canto holds it.
+    let set = crate::te_correction::annota_from_file_units_at(state, file_idx, set);
 
     let existing: Vec<crate::annotations::Annotation> =
         state.annotations.store().with_untracked(|store| {

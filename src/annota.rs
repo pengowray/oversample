@@ -540,20 +540,14 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
     };
     // Xeno-canto's times and frequencies are in the file's own seconds and
     // Hz; convert them if the user corrected the file's time expansion.
-    let to_current_rate = state.library.files().with_untracked(|files| {
-        files.get(file_idx).and_then(|f| {
-            crate::te_correction::user_factor(&f.audio).map(|_| {
-                crate::te_correction::RateChange::new(f.audio.stored_rate(), f.audio.sample_rate)
-            })
-        })
-    });
+    let set = crate::te_correction::annota_from_file_units_at(state, file_idx, set);
     let existing: Vec<Annotation> = state.annotations.store().with_untracked(|store| {
         store
             .get(file_id)
             .map(|s| s.annotations.clone())
             .unwrap_or_default()
     });
-    let mut out = import_set(
+    let out = import_set(
         &set,
         &existing,
         AnnotationId::new,
@@ -561,11 +555,6 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
     );
     if out.added.is_empty() {
         return;
-    }
-    if let Some(rc) = to_current_rate {
-        for ann in &mut out.added {
-            rc.annotation_kind(&mut ann.kind);
-        }
     }
     let n = out.regions_added();
     state.annotations.store().update(|store| {

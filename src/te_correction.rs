@@ -19,7 +19,8 @@
 //! file's own seconds and Hz: [`to_file_units`] converts a set before it is
 //! saved or exported (autosave, sidecars, "Export .batm", project files),
 //! and [`from_file_units`] converts one that is loaded or imported while the
-//! correction is on.
+//! correction is on. Annota-JSON from Xeno-canto, or imported by the user,
+//! is converted the same way ([`annota_from_file_units_at`]).
 
 use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
@@ -27,6 +28,7 @@ use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
 use crate::state::{AppState, FileSettings, Selection, UndoStack};
 use crate::types::{AudioData, TimeExpansionOrigin};
+use oversample_ipc::annota::AnnotaSet;
 
 /// The factor the species note's button applies.
 pub const TENFOLD: f64 = 10.0;
@@ -153,6 +155,16 @@ impl RateChange {
         }
     }
 
+    /// The times and frequencies of an Annota-JSON set (Xeno-canto's format).
+    pub fn annota_set(self, set: &mut AnnotaSet) {
+        for ann in &mut set.annotations {
+            ann.start_time = ann.start_time.map(|t| self.time(t));
+            ann.end_time = ann.end_time.map(|t| self.time(t));
+            ann.frequency_low = self.freq_opt(ann.frequency_low);
+            ann.frequency_high = self.freq_opt(ann.frequency_high);
+        }
+    }
+
     /// The annotation sets that undo and redo would restore for `file_id`.
     pub fn undo_stack(self, stack: &mut UndoStack, file_id: u64) {
         for entry in stack.undo.iter_mut().chain(stack.redo.iter_mut()) {
@@ -260,6 +272,21 @@ pub fn from_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) 
             Some(f) => from_file_units(&f.audio, set),
             None => set,
         })
+}
+
+/// An Annota-JSON set (from Xeno-canto, or a file the user imported), in the
+/// file's own seconds and Hz, converted to the rate file `file_idx` is read
+/// at now. Xeno-canto holds the file as it was uploaded, so its times and
+/// frequencies are in the file's own units. Untracked.
+pub fn annota_from_file_units_at(
+    state: AppState,
+    file_idx: usize,
+    mut set: AnnotaSet,
+) -> AnnotaSet {
+    if let Some(rc) = to_file_rate_at(state, file_idx) {
+        rc.inverse().annota_set(&mut set);
+    }
+    set
 }
 
 /// Read file `file_id` at `factor` times the rate it states, or at that rate
@@ -863,6 +890,28 @@ mod tests {
             file_units(Some(metadata(25_600, 1.0))),
         ));
         assert_eq!(t, 0.5);
+    }
+
+    #[test]
+    fn annota_json_times_and_frequencies_are_converted() {
+        let mut set: AnnotaSet = serde_json::from_str(
+            r#"{"set_name": "s", "annotations": [
+                {"start_time": 10.0, "end_time": 12.0,
+                 "frequency_low": 3000, "frequency_high": 5000},
+                {"start_time": 1.0}
+            ]}"#,
+        )
+        .unwrap();
+        TENFOLD_UP.annota_set(&mut set);
+        let a = &set.annotations[0];
+        assert!(close(a.start_time.unwrap(), 1.0) && close(a.end_time.unwrap(), 1.2));
+        assert_eq!(
+            (a.frequency_low, a.frequency_high),
+            (Some(30_000.0), Some(50_000.0))
+        );
+        let b = &set.annotations[1];
+        assert!(close(b.start_time.unwrap(), 0.1));
+        assert_eq!((b.end_time, b.frequency_low), (None, None));
     }
 
     #[test]
