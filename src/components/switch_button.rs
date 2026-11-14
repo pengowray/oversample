@@ -14,6 +14,10 @@
 //
 // The control has a fixed width, and the bottom row keeps showing the setting
 // (dimmed) while the control is off, so turning it on or off moves nothing.
+//
+// A control with no settings (Denoised, which only switches between a
+// recording and its denoised copy) leaves out the menu. Its bottom row then
+// has no caret and pressing it works the switch, like the top row.
 
 use crate::state::store_fields::*;
 use leptos::prelude::*;
@@ -33,11 +37,13 @@ pub fn SwitchButton(
     /// The setting in use, shown on the bottom row (e.g. "Peak +12 dB").
     #[prop(into)]
     value: Signal<String>,
-    /// Whether the settings menu is open.
-    #[prop(into)]
-    is_open: Signal<bool>,
-    /// Called when the bottom row is pressed.
-    toggle_menu: Callback<()>,
+    /// Whether the settings menu is open. Leave out for a control with no menu.
+    #[prop(optional, into)]
+    is_open: Option<Signal<bool>>,
+    /// Called when the bottom row is pressed. Leave out for a control with no
+    /// menu: pressing the bottom row then works the switch.
+    #[prop(optional)]
+    toggle_menu: Option<Callback<()>>,
     /// Greys out the whole control and ignores presses (no file loaded).
     #[prop(into)]
     disabled: Signal<bool>,
@@ -49,7 +55,9 @@ pub fn SwitchButton(
     width: &'static str,
     /// Tooltip for the top row.
     switch_title: &'static str,
-    /// Tooltip for the bottom row.
+    /// Tooltip for the bottom row. Without a menu the bottom row shows
+    /// `switch_title`.
+    #[prop(default = "")]
     menu_title: &'static str,
     /// "left" or "right": the edge of the control the menu lines up with.
     #[prop(default = "left")]
@@ -58,9 +66,12 @@ pub fn SwitchButton(
     #[prop(default = "")]
     panel_style: &'static str,
     /// Menu content. `ChildrenFn` because the menu is unmounted when closed.
-    children: ChildrenFn,
+    #[prop(optional)]
+    children: Option<ChildrenFn>,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
+    let has_menu = toggle_menu.is_some();
+    let is_open = is_open.unwrap_or_else(|| Signal::derive(|| false));
     let locked = move || switch_locked.is_some_and(|s| s.get());
     let row_ref = NodeRef::<leptos::html::Div>::new();
     let preferred_align = if panel_align == "right" {
@@ -99,33 +110,44 @@ pub fn SwitchButton(
                 <span class="switch-btn-name">{name}</span>
                 <span class="switch-mark"></span>
             </button>
+            // Without a menu this row repeats the switch for the mouse, so it
+            // is left out of the tab order and the accessibility tree.
             <button
                 class="switch-btn-value"
-                aria-expanded=move || is_open.get().to_string()
-                title=menu_title
+                aria-expanded=move || has_menu.then(|| is_open.get().to_string())
+                aria-hidden=(!has_menu).then_some("true")
+                tabindex=(!has_menu).then_some("-1")
+                title=if has_menu { menu_title } else { switch_title }
                 on:click=move |_: web_sys::MouseEvent| {
-                    if !disabled.get_untracked() {
-                        toggle_menu.run(());
+                    if disabled.get_untracked() {
+                        return;
+                    }
+                    match toggle_menu {
+                        Some(toggle_menu) => toggle_menu.run(()),
+                        None if !locked() => toggle.run(()),
+                        None => {}
                     }
                 }
             >
                 <span class="switch-btn-value-text fit-text" data-fit-max="11" data-fit-min="8">
                     {move || value.get()}
                 </span>
-                <span class="switch-btn-caret">{"\u{25BE}"}</span>
+                {has_menu.then(|| view! { <span class="switch-btn-caret">{"\u{25BE}"}</span> })}
             </button>
 
             // Portalled under <body> and placed against the viewport, so a
             // scrolling bar cannot clip the menu (see popup.rs).
-            <PopupPanel
-                is_open=is_open
-                anchor=row_ref
-                preferred_side=Side::Below
-                preferred_align=preferred_align
-                extra_style=panel_style
-            >
-                {children()}
-            </PopupPanel>
+            {children.map(|children| view! {
+                <PopupPanel
+                    is_open=is_open
+                    anchor=row_ref
+                    preferred_side=Side::Below
+                    preferred_align=preferred_align
+                    extra_style=panel_style
+                >
+                    {children()}
+                </PopupPanel>
+            })}
         </div>
     }
 }

@@ -320,6 +320,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         let preview = f.preview.clone();
                         let is_rec = f.is_recording;
                         let gi = &group_infos[i];
+                        // A denoised copy whose original is loaded is listed
+                        // under the original, indented.
+                        let is_denoised_copy = gi.denoise.original.is_some();
                         let track_badge = gi.track.clone();
                         let seq_badge = gi.sequence.clone();
                         let is_streaming = streaming_source::is_streaming(f.audio.source.as_ref());
@@ -468,11 +471,13 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             })
                         };
                         let show_unsaved = is_rec && !is_tauri;
+                        let name_title = name.clone();
                         let has_download = is_rec && !is_tauri;
                         let file_view = view! {
                             <div
                                 class=move || {
                                     let mut cls = "file-item".to_string();
+                                    if is_denoised_copy { cls.push_str(" denoised-copy"); }
                                     if is_active() { cls.push_str(" active"); }
                                     if is_selected() { cls.push_str(" selected"); }
                                     cls
@@ -488,7 +493,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     }
                 })}
                                 <div class="file-item-header">
-                                    <div class="file-item-name">
+                                    // The tooltip holds the full name: a long name is
+                                    // cut off before its " (denoised)" ending.
+                                    <div class="file-item-name" title=name_title>
                                         {if is_tauri {
                                             Some(view! {
                                                 <span
@@ -1014,5 +1021,6 @@ fn compute_sorted_indices(
             });
         }
     }
-    indices
+    // In every sort mode a denoised copy sits directly under its original.
+    file_groups::place_copies_after_originals(&indices, groups)
 }

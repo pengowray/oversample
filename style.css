@@ -2426,6 +2426,13 @@ a.open-link-btn {
     background: #222;
 }
 
+/* A denoised copy, listed directly under the recording it was made from
+   (file_groups.rs: place_copies_after_originals). The indent shows that the
+   two belong together. */
+.file-item.denoised-copy {
+    padding-left: 32px;
+}
+
 .file-item.active {
     background: #1a3a5a;
     color: #fff;

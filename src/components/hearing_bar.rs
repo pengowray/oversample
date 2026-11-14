@@ -4,7 +4,7 @@
 // Layout:
 //
 //   ┌─── band-affected overline ─────────────────────────────────┐ │
-//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [Noise]
+//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [Noise] [Denoised]
 //   └────────────────────────────────────────────────────────────┘ │
 //        ^band-cell HFR toggle (above the band gutter)
 //
@@ -520,6 +520,51 @@ pub(crate) fn BandpassCombo() -> impl IntoView {
     }
 }
 
+/// Switches between a recording and its denoised copy. Shown only while the
+/// open file has the other file of the pair loaded (and no timeline is open).
+/// The pair shares the view, gain, focus selections and playhead
+/// (`scope.rs`), so pressing it changes only the audio, also during playback.
+#[component]
+pub(crate) fn DenoisedSwitch() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    // (index of the partner, whether the open file is the copy)
+    let pair = Memo::new(move |_| {
+        if state.timeline.active().with(|t| t.is_some()) {
+            return None;
+        }
+        let partner = state.denoise_partner()?;
+        let idx = state.library.current_index().get()?;
+        let on_copy = state.library.files().with(|files| {
+            files.get(idx).is_some_and(|f| {
+                crate::components::file_sidebar::file_groups::denoised_original_stem(&f.name)
+                    .is_some()
+            })
+        });
+        Some((partner, on_copy))
+    });
+    let on = Signal::derive(move || pair.get().is_some_and(|(_, on_copy)| on_copy));
+    let value = Signal::derive(move || {
+        if on.get() {
+            "Denoised copy".to_string()
+        } else {
+            "Original".to_string()
+        }
+    });
+    view! {
+        <Show when=move || pair.get().is_some()>
+            <SwitchButton
+                name="Denoised"
+                on=on
+                toggle=Callback::new(move |()| state.flip_denoise_pair())
+                value=value
+                disabled=Signal::derive(|| false)
+                width="96px"
+                switch_title="Toggle between the original and the denoised copy (D)"
+            />
+        </Show>
+    }
+}
+
 // NoiseButton lives in `noise_button.rs`: one switch button for noise
 // reduction and the notch filter, with the Detect / Sensitivity / Bands /
 // Learn / Strength controls in its menu.
@@ -631,6 +676,7 @@ pub fn HearingBar() -> impl IntoView {
                 <div class="bar-controls">
                     <GainCombo/>
                     <NoiseButton/>
+                    <DenoisedSwitch/>
                 </div>
                 <crate::components::hear_sheet::HearSheet/>
             </div>
@@ -670,6 +716,7 @@ pub fn HearingBar() -> impl IntoView {
             <div class="bar-controls">
                 <GainCombo/>
                 <NoiseButton/>
+                    <DenoisedSwitch/>
             </div>
         </div>
         }
