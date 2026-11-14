@@ -187,7 +187,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
             files.push(new_file);
         });
         // A denoised copy (or its original) opens on its partner's view.
-        state.adopt_denoise_pair_settings(idx);
+        state.adopt_shared_settings(idx);
         // Set current_index OUTSIDE the files().update() closure — they are
         // siblings in the `library` store; an inner set can't acquire the write
         // guard (files() holds it) and silently no-ops in reactive_stores.

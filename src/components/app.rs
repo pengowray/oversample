@@ -518,7 +518,15 @@ pub fn App() -> impl IntoView {
             state.library.files().with_untracked(|files| {
                 files
                     .get(i)
-                    .map(|f| (f.min_display_freq, f.max_display_freq))
+                    .map(|f| {
+                        // A range shared from a file with a higher sample rate
+                        // can lie wholly above this file's top frequency, which
+                        // would draw nothing. Show the full range instead.
+                        match f.min_display_freq {
+                            Some(lo) if lo >= f.spectrogram.max_freq => (None, None),
+                            _ => (f.min_display_freq, f.max_display_freq),
+                        }
+                    })
                     .unwrap_or((None, None))
             })
         } else {

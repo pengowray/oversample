@@ -3225,62 +3225,76 @@ impl AppState {
         }
     }
 
-    /// Give a file that was just added to the list (at `idx`) the settings
-    /// its original + denoised copy pair shares, taken from the other file of
-    /// the pair, so the new file opens on the same view. Call it before the
-    /// new file becomes the open file. Does nothing when the file has no
-    /// loaded partner.
+    /// Give a file that was just added to the list (at `idx`) the settings it
+    /// shares with files already loaded: its denoised pair, the other channels
+    /// of its recording, and its sequence, each for the settings `scope.rs`
+    /// lists. Call it before the new file becomes the open file. Does nothing
+    /// for a file with no loaded relative.
     ///
-    /// If the partner is the open file, its scroll, gain and focus are still
-    /// in the live signals; the file-switch Effect writes those to the pair
+    /// Without this the new file holds defaults, and the file-switch Effect
+    /// copies them over its relatives' values when the user leaves it.
+    ///
+    /// If a relative is the open file, its scroll, gain and focus are still in
+    /// the live signals; the file-switch Effect writes those to its relatives
     /// when the new file opens. The vertical range is only stored when it
     /// changes, so it must be copied here.
-    pub fn adopt_denoise_pair_settings(&self, idx: usize) {
-        use crate::scope::{Relationship, Setting};
+    pub fn adopt_shared_settings(&self, idx: usize) {
+        use crate::scope::Setting;
         let groups = self.file_groups_untracked();
-        let Some(from) =
-            crate::components::file_sidebar::file_groups::denoise_partner(&groups, idx)
-        else {
-            return;
+        // For each setting, a loaded file that shares it with the new one.
+        let source = |s: Setting| {
+            crate::scope::share_members(s, &groups, idx)
+                .into_iter()
+                .find(|&m| m != idx)
         };
-        let pair_shares = |s: Setting| s.policy().1.contains(&Relationship::DenoisedPair);
+        let range_from = source(Setting::VerticalRange);
+        let gain_from = source(Setting::Gain);
+        let noise_from = source(Setting::NoiseFilters);
+        let scroll_from = source(Setting::HorizontalScroll);
+        let focus_from = source(Setting::FocusSelections);
         let mut ids = None;
         self.library.files().update(|files| {
-            let Some((src_id, src_min, src_max, src_settings)) = files.get(from).map(|s| {
-                (
-                    s.id,
-                    s.min_display_freq,
-                    s.max_display_freq,
-                    s.settings.clone(),
-                )
-            }) else {
-                return;
-            };
+            let range = range_from
+                .and_then(|m| files.get(m))
+                .map(|s| (s.min_display_freq, s.max_display_freq));
+            let gain = gain_from
+                .and_then(|m| files.get(m))
+                .map(|s| s.settings.clone());
+            let noise = noise_from
+                .and_then(|m| files.get(m))
+                .map(|s| s.settings.clone());
+            let id_of = |m: Option<usize>| m.and_then(|m| files.get(m)).map(|s| s.id);
+            let (scroll_id, focus_id) = (id_of(scroll_from), id_of(focus_from));
             let Some(f) = files.get_mut(idx) else {
                 return;
             };
-            if pair_shares(Setting::VerticalRange) {
-                f.min_display_freq = src_min;
-                f.max_display_freq = src_max;
+            if let Some((min, max)) = range {
+                f.min_display_freq = min;
+                f.max_display_freq = max;
             }
-            if pair_shares(Setting::Gain) {
-                f.settings.set_gain_from(&src_settings);
+            if let Some(src) = gain {
+                f.settings.set_gain_from(&src);
             }
-            ids = Some((src_id, f.id));
+            if let Some(src) = noise {
+                f.settings.set_noise_filters_from(&src);
+            }
+            ids = Some((f.id, scroll_id, focus_id));
         });
         // Outside the `files` update: `per_file_view` is a sibling field of
         // the same store.
-        if let Some((from_id, to_id)) = ids {
+        if let Some((to_id, scroll_id, focus_id)) = ids {
             self.library.per_file_view().update(|m| {
-                let Some(src) = m.get(&from_id).cloned() else {
+                let view = scroll_id.and_then(|id| m.get(&id)).map(|v| v.view.clone());
+                let focus = focus_id.and_then(|id| m.get(&id)).map(|v| v.focus.clone());
+                if view.is_none() && focus.is_none() {
                     return;
-                };
-                let entry = m.entry(to_id).or_default();
-                if pair_shares(Setting::HorizontalScroll) {
-                    entry.view = src.view;
                 }
-                if pair_shares(Setting::FocusSelections) {
-                    entry.focus = src.focus;
+                let entry = m.entry(to_id).or_default();
+                if let Some(view) = view {
+                    entry.view = view;
+                }
+                if let Some(focus) = focus {
+                    entry.focus = focus;
                 }
             });
         }

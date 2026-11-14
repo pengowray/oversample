@@ -99,14 +99,25 @@ pub fn compute_denoise_links(names: &[String]) -> Vec<DenoiseLinks> {
 /// - `260305_0058_1-2.wav` → group_key="260305_0058", label="1-2"
 /// - `recording_Ch1.flac` → group_key="recording", label="Ch1"
 /// - `260227_0055_3 my recording.wav` → group_key="260227_0055", label="3"
-/// - `site_004.wav` → group_key="site", label="004"
+/// - `260227_0056_3 my_recording.wav` → group_key="260227_0056", label="3"
 /// - `260305_0057_MIX.wav` → group_key="260305_0057", label="MIX"
+///
+/// A bare number is a channel only when it has 1 or 2 digits and follows a
+/// take number (`260401_0010_1`). Otherwise it is a sequence number
+/// (`260212_0041`, `site_004`) or a date (`survey_20260305`), and the file is
+/// not a channel of anything.
 pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
-    // Strip extension
-    let stem = filename
-        .rsplit_once('.')
-        .map(|(s, _)| s)
-        .unwrap_or(filename);
+    let stem = file_stem(filename);
+    // A renamed file has text after a space ("..._3 my_recording"). If that
+    // text holds an underscore the whole stem does not parse, so try the part
+    // before the first space as well.
+    parse_track_in(stem).or_else(|| {
+        stem.split_once(' ')
+            .and_then(|(head, _)| parse_track_in(head))
+    })
+}
+
+fn parse_track_in(stem: &str) -> Option<TrackInfo> {
 
     // Find last underscore — everything after it is the candidate segment
     let (prefix, segment) = stem.rsplit_once('_')?;
@@ -156,8 +167,11 @@ pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
         });
     }
 
-    // Pattern 4: bare number like "3", "004"
-    if track_part.chars().all(|c| c.is_ascii_digit()) {
+    // Pattern 4: a bare channel number like "3", after a take number.
+    let after_take = prefix
+        .rsplit_once('_')
+        .is_some_and(|(_, take)| !take.is_empty() && take.chars().all(|c| c.is_ascii_digit()));
+    if after_take && track_part.len() <= 2 && track_part.chars().all(|c| c.is_ascii_digit()) {
         return Some(TrackInfo {
             group_key: prefix.to_string(),
             label: track_part.to_string(),
@@ -206,9 +220,10 @@ pub fn compute_file_groups(names: &[String]) -> Vec<Option<TrackInfo>> {
 /// - `260212_0041` → Some(("260212", 41))
 /// - `site_004`    → Some(("site", 4))
 /// - `recording`   → None
+/// - `survey_20260305` → None (8 digits or more is a date, not a number in a series)
 fn parse_sequence_stem(stem: &str) -> Option<(String, u32)> {
     let (prefix, num_str) = stem.rsplit_once('_')?;
-    if prefix.is_empty() || num_str.is_empty() {
+    if prefix.is_empty() || num_str.is_empty() || num_str.len() >= 8 {
         return None;
     }
     // The number part must be all digits
@@ -248,6 +263,18 @@ fn sequence_stem(filename: &str) -> String {
 /// 5. Compute gaps between consecutive files using recording timestamps
 pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGroupInfo> {
     let tracks = compute_file_groups(names);
+    // The channel each name gives, whether or not its other channels are
+    // loaded. The sequence key uses this one: with the loaded-group label, a
+    // take whose other channel is missing would fall out of its sequence.
+    let channel_labels: Vec<String> = names
+        .iter()
+        .map(|n| {
+            if denoised_original_stem(n).is_some() {
+                return String::new();
+            }
+            parse_track_suffix(n).map(|t| t.label).unwrap_or_default()
+        })
+        .collect();
 
     // Parse sequence stems for each file
     // A denoised copy is never part of a sequence. If it were, it would get
@@ -267,10 +294,7 @@ pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGro
     let mut seq_groups: HashMap<(String, String), Vec<(usize, u32)>> = HashMap::new();
     for (i, sp) in seq_parses.iter().enumerate() {
         if let Some((prefix, num)) = sp {
-            let track_label = tracks[i]
-                .as_ref()
-                .map(|ti| ti.label.clone())
-                .unwrap_or_default();
+            let track_label = channel_labels[i].clone();
             seq_groups
                 .entry((prefix.clone(), track_label))
                 .or_default()
@@ -437,6 +461,71 @@ fn compute_gap(files: &[LoadedFile], prev_idx: usize, next_idx: usize) -> Option
 #[cfg(test)]
 mod scope_tests {
     use super::*;
+
+    fn groups_of(names: &[&str]) -> Vec<FileGroupInfo> {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        compute_all_groups(&names, &[])
+    }
+
+    #[test]
+    fn a_plain_numbered_series_is_a_sequence_not_channels() {
+        for names in [
+            ["260212_0041.wav", "260212_0042.wav", "260212_0043.wav"],
+            ["site_004.wav", "site_005.wav", "site_006.wav"],
+        ] {
+            let groups = groups_of(&names);
+            assert!(groups.iter().all(|g| g.track.is_none()), "{names:?}");
+            assert_eq!(multitrack_members(&groups, 0), vec![0]);
+            assert_eq!(sequential_members(&groups, 0), vec![0, 1, 2]);
+        }
+        let groups = groups_of(&["260212_0041.wav", "260212_0042.wav"]);
+        assert_eq!(groups[1].sequence.as_ref().unwrap().sequence_number, 42);
+    }
+
+    #[test]
+    fn names_ending_in_a_date_form_no_group() {
+        let groups = groups_of(&["survey_20260305.wav", "survey_20260306.wav"]);
+        assert!(groups
+            .iter()
+            .all(|g| g.track.is_none() && g.sequence.is_none()));
+    }
+
+    #[test]
+    fn channels_of_one_recording_are_a_multitrack_group() {
+        let groups = groups_of(&[
+            "260305_0058_1-2.wav",
+            "260305_0058_3.wav",
+            "260305_0058_MIX.wav",
+            "rec_Ch1.flac",
+            "rec_Ch2.flac",
+        ]);
+        assert_eq!(multitrack_members(&groups, 1), vec![0, 1, 2]);
+        assert_eq!(multitrack_members(&groups, 3), vec![3, 4]);
+        assert_eq!(groups[1].track.as_ref().unwrap().label, "3");
+    }
+
+    #[test]
+    fn a_take_with_one_channel_missing_stays_in_its_sequence() {
+        // Take 0011 has only channel 1 loaded.
+        let groups = groups_of(&[
+            "260401_0010_1.wav",
+            "260401_0010_2.wav",
+            "260401_0011_1.wav",
+            "260401_0012_1.wav",
+            "260401_0012_2.wav",
+        ]);
+        assert!(groups[2].track.is_none());
+        assert_eq!(sequential_members(&groups, 2), vec![0, 2, 3]);
+        assert_eq!(sequential_members(&groups, 1), vec![1, 4]);
+        assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_channel_when_the_added_text_has_an_underscore() {
+        let groups = groups_of(&["260227_0056_1-2.wav", "260227_0056_3 my_recording.wav"]);
+        assert_eq!(multitrack_members(&groups, 1), vec![0, 1]);
+        assert_eq!(groups[1].track.as_ref().unwrap().label, "3");
+    }
 
     fn ti(key: &str, label: &str) -> Option<TrackInfo> {
         Some(TrackInfo {
