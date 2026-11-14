@@ -345,11 +345,11 @@ impl AudioData {
 
     /// Whether [`AudioData::set_time_expansion`] can change this file's rate:
     /// its source can be read at another rate
-    /// ([`AudioSource::with_sample_rate`]: samples in memory, or a streamed
+    /// ([`AudioSource::can_change_rate`]: samples in memory, or a streamed
     /// WAV file), and it is not a zero-crossing (`.zc`) file, whose duration
     /// does not come from its sample count.
     pub fn can_set_time_expansion(&self) -> bool {
-        self.metadata.zc_data.is_none() && self.source.with_sample_rate(self.sample_rate).is_some()
+        self.metadata.zc_data.is_none() && self.source.can_change_rate()
     }
 
     /// Read the file at `factor` times the rate it states, or at that rate
@@ -840,6 +840,8 @@ mod tests {
         // Removed and then set again with the factor and origin it was
         // loaded with, the file is as it was loaded.
         let mut loaded = dummy_audio(38_400);
+        assert!(loaded.source.can_change_rate());
+        assert!(loaded.can_set_time_expansion());
         assert!(loaded.apply_time_expansion(10.0, FILE));
         let opened = loaded.metadata.time_expansion.unwrap();
         assert_eq!(opened.corrected_rate(), loaded.sample_rate);
@@ -900,6 +902,8 @@ mod tests {
             sample_rate: 25_600,
             channels: 1,
         }));
+        assert!(!audio.source.can_change_rate());
+        assert!(audio.source.with_sample_rate(256_000).is_none());
         assert!(!audio.can_set_time_expansion());
         assert!(!audio.set_time_expansion(Some(10.0), USER));
         assert_eq!(audio.sample_rate, 25_600);
@@ -922,6 +926,7 @@ mod tests {
             off_mask: Vec::new(),
             metadata: Default::default(),
         }));
+        assert!(audio.source.can_change_rate());
         assert!(!audio.can_set_time_expansion());
         assert!(!audio.set_time_expansion(Some(10.0), USER));
         assert_eq!(audio.sample_rate, 25_600);

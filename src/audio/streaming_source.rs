@@ -566,6 +566,10 @@ impl AudioSource for StreamingWavSource {
         }))
     }
 
+    fn can_change_rate(&self) -> bool {
+        true
+    }
+
     fn channel_count(&self) -> u32 {
         self.info.channels
     }
