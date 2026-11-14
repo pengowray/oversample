@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
@@ -215,6 +216,72 @@ async function select(page: Page, t0: number, t1: number, y0: number, y1: number
   await page.mouse.down();
   await page.mouse.move(x(t1), box.y + box.height * y1, { steps: 5 });
   await page.mouse.up();
+}
+
+/** Draws a region annotation over the given fractions of the view (as in
+ * `select`) and waits for it. */
+async function annotate(page: Page, t0: number, t1: number, y0: number, y1: number) {
+  const n = (await snap(page)).regions.length;
+  await page.locator(".tool-combo-btn").click();
+  await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+  await select(page, t0, t1, y0, y1);
+  await page.locator(".canvas-overflow-btn").click();
+  await page.locator(".canvas-overflow-menu button", { hasText: "Annotate" }).click();
+  await expect.poll(async () => (await snap(page)).regions.length).toBe(n + 1);
+}
+
+/** Opens a right-sidebar tab by its name in the tab menu. */
+async function openTab(page: Page, name: string) {
+  await page.locator(".right-sidebar .sidebar-tab-dropdown").click();
+  await page.locator(".sidebar-tab-option", { hasText: new RegExp(`^${name}$`) }).first().click();
+}
+
+/** Opens the Annotations tab with its "Annotation files" section expanded. */
+async function openAnnotationFiles(page: Page) {
+  await openTab(page, "Annotations");
+  const header = page.locator(".export-section-header", { hasText: "Annotation files" });
+  await expect(header).toBeVisible();
+  const body = page.locator(".export-section-body");
+  if (!(await body.evaluate((b) => b.classList.contains("open")))) await header.click();
+}
+
+/** Presses "Export .batm" and returns the downloaded file's path and text. */
+async function exportBatm(page: Page, name: string) {
+  const [dl] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator(".export-section-body button", { hasText: "Export .batm" }).click(),
+  ]);
+  const file = test.info().outputPath(name);
+  await dl.saveAs(file);
+  return { file, text: fs.readFileSync(file, "utf8") };
+}
+
+/** Imports an annotation file with "Import .batm/.json". */
+async function importAnnotations(page: Page, file: string) {
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    page.locator(".export-section-body button", { hasText: "Import .batm/.json" }).click(),
+  ]);
+  await chooser.setFiles(file);
+}
+
+/** The rate, duration and first region of a .batm file. */
+function batmFields(text: string) {
+  const num = (key: string) => {
+    const m = text.match(new RegExp(`^\\s*${key}: ([-0-9.e]+)$`, "m"));
+    expect(m, key).toBeTruthy();
+    return Number(m![1]);
+  };
+  return {
+    sampleRate: num("sample_rate"),
+    duration: num("duration_secs"),
+    region: {
+      timeStart: num("time_start"),
+      timeEnd: num("time_end"),
+      freqLow: num("freq_low"),
+      freqHigh: num("freq_high"),
+    } as Range,
+  };
 }
 
 /** Lets hover and tap highlights fade before a screenshot: the pointer goes to
@@ -441,6 +508,42 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expect(reopened.sampleRate).toBe(25_600);
     expectRange(reopened.regions[0], scaled(made, 0.1));
   });
+
+  test(".batm files exported and imported while corrected use the file's seconds and Hz", async ({
+    page,
+  }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const region = (await snap(page)).regions[0];
+
+    await openAnnotationFiles(page);
+    const before = await exportBatm(page, "before.batm");
+    const b = batmFields(before.text);
+    expect(b.sampleRate).toBe(25_600);
+    expect(b.duration).toBeCloseTo(20, 9);
+    expectRange(b.region, region);
+
+    await openTab(page, "Info");
+    await page.locator(TREAT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    const corrected = (await snap(page)).regions[0];
+    expectRange(corrected, scaled(region, 10));
+
+    // Exported while corrected: the same file as before the correction.
+    await openAnnotationFiles(page);
+    const during = batmFields((await exportBatm(page, "corrected.batm")).text);
+    expect(during.sampleRate).toBe(25_600);
+    expect(during.duration).toBeCloseTo(20, 9);
+    expectRange(during.region, region);
+
+    // Imported while corrected: lands on the same sounds as the annotation
+    // already there.
+    await importAnnotations(page, before.file);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(2);
+    for (const r of (await snap(page)).regions) expectRange(r, corrected);
+  });
+
 });
 
 test.describe("no x10 button on other files", () => {

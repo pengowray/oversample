@@ -15,12 +15,13 @@
 //! [`RateChange`], so annotations, the selection and the view stay on the
 //! same samples.
 //!
-//! The correction lasts for the session. Annotation files on disk keep the
+//! The correction lasts until the file is closed. Annotation files keep the
 //! file's own seconds and Hz: [`to_file_units`] converts a set before it is
-//! saved, and [`from_file_units`] converts one that is loaded while the
+//! saved or exported (autosave, sidecars, "Export .batm", project files),
+//! and [`from_file_units`] converts one that is loaded or imported while the
 //! correction is on.
 
-use crate::annotations::{AnnotationKind, AnnotationSet};
+use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
 use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
@@ -131,6 +132,12 @@ impl RateChange {
         }
     }
 
+    /// The rate and duration in a file's audio metadata.
+    pub fn audio_metadata(self, meta: &mut AudioFileMetadata) {
+        meta.sample_rate = self.rate(meta.sample_rate);
+        meta.duration_secs = self.time(meta.duration_secs);
+    }
+
     /// A file's annotation set: every annotation, the noise profile, and the
     /// rate and duration in its audio metadata. The per-file lowest bat
     /// frequency is a fact about bats, not about the file, so it stays.
@@ -142,8 +149,7 @@ impl RateChange {
             self.noise_profile(profile);
         }
         if let Some(meta) = set.audio_metadata.as_mut() {
-            meta.sample_rate = self.rate(meta.sample_rate);
-            meta.duration_secs = self.time(meta.duration_secs);
+            self.audio_metadata(meta);
         }
     }
 
@@ -184,14 +190,25 @@ pub fn user_factor(audio: &AudioData) -> Option<f64> {
 
 /// The change from the file's current rate to the rate it states, when the
 /// user corrected it; `None` otherwise.
-fn to_file_rate(audio: &AudioData) -> Option<RateChange> {
+pub fn to_file_rate(audio: &AudioData) -> Option<RateChange> {
     user_factor(audio)?;
     Some(RateChange::new(audio.sample_rate, audio.stored_rate()))
 }
 
-/// `set` in the file's own seconds and Hz, for saving. Annotation files on
-/// disk always use the rate the file states, so they still fit the file when
-/// it is opened again without the correction.
+/// [`to_file_rate`] for file `file_idx`. Untracked.
+pub fn to_file_rate_at(state: AppState, file_idx: usize) -> Option<RateChange> {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    state
+        .library
+        .files()
+        .with_untracked(|files| files.get(file_idx).and_then(|f| to_file_rate(&f.audio)))
+}
+
+/// `set` in the file's own seconds and Hz, for saving. Every annotation
+/// file the app writes uses the rate the file states: autosave, sidecars,
+/// "Export .batm" and project files. So a saved file still
+/// fits the file when it is opened again without the correction.
 pub fn to_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet {
     if let Some(rc) = to_file_rate(audio) {
         rc.annotation_set(&mut set);
@@ -199,13 +216,50 @@ pub fn to_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet
     set
 }
 
-/// A set loaded from disk, in the file's own seconds and Hz, converted to the
-/// rate the file is read at now.
+/// [`to_file_units`] for file `file_idx`. Untracked.
+pub fn to_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) -> AnnotationSet {
+    match to_file_rate_at(state, file_idx) {
+        Some(rc) => {
+            let mut set = set;
+            rc.annotation_set(&mut set);
+            set
+        }
+        None => set,
+    }
+}
+
+/// A set read from an annotation file (a sidecar, autosave or an imported
+/// .batm), in the file's own seconds and Hz, converted to the rate the file
+/// is read at now.
+///
+/// A set whose audio metadata states the current rate is already in the
+/// current units and is left as it is. Only an "Export .batm" made while
+/// the correction was on, before exports were converted, can be one.
 pub fn from_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet {
-    if let Some(rc) = to_file_rate(audio) {
+    let Some(rc) = to_file_rate(audio) else {
+        return set;
+    };
+    let in_current_units = set
+        .audio_metadata
+        .as_ref()
+        .is_some_and(|m| m.sample_rate == audio.sample_rate);
+    if !in_current_units {
         rc.inverse().annotation_set(&mut set);
     }
     set
+}
+
+/// [`from_file_units`] for file `file_idx`. Untracked.
+pub fn from_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) -> AnnotationSet {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    state
+        .library
+        .files()
+        .with_untracked(|files| match files.get(file_idx) {
+            Some(f) => from_file_units(&f.audio, set),
+            None => set,
+        })
 }
 
 /// Read file `file_id` at `factor` times the rate it states, or at that rate
@@ -737,6 +791,78 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn metadata(sample_rate: u32, duration_secs: f64) -> AudioFileMetadata {
+        AudioFileMetadata {
+            sample_rate,
+            total_samples: 512_000,
+            channels: 1,
+            duration_secs,
+            format: "WAV".into(),
+            bits_per_sample: Some(16),
+            data_offset: None,
+            data_size: None,
+            peak_db_30s: None,
+            peak_db_full: None,
+        }
+    }
+
+    fn region_start(set: &AnnotationSet) -> (f64, Option<f64>) {
+        match &set.annotations[0].kind {
+            AnnotationKind::Region(r) => (r.time_start, r.freq_low),
+            k => panic!("{k:?}"),
+        }
+    }
+
+    #[test]
+    fn a_saved_set_states_the_file_rate_and_duration() {
+        let mut audio = case_t_audio();
+        assert!(audio.set_time_expansion(Some(TENFOLD), TimeExpansionOrigin::User));
+        // In memory, the set states the corrected rate and duration.
+        let mut set = set_with(vec![region(0.05, 0.06, Some(40_000.0), None)]);
+        set.audio_metadata = Some(metadata(256_000, 0.1));
+        let saved = to_file_units(&audio, set);
+        let meta = saved.audio_metadata.as_ref().unwrap();
+        assert_eq!(meta.sample_rate, 25_600);
+        assert!(close(meta.duration_secs, 1.0));
+        let (t, f) = region_start(&saved);
+        assert!(close(t, 0.5));
+        assert!(close(f.unwrap(), 4_000.0));
+        // The project file's copy of the metadata is converted the same way.
+        let mut meta = metadata(256_000, 0.1);
+        to_file_rate(&audio).unwrap().audio_metadata(&mut meta);
+        assert_eq!(meta.sample_rate, 25_600);
+        assert!(close(meta.duration_secs, 1.0));
+    }
+
+    #[test]
+    fn an_imported_set_is_converted_unless_it_states_the_current_rate() {
+        let mut audio = case_t_audio();
+        assert!(audio.set_time_expansion(Some(TENFOLD), TimeExpansionOrigin::User));
+        let file_units = |meta: Option<AudioFileMetadata>| {
+            let mut set = set_with(vec![region(0.5, 0.6, Some(4_000.0), None)]);
+            set.audio_metadata = meta;
+            set
+        };
+        // Saved at the file's rate, or with no metadata: converted.
+        for meta in [Some(metadata(25_600, 1.0)), None] {
+            let (t, f) = region_start(&from_file_units(&audio, file_units(meta)));
+            assert!(close(t, 0.05));
+            assert!(close(f.unwrap(), 40_000.0));
+        }
+        // Saved at the corrected rate: already in the corrected units.
+        let (t, f) = region_start(&from_file_units(
+            &audio,
+            file_units(Some(metadata(256_000, 0.1))),
+        ));
+        assert_eq!((t, f), (0.5, Some(4_000.0)));
+        // Not corrected: never converted.
+        let (t, _) = region_start(&from_file_units(
+            &case_t_audio(),
+            file_units(Some(metadata(25_600, 1.0))),
+        ));
+        assert_eq!(t, 0.5);
     }
 
     #[test]

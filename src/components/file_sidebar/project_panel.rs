@@ -12,8 +12,14 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 
 /// Helper: build AudioFileMetadata from a LoadedFile.
+/// The file's own rate and duration, as in its annotation files, also while
+/// the user's time-expansion correction is on ([`crate::te_correction`]).
 fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
-    AudioFileMetadata::from_audio(&f.audio, f.cached_peak_db, f.cached_full_peak_db)
+    let mut meta = AudioFileMetadata::from_audio(&f.audio, f.cached_peak_db, f.cached_full_peak_db);
+    if let Some(rc) = crate::te_correction::to_file_rate(&f.audio) {
+        rc.audio_metadata(&mut meta);
+    }
+    meta
 }
 
 /// Save the current project to OPFS (fire-and-forget).
