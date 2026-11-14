@@ -518,15 +518,7 @@ pub fn App() -> impl IntoView {
             state.library.files().with_untracked(|files| {
                 files
                     .get(i)
-                    .map(|f| {
-                        // A range shared from a file with a higher sample rate
-                        // can lie wholly above this file's top frequency, which
-                        // would draw nothing. Show the full range instead.
-                        match f.min_display_freq {
-                            Some(lo) if lo >= f.spectrogram.max_freq => (None, None),
-                            _ => (f.min_display_freq, f.max_display_freq),
-                        }
-                    })
+                    .map(shown_display_range)
                     .unwrap_or((None, None))
             })
         } else {
@@ -549,7 +541,11 @@ pub fn App() -> impl IntoView {
             let needs_write = state.library.files().with_untracked(|files| {
                 files
                     .get(i)
-                    .map(|f| f.min_display_freq != min || f.max_display_freq != max)
+                    // Against the range as shown, not as stored: the full
+                    // range shown in place of one above this file's top
+                    // frequency is not a change, and saving it would wipe the
+                    // range of the higher-rate file it is shared with.
+                    .map(|f| shown_display_range(f) != (min, max))
                     .unwrap_or(false)
             });
             if needs_write {
@@ -2071,4 +2067,53 @@ pub fn disable_xform(state: &AppState) {
     state.display.auto_gain().set(false);
     state.display.gain_boost().set(0.0);
     state.display.decimate_effective().set(0);
+}
+
+/// The frequency range to show for a file: its stored range, or the full
+/// range when the stored one lies wholly above the file's top frequency. A
+/// range shared from a file with a higher sample rate can do that, and it
+/// would draw nothing.
+fn shown_display_range(f: &crate::state::LoadedFile) -> (Option<f64>, Option<f64>) {
+    range_within(
+        f.min_display_freq,
+        f.max_display_freq,
+        f.spectrogram.max_freq,
+    )
+}
+
+fn range_within(min: Option<f64>, max: Option<f64>, top: f64) -> (Option<f64>, Option<f64>) {
+    match min {
+        Some(lo) if top > 0.0 && lo >= top => (None, None),
+        _ => (min, max),
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::range_within;
+
+    #[test]
+    fn a_range_above_the_top_frequency_shows_the_full_range() {
+        // 115 to 175 kHz, set on a 384 kHz file, in a 192 kHz file (top 96 kHz).
+        assert_eq!(
+            range_within(Some(115_000.0), Some(175_000.0), 96_000.0),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn a_range_that_reaches_into_the_file_is_kept() {
+        let kept = (Some(40_000.0), Some(175_000.0));
+        assert_eq!(range_within(kept.0, kept.1, 96_000.0), kept);
+        assert_eq!(
+            range_within(None, Some(50_000.0), 96_000.0),
+            (None, Some(50_000.0))
+        );
+    }
+
+    #[test]
+    fn an_unknown_top_frequency_changes_nothing() {
+        let stored = (Some(115_000.0), Some(175_000.0));
+        assert_eq!(range_within(stored.0, stored.1, 0.0), stored);
+    }
 }
