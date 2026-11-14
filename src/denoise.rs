@@ -402,7 +402,9 @@ fn post_samples(run: u32, array: &js_sys::Float32Array, buffer: &JsValue) {
 /// "bat.wav" becomes "bat (denoised).wav".
 pub fn denoised_name(name: &str) -> String {
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-    format!("{stem} (denoised).wav")
+    // The suffix pairs the copy with its original in the file list.
+    let suffix = crate::components::file_sidebar::file_groups::DENOISED_SUFFIX;
+    format!("{stem}{suffix}.wav")
 }
 
 #[cfg(test)]

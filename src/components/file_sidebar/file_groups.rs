@@ -20,11 +20,69 @@ pub struct SequenceInfo {
     pub gap_from_prev_secs: Option<f64>,
 }
 
-/// Combined grouping info for a file: multitrack track info and/or sequence membership.
-#[derive(Clone, Debug, PartialEq)]
+/// A file's links to the other half of an original + denoised copy pair.
+/// Both fields are indices into the file list.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct DenoiseLinks {
+    /// For a denoised copy: the loaded recording it was made from.
+    pub original: Option<usize>,
+    /// For an original: its loaded denoised copies, in file-list order.
+    pub copies: Vec<usize>,
+}
+
+/// Combined grouping info for a file: multitrack track info, sequence
+/// membership, and its original + denoised copy links.
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct FileGroupInfo {
     pub track: Option<TrackInfo>,
     pub sequence: Option<SequenceInfo>,
+    pub denoise: DenoiseLinks,
+}
+
+/// What "Make Denoised Copy" adds to the end of a recording's stem:
+/// "bat.flac" becomes "bat (denoised).wav".
+pub const DENOISED_SUFFIX: &str = " (denoised)";
+
+/// The file name without its extension.
+fn file_stem(filename: &str) -> &str {
+    filename
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(filename)
+}
+
+/// For a denoised copy's name, the stem of the recording it was made from:
+/// "bat (denoised).wav" gives `Some("bat")`. `None` for any other name.
+pub fn denoised_original_stem(filename: &str) -> Option<&str> {
+    file_stem(filename)
+        .strip_suffix(DENOISED_SUFFIX)
+        .filter(|stem| !stem.is_empty())
+}
+
+/// Find the original + denoised copy pairs among `names`.
+///
+/// A copy named "<stem> (denoised).<ext>" pairs with the first file in the
+/// list whose stem is "<stem>", whatever its extension. The pairing uses only
+/// the names, so a copy that was saved and opened again pairs up without a
+/// project. Two copies of one recording both link to it. A copy of a copy
+/// ("bat (denoised) (denoised).wav") links to the copy it was made from.
+pub fn compute_denoise_links(names: &[String]) -> Vec<DenoiseLinks> {
+    let mut first_with_stem: HashMap<&str, usize> = HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        first_with_stem.entry(file_stem(name)).or_insert(i);
+    }
+    let mut links = vec![DenoiseLinks::default(); names.len()];
+    for (i, name) in names.iter().enumerate() {
+        let Some(original) = denoised_original_stem(name)
+            .and_then(|stem| first_with_stem.get(stem).copied())
+            .filter(|&j| j != i)
+        else {
+            continue;
+        };
+        links[i].original = Some(original);
+        links[original].copies.push(i);
+    }
+    links
 }
 
 /// Parse a filename to extract a track/channel suffix.
@@ -106,7 +164,19 @@ pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
 /// Returns a parallel Vec: `Some(TrackInfo)` for files that belong to a group
 /// of 2+ files sharing the same `group_key`, `None` for singletons.
 pub fn compute_file_groups(names: &[String]) -> Vec<Option<TrackInfo>> {
-    let parsed: Vec<Option<TrackInfo>> = names.iter().map(|n| parse_track_suffix(n)).collect();
+    // A denoised copy is never a channel of a multitrack recording. Its name
+    // would otherwise parse like its original's ("rec_1 (denoised).wav" reads
+    // as track "1"), because the parser ignores text after a space.
+    let parsed: Vec<Option<TrackInfo>> = names
+        .iter()
+        .map(|n| {
+            if denoised_original_stem(n).is_some() {
+                None
+            } else {
+                parse_track_suffix(n)
+            }
+        })
+        .collect();
 
     // Count occurrences per group_key
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -172,9 +242,14 @@ pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGro
     let tracks = compute_file_groups(names);
 
     // Parse sequence stems for each file
+    // A denoised copy is never part of a sequence. If it were, it would get
+    // its original's sequence number and the two would share noise settings.
     let seq_parses: Vec<Option<(String, u32)>> = names
         .iter()
         .map(|name| {
+            if denoised_original_stem(name).is_some() {
+                return None;
+            }
             let stem = sequence_stem(name);
             parse_sequence_stem(&stem)
         })
@@ -224,8 +299,75 @@ pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGro
     tracks
         .into_iter()
         .zip(sequence_infos)
-        .map(|(track, sequence)| FileGroupInfo { track, sequence })
+        .zip(compute_denoise_links(names))
+        .map(|((track, sequence), denoise)| FileGroupInfo {
+            track,
+            sequence,
+            denoise,
+        })
         .collect()
+}
+
+/// Indices of every file linked to `idx` as an original or a denoised copy,
+/// including `idx` itself: the original, all its copies, and copies of those
+/// copies. Returns `[idx]` when the file has no loaded partner.
+///
+/// Per the cross-file state-scoping model (`scope.rs`): the pair shares the
+/// view, the gain, the focus selections and the playhead, so the user can
+/// compare the two. It does not share the noise settings.
+pub fn denoise_pair_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
+    let mut members = vec![idx];
+    let mut next = 0;
+    while next < members.len() {
+        if let Some(g) = groups.get(members[next]) {
+            for j in g.denoise.original.iter().chain(g.denoise.copies.iter()) {
+                if !members.contains(j) {
+                    members.push(*j);
+                }
+            }
+        }
+        next += 1;
+    }
+    members.sort_unstable();
+    members
+}
+
+/// The file the flip control switches to from `idx`: a copy's original, or an
+/// original's first copy. `None` when the file has no loaded partner.
+pub fn denoise_partner(groups: &[FileGroupInfo], idx: usize) -> Option<usize> {
+    let links = &groups.get(idx)?.denoise;
+    links.original.or_else(|| links.copies.first().copied())
+}
+
+/// Move every denoised copy in `order` (a list of file indices) to directly
+/// after its original, so the file list can show it indented under the
+/// original. Copies of one original keep their relative order.
+pub fn place_copies_after_originals(order: &[usize], groups: &[FileGroupInfo]) -> Vec<usize> {
+    fn push_with_copies(i: usize, groups: &[FileGroupInfo], order: &[usize], out: &mut Vec<usize>) {
+        if out.contains(&i) {
+            return;
+        }
+        out.push(i);
+        for &c in order {
+            if groups.get(c).and_then(|g| g.denoise.original) == Some(i) {
+                push_with_copies(c, groups, order, out);
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(order.len());
+    for &i in order {
+        let has_original = groups.get(i).is_some_and(|g| g.denoise.original.is_some());
+        if !has_original {
+            push_with_copies(i, groups, order, &mut out);
+        }
+    }
+    // Only reachable if links form a loop, which names cannot produce.
+    for &i in order {
+        if !out.contains(&i) {
+            out.push(i);
+        }
+    }
+    out
 }
 
 /// Indices of every file in `idx`'s MULTITRACK group — simultaneous channels of
@@ -276,8 +418,8 @@ pub fn sequential_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
 /// Compute the time gap between two files: how many seconds between the end of
 /// `prev` and the start of `next`. Returns None if timestamps are unavailable.
 fn compute_gap(files: &[LoadedFile], prev_idx: usize, next_idx: usize) -> Option<f64> {
-    let prev = &files[prev_idx];
-    let next = &files[next_idx];
+    let prev = files.get(prev_idx)?;
+    let next = files.get(next_idx)?;
 
     let prev_start_ms = prev.recording_start_epoch_ms()?;
     let prev_end_ms = prev_start_ms + prev.audio.duration_secs * 1000.0;
@@ -312,14 +454,17 @@ mod scope_tests {
             FileGroupInfo {
                 track: ti("recA", "1"),
                 sequence: None,
+                ..Default::default()
             },
             FileGroupInfo {
                 track: ti("recA", "2"),
                 sequence: None,
+                ..Default::default()
             },
             FileGroupInfo {
                 track: None,
                 sequence: None,
+                ..Default::default()
             },
         ];
         assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
@@ -334,14 +479,17 @@ mod scope_tests {
             FileGroupInfo {
                 track: ti("site", "1"),
                 sequence: si("site", "1", 1),
+                ..Default::default()
             },
             FileGroupInfo {
                 track: ti("site", "2"),
                 sequence: si("site", "2", 1),
+                ..Default::default()
             },
             FileGroupInfo {
                 track: ti("site", "1"),
                 sequence: si("site", "1", 2),
+                ..Default::default()
             },
         ];
         assert_eq!(sequential_members(&groups, 0), vec![0, 2]);
@@ -356,15 +504,136 @@ mod scope_tests {
             FileGroupInfo {
                 track: ti("recA", "1"),
                 sequence: None,
+                ..Default::default()
             },
             FileGroupInfo {
                 track: ti("recA", "2"),
                 sequence: None,
+                ..Default::default()
             },
         ];
         // Multitrack groups them; sequential does not (each is its own sequence).
         assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
         assert_eq!(sequential_members(&groups, 0), vec![0]);
         assert_eq!(sequential_members(&groups, 1), vec![1]);
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn denoised_copy_names_give_the_original_stem() {
+        assert_eq!(denoised_original_stem("bat (denoised).wav"), Some("bat"));
+        assert_eq!(denoised_original_stem("bat (denoised)"), Some("bat"));
+        assert_eq!(
+            denoised_original_stem("XC1 - Bat (denoised).wav"),
+            Some("XC1 - Bat")
+        );
+        assert_eq!(denoised_original_stem("bat.wav"), None);
+        assert_eq!(denoised_original_stem("bat (denoised) take 2.wav"), None);
+        assert_eq!(denoised_original_stem(" (denoised).wav"), None);
+        // The suffix is the one `denoised_name` writes.
+        assert_eq!(
+            denoised_original_stem(&crate::denoise::denoised_name("XC1 - Bat.flac")),
+            Some("XC1 - Bat")
+        );
+    }
+
+    #[test]
+    fn a_copy_pairs_with_its_original_by_name() {
+        // The extension of the original does not matter, nor the load order.
+        let n = names(&["other.wav", "bat (denoised).wav", "bat.flac"]);
+        let groups = compute_all_groups(&n, &[]);
+        assert_eq!(groups[1].denoise.original, Some(2));
+        assert_eq!(groups[2].denoise.copies, vec![1]);
+        assert_eq!(denoise_pair_members(&groups, 1), vec![1, 2]);
+        assert_eq!(denoise_pair_members(&groups, 2), vec![1, 2]);
+        assert_eq!(denoise_pair_members(&groups, 0), vec![0]);
+        assert_eq!(denoise_partner(&groups, 1), Some(2));
+        assert_eq!(denoise_partner(&groups, 2), Some(1));
+        assert_eq!(denoise_partner(&groups, 0), None);
+    }
+
+    #[test]
+    fn a_copy_without_its_original_has_no_partner() {
+        let groups = compute_all_groups(&names(&["bat (denoised).wav", "cat.wav"]), &[]);
+        assert_eq!(denoise_partner(&groups, 0), None);
+        assert_eq!(denoise_pair_members(&groups, 0), vec![0]);
+    }
+
+    #[test]
+    fn two_copies_and_a_copy_of_a_copy() {
+        let n = names(&[
+            "bat.wav",
+            "bat (denoised).wav",
+            "bat (denoised).wav",
+            "bat (denoised) (denoised).wav",
+        ]);
+        let groups = compute_all_groups(&n, &[]);
+        // The original flips to its first copy; every copy flips to what it
+        // was made from.
+        assert_eq!(denoise_partner(&groups, 0), Some(1));
+        assert_eq!(denoise_partner(&groups, 1), Some(0));
+        assert_eq!(denoise_partner(&groups, 2), Some(0));
+        assert_eq!(denoise_partner(&groups, 3), Some(1));
+        for i in 0..4 {
+            assert_eq!(denoise_pair_members(&groups, i), vec![0, 1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn same_stem_with_two_extensions_pairs_with_the_first() {
+        let n = names(&["bat.wav", "bat.flac", "bat (denoised).wav"]);
+        let groups = compute_all_groups(&n, &[]);
+        assert_eq!(denoise_partner(&groups, 2), Some(0));
+        assert_eq!(denoise_partner(&groups, 0), Some(2));
+        assert_eq!(denoise_partner(&groups, 1), None);
+    }
+
+    #[test]
+    fn a_copy_joins_no_multitrack_group_or_sequence() {
+        // Recorder-style names: two takes, two channels each, and a copy of one.
+        let n = names(&[
+            "260212_0041_1.wav",
+            "260212_0041_2.wav",
+            "260212_0042_1.wav",
+            "260212_0042_2.wav",
+            "260212_0041_1 (denoised).wav",
+        ]);
+        let groups = compute_all_groups(&n, &[]);
+        assert!(groups[4].track.is_none());
+        assert!(groups[4].sequence.is_none());
+        assert_eq!(groups[4].denoise.original, Some(0));
+        // The originals group as they did before.
+        assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
+        assert_eq!(sequential_members(&groups, 0), vec![0, 2]);
+        assert_eq!(sequential_members(&groups, 4), vec![4]);
+
+        // An original with no track suffix and its copy are not two channels.
+        let n = names(&["260212_0041.wav", "260212_0041 (denoised).wav"]);
+        let groups = compute_all_groups(&n, &[]);
+        assert!(groups[0].track.is_none());
+        assert!(groups[1].track.is_none());
+        assert!(groups[0].sequence.is_none());
+    }
+
+    #[test]
+    fn copies_are_listed_after_their_originals() {
+        let n = names(&[
+            "bat (denoised).wav",
+            "cat.wav",
+            "bat.wav",
+            "bat (denoised) (denoised).wav",
+        ]);
+        let groups = compute_all_groups(&n, &[]);
+        assert_eq!(
+            place_copies_after_originals(&[0, 1, 2, 3], &groups),
+            vec![1, 2, 0, 3]
+        );
+        assert_eq!(
+            place_copies_after_originals(&[3, 2, 1, 0], &groups),
+            vec![2, 0, 3, 1]
+        );
     }
 }

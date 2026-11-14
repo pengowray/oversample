@@ -9,13 +9,17 @@
 //! are shared / lock a global setting to a file / presets" work.
 //!
 //! Relationships are resolved by `file_groups::{multitrack_members,
-//! sequential_members}` (auto-detected today; project groups will override later).
+//! sequential_members, denoise_pair_members}` (auto-detected from file names
+//! today; project groups will override later).
 //!
 //! Mental model: **sequential groups share audio-character settings (gain +
-//! denoise); multitrack groups share viewport settings (scroll + freq range).**
+//! noise settings); multitrack groups share viewport settings (scroll + freq
+//! range); an original and its denoised copy share everything needed to
+//! compare them (viewport, gain, focus selections, playhead) but not the
+//! noise settings, which are the difference being compared.**
 
 use crate::components::file_sidebar::file_groups::{
-    multitrack_members, sequential_members, FileGroupInfo,
+    denoise_pair_members, multitrack_members, sequential_members, FileGroupInfo,
 };
 
 /// Base scope of a setting across files.
@@ -29,57 +33,167 @@ pub enum Scope {
     Transient,
 }
 
-/// For a `PerFile` setting, which file-relationship its value propagates within.
+/// A way two loaded files can be related. A `PerFile` setting names the
+/// relationships its value is shared within.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShareAcross {
-    /// Strictly per file.
-    None,
-    /// Shared across simultaneous channels of one recording (same track group_key).
+pub enum Relationship {
+    /// Simultaneous channels of one recording (same track group_key).
     Multitrack,
-    /// Shared across consecutive recordings on the same channel (same sequence).
+    /// Consecutive recordings on the same channel (same sequence).
     Sequential,
+    /// A recording and the denoised copies made from it
+    /// ("bat.wav" and "bat (denoised).wav").
+    DenoisedPair,
+}
+
+impl Relationship {
+    /// Indices of the files related to `idx` this way, including `idx`.
+    fn members(self, groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
+        match self {
+            Relationship::Multitrack => multitrack_members(groups, idx),
+            Relationship::Sequential => sequential_members(groups, idx),
+            Relationship::DenoisedPair => denoise_pair_members(groups, idx),
+        }
+    }
 }
 
 /// The per-file settings this app scopes. `policy()` is the source of truth.
 ///
-/// | Setting                                    | Scope     | Shares across |
-/// |--------------------------------------------|-----------|---------------|
-/// | denoise: notch + spectral-sub + EQ curve   | PerFile   | Sequential    |
-/// | gain                                       | PerFile   | Sequential    |
-/// | vertical frequency range                   | PerFile   | Multitrack    |
-/// | horizontal scroll                          | PerFile   | Multitrack    |
-/// | frequency-focus selections                 | PerFile   | None          |
+/// | Setting                                         | Scope   | Shared within             |
+/// |-------------------------------------------------|---------|---------------------------|
+/// | noise settings: notch + spectral-sub + EQ curve | PerFile | Sequential                |
+/// | gain                                            | PerFile | Sequential, DenoisedPair  |
+/// | vertical frequency range                        | PerFile | Multitrack, DenoisedPair  |
+/// | horizontal scroll                               | PerFile | Multitrack, DenoisedPair  |
+/// | frequency-focus selections                      | PerFile | DenoisedPair              |
+/// | playhead (position, and playing or stopped)     | PerFile | DenoisedPair              |
 ///
 /// Global (not modelled here): HFR on/off, playback mode + transform params,
 /// `bandpass_mode` (HFR-coupled, pending the split), channel view, colormap.
 /// Transient: annotation selection, hover/marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
-    /// gain + notch + spectral-subtraction + bandpass-EQ curve (the FileSettings bundle).
-    AudioCharacter,
+    /// Gain mode and gain values (the gain fields of `FileSettings`).
+    Gain,
+    /// Notch + spectral subtraction + bandpass-EQ curve (the other fields of
+    /// `FileSettings`).
+    NoiseFilters,
     VerticalRange,
     HorizontalScroll,
     FocusSelections,
+    /// Where the playhead is, and whether it is playing. Within the files that
+    /// share it, a switch during playback keeps playing from the same position
+    /// in the other file.
+    Playhead,
 }
 
 impl Setting {
-    pub fn policy(self) -> (Scope, ShareAcross) {
+    pub fn policy(self) -> (Scope, &'static [Relationship]) {
+        use Relationship::*;
         match self {
-            Setting::AudioCharacter => (Scope::PerFile, ShareAcross::Sequential),
-            Setting::VerticalRange => (Scope::PerFile, ShareAcross::Multitrack),
-            Setting::HorizontalScroll => (Scope::PerFile, ShareAcross::Multitrack),
-            Setting::FocusSelections => (Scope::PerFile, ShareAcross::None),
+            Setting::Gain => (Scope::PerFile, &[Sequential, DenoisedPair]),
+            Setting::NoiseFilters => (Scope::PerFile, &[Sequential]),
+            Setting::VerticalRange => (Scope::PerFile, &[Multitrack, DenoisedPair]),
+            Setting::HorizontalScroll => (Scope::PerFile, &[Multitrack, DenoisedPair]),
+            Setting::FocusSelections => (Scope::PerFile, &[DenoisedPair]),
+            Setting::Playhead => (Scope::PerFile, &[DenoisedPair]),
         }
     }
 }
 
 /// Indices of the files a per-file `setting` value propagates to when it changes
-/// on `idx` (always includes `idx`). The single dispatch point for the sharing
-/// policy — change `Setting::policy` and every propagation site follows.
+/// on `idx` (always includes `idx`, sorted). The single dispatch point for the
+/// sharing policy — change `Setting::policy` and every propagation site follows.
+///
+/// When a setting is shared within more than one relationship, the result
+/// follows the links from file to file: the copy of channel 1 shares its scroll
+/// with channel 1, and so also with channel 2.
 pub fn share_members(setting: Setting, groups: &[FileGroupInfo], idx: usize) -> Vec<usize> {
-    match setting.policy().1 {
-        ShareAcross::Multitrack => multitrack_members(groups, idx),
-        ShareAcross::Sequential => sequential_members(groups, idx),
-        ShareAcross::None => vec![idx],
+    let relationships = setting.policy().1;
+    let mut members = vec![idx];
+    let mut next = 0;
+    while next < members.len() {
+        for relationship in relationships {
+            for j in relationship.members(groups, members[next]) {
+                if !members.contains(&j) {
+                    members.push(j);
+                }
+            }
+        }
+        next += 1;
+    }
+    members.sort_unstable();
+    members
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::file_sidebar::file_groups::compute_all_groups;
+
+    fn groups(names: &[&str]) -> Vec<FileGroupInfo> {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        compute_all_groups(&names, &[])
+    }
+
+    const ALL: [Setting; 6] = [
+        Setting::Gain,
+        Setting::NoiseFilters,
+        Setting::VerticalRange,
+        Setting::HorizontalScroll,
+        Setting::FocusSelections,
+        Setting::Playhead,
+    ];
+
+    #[test]
+    fn a_denoised_pair_shares_everything_but_the_noise_settings() {
+        let g = groups(&["bat.wav", "bat (denoised).wav", "cat.wav"]);
+        for setting in ALL {
+            let expected = if setting == Setting::NoiseFilters {
+                vec![0]
+            } else {
+                vec![0, 1]
+            };
+            assert_eq!(share_members(setting, &g, 0), expected, "{setting:?}");
+            assert_eq!(share_members(setting, &g, 2), vec![2], "{setting:?}");
+        }
+        assert_eq!(share_members(Setting::NoiseFilters, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::Gain, &g, 1), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_sequence_still_shares_gain_and_noise_settings() {
+        // Two takes on channel 1, and a denoised copy of the first take.
+        let g = groups(&[
+            "260212_0041_1.wav",
+            "260212_0042_1.wav",
+            "260212_0041_1 (denoised).wav",
+        ]);
+        // The takes share the noise settings with each other, never with the copy.
+        assert_eq!(share_members(Setting::NoiseFilters, &g, 0), vec![0, 1]);
+        assert_eq!(share_members(Setting::NoiseFilters, &g, 1), vec![0, 1]);
+        assert_eq!(share_members(Setting::NoiseFilters, &g, 2), vec![2]);
+        // Gain follows both links, from the copy to its original to the sequence.
+        assert_eq!(share_members(Setting::Gain, &g, 2), vec![0, 1, 2]);
+        assert_eq!(share_members(Setting::Gain, &g, 1), vec![0, 1, 2]);
+        // A sequence alone does not share the view, focus or playhead.
+        assert_eq!(share_members(Setting::HorizontalScroll, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::FocusSelections, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::Playhead, &g, 1), vec![1]);
+    }
+
+    #[test]
+    fn a_copy_shares_the_view_with_every_channel_of_its_original() {
+        let g = groups(&["rec_1.wav", "rec_2.wav", "rec_1 (denoised).wav"]);
+        assert_eq!(
+            share_members(Setting::HorizontalScroll, &g, 2),
+            vec![0, 1, 2]
+        );
+        assert_eq!(share_members(Setting::VerticalRange, &g, 1), vec![0, 1, 2]);
+        // Channels do not share gain, focus or the playhead; the pair does.
+        assert_eq!(share_members(Setting::Gain, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::Gain, &g, 2), vec![0, 2]);
+        assert_eq!(share_members(Setting::FocusSelections, &g, 0), vec![0, 2]);
+        assert_eq!(share_members(Setting::Playhead, &g, 1), vec![1]);
     }
 }
