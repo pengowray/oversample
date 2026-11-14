@@ -15,9 +15,9 @@
 //! [`RateChange`], so annotations, the selection and the view stay on the
 //! same samples.
 //!
-//! The correction lasts until the file is closed. Annotation files keep the
-//! file's own seconds and Hz: [`to_file_units`] converts a set before it is
-//! saved or exported (autosave, sidecars, "Export .batm", project files;
+//! The correction lasts until the file is closed or the page is reloaded.
+//! Annotation files keep the file's own seconds and Hz: [`to_file_units`]
+//! converts a set before it is saved or exported (autosave, sidecars, "Export .batm", project files;
 //! "Export for XC" converts each annotation with [`to_file_rate`]),
 //! and [`from_file_units`] converts one that is loaded or imported while the
 //! correction is on. Annota-JSON from Xeno-canto, or imported by the user,

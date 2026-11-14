@@ -535,7 +535,7 @@ test.describe("species call-range note on real demo recordings", () => {
       await openDemo(page, xc);
       await expect(
         page.locator(TE_NOTE, {
-          hasText: "Corrected for \u00d710 time expansion; the file says 38.4 kHz.",
+          hasText: "Corrected for \u00d710 time expansion. Sample rate in the file header: 38.4 kHz.",
         }),
       ).toBeVisible();
       await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);

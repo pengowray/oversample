@@ -85,8 +85,8 @@ impl NoteAction {
     pub fn tooltip(self, stored_rate: u32) -> Option<String> {
         match self {
             NoteAction::CorrectTenfold => Some(format!(
-                "Uses {} as the sample rate until the file is closed. The audio \
-                 file is not modified.",
+                "Sets the sample rate to {} until you close the file or reload \
+                 the page. The audio file is not changed.",
                 sample_rate_khz(stored_rate.saturating_mul(10))
             )),
             NoteAction::RemoveCorrection => None,
@@ -111,23 +111,24 @@ impl NoteAction {
     }
 }
 
-/// The time-expansion note's line: "Corrected for ×10 time expansion; the
-/// file says 38.4 kHz." A bat detector stored the recording slowed down so it
+/// The time-expansion note's line: "Corrected for ×10 time expansion. Sample
+/// rate in the file header: 38.4 kHz." A bat detector stored the recording slowed down so it
 /// can be heard, and its rate and duration were corrected: by the app when it
 /// loaded the file, or by the user. The rate in the line is the one in the
 /// file's header.
 ///
-/// A correction the user applied lasts until the file is closed, and the line
-/// says so: "Corrected for ×10 time expansion until the file is closed; the
-/// file says 25.6 kHz." That also tells it apart from a correction made from
+/// A correction the user applied lasts until the file is closed or the page is
+/// reloaded, and the line says so: "Corrected for ×10 time expansion until you
+/// close the file or reload the page. Sample rate in the file header:
+/// 25.6 kHz." That also tells it apart from a correction made from
 /// the file's metadata, which is made again each time the file is opened.
 pub fn time_expansion_line(te: TimeExpansion) -> NoteLine {
     let until = match te.origin {
-        TimeExpansionOrigin::User => " until the file is closed",
+        TimeExpansionOrigin::User => " until you close the file or reload the page",
         TimeExpansionOrigin::File | TimeExpansionOrigin::Source => "",
     };
     NoteLine::muted(format!(
-        "Corrected for {} time expansion{until}; the file says {}.",
+        "Corrected for {} time expansion{until}. Sample rate in the file header: {}.",
         crate::wikimedia::format_factor(te.factor),
         sample_rate_khz(te.stored_rate)
     ))
@@ -275,7 +276,8 @@ mod tests {
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
-                    "Corrected for \u{d7}10 time expansion; the file says 38.4\u{a0}kHz."
+                    "Corrected for \u{d7}10 time expansion. Sample rate in the file header: \
+                     38.4\u{a0}kHz."
                 )],
                 action: None,
             }]
@@ -367,8 +369,8 @@ mod tests {
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
-                    "Corrected for \u{d7}10 time expansion until the file is closed; the \
-                     file says 25.6\u{a0}kHz."
+                    "Corrected for \u{d7}10 time expansion until you close the file or \
+                     reload the page. Sample rate in the file header: 25.6\u{a0}kHz."
                 )],
                 action: Some(NoteAction::RemoveCorrection),
             }]
@@ -388,15 +390,15 @@ mod tests {
         assert_eq!(
             NoteAction::CorrectTenfold.tooltip(38_400).as_deref(),
             Some(
-                "Uses 384\u{a0}kHz as the sample rate until the file is closed. The audio \
-                 file is not modified."
+                "Sets the sample rate to 384\u{a0}kHz until you close the file or reload \
+                 the page. The audio file is not changed."
             )
         );
         assert_eq!(
             NoteAction::CorrectTenfold.tooltip(31_250).as_deref(),
             Some(
-                "Uses 312.5\u{a0}kHz as the sample rate until the file is closed. The \
-                 audio file is not modified."
+                "Sets the sample rate to 312.5\u{a0}kHz until you close the file or \
+                 reload the page. The audio file is not changed."
             )
         );
         assert_eq!(NoteAction::RemoveCorrection.tooltip(38_400), None);
@@ -504,7 +506,8 @@ mod tests {
         assert_eq!(
             notes[0].lines,
             [NoteLine::muted(
-                "Corrected for \u{d7}2 time expansion; the file says 25.6\u{a0}kHz."
+                "Corrected for \u{d7}2 time expansion. Sample rate in the file header: \
+                 25.6\u{a0}kHz."
             )]
         );
     }

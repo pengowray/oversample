@@ -362,7 +362,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(treat).toHaveText("Correct for ×10 time expansion");
     await expect(treat).toHaveAttribute(
       "title",
-      "Uses 256 kHz as the sample rate until the file is closed. The audio file is not modified.",
+      "Sets the sample rate to 256 kHz until you close the file or reload the page. The audio file is not changed.",
     );
     const order = await page
       .locator(SPECIES_NOTE)
@@ -384,7 +384,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
     await expect(page.locator(TE_NOTE)).toHaveText(
-      /^Corrected for ×10 time expansion until the file is closed; the file says 25\.6 kHz\.Remove ×10 correction$/,
+      /^Corrected for ×10 time expansion until you close the file or reload the page\. Sample rate in the file header: 25\.6 kHz\.Remove ×10 correction$/,
     );
     // The time-expansion note is now the first note under the Sample rate row.
     expect(
@@ -537,7 +537,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await showInfo(page);
     await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
-    await expect(page.locator(TE_NOTE)).toContainText("until the file is closed");
+    await expect(page.locator(TE_NOTE)).toContainText("until you close the file");
     await page.locator(".file-item-close").first().click();
     await expect(page.locator(".file-item")).toHaveCount(0);
     // Opened again from Today's bats: at the file's own rate, with the button.
@@ -730,7 +730,7 @@ test.describe("no x10 button on other files", () => {
       if (c.guano) {
         await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion");
         // Only the user's correction lasts until the file is closed.
-        await expect(page.locator(TE_NOTE)).not.toContainText("until the file is closed");
+        await expect(page.locator(TE_NOTE)).not.toContainText("until you close the file");
       }
       await expect(page.locator(".rate-note-action")).toHaveCount(0);
     });
