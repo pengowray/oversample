@@ -194,12 +194,34 @@ async function makeDenoisedCopy(page: Page) {
 test("a saved copy opened beside its original pairs with it by name", async ({ page }) => {
   await page.goto("/");
   const input = page.locator('input[type="file"][accept*=".wav"]').first();
-  // The copy first, then the original, as two ordinary files. No model, no project.
-  for (const name of [COPY, "other.wav", ORIGINAL]) {
+  const open = async (name: string) => {
     await input.setInputFiles({ name, mimeType: "audio/wav", buffer: batLikeWav(384_000, 2) });
     await expect(page.locator(".file-item", { hasText: name })).toBeVisible({ timeout: 30_000 });
-  }
-  await expect.poll(async () => (await snapshot(page)).currentFile).toBe(ORIGINAL);
+    await expect.poll(async () => (await snapshot(page)).currentFile).toBe(name);
+  };
+  // The copy first, as an ordinary file. No model, no project.
+  await open(COPY);
+  await expect(page.locator(".chart-stage canvas").first()).toBeVisible({ timeout: 30_000 });
+  await expect(denoisedSwitch(page)).toHaveCount(0);
+  // Set a frequency focus (the "All" band preset), a view and a gain on the copy.
+  await page.locator('button[title="Band range / presets"]').click();
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await pinch(page, "x", 60, 300);
+  await pinch(page, "y", 120, 280);
+  await page.keyboard.press("ArrowRight");
+  await setManualGain(page, 5);
+  const copyView = await snapshot(page);
+  expect(copyView.scrollOffset).toBeGreaterThan(0);
+  expect(copyView.maxFreq).not.toBeNull();
+
+  // Another file, then the original: it opens on the copy's view, gain and
+  // focus although the copy is not the open file at that moment.
+  await open("other.wav");
+  const otherView = await snapshot(page);
+  expect(otherView.scrollOffset).toBe(0);
+  expect(otherView.focusRange).not.toBe(copyView.focusRange);
+  await open(ORIGINAL);
+  expect(shared(await snapshot(page))).toEqual(shared(copyView));
   await expect(denoisedSwitch(page)).toHaveAttribute("aria-checked", "false");
 
   // The copy is listed under its original, though it was opened first.
@@ -209,12 +231,10 @@ test("a saved copy opened beside its original pairs with it by name", async ({ p
   await expect(rows.nth(2)).toContainText(COPY);
   await expect(rows.nth(2)).toHaveClass(/denoised-copy/);
 
-  await pinch(page, "x", 60, 300);
-  await pinch(page, "y", 120, 280);
   await page.keyboard.press("ArrowRight");
   await setManualGain(page, 9);
   const onOriginal = await snapshot(page);
-  expect(onOriginal.scrollOffset).toBeGreaterThan(0);
+  expect(onOriginal.scrollOffset).toBeGreaterThan(copyView.scrollOffset);
 
   await page.keyboard.press("d");
   await expect.poll(async () => (await snapshot(page)).currentFile).toBe(COPY);
@@ -254,6 +274,14 @@ test.describe("a recording and its denoised copy", () => {
     expect(shared(onCopy)).toEqual(shared(before));
     await expect(denoisedSwitch(page)).toBeVisible();
     await expect(denoisedSwitch(page)).toHaveAttribute("aria-checked", "true");
+
+    // Making the copy did not reset the original: flip to it and back.
+    await page.keyboard.press("d");
+    await expect.poll(async () => (await snapshot(page)).currentFile).toBe(ORIGINAL);
+    expect(shared(await snapshot(page))).toEqual(shared(before));
+    await page.keyboard.press("d");
+    await expect.poll(async () => (await snapshot(page)).currentFile).toBe(COPY);
+    expect(shared(await snapshot(page))).toEqual(shared(before));
 
     // In the file list the copy sits under its original, indented.
     const rows = page.locator(".file-item");

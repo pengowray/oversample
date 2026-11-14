@@ -30,6 +30,14 @@ pub struct DenoiseLinks {
     pub copies: Vec<usize>,
 }
 
+impl DenoiseLinks {
+    /// The file the Denoised switch opens from this one: a copy's original,
+    /// or an original's first copy. `None` when no partner is loaded.
+    pub fn partner(&self) -> Option<usize> {
+        self.original.or_else(|| self.copies.first().copied())
+    }
+}
+
 /// Combined grouping info for a file: multitrack track info, sequence
 /// membership, and its original + denoised copy links.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -332,11 +340,9 @@ pub fn denoise_pair_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> 
     members
 }
 
-/// The file the flip control switches to from `idx`: a copy's original, or an
-/// original's first copy. `None` when the file has no loaded partner.
+/// The file the Denoised switch opens from `idx` (see `DenoiseLinks::partner`).
 pub fn denoise_partner(groups: &[FileGroupInfo], idx: usize) -> Option<usize> {
-    let links = &groups.get(idx)?.denoise;
-    links.original.or_else(|| links.copies.first().copied())
+    groups.get(idx)?.denoise.partner()
 }
 
 /// Move every denoised copy in `order` (a list of file indices) to directly
@@ -609,6 +615,16 @@ mod scope_tests {
         assert_eq!(multitrack_members(&groups, 0), vec![0, 1]);
         assert_eq!(sequential_members(&groups, 0), vec![0, 2]);
         assert_eq!(sequential_members(&groups, 4), vec![4]);
+
+        // A Tascam-style name: without the rule the copy would read as a
+        // second track "3" and as a two-file sequence with its original.
+        let n = names(&["260305_0058_3.wav", "260305_0058_3 (denoised).wav"]);
+        let groups = compute_all_groups(&n, &[]);
+        for g in &groups {
+            assert!(g.track.is_none());
+            assert!(g.sequence.is_none());
+        }
+        assert_eq!(denoise_pair_members(&groups, 0), vec![0, 1]);
 
         // An original with no track suffix and its copy are not two channels.
         let n = names(&["260212_0041.wav", "260212_0041 (denoised).wav"]);

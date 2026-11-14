@@ -66,7 +66,12 @@ impl Relationship {
 /// | vertical frequency range                        | PerFile | Multitrack, DenoisedPair  |
 /// | horizontal scroll                               | PerFile | Multitrack, DenoisedPair  |
 /// | frequency-focus selections                      | PerFile | DenoisedPair              |
-/// | playhead (position, and playing or stopped)     | PerFile | DenoisedPair              |
+/// | playhead (position, and playing or stopped)     | Global  | DenoisedPair (see below)  |
+///
+/// The playhead is one global signal: it is not saved or restored per file,
+/// so it stays where it was on any switch. `DenoisedPair` marks the switches
+/// where that is intended: during playback the file-switch Effect restarts
+/// the audio in the other file at the same position.
 ///
 /// Global (not modelled here): HFR on/off, playback mode + transform params,
 /// `bandpass_mode` (HFR-coupled, pending the split), channel view, colormap.
@@ -83,7 +88,7 @@ pub enum Setting {
     FocusSelections,
     /// Where the playhead is, and whether it is playing. Within the files that
     /// share it, a switch during playback keeps playing from the same position
-    /// in the other file.
+    /// in the other file. See the note under the table.
     Playhead,
 }
 
@@ -96,7 +101,7 @@ impl Setting {
             Setting::VerticalRange => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::HorizontalScroll => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::FocusSelections => (Scope::PerFile, &[DenoisedPair]),
-            Setting::Playhead => (Scope::PerFile, &[DenoisedPair]),
+            Setting::Playhead => (Scope::Global, &[DenoisedPair]),
         }
     }
 }

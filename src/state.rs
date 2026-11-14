@@ -3193,8 +3193,7 @@ impl AppState {
         self.library.files().with(|files| {
             let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
             let links = crate::components::file_sidebar::file_groups::compute_denoise_links(&names);
-            let links = links.get(idx)?;
-            links.original.or_else(|| links.copies.first().copied())
+            links.get(idx)?.partner()
         })
     }
 

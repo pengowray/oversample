@@ -938,8 +938,10 @@ pub fn App() -> impl IntoView {
 
             // The playhead is shared between an original and its denoised
             // copy: if audio is playing, carry on from the same position in
-            // the incoming file, so the two can be compared by ear. (For any
-            // other switch the stream is left as it was.)
+            // the incoming file, so the two can be compared by ear. (Any
+            // other switch does the same today, but only as a side effect:
+            // `apply_to_state` above sets signals that the replay Effect
+            // watches. This call makes it a rule for the pair.)
             if state.playback.is_playing().get_untracked() {
                 if let (Some(oi), Some(ni)) = (old_oi, new_idx) {
                     if state
