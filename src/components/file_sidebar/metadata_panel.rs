@@ -1375,7 +1375,7 @@ fn channel_list(channels: &[u32]) -> String {
 }
 
 fn chime_heading(chime: &FoundChime) -> String {
-    let what = match chime.remote().map(|remote| remote.known()) {
+    let what = match chime.remote().map(|remote| remote.command()) {
         Some(Some(RemoteCommand::Start)) => CHIME_START.to_string(),
         Some(Some(RemoteCommand::Stop)) => CHIME_STOP.to_string(),
         Some(Some(RemoteCommand::SetClock)) => CHIME_SET_CLOCK.to_string(),
@@ -1386,7 +1386,10 @@ fn chime_heading(chime: &FoundChime) -> String {
         Some(None) => CHIME_UNKNOWN.to_string(),
         None => CHIME_OTHER.to_string(),
     };
-    format!("{what} at {}", file_position(chime.start_secs))
+    // Format version 2: the phone page had the X8's code typed in.
+    let coded = chime.remote().is_some_and(|remote| remote.check().is_some());
+    let code = if coded { CHIME_WITH_CODE } else { "" };
+    format!("{what}{code} at {}", file_position(chime.start_secs))
 }
 
 fn chime_signal_text(chime: &FoundChime) -> String {
@@ -1415,6 +1418,7 @@ const CHIME_REMOTE_PREFIX: &str = "Phone remote: ";
 /// A command from a newer phone page than this version of Oversample reads.
 const CHIME_UNKNOWN: &str = "Phone remote: unknown command";
 const CHIME_OTHER: &str = "Chime";
+const CHIME_WITH_CODE: &str = ", sent with a code,";
 const CHIME_TIME_LABEL: &str = "Phone date and time";
 /// Not "phone location": the AudioMoth app can send a location typed in by hand.
 const CHIME_LOCATION_LABEL: &str = "Chime location";
