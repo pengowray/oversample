@@ -582,37 +582,10 @@ pub fn App() -> impl IntoView {
             return;
         }
 
-        // EQ
-        let eq_on = match state.display.filter_eq().get() {
-            DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => state.filter.enabled().get(), // auto = show if playback EQ is on
-            DisplayFilterMode::Same => state.filter.enabled().get(),
-            DisplayFilterMode::Custom => false, // not yet implemented
-        };
+        // EQ, noise (notch + spectral subtraction) and transform
+        let (eq_on, noise_on, xform_on) = resolve_display_stages(&state);
         state.display.eq().set(eq_on);
-
-        // Noise (notch + spectral subtraction)
-        let nr_on = match state.display.filter_nr().get() {
-            DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto | DisplayFilterMode::Custom => true,
-            DisplayFilterMode::Same => state.noise_reduce.enabled().get(),
-        };
-        // Also consider notch
-        let notch_on = match state.display.filter_notch().get() {
-            DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => state.notch.enabled().get(), // auto = show if playback notch is on
-            DisplayFilterMode::Same => state.notch.enabled().get(),
-            DisplayFilterMode::Custom => false,
-        };
-        state.display.noise_filter().set(nr_on || notch_on);
-
-        // Transform
-        let xform_on = match state.display.filter_transform().get() {
-            DisplayFilterMode::Off => false,
-            DisplayFilterMode::Auto => false, // auto = off for transform
-            DisplayFilterMode::Same => state.playback.mode().get() != PlaybackMode::Normal,
-            DisplayFilterMode::Custom => false, // not yet implemented
-        };
+        state.display.noise_filter().set(noise_on);
         state.display.transform().set(xform_on);
 
         // Gain — compute display_gain_boost (dB) and display_auto_gain
@@ -2036,34 +2009,48 @@ fn dismiss_notif_rationale(state: &AppState, enable: bool) {
     }
 }
 
-/// Turn the XForm display-processing panel on: enable it with all per-stage
-/// filters defaulting to "Same" (mirror current playback), and eagerly resolve
-/// the display_* signals so the spectrogram render Effect sees them immediately
-/// (rather than waiting a tick for the resolve Effect).
+/// Resolve the EQ, noise and transform rows of the XForm menu into what the
+/// spectrogram shows: `(eq, noise_filter, transform)`. Reads are tracked, so
+/// the resolve Effect re-runs when a row or the playback setting it mirrors
+/// changes.
+fn resolve_display_stages(state: &AppState) -> (bool, bool, bool) {
+    let eq_on = match state.display.filter_eq().get() {
+        DisplayFilterMode::Off => false,
+        // auto = show if playback EQ is on
+        DisplayFilterMode::Auto | DisplayFilterMode::Same => state.filter.enabled().get(),
+        DisplayFilterMode::Custom => false, // not yet implemented
+    };
+    let nr_on = match state.display.filter_nr().get() {
+        DisplayFilterMode::Off => false,
+        DisplayFilterMode::Auto | DisplayFilterMode::Custom => true,
+        DisplayFilterMode::Same => state.noise_reduce.enabled().get(),
+    };
+    let notch_on = match state.display.filter_notch().get() {
+        DisplayFilterMode::Off => false,
+        // auto = show if playback notch is on
+        DisplayFilterMode::Auto | DisplayFilterMode::Same => state.notch.enabled().get(),
+        DisplayFilterMode::Custom => false,
+    };
+    let xform_on = match state.display.filter_transform().get() {
+        DisplayFilterMode::Off => false,
+        DisplayFilterMode::Auto => false, // auto = off for transform
+        DisplayFilterMode::Same => state.playback.mode().get() != PlaybackMode::Normal,
+        DisplayFilterMode::Custom => false, // not yet implemented
+    };
+    (eq_on, nr_on || notch_on, xform_on)
+}
+
+/// Turn the XForm display-processing panel on. The per-stage rows keep the
+/// settings they had (all "Same", mirror current playback, until the user
+/// changes one). The display_* signals are resolved eagerly so the
+/// spectrogram render Effect sees them immediately (rather than waiting a
+/// tick for the resolve Effect).
 pub fn enable_xform(state: &AppState) {
     state.display.xform_enabled().set(true);
-    state.display.filter_eq().set(DisplayFilterMode::Same);
-    state.display.filter_notch().set(DisplayFilterMode::Same);
-    state.display.filter_nr().set(DisplayFilterMode::Same);
-    state
-        .display
-        .filter_transform()
-        .set(DisplayFilterMode::Same);
-    state.display.filter_gain().set(DisplayFilterMode::Same);
-    state.display.filter_decimate().set(DisplayFilterMode::Same);
-    // Eagerly resolve "Same" → mirror current playback state.
-    state
-        .display
-        .eq()
-        .set(state.filter.enabled().get_untracked());
-    state
-        .display
-        .noise_filter()
-        .set(state.noise_reduce.enabled().get_untracked() || state.notch.enabled().get_untracked());
-    state
-        .display
-        .transform()
-        .set(state.playback.mode().get_untracked() != PlaybackMode::Normal);
+    let (eq_on, noise_on, xform_on) = untrack(|| resolve_display_stages(state));
+    state.display.eq().set(eq_on);
+    state.display.noise_filter().set(noise_on);
+    state.display.transform().set(xform_on);
 }
 
 /// Turn the XForm panel off and reset all derived display_* signals so the
