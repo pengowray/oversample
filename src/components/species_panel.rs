@@ -735,19 +735,22 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     });
 
     let out_of_view = Memo::new(move |_| {
-        let (lo, hi) = form.get()?.khz_extent()?;
+        let f = form.get()?;
+        let (lo, hi) = f.khz_extent()?;
+        // A harmonic in view counts as the calls being in view.
+        let (drawn_lo, drawn_hi) = drawn_khz_extent(f)?;
         layout.get()?;
         let sc = scale.get()?;
-        let (lo_hz, hi_hz) = (lo * 1000.0, hi * 1000.0);
+        let lo_hz = lo * 1000.0;
         if lo_hz > sc.file_max_hz {
             Some(OutOfView::AboveRecording {
                 lo_khz: lo,
                 hi_khz: hi,
                 top_khz: sc.file_max_hz / 1000.0,
             })
-        } else if lo_hz > sc.max_hz {
+        } else if drawn_lo * 1000.0 > sc.max_hz {
             Some(OutOfView::Above)
-        } else if hi_hz < sc.min_hz {
+        } else if drawn_hi * 1000.0 < sc.min_hz {
             Some(OutOfView::Below)
         } else {
             None
@@ -887,8 +890,12 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                 };
                 ctx.set_font("10px system-ui, sans-serif");
                 ctx.set_fill_style_str(&rgba(cmap.apply(170), 1.0));
-                let y = (y_of(lo) + WINDOW_MARGIN + 10.0).clamp(10.0, css_h - 2.0);
-                let _ = ctx.fill_text(&label, call_sketch::STRIP_PAD, y);
+                // Left out when there's no room under the calls: it would
+                // sit on them.
+                let y = y_of(lo) + WINDOW_MARGIN + 10.0;
+                if y <= css_h - 2.0 {
+                    let _ = ctx.fill_text(&label, call_sketch::STRIP_PAD, y);
+                }
             }
         }
         ctx.set_line_cap("round");
