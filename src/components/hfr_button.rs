@@ -17,6 +17,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::popup::{Align, PopupPanel, Side};
+use crate::focus_stack::FocusRange;
 use crate::state::{ActiveFocus, AppState, LayerPanel};
 
 fn layer_opt_class(active: bool, disabled: bool) -> &'static str {
@@ -83,37 +84,11 @@ fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
     if entry.freq_lo_hz <= 0.0 || entry.freq_hi_hz <= entry.freq_lo_hz {
         return None;
     }
-    let nyq = file.spectrogram.max_freq;
-    Some((
-        entry.name.to_string(),
-        entry.freq_lo_hz,
-        entry.freq_hi_hz.min(nyq),
-    ))
-}
-
-/// Range covering all currently-selected bat book species (min lo, max hi).
-fn selected_species_range(state: AppState) -> Option<(f64, f64)> {
-    let ids = state.bat_book.selected_ids().get_untracked();
-    if ids.is_empty() {
-        return None;
-    }
-    let mut lo = f64::MAX;
-    let mut hi = f64::MIN;
-    let mut found = false;
-    for id in &ids {
-        if let Some(entry) = crate::bat_book::auto_resolve::find_entry_any_book(id) {
-            if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
-                lo = lo.min(entry.freq_lo_hz);
-                hi = hi.max(entry.freq_hi_hz);
-                found = true;
-            }
-        }
-    }
-    if found && hi > lo {
-        Some((lo, hi))
-    } else {
-        None
-    }
+    // The range is empty when the species calls above the file's range.
+    // Applying an empty band makes HFR pick its default band
+    // (FocusRange::hfr_default).
+    let r = FocusRange::new(entry.freq_lo_hz, entry.freq_hi_hz).clip_to(file.spectrogram.max_freq);
+    Some((entry.name.to_string(), r.lo, r.hi))
 }
 
 /// Range from whichever of selection / annotation / frequency-focus is
@@ -210,7 +185,9 @@ fn selected_species_info(state: AppState) -> Option<(String, f64, f64)> {
     } else {
         format!("{count} species")
     };
-    Some((label, lo, hi))
+    // Clipped like the file species preset, so the band fits the file.
+    let r = FocusRange::new(lo, hi).clip_to(nyquist_for_current(state));
+    Some((label, r.lo, r.hi))
 }
 
 /// True when HFR is on and the current BandFF range matches `(lo, hi)` — used
@@ -354,7 +331,7 @@ pub fn RangeButton() -> impl IntoView {
                             )
                             disabled=disabled
                             on:click=move |_| {
-                                if let Some((lo, hi)) = selected_species_range(state) {
+                                if let Some((_, lo, hi)) = selected_species_info(state) {
                                     apply_band(state, lo, hi);
                                 }
                             }
