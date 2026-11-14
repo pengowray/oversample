@@ -120,6 +120,9 @@ pub enum ModelPart {
     PerchEmbedding,
     /// Perch 2.0's int8 classifier.
     PerchClassifier,
+    /// The learned bat-call denoiser. It is not a classifier and runs in a
+    /// worker of its own (see `src/denoise.rs` in the app).
+    Denoiser,
 }
 
 /// Where a model sits in the worker.
@@ -131,6 +134,8 @@ pub enum ModelSlot {
     /// The model that scores its output: a BattyBirdNET head or Perch's
     /// classifier.
     Head,
+    /// The denoiser.
+    Denoise,
 }
 
 impl ModelPart {
@@ -138,6 +143,7 @@ impl ModelPart {
         match self {
             ModelPart::Backbone | ModelPart::PerchEmbedding => ModelSlot::Audio,
             ModelPart::BatHead | ModelPart::PerchClassifier => ModelSlot::Head,
+            ModelPart::Denoiser => ModelSlot::Denoise,
         }
     }
 
@@ -308,7 +314,9 @@ pub mod attach {
     pub const MSG: &str = "msg";
     /// `ArrayBuffer` of model bytes, on [`super::ToWorker::Load`].
     pub const BYTES: &str = "bytes";
-    /// `Float32Array` of source-rate mono samples, on [`super::ToWorker::Chunk`].
+    /// `Float32Array` of source-rate mono samples, on [`super::ToWorker::Chunk`]
+    /// and [`super::ToWorker::DenoiseStart`] (the whole recording), and the
+    /// denoised recording on [`super::FromWorker::Denoised`].
     pub const SAMPLES: &str = "samples";
     /// `Float32Array` of the method's [`super::Method::embedding_len`] values per
     /// window, on [`super::FromWorker::Window`] (one window) and
@@ -350,6 +358,14 @@ pub enum ToWorker {
         lon: f32,
         week: u32,
     },
+    /// Take a whole recording ([`attach::SAMPLES`], mono, at its own rate) for
+    /// the loaded denoiser. Any recording before it is dropped. Answered by
+    /// `DenoiseProgress` with `done` 0.
+    DenoiseStart { run: u32 },
+    /// Denoise the next block. Answered by `DenoiseProgress`, or by `Denoised`
+    /// after the last block. One block per message, so a `Cancel` between two
+    /// of them stops the work.
+    DenoiseStep { run: u32 },
 }
 
 /// Worker to app.
@@ -377,6 +393,11 @@ pub enum FromWorker {
     /// The Geomodel's 0 to 1 occurrence score for each of its species, in the
     /// order of its labels file.
     Occurrence { req: u32, scores: Vec<f32> },
+    /// `done` of the recording's `total` blocks are denoised.
+    DenoiseProgress { run: u32, done: u32, total: u32 },
+    /// The denoised recording is in [`attach::SAMPLES`], the same length as
+    /// what was sent.
+    Denoised { run: u32 },
     /// Something failed. `run` is `None` for model loading.
     Error {
         run: Option<u32>,

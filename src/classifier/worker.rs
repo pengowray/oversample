@@ -294,6 +294,9 @@ fn on_message(ev: MessageEvent) {
             FromWorker::Occurrence { req, scores } => {
                 client.resolve(&Wait::Occurrence(req), Ok(Reply::Occurrence(scores)));
             }
+            // The denoiser's answers go to its own worker's client
+            // (`crate::denoise`), never to this one.
+            FromWorker::DenoiseProgress { .. } | FromWorker::Denoised { .. } => {}
             FromWorker::Error { run, error } => {
                 flush = client.take_flush();
                 // Fail every waiter the error concerns: the run's, or (for a
@@ -362,10 +365,15 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
         .part()
         .ok_or_else(|| worker_err(format!("{} is not a model", file.id)))?;
     let key = file.id.to_string();
+    if part.slot() == ModelSlot::Denoise {
+        // The denoiser has a worker of its own (`crate::denoise`).
+        return Err(worker_err(format!("{} is not a classifier model", file.id)).into());
+    }
     let loaded = CLIENT.with(|c| {
         c.borrow().as_ref().is_some_and(|cl| match part.slot() {
             ModelSlot::Audio => cl.audio.as_deref() == Some(&key),
             ModelSlot::Head => cl.head.as_deref() == Some(&key),
+            ModelSlot::Denoise => false,
         })
     });
     if loaded {
@@ -378,6 +386,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
         match part.slot() {
             ModelSlot::Audio => client.audio = None,
             ModelSlot::Head => client.head = None,
+            ModelSlot::Denoise => {}
         }
         client.perch = Some(part.is_perch());
         let buf = bytes.buffer();
@@ -400,6 +409,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
             match part.slot() {
                 ModelSlot::Audio => cl.audio = Some(key),
                 ModelSlot::Head => cl.head = Some(key),
+                ModelSlot::Denoise => {}
             }
         }
     });

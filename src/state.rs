@@ -1637,6 +1637,26 @@ pub struct NoiseReduceState {
     pub learning: bool,
 }
 
+/// The learned denoiser (`crate::denoise`).
+#[derive(Clone, Debug, Store)]
+pub struct DenoiseState {
+    pub status: DenoiseStatus,
+}
+
+/// Where the denoiser is with the recording it was asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DenoiseStatus {
+    Idle,
+    /// Fetching the model; the fraction downloaded, 0 to 1.
+    Downloading(f64),
+    /// Reading the recording and starting the worker.
+    Starting,
+    /// The fraction of the recording done, 0 to 1.
+    Running(f64),
+    /// The last recording failed, with the message to show.
+    Failed(String),
+}
+
 /// Bat call detection (the Call detection tab) and its spectrogram overlay.
 #[derive(Clone, Debug, Store)]
 pub struct CallDetectionState {
@@ -2388,6 +2408,7 @@ pub struct AppState {
     pub notch: Store<NotchState>,
     /// Spectral-subtraction noise-reduction settings.
     pub noise_reduce: Store<NoiseReduceState>,
+    pub denoise: Store<DenoiseState>,
     /// Bat call detection results and settings.
     pub call_detection: Store<CallDetectionState>,
     /// BirdNET / BattyBirdNET downloads, runs and results (`crate::classifier`).
@@ -2747,6 +2768,9 @@ impl AppState {
                 harmonic_suppression: 0.0,
             }),
 
+            denoise: Store::new(DenoiseState {
+                status: DenoiseStatus::Idle,
+            }),
             noise_reduce: Store::new(NoiseReduceState {
                 enabled: false,
                 strength: 0.6,

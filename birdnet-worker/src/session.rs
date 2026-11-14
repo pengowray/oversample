@@ -1,6 +1,7 @@
 //! The worker's state and message handling, without any browser types, so the
 //! native tests drive the same code the Web Worker runs.
 
+use crate::denoise::{Denoiser, TractMask};
 use crate::engine::{top_scores, Backbone, Head};
 use crate::perch;
 use crate::windows::{Window, Windower};
@@ -16,7 +17,8 @@ pub struct Attached {
     pub embedding: Option<Vec<f32>>,
 }
 
-/// Where the worker's answers go: the message, and for `Window` its embedding.
+/// Where the worker's answers go: the message, and for `Window` its embedding
+/// or for `Denoised` its samples.
 pub trait Outbox {
     fn send(&mut self, msg: FromWorker, embedding: Option<&[f32]>);
 }
@@ -50,6 +52,9 @@ pub struct Session {
     audio: Option<(String, AudioModel)>,
     head: Option<(String, HeadModel)>,
     run: Option<Run>,
+    /// The denoiser's model, and the recording it is working through.
+    denoiser: Option<(String, TractMask)>,
+    denoising: Option<(u32, Denoiser)>,
 }
 
 impl Session {
@@ -71,6 +76,10 @@ impl Session {
                 match part.slot() {
                     ModelSlot::Audio => self.audio = None,
                     ModelSlot::Head => self.head = None,
+                    ModelSlot::Denoise => {
+                        self.denoiser = None;
+                        self.denoising = None;
+                    }
                 }
                 let t = now_ms();
                 let bytes = att.bytes.unwrap_or_default();
@@ -86,6 +95,9 @@ impl Session {
                         .map_err(|e| format!("{e:#}")),
                     ModelPart::PerchClassifier => perch::Classifier::from_bytes(bytes)
                         .map(|m| self.head = Some((key.clone(), HeadModel::Perch(m)))),
+                    ModelPart::Denoiser => TractMask::load(bytes)
+                        .map(|m| self.denoiser = Some((key.clone(), m)))
+                        .map_err(|e| format!("{e:#}")),
                 };
                 match built {
                     Ok(()) => out.send(
@@ -161,6 +173,58 @@ impl Session {
             ToWorker::Cancel { run } => {
                 if self.run.as_ref().is_some_and(|r| r.id == run) {
                     self.run = None;
+                }
+                if self.denoising.as_ref().is_some_and(|(id, _)| *id == run) {
+                    self.denoising = None;
+                }
+            }
+            ToWorker::DenoiseStart { run } => {
+                self.denoising = None;
+                if self.denoiser.is_none() {
+                    out.send(inference_error(run, "no denoiser loaded".into()), None);
+                    return;
+                }
+                match Denoiser::new(att.samples.as_deref().unwrap_or_default()) {
+                    Ok(d) => {
+                        let total = d.blocks() as u32;
+                        self.denoising = Some((run, d));
+                        out.send(
+                            FromWorker::DenoiseProgress {
+                                run,
+                                done: 0,
+                                total,
+                            },
+                            None,
+                        );
+                    }
+                    Err(message) => out.send(inference_error(run, message), None),
+                }
+            }
+            ToWorker::DenoiseStep { run } => {
+                let Some((_, model)) = self.denoiser.as_mut() else {
+                    return;
+                };
+                let Some((_, d)) = self.denoising.as_mut().filter(|(id, _)| *id == run) else {
+                    return;
+                };
+                match d.step(model) {
+                    Ok(true) => out.send(
+                        FromWorker::DenoiseProgress {
+                            run,
+                            done: d.blocks_done() as u32,
+                            total: d.blocks() as u32,
+                        },
+                        None,
+                    ),
+                    Ok(false) => {
+                        if let Some((_, d)) = self.denoising.take() {
+                            out.send(FromWorker::Denoised { run }, Some(&d.finish()));
+                        }
+                    }
+                    Err(message) => {
+                        self.denoising = None;
+                        out.send(inference_error(run, message), None);
+                    }
                 }
             }
             ToWorker::Rescore { run, windows } => {

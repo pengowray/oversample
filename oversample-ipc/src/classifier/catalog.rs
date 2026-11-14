@@ -36,6 +36,9 @@ pub enum FileKind {
     /// eBird code for birds, a number for others), scientific name, English
     /// name, tab-separated.
     GeomodelLabels,
+    /// The learned bat-call denoiser: STFT features in, a gain for every bin
+    /// out. Not a classifier; it has its own worker (`src/denoise.rs`).
+    Denoiser,
 }
 
 /// One downloadable file.
@@ -59,6 +62,7 @@ impl ModelFile {
             FileKind::BatHead(_) => Some(ModelPart::BatHead),
             FileKind::PerchEmbedding => Some(ModelPart::PerchEmbedding),
             FileKind::PerchClassifier => Some(ModelPart::PerchClassifier),
+            FileKind::Denoiser => Some(ModelPart::Denoiser),
             // Run on its own, outside the worker's two slots.
             FileKind::Geomodel => None,
             FileKind::BirdNetLabels
@@ -88,6 +92,18 @@ pub const PERCH_LABELS_REVISION: &str = "c3c3c816976a6c1bb75140b8fbaef7397a6f708
 /// The revision of huggingface.co/tphakala/BirdNET-Geomodel (BirdNET+ Geomodel
 /// v3.0.4 from birdnet-team/geomodel, Apache 2.0).
 pub const GEOMODEL_REVISION: &str = "e4a58d521af276de0c69a9cf8348d431e97854e3";
+
+/// The bat-call denoiser, from the `batchi-noisier2noise` project. The weights
+/// are kept out of the app and its repository, and downloaded when asked for.
+// TODO(denoise): set the URL's revision, the size and the hash once the file
+// is uploaded. Until then the download fails with HTTP 404.
+pub const DENOISER: ModelFile = ModelFile {
+    id: "oversample-bat-denoise-v1.onnx",
+    url: "https://huggingface.co/pengowray/oversample-bat-denoise/resolve/main/oversample-bat-denoise-v1.onnx",
+    size: 0,
+    sha256: "",
+    kind: FileKind::Denoiser,
+};
 
 pub const GEOMODEL: ModelFile = ModelFile {
     id: "birdnet-geomodel-v3.0.4-fp32-b1.onnx",
@@ -287,7 +303,10 @@ impl ModelChoice {
 
 /// Every file in the catalog.
 pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
-    birdnet_files().chain(PERCH_FILES).chain(GEOMODEL_FILES)
+    birdnet_files()
+        .chain(PERCH_FILES)
+        .chain(GEOMODEL_FILES)
+        .chain(std::iter::once(&DENOISER))
 }
 
 /// BirdNET's and BattyBirdNET's files (they share the backbone), without

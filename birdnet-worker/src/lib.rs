@@ -53,7 +53,11 @@ mod wasm {
         match embedding {
             Some(e) => {
                 let arr = js_sys::Float32Array::from(e);
-                let _ = js_sys::Reflect::set(&obj, &attach::EMBEDDING.into(), &arr);
+                let name = match msg {
+                    FromWorker::Denoised { .. } => attach::SAMPLES,
+                    _ => attach::EMBEDDING,
+                };
+                let _ = js_sys::Reflect::set(&obj, &name.into(), &arr);
                 let transfer = js_sys::Array::of1(&arr.buffer());
                 let _ = scope.post_message_with_transfer(&obj, &transfer);
             }
