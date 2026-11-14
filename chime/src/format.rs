@@ -301,12 +301,16 @@ impl RemoteMessage {
     }
 }
 
-/// A command for the X8 bat patch's phone remote. Only [`RemoteCommand::Listen`] has an argument;
-/// the others are sent with argument 0, and any other argument makes the message unknown.
+/// A command for the X8 bat patch's phone remote. [`RemoteCommand::StartWithMute`] and
+/// [`RemoteCommand::Listen`] have an argument; the others are sent with argument 0, and any other
+/// argument makes the message unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteCommand {
-    /// Start recording.
+    /// Start recording, and leave the receiver's Mute while recording switch as it is.
     Start,
+    /// Start recording, after turning the receiver's Mute while recording switch on (`true`,
+    /// argument 1) or off (`false`, argument 2). The command byte is Start's.
+    StartWithMute(bool),
     /// Stop recording.
     Stop,
     /// Set the clock to the chime's time. Start, stop and listening mode chimes set the clock too,
@@ -317,8 +321,10 @@ pub enum RemoteCommand {
 }
 
 impl RemoteCommand {
-    pub const ALL: [RemoteCommand; 9] = [
+    pub const ALL: [RemoteCommand; 11] = [
         RemoteCommand::Start,
+        RemoteCommand::StartWithMute(true),
+        RemoteCommand::StartWithMute(false),
         RemoteCommand::Stop,
         RemoteCommand::SetClock,
         RemoteCommand::Listen(ListeningMode::Het),
@@ -333,6 +339,7 @@ impl RemoteCommand {
     fn from_code(code: u8, argument: u16) -> Option<Self> {
         match (code, argument) {
             (1, 0) => Some(RemoteCommand::Start),
+            (1, 1 | 2) => Some(RemoteCommand::StartWithMute(argument == 1)),
             (2, 0) => Some(RemoteCommand::Stop),
             (3, 0) => Some(RemoteCommand::SetClock),
             (4, 1..=6) => Some(RemoteCommand::Listen(
@@ -345,7 +352,7 @@ impl RemoteCommand {
     /// The command byte. 0 is never a command.
     pub const fn code(self) -> u8 {
         match self {
-            RemoteCommand::Start => 1,
+            RemoteCommand::Start | RemoteCommand::StartWithMute(_) => 1,
             RemoteCommand::Stop => 2,
             RemoteCommand::SetClock => 3,
             RemoteCommand::Listen(_) => 4,
@@ -356,6 +363,8 @@ impl RemoteCommand {
     pub const fn argument(self) -> u16 {
         match self {
             RemoteCommand::Listen(mode) => mode.code(),
+            RemoteCommand::StartWithMute(true) => 1,
+            RemoteCommand::StartWithMute(false) => 2,
             _ => 0,
         }
     }
@@ -986,6 +995,8 @@ mod tests {
             b"BATX\x01\x05\x00\x00",
             b"BATX\x02\x01\x00\x00",
             b"BATX\x01\x01\x05\x00",
+            b"BATX\x01\x01\x03\x00",
+            b"BATX\x01\x02\x01\x00",
             b"BATX\x01\x03\x01\x00",
             b"BATX\x01\x04\x00\x00",
             b"BATX\x01\x04\x07\x00",
@@ -1107,6 +1118,34 @@ mod tests {
         }
     }
 
+    /// Start recording can turn the receiver's Mute while recording switch on or off.
+    #[test]
+    fn start_with_mute_has_start_s_command_byte_and_an_argument() {
+        let (on, off) = (
+            RemoteCommand::StartWithMute(true),
+            RemoteCommand::StartWithMute(false),
+        );
+        assert_eq!(&on.deployment_id(), b"BATX\x01\x01\x01\x00");
+        assert_eq!(&off.deployment_id(), b"BATX\x01\x01\x02\x00");
+        assert_eq!(on.coded_byte(), 0x11);
+        assert_eq!(off.coded_byte(), 0x12);
+        for command in [on, off] {
+            let message = RemoteMessage::from_deployment_id(&command.deployment_id()).unwrap();
+            assert_eq!(message.known(), Some(command));
+            let id = command.coded_deployment_id(b"493817", 1_794_700_800, 600);
+            assert_eq!(
+                id[..6],
+                [0x42, 0x41, 0x54, 0x58, 0x02, command.coded_byte()]
+            );
+            let message = RemoteMessage::from_deployment_id(&id).unwrap();
+            assert_eq!(message.command(), Some(command));
+            assert!(message.check_matches(b"493817", 1_794_700_800, 600));
+            // Start's own check does not pass for it.
+            let start = RemoteCommand::Start.coded_deployment_id(b"493817", 1_794_700_800, 600);
+            assert_ne!(id[6..], start[6..]);
+        }
+    }
+
     #[test]
     fn every_command_round_trips_in_version_2() {
         for command in RemoteCommand::ALL {
@@ -1145,8 +1184,9 @@ mod tests {
 
     #[test]
     fn unknown_version_2_messages_are_not_known() {
-        // Command 0, command 5, Start with an argument, and listening modes 0 and 7.
-        for byte in [0x00, 0x50, 0x11, 0x40, 0x47] {
+        // Command 0, command 5, Start with argument 3, Stop with an argument, and listening
+        // modes 0 and 7.
+        for byte in [0x00, 0x50, 0x13, 0x21, 0x40, 0x47] {
             let id = [0x42, 0x41, 0x54, 0x58, 0x02, byte, 0, 0];
             let message = RemoteMessage::from_deployment_id(&id).unwrap();
             assert_eq!(message.command(), None, "{byte:#04x}");

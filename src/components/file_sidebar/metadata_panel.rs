@@ -1376,7 +1376,10 @@ fn channel_list(channels: &[u32]) -> String {
 
 fn chime_heading(chime: &FoundChime) -> String {
     let what = match chime.remote().map(|remote| remote.command()) {
-        Some(Some(RemoteCommand::Start)) => CHIME_START.to_string(),
+        // With or without a choice for the X8's Mute while recording switch.
+        Some(Some(RemoteCommand::Start | RemoteCommand::StartWithMute(_))) => {
+            CHIME_START.to_string()
+        }
         Some(Some(RemoteCommand::Stop)) => CHIME_STOP.to_string(),
         Some(Some(RemoteCommand::SetClock)) => CHIME_SET_CLOCK.to_string(),
         // Mode name first, so "1:1" doesn't sit next to the file position.
