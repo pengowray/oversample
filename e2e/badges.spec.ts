@@ -274,3 +274,39 @@ test.describe("file list rows in a narrow Files sidebar", () => {
     expect(await badgeLines(page, ".file-item:has-text('XC815138') .file-item-info")).toBe(2);
   });
 });
+
+test.describe("licence button in the heading", () => {
+  test("on a phone, a long licence shares the heterodyne badge's line", async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 375, height: 812 },
+      isMobile: true,
+      hasTouch: true,
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+    });
+    const page = await context.newPage();
+    await openHeterodyneDemo(page, "//creativecommons.org/publicdomain/mark/1.0/");
+    const licence = page.locator(".toolbar-cc-badge");
+    await expect(licence.locator(".toolbar-cc-label")).toHaveText("Public Domain Mark 1.0");
+    // Before the fix the licence moved to a third badge line.
+    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(2);
+    const het = (await page.locator(".toolbar-badge-row .file-badge-heterodyne").boundingBox())!;
+    const lic = (await licence.boundingBox())!;
+    expect(Math.abs(lic.y - het.y)).toBeLessThan(2);
+    // The label is cut off with an ellipsis, and the button stays inside the row.
+    const label = licence.locator(".toolbar-cc-label");
+    expect(await label.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+    const rowBox = (await page.locator(".toolbar-badge-row").boundingBox())!;
+    expect(lic.x + lic.width).toBeLessThanOrEqual(rowBox.x + rowBox.width + 0.5);
+    await context.close();
+  });
+
+  test("on a desktop, the whole licence shows", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openHeterodyneDemo(page, "//creativecommons.org/licenses/by-nc-sa/2.5/scotland/");
+    const label = page.locator(".toolbar-cc-badge .toolbar-cc-label");
+    await expect(label).toHaveText("BY-NC-SA 2.5 SCOTLAND");
+    expect(await label.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
+    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(1);
+  });
+});

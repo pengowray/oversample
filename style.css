@@ -2964,19 +2964,24 @@ a.open-link-btn {
 }
 
 /* The heading's licence button. Its box comes from .badge-btn ("File
-   badges"); this rule lays out the icon and label. A long licence name is
-   cut off with an ellipsis on the label, which clips itself, so the button
-   does not clip and the touch strip in .badge-btn::before stays tappable.
-   16em is 192px at the badge row's 12px: the longest Creative Commons
-   labels ("Public Domain Mark 1.0", "BY-NC-SA 2.5 SCOTLAND") fit, as they
-   did in the old 160px cap at 10px. */
+   badges"); this rule lays out the icon and label.
+   The button goes on the same line as the badges before it whenever 6em
+   (72px) is left on that line, and then widens to its full label or to the
+   end of the line, whichever is narrower. A label longer than that is cut
+   off with an ellipsis. On a phone this keeps the heading at two badge lines
+   for a heterodyne file with a long licence ("Public Domain Mark 1.0") or a
+   [~] badge, where a licence that moved to a line of its own made the
+   heading 16px taller than before badge style option A. With room to spare,
+   as on a desktop, the whole label shows.
+   The label clips itself, so the button does not clip and the touch strip
+   in .badge-btn::before stays tappable. */
 .toolbar-cc-badge {
-    flex-shrink: 0;
+    flex: 1 1 6em;
+    min-width: 0;
+    max-width: max-content;
     display: flex;
     align-items: center;
     gap: 3px;
-    white-space: nowrap;
-    max-width: 16em;
 }
 
 .toolbar-cc-icon {
@@ -2994,9 +2999,13 @@ a.open-link-btn {
     mask-repeat: no-repeat;
 }
 
+/* 14em is 168px at the badge row's 12px: the longest Creative Commons
+   labels ("Public Domain Mark 1.0", "BY-NC-SA 2.5 SCOTLAND") fit, and a
+   longer licence name that is not Creative Commons is cut off. */
 .toolbar-cc-label {
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 14em;
 }
 
 /* Document icon for licences that are not Creative Commons (GFDL, Fair use),
