@@ -166,8 +166,9 @@ pub struct FileMetadata {
     pub zc_data: Option<Arc<ZcData>>,
     /// WAV-only details. None for other formats.
     pub wav: Option<WavDetails>,
-    /// Set when the file was stored time-expanded and its rate was corrected on load;
-    /// `sample_rate` is then the corrected rate. `None` for a real-time recording.
+    /// Set when the file was stored time-expanded and its rate was corrected, on load
+    /// or later by the user; `sample_rate` is then the corrected rate. `None` for a
+    /// file read at the rate it states.
     pub time_expansion: Option<TimeExpansion>,
 }
 

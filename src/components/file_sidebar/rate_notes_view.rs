@@ -57,13 +57,18 @@ pub(crate) fn RateNotes(
 
 /// The button of a note. The change runs in the click handler. It rebuilds
 /// the Info panel, this button included, but the rebuild runs after the
-/// handler returns, before the next click can arrive. A second press of the
-/// same button sets the same rate and changes nothing.
+/// handler returns, before the next click can arrive.
+///
+/// The rebuild reuses the button element for the next note's button, so
+/// "Treat as time-expanded ×10" becomes "Use the file's sample rate" under
+/// the pointer and keeps keyboard focus. So that one double-click, or Enter
+/// held down, does not apply the correction and take it back, the second
+/// click of a double-click (`detail` 2 or more) and a key repeat do nothing.
+/// A separate press of the button does what its label says.
 ///
 /// The handler holds only `state` and the file's id, so it reads nothing that
 /// the rebuild disposes of. It sets no `disabled` property by hand: the
-/// rebuild reuses the button element for the next note's button and keeps
-/// any property it did not set.
+/// rebuilt button would keep it.
 fn action_button(
     state: AppState,
     action: NoteAction,
@@ -71,8 +76,16 @@ fn action_button(
     stored_rate: u32,
     loading: bool,
 ) -> impl IntoView {
-    let on_click = move |_: web_sys::MouseEvent| {
+    let on_click = move |ev: web_sys::MouseEvent| {
+        if ev.detail() > 1 {
+            return;
+        }
         crate::te_correction::set_user_time_expansion(state, file_id, action.factor());
+    };
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        if ev.repeat() {
+            ev.prevent_default();
+        }
     };
     view! {
         <button
@@ -81,6 +94,7 @@ fn action_button(
             title=action.tooltip(stored_rate)
             disabled=loading
             on:click=on_click
+            on:keydown=on_keydown
         >
             {action.label()}
         </button>

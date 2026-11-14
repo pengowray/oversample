@@ -2,8 +2,8 @@
 //!
 //! A file can have up to two notes, in this order:
 //!
-//! 1. The time-expansion note, when the app corrected the file's rate for
-//!    time expansion as it loaded the file.
+//! 1. The time-expansion note, when the file's rate was corrected for time
+//!    expansion: by the app as it loaded the file, or by the user.
 //! 2. The heterodyne note ([`crate::heterodyne`]) or the species call-range
 //!    note ([`crate::species_check`]), never both.
 //!

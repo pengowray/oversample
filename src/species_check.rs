@@ -63,9 +63,10 @@ pub fn file_finding(file: &LoadedFile) -> Option<SpeciesRangeFinding> {
 
 /// The finding for a species and a file's rate.
 ///
-/// - `time_expansion`: the correction the app applied when it loaded the
-///   file. A factor other than 1 counts as applied, as for the heterodyne hint.
-/// - `sample_rate`: the file's rate as loaded, after any correction.
+/// - `time_expansion`: the correction applied to the file's rate, by the app
+///   when it loaded the file or by the user. A factor other than 1 counts as
+///   applied, as for the heterodyne hint.
+/// - `sample_rate`: the rate the file is read at, after any correction.
 pub(crate) fn finding(
     name: &str,
     species: &BatSpecies,

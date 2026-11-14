@@ -200,40 +200,45 @@ function expectRange(actual: Range | null | undefined, expected: Range) {
   }
 }
 
-/** Drags out a selection from `t0` to `t1`, given as fractions of the file's
- * duration, over the given fractions of the spectrogram's height (from the
- * top). The spectrogram's width in seconds is its width in columns (pixels
- * over zoom) times the seconds per column (512 samples). */
+/** Drags out a selection from `t0` to `t1`, given as fractions of the part of
+ * the file in view, over the given fractions of the spectrogram's height
+ * (from the top). The spectrogram's width in seconds is its width in columns
+ * (pixels over zoom) times the seconds per column (512 samples). */
 async function select(page: Page, t0: number, t1: number, y0: number, y1: number) {
   const canvas = page.locator(".main-view .chart-stage > canvas");
   const box = (await canvas.boundingBox())!;
   const s = await snap(page);
   const visible = (box.width / s.zoom) * (512 / s.sampleRate);
-  const x = (t: number) => box.x + (box.width * (t * s.duration - s.scrollOffset)) / visible;
+  const shown = Math.min(visible, s.duration - s.scrollOffset);
+  const x = (f: number) => box.x + (box.width * f * shown) / visible;
   await page.mouse.move(x(t0), box.y + box.height * y0);
   await page.mouse.down();
   await page.mouse.move(x(t1), box.y + box.height * y1, { steps: 5 });
   await page.mouse.up();
 }
 
+/** Lets hover and tap highlights fade before a screenshot: the pointer goes to
+ * the window title, or a phone taps the Info panel's "File" heading. */
+async function settle(page: Page) {
+  if (page.viewportSize()!.width < 768) {
+    await page.locator(".right-sidebar .setting-group-title", { hasText: "File" }).first().tap();
+  } else {
+    await page.mouse.move(785, 16);
+  }
+  await page.waitForTimeout(500);
+}
+
 test.describe("x10 correction on a probably time-expanded file", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("the button corrects the rate and the second button undoes it", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
     await openCase(page, CASE_T);
-
-    // An annotation and a selection, made before the correction.
-    await expect(page.locator(".main-view .chart-stage > canvas")).toBeVisible();
-    await page.locator(".tool-combo-btn").click();
-    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
-    await select(page, 0.2, 0.4, 0.3, 0.6);
-    await page.locator(".canvas-overflow-btn").click();
-    await page.locator(".canvas-overflow-menu button", { hasText: "Annotate" }).click();
-    await expect.poll(async () => (await snap(page)).regions.length).toBe(1);
-    await select(page, 0.55, 0.8, 0.2, 0.5);
-    await expect.poll(async () => (await snap(page)).selection !== null).toBe(true);
+    await showInfo(page);
 
     // Zoom in on time (Ctrl+wheel) and frequency (Shift+wheel), and scroll.
+    await expect(page.locator(".main-view .chart-stage > canvas")).toBeVisible();
     const box = (await page.locator(".main-view .chart-stage > canvas").boundingBox())!;
     await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.5);
     await page.keyboard.down("Control");
@@ -245,7 +250,16 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 100);
     await expect.poll(async () => (await snap(page)).scrollOffset).toBeGreaterThan(0.1);
 
-    await showInfo(page);
+    // An annotation and a selection in view, made before the correction.
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+    await select(page, 0.15, 0.4, 0.3, 0.6);
+    await page.locator(".canvas-overflow-btn").click();
+    await page.locator(".canvas-overflow-menu button", { hasText: "Annotate" }).click();
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(1);
+    await select(page, 0.55, 0.8, 0.2, 0.5);
+    await expect.poll(async () => (await snap(page)).selection !== null).toBe(true);
+
     const before = await snap(page);
     expect(before.sampleRate).toBe(25_600);
     expect(before.duration).toBeCloseTo(20, 9);
@@ -273,6 +287,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
       "rate-note-muted",
     ]);
     expect((await treat.boundingBox())!.height).toBeGreaterThanOrEqual(24);
+    await settle(page);
     await shot(page, "desktop-1440-before.png");
 
     // Playback stops when the rate changes.
@@ -307,6 +322,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expectRange(after.regions[0], scaled(region, 10));
     expectRange(after.selection, scaled(selection, 10));
     const durationAfter = await row(page, "Duration").textContent();
+    await settle(page);
     await shot(page, "desktop-1440-apply-after.png");
 
     // A second press is not possible: the button has gone.
@@ -337,7 +353,25 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expect(undone.scrollOffset).toBeCloseTo(before.scrollOffset, 9);
     expectRange(undone.regions[0], region);
     expectRange(undone.selection, selection);
+    await settle(page);
     await shot(page, "desktop-1440-undo-after.png");
+
+    // The pressed button becomes "Use the file's sample rate" in place. A
+    // double-click applies the correction once, and Enter held down on the
+    // focused button acts once.
+    await page.locator(TREAT).dblclick();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await page.waitForTimeout(300);
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await page.locator(USE_FILE).focus();
+    await page.keyboard.down("Enter");
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await page.keyboard.down("Enter");
+    await page.keyboard.down("Enter");
+    await page.keyboard.up("Enter");
+    await page.waitForTimeout(300);
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    expect(errors).toEqual([]);
   });
 
   test("an annotation made after the correction is kept by the undo", async ({ page }) => {
@@ -383,7 +417,21 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     // The correction lasts for the session: the file opens at its own rate,
     // and the annotation saved while it was corrected is in the file's own
     // seconds and Hz.
-    await page.waitForTimeout(1500);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+            for await (const [, handle] of (dir as any).entries()) {
+              const text = await (await (handle as FileSystemFileHandle).getFile()).text();
+              if (text.includes("Region")) return true;
+            }
+            return false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
     await page.reload();
     await expect(page.locator(".toolbar-badge-row .badge-sample-rate")).toBeVisible({
       timeout: 60_000,
@@ -466,6 +514,7 @@ test.describe("x10 correction on a phone", () => {
     });
     expect(lineTops).toBe(1);
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await settle(page);
     await shot(page, "phone-375-before.png");
 
     await treat.tap();
@@ -474,12 +523,14 @@ test.describe("x10 correction on a phone", () => {
     await expect(useFile).toBeVisible();
     expect((await useFile.boundingBox())!.height).toBeGreaterThanOrEqual(36);
     expect((await snap(page)).duration).toBeCloseTo(2, 9);
+    await settle(page);
     await shot(page, "phone-375-apply-after.png");
 
     await useFile.tap();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     await expect(page.locator(TREAT)).toBeVisible();
     expect((await snap(page)).duration).toBeCloseTo(20, 9);
+    await settle(page);
     await shot(page, "phone-375-undo-after.png");
     // No horizontal page scroll.
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(

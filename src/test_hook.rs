@@ -156,6 +156,17 @@ pub fn install(state: AppState) {
             "isPlaying",
             JsValue::from_bool(state.playback.is_playing().get_untracked()),
         );
+        // The HFR band in force (0 to 0 when HFR is off).
+        set(
+            &o,
+            "hfrBandLo",
+            JsValue::from_f64(state.filter.band_ff_freq_lo().get_untracked()),
+        );
+        set(
+            &o,
+            "hfrBandHi",
+            JsValue::from_f64(state.filter.band_ff_freq_hi().get_untracked()),
+        );
         // Live capture
         let listening = state.mic.listening().get_untracked();
         let recording = state.mic.recording().get_untracked();

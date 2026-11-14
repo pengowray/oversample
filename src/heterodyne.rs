@@ -45,10 +45,11 @@ pub fn field_label(field: TextField) -> &'static str {
 /// The heterodyne hint for a file, from its site metadata rows.
 ///
 /// - `fields`: the site metadata label/value rows (`SiteMetadata::fields`).
-/// - `time_expansion`: the correction the app applied when it loaded the file.
-///   A factor other than 1 gives `None`: the file is then known to be
-///   time-expanded, and the correction already accounts for its frequencies.
-/// - `sample_rate`: the file's rate as loaded. The rule needs the rate in the
+/// - `time_expansion`: the correction applied to the file's rate, by the app
+///   when it loaded the file or by the user. A factor other than 1 gives
+///   `None`: the file is then taken to be time-expanded, and the correction
+///   already accounts for its frequencies.
+/// - `sample_rate`: the rate the file is read at. The rule needs the rate in the
 ///   file header, which is `time_expansion.stored_rate` when a correction was
 ///   applied and `sample_rate` otherwise.
 pub fn file_hint(
