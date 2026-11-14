@@ -109,10 +109,15 @@ async function showInfo(page: Page) {
   await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
 }
 
+/** The notes under the Sample rate row are `.rate-note` elements; `data-note`
+ * names each note's kind (src/rate_notes.rs). */
+const HET_NOTE = '.rate-note[data-note="heterodyne"]';
+const TE_NOTE = '.rate-note[data-note="time-expansion"]';
+
 /** The text and class of each line of the Info panel's heterodyne note. */
 async function noteLines(page: Page) {
   return page
-    .locator(".heterodyne-note > div")
+    .locator(`${HET_NOTE} > div`)
     .evaluateAll((els) => els.map((e) => [e.className, e.textContent]));
 }
 
@@ -120,9 +125,11 @@ const HEADLINE = "Recorded from a heterodyne bat detector's audio output.";
 const CONSEQUENCE = "Frequencies are not the bat's call frequencies and can't be corrected.";
 /** The consequence line when the remark gives the detector's tuning. */
 const CONSEQUENCE_TUNED = "Frequencies are not the bat's call frequencies.";
-const WARN = "heterodyne-note-warning";
-const DETAIL = "heterodyne-note-detail";
-const PLAIN = "heterodyne-note-plain";
+const WARN = "rate-note-warning";
+const MUTED = "rate-note-muted";
+/** The line that quotes the recording's metadata. It is drawn muted. */
+const QUOTE = "rate-note-quote";
+const PLAIN = "rate-note-plain";
 
 test.describe("heterodyne badge and note", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -158,10 +165,10 @@ test.describe("heterodyne badge and note", () => {
     await badge.click();
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
     await expect(page.locator(".right-sidebar .sidebar-tab-dropdown")).toContainText("Info");
-    await expect(page.locator(".heterodyne-note")).toBeVisible();
+    await expect(page.locator(HET_NOTE)).toBeVisible();
     expect(await noteLines(page)).toEqual([
       [WARN, lines[0]],
-      [DETAIL, lines[1]],
+      [QUOTE, lines[1]],
       [WARN, lines[2]],
       [PLAIN, lines[3]],
     ]);
@@ -175,7 +182,7 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [WARN, HEADLINE],
-      [DETAIL, 'Remarks: "Recorded with a handheld hetrodyne detector"'],
+      [QUOTE, 'Remarks: "Recorded with a handheld hetrodyne detector"'],
       [WARN, CONSEQUENCE],
     ]);
   });
@@ -194,8 +201,8 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [WARN, lines[0]],
-      [DETAIL, lines[1]],
-      [DETAIL, lines[2]],
+      [QUOTE, lines[1]],
+      [MUTED, lines[2]],
       [WARN, lines[3]],
     ]);
   });
@@ -225,7 +232,7 @@ test.describe("heterodyne badge and note", () => {
     await page.locator(".file-item .file-badge-heterodyne").click();
     await expect(page.locator(".file-item.active .file-item-name")).toHaveText("XC815138 demo.wav");
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
-    await expect(page.locator(".heterodyne-note")).toBeVisible();
+    await expect(page.locator(HET_NOTE)).toBeVisible();
   });
 
   test("the badge scrolls the Info panel back to the Sample rate row and note", async ({
@@ -235,11 +242,11 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     const panel = page.locator(".right-sidebar .sidebar-panel");
     await panel.evaluate((el) => (el.scrollTop = el.scrollHeight));
-    const note = page.locator(".heterodyne-note");
+    const note = page.locator(HET_NOTE);
     const top = (sel: string) =>
       page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, sel);
     const panelBox = (await panel.boundingBox())!;
-    expect(await top(".heterodyne-note")).toBeLessThan(panelBox.y);
+    expect(await top(HET_NOTE)).toBeLessThan(panelBox.y);
 
     await page.locator(".toolbar-badge-row .file-badge-heterodyne").click();
     // The Sample rate row (just above the note) and the note are both in view.
@@ -290,13 +297,13 @@ test.describe("heterodyne badge and note", () => {
     await showInfo(page);
     expect(await noteLines(page)).toEqual([
       [
-        DETAIL,
+        MUTED,
         "Possibly recorded from a bat detector's output " +
           "(heterodyne, time expansion or frequency division).",
       ],
-      [DETAIL, 'Device: "Pettersson D980"'],
-      [DETAIL, "The Pettersson D980 has a heterodyne mode and other modes."],
-      [DETAIL, "If so, frequencies are not the bat's call frequencies."],
+      [QUOTE, 'Device: "Pettersson D980"'],
+      [MUTED, "The Pettersson D980 has a heterodyne mode and other modes."],
+      [MUTED, "If so, frequencies are not the bat's call frequencies."],
     ]);
     await expect(page.locator(".file-badge-heterodyne")).toHaveCount(0);
   });
@@ -319,10 +326,10 @@ test.describe("heterodyne badge and note", () => {
       await showInfo(page);
       await expect(page.locator(".metadata-row-inline .setting-label", { hasText: /^Sample rate$/ })).toBeVisible();
       await expect(page.locator(".file-badge-heterodyne")).toHaveCount(0);
-      await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+      await expect(page.locator(HET_NOTE)).toHaveCount(0);
       if (c.guano) {
         // The app applied the file's time expansion, which is why there is no hint.
-        await expect(page.locator(".metadata-note", { hasText: /time expansion/ })).toBeVisible();
+        await expect(page.locator(TE_NOTE, { hasText: /time expansion/ })).toBeVisible();
       }
     });
   }
@@ -452,7 +459,7 @@ test.describe("heterodyne badge on a phone", () => {
     await page.locator(".file-item .file-badge-heterodyne").tap();
     await expect(left).toHaveClass(/collapsed/);
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
-    const note = page.locator(".heterodyne-note");
+    const note = page.locator(HET_NOTE);
     await expect(note).toBeVisible();
     // The note stays inside the panel.
     const panel = (await page.locator(".right-sidebar").boundingBox())!;

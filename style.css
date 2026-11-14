@@ -5190,35 +5190,39 @@ a.open-link-btn {
     }
 }
 
-/* The heterodyne note under the Info panel's Sample rate row. The container is
-   a .metadata-note, so detail lines are muted; the finding and its consequence
-   take the .analysis-warning amber. The quoted evidence can be one long word
-   (a URL, a model number run), so it may break anywhere to stay in the panel. */
-.heterodyne-note {
+/* The notes under the Info panel's Sample rate row (src/rate_notes.rs, drawn by
+   file_sidebar/rate_notes_view.rs): the time-expansion note, then the
+   heterodyne note or the species call-range note. Each note is a
+   .metadata-note, with one div per line, and each line's class is its role.
+   A line can contain text from the recording's metadata (a quoted remark, a
+   detector or species name), which can be one long word such as a URL, so a
+   line may break anywhere to stay in the panel. */
+.rate-note {
     overflow-wrap: anywhere;
 }
-/* The species note takes the heterodyne note's place for a file whose sample
-   rate is too low for its species' echolocation calls and which has no
-   heterodyne hint (src/species_check.rs), and is styled the same way. Its
-   lines are muted, except that a probable x10 time expansion takes the amber:
-   all 10 Xeno-canto records at a x10 header rate were time-expanded (2 of
-   them the app corrects from their GUANO, so they show no note). Its text
-   has no long words, so it wraps normally. */
 /* Each line is one statement and most wrap in the panel, so a small gap shows
    where one ends and the next begins. */
-.heterodyne-note > div + div,
-.species-range-note > div + div {
+.rate-note > div + div {
     margin-top: 2px;
 }
-.heterodyne-note-warning,
-.species-range-note-warning {
+/* A finding or its consequence: the .analysis-warning amber. A species note
+   has one only for a probable x10 time expansion: all 10 Xeno-canto records
+   at a x10 header rate were time-expanded (2 of them the app corrects from
+   their GUANO, so they show no note). */
+.rate-note-warning {
     color: #fc8;
 }
-/* With the detector's tuning known, the last line says how to read the file's
-   frequencies. It is a reading rule, not a second warning, so it takes the
-   app's normal text colour (body #ccc) instead of amber or the muted grey. */
-.heterodyne-note-plain {
+/* How to read the file's frequencies when the detector's tuning is known. It
+   is a reading rule, not a second warning, so it takes the app's normal text
+   colour (body #ccc) instead of amber or the muted grey. */
+.rate-note-plain {
     color: #ccc;
+}
+/* Supporting detail and possibilities, and the line that quotes the
+   recording's metadata: the .metadata-note grey. */
+.rate-note-muted,
+.rate-note-quote {
+    color: #999;
 }
 
 /* Sequence gap indicators */

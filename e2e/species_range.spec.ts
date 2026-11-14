@@ -127,10 +127,16 @@ async function showInfo(page: Page) {
   ).toBeVisible();
 }
 
-/** The class and text of each line of a note. */
+/** The notes under the Sample rate row are `.rate-note` elements; `data-note`
+ * names each note's kind (src/rate_notes.rs). */
+const SPECIES_NOTE = '.rate-note[data-note="species"]';
+const HET_NOTE = '.rate-note[data-note="heterodyne"]';
+const TE_NOTE = '.rate-note[data-note="time-expansion"]';
+
+/** The class and text of each line of the note that `note` selects. */
 async function lines(page: Page, note: string) {
   return page
-    .locator(`.${note} > div`)
+    .locator(`${note} > div`)
     .evaluateAll((els) => els.map((e) => [e.className, e.textContent]));
 }
 
@@ -140,8 +146,10 @@ function spaced(s: string): string {
   return s.replaceAll(" kHz", " kHz").replaceAll("–", "–⁠");
 }
 
-const WARN = "species-range-note-warning";
-const DETAIL = "species-range-note-detail";
+const WARN = "rate-note-warning";
+const MUTED = "rate-note-muted";
+/** The line that quotes the recording's metadata. It is drawn muted. */
+const QUOTE = "rate-note-quote";
 const OTHER =
   "This file may be a bat detector's output (heterodyne, time expansion or frequency " +
   "division), or contain only lower-frequency sounds such as social calls.";
@@ -161,10 +169,14 @@ const fact = (species: string, range: string, limit: string, corrected = false) 
  * time-expansion note when there is one. */
 async function expectUnderSampleRate(page: Page, note: string, afterTimeExpansion = false) {
   const prev = await page
-    .locator(`.${note}`)
-    .evaluate((n) => [n.previousElementSibling!.className, n.previousElementSibling!.textContent]);
+    .locator(note)
+    .evaluate((n) => {
+      const prev = n.previousElementSibling!;
+      return [prev.className, prev.textContent, prev.getAttribute("data-note")];
+    });
   if (afterTimeExpansion) {
-    expect(prev[0]).toBe("metadata-note");
+    expect(prev[0]).toBe("metadata-note rate-note");
+    expect(prev[2]).toBe("time-expansion");
     expect(prev[1]).toContain("time expansion");
   } else {
     expect(prev[1]).toContain("Sample rate");
@@ -185,12 +197,12 @@ test.describe("species call-range note", () => {
   test("x10 header rate: probably time-expanded (XC1001172)", async ({ page }) => {
     await openCase(page, { species: "Eptesicus nilssonii", type: "echolocation", rate: 25_600 });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
       [WARN, tenfold("256")],
-      [DETAIL, fact("Eptesicus nilssonii", "25–45", "12.8")],
+      [MUTED, fact("Eptesicus nilssonii", "25–45", "12.8")],
     ]);
-    await expectUnderSampleRate(page, "species-range-note");
-    await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+    await expectUnderSampleRate(page, SPECIES_NOTE);
+    await expect(page.locator(HET_NOTE)).toHaveCount(0);
     await expectNoBadge(page);
   });
 
@@ -202,9 +214,9 @@ test.describe("species call-range note", () => {
       fields: { cnt: "Netherlands", rmk: "The recording has not been modified." },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
       [WARN, tenfold("384")],
-      [DETAIL, fact("Pipistrellus pipistrellus", "42–51", "19.2")],
+      [MUTED, fact("Pipistrellus pipistrellus", "42–51", "19.2")],
     ]);
   });
 
@@ -216,11 +228,11 @@ test.describe("species call-range note", () => {
       fields: { cnt: "Italy", dvc: "Apodemus pippyg", rmk: "Rate slowed down by 8 times" },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Pipistrellus kuhlii", "35–45", "24")],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Pipistrellus kuhlii", "35–45", "24")],
+      [MUTED, OTHER],
     ]);
-    await expectUnderSampleRate(page, "species-range-note");
+    await expectUnderSampleRate(page, SPECIES_NOTE);
     await expectNoBadge(page);
   });
 
@@ -238,9 +250,9 @@ test.describe("species call-range note", () => {
       },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Pipistrellus nathusii", "35–44", "16")],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Pipistrellus nathusii", "35–44", "16")],
+      [MUTED, OTHER],
     ]);
   });
 
@@ -252,9 +264,9 @@ test.describe("species call-range note", () => {
       fields: { cnt: "United States" },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Lasiurus cinereus", "17–36", "11")],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Lasiurus cinereus", "17–36", "11")],
+      [MUTED, OTHER],
     ]);
   });
 
@@ -268,9 +280,9 @@ test.describe("species call-range note", () => {
       fields: { sp: "ferrumequinum nippon" },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Rhinolophus ferrumequinum nippon", "58–77", "22.1")],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Rhinolophus ferrumequinum nippon", "58–77", "22.1")],
+      [MUTED, OTHER],
     ]);
   });
 
@@ -282,8 +294,8 @@ test.describe("species call-range note", () => {
       fields: { dvc: "AudioMoth" },
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Rhinolophus hipposideros", "105–115", "96")],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Rhinolophus hipposideros", "105–115", "96")],
     ]);
   });
 
@@ -295,11 +307,11 @@ test.describe("species call-range note", () => {
       guano: "GUANO|Version: 1.0\nTE: 2\n",
     });
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Pipistrellus pygmaeus", "51–60", "25.6", true)],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Pipistrellus pygmaeus", "51–60", "25.6", true)],
+      [MUTED, OTHER],
     ]);
-    await expectUnderSampleRate(page, "species-range-note", true);
+    await expectUnderSampleRate(page, SPECIES_NOTE, true);
   });
 
   test("heterodyne level C gets the species line last (XC933228)", async ({ page }) => {
@@ -313,18 +325,18 @@ test.describe("species call-range note", () => {
       },
     });
     await showInfo(page);
-    const d = "heterodyne-note-detail";
-    expect(await lines(page, "heterodyne-note")).toEqual([
+    const d = MUTED;
+    expect(await lines(page, HET_NOTE)).toEqual([
       [
         d,
         "Possibly recorded from a bat detector's output " +
           "(heterodyne, time expansion or frequency division).",
       ],
-      [d, 'Remarks: "recorded sound from ultrasonic detectors spaker with mobilphone"'],
+      [QUOTE, 'Remarks: "recorded sound from ultrasonic detectors spaker with mobilphone"'],
       [d, "If so, frequencies are not the bat's call frequencies."],
       [d, fact("Eptesicus nilssonii", "25–45", "22.1")],
     ]);
-    await expect(page.locator(".species-range-note")).toHaveCount(0);
+    await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
   });
 
   test("heterodyne level A keeps its note alone (XC1034529)", async ({ page }) => {
@@ -335,10 +347,10 @@ test.describe("species call-range note", () => {
       fields: { rmk: "hetrodyne detector set at 31,9 kHz" },
     });
     await showInfo(page);
-    const note = await lines(page, "heterodyne-note");
+    const note = await lines(page, HET_NOTE);
     expect(note.length).toBe(4);
     expect(note.map((l) => l[1]).join("\n")).not.toContain("echolocation calls at");
-    await expect(page.locator(".species-range-note")).toHaveCount(0);
+    await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
   });
 
   test("heterodyne level C with the range reached: no species line (XC1062080)", async ({
@@ -351,8 +363,8 @@ test.describe("species call-range note", () => {
       fields: { dvc: "Pettersson D980" },
     });
     await showInfo(page);
-    expect((await lines(page, "heterodyne-note")).length).toBe(4);
-    await expect(page.locator(".species-range-note")).toHaveCount(0);
+    expect((await lines(page, HET_NOTE)).length).toBe(4);
+    await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
   });
 
   const NOTHING: [string, Case][] = [
@@ -398,10 +410,10 @@ test.describe("species call-range note", () => {
     test(`no note for ${name}`, async ({ page }) => {
       await openCase(page, c);
       await showInfo(page);
-      await expect(page.locator(".species-range-note")).toHaveCount(0);
-      await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+      await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
+      await expect(page.locator(HET_NOTE)).toHaveCount(0);
       if (c.guano) {
-        await expect(page.locator(".metadata-note", { hasText: /time expansion/ })).toBeVisible();
+        await expect(page.locator(TE_NOTE, { hasText: /time expansion/ })).toBeVisible();
       }
     });
   }
@@ -420,9 +432,9 @@ test.describe("species call-range note", () => {
       "guano-kuhlii.wav",
     );
     await showInfo(page);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Pipistrellus kuhlii", "35–45", "24")],
-      [DETAIL, OTHER],
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Pipistrellus kuhlii", "35–45", "24")],
+      [MUTED, OTHER],
     ]);
   });
 });
@@ -439,7 +451,7 @@ test.describe("species call-range note on a phone", () => {
   test("the note stays inside the Info panel and keeps ranges whole", async ({ page }) => {
     await openCase(page, { species: "Eptesicus nilssonii", type: "echolocation", rate: 25_600 });
     await page.locator('button[title="Show info panel"]').first().tap();
-    const note = page.locator(".species-range-note");
+    const note = page.locator(SPECIES_NOTE);
     await expect(note).toBeVisible();
     const panel = (await page.locator(".right-sidebar").boundingBox())!;
     const box = (await note.boundingBox())!;
@@ -522,28 +534,28 @@ test.describe("species call-range note on real demo recordings", () => {
     test(`${xc}: corrected for x10 time expansion, so no note`, async ({ page }) => {
       await openDemo(page, xc);
       await expect(
-        page.locator(".metadata-note", {
+        page.locator(TE_NOTE, {
           hasText: "Corrected for \u00d710 time expansion; the file says 38.4 kHz.",
         }),
       ).toBeVisible();
-      await expect(page.locator(".species-range-note")).toHaveCount(0);
-      await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+      await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
+      await expect(page.locator(HET_NOTE)).toHaveCount(0);
     });
   }
 
   for (const xc of ["XC924726", "XC924727"]) {
     test(`${xc}: the level B heterodyne note is unchanged`, async ({ page }) => {
       await openDemo(page, xc);
-      expect(await lines(page, "heterodyne-note")).toEqual([
-        ["heterodyne-note-warning", "Recorded from a heterodyne bat detector's audio output."],
-        ["heterodyne-note-detail", 'Remarks: "Recording with Magenta Bat5"'],
-        ["heterodyne-note-detail", "The Magenta Bat5 is a heterodyne-only detector."],
+      expect(await lines(page, HET_NOTE)).toEqual([
+        [WARN, "Recorded from a heterodyne bat detector's audio output."],
+        [QUOTE, 'Remarks: "Recording with Magenta Bat5"'],
+        [MUTED, "The Magenta Bat5 is a heterodyne-only detector."],
         [
-          "heterodyne-note-warning",
+          WARN,
           "Frequencies are not the bat's call frequencies and can't be corrected.",
         ],
       ]);
-      await expect(page.locator(".species-range-note")).toHaveCount(0);
+      await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
     });
   }
 
@@ -552,10 +564,10 @@ test.describe("species call-range note on real demo recordings", () => {
   // remark that names the detector, the species note shows.
   test("XC924726 without its remark: the species note", async ({ page }) => {
     await openDemo(page, "XC924726", (sidecar) => ({ ...sidecar, rmk: "" }));
-    await expect(page.locator(".heterodyne-note")).toHaveCount(0);
-    expect(await lines(page, "species-range-note")).toEqual([
-      [DETAIL, fact("Rhinolophus pumilus", "104\u2013121", "24")],
-      [DETAIL, OTHER],
+    await expect(page.locator(HET_NOTE)).toHaveCount(0);
+    expect(await lines(page, SPECIES_NOTE)).toEqual([
+      [MUTED, fact("Rhinolophus pumilus", "104\u2013121", "24")],
+      [MUTED, OTHER],
     ]);
   });
 
@@ -575,8 +587,8 @@ test.describe("species call-range note on real demo recordings", () => {
   for (const [xc, what] of NO_NOTE) {
     test(`${xc}: no note (${what})`, async ({ page }) => {
       await openDemo(page, xc);
-      await expect(page.locator(".species-range-note")).toHaveCount(0);
-      await expect(page.locator(".heterodyne-note")).toHaveCount(0);
+      await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
+      await expect(page.locator(HET_NOTE)).toHaveCount(0);
     });
   }
 });

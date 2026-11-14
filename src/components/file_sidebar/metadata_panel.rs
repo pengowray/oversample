@@ -1,4 +1,5 @@
-use crate::rate_notes::{LineRole, NoteKind};
+use super::rate_notes_view::{note_selector, RateNotes};
+use crate::rate_notes::{file_rate_notes, NoteKind};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
 use crate::types::AudioFormat;
@@ -764,37 +765,6 @@ fn sample_rate_row_value(hz: u32) -> String {
     format!("{} kHz", crate::format_units::sample_rate_khz_value(hz))
 }
 
-/// The notes under the Sample rate row (`crate::rate_notes`), with the class
-/// names each note had before the notes shared one model.
-fn sample_rate_notes(f: &crate::state::LoadedFile) -> impl IntoView {
-    crate::rate_notes::file_rate_notes(f)
-        .into_iter()
-        .map(|note| {
-            let class = match note.kind {
-                NoteKind::TimeExpansion => {
-                    let text = note.lines.into_iter().map(|l| l.text).collect::<String>();
-                    return view! { <div class="metadata-note">{text}</div> }.into_any();
-                }
-                NoteKind::Heterodyne => "heterodyne-note",
-                NoteKind::Species => "species-range-note",
-            };
-            let lines = note
-                .lines
-                .into_iter()
-                .map(|line| {
-                    let role = match line.role {
-                        LineRole::Warning => "warning",
-                        LineRole::Muted | LineRole::Quote => "detail",
-                        LineRole::Plain => "plain",
-                    };
-                    view! { <div class=format!("{class}-{role}")>{line.text}</div> }
-                })
-                .collect_view();
-            view! { <div class=format!("metadata-note {class}")>{lines}</div> }.into_any()
-        })
-        .collect_view()
-}
-
 /// Open the right sidebar on the Info tab, as the "Heterodyne recording" badge
 /// does. On a phone the two sidebars are overlays, so the Files sidebar is
 /// closed, as the toolbar's Show info panel button does. If the panel is
@@ -806,10 +776,11 @@ pub(crate) fn open_info_panel(state: AppState) {
         state.panels.left_collapsed().set(true);
     }
     request_animation_frame(|| {
-        if let Some(el) = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.query_selector(".heterodyne-note").ok().flatten())
-        {
+        if let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| {
+            d.query_selector(&note_selector(NoteKind::Heterodyne))
+                .ok()
+                .flatten()
+        }) {
             let opts = web_sys::ScrollIntoViewOptions::new();
             opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
             // The note annotates the Sample rate row above it, so bring that
@@ -1626,7 +1597,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
                                 {inline_row("Sample rate".into(), sample_rate_row_value(f.audio.sample_rate), None)}
-                                {sample_rate_notes(f)}
+                                <RateNotes notes=file_rate_notes(f) />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}
