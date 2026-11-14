@@ -7,9 +7,19 @@
 //! them. [`keep_units_with_numbers`] does the same in text quoted from a
 //! recording's metadata.
 //!
+//! The numbers follow one of two rules, which round differently:
+//!
+//! - [`khz_value`], for frequencies: rounded half up, with no trailing zeros.
+//!   31,250 Hz gives "31.3" and 11,025 Hz gives "11".
+//! - [`sample_rate_khz_value`], for sample rates: no decimals for a whole
+//!   number of kHz, otherwise exactly one. 31,250 Hz gives "31.2" and
+//!   11,025 Hz gives "11.0".
+//!
 //! The toolbar's sample rate chip ("48kHz") and the frequency axis labels
-//! have their own formats and are not written here. The axis labels use
-//! [`khz_value`] for their numbers.
+//! (`freq_marker_label` in oversample-core) have their own formats and are
+//! not written here. The frequency axis hover text
+//! ([`crate::heterodyne::axis_call_suffixes`]) uses [`khz_value`] for its
+//! numbers.
 
 /// The space between a number and its "kHz".
 const NO_BREAK_SPACE: char = '\u{a0}';
@@ -129,6 +139,9 @@ mod tests {
         assert_eq!(khz_value(31_905, 2), "31.91");
         assert_eq!(khz_value(31_050, 2), "31.05");
         assert_eq!(khz_value(31_900, 2), "31.9");
+        // The same rates as sample_rate_khz_value's "31.2" and "11.0".
+        assert_eq!(khz_value(31_250, 1), "31.3");
+        assert_eq!(khz_value(11_025, 1), "11");
     }
 
     #[test]
