@@ -3133,10 +3133,12 @@ a.open-link-btn {
    a second line (heterodyne badge, CC icon) is no taller than it was.
    The Files sidebar can be narrowed to 140px, so the spacing is tight: a 4px
    gap between badges, 3px before each middle dot ("File badges") and 3px
-   side padding in each control. With these, no row is taller than it was
-   before badge style option A at any sidebar width from 140px up, except a
-   heterodyne row with a licence icon when the sidebar is 164 to 169px wide:
-   the "Heterodyne recording" text is 11px, where it was 10px.
+   side padding in each control. Checked at sidebar widths from 140 to 200px
+   with seven sample rows (192 kHz sequence and track files, a 384 kHz 32-bit
+   float file, a heterodyne file with a licence icon, an unsaved recording),
+   no row was taller than before badge style option A, except the heterodyne
+   row at 164 to 169px: the "Heterodyne recording" text is 11px, where it was
+   10px. Rows with [~] or other badge mixes were not checked.
    See "File badges" for the facts and controls in it. */
 .file-item-info {
     font-size: 11px;
