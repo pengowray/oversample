@@ -140,13 +140,93 @@ pub struct TimeMessage {
 /// repository is the full format.
 pub const REMOTE_MAGIC: [u8; 4] = *b"BATX";
 
-/// The layout of the 4 bytes after [`REMOTE_MAGIC`] that this crate reads: byte 4 is this version,
-/// byte 5 the command and bytes 6 and 7 a 16-bit argument, low byte first. New commands keep the
-/// version; a new version means bytes 5 to 7 have a different layout.
+/// The first layout of the 4 bytes after [`REMOTE_MAGIC`]: byte 4 is this version, byte 5 the
+/// command and bytes 6 and 7 a 16-bit argument, low byte first. New commands keep the version; a
+/// new version means bytes 5 to 7 have a different layout.
 pub const REMOTE_VERSION: u8 = 1;
+
+/// The layout with a check, for a receiver that shows a code: byte 4 is this version, byte 5 has
+/// the command in its high 4 bits and the argument in its low 4 bits, and bytes 6 and 7 are the
+/// check that [`remote_check`] makes from the code.
+pub const REMOTE_VERSION_CODED: u8 = 2;
+
+/// The number of digits in the code that the receiver shows and the phone page is given.
+pub const REMOTE_CODE_DIGITS: usize = 6;
+
+/// The check in bytes 6 and 7 of a version 2 deployment ID: the low 16 bits of a SipHash-2-4
+/// hash, low byte first. The key is 16 bytes: the code's 6 ASCII digits, then 10 zero bytes. The
+/// message is 12 bytes: [`REMOTE_MAGIC`], [`REMOTE_VERSION_CODED`], byte 5 of the deployment ID,
+/// then the chime's Unix time (4 bytes) and UTC offset in minutes (2 bytes), both little-endian
+/// as in the payload.
+///
+/// The time is in the message, so a recording of a chime has the wrong check when it is sent
+/// again with another time. The check has 16 bits, so one guess in 65,536 is right, and a
+/// recording of a few commands is enough to find the code by trying all 1,000,000 codes.
+pub fn remote_check(
+    code: &[u8; REMOTE_CODE_DIGITS],
+    command_byte: u8,
+    unix_time: u32,
+    timezone_minutes: i16,
+) -> [u8; 2] {
+    // The key's second half is zero. The message is 12 bytes, so it is one whole word, then a
+    // last word with its other 4 bytes and, in the top byte, its length.
+    let [c0, c1, c2, c3, c4, c5] = *code;
+    let key = [u64::from_le_bytes([c0, c1, c2, c3, c4, c5, 0, 0]), 0];
+    let [t0, t1, t2, t3] = unix_time.to_le_bytes();
+    let [z0, z1] = timezone_minutes.to_le_bytes();
+    let [m0, m1, m2, m3] = REMOTE_MAGIC;
+    let words = [
+        u64::from_le_bytes([m0, m1, m2, m3, REMOTE_VERSION_CODED, command_byte, t0, t1]),
+        u64::from_le_bytes([t2, t3, z0, z1, 0, 0, 0, 12]),
+    ];
+    let [check_0, check_1, ..] = siphash_2_4(key, &words).to_le_bytes();
+    [check_0, check_1]
+}
+
+/// SipHash-2-4 with a 64-bit result (Aumasson and Bernstein, 2012), written for size: in the X8
+/// patch it is smaller than the `siphasher` crate, which this file's tests check it against.
+/// `key` is the 16-byte key as two little-endian words. `words` is the message as little-endian
+/// words, the last one holding the bytes left over and, in its top byte, the message's length
+/// in bytes modulo 256.
+fn siphash_2_4(key: [u64; 2], words: &[u64]) -> u64 {
+    #[inline(never)]
+    fn round(v: &mut [u64; 4]) {
+        v[0] = v[0].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(13) ^ v[0];
+        v[0] = v[0].rotate_left(32);
+        v[2] = v[2].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(16) ^ v[2];
+        v[0] = v[0].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(21) ^ v[0];
+        v[2] = v[2].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(17) ^ v[2];
+        v[2] = v[2].rotate_left(32);
+    }
+    let mut v = [
+        key[0] ^ 0x736f_6d65_7073_6575,
+        key[1] ^ 0x646f_7261_6e64_6f6d,
+        key[0] ^ 0x6c79_6765_6e65_7261,
+        key[1] ^ 0x7465_6462_7974_6573,
+    ];
+    for &word in words {
+        v[3] ^= word;
+        round(&mut v);
+        round(&mut v);
+        v[0] ^= word;
+    }
+    v[2] ^= 0xff;
+    for _ in 0..4 {
+        round(&mut v);
+    }
+    v[0] ^ v[1] ^ v[2] ^ v[3]
+}
 
 /// A phone remote message: a deployment ID that starts with [`REMOTE_MAGIC`]. It may hold a
 /// version or command that this crate does not know, which the receiver reports as unknown.
+///
+/// The fields are named for version 1. In a version 2 message `command` is byte 5, which has the
+/// command and the argument, and `argument` is the check: see [`RemoteMessage::coded`] and
+/// [`RemoteMessage::check`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteMessage {
     pub version: u8,
@@ -174,14 +254,50 @@ impl RemoteMessage {
         [m0, m1, m2, m3, self.version, self.command, low, high]
     }
 
-    /// The command, if this crate knows the version, the command and its argument.
+    /// The command of a version 1 message, if this crate knows the command and its argument.
+    /// None for a version 2 message: see [`RemoteMessage::coded`].
     pub fn known(self) -> Option<RemoteCommand> {
         if self.version != REMOTE_VERSION {
             return None;
         }
-        RemoteCommand::ALL
-            .into_iter()
-            .find(|command| command.message() == self)
+        RemoteCommand::from_code(self.command, self.argument)
+    }
+
+    /// The command of a version 2 message, if this crate knows the command and its argument. The
+    /// check is not looked at: see [`RemoteMessage::check_matches`].
+    pub fn coded(self) -> Option<RemoteCommand> {
+        if self.version != REMOTE_VERSION_CODED {
+            return None;
+        }
+        RemoteCommand::from_code(self.command >> 4, (self.command & 0x0f).into())
+    }
+
+    /// The command of a version 1 or version 2 message that this crate knows, whatever the
+    /// check of a version 2 message is.
+    pub fn command(self) -> Option<RemoteCommand> {
+        self.known().or(self.coded())
+    }
+
+    /// The check in a version 2 message, as bytes 6 and 7 of the deployment ID.
+    pub fn check(self) -> Option<[u8; 2]> {
+        (self.version == REMOTE_VERSION_CODED).then(|| self.argument.to_le_bytes())
+    }
+
+    /// Whether this is a version 2 message whose check is the one that `code` gives for the
+    /// chime's time and UTC offset. The command may be one this crate does not know.
+    pub fn check_matches(
+        self,
+        code: &[u8; REMOTE_CODE_DIGITS],
+        unix_time: u32,
+        timezone_minutes: i16,
+    ) -> bool {
+        self.check()
+            == Some(remote_check(
+                code,
+                self.command,
+                unix_time,
+                timezone_minutes,
+            ))
     }
 }
 
@@ -213,6 +329,19 @@ impl RemoteCommand {
         RemoteCommand::Listen(ListeningMode::Thru),
     ];
 
+    /// The command with this command byte and argument, if this crate knows both.
+    fn from_code(code: u8, argument: u16) -> Option<Self> {
+        match (code, argument) {
+            (1, 0) => Some(RemoteCommand::Start),
+            (2, 0) => Some(RemoteCommand::Stop),
+            (3, 0) => Some(RemoteCommand::SetClock),
+            (4, 1..=6) => Some(RemoteCommand::Listen(
+                ListeningMode::ALL[argument as usize - 1],
+            )),
+            _ => None,
+        }
+    }
+
     /// The command byte. 0 is never a command.
     pub const fn code(self) -> u8 {
         match self {
@@ -240,14 +369,34 @@ impl RemoteCommand {
         }
     }
 
-    /// The command in a deployment ID, if it holds one this crate knows.
+    /// The version 1 command in a deployment ID, if it holds one this crate knows.
     pub fn from_deployment_id(id: &[u8; DEPLOYMENT_ID_BYTES]) -> Option<Self> {
         RemoteMessage::from_deployment_id(id)?.known()
     }
 
-    /// The whole deployment ID, as the decoder gives it.
+    /// The whole version 1 deployment ID, as the decoder gives it.
     pub fn deployment_id(self) -> [u8; DEPLOYMENT_ID_BYTES] {
         self.message().deployment_id()
+    }
+
+    /// Byte 5 of a version 2 deployment ID: the command in the high 4 bits and the argument in
+    /// the low 4 bits.
+    pub const fn coded_byte(self) -> u8 {
+        self.code() << 4 | self.argument() as u8
+    }
+
+    /// The whole version 2 deployment ID, as the decoder gives it, for a chime that carries
+    /// `unix_time` and `timezone_minutes`, with the check that `code` gives.
+    pub fn coded_deployment_id(
+        self,
+        code: &[u8; REMOTE_CODE_DIGITS],
+        unix_time: u32,
+        timezone_minutes: i16,
+    ) -> [u8; DEPLOYMENT_ID_BYTES] {
+        let [m0, m1, m2, m3] = REMOTE_MAGIC;
+        let byte = self.coded_byte();
+        let [c0, c1] = remote_check(code, byte, unix_time, timezone_minutes);
+        [m0, m1, m2, m3, REMOTE_VERSION_CODED, byte, c0, c1]
     }
 }
 
@@ -351,10 +500,17 @@ impl TimeMessage {
         RemoteMessage::from_deployment_id(self.deployment_id.as_ref()?)
     }
 
-    /// The X8 bat patch's phone remote command in the deployment ID, if it holds one this crate
-    /// knows.
+    /// The X8 bat patch's version 1 phone remote command in the deployment ID, if it holds one
+    /// this crate knows.
     pub fn remote_command(&self) -> Option<RemoteCommand> {
         self.remote()?.known()
+    }
+
+    /// Whether the deployment ID is a version 2 phone remote message whose check is the one that
+    /// `code` gives for this chime's time and UTC offset.
+    pub fn remote_check_matches(&self, code: &[u8; REMOTE_CODE_DIGITS]) -> bool {
+        self.remote()
+            .is_some_and(|remote| remote.check_matches(code, self.unix_time, self.timezone_minutes))
     }
 
     /// The location as latitude and longitude in degrees, if the chime has one.
@@ -801,6 +957,10 @@ mod tests {
     fn remote_commands_round_trip() {
         for command in RemoteCommand::ALL {
             assert_eq!(
+                RemoteCommand::from_code(command.code(), command.argument()),
+                Some(command)
+            );
+            assert_eq!(
                 RemoteCommand::from_deployment_id(&command.deployment_id()),
                 Some(command)
             );
@@ -845,5 +1005,155 @@ mod tests {
             RemoteMessage::from_deployment_id(b"BATY\x01\x01\x00\x00"),
             None
         );
+    }
+
+    /// SipHash-2-4 of a message of any length, with the key as 16 bytes.
+    fn siphash_bytes(key: &[u8; 16], data: &[u8]) -> u64 {
+        let word = |bytes: &[u8]| {
+            let mut word = [0u8; 8];
+            word[..bytes.len()].copy_from_slice(bytes);
+            u64::from_le_bytes(word)
+        };
+        let whole = data.chunks_exact(8);
+        let last = word(whole.remainder()) | (data.len() as u64) << 56;
+        let words: std::vec::Vec<u64> = whole.map(word).chain([last]).collect();
+        siphash_2_4([word(&key[..8]), word(&key[8..])], &words)
+    }
+
+    /// The vector in the SipHash paper's appendix, and each shorter message against the
+    /// `siphasher` crate.
+    #[test]
+    fn siphash_matches_the_reference() {
+        use core::hash::Hasher;
+
+        let key: [u8; 16] = core::array::from_fn(|i| i as u8);
+        let message: [u8; 15] = core::array::from_fn(|i| i as u8);
+        assert_eq!(siphash_bytes(&key, &message), 0xa129_ca61_49be_45e5);
+        let long: [u8; 40] = core::array::from_fn(|i| (i * 7) as u8);
+        for len in 0..=long.len() {
+            let mut hasher = siphasher::sip::SipHasher24::new_with_key(&key);
+            hasher.write(&long[..len]);
+            assert_eq!(
+                siphash_bytes(&key, &long[..len]),
+                hasher.finish(),
+                "{len} bytes"
+            );
+        }
+    }
+
+    /// The whole hash of each vector that the phone page's tests also use.
+    #[test]
+    fn the_check_is_the_low_16_bits_of_the_hash() {
+        let mut key = [0u8; 16];
+        key[..6].copy_from_slice(b"493817");
+        let mut message = std::vec::Vec::from(*b"BATX\x02\x10");
+        message.extend_from_slice(&1_794_700_800u32.to_le_bytes());
+        message.extend_from_slice(&600i16.to_le_bytes());
+        assert_eq!(siphash_bytes(&key, &message), 0xc2a8_f456_2886_f3ba);
+        message[5] = 0x46;
+        message[6..10].copy_from_slice(&1_794_700_801u32.to_le_bytes());
+        message[10..].copy_from_slice(&(-300i16).to_le_bytes());
+        assert_eq!(siphash_bytes(&key, &message), 0x3f47_b561_45d0_adb0);
+        let mut zero_key = [0u8; 16];
+        zero_key[..6].copy_from_slice(b"000000");
+        assert_eq!(
+            siphash_bytes(&zero_key, b"BATX\x02\x30\0\0\0\0\0\0"),
+            0x82c3_7daf_f2bd_0a6b
+        );
+    }
+
+    /// The vectors that the phone page's tests also use.
+    #[test]
+    fn coded_remote_commands_match_the_test_vectors() {
+        let vectors: [(&[u8; 6], u32, i16, RemoteCommand, [u8; 8]); 3] = [
+            (
+                b"493817",
+                1_794_700_800,
+                600,
+                RemoteCommand::Start,
+                [0x42, 0x41, 0x54, 0x58, 0x02, 0x10, 0xba, 0xf3],
+            ),
+            (
+                b"493817",
+                1_794_700_801,
+                -300,
+                RemoteCommand::Listen(ListeningMode::Thru),
+                [0x42, 0x41, 0x54, 0x58, 0x02, 0x46, 0xb0, 0xad],
+            ),
+            (
+                b"000000",
+                0,
+                0,
+                RemoteCommand::SetClock,
+                [0x42, 0x41, 0x54, 0x58, 0x02, 0x30, 0x6b, 0x0a],
+            ),
+        ];
+        for (code, unix_time, timezone_minutes, command, id) in vectors {
+            assert_eq!(
+                command.coded_deployment_id(code, unix_time, timezone_minutes),
+                id
+            );
+            let message = RemoteMessage::from_deployment_id(&id).unwrap();
+            assert_eq!(message.deployment_id(), id);
+            assert_eq!(message.coded(), Some(command));
+            assert_eq!(message.command(), Some(command));
+            assert_eq!(message.known(), None);
+            assert_eq!(message.check(), Some([id[6], id[7]]));
+            assert!(message.check_matches(code, unix_time, timezone_minutes));
+            // Another code, time or UTC offset gives another check.
+            assert!(!message.check_matches(b"493818", unix_time, timezone_minutes));
+            assert!(!message.check_matches(code, unix_time + 1, timezone_minutes));
+            assert!(!message.check_matches(code, unix_time, timezone_minutes + 60));
+        }
+    }
+
+    #[test]
+    fn every_command_round_trips_in_version_2() {
+        for command in RemoteCommand::ALL {
+            let id = command.coded_deployment_id(b"012345", 1_794_700_800, 0);
+            let message = RemoteMessage::from_deployment_id(&id).unwrap();
+            assert_eq!(message.coded(), Some(command));
+            assert!(message.check_matches(b"012345", 1_794_700_800, 0));
+            // Another command with the same check is refused.
+            let mut other = id;
+            other[5] ^= 0x30;
+            let other = RemoteMessage::from_deployment_id(&other).unwrap();
+            assert!(!other.check_matches(b"012345", 1_794_700_800, 0));
+        }
+    }
+
+    #[test]
+    fn a_coded_chime_is_checked_against_its_own_time() {
+        let id = RemoteCommand::Stop.coded_deployment_id(b"493817", 1_794_700_800, 600);
+        let mut payload = std::vec::Vec::new();
+        payload.extend_from_slice(&1_794_700_800u32.to_le_bytes());
+        payload.extend_from_slice(&600i16.to_le_bytes());
+        payload.extend_from_slice(&id);
+        let message = TimeMessage::parse(&payload).unwrap();
+        assert!(message.remote_check_matches(b"493817"));
+        assert!(!message.remote_check_matches(b"493816"));
+        // The same deployment ID in a chime with a later time.
+        payload[0] += 1;
+        let later = TimeMessage::parse(&payload).unwrap();
+        assert!(!later.remote_check_matches(b"493817"));
+        // Version 1 has no check.
+        assert_eq!(later.remote_command(), None);
+        let version_1 = RemoteMessage::from_deployment_id(&RemoteCommand::Stop.deployment_id());
+        assert_eq!(version_1.unwrap().check(), None);
+        assert!(!version_1.unwrap().check_matches(b"493817", 0, 0));
+    }
+
+    #[test]
+    fn unknown_version_2_messages_are_not_known() {
+        // Command 0, command 5, Start with an argument, and listening modes 0 and 7.
+        for byte in [0x00, 0x50, 0x11, 0x40, 0x47] {
+            let id = [0x42, 0x41, 0x54, 0x58, 0x02, byte, 0, 0];
+            let message = RemoteMessage::from_deployment_id(&id).unwrap();
+            assert_eq!(message.command(), None, "{byte:#04x}");
+        }
+        // A version this crate does not know.
+        let message = RemoteMessage::from_deployment_id(b"BATX\x03\x10\x00\x00").unwrap();
+        assert_eq!(message.command(), None);
+        assert_eq!(message.check(), None);
     }
 }

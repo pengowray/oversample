@@ -613,6 +613,7 @@ dependencies = [
  "chime",
  "hound",
  "libm",
+ "siphasher",
 ]
 
 [[package]]
