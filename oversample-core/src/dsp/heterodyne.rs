@@ -27,9 +27,23 @@ pub fn heterodyne_mix(samples: &[f32], sample_rate: u32, lo_freq: f64, cutoff_hz
     // Step 2: low-pass to remove the sum frequency, keeping the difference
     // tone flat up to near `cutoff_hz` (-3 dB there, 48 dB per octave above).
     let mut filtered = mixed;
-    Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32)
-        .process_in_place(&mut filtered);
+    Butterworth::lowpass(
+        HET_LP_ORDER,
+        sample_rate as f32,
+        safe_lp_cutoff(cutoff_hz, sample_rate),
+    )
+    .process_in_place(&mut filtered);
     filtered
+}
+
+/// The low-pass cutoff clamped to what the biquads can use at `sample_rate`:
+/// 1 Hz to 98% of Nyquist, and 1 Hz for NaN. With a cutoff above Nyquist the
+/// biquad is unstable and its output grows to infinity. That cutoff is
+/// possible: the user can drag the cutoff to 30 kHz on a 192 kHz file, and
+/// it is kept when they open a 44.1 kHz file.
+fn safe_lp_cutoff(cutoff_hz: f64, sample_rate: u32) -> f32 {
+    let nyquist = sample_rate as f64 / 2.0;
+    cutoff_hz.max(1.0).min(nyquist * 0.98) as f32
 }
 
 /// Order of the Butterworth low-pass after the mixer. 8th order, so with a
@@ -45,7 +59,7 @@ pub struct RealtimeHet {
     phase: f64,
     /// The low-pass and the (sample rate, cutoff) it is tuned for. Kept
     /// across buffers; a new cutoff retunes it without clearing its memory.
-    lp: Option<(Butterworth, u32, f64)>,
+    lp: Option<(Butterworth, u32, f32)>,
 }
 
 impl Default for RealtimeHet {
@@ -75,16 +89,17 @@ impl RealtimeHet {
     ) {
         let sr = sample_rate as f64;
         let phase_inc = 2.0 * PI * lo_freq / sr;
+        let cutoff_hz = safe_lp_cutoff(cutoff_hz, sample_rate);
         let lp = match &mut self.lp {
             Some((lp, rate, cutoff)) if *rate == sample_rate => {
                 if *cutoff != cutoff_hz {
-                    lp.retune_lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32);
+                    lp.retune_lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz);
                     *cutoff = cutoff_hz;
                 }
                 lp
             }
             _ => {
-                let lp = Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz as f32);
+                let lp = Butterworth::lowpass(HET_LP_ORDER, sample_rate as f32, cutoff_hz);
                 &mut self.lp.insert((lp, sample_rate, cutoff_hz)).0
             }
         };
@@ -286,6 +301,28 @@ mod tests {
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
         assert!(worst < 1e-4, "largest difference {worst}");
+    }
+
+    #[test]
+    fn low_pass_cutoff_above_nyquist_stays_finite() {
+        // A cutoff set by hand (the drag handle allows up to 30 kHz) is
+        // kept when a 44.1 kHz file is opened, so it can be above that
+        // file's 22.05 kHz Nyquist frequency.
+        let sr = 44_100;
+        let x = tone(4_000.0, sr, sr as usize);
+        for cutoff in [22_050.0, 30_000.0, 100_000.0, 0.0, -5_000.0, f64::NAN] {
+            let y = heterodyne_mix(&x, sr, 19_000.0, cutoff);
+            assert!(y.iter().all(|s| s.is_finite()), "cutoff {cutoff} Hz");
+            let mut rt = RealtimeHet::new();
+            let mut out = vec![0.0; x.len()];
+            for (input, output) in x.chunks(4_096).zip(out.chunks_mut(4_096)) {
+                rt.process(input, output, sr, 19_000.0, cutoff);
+            }
+            assert!(
+                out.iter().all(|s| s.is_finite()),
+                "live, cutoff {cutoff} Hz"
+            );
+        }
     }
 
     #[test]
