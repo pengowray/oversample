@@ -115,7 +115,6 @@ pub fn Toolbar() -> impl IntoView {
             bits_per_sample: f.audio.metadata.bits_per_sample,
             is_float: f.audio.metadata.is_float,
             duration_secs: f.audio.duration_secs,
-            is_unsaved: f.is_recording,
             is_streaming: streaming_source::is_streaming(f.audio.source.as_ref()),
             track: gi.track.clone(),
             sequence: gi.sequence.clone(),

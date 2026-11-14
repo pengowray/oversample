@@ -22,7 +22,6 @@ pub struct FileBadgeData {
     pub bits_per_sample: u16,
     pub is_float: bool,
     pub duration_secs: f64,
-    pub is_unsaved: bool,
     pub is_streaming: bool,
     pub track: Option<TrackInfo>,
     pub sequence: Option<SequenceInfo>,
@@ -77,7 +76,9 @@ pub fn FileBadgeRow(
     /// Whether seq/track badges are clickable dropdown triggers (toolbar only)
     #[prop(default = false)]
     group_dropdowns: bool,
-    /// Whether to show the download button (file-menu recordings only)
+    /// Whether to show the download button: file-menu rows of browser
+    /// recordings that are not downloaded yet. A download clears the file's
+    /// recording flag, so the button is only ever shown for an unsaved file.
     #[prop(default = false)]
     show_download: bool,
     /// Download handler (required if show_download is true)
@@ -107,7 +108,6 @@ pub fn FileBadgeRow(
     let is_streaming = data.is_streaming;
     let seq = data.sequence.clone();
     let track = data.track.clone();
-    let is_unsaved = data.is_unsaved;
     let is_file_menu = context == "file-menu";
     let cc_license = data.cc_license.clone();
     let cc_tooltip = data.cc_tooltip.clone();
@@ -216,16 +216,10 @@ pub fn FileBadgeRow(
         // 7. Download button (file-menu only, when show_download is true)
         {(is_file_menu && show_download).then(|| {
             let on_dl = on_download.clone();
-            let cls = if is_unsaved {
-                "badge-btn badge-download-btn unsaved"
-            } else {
-                "badge-btn badge-download-btn saved"
-            };
-            let title = if is_unsaved { "Download WAV (unsaved)" } else { "Download WAV" };
             view! {
                 <button
-                    class=cls
-                    title=title
+                    class="badge-btn badge-download-btn unsaved"
+                    title="Download WAV (unsaved)"
                     on:click=move |e: web_sys::MouseEvent| {
                         e.stop_propagation();
                         if let Some(cb) = &on_dl { cb.run(()); }

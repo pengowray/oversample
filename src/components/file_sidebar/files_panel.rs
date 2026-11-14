@@ -355,7 +355,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             bits_per_sample: f.audio.metadata.bits_per_sample,
                             is_float: f.audio.metadata.is_float,
                             duration_secs: f.audio.duration_secs,
-                            is_unsaved: is_rec && !is_tauri,
                             is_streaming,
                             track: track_badge,
                             sequence: seq_badge,

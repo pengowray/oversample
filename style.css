@@ -5081,7 +5081,6 @@ a.open-link-btn {
    pressed: the filled heterodyne badge was a button, but the filled sequence,
    track and streaming badges in rows were not. */
 .file-badge {
-    white-space: nowrap;
     flex-shrink: 0;
 }
 .badge-fact {
@@ -5153,10 +5152,6 @@ a.open-link-btn {
 }
 :is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved):hover {
     background: #4d3400;
-}
-/* A saved recording's row download: grey text, since nothing needs doing. */
-.file-item-info .badge-btn.badge-download-btn.saved {
-    color: #aaa;
 }
 /* The row download sits at the right end of the row. */
 .badge-download-btn {
