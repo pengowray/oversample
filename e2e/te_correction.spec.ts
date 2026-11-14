@@ -745,7 +745,7 @@ const GUANO_CASE: Case = {
 const GUANO_CORRECTED =
   /^Corrected for ×10 time expansion\. Sample rate in the file header: 38\.4\u00a0kHz\.Remove ×10 correction$/;
 const GUANO_REMOVED =
-  "×10 correction removed until you close the file or reload the page. " +
+  "Correction for ×10 time expansion removed until you close the file or reload the page. " +
   "Time expansion in the file's GUANO metadata: ×10.";
 
 test.describe("a correction from the file's GUANO", () => {

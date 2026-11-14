@@ -216,8 +216,8 @@ test.describe("a correction from Find recordings", () => {
     await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "×10 correction removed until you close the file or reload the page. " +
-        "Time expansion from Find recordings: ×10.",
+      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+        "Time expansion in the Find recordings result: ×10.",
     ]);
     await expect(page.locator(MARK)).toHaveCount(0);
     expect((await snap(page)).duration).toBeCloseTo(1, 9);
@@ -275,7 +275,7 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     expect((await snap(page)).duration).toBeCloseTo(frames / 38_400, 6);
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "×10 correction removed until you close the file or reload the page. " +
+      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
         "Time expansion in the file's GUANO metadata: ×10.",
     ]);
     await expect(page.locator(".toolbar-badge-row .file-badge-streaming")).toBeVisible();

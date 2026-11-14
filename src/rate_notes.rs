@@ -181,20 +181,21 @@ pub enum StatedIn {
     Site(String),
     /// A Find recordings result. The search service reads the factor from
     /// the file's GUANO, so this is only for a file whose own metadata does
-    /// not give the same factor.
+    /// not give the same factor. The note names the result, not the site the
+    /// recording is on: the site's own record may not state the factor.
     FindRecordings,
 }
 
 impl StatedIn {
     /// The words after "Time expansion" in the note: "in the file's GUANO
-    /// metadata", "on Wikimedia Commons".
+    /// metadata", "on Wikimedia Commons", "in the Find recordings result".
     fn phrase(&self) -> String {
         match self {
             StatedIn::Guano => "in the file's GUANO metadata".to_string(),
             StatedIn::WildlifeAcoustics => "in the file's Wildlife Acoustics metadata".to_string(),
             StatedIn::FileMetadata => "in the file's metadata".to_string(),
             StatedIn::Site(name) => format!("on {name}"),
-            StatedIn::FindRecordings => "from Find recordings".to_string(),
+            StatedIn::FindRecordings => "in the Find recordings result".to_string(),
         }
     }
 }
@@ -243,17 +244,18 @@ pub fn opened_correction(file: &LoadedFile) -> Option<OpenedCorrection> {
 }
 
 /// The time-expansion note's line after the user removed the correction
-/// the file was opened with: "×10 correction removed until you close the
-/// file or reload the page. Time expansion in the file's GUANO metadata:
-/// ×10." The first sentence repeats the words of the "Remove ×10
-/// correction" button that was pressed. The Sample rate row above shows the
-/// rate in the file header. A no-break space keeps the factor on the line of
-/// the words it ends.
+/// the file was opened with: "Correction for ×10 time expansion removed
+/// until you close the file or reload the page. Time expansion in the
+/// file's GUANO metadata: ×10." The first sentence uses the words of the
+/// corrected note ("Corrected for ×10 time expansion") and of the "Remove
+/// ×10 correction" button that was pressed, and starts with a word, not the
+/// factor. The Sample rate row above shows the rate in the file header. A
+/// no-break space keeps the factor on the line of the words it ends.
 pub fn removed_line(opened: &OpenedCorrection) -> NoteLine {
     let factor = format_factor(opened.te.factor);
     NoteLine::muted(format!(
-        "{factor} correction removed until you close the file or reload the page. \
-         Time expansion {}:\u{a0}{factor}.",
+        "Correction for {factor} time expansion removed until you close the file or \
+         reload the page. Time expansion {}:\u{a0}{factor}.",
         opened.stated_in.phrase()
     ))
 }
@@ -667,7 +669,7 @@ mod tests {
                 StatedIn::Site("Wikimedia Commons".into()),
                 "on Wikimedia Commons",
             ),
-            (StatedIn::FindRecordings, "from Find recordings"),
+            (StatedIn::FindRecordings, "in the Find recordings result"),
         ] {
             let o = opened(stated_in);
             assert_eq!(
@@ -675,8 +677,8 @@ mod tests {
                 [RateNote {
                     kind: NoteKind::TimeExpansion,
                     lines: vec![NoteLine::muted(format!(
-                        "\u{d7}10 correction removed until you close the file or reload the \
-                         page. Time expansion {phrase}:\u{a0}\u{d7}10."
+                        "Correction for \u{d7}10 time expansion removed until you close the \
+                         file or reload the page. Time expansion {phrase}:\u{a0}\u{d7}10."
                     ))],
                     action: Some(NoteAction::ApplyCorrection(o.te)),
                 }]
