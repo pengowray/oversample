@@ -146,7 +146,7 @@ const OTHER_LINE_MAX_HEADER_RATE: u32 = 96_000;
 ///   the species line. All 10 such Xeno-canto records were time-expanded
 ///   ×10, though the app corrects 2 of them from their GUANO (see
 ///   [`RangeCase::TenfoldHeaderRate`]). The note says how to read the file
-///   as it is, and its "Treat as time-expanded ×10" button
+///   as it is, and its "Correct for ×10 time expansion" button
 ///   ([`crate::rate_notes::NoteAction`]) corrects it. After the correction
 ///   the file reaches the species' calls and the note is gone.
 /// - At any other rate, the species line, then the possibilities, all muted.

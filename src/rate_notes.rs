@@ -7,10 +7,10 @@
 //! 2. The heterodyne note ([`crate::heterodyne`]) or the species call-range
 //!    note ([`crate::species_check`]), never both.
 //!
-//! A note can have one button ([`NoteAction`]), drawn under its first line:
-//! the species note of a probably time-expanded file has one that reads the
-//! file at ten times its rate, and the time-expansion note that replaces it
-//! has one that goes back to the file's own rate ([`crate::te_correction`]).
+//! A note can have one button ([`NoteAction`]), drawn after its lines: the
+//! species note of a probably time-expanded file has one that reads the file
+//! at ten times its rate, and the time-expansion note that replaces it has
+//! one that goes back to the file's own rate ([`crate::te_correction`]).
 //!
 //! [`file_rate_notes`] gives a file's notes. [`rate_notes`] is the same rule
 //! on plain values, for unit tests. The `RateNotes` component
@@ -51,8 +51,8 @@ impl NoteKind {
 pub struct RateNote {
     pub kind: NoteKind,
     pub lines: Vec<NoteLine>,
-    /// The note's button, drawn under its first line: the line the button
-    /// acts on.
+    /// The note's button, drawn after the note's lines, so the claim and
+    /// its evidence come before the action.
     pub action: Option<NoteAction>,
 }
 
@@ -60,42 +60,44 @@ pub struct RateNote {
 /// ([`crate::te_correction::set_user_time_expansion`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteAction {
-    /// On the species note's "Probably time-expanded ×10" line: read the
+    /// On the species note that says "Probably time-expanded ×10": read the
     /// file at ten times the rate it states.
-    TreatAsTenfold,
+    CorrectTenfold,
     /// On the time-expansion note of a correction the user applied: read the
     /// file at the rate it states again.
-    UseFileRate,
+    RemoveCorrection,
 }
 
 impl NoteAction {
-    /// The button's label. Each repeats the words of the line above it, so
-    /// the button reads as accepting or reversing what that line says.
+    /// The button's label. Both use the words of the time-expansion note
+    /// that a correction shows ("Corrected for ×10 time expansion"), so the
+    /// button and its result read as one action.
     pub fn label(self) -> &'static str {
         match self {
-            NoteAction::TreatAsTenfold => "Treat as time-expanded \u{d7}10",
-            NoteAction::UseFileRate => "Use the file's sample rate",
+            NoteAction::CorrectTenfold => "Correct for \u{d7}10 time expansion",
+            NoteAction::RemoveCorrection => "Remove \u{d7}10 correction",
         }
     }
 
     /// The button's tooltip, for a file whose header states `stored_rate`.
-    /// "Use the file's sample rate" has none: the line above it names the
-    /// file's rate.
+    /// "Remove ×10 correction" has none: the note above it names the file's
+    /// rate.
     pub fn tooltip(self, stored_rate: u32) -> Option<String> {
         match self {
-            NoteAction::TreatAsTenfold => Some(format!(
-                "Uses {} as the sample rate. The file is not changed.",
+            NoteAction::CorrectTenfold => Some(format!(
+                "Uses {} as the sample rate until the file is closed. The audio \
+                 file is not modified.",
                 sample_rate_khz(stored_rate.saturating_mul(10))
             )),
-            NoteAction::UseFileRate => None,
+            NoteAction::RemoveCorrection => None,
         }
     }
 
     /// The factor the button sets: ×10, or `None` for the file's own rate.
     pub fn factor(self) -> Option<f64> {
         match self {
-            NoteAction::TreatAsTenfold => Some(crate::te_correction::TENFOLD),
-            NoteAction::UseFileRate => None,
+            NoteAction::CorrectTenfold => Some(crate::te_correction::TENFOLD),
+            NoteAction::RemoveCorrection => None,
         }
     }
 
@@ -103,8 +105,8 @@ impl NoteAction {
     /// Playwright specs use to find it.
     pub fn key(self) -> &'static str {
         match self {
-            NoteAction::TreatAsTenfold => "treat-as-tenfold",
-            NoteAction::UseFileRate => "use-file-rate",
+            NoteAction::CorrectTenfold => "correct-tenfold",
+            NoteAction::RemoveCorrection => "remove-correction",
         }
     }
 }
@@ -114,9 +116,18 @@ impl NoteAction {
 /// can be heard, and its rate and duration were corrected: by the app when it
 /// loaded the file, or by the user. The rate in the line is the one in the
 /// file's header.
+///
+/// A correction the user applied lasts until the file is closed, and the line
+/// says so: "Corrected for ×10 time expansion until the file is closed; the
+/// file says 25.6 kHz." That also tells it apart from a correction made from
+/// the file's metadata, which is made again each time the file is opened.
 pub fn time_expansion_line(te: TimeExpansion) -> NoteLine {
+    let until = match te.origin {
+        TimeExpansionOrigin::User => " until the file is closed",
+        TimeExpansionOrigin::File | TimeExpansionOrigin::Source => "",
+    };
     NoteLine::muted(format!(
-        "Corrected for {} time expansion; the file says {}.",
+        "Corrected for {} time expansion{until}; the file says {}.",
         crate::wikimedia::format_factor(te.factor),
         sample_rate_khz(te.stored_rate)
     ))
@@ -137,12 +148,12 @@ pub fn file_rate_notes(file: &LoadedFile) -> Vec<RateNote> {
 ///
 /// - `time_expansion`: the correction applied to the file's rate. It gives
 ///   the time-expansion note, which comes first. When the user applied it,
-///   the note has the "Use the file's sample rate" button.
+///   the note has the "Remove ×10 correction" button.
 /// - `can_correct`: whether the app can change the rate the file is read at
 ///   ([`crate::types::AudioData::can_set_time_expansion`]): false for a
 ///   streamed file. When true, the species note of a file at a ×10 header
 ///   rate ([`crate::species_check::RangeCase::TenfoldHeaderRate`]) has the
-///   "Treat as time-expanded ×10" button.
+///   "Correct for ×10 time expansion" button.
 /// - Heterodyne levels A and B: the heterodyne note without the species
 ///   line. The note already says the frequencies are not the bat's.
 /// - Heterodyne level C: the heterodyne note, then the species line, muted
@@ -161,7 +172,8 @@ pub fn rate_notes(
         notes.push(RateNote {
             kind: NoteKind::TimeExpansion,
             lines: vec![time_expansion_line(te)],
-            action: (te.origin == TimeExpansionOrigin::User).then_some(NoteAction::UseFileRate),
+            action: (te.origin == TimeExpansionOrigin::User)
+                .then_some(NoteAction::RemoveCorrection),
         });
     }
     match (hint, finding) {
@@ -181,7 +193,7 @@ pub fn rate_notes(
             lines: crate::species_check::note_lines(finding),
             action: (can_correct
                 && finding.case == crate::species_check::RangeCase::TenfoldHeaderRate)
-                .then_some(NoteAction::TreatAsTenfold),
+                .then_some(NoteAction::CorrectTenfold),
         }),
         (None, None) => {}
     }
@@ -241,12 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn a_probable_tenfold_file_gets_the_treat_as_button() {
+    fn a_probable_tenfold_file_gets_the_correct_button() {
         let species = case_t();
         let notes = rate_notes(None, None, Some(&species), true);
         assert_eq!(kinds(&notes), [NoteKind::Species]);
-        assert_eq!(notes[0].action, Some(NoteAction::TreatAsTenfold));
-        // The button sits under the amber line it acts on.
+        assert_eq!(notes[0].action, Some(NoteAction::CorrectTenfold));
+        // The button comes after the amber claim and the species evidence.
+        assert_eq!(notes[0].lines, crate::species_check::note_lines(&species));
         assert_eq!(notes[0].lines[0].role, crate::note_line::LineRole::Warning);
         // A streamed file keeps the note without the button.
         let notes = rate_notes(None, None, Some(&species), false);
@@ -281,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn a_user_correction_gets_the_use_file_rate_button() {
+    fn a_user_correction_gets_the_remove_button() {
         // After the user's x10 correction the file reaches the species'
         // calls, so the species note is gone and the time-expansion note,
         // now first under the Sample rate row, has the button.
@@ -300,9 +313,10 @@ mod tests {
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
-                    "Corrected for \u{d7}10 time expansion; the file says 25.6\u{a0}kHz."
+                    "Corrected for \u{d7}10 time expansion until the file is closed; the \
+                     file says 25.6\u{a0}kHz."
                 )],
-                action: Some(NoteAction::UseFileRate),
+                action: Some(NoteAction::RemoveCorrection),
             }]
         );
     }
@@ -310,24 +324,30 @@ mod tests {
     #[test]
     fn button_labels_and_tooltip() {
         assert_eq!(
-            NoteAction::TreatAsTenfold.label(),
-            "Treat as time-expanded \u{d7}10"
+            NoteAction::CorrectTenfold.label(),
+            "Correct for \u{d7}10 time expansion"
         );
         assert_eq!(
-            NoteAction::UseFileRate.label(),
-            "Use the file's sample rate"
+            NoteAction::RemoveCorrection.label(),
+            "Remove \u{d7}10 correction"
         );
         assert_eq!(
-            NoteAction::TreatAsTenfold.tooltip(38_400).as_deref(),
-            Some("Uses 384\u{a0}kHz as the sample rate. The file is not changed.")
+            NoteAction::CorrectTenfold.tooltip(38_400).as_deref(),
+            Some(
+                "Uses 384\u{a0}kHz as the sample rate until the file is closed. The audio \
+                 file is not modified."
+            )
         );
         assert_eq!(
-            NoteAction::TreatAsTenfold.tooltip(31_250).as_deref(),
-            Some("Uses 312.5\u{a0}kHz as the sample rate. The file is not changed.")
+            NoteAction::CorrectTenfold.tooltip(31_250).as_deref(),
+            Some(
+                "Uses 312.5\u{a0}kHz as the sample rate until the file is closed. The \
+                 audio file is not modified."
+            )
         );
-        assert_eq!(NoteAction::UseFileRate.tooltip(38_400), None);
-        assert_eq!(NoteAction::TreatAsTenfold.factor(), Some(10.0));
-        assert_eq!(NoteAction::UseFileRate.factor(), None);
+        assert_eq!(NoteAction::RemoveCorrection.tooltip(38_400), None);
+        assert_eq!(NoteAction::CorrectTenfold.factor(), Some(10.0));
+        assert_eq!(NoteAction::RemoveCorrection.factor(), None);
     }
 
     #[test]

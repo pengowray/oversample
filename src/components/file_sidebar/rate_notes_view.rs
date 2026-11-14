@@ -20,8 +20,8 @@ pub(crate) fn note_selector(kind: NoteKind) -> String {
 ///   `rate-note-plain`, `rate-note-muted` or `rate-note-quote`
 ///   (`style.css`).
 /// - A note's button ([`NoteAction`]) is a `button.rate-note-action` after
-///   the first line, with `data-action` naming it. It is disabled while the
-///   file is still loading (`loading`).
+///   the note's lines, with `data-action` naming it. It is disabled while
+///   the file is still loading (`loading`).
 ///
 /// `file_id` and `stored_rate` are the file's id and the rate its header
 /// states.
@@ -39,16 +39,17 @@ pub(crate) fn RateNotes(
             let button = note
                 .action
                 .map(|action| action_button(state, action, file_id, stored_rate, loading));
-            let mut lines = note.lines.into_iter().map(|line| {
-                view! { <div class=format!("rate-note-{}", line.role.key())>{line.text}</div> }
-            });
-            let first = lines.next();
-            let rest = lines.collect_view();
+            let lines = note
+                .lines
+                .into_iter()
+                .map(|line| {
+                    view! { <div class=format!("rate-note-{}", line.role.key())>{line.text}</div> }
+                })
+                .collect_view();
             view! {
                 <div class="metadata-note rate-note" data-note=note.kind.key()>
-                    {first}
+                    {lines}
                     {button}
-                    {rest}
                 </div>
             }
         })
@@ -60,7 +61,7 @@ pub(crate) fn RateNotes(
 /// handler returns, before the next click can arrive.
 ///
 /// The rebuild reuses the button element for the next note's button, so
-/// "Treat as time-expanded ×10" becomes "Use the file's sample rate" under
+/// "Correct for ×10 time expansion" becomes "Remove ×10 correction" under
 /// the pointer and keeps keyboard focus. So that one double-click, or Enter
 /// held down, does not apply the correction and take it back, the second
 /// click of a double-click (`detail` 2 or more) and a key repeat do nothing.

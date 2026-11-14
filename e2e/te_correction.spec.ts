@@ -7,9 +7,9 @@ import * as path from "node:path";
  *
  * A file at a x10 header rate that is too low for its species' calls (case T
  * in src/species_check.rs) gets the species note "Probably time-expanded
- * x10" with a "Treat as time-expanded x10" button. Pressing it reads the file
- * at ten times its rate; the time-expansion note that replaces the species
- * note has a "Use the file's sample rate" button that goes back.
+ * x10" with a "Correct for x10 time expansion" button. Pressing it reads the
+ * file at ten times its rate; the time-expansion note that replaces the
+ * species note has a "Remove x10 correction" button that goes back.
  *
  * The recording is demo XC815138 with a generated WAV and the metadata of
  * XC1001172 (Eptesicus nilssonii, 25-45 kHz, at 25.6 kHz), served as in
@@ -183,8 +183,8 @@ async function snap(page: Page): Promise<Snap> {
 
 const SPECIES_NOTE = '.rate-note[data-note="species"]';
 const TE_NOTE = '.rate-note[data-note="time-expansion"]';
-const TREAT = 'button.rate-note-action[data-action="treat-as-tenfold"]';
-const USE_FILE = 'button.rate-note-action[data-action="use-file-rate"]';
+const CORRECT = 'button.rate-note-action[data-action="correct-tenfold"]';
+const REMOVE = 'button.rate-note-action[data-action="remove-correction"]';
 
 /** `r` with its times divided and its frequencies multiplied by `k`. */
 function scaled(r: Range, k: number): Range {
@@ -357,20 +357,20 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     const durationBefore = await row(page, "Duration").textContent();
 
-    // The button sits under the amber line it acts on, above the species line.
-    const treat = page.locator(`${SPECIES_NOTE} ${TREAT}`);
-    await expect(treat).toHaveText("Treat as time-expanded ×10");
+    // The button comes after the amber claim and the species evidence.
+    const treat = page.locator(`${SPECIES_NOTE} ${CORRECT}`);
+    await expect(treat).toHaveText("Correct for ×10 time expansion");
     await expect(treat).toHaveAttribute(
       "title",
-      "Uses 256 kHz as the sample rate. The file is not changed.",
+      "Uses 256 kHz as the sample rate until the file is closed. The audio file is not modified.",
     );
     const order = await page
       .locator(SPECIES_NOTE)
       .evaluate((n) => Array.from(n.children).map((c) => c.className));
     expect(order).toEqual([
       "rate-note-warning",
-      "hash-calc-btn rate-note-action",
       "rate-note-muted",
+      "hash-calc-btn rate-note-action",
     ]);
     expect((await treat.boundingBox())!.height).toBeGreaterThanOrEqual(24);
     await settle(page);
@@ -384,7 +384,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
     await expect(page.locator(TE_NOTE)).toHaveText(
-      /^Corrected for ×10 time expansion; the file says 25\.6 kHz\.Use the file's sample rate$/,
+      /^Corrected for ×10 time expansion until the file is closed; the file says 25\.6 kHz\.Remove ×10 correction$/,
     );
     // The time-expansion note is now the first note under the Sample rate row.
     expect(
@@ -412,14 +412,14 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await shot(page, "desktop-1440-apply-after.png");
 
     // A second press is not possible: the button has gone.
-    await expect(page.locator(TREAT)).toHaveCount(0);
+    await expect(page.locator(CORRECT)).toHaveCount(0);
 
     // The corrected file plays, and going back to the file's rate stops it.
     await page.locator(".play-main-btn").click();
     await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
 
-    const useFile = page.locator(`${TE_NOTE} ${USE_FILE}`);
-    await expect(useFile).toHaveText("Use the file's sample rate");
+    const useFile = page.locator(`${TE_NOTE} ${REMOVE}`);
+    await expect(useFile).toHaveText("Remove ×10 correction");
     expect(await useFile.getAttribute("title")).toBeNull();
     await useFile.click();
     expect((await snap(page)).isPlaying).toBe(false);
@@ -428,7 +428,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Duration")).toHaveText(durationBefore!);
     expect(durationAfter).not.toBe(durationBefore);
     await expect(page.locator(TE_NOTE)).toHaveCount(0);
-    await expect(page.locator(`${SPECIES_NOTE} ${TREAT}`)).toBeVisible();
+    await expect(page.locator(`${SPECIES_NOTE} ${CORRECT}`)).toBeVisible();
     const undone = await snap(page);
     expect(undone.sampleRate).toBe(25_600);
     expect(undone.duration).toBe(before.duration);
@@ -442,14 +442,14 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await settle(page);
     await shot(page, "desktop-1440-undo-after.png");
 
-    // The pressed button becomes "Use the file's sample rate" in place. A
+    // The pressed button becomes "Remove ×10 correction" in place. A
     // double-click applies the correction once, and Enter held down on the
     // focused button acts once.
-    await page.locator(TREAT).dblclick();
+    await page.locator(CORRECT).dblclick();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await page.waitForTimeout(300);
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
-    await page.locator(USE_FILE).focus();
+    await page.locator(REMOVE).focus();
     await page.keyboard.down("Enter");
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     await page.keyboard.down("Enter");
@@ -463,7 +463,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
   test("an annotation made after the correction is kept by the undo", async ({ page }) => {
     await openCase(page, CASE_T);
     await showInfo(page);
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
 
     await page.locator(".tool-combo-btn").click();
@@ -478,7 +478,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expect(made.timeEnd).toBeLessThan(1.1);
     expect(made.freqHigh!).toBeGreaterThan(12_800);
 
-    await page.locator(USE_FILE).click();
+    await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     const back = await snap(page);
     expect(back.regions.length).toBe(1);
@@ -490,7 +490,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
   }) => {
     await openCase(page, CASE_T);
     await showInfo(page);
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await page.locator(".tool-combo-btn").click();
     await page.locator(".layer-panel button", { hasText: "Selection" }).click();
@@ -544,7 +544,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     expectRange(b.region, region);
 
     await openTab(page, "Info");
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     const corrected = (await snap(page)).regions[0];
     expectRange(corrected, scaled(region, 10));
@@ -568,7 +568,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
   }) => {
     await openCase(page, CASE_T);
     await showInfo(page);
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     const file = test.info().outputPath("annota.json");
     fs.writeFileSync(
@@ -607,7 +607,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     const before = (await exportXc(page, "xc-before.json")).json.annotations[0];
 
     await openTab(page, "Info");
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await openAnnotationFiles(page);
     const exported = await exportXc(page, "xc-corrected.json");
@@ -635,7 +635,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await showInfo(page);
     const pass = (s: Snap) => [s.passBandLo, s.passBandHi];
     expect(pass(await snap(page))).toEqual([20_000, 60_000]);
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     // The app's default band, as a file loaded at 256 kHz gets, inside the
     // corrected file's 128 kHz.
@@ -645,7 +645,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     const caption = passBtn.locator("xpath=..");
     await expect(caption).toContainText("20.0");
     await expect(caption).not.toContainText("200.0");
-    await page.locator(USE_FILE).click();
+    await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     expect(pass(await snap(page))).toEqual([20_000, 60_000]);
   });
@@ -653,14 +653,14 @@ test.describe("x10 correction on a probably time-expanded file", () => {
   test('the "Playing 1:1" card closes when the rate changes', async ({ page }) => {
     await openCase(page, CASE_T);
     await showInfo(page);
-    await page.locator(TREAT).click();
+    await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     // The corrected file holds sound above hearing range, so playing it at
     // 1:1 shows the card.
     expect((await snap(page)).hfrOn).toBe(false);
     await page.locator(".play-main-btn").click();
     await expect(page.locator(".hfr-nudge")).toBeVisible();
-    await page.locator(USE_FILE).click();
+    await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     await expect(page.locator(".hfr-nudge")).toHaveCount(0);
     expect((await snap(page)).hfrNudge).toBe(false);
@@ -704,6 +704,8 @@ test.describe("no x10 button on other files", () => {
       await showInfo(page);
       if (c.guano) {
         await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion");
+        // Only the user's correction lasts until the file is closed.
+        await expect(page.locator(TE_NOTE)).not.toContainText("until the file is closed");
       }
       await expect(page.locator(".rate-note-action")).toHaveCount(0);
     });
@@ -722,7 +724,7 @@ test.describe("x10 correction on a phone", () => {
   test("the buttons fit the Info panel and are big enough to tap", async ({ page }) => {
     await openCase(page, CASE_T);
     await page.locator('button[title="Show info panel"]').first().tap();
-    const treat = page.locator(TREAT);
+    const treat = page.locator(CORRECT);
     await expect(treat).toBeVisible();
     await treat.scrollIntoViewIfNeeded();
     const panel = (await page.locator(".right-sidebar").boundingBox())!;
@@ -743,7 +745,7 @@ test.describe("x10 correction on a phone", () => {
 
     await treat.tap();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
-    const useFile = page.locator(USE_FILE);
+    const useFile = page.locator(REMOVE);
     await expect(useFile).toBeVisible();
     expect((await useFile.boundingBox())!.height).toBeGreaterThanOrEqual(36);
     expect((await snap(page)).duration).toBeCloseTo(2, 9);
@@ -752,7 +754,7 @@ test.describe("x10 correction on a phone", () => {
 
     await useFile.tap();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
-    await expect(page.locator(TREAT)).toBeVisible();
+    await expect(page.locator(CORRECT)).toBeVisible();
     expect((await snap(page)).duration).toBeCloseTo(20, 9);
     await settle(page);
     await shot(page, "phone-375-undo-after.png");
