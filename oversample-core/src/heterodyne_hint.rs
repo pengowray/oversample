@@ -165,8 +165,9 @@ pub struct HeterodyneHint {
     /// phrases such as "set at 31,9 kHz" (31 900). Only at level A, and only
     /// when every tuning phrase outside other-mode clauses gives one clear
     /// value. `None` when the text has no tuning phrase, when phrases
-    /// disagree, or when a phrase may be a range ("set to 40-50 kHz", "tuned
-    /// from 40 to 50 kHz") or names a second frequency right after the unit.
+    /// disagree, when a phrase may be a range ("set to 40-50 kHz", "tuned
+    /// from 40 to 50 kHz"), or when the phrase's field gives any other
+    /// frequency in kHz ("set to 40 kHz, later 50 kHz").
     ///
     /// A frequency beside an R1 heterodyne word ("heterodyne at 45 kHz",
     /// "het 45 kHz") does not count. R1 reads the number after "het" only to
@@ -851,8 +852,9 @@ struct Evidence {
     widen: bool,
     /// The model's label, for R3 and R4 evidence.
     detector: Option<&'static str>,
-    /// For R2 evidence, the tuning frequency in Hz when the clause gives one
-    /// clear value (see [`tuned_hz`]). Always `None` for other rules.
+    /// For R2 evidence, the tuning frequency in Hz when the clause's tuning
+    /// phrases give one clear value and the field gives no other frequency
+    /// (see [`tuned_hz`]). Always `None` for other rules.
     tuned_hz: Option<u32>,
     /// What matched, written the way the Python reference writes it: the
     /// lowercase token or tokens, or "label [sequence]" for a model. The
@@ -1103,41 +1105,53 @@ fn tuning_from(toks: &[String], from: usize) -> Option<TuningMatch> {
 }
 
 /// The frequency a clause's tuning phrases give, in Hz, or `None` when they
-/// do not give one clear value. A phrase gives no clear value when:
+/// do not give one clear value. `ci` is the clause's index in `field`. A
+/// phrase gives no clear value when:
 /// - another number comes between the verb and the frequency ("tuned from
 ///   40 to 50 kHz", "set between 40 and 50 kHz");
 /// - the two numbers are joined by anything but one "," or "." ("40-50 kHz",
 ///   "40 50 kHz"), since tokens do not keep the separator;
-/// - another frequency in kHz follows the unit within two tokens ("45 kHz
-///   to 50 kHz", "45 kHz, 44 kHz sample rate").
+/// - the field gives another frequency in kHz anywhere, in this clause or
+///   another ("45 kHz to 50 kHz", "set at 45 kHz, also tried 55 kHz", "set to
+///   45 kHz; later 50 kHz", "45 kHz, 44 kHz sample rate"). The same frequency
+///   again is fine.
 ///
 /// Two phrases in the clause must give the same value.
-fn tuned_hz(text: &str, clause: &Clause) -> Option<u32> {
-    let toks = &clause.words;
+fn tuned_hz(field: &FieldText, ci: usize) -> Option<u32> {
+    let toks = &field.clauses[ci].words;
     let mut values = tuning_phrases(toks)
         .into_iter()
-        .map(|m| phrase_hz(text, clause, m));
+        .map(|m| phrase_hz(field, ci, m));
     let first = values.next()??;
     values.all(|v| v == Some(first)).then_some(first)
 }
 
 /// The frequency one tuning phrase gives, in Hz. See [`tuned_hz`].
-fn phrase_hz(text: &str, clause: &Clause, m: TuningMatch) -> Option<u32> {
+fn phrase_hz(field: &FieldText, ci: usize, m: TuningMatch) -> Option<u32> {
+    let clause = &field.clauses[ci];
     let toks = &clause.words;
     if toks[m.verb + 1..m.number].iter().any(|t| is_num(t)) {
         return None;
     }
-    let after = m.unit_end(toks) + 1;
-    let second_frequency =
-        (after..after + 2).any(|n| toks.get(n).is_some_and(|t| is_num(t)) && khz_at(toks, n + 1));
-    if second_frequency {
-        return None;
-    }
-    let whole: u32 = toks[m.number].parse().ok()?;
-    let fraction = match m.decimal {
+    let hz = khz_value(field.text, clause, m.number, m.decimal)?;
+    let other_frequency = field.clauses.iter().enumerate().any(|(i, c)| {
+        (0..c.words.len())
+            .filter(|&k| khz_at(&c.words, k) && !(i == ci && k == m.unit))
+            .any(|k| frequency_differs(field.text, c, k, hz))
+    });
+    (!other_frequency).then_some(hz)
+}
+
+/// The frequency in Hz that the number at token `number` gives, with the 1-2
+/// digit token at `decimal` as its decimal part ("31,9" is 31 900). `None`
+/// when the two numbers are joined by anything but one "," or ".".
+fn khz_value(text: &str, clause: &Clause, number: usize, decimal: Option<usize>) -> Option<u32> {
+    let toks = &clause.words;
+    let whole: u32 = toks[number].parse().ok()?;
+    let fraction = match decimal {
         None => 0,
         Some(d) => {
-            let between = &text[clause.spans[m.number].1..clause.spans[d].0];
+            let between = &text[clause.spans[number].1..clause.spans[d].0];
             if between != "," && between != "." {
                 return None;
             }
@@ -1150,7 +1164,26 @@ fn phrase_hz(text: &str, clause: &Clause, m: TuningMatch) -> Option<u32> {
             }
         }
     };
-    Some(whole * 1000 + fraction)
+    whole.checked_mul(1000)?.checked_add(fraction)
+}
+
+/// Whether the kHz unit at token `unit` follows a frequency other than `hz`.
+/// A unit with no number before it ("in kHz") follows none. Two numbers
+/// joined by anything but one "," or "." ("40-50 kHz") count as another
+/// frequency, since they may be a range.
+fn frequency_differs(text: &str, clause: &Clause, unit: usize, hz: u32) -> bool {
+    let toks = &clause.words;
+    let Some(number) = unit.checked_sub(1).filter(|&n| is_num(&toks[n])) else {
+        return false;
+    };
+    let whole = number
+        .checked_sub(1)
+        .filter(|&w| is_num(&toks[w]) && toks[number].len() <= 2);
+    let value = match whole {
+        Some(w) => khz_value(text, clause, w, Some(number)),
+        None => khz_value(text, clause, number, None),
+    };
+    value != Some(hz)
 }
 
 /// A model match: its label, token position and the sequence that matched.
@@ -1282,7 +1315,7 @@ fn analyze<'a>(text: &RecordingText<'a>, sample_rate: Option<u32>) -> Analysis<'
                         true,
                         None,
                         toks[i..=k].join(" "),
-                        tuned_hz(f.text, clause),
+                        tuned_hz(f, ci),
                     );
                 }
             }
@@ -2435,8 +2468,6 @@ mod tests {
             assert_eq!(hint.level, SaysHeterodyne, "{s}");
             hint.tuned_hz
         };
-        // The quote is the heterodyne word, but the frequency still comes
-        // from the tuning phrase.
         assert_eq!(
             tuned("handheld hetrodyne detector set at 31,9 kHz"),
             Some(31_900)
@@ -2459,6 +2490,27 @@ mod tests {
             tuned("bat detector set to 45 kHz. Still set to 45 kHz"),
             Some(45_000)
         );
+        assert_eq!(
+            tuned("bat detector set to 45 kHz. Loudest at 45 kHz"),
+            Some(45_000)
+        );
+        assert_eq!(
+            tuned("bat detector set to 31,9 kHz (31.9 kHz)"),
+            Some(31_900)
+        );
+        // "kHz" with no number before it is not another frequency.
+        assert_eq!(
+            tuned("bat detector set to 45 kHz. Frequencies in kHz"),
+            Some(45_000)
+        );
+        // A frequency in another field doesn't count.
+        let t = RecordingText {
+            remarks: Some("Heterodyne detector set to 45 kHz"),
+            description: Some("Calls at 50 kHz"),
+            ..Default::default()
+        };
+        let hint = infer_heterodyne_hint(&t, Some(44100)).unwrap();
+        assert_eq!(hint.tuned_hz, Some(45_000));
         // No tuning phrase.
         assert_eq!(tuned("handheld heterodyne detector"), None);
         // A frequency beside a heterodyne word is not a tuning phrase.
@@ -2475,8 +2527,20 @@ mod tests {
             "bat detector tuned from 40 to 50 kHz",
             "bat detector tuned between 40 and 50 kHz",
             "bat detector set to 40 kHz to 50 kHz",
-            // A second frequency right after the unit.
+            // Another frequency in the clause.
             "bat detector set to 40 kHz and 50 kHz",
+            "Heterodyne detector tuned from 40 kHz up to 50 kHz",
+            "Heterodyne detector set at 40 kHz and later at 50 kHz",
+            "Heterodyne detector set to 40 kHz and then to 50 kHz",
+            "Heterodyne detector set to 40 kHz or about 50 kHz",
+            "Heterodyne detector set to 45 kHz for pipistrelles and 25 kHz for noctules",
+            "Heterodyne detector set at 45 kHz, also tried 55 kHz",
+            "Heterodyne detector set at 45 kHz, recorded with phone at 48 kHz",
+            "Heterodyne detector set to 45 kHz. Recorder at 44,1 kHz",
+            "Heterodyne detector set to 45 kHz, 40-50 kHz calls",
+            // Another frequency in a later or earlier clause of the field.
+            "Heterodyne detector set to 45 kHz; later 50 kHz",
+            "Calls at 40 kHz. Heterodyne detector set to 45 kHz",
             // Two tuning phrases that disagree, in one clause or two.
             "bat detector set to 40 kHz, then set to 50 kHz",
             "bat detector set to 40 kHz. Later set to 50 kHz",
