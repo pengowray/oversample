@@ -19,6 +19,7 @@ pub mod markdown;
 pub mod opfs;
 pub mod project;
 pub mod project_store;
+pub mod rate_notes;
 pub mod scope;
 pub mod search_client;
 pub mod settings;

@@ -4,15 +4,15 @@
 //!
 //! [`file_finding`] looks the species up in the bat book the way the
 //! typical-calls strip does, and is stored on the `LoadedFile` when the file
-//! is built, as the heterodyne hint is. [`sample_rate_notes`] gives the notes
-//! under the Info panel's Sample rate row: a file with a heterodyne hint
-//! keeps the heterodyne note, and a species line is added to it only at
-//! level C. Otherwise the species check has a note of its own.
+//! is built, as the heterodyne hint is. [`note_lines`] gives the lines of the
+//! species note under the Info panel's Sample rate row. [`crate::rate_notes`]
+//! decides when the note is shown: a file with a heterodyne hint keeps the
+//! heterodyne note, and only [`fact_line`] is added to it, at level C.
 
 use crate::bat_book::auto_resolve::{country_region, find_species, get_scientific_name};
 use crate::bat_book::types::BatSpecies;
 use crate::format_units;
-use crate::heterodyne::{HeterodyneHint, HeterodyneLevel, LineRole, NoteLine};
+use crate::rate_notes::NoteLine;
 use crate::state::LoadedFile;
 use crate::types::TimeExpansion;
 pub use oversample_core::species_range::RangeCase;
@@ -65,7 +65,7 @@ pub fn file_finding(file: &LoadedFile) -> Option<SpeciesRangeFinding> {
 /// - `time_expansion`: the correction the app applied when it loaded the
 ///   file. A factor other than 1 counts as applied, as for the heterodyne hint.
 /// - `sample_rate`: the file's rate as loaded, after any correction.
-fn finding(
+pub(crate) fn finding(
     name: &str,
     species: &BatSpecies,
     sound_type: Option<&str>,
@@ -103,13 +103,6 @@ fn khz_range(lo_hz: f64, hi_hz: f64) -> String {
     format_units::khz_range(lo_hz.round() as i64, hi_hz.round() as i64, 1)
 }
 
-fn detail(text: String) -> NoteLine {
-    NoteLine {
-        text,
-        role: LineRole::Detail,
-    }
-}
-
 /// The species line: "Pipistrellus kuhlii: echolocation calls at 35–45 kHz,
 /// but this file can only contain frequencies up to 24 kHz." When the app
 /// corrected the file for time expansion, the line says the limit is after
@@ -121,7 +114,7 @@ pub fn fact_line(f: &SpeciesRangeFinding) -> NoteLine {
     } else {
         ""
     };
-    detail(format!(
+    NoteLine::muted(format!(
         "{}: echolocation calls at {}, but {after}this file can only contain frequencies \
          up to {}.",
         f.name,
@@ -157,63 +150,20 @@ const OTHER_LINE_MAX_HEADER_RATE: u32 = 96_000;
 pub fn note_lines(f: &SpeciesRangeFinding) -> Vec<NoteLine> {
     match f.case {
         RangeCase::TenfoldHeaderRate => vec![
-            NoteLine {
-                text: format!(
-                    "Probably time-expanded \u{d7}10 (recorded at {}). Frequencies shown are \
-                     one tenth of the real ones, and durations are ten times longer.",
-                    khz(f64::from(f.rate.header_rate) * 10.0)
-                ),
-                role: LineRole::Warning,
-            },
+            NoteLine::warning(format!(
+                "Probably time-expanded \u{d7}10 (recorded at {}). Frequencies shown are \
+                 one tenth of the real ones, and durations are ten times longer.",
+                khz(f64::from(f.rate.header_rate) * 10.0)
+            )),
             fact_line(f),
         ],
         RangeCase::Other => {
             let mut lines = vec![fact_line(f)];
             if f.rate.header_rate <= OTHER_LINE_MAX_HEADER_RATE {
-                lines.push(detail(OTHER_LINE.to_string()));
+                lines.push(NoteLine::muted(OTHER_LINE));
             }
             lines
         }
-    }
-}
-
-/// The notes under the Info panel's Sample rate row, after the
-/// time-expansion note. At most one of the two is non-empty.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SampleRateNotes {
-    /// The heterodyne note's lines.
-    pub heterodyne: Vec<NoteLine>,
-    /// The species note's lines, for a file with no heterodyne hint.
-    pub species: Vec<NoteLine>,
-}
-
-/// The notes for a file's heterodyne hint and species finding.
-///
-/// - Heterodyne levels A and B: the heterodyne note alone. It already says
-///   the frequencies are not the bat's.
-/// - Level C: the heterodyne note, then the species line, muted like the
-///   rest of a level C note. It comes last so that the note's "If so, ..."
-///   line still follows the "Possibly recorded from ..." line it refers to.
-/// - No hint: the species note.
-pub fn sample_rate_notes(
-    hint: Option<&HeterodyneHint>,
-    finding: Option<&SpeciesRangeFinding>,
-) -> SampleRateNotes {
-    match hint {
-        Some(hint) => {
-            let mut heterodyne = crate::heterodyne::note_lines(hint);
-            if hint.level == HeterodyneLevel::MayBeHeterodyne {
-                heterodyne.extend(finding.map(fact_line));
-            }
-            SampleRateNotes {
-                heterodyne,
-                species: Vec::new(),
-            }
-        }
-        None => SampleRateNotes {
-            heterodyne: Vec::new(),
-            species: finding.map(note_lines).unwrap_or_default(),
-        },
     }
 }
 
@@ -222,7 +172,7 @@ mod tests {
     use super::*;
     use crate::bat_book::data::all_species;
     use crate::bat_book::types::BatBookRegion;
-    use LineRole::{Detail, Warning};
+    use crate::rate_notes::LineRole::{self, Muted, Warning};
 
     /// `s` with the no-break space before each "kHz" and the word joiner
     /// after each range's en dash.
@@ -276,7 +226,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(roles(&lines), [Warning, Detail]);
+        assert_eq!(roles(&lines), [Warning, Muted]);
         // XC1001172.
         let f = check("Eptesicus nilssonii", ECHO, 25_600).unwrap();
         assert_eq!(
@@ -324,7 +274,7 @@ mod tests {
                 other.clone(),
             ]
         );
-        assert_eq!(roles(&lines), [Detail, Detail]);
+        assert_eq!(roles(&lines), [Muted, Muted]);
         assert_eq!(
             OTHER_LINE,
             "This file may be a bat detector's output (heterodyne, time expansion or \
@@ -497,76 +447,6 @@ mod tests {
         );
         let f = check("Eptesicus nilssonii", ECHO, 44_100).unwrap();
         assert_eq!((f.freq_lo_hz, f.freq_hi_hz), (25_000.0, 45_000.0));
-    }
-
-    #[test]
-    fn heterodyne_levels_a_and_b_hide_the_species_note() {
-        let finding = check("Rhinolophus pumilus", ECHO, 48_000).unwrap();
-        // XC924726: "Recording with Magenta Bat5" is level B.
-        let rows = vec![(
-            "Remarks".to_string(),
-            "Recording with Magenta Bat5".to_string(),
-        )];
-        let hint = crate::heterodyne::file_hint(&rows, None, 48_000).unwrap();
-        assert_eq!(hint.level, HeterodyneLevel::HeterodyneOnlyDetector);
-        let notes = sample_rate_notes(Some(&hint), Some(&finding));
-        assert_eq!(notes.heterodyne, crate::heterodyne::note_lines(&hint));
-        assert!(notes.species.is_empty());
-        // XC1034529: level A.
-        let finding = check("Eptesicus nilssonii", ECHO, 48_000).unwrap();
-        let rows = vec![(
-            "Remarks".to_string(),
-            "hetrodyne detector set at 31,9 kHz".to_string(),
-        )];
-        let hint = crate::heterodyne::file_hint(&rows, None, 48_000).unwrap();
-        assert_eq!(hint.level, HeterodyneLevel::SaysHeterodyne);
-        let notes = sample_rate_notes(Some(&hint), Some(&finding));
-        assert_eq!(notes.heterodyne, crate::heterodyne::note_lines(&hint));
-        assert!(notes.species.is_empty());
-    }
-
-    #[test]
-    fn heterodyne_level_c_gets_the_species_line_last() {
-        // XC933228.
-        let finding = check(
-            "Eptesicus nilssonii",
-            Some("echolocation, feeding buzz"),
-            44_100,
-        )
-        .unwrap();
-        let rows = vec![(
-            "Remarks".to_string(),
-            "recorded sound from ultrasonic detectors spaker with mobilphone".to_string(),
-        )];
-        let hint = crate::heterodyne::file_hint(&rows, None, 44_100).unwrap();
-        assert_eq!(hint.level, HeterodyneLevel::MayBeHeterodyne);
-        let notes = sample_rate_notes(Some(&hint), Some(&finding));
-        let mut expected = crate::heterodyne::note_lines(&hint);
-        expected.push(NoteLine {
-            text: spaced(
-                "Eptesicus nilssonii: echolocation calls at 25\u{2013}45 kHz, but this file can \
-                 only contain frequencies up to 22.1 kHz.",
-            ),
-            role: Detail,
-        });
-        assert_eq!(notes.heterodyne, expected);
-        assert!(notes.species.is_empty());
-        // XC1062080: Myotis blythii (20-120 kHz) from a Pettersson D980 at
-        // 44.1 kHz: level C only.
-        assert_eq!(check("Myotis blythii", ECHO, 44_100), None);
-        let rows = vec![("Device".to_string(), "Pettersson D980".to_string())];
-        let hint = crate::heterodyne::file_hint(&rows, None, 44_100).unwrap();
-        let notes = sample_rate_notes(Some(&hint), None);
-        assert_eq!(notes.heterodyne, crate::heterodyne::note_lines(&hint));
-    }
-
-    #[test]
-    fn no_hint_gives_the_species_note() {
-        let finding = check("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
-        let notes = sample_rate_notes(None, Some(&finding));
-        assert!(notes.heterodyne.is_empty());
-        assert_eq!(notes.species, note_lines(&finding));
-        assert_eq!(sample_rate_notes(None, None), SampleRateNotes::default());
     }
 
     /// The check leaves out non-bats by family. A family added to the bat
