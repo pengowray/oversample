@@ -118,7 +118,6 @@ pub fn parse_track_suffix(filename: &str) -> Option<TrackInfo> {
 }
 
 fn parse_track_in(stem: &str) -> Option<TrackInfo> {
-
     // Find last underscore — everything after it is the candidate segment
     let (prefix, segment) = stem.rsplit_once('_')?;
 
