@@ -8238,6 +8238,16 @@ button.toolbar-overflow-btn {
     font-size: 11px;
     opacity: 0.6;
     line-height: 1.3;
+    /* Wrap inside the menu's own width: a long line must not widen the menu,
+       which would move every control in it when the line changes. */
+    width: 0;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+/* Room for two lines of note or the progress bar with its text, so the notch
+   controls below stay where they are while the status changes. */
+.denoise-status {
+    min-height: 32px;
 }
 .denoise-note.denoise-error {
     color: #e88;

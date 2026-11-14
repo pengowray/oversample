@@ -642,6 +642,7 @@ fn DenoiseSection() -> impl IntoView {
                 }.into_any()
             }}
         </div>
+        <div class="denoise-status">
         {move || {
             let muted = |line: String| view! {
                 <div class="denoise-note">{line}</div>
@@ -670,6 +671,7 @@ fn DenoiseSection() -> impl IntoView {
                 },
             }
         }}
+        </div>
     }
 }
 

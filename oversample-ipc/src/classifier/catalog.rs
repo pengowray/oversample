@@ -100,8 +100,8 @@ pub const GEOMODEL_REVISION: &str = "e4a58d521af276de0c69a9cf8348d431e97854e3";
 pub const DENOISER: ModelFile = ModelFile {
     id: "oversample-bat-denoise-v1.onnx",
     url: "https://huggingface.co/pengowray/oversample-bat-denoise/resolve/main/oversample-bat-denoise-v1.onnx",
-    size: 0,
-    sha256: "",
+    size: 263_936,
+    sha256: "87799f99479976887030e1d962c8a8c40b4e994777c8aee7fdfac2cd9567326d",
     kind: FileKind::Denoiser,
 };
 

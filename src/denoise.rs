@@ -27,8 +27,9 @@ use web_sys::{MessageEvent, Worker};
 const WORKER_URL: &str = "birdnet-worker_loader.js";
 
 /// Lowest sample rate the denoiser takes. It was trained on recordings from
-/// 250 to 500 kHz, used sample for sample.
-pub const MIN_RATE: u32 = 250_000;
+/// 250 to 500 kHz, used sample for sample, and checked by eye on recordings
+/// at 192, 256, 384 and 500 kHz (2026-11-14). Not tried below 192 kHz.
+pub const MIN_RATE: u32 = 192_000;
 /// Longest recording, in samples (62 s at 384 kHz). The worker holds the
 /// recording four times over while it works.
 pub const MAX_SAMPLES: usize = 24_000_000;
@@ -417,7 +418,7 @@ mod tests {
     #[test]
     fn low_rates_and_long_recordings_are_refused() {
         assert!(refusal(384_000, 1_000_000).is_none());
-        assert!(refusal(192_000, 1_000_000).unwrap().contains("250 kHz"));
+        assert!(refusal(96_000, 1_000_000).unwrap().contains("192 kHz"));
         assert!(refusal(384_000, MAX_SAMPLES + 1).unwrap().contains("62 s"));
     }
 }
