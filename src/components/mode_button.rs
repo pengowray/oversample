@@ -236,15 +236,23 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
                     let entry = auto_resolve::find_entry_in_manifest(resolved.region, &species_id)
                         .or_else(|| auto_resolve::find_entry_any_book(&species_id))?;
                     if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
-                        Some((entry.freq_lo_hz, entry.freq_hi_hz.min(nyquist)))
+                        Some((entry.freq_lo_hz, entry.freq_hi_hz))
                     } else {
                         None
                     }
                 });
 
                 let lowest = state.lowest_bat_hz_untracked() as f64;
-                let (lo, hi) = species_range.unwrap_or((lowest.min(nyquist), nyquist));
-                state.set_band_ff_range(lo, hi);
+                // Writing the focus stack runs this effect again. An empty band
+                // would leave the effective range inactive, so the effect would
+                // write it again forever: choosing HET hung the page for a
+                // 44.1 kHz file of a species that calls at 35-80 kHz.
+                // `hfr_default` gives a band that fits the file, or none.
+                if let Some(range) =
+                    crate::focus_stack::FocusRange::hfr_default(species_range, lowest, nyquist)
+                {
+                    state.set_band_ff_range(range.lo, range.hi);
+                }
             }
         }
     });

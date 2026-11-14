@@ -59,6 +59,37 @@ pub fn install(state: AppState) {
             "maxFreq",
             opt_f64(state.view.max_display_freq().get_untracked()),
         );
+        // HFR band and playback mode
+        set(
+            &o,
+            "hfrEnabled",
+            JsValue::from_bool(state.viewmode.hfr_enabled().get_untracked()),
+        );
+        set(
+            &o,
+            "bandLo",
+            JsValue::from_f64(state.filter.band_ff_freq_lo().get_untracked()),
+        );
+        set(
+            &o,
+            "bandHi",
+            JsValue::from_f64(state.filter.band_ff_freq_hi().get_untracked()),
+        );
+        set(
+            &o,
+            "playbackMode",
+            JsValue::from_str(&format!("{:?}", state.playback.mode().get_untracked())),
+        );
+        set(
+            &o,
+            "hetFreq",
+            JsValue::from_f64(state.transform.het_frequency().get_untracked()),
+        );
+        set(
+            &o,
+            "hetCutoff",
+            JsValue::from_f64(state.transform.het_cutoff().get_untracked()),
+        );
         // Live capture
         let listening = state.mic.listening().get_untracked();
         let recording = state.mic.recording().get_untracked();
