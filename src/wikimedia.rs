@@ -467,7 +467,7 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
     }
     if let Some(te) = time_expansion {
         fields.push((
-            "Time expansion".to_string(),
+            TIME_EXPANSION_FIELD.to_string(),
             format!("{} (P14424)", format_factor(te)),
         ));
     }
@@ -488,6 +488,11 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
         host: stored_on(api_host, page),
     })
 }
+
+/// The label of the metadata row that shows a file's P14424 time expansion
+/// factor. [`crate::rate_notes`] looks for it to say where the factor of a
+/// correction comes from.
+pub const TIME_EXPANSION_FIELD: &str = "Time expansion";
 
 /// Render a factor the way people write it: `\u{00D7}10`, `\u{00D7}2.5`.
 pub fn format_factor(te: f64) -> String {

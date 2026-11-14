@@ -346,6 +346,20 @@ pub struct LoadedFile {
     pub min_display_freq: Option<f64>,
     /// Per-file vertical zoom: upper frequency bound in Hz. `None` = default (Nyquist).
     pub max_display_freq: Option<f64>,
+    /// The time-expansion correction made when the file was opened: from its
+    /// own metadata (GUANO's TE field, a Wildlife Acoustics `wamd` chunk) or
+    /// from the site it came from (Wikimedia Commons, Find recordings). `None`
+    /// for a file opened at the rate its header states. The user can remove
+    /// it in the Info panel and apply it again ([`crate::te_correction`]).
+    /// It is made again each time the file is opened, so annotation files
+    /// use the seconds and Hz of this correction.
+    pub opened_time_expansion: Option<crate::types::TimeExpansion>,
+    /// Whether HFR was on when the user last pressed a button in the Info
+    /// panel that corrects the file for time expansion. When the user then
+    /// removes that correction, HFR is turned off again if it was off at the
+    /// press ([`crate::te_correction::set_time_expansion`]). `None` when
+    /// there is no such press to undo.
+    pub hfr_on_at_correction: Option<bool>,
 }
 
 impl LoadedFile {

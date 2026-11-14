@@ -85,16 +85,16 @@ pub fn XcAnnotationExport(on_close: Callback<()>) -> impl IntoView {
     let selected_count = move || state.annotations.selected_ids().with(|ids| ids.len());
 
     // Xeno-canto holds the file as it was uploaded, so the export uses the
-    // file's own seconds and Hz, also while the user's time-expansion
-    // correction is on. A memo of its own, so that other changes to the file
-    // list do not rebuild the export.
+    // seconds and Hz the file opens in (its own, or corrected from its
+    // GUANO), also while the user has changed its time-expansion correction.
+    // A memo of its own, so that other changes to the file list do not
+    // rebuild the export.
     let to_file_rate = Memo::new(move |_| {
         let idx = state.library.current_index().get()?;
-        state.library.files().with(|files| {
-            files
-                .get(idx)
-                .and_then(|f| crate::te_correction::to_file_rate(&f.audio))
-        })
+        state
+            .library
+            .files()
+            .with(|files| files.get(idx).and_then(crate::te_correction::to_file_rate))
     });
 
     let file_name_for_memo = file_name.clone();

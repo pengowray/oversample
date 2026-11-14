@@ -146,6 +146,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         display_dc,
     } = f;
     let id = crate::state::next_file_id();
+    let opened_time_expansion = audio.metadata.time_expansion;
     let mut new_file = LoadedFile {
         id,
         name,
@@ -175,6 +176,8 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         loading_id: Some(load_id),
         min_display_freq: None,
         max_display_freq: None,
+        opened_time_expansion,
+        hfr_on_at_correction: None,
     };
     // A local file's GUANO can name the species.
     new_file.species_range = crate::species_check::file_finding(&new_file);

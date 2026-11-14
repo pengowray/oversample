@@ -156,6 +156,8 @@ pub(crate) fn start_live_recording(state: &AppState, sample_rate: u32) -> usize 
             loading_id: None,
             min_display_freq: None,
             max_display_freq: None,
+            opened_time_expansion: None,
+            hfr_on_at_correction: None,
         });
     });
 
@@ -256,6 +258,8 @@ pub(crate) fn start_live_armed(state: &AppState, sample_rate: u32) -> usize {
             loading_id: None,
             min_display_freq: None,
             max_display_freq: None,
+            opened_time_expansion: None,
+            hfr_on_at_correction: None,
         });
     });
 
@@ -508,6 +512,8 @@ pub(crate) fn start_live_listening(state: &AppState, sample_rate: u32) -> usize 
             loading_id: None,
             min_display_freq: None,
             max_display_freq: None,
+            opened_time_expansion: None,
+            hfr_on_at_correction: None,
         });
     });
 
@@ -1478,6 +1484,8 @@ fn update_or_create_file(
                 loading_id: None,
                 min_display_freq: None,
                 max_display_freq: None,
+                opened_time_expansion: None,
+                hfr_on_at_correction: None,
             });
         });
         state.library.current_index().set(Some(idx));

@@ -1,12 +1,17 @@
-//! The time-expansion correction the user applies from the Info panel.
+//! Time-expansion corrections the user applies or removes in the Info panel.
 //!
 //! A file whose header rate is one tenth of a full-spectrum rate and too low
 //! for its species' calls gets the species note "Probably time-expanded ×10"
 //! ([`crate::species_check`], case T). The note has a button that reads the
 //! file at ten times its rate, and the time-expansion note that replaces it
 //! has a button that goes back to the file's own rate
-//! ([`crate::rate_notes::NoteAction`]). Both call
-//! [`set_user_time_expansion`].
+//! ([`crate::rate_notes::NoteAction`]).
+//!
+//! A file corrected when it was opened, from its own metadata (GUANO, `wamd`)
+//! or from the site it came from (Wikimedia Commons, Find recordings), has
+//! the same "Remove" button. After it is pressed, the note says what the
+//! metadata states and has a button that makes that correction again. All
+//! these buttons call [`set_time_expansion`].
 //!
 //! The file is changed in place: it keeps its id, its place in the file list,
 //! its annotations and its settings. Its samples are not changed, only the
@@ -15,20 +20,23 @@
 //! [`RateChange`], so annotations, the selection and the view stay on the
 //! same samples.
 //!
-//! The correction lasts until the file is closed or the page is reloaded.
-//! Annotation files keep the file's own seconds and Hz: [`to_file_units`]
-//! converts a set before it is saved or exported (autosave, sidecars, "Export .batm", project files;
-//! "Export for XC" converts each annotation with [`to_file_rate`]),
-//! and [`from_file_units`] converts one that is loaded or imported while the
-//! correction is on. Annota-JSON from Xeno-canto, or imported by the user,
-//! is converted the same way ([`annota_from_file_units_at`]).
+//! A change lasts until the file is closed or the page is reloaded: opening
+//! the file again makes the correction it was opened with
+//! ([`crate::state::LoadedFile::opened_time_expansion`]), or none. So
+//! annotation files use the seconds and Hz the file opens in: [`to_file_units`]
+//! converts a set before it is saved or exported (autosave, sidecars,
+//! "Export .batm", project files; "Export for XC" converts each annotation
+//! with [`to_file_rate`]), and [`from_file_units`] converts one that is loaded
+//! or imported while the rate differs. Annota-JSON from Xeno-canto, or
+//! imported by the user, is converted the same way
+//! ([`annota_from_file_units_at`]).
 
 use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
 use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
-use crate::state::{AppState, BandpassRange, FileSettings, Selection, UndoStack};
-use crate::types::{AudioData, TimeExpansionOrigin};
+use crate::state::{AppState, BandpassRange, FileSettings, LoadedFile, Selection, UndoStack};
+use crate::types::{AudioData, TimeExpansion, TimeExpansionOrigin};
 use oversample_ipc::annota::AnnotaSet;
 
 /// The factor the species note's button applies.
@@ -205,21 +213,20 @@ impl RateChange {
     }
 }
 
-/// The factor of a correction the user applied, or `None` when the file is
-/// at its own rate or was corrected from its metadata or source.
-pub fn user_factor(audio: &AudioData) -> Option<f64> {
-    audio
-        .metadata
-        .time_expansion
-        .filter(|te| te.origin == TimeExpansionOrigin::User)
-        .map(|te| te.factor)
+/// The change from the rate `audio` is read at now to the rate it opens at,
+/// or `None` when they are the same. `opened` is the correction made when
+/// the file was opened ([`LoadedFile::opened_time_expansion`]); the file
+/// opens at the rate its header states when there was none.
+pub fn to_opening_rate(audio: &AudioData, opened: Option<TimeExpansion>) -> Option<RateChange> {
+    let opening = opened.map_or(audio.stored_rate(), TimeExpansion::corrected_rate);
+    (audio.sample_rate != opening).then(|| RateChange::new(audio.sample_rate, opening))
 }
 
-/// The change from the file's current rate to the rate it states, when the
-/// user corrected it; `None` otherwise.
-pub fn to_file_rate(audio: &AudioData) -> Option<RateChange> {
-    user_factor(audio)?;
-    Some(RateChange::new(audio.sample_rate, audio.stored_rate()))
+/// The change from the file's current seconds and Hz to those of its
+/// annotation files: the rate it opens at ([`to_opening_rate`]). `None`
+/// while the file is at that rate.
+pub fn to_file_rate(file: &LoadedFile) -> Option<RateChange> {
+    to_opening_rate(&file.audio, file.opened_time_expansion)
 }
 
 /// [`to_file_rate`] for file `file_idx`. Untracked.
@@ -229,14 +236,19 @@ pub fn to_file_rate_at(state: AppState, file_idx: usize) -> Option<RateChange> {
     state
         .library
         .files()
-        .with_untracked(|files| files.get(file_idx).and_then(|f| to_file_rate(&f.audio)))
+        .with_untracked(|files| files.get(file_idx).and_then(to_file_rate))
 }
 
-/// `set` in the file's own seconds and Hz, for saving. Every annotation
-/// file the app writes uses the rate the file states, so the saved file
-/// still fits the audio file when it is opened again without the correction.
-pub fn to_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet {
-    if let Some(rc) = to_file_rate(audio) {
+/// `set` in the seconds and Hz the file opens in, for saving. Every
+/// annotation file the app writes uses them, so the saved file still fits
+/// the audio file when it is opened again: at the rate its header states,
+/// or corrected again from its metadata.
+pub fn to_file_units(
+    audio: &AudioData,
+    opened: Option<TimeExpansion>,
+    mut set: AnnotationSet,
+) -> AnnotationSet {
+    if let Some(rc) = to_opening_rate(audio, opened) {
         rc.annotation_set(&mut set);
     }
     set
@@ -255,14 +267,18 @@ pub fn to_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) ->
 }
 
 /// A set read from an annotation file (a sidecar, autosave or an imported
-/// .batm), in the file's own seconds and Hz, converted to the rate the file
-/// is read at now.
+/// .batm), in the seconds and Hz the file opens in, converted to the rate
+/// the file is read at now.
 ///
 /// A set whose audio metadata states the current rate is already in the
 /// current units and is left as it is. Only an "Export .batm" made while
-/// the correction was on, before exports were converted, can be one.
-pub fn from_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet {
-    let Some(rc) = to_file_rate(audio) else {
+/// the user's correction was on, before exports were converted, can be one.
+pub fn from_file_units(
+    audio: &AudioData,
+    opened: Option<TimeExpansion>,
+    mut set: AnnotationSet,
+) -> AnnotationSet {
+    let Some(rc) = to_opening_rate(audio, opened) else {
         return set;
     };
     let in_current_units = set
@@ -283,15 +299,16 @@ pub fn from_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) 
         .library
         .files()
         .with_untracked(|files| match files.get(file_idx) {
-            Some(f) => from_file_units(&f.audio, set),
+            Some(f) => from_file_units(&f.audio, f.opened_time_expansion, set),
             None => set,
         })
 }
 
 /// An Annota-JSON set (from Xeno-canto, or a file the user imported), in the
-/// file's own seconds and Hz, converted to the rate file `file_idx` is read
-/// at now. Xeno-canto holds the file as it was uploaded, so its times and
-/// frequencies are in the file's own units. Untracked.
+/// seconds and Hz the file opens in, converted to the rate file `file_idx`
+/// is read at now. Xeno-canto holds the file as it was uploaded, and the app
+/// opens it at the rate its header states, or corrected from its GUANO,
+/// as when the annotations were made. Untracked.
 pub fn annota_from_file_units_at(
     state: AppState,
     file_idx: usize,
@@ -303,17 +320,30 @@ pub fn annota_from_file_units_at(
     set
 }
 
-/// Read file `file_id` at `factor` times the rate it states, or at that rate
-/// for `None`, and convert everything the app holds for it. Returns `false`
-/// and changes nothing when the file is gone, still loading, streamed, or
-/// already at that rate.
+/// Read file `file_id` at a time-expansion correction pressed in the Info
+/// panel, and convert everything the app holds for it. `te` is the factor
+/// and what gave it: the user's ×10, or the correction the file was opened
+/// with, made again. `None` reads the file at the rate its header states.
+/// Returns `false` and changes nothing when the file is gone, still loading,
+/// its rate can't be changed (a streamed file other than WAV, a `.zc` file),
+/// or it is already at that rate.
 ///
 /// Playback stops, and the "Playing 1:1" card closes. Annotations (and the
 /// copies undo would restore), the selection, the view, the HFR band,
 /// bookmarks and the filter bands are converted so they stay on the same
 /// samples. Call detection results for
 /// the file are dropped, since the detector ran at the old rate.
-pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64>) -> bool {
+///
+/// A correction remembers whether HFR was on. Removing it turns HFR off when
+/// HFR was off at the correction and is on now: choosing PS or another mode
+/// that needs HFR on the corrected file turns HFR on, and Remove undoes that
+/// with the rest of the correction. The correction made when the file was
+/// opened was not pressed, so the first Remove of it leaves HFR as it is.
+pub fn set_time_expansion(
+    state: AppState,
+    file_id: u64,
+    te: Option<(f64, TimeExpansionOrigin)>,
+) -> bool {
     use crate::state::store_fields::*;
     use leptos::prelude::*;
 
@@ -329,10 +359,17 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
         return false;
     };
     let old_rate = audio.sample_rate;
-    if !audio.set_time_expansion(factor, TimeExpansionOrigin::User) || audio.sample_rate == old_rate
-    {
+    let (factor, origin) = match te {
+        Some((factor, origin)) => (Some(factor), origin),
+        None => (None, TimeExpansionOrigin::User),
+    };
+    if !audio.set_time_expansion(factor, origin) || audio.sample_rate == old_rate {
         return false;
     }
+    let hfr_on = state
+        .viewmode
+        .focus_stack()
+        .with_untracked(|s| s.hfr_enabled());
     let rc = RateChange::new(old_rate, audio.sample_rate);
     let is_current = state.library.current_index().get_untracked() == Some(idx);
 
@@ -361,6 +398,7 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
     let rate = f64::from(audio.sample_rate);
 
     let mut name = String::new();
+    let mut hfr_on_at_correction = None;
     state.library.files().update(|files| {
         let Some(f) = files.get_mut(idx) else {
             return;
@@ -384,6 +422,8 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
         f.min_display_freq = rc.freq_opt(f.min_display_freq);
         f.max_display_freq = rc.freq_opt(f.max_display_freq);
         rc.file_settings(&mut f.settings);
+        hfr_on_at_correction = f.hfr_on_at_correction;
+        f.hfr_on_at_correction = factor.is_some().then_some(hfr_on);
         name = f.name.clone();
     });
     // NB: each store field is written on its own, never inside another's
@@ -466,6 +506,22 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
     // The effect that clamps the HFR band to the file's Nyquist frequency
     // runs when the current file changes, which it does not here.
     state.resync_focus_outputs();
+
+    // HFR mode is global (app.rs keeps it when the current file changes).
+    // This only undoes what the correction led to: HFR turned on while the
+    // file was corrected, by the user or by a mode that needs it. The band
+    // was converted above, so HFR turns off with the band in the new units,
+    // and turns on again there.
+    if factor.is_none()
+        && is_current
+        && hfr_on_at_correction == Some(false)
+        && state
+            .viewmode
+            .focus_stack()
+            .with_untracked(|s| s.hfr_enabled())
+    {
+        state.toggle_hfr();
+    }
     state
         .viewmode
         .tile_ready_signal()
@@ -843,7 +899,7 @@ mod tests {
         let set = set_with(vec![region(0.5, 0.6, Some(4_000.0), Some(5_000.0))]);
         let mut audio = case_t_audio();
         // Not corrected: saved as it is.
-        let saved = to_file_units(&audio, set.clone());
+        let saved = to_file_units(&audio, None, set.clone());
         match &saved.annotations[0].kind {
             AnnotationKind::Region(r) => assert_eq!(r.time_start, 0.5),
             _ => unreachable!(),
@@ -851,10 +907,13 @@ mod tests {
         // Corrected by the user: the in-memory set is in the new units, and
         // the saved one in the file's.
         assert!(audio.set_time_expansion(Some(TENFOLD), TimeExpansionOrigin::User));
-        assert_eq!(user_factor(&audio), Some(10.0));
+        assert_eq!(
+            to_opening_rate(&audio, None),
+            Some(RateChange::new(256_000, 25_600))
+        );
         let mut in_memory = set.clone();
         TENFOLD_UP.annotation_set(&mut in_memory);
-        let saved = to_file_units(&audio, in_memory);
+        let saved = to_file_units(&audio, None, in_memory);
         match &saved.annotations[0].kind {
             AnnotationKind::Region(r) => {
                 assert!(close(r.time_start, 0.5));
@@ -863,7 +922,7 @@ mod tests {
             _ => unreachable!(),
         }
         // Loading the saved set converts it back to the corrected units.
-        let loaded = from_file_units(&audio, saved);
+        let loaded = from_file_units(&audio, None, saved);
         match &loaded.annotations[0].kind {
             AnnotationKind::Region(r) => {
                 assert!(close(r.time_start, 0.05));
@@ -902,7 +961,7 @@ mod tests {
         // In memory, the set states the corrected rate and duration.
         let mut set = set_with(vec![region(0.05, 0.06, Some(40_000.0), None)]);
         set.audio_metadata = Some(metadata(256_000, 0.1));
-        let saved = to_file_units(&audio, set);
+        let saved = to_file_units(&audio, None, set);
         let meta = saved.audio_metadata.as_ref().unwrap();
         assert_eq!(meta.sample_rate, 25_600);
         assert!(close(meta.duration_secs, 1.0));
@@ -911,7 +970,9 @@ mod tests {
         assert!(close(f.unwrap(), 4_000.0));
         // The project file's copy of the metadata is converted the same way.
         let mut meta = metadata(256_000, 0.1);
-        to_file_rate(&audio).unwrap().audio_metadata(&mut meta);
+        to_opening_rate(&audio, None)
+            .unwrap()
+            .audio_metadata(&mut meta);
         assert_eq!(meta.sample_rate, 25_600);
         assert!(close(meta.duration_secs, 1.0));
     }
@@ -927,19 +988,21 @@ mod tests {
         };
         // Saved at the file's rate, or with no metadata: converted.
         for meta in [Some(metadata(25_600, 1.0)), None] {
-            let (t, f) = region_start(&from_file_units(&audio, file_units(meta)));
+            let (t, f) = region_start(&from_file_units(&audio, None, file_units(meta)));
             assert!(close(t, 0.05));
             assert!(close(f.unwrap(), 40_000.0));
         }
         // Saved at the corrected rate: already in the corrected units.
         let (t, f) = region_start(&from_file_units(
             &audio,
+            None,
             file_units(Some(metadata(256_000, 0.1))),
         ));
         assert_eq!((t, f), (0.5, Some(4_000.0)));
         // Not corrected: never converted.
         let (t, _) = region_start(&from_file_units(
             &case_t_audio(),
+            None,
             file_units(Some(metadata(25_600, 1.0))),
         ));
         assert_eq!(t, 0.5);
@@ -968,25 +1031,57 @@ mod tests {
     }
 
     #[test]
-    fn only_a_user_correction_is_converted_on_disk() {
-        // Corrected from the file's GUANO when it loaded: annotations are
-        // saved in the corrected units, as before.
+    fn a_correction_the_file_opens_with_sets_the_units_on_disk() {
+        // Corrected x10 from the file's GUANO when it was opened:
+        // annotations are saved in the corrected units, as before.
         let mut audio = case_t_audio();
         assert!(audio.apply_time_expansion(10.0, TimeExpansionOrigin::File));
+        let opened = audio.metadata.time_expansion;
         assert_eq!(
-            audio.metadata.time_expansion,
+            opened,
             Some(TimeExpansion {
                 factor: 10.0,
                 stored_rate: 25_600,
                 origin: TimeExpansionOrigin::File,
             })
         );
-        assert_eq!(user_factor(&audio), None);
-        let set = set_with(vec![region(0.05, 0.06, None, None)]);
-        let saved = to_file_units(&audio, set);
-        match &saved.annotations[0].kind {
-            AnnotationKind::Region(r) => assert_eq!(r.time_start, 0.05),
-            _ => unreachable!(),
-        }
+        assert_eq!(to_opening_rate(&audio, opened), None);
+        let corrected = set_with(vec![region(0.05, 0.06, Some(40_000.0), None)]);
+        let saved = to_file_units(&audio, opened, corrected.clone());
+        assert_eq!(region_start(&saved), (0.05, Some(40_000.0)));
+
+        // The user removed it: the file is at 25.6 kHz, and a set is saved
+        // in the corrected units the file opens in again.
+        assert!(audio.set_time_expansion(None, TimeExpansionOrigin::User));
+        assert_eq!(
+            to_opening_rate(&audio, opened),
+            Some(RateChange::new(25_600, 256_000))
+        );
+        let mut in_memory = corrected.clone();
+        TENFOLD_UP.inverse().annotation_set(&mut in_memory);
+        let (t, f) = region_start(&in_memory);
+        assert!(close(t, 0.5) && close(f.unwrap(), 4_000.0));
+        let saved = to_file_units(&audio, opened, in_memory);
+        let (t, f) = region_start(&saved);
+        assert!(close(t, 0.05) && close(f.unwrap(), 40_000.0));
+        // A set saved before, in the corrected units, loads onto the same
+        // samples at 25.6 kHz.
+        let loaded = from_file_units(&audio, opened, corrected.clone());
+        let (t, f) = region_start(&loaded);
+        assert!(close(t, 0.5) && close(f.unwrap(), 4_000.0));
+
+        // Made again with the factor and origin it was opened with: back in
+        // the units on disk.
+        let te = opened.unwrap();
+        assert!(audio.set_time_expansion(Some(te.factor), te.origin));
+        assert_eq!(to_opening_rate(&audio, opened), None);
+        // The user's own x10 on a file opened without a correction is
+        // converted back to the header rate.
+        let mut plain = case_t_audio();
+        assert!(plain.set_time_expansion(Some(TENFOLD), TimeExpansionOrigin::User));
+        assert_eq!(
+            to_opening_rate(&plain, None),
+            Some(RateChange::new(256_000, 25_600))
+        );
     }
 }
