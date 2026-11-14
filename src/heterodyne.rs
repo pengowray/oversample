@@ -17,7 +17,7 @@
 //! the two call frequencies a sound at each label came from.
 
 use crate::format_units::{keep_units_with_numbers, khz, khz_value};
-use crate::rate_notes::{lines_text, NoteLine};
+use crate::note_line::{lines_text, NoteLine};
 use crate::types::TimeExpansion;
 use oversample_core::heterodyne_hint::{infer_heterodyne_hint, HeterodyneSource, RecordingText};
 pub use oversample_core::heterodyne_hint::{HeterodyneHint, HeterodyneLevel, TextField};
@@ -331,7 +331,7 @@ mod tests {
         note_lines(hint).into_iter().map(|l| l.role).collect()
     }
 
-    use crate::rate_notes::LineRole::{self, Muted, Plain, Quote, Warning};
+    use crate::note_line::LineRole::{self, Muted, Plain, Quote, Warning};
 
     /// `s` with the no-break space the note puts before each "kHz".
     fn nbsp(s: &str) -> String {

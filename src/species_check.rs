@@ -12,7 +12,7 @@
 use crate::bat_book::auto_resolve::{country_region, find_species, get_scientific_name};
 use crate::bat_book::types::BatSpecies;
 use crate::format_units;
-use crate::rate_notes::NoteLine;
+use crate::note_line::NoteLine;
 use crate::state::LoadedFile;
 use crate::types::TimeExpansion;
 pub use oversample_core::species_range::RangeCase;
@@ -172,7 +172,7 @@ mod tests {
     use super::*;
     use crate::bat_book::data::all_species;
     use crate::bat_book::types::BatBookRegion;
-    use crate::rate_notes::LineRole::{self, Muted, Warning};
+    use crate::note_line::LineRole::{self, Muted, Warning};
 
     /// `s` with the no-break space before each "kHz" and the word joiner
     /// after each range's en dash.

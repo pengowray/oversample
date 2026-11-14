@@ -16,6 +16,7 @@ pub mod format_units;
 pub mod heterodyne;
 pub mod license;
 pub mod markdown;
+pub mod note_line;
 pub mod opfs;
 pub mod project;
 pub mod project_store;
