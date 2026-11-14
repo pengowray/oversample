@@ -95,11 +95,9 @@ pub const GEOMODEL_REVISION: &str = "e4a58d521af276de0c69a9cf8348d431e97854e3";
 
 /// The bat-call denoiser, from the `batchi-noisier2noise` project. The weights
 /// are kept out of the app and its repository, and downloaded when asked for.
-// TODO(denoise): set the URL's revision, the size and the hash once the file
-// is uploaded. Until then the download fails with HTTP 404.
 pub const DENOISER: ModelFile = ModelFile {
     id: "oversample-bat-denoise-v1.onnx",
-    url: "https://huggingface.co/pengowray/oversample-bat-denoise/resolve/main/oversample-bat-denoise-v1.onnx",
+    url: "https://huggingface.co/pengowray/oversample-bat-denoise/resolve/bb824d1c2431ab3cb9f422751350faddfd590dfc/oversample-bat-denoise-v1.onnx",
     size: 263_936,
     sha256: "87799f99479976887030e1d962c8a8c40b4e994777c8aee7fdfac2cd9567326d",
     kind: FileKind::Denoiser,
