@@ -17,7 +17,8 @@
 //!
 //! The correction lasts until the file is closed. Annotation files keep the
 //! file's own seconds and Hz: [`to_file_units`] converts a set before it is
-//! saved or exported (autosave, sidecars, "Export .batm", project files),
+//! saved or exported (autosave, sidecars, "Export .batm", project files;
+//! "Export for XC" converts each annotation with [`to_file_rate`]),
 //! and [`from_file_units`] converts one that is loaded or imported while the
 //! correction is on. Annota-JSON from Xeno-canto, or imported by the user,
 //! is converted the same way ([`annota_from_file_units_at`]).
@@ -218,9 +219,8 @@ pub fn to_file_rate_at(state: AppState, file_idx: usize) -> Option<RateChange> {
 }
 
 /// `set` in the file's own seconds and Hz, for saving. Every annotation
-/// file the app writes uses the rate the file states: autosave, sidecars,
-/// "Export .batm" and project files. So a saved file still
-/// fits the file when it is opened again without the correction.
+/// file the app writes uses the rate the file states, so the saved file
+/// still fits the audio file when it is opened again without the correction.
 pub fn to_file_units(audio: &AudioData, mut set: AnnotationSet) -> AnnotationSet {
     if let Some(rc) = to_file_rate(audio) {
         rc.annotation_set(&mut set);

@@ -256,6 +256,19 @@ async function exportBatm(page: Page, name: string) {
   return { file, text: fs.readFileSync(file, "utf8") };
 }
 
+/** Presses "Export for XC", saves the Annota-JSON file and closes the form. */
+async function exportXc(page: Page, name: string) {
+  await page.locator(".export-section-body button", { hasText: "Export for XC" }).click();
+  const [dl] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("button.annota-btn", { hasText: "Save file" }).click(),
+  ]);
+  const file = test.info().outputPath(name);
+  await dl.saveAs(file);
+  await page.locator("button.annota-btn", { hasText: "Close" }).click();
+  return { file, json: JSON.parse(fs.readFileSync(file, "utf8")) };
+}
+
 /** Imports an annotation file with "Import .batm/.json". */
 async function importAnnotations(page: Page, file: string) {
   const [chooser] = await Promise.all([
@@ -579,6 +592,37 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     });
   });
 
+  test("Export for XC while corrected uses the file's seconds and Hz", async ({ page }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const region = (await snap(page)).regions[0];
+    await openAnnotationFiles(page);
+    const before = (await exportXc(page, "xc-before.json")).json.annotations[0];
+
+    await openTab(page, "Info");
+    await page.locator(TREAT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await openAnnotationFiles(page);
+    const exported = await exportXc(page, "xc-corrected.json");
+    const during = exported.json.annotations[0];
+    // Times are rounded to 6 decimals and frequencies to whole Hz.
+    expect(during.start_time).toBeCloseTo(before.start_time, 5);
+    expect(during.end_time).toBeCloseTo(before.end_time, 5);
+    expect(Math.abs(during.frequency_low - before.frequency_low)).toBeLessThanOrEqual(1);
+    expect(Math.abs(during.frequency_high - before.frequency_high)).toBeLessThanOrEqual(1);
+    expect(during.start_time).toBeCloseTo(region.timeStart, 5);
+
+    // Imported back while corrected, it lands on the region it came from.
+    await importAnnotations(page, exported.file);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(2);
+    const [, back] = (await snap(page)).regions;
+    const corrected = scaled(region, 10);
+    expect(back.timeStart).toBeCloseTo(corrected.timeStart, 5);
+    expect(back.timeEnd).toBeCloseTo(corrected.timeEnd, 5);
+    expect(Math.abs(back.freqLow! - corrected.freqLow!)).toBeLessThanOrEqual(10);
+    expect(Math.abs(back.freqHigh! - corrected.freqHigh!)).toBeLessThanOrEqual(10);
+  });
 });
 
 test.describe("no x10 button on other files", () => {

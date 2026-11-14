@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 
 use crate::annota::{export_set, ExportContext, ExportOutcome};
-use crate::annotations::AnnotationId;
+use crate::annotations::{Annotation, AnnotationId};
 use crate::state::store_fields::*;
 use crate::state::AppState;
 
@@ -84,6 +84,19 @@ pub fn XcAnnotationExport(on_close: Callback<()>) -> impl IntoView {
 
     let selected_count = move || state.annotations.selected_ids().with(|ids| ids.len());
 
+    // Xeno-canto holds the file as it was uploaded, so the export uses the
+    // file's own seconds and Hz, also while the user's time-expansion
+    // correction is on. A memo of its own, so that other changes to the file
+    // list do not rebuild the export.
+    let to_file_rate = Memo::new(move |_| {
+        let idx = state.library.current_index().get()?;
+        state.library.files().with(|files| {
+            files
+                .get(idx)
+                .and_then(|f| crate::te_correction::to_file_rate(&f.audio))
+        })
+    });
+
     let file_name_for_memo = file_name.clone();
     let outcome = Memo::new(move |_| -> Option<ExportOutcome> {
         let file_id = state.current_file_id()?;
@@ -99,11 +112,27 @@ pub fn XcAnnotationExport(on_close: Callback<()>) -> impl IntoView {
             license: non_empty(license.get()),
             software: format!("Oversample {}", env!("CARGO_PKG_VERSION")),
         };
+        let rc = to_file_rate.get();
         state.annotations.store().with(|store| {
             let anns = store
                 .get(file_id)
                 .map(|s| s.annotations.as_slice())
                 .unwrap_or(&[]);
+            let in_file_units: Vec<Annotation>;
+            let anns = match rc {
+                Some(rc) => {
+                    in_file_units = anns
+                        .iter()
+                        .cloned()
+                        .map(|mut a| {
+                            rc.annotation_kind(&mut a.kind);
+                            a
+                        })
+                        .collect();
+                    in_file_units.as_slice()
+                }
+                None => anns,
+            };
             Some(export_set(
                 anns,
                 use_selected.then_some(selected.as_slice()),
