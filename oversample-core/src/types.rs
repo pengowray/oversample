@@ -17,14 +17,31 @@ pub struct RecorderBlock {
     pub fields: Vec<(String, String)>,
 }
 
-/// How a file's sample rate was corrected when it was loaded, for recordings stored
-/// time-expanded (slowed down). See [`AudioData::apply_time_expansion`].
+/// How a file's sample rate was corrected for time expansion, for recordings stored
+/// time-expanded (slowed down). See [`AudioData::apply_time_expansion`] and
+/// [`AudioData::set_time_expansion`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimeExpansion {
     /// What the recording was slowed down by: 10 for a file played 10 times slower.
     pub factor: f64,
     /// The sample rate the file itself states, before the correction.
     pub stored_rate: u32,
+    /// What gave the factor.
+    pub origin: TimeExpansionOrigin,
+}
+
+/// What gave a [`TimeExpansion`] factor. The app shows the same note for each
+/// ("Corrected for ×10 time expansion; ..."), and only a correction the user
+/// applied can be taken back from that note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeExpansionOrigin {
+    /// The file's own metadata: GUANO's `TE` field or a `wamd` chunk's
+    /// Time Expansion value.
+    File,
+    /// The site the file came from (Wikimedia Commons, the recording search).
+    Source,
+    /// The user, after the file was loaded.
+    User,
 }
 
 /// WAV-specific facts beyond rate, channels and sample width.
@@ -220,14 +237,21 @@ pub fn declared_time_expansion(
         .and_then(usable_factor)
 }
 
-/// The factor to apply when a file is loaded: the one the source it came from gave
-/// (Wikimedia Commons, the recording search), else the one the file itself states. The
-/// source's wins, so a file is never corrected twice when the source read the same
-/// header.
-pub fn time_expansion_to_apply(source: Option<f64>, meta: &FileMetadata) -> Option<f64> {
+/// The factor to apply when a file is loaded, and what gave it: the one the source
+/// it came from gave (Wikimedia Commons, the recording search), else the one the file
+/// itself states. The source's wins, so a file is never corrected twice when the
+/// source read the same header.
+pub fn time_expansion_to_apply(
+    source: Option<f64>,
+    meta: &FileMetadata,
+) -> Option<(f64, TimeExpansionOrigin)> {
     source
         .and_then(usable_factor)
-        .or_else(|| meta.declared_time_expansion())
+        .map(|f| (f, TimeExpansionOrigin::Source))
+        .or_else(|| {
+            meta.declared_time_expansion()
+                .map(|f| (f, TimeExpansionOrigin::File))
+        })
 }
 
 #[derive(Clone)]
@@ -258,7 +282,10 @@ impl AudioData {
     /// Returns `false` and leaves `self` alone when `factor` isn't a usable
     /// expansion: non-finite, zero or negative, exactly 1, or large enough to
     /// push the corrected rate past [`MAX_CORRECTED_SAMPLE_RATE`].
-    pub fn apply_time_expansion(&mut self, factor: f64) -> bool {
+    ///
+    /// Two corrections in a row multiply. To set a factor after loading, use
+    /// [`AudioData::set_time_expansion`], which goes from the file's own rate.
+    pub fn apply_time_expansion(&mut self, factor: f64, origin: TimeExpansionOrigin) -> bool {
         if !factor.is_finite() || factor <= 0.0 || (factor - 1.0).abs() < 1e-9 {
             return false;
         }
@@ -277,6 +304,7 @@ impl AudioData {
                 .metadata
                 .time_expansion
                 .map_or(self.sample_rate, |t| t.stored_rate),
+            origin,
         });
         self.sample_rate = corrected;
         self.duration_secs /= factor;
@@ -292,6 +320,72 @@ impl AudioData {
                 channels: mem.channels,
             });
         }
+        true
+    }
+
+    /// The rate the file itself states: the header rate before any
+    /// time-expansion correction.
+    pub fn stored_rate(&self) -> u32 {
+        self.metadata
+            .time_expansion
+            .map_or(self.sample_rate, |t| t.stored_rate)
+    }
+
+    /// Whether [`AudioData::set_time_expansion`] can change this file's rate:
+    /// its samples are all in memory, and it is not a zero-crossing (`.zc`)
+    /// file, whose duration does not come from its sample count.
+    pub fn can_set_time_expansion(&self) -> bool {
+        self.source.as_any().is::<InMemorySource>() && self.metadata.zc_data.is_none()
+    }
+
+    /// Read the file at `factor` times the rate it states, or at that rate
+    /// itself for `None`. Unlike [`AudioData::apply_time_expansion`], the
+    /// result goes from the file's own rate, not the current one, so setting
+    /// the same factor twice changes nothing and `None` restores the rate,
+    /// duration and source exactly as loaded. The samples are not changed.
+    ///
+    /// Returns `false` and leaves `self` alone when the file can't be changed
+    /// ([`AudioData::can_set_time_expansion`]) or `factor` isn't usable
+    /// (non-finite, zero or negative, or a corrected rate past
+    /// [`MAX_CORRECTED_SAMPLE_RATE`]). A factor of 1 is the same as `None`.
+    pub fn set_time_expansion(&mut self, factor: Option<f64>, origin: TimeExpansionOrigin) -> bool {
+        if !self.can_set_time_expansion() {
+            return false;
+        }
+        if factor.is_some_and(|f| !f.is_finite() || f <= 0.0) {
+            return false;
+        }
+        let stored_rate = self.stored_rate();
+        let factor = factor.filter(|f| (f - 1.0).abs() > 1e-9);
+        let (rate, time_expansion) = match factor {
+            None => (stored_rate, None),
+            Some(f) => {
+                let corrected = (f64::from(stored_rate) * f).round();
+                if !(1.0..=MAX_CORRECTED_SAMPLE_RATE).contains(&corrected) {
+                    return false;
+                }
+                let te = TimeExpansion {
+                    factor: f,
+                    stored_rate,
+                    origin,
+                };
+                (corrected as u32, Some(te))
+            }
+        };
+        let Some(mem) = self.source.as_any().downcast_ref::<InMemorySource>() else {
+            return false;
+        };
+        self.source = Arc::new(InMemorySource {
+            samples: mem.samples.clone(),
+            raw_samples: mem.raw_samples.clone(),
+            sample_rate: rate,
+            channels: mem.channels,
+        });
+        self.sample_rate = rate;
+        // Computed from the sample count, as the loader does, so going back to
+        // the file's own rate gives the duration it was loaded with.
+        self.duration_secs = self.source.total_samples() as f64 / f64::from(rate);
+        self.metadata.time_expansion = time_expansion;
         true
     }
 }
@@ -445,6 +539,9 @@ pub enum FlowColorScheme {
 mod tests {
     use super::*;
 
+    const FILE: TimeExpansionOrigin = TimeExpansionOrigin::File;
+    const USER: TimeExpansionOrigin = TimeExpansionOrigin::User;
+
     fn dummy_audio(sample_rate: u32) -> AudioData {
         let samples = Arc::new(vec![0.0f32; sample_rate as usize]);
         AudioData {
@@ -571,12 +668,25 @@ mod tests {
 
         // The source's factor wins, so a file is corrected once, not twice.
         let meta = file(AudioFormat::Wav, te10(), None);
-        assert_eq!(time_expansion_to_apply(Some(10.0), &meta), Some(10.0));
-        assert_eq!(time_expansion_to_apply(Some(0.5), &meta), Some(0.5));
-        assert_eq!(time_expansion_to_apply(None, &meta), Some(10.0));
+        use TimeExpansionOrigin::{File, Source};
+        assert_eq!(
+            time_expansion_to_apply(Some(10.0), &meta),
+            Some((10.0, Source))
+        );
+        assert_eq!(
+            time_expansion_to_apply(Some(0.5), &meta),
+            Some((0.5, Source))
+        );
+        assert_eq!(time_expansion_to_apply(None, &meta), Some((10.0, File)));
         // A source that gives 1, or nonsense, falls back to the file.
-        assert_eq!(time_expansion_to_apply(Some(1.0), &meta), Some(10.0));
-        assert_eq!(time_expansion_to_apply(Some(f64::NAN), &meta), Some(10.0));
+        assert_eq!(
+            time_expansion_to_apply(Some(1.0), &meta),
+            Some((10.0, File))
+        );
+        assert_eq!(
+            time_expansion_to_apply(Some(f64::NAN), &meta),
+            Some((10.0, File))
+        );
         assert_eq!(
             time_expansion_to_apply(None, &FileMetadata::default()),
             None
@@ -586,34 +696,36 @@ mod tests {
     #[test]
     fn time_expansion_is_recorded_for_the_panel() {
         let mut audio = dummy_audio(38_400);
-        assert!(audio.apply_time_expansion(10.0));
+        assert!(audio.apply_time_expansion(10.0, FILE));
         assert_eq!(
             audio.metadata.time_expansion,
             Some(TimeExpansion {
                 factor: 10.0,
-                stored_rate: 38_400
+                stored_rate: 38_400,
+                origin: FILE,
             })
         );
         // A second correction multiplies; the stored rate stays the file's own.
-        assert!(audio.apply_time_expansion(2.0));
+        assert!(audio.apply_time_expansion(2.0, FILE));
         assert_eq!(
             audio.metadata.time_expansion,
             Some(TimeExpansion {
                 factor: 20.0,
-                stored_rate: 38_400
+                stored_rate: 38_400,
+                origin: FILE,
             })
         );
         assert_eq!(audio.sample_rate, 768_000);
         // A rejected factor records nothing.
         let mut audio = dummy_audio(44_100);
-        assert!(!audio.apply_time_expansion(1.0));
+        assert!(!audio.apply_time_expansion(1.0, FILE));
         assert_eq!(audio.metadata.time_expansion, None);
     }
 
     #[test]
     fn time_expansion_scales_rate_and_duration() {
         let mut audio = dummy_audio(44_100);
-        assert!(audio.apply_time_expansion(10.0));
+        assert!(audio.apply_time_expansion(10.0, FILE));
         assert_eq!(audio.sample_rate, 441_000);
         assert_eq!(audio.source.sample_rate(), 441_000);
         assert!((audio.duration_secs - 0.1).abs() < 1e-9);
@@ -626,7 +738,7 @@ mod tests {
         for factor in [f64::NAN, f64::INFINITY, 0.0, -10.0, 1.0] {
             let mut audio = dummy_audio(44_100);
             assert!(
-                !audio.apply_time_expansion(factor),
+                !audio.apply_time_expansion(factor, FILE),
                 "factor {factor} should be rejected"
             );
             assert_eq!(audio.sample_rate, 44_100);
@@ -637,18 +749,101 @@ mod tests {
     #[test]
     fn time_expansion_rejects_absurd_corrected_rate() {
         let mut audio = dummy_audio(384_000);
-        assert!(!audio.apply_time_expansion(1000.0));
+        assert!(!audio.apply_time_expansion(1000.0, FILE));
         assert_eq!(audio.sample_rate, 384_000);
         // Just under the ceiling still applies.
-        assert!(audio.apply_time_expansion(10.0));
+        assert!(audio.apply_time_expansion(10.0, FILE));
         assert_eq!(audio.sample_rate, 3_840_000);
     }
 
     #[test]
     fn time_expansion_below_one_compresses() {
         let mut audio = dummy_audio(48_000);
-        assert!(audio.apply_time_expansion(0.5));
+        assert!(audio.apply_time_expansion(0.5, FILE));
         assert_eq!(audio.sample_rate, 24_000);
         assert!((audio.duration_secs - 2.0).abs() < 1e-9);
+    }
+
+    /// One second of samples at 25.6 kHz, loaded with the duration the loader
+    /// gives (sample count over rate).
+    fn case_t_audio() -> AudioData {
+        let mut audio = dummy_audio(25_600);
+        audio.duration_secs = 25_600.0 / 25_600.0;
+        audio
+    }
+
+    #[test]
+    fn set_time_expansion_goes_from_the_file_rate() {
+        let mut audio = case_t_audio();
+        assert!(audio.set_time_expansion(Some(10.0), USER));
+        assert_eq!(audio.sample_rate, 256_000);
+        assert_eq!(audio.source.sample_rate(), 256_000);
+        assert!((audio.duration_secs - 0.1).abs() < 1e-12);
+        assert_eq!(
+            audio.metadata.time_expansion,
+            Some(TimeExpansion {
+                factor: 10.0,
+                stored_rate: 25_600,
+                origin: USER,
+            })
+        );
+        assert_eq!(audio.stored_rate(), 25_600);
+        // A second press sets the same factor: still x10, not x100.
+        assert!(audio.set_time_expansion(Some(10.0), USER));
+        assert_eq!(audio.sample_rate, 256_000);
+        assert_eq!(audio.metadata.time_expansion.unwrap().factor, 10.0);
+        // The samples are read at a new rate, never resampled.
+        assert_eq!(audio.samples.len(), 25_600);
+        assert_eq!(audio.source.total_samples(), 25_600);
+    }
+
+    #[test]
+    fn set_time_expansion_none_restores_the_file_as_loaded() {
+        let loaded = case_t_audio();
+        let mut audio = loaded.clone();
+        assert!(audio.set_time_expansion(Some(10.0), USER));
+        assert!(audio.set_time_expansion(None, USER));
+        assert_eq!(audio.sample_rate, loaded.sample_rate);
+        assert_eq!(audio.source.sample_rate(), loaded.sample_rate);
+        assert_eq!(audio.duration_secs, loaded.duration_secs);
+        assert_eq!(audio.metadata.time_expansion, None);
+        // A factor of 1 is the file's own rate too.
+        assert!(audio.set_time_expansion(Some(10.0), USER));
+        assert!(audio.set_time_expansion(Some(1.0), USER));
+        assert_eq!(audio.sample_rate, 25_600);
+        assert_eq!(audio.metadata.time_expansion, None);
+    }
+
+    #[test]
+    fn set_time_expansion_replaces_a_load_time_correction() {
+        // A file the app corrected x10 from its GUANO when it loaded.
+        let mut audio = dummy_audio(38_400);
+        assert!(audio.apply_time_expansion(10.0, FILE));
+        assert!(audio.set_time_expansion(None, USER));
+        assert_eq!(audio.sample_rate, 38_400);
+        assert_eq!(audio.metadata.time_expansion, None);
+        assert!(audio.set_time_expansion(Some(10.0), USER));
+        assert_eq!(audio.sample_rate, 384_000);
+    }
+
+    #[test]
+    fn set_time_expansion_rejects_unusable_factors_and_sources() {
+        for factor in [f64::NAN, f64::INFINITY, 0.0, -10.0, 1e6] {
+            let mut audio = case_t_audio();
+            assert!(!audio.set_time_expansion(Some(factor), USER), "{factor}");
+            assert_eq!(audio.sample_rate, 25_600);
+            assert_eq!(audio.metadata.time_expansion, None);
+        }
+        // A zero-crossing file's duration is not its sample count over rate.
+        let mut audio = case_t_audio();
+        audio.metadata.zc_data = Some(Arc::new(ZcData {
+            times_s: Vec::new(),
+            freqs_hz: Vec::new(),
+            off_mask: Vec::new(),
+            metadata: Default::default(),
+        }));
+        assert!(!audio.can_set_time_expansion());
+        assert!(!audio.set_time_expansion(Some(10.0), USER));
+        assert_eq!(audio.sample_rate, 25_600);
     }
 }

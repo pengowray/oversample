@@ -341,6 +341,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 4.0,
             stored_rate: 48_000,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         let f = check_te("Rhinolophus hipposideros", ECHO, 192_000, Some(te)).unwrap();
         assert_eq!(texts(&note_lines(&f)).len(), 2);
@@ -351,6 +352,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 2.0,
             stored_rate: 25_600,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         let f = check_te("Pipistrellus pygmaeus", ECHO, 51_200, Some(te)).unwrap();
         assert_eq!(f.case, RangeCase::Other);
@@ -369,6 +371,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 38_400,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(
             check_te("Pipistrellus pipistrellus", ECHO, 384_000, Some(te)),
@@ -378,6 +381,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 1.0,
             stored_rate: 38_400,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         let f = check_te("Pipistrellus pipistrellus", ECHO, 38_400, Some(te)).unwrap();
         assert_eq!(f.case, RangeCase::TenfoldHeaderRate);

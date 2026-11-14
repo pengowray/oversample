@@ -144,6 +144,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 38_400,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(
             rate_notes(Some(te), None, None),
@@ -240,6 +241,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 2.0,
             stored_rate: 25_600,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         let species = find_species("Pipistrellus pygmaeus", None).unwrap();
         let species =

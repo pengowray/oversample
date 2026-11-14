@@ -702,6 +702,7 @@ mod tests {
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 44_100,
+            origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(file_hint(&fields, Some(te), 441_000), None);
     }

@@ -219,8 +219,10 @@ pub(crate) async fn load_named_bytes(
     // scan, spectrogram geometry - is computed below. The factor is the one the
     // source gave, else the one the file itself states (a bat detector's GUANO
     // `TE` field or `wamd` chunk).
-    if let Some(te) = crate::types::time_expansion_to_apply(time_expansion, &audio.metadata) {
-        if audio.apply_time_expansion(te) {
+    if let Some((te, origin)) =
+        crate::types::time_expansion_to_apply(time_expansion, &audio.metadata)
+    {
+        if audio.apply_time_expansion(te, origin) {
             log::info!(
                 "{name}: time expansion {te}x applied, true rate {} Hz",
                 audio.sample_rate
