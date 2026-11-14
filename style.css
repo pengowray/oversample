@@ -5147,7 +5147,10 @@ a.open-link-btn {
    file is a heterodyne bat detector's output, so its frequencies are not the
    bat's, and the badge opens the Info panel at the note), and Download or
    Save for an unsaved recording. The same colours on the selected row, since
-   it is a warning about the file and not a selection state. */
+   it is a warning about the file and not a selection state. The "Corrected
+   ×10" badge (file_badges.rs) also opens a note, but stays grey: a rate
+   corrected for time expansion is the recording's real rate, not a
+   warning. */
 :is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved) {
     background: #3a2700;
     color: #fc8;

@@ -121,6 +121,7 @@ pub fn Toolbar() -> impl IntoView {
             cc_license: cc_info,
             cc_tooltip: None, // toolbar renders CC separately
             heterodyne_tooltip: file_badges::heterodyne_tooltip(f),
+            corrected_rate: file_badges::corrected_rate_badge(f),
             file_index: idx,
         })
     });
