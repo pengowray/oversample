@@ -254,8 +254,14 @@ pub fn draw_freq_markers(
     // The bottom edge of each main label drawn, so a minor label that would
     // overlap one is left out.
     let mut label_bottoms: Vec<f64> = Vec::new();
+    // For a heterodyne detector recording with a known tuning, each label's
+    // hover text: the call frequencies (" → 21.9 or 41.9 kHz"), decided for
+    // the whole axis at once so the labels all keep or all drop the unit.
+    let call_suffixes = ms
+        .tuned_hz
+        .map(|tuned| crate::heterodyne::axis_call_suffixes(&divisions, tuned));
 
-    for &freq in &divisions {
+    for (div_index, &freq) in divisions.iter().enumerate() {
         let y = freq_to_y(freq, min_freq, max_freq, canvas_height);
 
         // Skip topmost division if it would overlap nyquist marker
@@ -405,8 +411,8 @@ pub fn draw_freq_markers(
             // Split rendering: number at full alpha, suffix fading. The suffix
             // is " kHz", or for a heterodyne detector recording with a known
             // tuning, the call frequencies (" → 21.9 or 41.9 kHz").
-            let suffix = match ms.tuned_hz {
-                Some(tuned) => crate::heterodyne::axis_call_suffix(freq, tuned),
+            let suffix = match &call_suffixes {
+                Some(suffixes) => suffixes[div_index].clone(),
                 None => " kHz".to_string(),
             };
             let full_label_for_measure = if khz_fade > 0.01 {

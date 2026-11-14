@@ -13,7 +13,7 @@
 //!
 //! When the text gives the detector's tuning frequency
 //! ([`HeterodyneHint::tuned_hz`]), the note says how to read the file's
-//! frequencies, and [`axis_call_suffix`] gives the frequency axis's hover text:
+//! frequencies, and [`axis_call_suffixes`] gives the frequency axis's hover text:
 //! the two call frequencies a sound at each label came from.
 
 use crate::types::TimeExpansion;
@@ -262,11 +262,11 @@ fn detector_name(hint: &HeterodyneHint) -> Option<String> {
 /// The note's line for a detector tuned to `tuned_hz`, with a worked example
 /// at 10 kHz: "Detector tuned to 31.9 kHz: a sound at 10 kHz in this file came
 /// from a call at either 21.9 or 41.9 kHz." 10 kHz is also a frequency axis
-/// label, so its hover text shows the same numbers. A detector tuned to 10 kHz
-/// or lower uses 5 kHz, so the lower call frequency stays above 0.
+/// label, so its hover text shows the same numbers. A detector tuned below
+/// 20 kHz uses 5 kHz, so the lower call frequency is at least 5 kHz.
 pub fn tuned_line(tuned_hz: u32) -> String {
     let tuned = i64::from(tuned_hz);
-    let example = if tuned <= 10_000 { 5_000 } else { 10_000 };
+    let example = if tuned < 20_000 { 5_000 } else { 10_000 };
     // Two decimals, so a tuning given as "31,95 kHz" is shown as written. A
     // no-break space before each "kHz" keeps it on the number's line when the
     // note wraps in the narrow panel.
@@ -281,21 +281,43 @@ pub fn tuned_line(tuned_hz: u32) -> String {
 }
 
 /// Longest frequency axis hover label, in characters, that keeps its " kHz".
-/// "10 → 21.9 or 41.9 kHz" is 21 characters; a longer label, such as
-/// "15 → 97.5 or 127.5", drops the unit so it stays about as wide.
+/// "10 → 21.9 or 41.9 kHz" is 21 characters; when any label on the axis
+/// would be longer, such as "15 → 97.5 or 127.5", every label drops the unit,
+/// so they stay about as wide and one axis never mixes the two forms.
 const AXIS_LABEL_MAX_CHARS: usize = 21;
 
-/// The hover text after a frequency axis label when the file was recorded
-/// from a heterodyne detector tuned to `tuned_hz`: the call frequencies that a
-/// sound at the label's frequency (`freq_hz`) came from. Tuned to 31.9 kHz,
-/// the 10 kHz label gets " → 21.9 or 41.9 kHz". Values have one decimal, or
-/// two when the tuning has two, as in the note. The lower call frequency is
-/// left out when it is 0 or less ("35 → 66.9 kHz"), and the unit is left out
-/// when the whole label would be longer than [`AXIS_LABEL_MAX_CHARS`]. The
-/// label itself is [`freq_marker_label`], which the renderer draws first.
+/// The hover texts after the frequency axis labels at `freqs_hz`, in the same
+/// order, when the file was recorded from a heterodyne detector tuned to
+/// `tuned_hz`: the call frequencies that a sound at each label's frequency
+/// came from. Tuned to 31.9 kHz, the 10 kHz label gets " → 21.9 or 41.9 kHz".
+/// Values have one decimal, or two when the tuning has two, as in the note.
+/// The lower call frequency is left out when it is 0 or less ("35 → 66.9
+/// kHz"). Every label keeps the unit, or none does: none when any whole label
+/// would be longer than [`AXIS_LABEL_MAX_CHARS`] with it. The label itself is
+/// [`freq_marker_label`], which the renderer draws first.
 ///
 /// [`freq_marker_label`]: crate::canvas::colors::freq_marker_label
-pub fn axis_call_suffix(freq_hz: f64, tuned_hz: u32) -> String {
+pub fn axis_call_suffixes(freqs_hz: &[f64], tuned_hz: u32) -> Vec<String> {
+    let values: Vec<String> = freqs_hz
+        .iter()
+        .map(|&freq| call_frequencies(freq, tuned_hz))
+        .collect();
+    let with_unit = freqs_hz.iter().zip(&values).all(|(&freq, v)| {
+        let label = crate::canvas::colors::freq_marker_label(freq);
+        let with_unit = format!("{label} \u{2192} {v} kHz");
+        with_unit.chars().count() <= AXIS_LABEL_MAX_CHARS
+    });
+    let unit = if with_unit { " kHz" } else { "" };
+    values
+        .into_iter()
+        .map(|v| format!(" \u{2192} {v}{unit}"))
+        .collect()
+}
+
+/// The call frequencies, in kHz without the unit, that a sound at `freq_hz`
+/// came from: "21.9 or 41.9", or only the upper one. See
+/// [`axis_call_suffixes`].
+fn call_frequencies(freq_hz: f64, tuned_hz: u32) -> String {
     let freq = freq_hz.round() as i64;
     let tuned = i64::from(tuned_hz);
     // One decimal, or two when the tuning has two ("31,95 kHz"), so the
@@ -306,16 +328,9 @@ pub fn axis_call_suffix(freq_hz: f64, tuned_hz: u32) -> String {
     let step = 10_i64.pow(3 - decimals);
     let lower = ((tuned - freq) * 2 >= step).then(|| tuned - freq);
     let upper = tuned + freq;
-    let values = match lower {
+    match lower {
         Some(lower) if lower != upper => format!("{} or {}", khz(lower), khz(upper)),
         _ => khz(upper),
-    };
-    let label = crate::canvas::colors::freq_marker_label(freq_hz);
-    let with_unit = format!(" \u{2192} {values} kHz");
-    if label.chars().count() + with_unit.chars().count() <= AXIS_LABEL_MAX_CHARS {
-        with_unit
-    } else {
-        format!(" \u{2192} {values}")
     }
 }
 
@@ -470,7 +485,12 @@ mod tests {
                  at either 5 or 15 kHz."
             )
         );
-        assert!(tuned_line(10_500).contains(&nbsp("a sound at 10 kHz")));
+        // Tuned below 20 kHz: the 5 kHz example keeps the lower call at
+        // 5 kHz or more.
+        assert!(tuned_line(10_500).contains(&nbsp("a sound at 5 kHz")));
+        assert!(tuned_line(12_000).contains(&nbsp("either 7 or 17 kHz")));
+        assert!(tuned_line(19_900).contains(&nbsp("either 14.9 or 24.9 kHz")));
+        assert!(tuned_line(20_000).contains(&nbsp("either 10 or 30 kHz")));
         // Every "kHz" keeps its number on the same line.
         assert!(!tuned_line(31_900).contains(" kHz"));
     }
@@ -482,7 +502,7 @@ mod tests {
             format!(
                 "{}{}",
                 crate::canvas::colors::freq_marker_label(freq),
-                axis_call_suffix(freq, tuned_hz)
+                axis_call_suffixes(&[freq], tuned_hz)[0]
             )
         };
         // Below the tuning: both call frequencies, lower first.
@@ -508,6 +528,35 @@ mod tests {
         assert!(tuned_line(31_950).contains("21.95 or 41.95"));
         // A small lower call frequency is still shown when it is above 0.
         assert_eq!(label(31.0, 31_040), "31 \u{2192} 0.04 or 62.04");
+    }
+
+    #[test]
+    fn axis_labels_all_keep_the_unit_or_all_drop_it() {
+        let khz = |freqs: &[f64]| freqs.iter().map(|f| f * 1000.0).collect::<Vec<_>>();
+        // Every label fits with its unit.
+        assert_eq!(
+            axis_call_suffixes(&khz(&[5.0, 10.0, 15.0]), 31_900),
+            [
+                " \u{2192} 26.9 or 36.9 kHz",
+                " \u{2192} 21.9 or 41.9 kHz",
+                " \u{2192} 16.9 or 46.9 kHz",
+            ]
+        );
+        // "30 → 1.95 or 61.95 kHz" is too long, so "40 → 71.95" drops the
+        // unit too, although it would fit.
+        assert_eq!(
+            axis_call_suffixes(&khz(&[20.0, 30.0, 40.0]), 31_950),
+            [
+                " \u{2192} 11.95 or 51.95",
+                " \u{2192} 1.95 or 61.95",
+                " \u{2192} 71.95",
+            ]
+        );
+        assert_eq!(
+            axis_call_suffixes(&khz(&[100.0, 140.0]), 112_500),
+            [" \u{2192} 12.5 or 212.5", " \u{2192} 252.5"]
+        );
+        assert!(axis_call_suffixes(&[], 31_900).is_empty());
     }
 
     #[test]
