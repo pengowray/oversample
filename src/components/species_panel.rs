@@ -39,6 +39,8 @@ const TOP_BLOCK_PX: f64 = 70.0;
 const TOP_BLOCK_WITH_FORMS_PX: f64 = 100.0;
 /// Clear space above and below the drawn calls in the window, CSS px.
 const WINDOW_MARGIN: f64 = 12.0;
+/// Room under the drawn calls for the caption ("Typical search calls"), CSS px.
+const CAPTION_PX: f64 = 14.0;
 /// Below this spectrogram size the text goes in a panel under the
 /// spectrogram: the column would cover too much of the recording.
 const COLUMN_MIN_VIEW_W: f64 = 2.0 * COLUMN_WIDTH;
@@ -129,6 +131,20 @@ fn chosen_form(sketch: &'static CallSketch, state: AppState) -> Form<'static> {
         .call_form()
         .with(|key| sketch.form(key))
         .unwrap_or_else(|| sketch.search())
+}
+
+/// Lowest and highest frequency drawn, kHz: the calls and their harmonics.
+fn drawn_khz_extent(form: Form<'static>) -> Option<(f64, f64)> {
+    let (lo, hi) = form.khz_extent()?;
+    let multiples = || {
+        form.sequence()
+            .into_iter()
+            .flat_map(|c| c.harmonics.iter().map(|h| h.multiple))
+    };
+    Some((
+        lo * multiples().fold(1.0, f64::min),
+        hi * multiples().fold(1.0, f64::max),
+    ))
 }
 
 /// Colour scheme for the drawing: one the recording isn't using.
@@ -807,15 +823,16 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         view_size.try_set(SpectSize::default());
     });
 
-    // The clear window over the drawn calls: top and height, CSS px.
+    // The clear window over the drawn calls, their harmonics and the
+    // caption under them: top and height, CSS px.
     let window = Memo::new(move |_| {
         let sc = scale.get()?;
         let f = form.get()?;
         layout.get()?;
-        let (lo, hi) = f.khz_extent()?;
+        let (lo, hi) = drawn_khz_extent(f)?;
         let y = |khz: f64| freq_to_y(khz * 1000.0, sc.min_hz, sc.max_hz, sc.css_h);
         let top = (y(hi) - WINDOW_MARGIN).clamp(0.0, sc.css_h);
-        let bottom = (y(lo) + WINDOW_MARGIN).clamp(0.0, sc.css_h);
+        let bottom = (y(lo) + WINDOW_MARGIN + CAPTION_PX).clamp(0.0, sc.css_h);
         Some((top, (bottom - top).max(0.0)))
     });
 
@@ -859,9 +876,9 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
 
         let y_of = |khz: f64| freq_to_y(khz * 1000.0, min_f, max_f, css_h);
         let line = cmap.apply(240);
-        // Name the drawing just above the calls, so it reads as a sketch of
-        // a kind of call (and which kind) even when the text is scrolled.
-        if let Some((_, hi)) = form.get_untracked().and_then(|f| f.khz_extent()) {
+        // Name the drawing just under the calls, so it reads as a sketch of
+        // a kind of call (and which kind) without covering any of it.
+        if let Some((lo, _)) = form.get_untracked().and_then(drawn_khz_extent) {
             if let Some(f) = form.get_untracked() {
                 let label = if f.kind == FormKind::Search {
                     "Typical search calls".to_string()
@@ -870,7 +887,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                 };
                 ctx.set_font("10px system-ui, sans-serif");
                 ctx.set_fill_style_str(&rgba(cmap.apply(170), 1.0));
-                let y = (y_of(hi) - 3.0).clamp(10.0, css_h - 2.0);
+                let y = (y_of(lo) + WINDOW_MARGIN + 10.0).clamp(10.0, css_h - 2.0);
                 let _ = ctx.fill_text(&label, call_sketch::STRIP_PAD, y);
             }
         }
@@ -922,8 +939,9 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         }
     });
 
-    // The column's scrolled content: the name block sits just above the
-    // window when there's room, else just below it; the rest follows.
+    // The column's scrolled content: the name block sits at the top of the
+    // column when it fits above the window, else just below the window; the
+    // rest follows.
     let column = move || {
         let (top, h) = window.get().unwrap_or((0.0, 0.0));
         let has_forms = shown
@@ -936,7 +954,17 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             TOP_BLOCK_PX
         };
         let name_first = top_h <= top;
+        // Under the window, the name block must still be in view: when the
+        // calls reach the bottom of the spectrogram, the window ends early.
+        let h = if name_first {
+            h
+        } else {
+            let view_h = scale.get().map_or(0.0, |sc| sc.css_h);
+            h.min((view_h - top - top_h).max(0.0))
+        };
         let spacer = if name_first { top - top_h } else { top };
+        let spacer_div =
+            view! { <div class="species-spacer" style:height=format!("{spacer}px")></div> };
         let top_block = view! {
             <div class="species-top species-text" style:height=format!("{top_h}px")>
                 {nav_row(state)}
@@ -946,11 +974,10 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         };
         let window_div = view! { <div class="species-window" style:height=format!("{h}px")></div> };
         view! {
-            <div class="species-spacer" style:height=format!("{spacer}px")></div>
             {if name_first {
-                view! { {top_block} {window_div} }.into_any()
+                view! { {top_block} {spacer_div} {window_div} }.into_any()
             } else {
-                view! { {window_div} {top_block} }.into_any()
+                view! { {spacer_div} {window_div} {top_block} }.into_any()
             }}
             <div class="species-bottom species-text">
                 {body(shown, form, warning, false)}

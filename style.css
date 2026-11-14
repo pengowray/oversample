@@ -9105,8 +9105,8 @@ button.canvas-overflow-action-btn.disabled {
 }
 /* Pinned: once scrolled to the top of the column the name and kinds of
    call stay there, so the text scrolling under them always says which
-   species and which kind of call it is about. Until then the block sits
-   just above (or below) the window, as placed. */
+   species and which kind of call it is about. It starts at the top of the
+   column, or under the window when it doesn't fit above the calls. */
 .species-scroll .species-top {
     position: sticky;
     top: 0;
