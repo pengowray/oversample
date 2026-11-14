@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn a_copy_shares_the_view_with_every_channel_of_its_original() {
-        let g = groups(&["rec_1.wav", "rec_2.wav", "rec_1 (denoised).wav"]);
+        let g = groups(&["rec_Ch1.wav", "rec_Ch2.wav", "rec_Ch1 (denoised).wav"]);
         assert_eq!(
             share_members(Setting::HorizontalScroll, &g, 2),
             vec![0, 1, 2]
