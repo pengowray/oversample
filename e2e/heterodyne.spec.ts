@@ -176,8 +176,8 @@ test.describe("heterodyne badge and note", () => {
   test("a quoted frequency keeps its kHz on the same line at any note width", async ({
     page,
   }) => {
-    // XC1034529's remark. At 1440 x 900 the Info panel's quote line used to
-    // wrap between "31,9" and "kHz".
+    // XC1034529's remark. Its quote line wraps in the Info panel at 1440 x 900,
+    // just before "31,9 kHz".
     await openCase(page, { fields: { rmk: "hetrodyne detector set at 31,9 kHz" }, rate: 48_000 });
     await showInfo(page);
     await expect(page.locator(HET_NOTE)).toBeVisible();
