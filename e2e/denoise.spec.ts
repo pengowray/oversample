@@ -54,6 +54,20 @@ function batLikeWav(sampleRate: number, seconds: number): Buffer {
   return Buffer.concat([header, data]);
 }
 
+/** Serve the model from the local file. DENOISE_REAL_DOWNLOAD=1 leaves the
+ * request alone, so the test downloads from the catalog's real URL. */
+async function serveModel(page: Page) {
+  if (process.env.DENOISE_REAL_DOWNLOAD) return;
+  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/octet-stream",
+      headers: { "access-control-allow-origin": "*" },
+      body: fs.readFileSync(modelPath),
+    }),
+  );
+}
+
 async function openRecording(page: Page, name: string, wav: Buffer) {
   await page.goto("/");
   await page
@@ -77,16 +91,12 @@ test("a 96 kHz recording cannot be denoised, and the menu says why", async ({ pa
 test("Make Denoised Copy downloads the model and adds the copy to the file list", async ({
   page,
 }) => {
-  test.skip(!fs.existsSync(modelPath), `no model file at ${modelPath}`);
-  test.setTimeout(240_000);
-  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/octet-stream",
-      headers: { "access-control-allow-origin": "*" },
-      body: fs.readFileSync(modelPath),
-    }),
+  test.skip(
+    !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+    `no model file at ${modelPath}`,
   );
+  test.setTimeout(240_000);
+  await serveModel(page);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
 
@@ -108,16 +118,12 @@ test("Make Denoised Copy downloads the model and adds the copy to the file list"
 });
 
 test("Cancel stops the work and brings the button back", async ({ page }) => {
-  test.skip(!fs.existsSync(modelPath), `no model file at ${modelPath}`);
-  test.setTimeout(120_000);
-  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/octet-stream",
-      headers: { "access-control-allow-origin": "*" },
-      body: fs.readFileSync(modelPath),
-    }),
+  test.skip(
+    !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+    `no model file at ${modelPath}`,
   );
+  test.setTimeout(120_000);
+  await serveModel(page);
   await openRecording(page, "long.wav", batLikeWav(384_000, 20));
   await page.getByRole("button", { name: "Make Denoised Copy" }).click();
   await expect(page.getByText(/Denoising: \d+%/)).toBeVisible({ timeout: 100_000 });
