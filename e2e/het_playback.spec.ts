@@ -304,3 +304,51 @@ test.describe("HET on files with a species above Nyquist or below the bat range"
     });
   }
 });
+
+test.describe("Band presets on a file below the species' range", () => {
+  test("the bat book's current species preset applies a band that fits the file", async ({
+    page,
+  }) => {
+    // Myotis fimbriatus (35-80 kHz) in a 44.1 kHz file. The preset applied
+    // 35-80 kHz as it was, so the band shown and played was 22.05-22.05 kHz.
+    const c: Case = {
+      rate: 44_100,
+      seconds: 1,
+      species: "fimbriatus",
+      band: [16_000, 22_050],
+      toneHz: 18_025,
+    };
+    await page.addInitScript(installAudioTap);
+    await openCase(page, c);
+    expect(
+      await finishes(page, clickIn, 'button[title^="HET"]'),
+      "choosing HET finishes",
+    ).toBe(true);
+
+    // Opening the bat book selects the recording's species on its current page.
+    await page.getByText("Bat book", { exact: true }).first().click();
+    await expect(page.locator(".bat-book-chip.selected")).toContainText("Fringed Long-footed");
+    await page.locator('button[title="Band range / presets"]').filter({ visible: true }).click();
+    const preset = page.locator(".layer-panel button", { hasText: "Bat book: current page" });
+    await expect(preset).toContainText("(35–80 kHz)");
+    await preset.click();
+    expect(await answers(page), "page answers after the preset").toBe(true);
+
+    const s = await snapshot(page);
+    expect(s.hfrEnabled).toBe(true);
+    expect(s.bandLo).toBeCloseTo(c.band[0], 0);
+    expect(s.bandHi).toBeCloseTo(c.band[1], 0);
+
+    await page.locator(".play-main-btn").click();
+    await page.waitForFunction(
+      () => (window as unknown as { __audioTap: Tap }).__audioTap.buffers.length >= 1,
+      undefined,
+      { timeout: 15_000 },
+    );
+    const { buffers } = await page.evaluate(
+      () => (window as unknown as { __audioTap: Tap }).__audioTap,
+    );
+    expect(buffers.every((b) => b.finite && b.length > 0)).toBe(true);
+    expect(Math.max(...buffers.map((b) => b.peak)), "loudest sample").toBeGreaterThan(0.01);
+  });
+});
