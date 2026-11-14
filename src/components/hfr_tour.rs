@@ -50,6 +50,7 @@ const L_DONE: &str = "Done";
 const L_CLOSE: &str = "Close tutorial";
 const L_PROGRESS: &str = "{{current}} of {{total}}";
 
+const NUDGE_TEXT_LIVE: &str = "Listening 1:1. Sound above 20 kHz is too high to hear.";
 const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20 kHz is too high to hear.";
 const NUDGE_HFR: &str = "Turn on HFR";
 const NUDGE_NEVER: &str = "Don't show again";
@@ -483,7 +484,9 @@ pub fn HfrNudge() -> impl IntoView {
                 <button class="hfr-nudge-close" title=NUDGE_CLOSE aria-label=NUDGE_CLOSE
                     on:click=move |_| hide_nudge(state)
                 >"\u{00D7}"</button>
-                <p class="hfr-nudge-text">{NUDGE_TEXT}</p>
+                <p class="hfr-nudge-text">
+                    {move || if state.mic.listening().get() { NUDGE_TEXT_LIVE } else { NUDGE_TEXT }}
+                </p>
                 <div class="hfr-nudge-actions">
                     <button class="hfr-nudge-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
                     <Show when=move || tour_available(state)>

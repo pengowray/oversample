@@ -91,7 +91,7 @@ test.describe("HFR card and tutorial", () => {
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
     const card = page.locator(".hfr-nudge");
     await expect(card).toBeVisible({ timeout: 25_000 });
-    await expect(card).toContainText("Playing 1:1");
+    await expect(card).toContainText("Listening 1:1");
     // The tutorial ends on pressing Play, so it is unavailable while listening.
     await expect(card.getByRole("button", { name: "HFR tutorial" })).toHaveCount(0);
     await page.getByTitle("Settings", { exact: true }).click();

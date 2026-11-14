@@ -1385,7 +1385,8 @@ body.sidebar-resizing {
     padding: 6px 16px 4px;
     font-size: 11px;
     font-weight: 600;
-    color: #666;
+    /* #888: 5.3:1 on the sidebar (#666 was 3.29:1, under WCAG AA's 4.5:1). */
+    color: #888;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -3061,18 +3062,6 @@ a.open-link-btn {
     color: #fff !important;
 }
 
-/* Play/Stop button */
-.play-btn {
-    min-width: 60px;
-    font-weight: 600 !important;
-}
-
-.play-btn.playing {
-    background: #5a2020 !important;
-    border-color: #a44 !important;
-    color: #fff !important;
-}
-
 /* Mode-specific parameter controls */
 .mode-param {
     color: #aaa !important;
@@ -3709,7 +3698,8 @@ a.open-link-btn {
     font-size: 14px;
     font-weight: 700;
     letter-spacing: 1px;
-    color: #555;
+    /* Off state. #888: 5.6:1 on the cell (#555 was 2.6:1, under 4.5:1). */
+    color: #888;
     transition: color 0.15s;
 }
 .band-cell.hfr-on .band-cell-hfr-label {
@@ -3718,7 +3708,7 @@ a.open-link-btn {
 /* "FR" stays bright but the leading "H" dims when the active band is
    audible-only (entirely < 24 kHz) — same rule as the old HfrButton. */
 .band-cell.hfr-on.hfr-h-dim .band-cell-hfr-label::first-letter {
-    color: #555;
+    color: #888; /* the off colour */
 }
 
 /* On mobile the gutter widens to 64px — match it here too. */
