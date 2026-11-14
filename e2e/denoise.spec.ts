@@ -75,7 +75,7 @@ async function openRecording(page: Page, name: string, wav: Buffer) {
     .first()
     .setInputFiles({ name, mimeType: "audio/wav", buffer: wav });
   await expect(page.locator("canvas").first()).toBeVisible();
-  await page.getByRole("button", { name: /^NR/ }).click();
+  await page.locator('button[title="Noise filter settings"]').click();
   await expect(page.getByText("Bat Call Model")).toBeVisible();
 }
 
