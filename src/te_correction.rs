@@ -304,11 +304,11 @@ pub fn from_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) 
         })
 }
 
-/// An Annota-JSON set (from Xeno-canto, or a file the user imported), in the
-/// seconds and Hz the file opens in, converted to the rate file `file_idx`
-/// is read at now. Xeno-canto holds the file as it was uploaded, and the app
-/// opens it at the rate its header states, or corrected from its GUANO,
-/// as when the annotations were made. Untracked.
+/// An Annota-JSON set (from Xeno-canto, or a file the user imported), taken
+/// to be in the seconds and Hz the file opens in, converted to the rate file
+/// `file_idx` is read at now. "Export for XC" writes those units
+/// ([`to_file_rate`]), so a set exported and imported again lands on the
+/// same samples. Untracked.
 pub fn annota_from_file_units_at(
     state: AppState,
     file_idx: usize,

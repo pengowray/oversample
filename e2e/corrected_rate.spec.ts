@@ -17,24 +17,25 @@ const MARK = ".file-badge-corrected";
 const SHOT_DIR = process.env.TE_SHOT_DIR;
 
 /** A WAV file: mono 8-bit, 16-bit or 32-bit float, with a GUANO chunk after
- * the data when given. `fill` sets the samples; the default is a quiet
- * 4 kHz tone. */
+ * the data when given. The samples are a quiet 4 kHz tone, in the frame
+ * ranges `tones` when given, else throughout, and silence elsewhere. */
 function wav(opts: {
   rate: number;
   frames: number;
   format: "u8" | "16" | "float";
   guano?: string;
-  tone_frames?: number;
+  tones?: [number, number][];
 }): Buffer {
   const { rate, frames, format } = opts;
   const bps = format === "u8" ? 1 : format === "16" ? 2 : 4;
   const data = Buffer.alloc(frames * bps, format === "u8" ? 0x80 : 0);
-  const toned = Math.min(frames, opts.tone_frames ?? frames);
-  for (let i = 0; i < toned; i++) {
-    const s = Math.sin((2 * Math.PI * 4000 * i) / rate) * 0.25;
-    if (format === "float") data.writeFloatLE(s, i * 4);
-    else if (format === "16") data.writeInt16LE(Math.round(s * 32767), i * 2);
-    else data.writeUInt8(128 + Math.round(s * 127), i);
+  for (const [start, end] of opts.tones ?? [[0, frames]]) {
+    for (let i = start; i < Math.min(end, frames); i++) {
+      const s = Math.sin((2 * Math.PI * 4000 * i) / rate) * 0.25;
+      if (format === "float") data.writeFloatLE(s, i * 4);
+      else if (format === "16") data.writeInt16LE(Math.round(s * 32767), i * 2);
+      else data.writeUInt8(128 + Math.round(s * 127), i);
+    }
   }
   const chunks: Buffer[] = [data];
   if (opts.guano) {
@@ -90,6 +91,8 @@ async function showFiles(page: Page) {
 interface Snap {
   sampleRate: number;
   duration: number;
+  scrollOffset: number;
+  isPlaying: boolean;
 }
 
 async function snap(page: Page): Promise<Snap> {
@@ -232,12 +235,23 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(String(e)));
     // 8-bit, so 135 million samples are a 135 MB file that the app streams:
-    // decoded to 32-bit floats they would take more than 512 MiB.
+    // decoded to 32-bit floats they would take more than 512 MiB. The tone
+    // is in the first 2 seconds and from 60 to 70 seconds at 38.4 kHz, past
+    // the first 30 seconds, which the app decodes when it opens the file.
     const frames = 135_000_000;
     const file = test.info().outputPath("streamed-te10.wav");
     fs.writeFileSync(
       file,
-      wav({ rate: 38_400, frames, format: "u8", guano: GUANO_TE10, tone_frames: 76_800 }),
+      wav({
+        rate: 38_400,
+        frames,
+        format: "u8",
+        guano: GUANO_TE10,
+        tones: [
+          [0, 76_800],
+          [2_304_000, 2_688_000],
+        ],
+      }),
     );
     await page.goto("/");
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
@@ -266,6 +280,25 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
       await page.waitForTimeout(1500);
       await page.screenshot({ path: path.join(SHOT_DIR, "streamed-1440-removed.png") });
     }
+    // Past the first 30 seconds the samples are read from the file as they
+    // are needed, by the source made for the new rate. Scroll there, and
+    // play from there.
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let i = 0; i < 80 && (await snap(page)).scrollOffset < 58; i++) {
+      await page.mouse.wheel(0, 400);
+    }
+    expect((await snap(page)).scrollOffset).toBeGreaterThan(58);
+    await page.locator(".play-main-btn").click();
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    await page.waitForTimeout(1500);
+    expect((await snap(page)).isPlaying).toBe(true);
+    if (SHOT_DIR) {
+      await page.screenshot({ path: path.join(SHOT_DIR, "streamed-1440-removed-60s.png") });
+    }
+    await page.locator(".play-main-btn").click();
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
 
     await page.locator(APPLY).click();
     await expect(row(page, "Sample rate")).toHaveText("384 kHz");
