@@ -5129,9 +5129,14 @@ a.open-link-btn {
     white-space: nowrap;
 }
 /* A file row's controls: the row's 11px text and 3px side padding (see
-   .file-item-info). */
-.file-item-info .badge-btn {
+   .file-item-info). The [.batm] toggle sits in the name line, whose text is
+   13px; at 13px the toggle cut off more of the file name than the old 10px
+   label did. */
+:is(.file-item-info, .file-item-name) .badge-btn {
     padding: 0 3px;
+}
+.file-item-name .badge-btn {
+    font-size: 11px;
 }
 :is(.toolbar-badge-row, .file-item-info, .file-item-name) .badge-btn:hover {
     background: rgba(255, 255, 255, 0.22);

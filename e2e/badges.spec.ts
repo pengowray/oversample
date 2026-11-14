@@ -310,3 +310,26 @@ test.describe("licence button in the heading", () => {
     expect(await badgeLines(page, ".toolbar-badge-row")).toBe(1);
   });
 });
+
+test.describe("[.batm] toggle in a file row", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  // The toggle only renders in the desktop app, so this test adds its markup
+  // to a row of the browser build.
+  test("uses the row's 11px control size", async ({ page }) => {
+    await openLocalFiles(page);
+    const style = await page.locator(".file-item-name").first().evaluate((name) => {
+      const b = document.createElement("button");
+      b.className = "file-badge badge-btn file-badge-batm";
+      b.textContent = "[.batm view]";
+      b.style.display = "inline-block";
+      name.prepend(b);
+      const cs = getComputedStyle(b);
+      return { fontSize: cs.fontSize, padding: cs.paddingLeft, width: b.getBoundingClientRect().width };
+    });
+    expect(style.fontSize).toBe("11px");
+    expect(style.padding).toBe("3px");
+    // At 13px it was 85px wide.
+    expect(style.width).toBeLessThan(70);
+  });
+});
