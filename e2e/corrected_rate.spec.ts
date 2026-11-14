@@ -447,3 +447,63 @@ test.describe("after a correction from the file's metadata is removed", () => {
     });
   }
 });
+
+/** Picks PS (pitch shift) in the HEAR bar, which turns HFR on. */
+async function choosePitchShift(page: Page) {
+  await page.locator('button[title^="PS"]').first().click();
+  await expect.poll(async () => (await snap(page)).hfrOn).toBe(true);
+}
+
+async function selectFile(page: Page, index: number) {
+  await page.locator(".file-item").nth(index).locator(".file-item-name").click();
+  await expect(page.locator(".file-item").nth(index)).toHaveClass(/\bactive\b/);
+}
+
+test.describe("HFR when a correction from the file's metadata is removed", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  const files = [
+    {
+      name: "a corrected.wav",
+      buffer: wav({ rate: 38_400, frames: 76_800, format: "16", guano: GUANO_TE10 }),
+    },
+    { name: "b native.wav", buffer: wav({ rate: 384_000, frames: 384_000, format: "16" }) },
+  ];
+
+  /** Opens both files, with the first current, its correction removed and
+   * applied again with HFR off. */
+  async function applyAgainWithHfrOff(page: Page) {
+    await addFiles(page, files);
+    await selectFile(page, 0);
+    await showInfo(page);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await page.locator(APPLY).click();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    expect((await snap(page)).hfrOn).toBe(false);
+  }
+
+  test("stays on when it was turned on while another file was current", async ({ page }) => {
+    await applyAgainWithHfrOff(page);
+    await selectFile(page, 1);
+    await choosePitchShift(page);
+    await selectFile(page, 0);
+    expect((await snap(page)).hfrOn).toBe(true);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    const after = await snap(page);
+    expect(after.hfrOn).toBe(true);
+    expect(after.playbackMode).toBe("PitchShift");
+  });
+
+  test("turns off when it was turned on for the corrected file", async ({ page }) => {
+    await applyAgainWithHfrOff(page);
+    await choosePitchShift(page);
+    // Switching away and back leaves HFR as it was.
+    await selectFile(page, 1);
+    await selectFile(page, 0);
+    await page.locator(REMOVE).click();
+    await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
+    await expect.poll(async () => (await snap(page)).hfrOn).toBe(false);
+  });
+});

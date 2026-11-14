@@ -42,6 +42,30 @@ use oversample_ipc::annota::AnnotaSet;
 /// The factor the species note's button applies.
 pub const TENFOLD: f64 = 10.0;
 
+thread_local! {
+    /// The id of the file that was current the last time HFR turned on, set
+    /// by [`track_hfr_turn_on`]. HFR is global, so [`set_time_expansion`]
+    /// uses this to tell whether HFR came on while the corrected file was
+    /// current or while the user was on another file.
+    static HFR_TURNED_ON_WITH: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Record which file is current each time HFR turns on, by any path: the
+/// HFR button, a HEAR mode that needs HFR (PS), the bat book or an
+/// annotation's band. Call once at startup.
+pub fn track_hfr_turn_on(state: AppState) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    Effect::new(move |was_on: Option<bool>| {
+        let on = state.viewmode.focus_stack().with(|s| s.hfr_enabled());
+        if on && was_on == Some(false) {
+            HFR_TURNED_ON_WITH.set(state.current_file_id());
+        }
+        on
+    });
+}
+
 /// A change of the rate a file's samples are read at, from `old_rate` to
 /// `new_rate` (Hz). A sample's time is multiplied by `old_rate / new_rate`
 /// and a frequency by `new_rate / old_rate`.
@@ -335,10 +359,12 @@ pub fn annota_from_file_units_at(
 /// the file are dropped, since the detector ran at the old rate.
 ///
 /// A correction remembers whether HFR was on. Removing it turns HFR off when
-/// HFR was off at the correction and is on now: choosing PS or another mode
-/// that needs HFR on the corrected file turns HFR on, and Remove undoes that
-/// with the rest of the correction. The correction made when the file was
-/// opened was not pressed, so the first Remove of it leaves HFR as it is.
+/// HFR was off at the correction, is on now, and was turned on while this
+/// file was current: choosing PS or another mode that needs HFR on the
+/// corrected file turns HFR on, and Remove undoes that with the rest of the
+/// correction. HFR turned on while another file was current stays on. The
+/// correction made when the file was opened was not pressed, so the first
+/// Remove of it leaves HFR as it is.
 pub fn set_time_expansion(
     state: AppState,
     file_id: u64,
@@ -509,12 +535,15 @@ pub fn set_time_expansion(
 
     // HFR mode is global (app.rs keeps it when the current file changes).
     // This only undoes what the correction led to: HFR turned on while the
-    // file was corrected, by the user or by a mode that needs it. The band
-    // was converted above, so HFR turns off with the band in the new units,
-    // and turns on again there.
+    // file was corrected and current, by the user or by a mode that needs
+    // it. HFR was off at the correction and is on now, so it last turned on
+    // after the correction; if another file was current then, the user
+    // turned it on for that file. The band was converted above, so HFR
+    // turns off with the band in the new units, and turns on again there.
     if factor.is_none()
         && is_current
         && hfr_on_at_correction == Some(false)
+        && HFR_TURNED_ON_WITH.get() == Some(file_id)
         && state
             .viewmode
             .focus_stack()

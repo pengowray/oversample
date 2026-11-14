@@ -357,8 +357,9 @@ pub struct LoadedFile {
     /// Whether HFR was on when the user last pressed a button in the Info
     /// panel that corrects the file for time expansion. When the user then
     /// removes that correction, HFR is turned off again if it was off at the
-    /// press ([`crate::te_correction::set_time_expansion`]). `None` when
-    /// there is no such press to undo.
+    /// press and was turned on while this file was current
+    /// ([`crate::te_correction::set_time_expansion`]). `None` when there is
+    /// no such press to undo.
     pub hfr_on_at_correction: Option<bool>,
 }
 
