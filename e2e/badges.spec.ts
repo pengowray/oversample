@@ -34,6 +34,64 @@ function wav(rate: number, seconds: number, format: "16" | "24" | "float" = "16"
   return Buffer.concat([h, data]);
 }
 
+/**
+ * Opens demo XC815138 as a heterodyne recording (the remark names a
+ * heterodyne detector) with the given licence, as a 1.9 s 44.1 kHz 32-bit
+ * float file, so its badge row is "44.1kHz · 32 bit float · 1.9s",
+ * "Heterodyne recording" and the licence.
+ */
+async function openHeterodyneDemo(page: Page, lic: string) {
+  const sidecar = {
+    id: "815138",
+    en: "Fringed Long-footed Myotis",
+    gen: "Myotis",
+    sp: "fimbriatus",
+    rec: "Test",
+    cnt: "Brazil",
+    method: "field recording",
+    rmk: "handheld hetrodyne detector set at 31,9 kHz",
+    // A sound type that names no echolocation keeps the species call-range
+    // note out of the heading.
+    type: "social call",
+    url: "https://xeno-canto.org/815138",
+    lic,
+  };
+  const audio = wav(44_100, 1.9, "float");
+  const handler = async (route: any) => {
+    const url: string = route.request().url();
+    if (url.endsWith("/index.json")) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: 1,
+          sounds: [
+            {
+              en: "Fringed Long-footed Myotis",
+              filename: "XC815138 demo.wav",
+              metadata: "XC815138 demo.xc.json",
+              source: "xeno-canto",
+              species: "Myotis fimbriatus",
+              xc_id: 815138,
+            },
+          ],
+        }),
+      });
+    }
+    if (url.endsWith(".xc.json")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(sidecar) });
+    }
+    if (url.endsWith(".wav")) return route.fulfill({ contentType: "audio/wav", body: audio });
+    return route.fulfill({ status: 404, body: "" });
+  };
+  await page.route("https://archive.oversample.com/**", handler);
+  await page.route("https://cdn.jsdelivr.net/gh/pengowray/bat-demo-sounds@main/**", handler);
+  await page.goto("/#XC815138");
+  await expect(page.locator(".toolbar-badge-row .file-badge-heterodyne")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.locator(".toolbar-cc-badge")).toBeVisible();
+}
+
 /** Two recordings of a sequence, each in two track files, and one 384 kHz
  *  32-bit float file. */
 const LOCAL_FILES = [
@@ -64,6 +122,40 @@ async function showFilesSidebar(page: Page) {
 function row(page: Page, name: string) {
   return page.locator(".file-item", {
     has: page.locator(".file-item-name", { hasText: name }),
+  });
+}
+
+/** Drags the Files sidebar's resize handle so the handle is at x = `width`. */
+async function setSidebarWidth(page: Page, width: number) {
+  const handle = page.locator(".sidebar:not(.right-sidebar) .sidebar-resize-handle");
+  const box = (await handle.boundingBox())!;
+  // The handle straddles the sidebar's edge; grab its inner half.
+  const x = box.x + 1.5;
+  const y = box.y + box.height / 2;
+  const centre = box.x + box.width / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + (width - centre), y, { steps: 8 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => {
+      const b = (await handle.boundingBox())!;
+      return Math.round(b.x + b.width / 2);
+    })
+    .toBe(width);
+}
+
+/** The number of lines a badge row's items take up. */
+function badgeLines(page: Page, selector: string) {
+  return page.locator(selector).evaluate((el) => {
+    const mids = [...el.children]
+      .filter((k) => getComputedStyle(k).display !== "none" && k.getBoundingClientRect().width)
+      .map((k) => {
+        const b = k.getBoundingClientRect();
+        return (b.top + b.bottom) / 2;
+      })
+      .sort((a, b) => a - b);
+    return mids.filter((m, i) => i === 0 || m - mids[i - 1] > 6).length;
   });
 }
 
@@ -138,5 +230,47 @@ test.describe("sequence and track menus in the heading", () => {
     await page.locator('button[title="Show info panel"]').click();
     await expect(page.locator(".right-sidebar")).not.toHaveClass(/collapsed/);
     await expect(menu(page)).toHaveCount(0);
+  });
+});
+
+test.describe("file list rows in a narrow Files sidebar", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("a 384 kHz 32-bit float row stays on one line at 170px", async ({ page }) => {
+    await openLocalFiles(page);
+    await setSidebarWidth(page, 170);
+    // Before the fix, its duration wrapped onto a second line.
+    expect(await badgeLines(page, ".file-item:has-text('Myotis daubentonii') .file-item-info")).toBe(1);
+  });
+
+  test("a wrapped line never starts with a middle dot", async ({ page }) => {
+    await openLocalFiles(page);
+    for (const width of [140, 150, 170]) {
+      await setSidebarWidth(page, width);
+      const lineStarts = await page.locator(".file-item-info").evaluateAll((infos) =>
+        infos.flatMap((info) => {
+          const left = info.getBoundingClientRect().left;
+          return [...info.children]
+            .filter((k) => getComputedStyle(k).display !== "none")
+            .filter((k) => Math.abs(k.getBoundingClientRect().left - left) < 1)
+            .map((k) => getComputedStyle(k, "::before").content);
+        }),
+      );
+      expect(lineStarts.length).toBeGreaterThan(0);
+      for (const content of lineStarts) expect(content).not.toContain("·");
+    }
+    // The dot ends the sample rate and bit depth instead.
+    const after = await page
+      .locator(".file-item:has-text('Myotis daubentonii') .badge-sample-rate")
+      .evaluate((e) => getComputedStyle(e, "::after").content);
+    expect(after).toContain("·");
+  });
+
+  test("a heterodyne row with a licence keeps two lines at 172px", async ({ page }) => {
+    await openHeterodyneDemo(page, "//creativecommons.org/licenses/by-nc-sa/4.0/");
+    await showFilesSidebar(page);
+    // Before the fix, the licence icon wrapped onto a third line at this width.
+    await setSidebarWidth(page, 172);
+    expect(await badgeLines(page, ".file-item:has-text('XC815138') .file-item-info")).toBe(2);
   });
 });

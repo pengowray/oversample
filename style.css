@@ -3122,6 +3122,12 @@ a.open-link-btn {
    The 14px line height is the height the bordered sample rate chip gave each
    line before the badges became plain text, so a row whose badges wrap onto
    a second line (heterodyne badge, CC icon) is no taller than it was.
+   The Files sidebar can be narrowed to 140px, so the spacing is tight: a 4px
+   gap between badges, 3px before each middle dot ("File badges") and 3px
+   side padding in each control. With these, no row is taller than it was
+   before badge style option A at any sidebar width from 140px up, except a
+   heterodyne row with a licence icon when the sidebar is 164 to 169px wide:
+   the "Heterodyne recording" text is 11px, where it was 10px.
    See "File badges" for the facts and controls in it. */
 .file-item-info {
     font-size: 11px;
@@ -3130,7 +3136,7 @@ a.open-link-btn {
     margin-top: 2px;
     display: flex;
     align-items: center;
-    gap: 4px 6px;
+    gap: 4px;
     flex-wrap: wrap;
 }
 
@@ -5074,17 +5080,24 @@ a.open-link-btn {
 }
 
 /* A middle dot between sample rate, bit depth and duration
-   ("192kHz · 24 bit · 0.9s"). There is no dot before the sequence and track
-   labels ("#59 [3]"), which have their own marks: a dot there made a 192 kHz
-   row wrap at the default sidebar width. The second content line gives the
-   dot empty alternative text, so screen readers skip it; a browser without
-   that syntax uses the first line. */
-.badge-bit-depth::before,
-.badge-duration::before {
+   ("192kHz · 24 bit · 0.9s"). The dot ends the fact before it, so when a row
+   wraps between two facts, the dot stays at the end of the upper line and no
+   line starts with one. Every sample rate and bit depth has a fact after it,
+   since the duration is always shown. There is no dot before the sequence
+   and track labels ("#59 [3]"), which have their own marks: a dot there made
+   a 192 kHz row wrap at the default sidebar width. The second content line
+   gives the dot empty alternative text, so screen readers skip it; a browser
+   without that syntax uses the first line. 6px matches the heading's gap
+   between badges, so the dot is centred; file rows use less (.file-item-info). */
+.badge-sample-rate::after,
+.badge-bit-depth::after {
     content: "\00B7";
     content: "\00B7" / "";
-    margin-right: 6px;
+    margin-left: 6px;
     opacity: 0.6;
+}
+.file-item-info :is(.badge-sample-rate, .badge-bit-depth)::after {
+    margin-left: 3px;
 }
 
 /* "* File unsaved" in the heading: amber text, no box. */
@@ -5105,6 +5118,11 @@ a.open-link-btn {
     color: #e6e6e6;
     cursor: pointer;
     white-space: nowrap;
+}
+/* A file row's controls: the row's 11px text and 3px side padding (see
+   .file-item-info). */
+.file-item-info .badge-btn {
+    padding: 0 3px;
 }
 :is(.toolbar-badge-row, .file-item-info, .file-item-name) .badge-btn:hover {
     background: rgba(255, 255, 255, 0.22);
