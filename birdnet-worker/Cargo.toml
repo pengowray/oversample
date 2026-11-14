@@ -22,6 +22,8 @@ tract-onnx = "0.23"
 # Band-limited resampling to the models' rates. Default features include the FFT
 # resampler.
 rubato = "5"
+# The denoiser's STFT. Already in the build through rubato.
+realfft = "3"
 
 # The browser target. tract-onnx's default features pull in getrandom 0.4, which needs
 # its wasm_js backend on wasm32-unknown-unknown.

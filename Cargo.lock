@@ -300,6 +300,7 @@ dependencies = [
  "js-sys",
  "oversample-core",
  "oversample-ipc",
+ "realfft",
  "rubato",
  "serde-wasm-bindgen",
  "tract-onnx",
