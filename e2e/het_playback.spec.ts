@@ -176,10 +176,11 @@ function clickIn(selector: string) {
 
 /** Opens the PASS menu and clicks its ON button, which turns HFR on. */
 async function passOn() {
-  const pass = [...document.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === "PASS",
+  // PASS is a switch button: its bottom row opens the menu with ON.
+  const pass = [...document.querySelectorAll(".switch-btn")].find(
+    (b) => b.querySelector(".switch-btn-name")?.textContent?.trim() === "PASS",
   );
-  (pass?.parentElement?.querySelector(".combo-btn-right") as HTMLElement).click();
+  (pass?.querySelector(".switch-btn-value") as HTMLElement).click();
   await new Promise((r) => setTimeout(r, 200));
   const on = [...document.querySelectorAll(".layer-panel button")].find(
     (b) => b.textContent?.trim() === "ON",

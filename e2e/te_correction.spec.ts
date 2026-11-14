@@ -415,6 +415,10 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(page.locator(CORRECT)).toHaveCount(0);
 
     // The corrected file plays, and going back to the file's rate stops it.
+    // Play starts at "Auto", which plays the selection: about 30 ms at the
+    // corrected rate, often over before the next check. "All" plays 2 s.
+    await page.locator('[title="Play start position"]').click();
+    await page.locator(".layer-panel button", { hasText: "Play from start" }).click();
     await page.locator(".play-main-btn").click();
     await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
 
@@ -657,11 +661,15 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     // The app's default band, as a file loaded at 256 kHz gets, inside the
     // corrected file's 128 kHz.
     expect(pass(await snap(page))).toEqual([20_000, 60_000]);
-    const passBtn = page.locator(".layer-btn", { hasText: "PASS" }).first();
-    await passBtn.click();
-    const caption = passBtn.locator("xpath=..");
-    await expect(caption).toContainText("20.0");
-    await expect(caption).not.toContainText("200.0");
+    // PASS is a switch button: the top row turns it on and the bottom row
+    // shows the range in use.
+    const passSwitch = page.locator(".switch-btn", {
+      has: page.locator(".switch-btn-name", { hasText: /^PASS$/ }),
+    });
+    await passSwitch.locator(".switch-btn-top").click();
+    const caption = passSwitch.locator(".switch-btn-value");
+    await expect(caption).toContainText("20\u201360 kHz");
+    await expect(caption).not.toContainText("200");
     await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     expect(pass(await snap(page))).toEqual([20_000, 60_000]);
