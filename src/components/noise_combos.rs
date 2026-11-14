@@ -501,12 +501,14 @@ pub fn NrCombo() -> impl IntoView {
             state.noise_reduce.learning().set(true);
             spawn_local(async move {
                 yield_to_browser().await;
-                let duration = samples.len() as f64 / sample_rate as f64;
-                let analysis_secs = duration.min(10.0);
+                // The newest LEARN_SECS: what was just heard.
+                let learn_secs = crate::dsp::spectral_sub::LEARN_SECS;
+                let keep = (learn_secs * sample_rate as f64).ceil() as usize;
+                let recent = &samples[samples.len().saturating_sub(keep)..];
                 let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
-                    &samples,
+                    recent,
                     sample_rate,
-                    analysis_secs,
+                    learn_secs,
                     crate::canvas::tile_cache::yield_to_browser,
                 )
                 .await;
@@ -529,22 +531,24 @@ pub fn NrCombo() -> impl IntoView {
             return;
         };
         state.noise_reduce.learning().set(true);
-        let total = file.audio.source.total_samples() as usize;
-        let samples = Arc::new(
-            file.audio
-                .source
-                .read_region(ChannelView::MonoMix, 0, total),
-        );
+        // The first LEARN_SECS, the same stretch the display's automatic
+        // floor uses.
         let sample_rate = file.audio.sample_rate;
-        let duration = file.audio.duration_secs;
+        let learn_secs = crate::dsp::spectral_sub::LEARN_SECS;
+        let total = file.audio.source.total_samples() as usize;
+        let wanted = (learn_secs * sample_rate as f64).ceil() as usize;
+        let samples = Arc::new(file.audio.source.read_region(
+            ChannelView::MonoMix,
+            0,
+            total.min(wanted),
+        ));
 
         spawn_local(async move {
             yield_to_browser().await;
-            let analysis_secs = if duration > 30.0 { 10.0 } else { duration };
             let floor = crate::dsp::spectral_sub::learn_noise_floor_async(
                 &samples,
                 sample_rate,
-                analysis_secs,
+                learn_secs,
                 crate::canvas::tile_cache::yield_to_browser,
             )
             .await;

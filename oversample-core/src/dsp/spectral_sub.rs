@@ -35,6 +35,10 @@ fn fft_size_for_rate(sample_rate: u32) -> usize {
     }
 }
 
+/// How much audio every caller learns a noise floor from. Long enough that
+/// calls rarely fill over half of it, which is what the median needs.
+pub const LEARN_SECS: f64 = 10.0;
+
 /// Most frames the floor is taken from.
 const MAX_FLOOR_FRAMES: usize = 1024;
 
