@@ -31,16 +31,11 @@ use crate::state::{AppState, SpectSize};
 const MAX_WIDTH_FRACTION: f64 = 0.35;
 /// Width of the text column over the drawing, CSS px.
 const COLUMN_WIDTH: f64 = 270.0;
-/// Height of the column's top block (navigation, name, scientific name),
-/// and with the kinds-of-call row when the species has more than search
-/// calls. Fixed so the clear window can be placed before the block is
-/// measured; set inline on `.species-top`.
-const TOP_BLOCK_PX: f64 = 70.0;
-const TOP_BLOCK_WITH_FORMS_PX: f64 = 100.0;
+/// Height of the column's top block (navigation, name, scientific name)
+/// until it has been measured, CSS px.
+const TOP_BLOCK_GUESS_PX: f64 = 70.0;
 /// Clear space above and below the drawn calls in the window, CSS px.
 const WINDOW_MARGIN: f64 = 12.0;
-/// Room under the drawn calls for the caption ("Typical search calls"), CSS px.
-const CAPTION_PX: f64 = 14.0;
 /// Below this spectrogram size the text goes in a panel under the
 /// spectrogram: the column would cover too much of the recording.
 const COLUMN_MIN_VIEW_W: f64 = 2.0 * COLUMN_WIDTH;
@@ -526,8 +521,18 @@ fn body(
         };
         let lines = form_facts(f);
         let reason = not_drawn_reason(f);
+        // Names the drawing (and which kind of call it is), for a reader
+        // who takes it for part of the recording.
+        let caption = f.drawable().then(|| {
+            if f.kind == FormKind::Search {
+                "Typical search calls".to_string()
+            } else {
+                format!("Typical {}", f.name().to_lowercase())
+            }
+        });
         Some(
             view! {
+                {caption.map(|c| view! { <div class="species-muted">{c}</div> })}
                 <div class="species-facts">
                     {lines.into_iter().map(|l| view! { <div>{l}</div> }).collect_view()}
                     {reason.map(|r| view! { <div class="species-muted">{r}</div> })}
@@ -826,8 +831,8 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         view_size.try_set(SpectSize::default());
     });
 
-    // The clear window over the drawn calls, their harmonics and the
-    // caption under them: top and height, CSS px.
+    // The clear window over the drawn calls and their harmonics: top and
+    // height, CSS px.
     let window = Memo::new(move |_| {
         let sc = scale.get()?;
         let f = form.get()?;
@@ -835,7 +840,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         let (lo, hi) = drawn_khz_extent(f)?;
         let y = |khz: f64| freq_to_y(khz * 1000.0, sc.min_hz, sc.max_hz, sc.css_h);
         let top = (y(hi) - WINDOW_MARGIN).clamp(0.0, sc.css_h);
-        let bottom = (y(lo) + WINDOW_MARGIN + CAPTION_PX).clamp(0.0, sc.css_h);
+        let bottom = (y(lo) + WINDOW_MARGIN).clamp(0.0, sc.css_h);
         Some((top, (bottom - top).max(0.0)))
     });
 
@@ -879,25 +884,6 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
 
         let y_of = |khz: f64| freq_to_y(khz * 1000.0, min_f, max_f, css_h);
         let line = cmap.apply(240);
-        // Name the drawing just under the calls, so it reads as a sketch of
-        // a kind of call (and which kind) without covering any of it.
-        if let Some((lo, _)) = form.get_untracked().and_then(drawn_khz_extent) {
-            if let Some(f) = form.get_untracked() {
-                let label = if f.kind == FormKind::Search {
-                    "Typical search calls".to_string()
-                } else {
-                    format!("Typical {}", f.name().to_lowercase())
-                };
-                ctx.set_font("10px system-ui, sans-serif");
-                ctx.set_fill_style_str(&rgba(cmap.apply(170), 1.0));
-                // Left out when there's no room under the calls: it would
-                // sit on them.
-                let y = y_of(lo) + WINDOW_MARGIN + 10.0;
-                if y <= css_h - 2.0 {
-                    let _ = ctx.fill_text(&label, call_sketch::STRIP_PAD, y);
-                }
-            }
-        }
         ctx.set_line_cap("round");
         ctx.set_line_join("round");
 
@@ -946,20 +932,42 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         }
     });
 
+    // The name block's height, measured: it grows with a long name that
+    // wraps and with the kinds-of-call row. Where the block goes (above or
+    // under the window) depends on it, and it doesn't depend on where the
+    // block goes, so measuring can't loop.
+    let top_ref = NodeRef::<leptos::html::Div>::new();
+    let top_block_h = RwSignal::new(TOP_BLOCK_GUESS_PX);
+    Effect::new(move |_| {
+        let Some(el) = top_ref.get() else { return };
+        let el: web_sys::HtmlElement = el.into();
+        let read = {
+            let el = el.clone();
+            move || {
+                let h = el.offset_height() as f64;
+                // try_*: the observer may fire after this component is gone.
+                if h > 0.0 && top_block_h.try_get_untracked().is_some_and(|old| old != h) {
+                    top_block_h.try_set(h);
+                }
+            }
+        };
+        read();
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
+            move |_e: js_sys::Array| read(),
+        );
+        if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            obs.observe(&el);
+            on_cleanup(move || obs.disconnect());
+        }
+        cb.forget();
+    });
+
     // The column's scrolled content: the name block sits at the top of the
     // column when it fits above the window, else just below the window; the
     // rest follows.
     let column = move || {
         let (top, h) = window.get().unwrap_or((0.0, 0.0));
-        let has_forms = shown
-            .get()
-            .and_then(|s| s.sketch)
-            .is_some_and(|sk| sk.forms().len() > 1);
-        let top_h = if has_forms {
-            TOP_BLOCK_WITH_FORMS_PX
-        } else {
-            TOP_BLOCK_PX
-        };
+        let top_h = top_block_h.get();
         let name_first = top_h <= top;
         // Under the window, the name block must still be in view: when the
         // calls reach the bottom of the spectrogram, the window ends early.
@@ -973,7 +981,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         let spacer_div =
             view! { <div class="species-spacer" style:height=format!("{spacer}px")></div> };
         let top_block = view! {
-            <div class="species-top species-text" style:height=format!("{top_h}px")>
+            <div class="species-top species-text" node_ref=top_ref>
                 {nav_row(state)}
                 {name_block(shown)}
                 {forms_row(state, shown, form)}
