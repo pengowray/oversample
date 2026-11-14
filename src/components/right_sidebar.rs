@@ -91,10 +91,24 @@ pub fn RightSidebar() -> impl IntoView {
         }
     };
 
-    // Close dropdown when clicking outside
-    let on_dropdown_blur = move |_: web_sys::FocusEvent| {
+    // Close the dropdown when focus leaves it. The check runs 150 ms later and
+    // closes the menu only if focus is still outside: a press elsewhere (the
+    // Info panel's "Correct for ×10" button, say) followed within 150 ms by a
+    // press on the dropdown would otherwise close the menu that press opened.
+    let on_dropdown_blur = move |ev: web_sys::FocusEvent| {
+        let wrap = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Node>().ok());
         let handle = wasm_bindgen::closure::Closure::once(move || {
-            dropdown_open.set(false);
+            let focus_inside = wrap.is_some_and(|wrap| {
+                web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.active_element())
+                    .is_some_and(|el| wrap.contains(Some(&el)))
+            });
+            if !focus_inside {
+                dropdown_open.set(false);
+            }
         });
         let _ = web_sys::window()
             .unwrap()
