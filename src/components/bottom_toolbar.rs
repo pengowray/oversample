@@ -568,14 +568,21 @@ pub fn BottomToolbar() -> impl IntoView {
             // channel and no multitrack timeline (so its slot is reserved and
             // users can see the option exists).
             {
+                // A timeline of multitrack recordings: the channels it can
+                // show, and the one it shows now (`None` when its clips show
+                // different channels). `None` for any other timeline or file.
+                let timeline_tracks = move || {
+                    state.timeline.active().with(|t| {
+                        t.as_ref()
+                            .filter(|tv| !tv.tracks.is_empty())
+                            .map(|tv| tv.shown_track.clone())
+                    })
+                };
                 let is_multi = move || {
                     let files = state.library.files().get();
                     let idx = state.library.current_index().get();
                     let has_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
-                    let has_mt = state.timeline.active().with(|t| {
-                        t.as_ref().map(|tv| !tv.multitrack_groups.is_empty()).unwrap_or(false)
-                    });
-                    has_stereo || has_mt
+                    has_stereo || timeline_tracks().is_some()
                 };
                 view! {
                 <div style="position:relative">
@@ -586,14 +593,21 @@ pub fn BottomToolbar() -> impl IntoView {
                             else { "layer-btn" }
                         }
                         on:click=move |_| { if is_multi() { toggle_panel(&state, LayerPanel::Channel); } }
-                        title=move || if is_multi() { "Channel / Track view" } else { "Mono file \u{2014} no channel options" }
+                        title=move || {
+                            if timeline_tracks().is_some() { "Channel shown on the timeline" }
+                            else if is_multi() { "Channel view" }
+                            else { "Mono file \u{2014} no channel options" }
+                        }
                     >
                         <span class="layer-btn-category">"Ch"</span>
                         <span class="layer-btn-value">{move || {
                             if !is_multi() { return "Mono".to_string(); }
-                            // Show active track label if in timeline mode with multitrack
-                            if let Some(ref track) = state.timeline.active_track().get() {
-                                return format!("Trk {}", track);
+                            // A multitrack timeline: the channel its clips show.
+                            if let Some(shown) = timeline_tracks() {
+                                return match shown {
+                                    Some(label) => crate::timeline::track_short_name(&label),
+                                    None => "Mixed".to_string(),
+                                };
                             }
                             match state.viewmode.channel_view().get() {
                                 ChannelView::Stereo => "Stereo".to_string(),
@@ -612,7 +626,6 @@ pub fn BottomToolbar() -> impl IntoView {
                             let set_ch = move |cv: ChannelView| {
                                 move |_: web_sys::MouseEvent| {
                                     state.viewmode.channel_view().set(cv);
-                                    state.timeline.active_track().set(None); // Clear track when switching channel
                                     crate::canvas::tile_cache::clear_all_caches();
                                     state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
                                     state.panels.layer_panel_open().set(None);
@@ -624,9 +637,9 @@ pub fn BottomToolbar() -> impl IntoView {
                             let idx = state.library.current_index().get_untracked();
                             let is_stereo = idx.and_then(|i| files.get(i)).map(|f| f.audio.channels).unwrap_or(1) > 1;
 
-                            // Get multitrack options from active timeline
-                            let mt_groups: Vec<crate::timeline::MultitrackOption> = state.timeline.active().with_untracked(|t| {
-                                t.as_ref().map(|tv| tv.multitrack_groups.clone()).unwrap_or_default()
+                            // The channels a multitrack timeline can show.
+                            let (tracks, take_count) = state.timeline.active().with_untracked(|t| {
+                                t.as_ref().map(|tv| (tv.tracks.clone(), tv.take_count)).unwrap_or_default()
                             });
 
                             view! {
@@ -635,56 +648,56 @@ pub fn BottomToolbar() -> impl IntoView {
                                     {if is_stereo {
                                         Some(view! {
                                             <button
-                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Stereo && state.timeline.active_track().with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Stereo)
                                                 on:click=set_ch(ChannelView::Stereo)
                                             >"Stereo"</button>
                                             <button
-                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::MonoMix && state.timeline.active_track().with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::MonoMix)
                                                 on:click=set_ch(ChannelView::MonoMix)
                                             >"Mono (L+R)"</button>
                                             <button
-                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Channel(0) && state.timeline.active_track().with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Channel(0))
                                                 on:click=set_ch(ChannelView::Channel(0))
                                             >"Left"</button>
                                             <button
-                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Channel(1) && state.timeline.active_track().with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Channel(1))
                                                 on:click=set_ch(ChannelView::Channel(1))
                                             >"Right"</button>
                                             <button
-                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Difference && state.timeline.active_track().with(|t| t.is_none()))
+                                                class=move || layer_opt_class(state.viewmode.channel_view().get() == ChannelView::Difference)
                                                 on:click=set_ch(ChannelView::Difference)
                                             >"Diff (L-R)"</button>
                                         })
                                     } else {
                                         None
                                     }}
-                                    {if !mt_groups.is_empty() {
-                                        let items: Vec<_> = mt_groups.iter().map(|mt| {
-                                            let label = mt.label.clone();
-                                            let label2 = label.clone();
-                                            let label3 = label.clone();
-                                            view! {
-                                                <button
-                                                    class=move || layer_opt_class(
-                                                        state.timeline.active_track().with(|t| t.as_deref() == Some(&label3))
-                                                    )
-                                                    on:click=move |_: web_sys::MouseEvent| {
-                                                        state.timeline.active_track().set(Some(label2.clone()));
-                                                        crate::canvas::tile_cache::clear_all_caches();
-                                                        state.viewmode.tile_ready_signal().update(|n| *n = n.wrapping_add(1));
-                                                        state.panels.layer_panel_open().set(None);
-                                                    }
-                                                >{format!("Track: {}", label)}</button>
-                                            }
-                                        }).collect();
-                                        Some(view! {
-                                            <div class="layer-panel-divider"></div>
-                                            <div class="layer-panel-title">"Tracks"</div>
-                                            {items}
-                                        })
-                                    } else {
-                                        None
-                                    }}
+                                    // One option per channel of the multitrack
+                                    // recordings on the timeline. Choosing one
+                                    // makes every clip show that channel's file.
+                                    {tracks.into_iter().map(|track| {
+                                        let label = track.label.clone();
+                                        let label_for_class = label.clone();
+                                        // Said only when some recordings lack
+                                        // this channel: their place on the
+                                        // timeline will be empty.
+                                        let partly_loaded = (track.takes_loaded < take_count).then(|| {
+                                            format!("Loaded for {} of {} recordings", track.takes_loaded, take_count)
+                                        });
+                                        view! {
+                                            <button
+                                                class=move || layer_opt_class(
+                                                    timeline_tracks().flatten().as_deref() == Some(label_for_class.as_str())
+                                                )
+                                                on:click=move |_: web_sys::MouseEvent| {
+                                                    crate::timeline::set_track(&state, Some(label.clone()));
+                                                    state.panels.layer_panel_open().set(None);
+                                                }
+                                            >
+                                                <span class="preset-main">{crate::timeline::track_name(&track.label)}</span>
+                                                {partly_loaded.map(|note| view! { <span class="preset-sub">{note}</span> })}
+                                            </button>
+                                        }
+                                    }).collect::<Vec<_>>()}
                                 </div>
                             }
                         }

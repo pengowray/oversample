@@ -519,7 +519,8 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             return;
         }
         let files = state.library.files().get_untracked();
-        if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
+        if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files, None)
+        {
             let timeline_duration = tv.total_duration_secs;
             let primary_time_res = tv
                 .segments
@@ -801,7 +802,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         }
 
                         if runtime_indices.len() >= 2 {
-                            if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files) {
+                            if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files, None) {
                                 let timeline_duration = tv.total_duration_secs;
                                 let primary_time_res = tv.segments.first()
                                     .and_then(|s| files.get(s.file_index))
