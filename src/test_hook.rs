@@ -123,11 +123,13 @@ pub fn install(state: AppState) {
                         f.audio.sample_rate,
                         f.audio.duration_secs,
                         f.spectrogram.max_freq,
+                        f.audio.channels,
                     )
                 })
             })
         });
-        if let Some((id, rate, duration, max_freq)) = current {
+        if let Some((id, rate, duration, max_freq, channels)) = current {
+            set(&o, "channels", JsValue::from_f64(f64::from(channels)));
             set(&o, "sampleRate", JsValue::from_f64(f64::from(rate)));
             set(&o, "duration", JsValue::from_f64(duration));
             set(&o, "fileMaxFreq", JsValue::from_f64(max_freq));
