@@ -6,6 +6,13 @@
 // has a section per filter, each with its own switch and settings. A new
 // noise filter gets a section here, not another button in the bar.
 //
+// The menu has two groups (2026-11-15, after the user found it "a confusing
+// mix"): "Filters" holds noise reduction and the notch filter, which change
+// what is heard and seen and can both be on; under a rule, "Denoised copy"
+// makes a new recording and is not affected by either switch. Each filter's
+// settings are indented under its switch and stay visible while it is off,
+// so nothing moves when a switch is pressed.
+//
 // Profile management (save/load Tauri presets) was dropped earlier; the
 // Tauri-side commands are still there if it's reinstated.
 
@@ -318,21 +325,25 @@ pub fn NoiseButton() -> impl IntoView {
             switch_title="Turn noise filtering on or off"
             menu_title="Noise filter settings"
             panel_align="right"
-            panel_style="min-width: 260px;"
+            // A fixed width: the menu is placed when it opens, and a row that
+            // grew afterwards ("Learn again") pushed it off a phone's screen.
+            panel_style="width: min(340px, calc(100vw - 16px));"
         >
+            <div class="layer-panel-title">"Filters: use one or both"</div>
             <SwitchRow name="Noise reduction" on=nr_on toggle=toggle_nr />
-            <NrSettings />
-            <hr />
+            <div class="noise-settings"><NrSettings /></div>
             <SwitchRow name="Notch filter" on=notch_on toggle=toggle_notch />
-            <NotchSettings sensitivity=sensitivity />
+            <div class="noise-settings"><NotchSettings sensitivity=sensitivity /></div>
+            <DenoiseSection />
         </SwitchButton>
     }
 }
 
 // ─── Notch filter settings ──────────────────────────────────────────────
 //
-// Detection (button + sensitivity), the per-band list (with bulk toggles),
-// and harmonic suppression.
+// What the filter removes, the Bands row (how many bands are on, and the
+// Detect button), the band list with its bulk buttons, and the sensitivity
+// that the next Detect uses.
 
 #[component]
 fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
@@ -346,13 +357,6 @@ fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = target.value().parse::<f64>() {
             sensitivity.set((150.0 - val) / 10.0);
-        }
-    };
-
-    let on_harmonic_change = move |ev: web_sys::Event| {
-        let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-        if let Ok(val) = target.value().parse::<f64>() {
-            state.notch.harmonic_suppression().set(val / 100.0);
         }
     };
 
@@ -377,55 +381,51 @@ fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
             }
         });
     };
+    let live = move || state.mic.listening().get() || state.mic.recording().get();
 
     view! {
-        // ── Detection ──
-        <div class="layer-panel-title">"Detection"</div>
-        <div style="display: flex; gap: 4px; padding: 0 6px 4px;">
+        <div class="noise-note">"Removes constant tones"</div>
+
+        // ── Bands: how many are on, and Detect ──
+        <div class="noise-row">
+            <span class="noise-row-label">"Bands"</span>
+            {move || {
+                let bands = state.notch.bands().get();
+                if bands.is_empty() {
+                    view! { <span class="noise-row-value none">"none yet"</span> }.into_any()
+                } else {
+                    let on = bands.iter().filter(|b| b.enabled).count();
+                    view! {
+                        <span class="noise-row-value">{format!("{} of {} on", on, bands.len())}</span>
+                    }.into_any()
+                }
+            }}
             <button
-                class="layer-panel-opt"
-                style="flex: 1;"
+                class="noise-btn"
                 on:click=on_detect
                 disabled=move || {
-                    if state.notch.detecting().get() { return true; }
-                    let live = state.mic.listening().get() || state.mic.recording().get();
-                    !live && state.library.current_index().get().is_none()
+                    state.notch.detecting().get()
+                        || (!live() && state.library.current_index().get().is_none())
                 }
             >
                 {move || {
-                    if state.notch.detecting().get() { return "Detecting\u{2026}".to_string(); }
-                    let live = state.mic.listening().get() || state.mic.recording().get();
-                    if live { "Detect from Live".to_string() } else { "Detect Noise".to_string() }
+                    if state.notch.detecting().get() {
+                        "Detecting\u{2026}"
+                    } else if live() {
+                        "Detect from live"
+                    } else if state.notch.bands().with(|b| b.is_empty()) {
+                        "Detect"
+                    } else {
+                        "Detect again"
+                    }
                 }}
             </button>
         </div>
-        <div class="layer-panel-slider-row">
-            <label>"Sensitivity"</label>
-            <input type="range" min="30" max="120" step="5"
-                prop:value=move || (150.0 - sensitivity.get() * 10.0) as i32
-                on:input=on_sensitivity_change
-                title=move || format!("Threshold: {:.1}x ({:.0} dB)", sensitivity.get(), 20.0 * sensitivity.get().log10())
-            />
-        </div>
 
-        <hr />
-
-        // ── Bands ──
-        <div class="layer-panel-title">{move || {
-            let bands = state.notch.bands().get();
-            let on = bands.iter().filter(|b| b.enabled).count();
-            if bands.is_empty() { "Bands".to_string() }
-            else { format!("Bands ({}/{})", on, bands.len()) }
-        }}</div>
+        // ── The bands ──
         {move || {
             let bands = state.notch.bands().get();
-            if bands.is_empty() {
-                view! {
-                    <div style="padding: 4px 8px; font-size: 11px; opacity: 0.55;">
-                        "No bands detected yet"
-                    </div>
-                }.into_any()
-            } else {
+            (!bands.is_empty()).then(|| {
                 let items: Vec<_> = bands.iter().enumerate().map(|(i, band)| {
                     let center = band.center_hz;
                     let strength = band.strength_db;
@@ -433,85 +433,72 @@ fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
                     let bandwidth = band.bandwidth_hz;
                     view! {
                         <div
-                            style="display: flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 11px;"
+                            class="noise-band"
                             on:mouseenter=move |_| state.notch.hovering_band().set(Some(i))
                             on:mouseleave=move |_| state.notch.hovering_band().set(None)
                         >
                             <input type="checkbox"
                                 checked=band_enabled
                                 on:change=move |_| toggle_band(i)
-                                style="margin: 0;"
                             />
-                            <span style="flex: 1; white-space: nowrap;">
+                            <span class="noise-band-freq">
                                 {if center >= 1000.0 { format!("{:.1} kHz", center / 1000.0) }
                                  else { format!("{:.0} Hz", center) }}
                             </span>
-                            <span style="opacity: 0.6; font-size: 10px; white-space: nowrap;"
-                                  title=format!("BW: {:.0} Hz", bandwidth)>
-                                {format!("+{:.0}dB", strength)}
+                            <span class="noise-band-level"
+                                  title=format!("{:.0} dB above the sound around it; {:.0} Hz wide", strength, bandwidth)>
+                                {format!("+{:.0} dB", strength)}
                             </span>
                             <button
-                                style="background: none; border: none; color: inherit; opacity: 0.4; cursor: pointer; padding: 0 2px; font-size: 12px;"
+                                class="noise-band-remove"
                                 on:click=move |_: web_sys::MouseEvent| remove_band(i)
                                 title="Remove band"
+                                aria-label="Remove band"
                             >{"\u{00D7}"}</button>
                         </div>
                     }
                 }).collect();
                 view! {
-                    <div style="max-height: 220px; overflow-y: auto;">{items}</div>
-                    <div style="display: flex; gap: 4px; padding: 4px 6px 0;">
-                        <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
+                    <div class="noise-bands">{items}</div>
+                    <div class="noise-row noise-band-actions">
+                        <button class="noise-btn"
                             on:click=move |_: web_sys::MouseEvent| set_all_enabled(true)
-                        >"All On"</button>
-                        <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
+                        >"All on"</button>
+                        <button class="noise-btn"
                             on:click=move |_: web_sys::MouseEvent| set_all_enabled(false)
-                        >"All Off"</button>
-                        <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
+                        >"All off"</button>
+                        <button class="noise-btn"
+                            title="Removes every band and turns the notch filter off"
                             on:click=move |_: web_sys::MouseEvent| {
                                 state.notch.bands().set(Vec::new());
                                 state.notch.enabled().set(false);
                             }
                         >"Clear"</button>
                     </div>
-                }.into_any()
-            }
+                }
+            })
         }}
 
-        // ── Harmonic suppression (only when there are bands or a learned floor) ──
-        {move || {
-            let has_bands = !state.notch.bands().get().is_empty();
-            let has_floor = state.noise_reduce.floor().get().is_some();
-            if has_bands || has_floor {
-                view! {
-                    <hr />
-                    <div class="layer-panel-slider-row">
-                        <label>"Harm. supp."</label>
-                        <input type="range" min="0" max="100" step="5"
-                            prop:value=move || (state.notch.harmonic_suppression().get() * 100.0) as i32
-                            on:input=on_harmonic_change
-                            title=move || {
-                                let v = state.notch.harmonic_suppression().get();
-                                if v == 0.0 { "Off".to_string() }
-                                else { format!("{:.0}% ({:.0} dB at 2\u{00D7} & 3\u{00D7})", v * 100.0, -48.0 * v) }
-                            }
-                        />
-                        <span style="min-width: 30px; text-align: right; font-size: 10px; opacity: 0.7;">
-                            {move || format!("{:.0}%", state.notch.harmonic_suppression().get() * 100.0)}
-                        </span>
-                    </div>
-                }.into_any()
-            } else {
-                view! { <span></span> }.into_any()
-            }
-        }}
+        // ── Sensitivity of the next Detect ──
+        <div class="layer-panel-slider-row">
+            <label>"Sensitivity"</label>
+            <input type="range" min="30" max="120" step="5"
+                prop:value=move || (150.0 - sensitivity.get() * 10.0) as i32
+                on:input=on_sensitivity_change
+                title=move || format!(
+                    "Detect finds tones at least {:.0} dB above the sound around them",
+                    20.0 * sensitivity.get().log10()
+                )
+            />
+        </div>
     }
 }
 
 // ─── Noise reduction settings ───────────────────────────────────────────
 //
-// Spectral-subtraction noise reduction: the "learn" button, strength slider,
-// and floor status.
+// Spectral-subtraction noise reduction: what it removes, the strength
+// slider, and the Noise floor row (how much audio the floor was learned
+// from, Learn, Clear).
 
 #[component]
 fn NrSettings() -> impl IntoView {
@@ -527,27 +514,11 @@ fn NrSettings() -> impl IntoView {
             state.noise_reduce.strength().set(val / 100.0);
         }
     };
+    let live = move || state.mic.listening().get() || state.mic.recording().get();
+    let has_floor = move || state.noise_reduce.floor().with(|f| f.is_some());
 
     view! {
-        // ── Learn ──
-        <div style="display: flex; gap: 4px; padding: 0 6px 4px;">
-            <button
-                class="layer-panel-opt"
-                style="flex: 1;"
-                on:click=on_learn_floor
-                disabled=move || {
-                    if state.noise_reduce.learning().get() { return true; }
-                    let live = state.mic.listening().get() || state.mic.recording().get();
-                    !live && state.library.current_index().get().is_none()
-                }
-            >
-                {move || {
-                    if state.noise_reduce.learning().get() { return "Learning\u{2026}".to_string(); }
-                    let live = state.mic.listening().get() || state.mic.recording().get();
-                    if live { "Learn from Live".to_string() } else { "Learn Noise Floor".to_string() }
-                }}
-            </button>
-        </div>
+        <div class="noise-note">"Removes steady background noise"</div>
 
         // ── Strength ──
         <div class="layer-panel-slider-row">
@@ -555,50 +526,60 @@ fn NrSettings() -> impl IntoView {
             <input type="range" min="0" max="300" step="5"
                 prop:value=move || (state.noise_reduce.strength().get() * 100.0) as i32
                 on:input=on_strength_change
-                title=move || format!("{:.0}%", state.noise_reduce.strength().get() * 100.0)
             />
-            <span style="min-width: 36px; text-align: right; font-size: 10px; opacity: 0.7;">
-                {move || format!("{:.0}%", state.noise_reduce.strength().get() * 100.0)}
-            </span>
+            <span>{move || format!("{:.0}%", state.noise_reduce.strength().get() * 100.0)}</span>
         </div>
 
-        // ── Floor status ──
-        {move || {
-            let floor = state.noise_reduce.floor().get();
-            if let Some(f) = floor {
-                let bins = f.bin_magnitudes.len();
-                let dur = f.analysis_duration_secs;
-                view! {
-                    <hr />
-                    <div style="padding: 2px 8px; font-size: 11px; opacity: 0.7;">
-                        {format!("{} bins, {:.1}s analyzed", bins, dur)}
-                    </div>
-                    <div style="display: flex; gap: 4px; padding: 2px 6px 0;">
-                        <button class="layer-panel-opt" style="flex: 1; font-size: 10px;"
-                            on:click=move |_: web_sys::MouseEvent| {
-                                state.noise_reduce.floor().set(None);
-                                state.noise_reduce.enabled().set(false);
-                            }
-                        >"Clear Floor"</button>
-                    </div>
-                }.into_any()
-            } else {
-                view! {
-                    <div style="padding: 2px 8px; font-size: 11px; opacity: 0.5;">
-                        "No noise floor learned"
-                    </div>
-                }.into_any()
-            }
-        }}
-
-        <DenoiseSection />
+        // ── Noise floor: what it was learned from, Learn, Clear ──
+        <div class="noise-row">
+            <span class="noise-row-label">"Noise floor"</span>
+            {move || match state.noise_reduce.floor().get() {
+                Some(f) => view! {
+                    <span class="noise-row-value"
+                        title=format!("{} frequency bins", f.bin_magnitudes.len())>
+                        {format!("{:.1} s of audio", f.analysis_duration_secs)}
+                    </span>
+                }.into_any(),
+                None => view! { <span class="noise-row-value none">"not learned"</span> }.into_any(),
+            }}
+            <button
+                class="noise-btn"
+                on:click=on_learn_floor
+                disabled=move || {
+                    state.noise_reduce.learning().get()
+                        || (!live() && state.library.current_index().get().is_none())
+                }
+            >
+                {move || {
+                    if state.noise_reduce.learning().get() {
+                        "Learning\u{2026}"
+                    } else if live() {
+                        "Learn from live"
+                    } else if has_floor() {
+                        "Learn again"
+                    } else {
+                        "Learn"
+                    }
+                }}
+            </button>
+            <button
+                class="noise-btn"
+                title="Clears the noise floor and turns noise reduction off"
+                disabled=move || !has_floor()
+                on:click=move |_: web_sys::MouseEvent| {
+                    state.noise_reduce.floor().set(None);
+                    state.noise_reduce.enabled().set(false);
+                }
+            >"Clear"</button>
+        </div>
     }
 }
 
 // ─── The learned denoiser ───────────────────────────────────────────────
 //
-// A second method, in the same menu: one button that makes a denoised copy of
-// the open recording (`crate::denoise`). The lines under the button name the
+// The menu's second group, under a rule: one button that makes a denoised
+// copy of the open recording (`crate::denoise`). It is not one of the
+// filters above, and their switches do not change the copy. The lines under the button name the
 // model and say what the press will do, why it can't be pressed, or how far
 // the work has got. The "Model:" line is where a choice of model would go.
 
@@ -627,16 +608,16 @@ fn DenoiseSection() -> impl IntoView {
     view! {
         <hr />
         <div class="layer-panel-title">{text::TITLE}</div>
-        <div style="display: flex; gap: 4px; padding: 0 6px 4px;">
+        <div class="noise-row">
             {move || if busy() {
                 view! {
-                    <button class="layer-panel-opt" style="flex: 1;"
+                    <button class="noise-btn"
                         on:click=move |_: web_sys::MouseEvent| denoise::cancel(state)
                     >{text::CANCEL}</button>
                 }.into_any()
             } else {
                 view! {
-                    <button class="layer-panel-opt" style="flex: 1;"
+                    <button class="noise-btn"
                         title=text::TOOLTIP
                         disabled=move || open().is_none() || refusal().is_some()
                         on:click=move |_: web_sys::MouseEvent| denoise::start(state)
@@ -695,5 +676,6 @@ fn progress(fraction: f64, line: String) -> AnyView {
             </div>
             <div class="export-progress-text">{line}</div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }

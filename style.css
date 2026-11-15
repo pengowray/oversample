@@ -5571,7 +5571,8 @@ a.open-link-btn {
 
 .layer-panel-slider-row label {
     font-size: 11px;
-    color: #777;
+    /* 4.8:1 on the panel's #101010 (#777 was 4.2:1). */
+    color: #808080;
     min-width: 70px;
 }
 
@@ -5586,6 +5587,120 @@ a.open-link-btn {
     min-width: 42px;
     text-align: right;
     font-variant-numeric: tabular-nums;
+}
+
+/* Noise menu (src/components/noise_button.rs). Each filter's settings sit
+   under its switch, indented, so it is clear which switch they belong to.
+   .noise-row is a row with a value and buttons; its label is the same width
+   as a slider row's label, so the two kinds of row line up. */
+.noise-settings {
+    padding: 0 0 6px 8px;
+}
+.noise-note {
+    padding: 0 8px 4px 10px;
+    font-size: 11px;
+    /* 5.6:1 on the panel's #101010. */
+    color: #8a8a8a;
+}
+.noise-row {
+    display: flex;
+    /* On a screen narrower than the menu's 340px, buttons go to a second
+       line and nothing is cut off. */
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px 3px 10px;
+    font-size: 11px;
+}
+.noise-row-label {
+    color: #808080;
+    min-width: 70px;
+}
+.noise-row-value {
+    flex: 1;
+    min-width: 0;
+    color: #bbb;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+/* A value that is not there yet ("not learned", "none yet"). */
+.noise-row-value.none {
+    color: #808080;
+    font-style: italic;
+}
+/* Small bordered button inside a row. 24px tall for a mouse, 36px for a
+   finger. */
+.noise-btn {
+    min-height: 24px;
+    padding: 2px 8px;
+    background: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #bbb;
+    font-family: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.noise-btn:hover:not(:disabled) {
+    background: #202020;
+    color: #eee;
+}
+.noise-btn:disabled {
+    color: #666;
+    border-color: #333;
+    cursor: default;
+}
+.noise-bands {
+    max-height: 220px;
+    overflow-y: auto;
+}
+.noise-band {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px 2px 10px;
+    font-size: 11px;
+    color: #bbb;
+}
+.noise-band input {
+    margin: 0;
+}
+.noise-band-freq {
+    flex: 1;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.noise-band-level {
+    color: #8a8a8a;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.noise-band-remove {
+    min-width: 24px;
+    min-height: 24px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: #8a8a8a;
+    font-size: 14px;
+    cursor: pointer;
+}
+.noise-band-remove:hover {
+    background: #202020;
+    color: #eee;
+}
+.noise-band-actions {
+    justify-content: flex-end;
+}
+@media (pointer: coarse), (max-width: 640px) {
+    .noise-btn,
+    .noise-band-remove {
+        min-height: 36px;
+    }
+    .noise-band-remove {
+        min-width: 36px;
+    }
 }
 
 /* Peak source segmented radio buttons */

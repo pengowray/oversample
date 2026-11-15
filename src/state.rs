@@ -89,7 +89,6 @@ pub struct FileSettings {
     pub notch_enabled: bool,
     pub notch_bands: Vec<crate::dsp::notch::NoiseBand>,
     pub notch_profile_name: String,
-    pub notch_harmonic_suppression: f64,
     pub noise_reduce_enabled: bool,
     pub noise_reduce_strength: f64,
     pub noise_reduce_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
@@ -135,7 +134,6 @@ impl FileSettings {
             notch_enabled: state.notch.enabled().get_untracked(),
             notch_bands: state.notch.bands().get_untracked(),
             notch_profile_name: state.notch.profile_name().get_untracked(),
-            notch_harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
             noise_reduce_enabled: state.noise_reduce.enabled().get_untracked(),
             noise_reduce_strength: state.noise_reduce.strength().get_untracked(),
             noise_reduce_floor: state.noise_reduce.floor().get_untracked(),
@@ -176,10 +174,6 @@ impl FileSettings {
             .notch
             .profile_name()
             .set(self.notch_profile_name.clone());
-        state
-            .notch
-            .harmonic_suppression()
-            .set(self.notch_harmonic_suppression);
         state.noise_reduce.enabled().set(self.noise_reduce_enabled);
         state
             .noise_reduce
@@ -244,7 +238,6 @@ impl Default for FileSettings {
             notch_enabled: false,
             notch_bands: Vec::new(),
             notch_profile_name: String::new(),
-            notch_harmonic_suppression: 0.0,
             noise_reduce_enabled: false,
             noise_reduce_strength: 1.0,
             noise_reduce_floor: None,
@@ -1661,8 +1654,6 @@ pub struct NotchState {
     pub detecting: bool,
     pub profile_name: String,
     pub hovering_band: Option<usize>,
-    /// Harmonic suppression strength (0.0–1.0). Attenuates 2x and 3x harmonics.
-    pub harmonic_suppression: f64,
 }
 
 /// Spectral-subtraction noise reduction.
@@ -2812,7 +2803,6 @@ impl AppState {
                 detecting: false,
                 profile_name: String::new(),
                 hovering_band: None,
-                harmonic_suppression: 0.0,
             }),
 
             denoise: Store::new(DenoiseState {
@@ -3377,15 +3367,11 @@ impl AppState {
         let _ = self.filter.quality().get();
         let _ = self.filter.bandpass_mode().get();
         let _ = self.viewmode.channel_view().get();
-        let notch_on = self.notch.enabled().get();
+        let _ = self.notch.enabled().get();
         let _ = self.notch.bands().get();
-        let noise_on = self.noise_reduce.enabled().get();
+        let _ = self.noise_reduce.enabled().get();
         let _ = self.noise_reduce.strength().get();
         let _ = self.noise_reduce.floor().get();
-        // Only retrigger on harmonic suppression when a noise system is active.
-        if notch_on || noise_on {
-            let _ = self.notch.harmonic_suppression().get();
-        }
     }
 
     /// Read (and subscribe to) the params whose change requires clearing live

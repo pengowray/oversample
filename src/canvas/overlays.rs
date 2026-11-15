@@ -1598,7 +1598,6 @@ pub fn pixel_to_time_freq(
 }
 
 /// Draw notch filter band markers as semi-transparent horizontal overlays.
-/// When `harmonic_suppression` > 0, also draws dashed lines at 2x and 3x harmonics.
 pub fn draw_notch_bands(
     ctx: &web_sys::CanvasRenderingContext2d,
     min_freq: f64,
@@ -1608,7 +1607,6 @@ pub fn draw_notch_bands(
     bands: &[crate::dsp::notch::NoiseBand],
     notch_enabled: bool,
     hovered_index: Option<usize>,
-    harmonic_suppression: f64,
 ) {
     for (band_idx, band) in bands.iter().enumerate() {
         let center = band.center_hz;
@@ -1677,42 +1675,6 @@ pub fn draw_notch_bands(
             format!("{:.0}", center)
         };
         let _ = ctx.fill_text(&label, canvas_width - 40.0, y_center - 2.0);
-    }
-
-    // Draw harmonic markers (dashed orange lines at 2x and 3x)
-    if harmonic_suppression > 0.0 && notch_enabled {
-        let alpha = (harmonic_suppression * 0.6).min(0.6);
-        let dash = js_sys::Array::new();
-        dash.push(&wasm_bindgen::JsValue::from_f64(4.0));
-        dash.push(&wasm_bindgen::JsValue::from_f64(4.0));
-
-        for band in bands.iter().filter(|b| b.enabled) {
-            for &multiplier in &[2.0_f64, 3.0] {
-                let harmonic_hz = band.center_hz * multiplier;
-                if harmonic_hz < min_freq || harmonic_hz > max_freq {
-                    continue;
-                }
-                let y = freq_to_y(harmonic_hz, min_freq, max_freq, canvas_height);
-
-                ctx.set_stroke_style_str(&format!("rgba(255, 120, 40, {:.2})", alpha));
-                ctx.set_line_width(1.0);
-                let _ = ctx.set_line_dash(&dash);
-                ctx.begin_path();
-                ctx.move_to(0.0, y);
-                ctx.line_to(canvas_width, y);
-                ctx.stroke();
-
-                // Small label
-                let label = format!("{}x", multiplier as u32);
-                ctx.set_fill_style_str(&format!("rgba(255, 140, 60, {:.2})", alpha));
-                ctx.set_font("9px sans-serif");
-                ctx.set_text_baseline("bottom");
-                let _ = ctx.fill_text(&label, canvas_width - 22.0, y - 2.0);
-            }
-        }
-
-        // Reset line dash
-        let _ = ctx.set_line_dash(&js_sys::Array::new());
     }
 }
 
