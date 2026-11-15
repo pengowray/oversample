@@ -4,7 +4,7 @@ import os from "os";
 import path from "path";
 
 /**
- * The Denoised Copy section of the NR menu: the button, the model download,
+ * The Denoised copy group of the Noise menu: the button, the model download,
  * the progress, and the denoised copy in the file list.
  *
  * The model is not in the repository. The test serves it from a local file in
@@ -76,12 +76,12 @@ async function openRecording(page: Page, name: string, wav: Buffer) {
     .setInputFiles({ name, mimeType: "audio/wav", buffer: wav });
   await expect(page.locator("canvas").first()).toBeVisible();
   await page.locator('button[title="Noise filter settings"]').click();
-  await expect(page.getByText("Denoised Copy", { exact: true })).toBeVisible();
+  await expect(page.getByText("Denoised copy", { exact: true })).toBeVisible();
 }
 
 test("a 16 kHz recording cannot be denoised, and the menu says why", async ({ page }) => {
   await openRecording(page, "low-rate.wav", batLikeWav(16_000, 2));
-  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toBeDisabled();
   // The space before "kHz" is a no-break space.
   await expect(page.getByText(/Sample rate too low/)).toBeVisible();
   await expect(page.getByText(/Needs 22\.05\skHz or more\. This recording: 16\skHz\./)).toBeVisible();
@@ -102,7 +102,7 @@ test("a 44.1 kHz recording is denoised and the copy is added to the file list", 
 
   await openRecording(page, "bird-rate.wav", batLikeWav(44_100, 6));
   await expect(page.getByText("Model: trained on bat recordings")).toBeVisible();
-  const button = page.getByRole("button", { name: "Make Denoised Copy" });
+  const button = page.getByRole("button", { name: "Make denoised copy" });
   await expect(button).toBeEnabled();
   await button.click();
   await expect(page.getByText("bird-rate (denoised).wav").first()).toBeVisible({
@@ -112,7 +112,7 @@ test("a 44.1 kHz recording is denoised and the copy is added to the file list", 
   expect(errors).toEqual([]);
 });
 
-test("Make Denoised Copy downloads the model and adds the copy to the file list", async ({
+test("Make denoised copy downloads the model and adds the copy to the file list", async ({
   page,
 }) => {
   test.skip(
@@ -130,13 +130,13 @@ test("Make Denoised Copy downloads the model and adds the copy to the file list"
   await expect(page.getByText("Downloads the model first: 0.3 MB, once.")).toBeVisible();
   await page.screenshot({ path: "test-results/denoise-idle.png" });
 
-  await page.getByRole("button", { name: "Make Denoised Copy" }).click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
   await expect(page.getByText(/Denoising: \d+%/)).toBeVisible({ timeout: 120_000 });
   await page.screenshot({ path: "test-results/denoise-running.png" });
 
   await expect(page.getByText("pass (denoised).wav").first()).toBeVisible({ timeout: 200_000 });
-  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toBeVisible();
   // The model is stored now, so the download line is gone.
   await expect(page.getByText("Adds a copy and keeps the original.")).toBeVisible();
   await expect(page.getByText(/Downloads the model first/)).toHaveCount(0);
@@ -152,10 +152,10 @@ test("Cancel stops the work and brings the button back", async ({ page }) => {
   test.setTimeout(120_000);
   await serveModel(page);
   await openRecording(page, "long.wav", batLikeWav(384_000, 20));
-  await page.getByRole("button", { name: "Make Denoised Copy" }).click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
   await expect(page.getByText(/Denoising: \d+%/)).toBeVisible({ timeout: 100_000 });
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toBeEnabled();
   await expect(page.getByText("long (denoised).wav")).toHaveCount(0);
 });
 
@@ -259,7 +259,7 @@ test("a stereo recording gives a stereo copy with the same balance between its c
   const [left, right] = stereoSamples();
   await openRecording(page, "stereo.wav", stereoWav(left, right));
   await expect(page.getByText("Adds a copy and keeps the original.")).toBeVisible();
-  await page.getByRole("button", { name: "Make Denoised Copy" }).click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
   await expect(page.locator(".file-item", { hasText: "stereo (denoised).wav" })).toBeVisible({
     timeout: 200_000,
   });
@@ -276,7 +276,7 @@ test("a stereo recording gives a stereo copy with the same balance between its c
 
   // The D key goes to the stereo original and back to the copy.
   await page.locator('button[title="Noise filter settings"]').click();
-  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toHaveCount(0);
   await page.keyboard.press("d");
   await expect.poll(async () => (await snapshot()).currentFile).toBe("stereo.wav");
   expect((await snapshot()).channels).toBe(2);

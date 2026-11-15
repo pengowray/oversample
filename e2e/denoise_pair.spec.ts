@@ -183,11 +183,11 @@ async function openAndSetView(page: Page, seconds: number) {
 
 async function makeDenoisedCopy(page: Page) {
   await page.locator('button[title="Noise filter settings"]').click();
-  await page.getByRole("button", { name: "Make Denoised Copy" }).click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
   await expect(page.locator(".file-item", { hasText: COPY })).toBeVisible({ timeout: 200_000 });
   // Close the Noise menu.
   await page.locator('button[title="Noise filter settings"]').click();
-  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toHaveCount(0);
   await expect.poll(async () => (await snapshot(page)).currentFile).toBe(COPY);
 }
 
