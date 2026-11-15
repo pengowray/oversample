@@ -196,7 +196,7 @@ pub fn XformButton() -> impl IntoView {
         };
         match (picture, heard) {
             (Some(picture), Some(heard)) => format!("{picture} {}", heard.blurb()),
-            (None, Some(heard)) => format!("Spectrogram of the recording. {}", heard.blurb()),
+            (None, Some(heard)) => format!("The recording's own spectrogram. {}", heard.blurb()),
             (Some(picture), None) => picture,
             (None, None) => "Showing the spectrogram of the unmodified signal — no processing \
                              stages are active. Switch a row below to \"sam\" to mirror playback."

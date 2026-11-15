@@ -771,7 +771,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         // The note that the labels give heard times sits at the right end,
         // and the tick labels stop short of it.
         // On a strip too narrow to keep two thirds for tick labels (a
-        // phone), the note is left out; the labels are still amber.
+        // phone), the note is left out; the labels are still green.
         ctx.set_font("10px sans-serif");
         let caption = heard.map(|h| h.time_caption()).and_then(|c| {
             let width = ctx.measure_text(&c).ok()?.width();

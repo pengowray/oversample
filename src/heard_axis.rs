@@ -13,10 +13,11 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, PlaybackMode};
 use leptos::prelude::*;
 
-/// "r,g,b" of labels and captions that give heard values: the amber of the
-/// HEAR bar's HFR label (`.band-cell.hfr-on .band-cell-hfr-label`). The
-/// recording's own values are white.
-pub const HEARD_RGB: &str = "240,192,80";
+/// "r,g,b" of labels and notes that give heard values: the green of the
+/// HEAR bar's "OUT ÷10" button (`.layer-btn.active`, #8fc), which gives the
+/// same factor. Not the amber of the HFR band's text beside it, which gives
+/// frequencies of the recording. The recording's own values are white.
+pub const HEARD_RGB: &str = "136,255,204";
 /// "r,g,b" of labels that give the recording's own values.
 pub const RECORDING_RGB: &str = "255,255,255";
 
@@ -61,21 +62,22 @@ impl HeardAxis {
         op(self.time_scale)
     }
 
-    /// The note at the top of the spectrogram's frequency axis.
+    /// The note in the spectrogram's top left corner, beside the frequency
+    /// strip. It gives the unit, which the axis labels leave out.
     pub fn freq_caption(self) -> String {
-        format!("heard = recording {}", self.freq_op())
+        format!("heard kHz = recording {}", self.freq_op())
     }
 
     /// The note at the end of the time strip.
     pub fn time_caption(self) -> String {
-        format!("heard = recording {}", self.time_op())
+        format!("heard time = recording {}", self.time_op())
     }
 
     /// The sentence in the Display Processing menu.
     pub fn blurb(self) -> String {
         let factor = self.time_scale.max(self.freq_scale);
         format!(
-            "Axes show heard values for {}\u{00D7} time-expansion: frequency {}, time {}.",
+            "Axes show what is heard at {}\u{00D7} time-expansion: frequency {}, time {}.",
             number(factor),
             self.freq_op(),
             self.time_op()
@@ -204,11 +206,11 @@ mod tests {
         let axis = HeardAxis::for_te_factor(10.0).unwrap();
         assert!((axis.freq_scale - 0.1).abs() < 1e-12);
         assert_eq!(axis.time_scale, 10.0);
-        assert_eq!(axis.freq_caption(), "heard = recording ÷10");
-        assert_eq!(axis.time_caption(), "heard = recording ×10");
+        assert_eq!(axis.freq_caption(), "heard kHz = recording ÷10");
+        assert_eq!(axis.time_caption(), "heard time = recording ×10");
         assert_eq!(
             axis.blurb(),
-            "Axes show heard values for 10× time-expansion: frequency ÷10, time ×10."
+            "Axes show what is heard at 10× time-expansion: frequency ÷10, time ×10."
         );
     }
 
@@ -217,8 +219,8 @@ mod tests {
         let axis = HeardAxis::for_te_factor(-4.0).unwrap();
         assert_eq!(axis.freq_scale, 4.0);
         assert_eq!(axis.time_scale, 0.25);
-        assert_eq!(axis.freq_caption(), "heard = recording ×4");
-        assert_eq!(axis.time_caption(), "heard = recording ÷4");
+        assert_eq!(axis.freq_caption(), "heard kHz = recording ×4");
+        assert_eq!(axis.time_caption(), "heard time = recording ÷4");
     }
 
     #[test]
@@ -231,7 +233,7 @@ mod tests {
     #[test]
     fn fractional_factors_keep_one_decimal() {
         let axis = HeardAxis::for_te_factor(2.5).unwrap();
-        assert_eq!(axis.freq_caption(), "heard = recording ÷2.5");
+        assert_eq!(axis.freq_caption(), "heard kHz = recording ÷2.5");
     }
 
     #[test]

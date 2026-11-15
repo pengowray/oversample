@@ -49,7 +49,7 @@ pub struct FreqMarkerState {
     pub tuned_hz: Option<u32>,
     /// Set when the axis is drawn in heard values (`crate::heard_axis`): the
     /// note written at the top of the axis ("heard = recording ÷10"). The
-    /// labels are then amber and their step is
+    /// labels are then green and their step is
     /// `crate::heard_axis::heard_div_interval`'s. Every frequency passed to the drawing function is then a
     /// heard frequency.
     pub heard_caption: Option<String>,
@@ -241,7 +241,7 @@ pub fn draw_freq_markers(
     } else {
         10_000.0
     };
-    // Amber for heard values, white for the recording's own.
+    // Green for heard values, white for the recording's own.
     let label_rgb = if ms.heard_caption.is_some() {
         crate::heard_axis::HEARD_RGB
     } else {
@@ -632,22 +632,22 @@ pub fn draw_freq_markers(
     }
 
     // --- Note that the axis gives heard values ---
-    // Written on the top line, left of the MAX marker when that is drawn, so
-    // it is read before any number on the axis. Amber like the labels.
+    // In the corner away from the labels: with the labels on the right (as
+    // XForm draws them) that is the top left, beside the frequency strip and
+    // over the start of the picture, where it is read first. No label is
+    // drawn there, so the note covers none. Coloured like the labels.
     let show_max = is_nyquist_top && !ms.mouse_in_label_area;
     if let Some(caption) = &ms.heard_caption {
-        ctx.set_font("10px sans-serif");
+        ctx.set_font("11px sans-serif");
         ctx.set_text_baseline("top");
         let caption_w = ctx.measure_text(caption).unwrap().width();
-        // Room for the widest MAX marker ("25.6k MAX") and a gap.
-        let max_room = if show_max { 62.0 } else { 0.0 };
         let caption_x = if labels_on_right {
-            label_x - max_room - caption_w
+            right_tick_len + 4.0
         } else {
-            label_x + max_room
+            canvas_width - tick_len - 4.0 - caption_w
         };
-        ctx.set_fill_style_str("rgba(0,0,0,0.6)");
-        ctx.fill_rect(caption_x - 3.0, 0.0, caption_w + 6.0, 14.0);
+        ctx.set_fill_style_str("rgba(0,0,0,0.7)");
+        ctx.fill_rect(caption_x - 4.0, 0.0, caption_w + 8.0, 16.0);
         ctx.set_fill_style_str(&format!("rgba({},0.95)", crate::heard_axis::HEARD_RGB));
         let _ = ctx.fill_text(caption, caption_x, 2.0);
     }

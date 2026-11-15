@@ -117,7 +117,7 @@ pub fn draw_band_gutter(
     // Label divisions use the visible range's span — same adaptive rule as
     // the spectrogram's own axis labels, so ticks sit at identical y's.
     let range = (max_freq - min_freq).max(1.0);
-    // A strip in heard values (`heard`, see `crate::heard_axis`) has amber
+    // A strip in heard values (`heard`, see `crate::heard_axis`) has green
     // labels, stepped by that module's rule.
     let div_for_labels = if heard {
         crate::heard_axis::heard_div_interval(range, h)
