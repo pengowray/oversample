@@ -257,6 +257,25 @@ test.describe("Opening another file", () => {
     expect((await snap(page)).scrollOffset).toBeCloseTo(before, 6);
   });
 
+  test("closing the open file shows the next one with its own view", async ({
+    page,
+  }) => {
+    await start(page, "alpha.wav", 20);
+    await open(page, "beta.wav", 8, 99);
+    await show(page, "alpha.wav");
+    await scrollAway(page, 30);
+    await selectTool(page);
+    await select(page, 0.2, 0.4, 0.3, 0.6);
+    expect((await snap(page)).selection).not.toBeNull();
+
+    // alpha is first in the list, so beta takes its position.
+    await page.locator(".file-item", { hasText: "alpha.wav" }).locator(".file-item-close").click();
+    await expect.poll(async () => (await snap(page)).currentFile).toBe("beta.wav");
+    const shown = await snap(page);
+    expect(shown.selection).toBeNull();
+    expect(shown.scrollOffset).toBe(0);
+  });
+
   test("a Xeno-canto recording opened during playback opens stopped, with its own annotations", async ({
     page,
   }) => {
