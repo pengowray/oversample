@@ -68,14 +68,19 @@ impl Relationship {
 /// | frequency-focus selections                      | PerFile | DenoisedPair              |
 /// | playhead (position, and playing or stopped)     | Global  | DenoisedPair (see below)  |
 ///
-/// The playhead is one global signal: it is not saved or restored per file,
-/// so it stays where it was on any switch. `DenoisedPair` marks the switches
-/// where that is intended: during playback the file-switch Effect restarts
-/// the audio in the other file at the same position.
+/// The playhead is one global signal: it is not saved or restored per file.
+/// A switch within a `DenoisedPair` keeps it: during playback the file-switch
+/// Effect restarts the audio in the other file at the same position. Any
+/// other switch stops playback and puts the playhead at the start.
+///
+/// The selection (`interaction.selection`) is also one global signal. It is
+/// kept on a switch between files that share the horizontal scroll, and
+/// cleared on any other switch.
 ///
 /// Global (not modelled here): HFR on/off, playback mode + transform params,
 /// `bandpass_mode` (HFR-coupled, pending the split), channel view, colormap.
-/// Transient: annotation selection, hover/marker.
+/// Transient: annotation selection, hover/marker, and the selection and
+/// playback outside the files described above.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
     /// Gain mode and gain values (the gain fields of `FileSettings`).

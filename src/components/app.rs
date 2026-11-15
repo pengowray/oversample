@@ -442,6 +442,14 @@ pub fn App() -> impl IntoView {
     // or target duration changes. Without this, switching to a shorter file or
     // resizing while a non-spectrogram view is active can leave scroll outside
     // the valid data window and the waveform view renders a blank canvas.
+    //
+    // `view_file` is the file whose scroll is in `scroll_offset`, set by the
+    // file-switch Effect further down. Right after another file becomes the
+    // open file, `scroll_offset` still holds the previous file's position.
+    // Clamping it to the new file's length here would change it before the
+    // file-switch Effect saves it for the previous file, so this Effect waits
+    // until that Effect has run.
+    let view_file: RwSignal<Option<u64>> = RwSignal::new(None);
     Effect::new(move |_| {
         let scroll = state.view.scroll_offset().get();
         let zoom = state.view.zoom_level().get();
@@ -450,6 +458,10 @@ pub fn App() -> impl IntoView {
         let timeline = state.timeline.active().get();
         let files = state.library.files().get();
         let idx = state.library.current_index().get();
+        let open_id = idx.and_then(|i| files.get(i)).map(|f| f.id);
+        if view_file.get() != open_id {
+            return;
+        }
 
         let (time_res, duration) = if let Some(ref tl) = timeline {
             let time_res = tl
@@ -818,6 +830,35 @@ pub fn App() -> impl IntoView {
                 });
             }
 
+            // Whether the incoming file shares `setting` with the outgoing one.
+            let shares = |setting: crate::scope::Setting| match (old_oi, new_idx) {
+                (Some(oi), Some(ni)) => state.share_members(setting, oi).contains(&ni),
+                _ => false,
+            };
+
+            // A file that does not share the playhead opens stopped, with the
+            // playhead at the start. Stopping comes before the outgoing
+            // file's scroll is saved below: Stop puts the scroll back where
+            // it was before Play, and that is the position to save. Left
+            // playing, the audio carried on in the new file from the old
+            // file's position, the view followed it, and the end of playback
+            // then moved the new file to the old file's scroll position.
+            if !shares(crate::scope::Setting::Playhead) {
+                if state.playback.is_playing().get_untracked() {
+                    playback::stop(&state);
+                }
+                state.playback.playhead_time().set(0.0);
+            }
+
+            // The selection is a time and frequency range in the outgoing
+            // file. It stays only for a file that shows the same recording at
+            // the same place (another channel, or the denoised copy). On any
+            // other file it would be a box left over from a different file,
+            // and Play would start from it.
+            if !shares(crate::scope::Setting::HorizontalScroll) {
+                state.interaction.selection().set(None);
+            }
+
             // Genuine switch: clear the annotation selection (its focus override
             // is cleared below by the focus reset — note we do NOT call
             // pop_annotation_ff(), which would disable the now-global HFR), and
@@ -929,19 +970,15 @@ pub fn App() -> impl IntoView {
             // The playhead is shared between an original and its denoised
             // copy: if audio is playing, carry on from the same position in
             // the incoming file, so the two can be compared by ear. (Any
-            // other switch does the same today, but only as a side effect:
-            // `apply_to_state` above sets signals that the replay Effect
-            // watches. This call makes it a rule for the pair.)
-            if state.playback.is_playing().get_untracked() {
-                if let (Some(oi), Some(ni)) = (old_oi, new_idx) {
-                    if state
-                        .share_members(crate::scope::Setting::Playhead, oi)
-                        .contains(&ni)
-                    {
-                        playback::schedule_replay_live(&state);
-                    }
-                }
+            // other switch stopped playback above.)
+            if state.playback.is_playing().get_untracked()
+                && shares(crate::scope::Setting::Playhead)
+            {
+                playback::schedule_replay_live(&state);
             }
+
+            // `scroll_offset` now belongs to the incoming file.
+            view_file.set(new_id);
         });
     }
 
