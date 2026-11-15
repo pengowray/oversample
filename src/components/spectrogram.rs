@@ -339,7 +339,6 @@ pub fn Spectrogram() -> impl IntoView {
             let het_comb_spacing = state.transform.het_comb_spacing().get();
             let te_factor = state.transform.te_factor().get();
             let ps_factor = state.transform.ps_factor().get();
-            let pv_factor = state.transform.pv_factor().get();
             let playback_mode = state.playback.mode().get();
             let min_display_freq = state.view.min_display_freq().get();
             let max_display_freq = state.view.max_display_freq().get();
@@ -1239,16 +1238,6 @@ pub fn Spectrogram() -> impl IntoView {
                         }
                         PlaybackMode::PitchShift if !ps_factor.is_bypass() && ps_factor.is_up() => {
                             FreqShiftMode::Multiply(ps_factor.magnitude())
-                        }
-                        PlaybackMode::PhaseVocoder
-                            if !pv_factor.is_bypass() && !pv_factor.is_up() =>
-                        {
-                            FreqShiftMode::Divide(pv_factor.magnitude())
-                        }
-                        PlaybackMode::PhaseVocoder
-                            if !pv_factor.is_bypass() && pv_factor.is_up() =>
-                        {
-                            FreqShiftMode::Multiply(pv_factor.magnitude())
                         }
                         PlaybackMode::ZeroCrossing => {
                             FreqShiftMode::Divide(state.transform.zc_factor().get())

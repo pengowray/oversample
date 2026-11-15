@@ -292,7 +292,7 @@ pub fn App() -> impl IntoView {
     }
 
     // Live-mode safety: when a playback-mode or filter parameter changes
-    // while listening or recording, clear the live DSP state so PS/PV overlap
+    // while listening or recording, clear the live DSP state so PS overlap
     // buffers, HET filter delay lines, and the IIR bandpass warmup tail don't
     // carry artefacts from the previous mode into the new one. Also warns the
     // user when TimeExpansion is selected during live audio — TE falls through
@@ -534,7 +534,7 @@ pub fn App() -> impl IntoView {
         state.sync_annotation_auto_focus();
     });
 
-    // The view of a picture of pitch-shifted audio (XForm with PS or PV),
+    // The view of a picture of pitch-shifted audio (XForm with PS),
     // which fills only the bottom of the recording's range. `None` in every
     // other state.
     let heard_view = Memo::new(move |_| crate::heard_axis::heard_view(&state));

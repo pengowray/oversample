@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// A sign-encoded pitch-shift factor (shared by PitchShift and PhaseVocoder).
+/// A sign-encoded pitch-shift factor.
 ///
 /// The historical convention packs three things into one number, and is kept on
 /// the wire/UI (stored values and slider positions are unchanged):

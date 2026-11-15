@@ -4080,13 +4080,6 @@ a.open-link-btn {
     display: block;
 }
 
-/* The PS settings popup has an Algorithm row with PS / PV toggles. */
-.algo-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
 /* ── Main view area ─────────────────────────────────────────────────────── */
 
 .main-view {

@@ -25,25 +25,16 @@ use crate::state::{FilterQuality, GainMode, PlaybackMode};
 // boundary clicks) are shared with offline export. See audio::chunk_params.
 use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 
-/// Overlap samples for PV HQ mode. Each chunk extends by this amount past
-/// its nominal end. The trailing overlap gets a Hann fade-out, while the
-/// next chunk's leading overlap (same size) gets a Hann fade-in. Web Audio
-/// sums them → smooth crossfade, eliminating boundary clicks without
-/// needing the warmup-trim hack.
-pub(crate) const PV_HQ_OVERLAP: usize = 8192;
-
 /// Samples by which each chunk runs past its nominal end, to be crossfaded
 /// with the start of the next chunk. 0 when chunks are trimmed and placed
 /// end to end.
 ///
 /// Pitch shift always crossfades, over one grain: two chunks line their
 /// grains up differently, so their waveforms differ where they meet, and
-/// placed end to end they would click. The phase vocoder crossfades over
-/// [`PV_HQ_OVERLAP`] when its Quality is HQ.
+/// placed end to end they would click.
 pub(crate) fn chunk_overlap(params: &PlaybackParams) -> usize {
     match params.mode {
         PlaybackMode::PitchShift => crate::dsp::pitch_shift::GRAIN,
-        PlaybackMode::PhaseVocoder if params.pv_hq => PV_HQ_OVERLAP,
         _ => 0,
     }
 }
@@ -61,15 +52,10 @@ pub(crate) fn chunk_tail(
     let keep_end = (chunk_end + chunk_overlap(params)).min(end_sample);
     let read_end = match params.mode {
         PlaybackMode::PitchShift => (keep_end + FILTER_WARMUP).min(end_sample),
-        PlaybackMode::PhaseVocoder if !params.pv_hq => (keep_end + FILTER_WARMUP).min(end_sample),
         _ => keep_end,
     };
     (keep_end, read_end)
 }
-
-/// Compensatory gain boost for PhaseVocoder mode (dB).
-/// PV's STFT bin-shifting inherently loses ~6-12 dB compared to PitchShift.
-pub(crate) const PV_MODE_BOOST_DB: f64 = 6.0;
 
 /// How far ahead (in seconds) to stay buffered beyond current playback time.
 const LOOKAHEAD_SECS: f64 = 1.5;
@@ -162,10 +148,8 @@ pub(crate) struct PlaybackParams {
     pub het_comb_spacing: f64,
     pub te_factor: f64,
     pub ps_factor: PitchFactor,
-    pub pv_factor: PitchFactor,
-    pub pv_hq: bool,
     /// Output-side heterodyne shift (Hz) applied AFTER pitch shifting
-    /// in PS / PV modes. Compound mapping: `out = |in/factor − shift|`.
+    /// in PS mode. Compound mapping: `out = |in/factor − shift|`.
     /// Stored in output-Hz space (typically 0–5 kHz) so the LP cutoff
     /// stays narrow. 0 = no shift (pure multiplicative pitch divide).
     pub ps_shift_hz: f64,
@@ -204,7 +188,6 @@ fn selection_bandpass_active(sample_rate: u32, params: &PlaybackParams) -> bool 
             PlaybackMode::Normal
                 | PlaybackMode::TimeExpansion
                 | PlaybackMode::PitchShift
-                | PlaybackMode::PhaseVocoder
                 | PlaybackMode::ZeroCrossing
         )
         && (params.sel_freq_low > 0.0 || params.sel_freq_high < (sample_rate as f64 / 2.0))
@@ -212,25 +195,13 @@ fn selection_bandpass_active(sample_rate: u32, params: &PlaybackParams) -> bool 
 
 /// The fixed gain (dB) of playback and export, before any AGC: none when
 /// gain is Off, the slider for Manual and Adaptive, the measured peak gain
-/// plus the slider for Peak. The phase vocoder's level boost applies in every
-/// mode.
-pub(crate) fn fixed_gain_db(
-    mode: PlaybackMode,
-    gain_mode: GainMode,
-    slider_db: f64,
-    auto_peak_db: f64,
-) -> f64 {
-    let mode_boost = if matches!(mode, PlaybackMode::PhaseVocoder) {
-        PV_MODE_BOOST_DB
-    } else {
-        0.0
-    };
-    mode_boost
-        + match gain_mode {
-            GainMode::Off => 0.0,
-            GainMode::Manual | GainMode::Adaptive => slider_db,
-            GainMode::AutoPeak => auto_peak_db + slider_db,
-        }
+/// plus the slider for Peak.
+pub(crate) fn fixed_gain_db(gain_mode: GainMode, slider_db: f64, auto_peak_db: f64) -> f64 {
+    match gain_mode {
+        GainMode::Off => 0.0,
+        GainMode::Manual | GainMode::Adaptive => slider_db,
+        GainMode::AutoPeak => auto_peak_db + slider_db,
+    }
 }
 
 /// Duration of fade-in when starting playback (milliseconds).
@@ -434,7 +405,7 @@ async fn chunk_loop(
     };
 
     // AGC (Adaptive) is applied per-sample in process_one_chunk, after this.
-    let global_gain = fixed_gain_db(params.mode, params.gain_mode, manual_boost, auto_peak_gain);
+    let global_gain = fixed_gain_db(params.gain_mode, manual_boost, auto_peak_gain);
 
     // ── Pre-buffer phase ─────────────────────────────────────────────────────
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
@@ -638,7 +609,7 @@ async fn process_one_chunk(
 
     // Hann fades for the crossfade overlap, applied after the warmup is trimmed.
     let core_len = chunk_end - pos; // nominal chunk length (without overlap)
-    let apply_pv_hq_fading = |buf: &mut Vec<f32>| {
+    let apply_crossfade_fading = |buf: &mut Vec<f32>| {
         // Hann fade-in on leading overlap (first chunk's start is clean)
         if pos > start_sample {
             let fade_in_len = overlap.min(core_len).min(buf.len());
@@ -672,7 +643,7 @@ async fn process_one_chunk(
             processed
         };
         if overlap > 0 {
-            apply_pv_hq_fading(&mut out);
+            apply_crossfade_fading(&mut out);
         }
         apply_gain(&mut out, global_gain);
         out
@@ -806,7 +777,7 @@ pub(crate) fn het_carriers_for(
     }
 }
 
-/// Post-pitch heterodyne shift for PS / PV modes. The shift value is
+/// Post-pitch heterodyne shift for PS mode. The shift value is
 /// expressed in OUTPUT-Hz space, so it's small (typically 0–5 kHz) and
 /// the LP cutoff stays narrow, which keeps the low-pass well-behaved.
 ///
@@ -822,7 +793,6 @@ fn ps_post_shift(samples: &[f32], sample_rate: u32, params: &PlaybackParams) -> 
     }
     let factor = match params.mode {
         PlaybackMode::PitchShift => params.ps_factor,
-        PlaybackMode::PhaseVocoder => params.pv_factor,
         _ => return samples.to_vec(),
     }
     .magnitude();
@@ -870,11 +840,6 @@ pub(crate) fn apply_dsp_mode(
         }
         PlaybackMode::PitchShift => {
             let pitched = pitch_shift_realtime(samples, params.ps_factor);
-            ps_post_shift(&pitched, sample_rate, params)
-        }
-        PlaybackMode::PhaseVocoder => {
-            let pitched =
-                crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(samples, params.pv_factor);
             ps_post_shift(&pitched, sample_rate, params)
         }
         PlaybackMode::ZeroCrossing => zc_divide(

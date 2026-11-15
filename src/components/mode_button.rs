@@ -9,9 +9,6 @@
 //   to the chosen mode (no more giant mode picker inside).
 // • The selected button shows a small corner indicator (◢) when it has
 //   a settings popup available (HET/TE/PS/ZC). 1:1 has no settings.
-// • PS is a bucket: both PitchShift and PhaseVocoder live under it. The
-//   PS settings popup has an "Algorithm" toggle to switch between them.
-//
 // The cross-cutting Effects (focus-stack default range, smart-auto
 // factor, ZC display save/restore, bandpass driving filter settings) all
 // live in this component because they're playback-mode-coupled. They
@@ -136,8 +133,7 @@ fn parse_factor_input(s: &str) -> Option<f64> {
     }
 }
 
-/// Logical "bucket" for the mode radio group. PS bucket spans the
-/// PitchShift and PhaseVocoder playback modes; everything else maps 1:1.
+/// One button of the mode radio group. Each stands for one playback mode.
 // Ord follows declaration order (Normal < Het < Te < Ps < Zc) — the canonical
 // display order used to keep the extra play buttons in a stable position.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -155,7 +151,7 @@ impl ModeBucket {
             PlaybackMode::Normal => ModeBucket::Normal,
             PlaybackMode::Heterodyne => ModeBucket::Het,
             PlaybackMode::TimeExpansion => ModeBucket::Te,
-            PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => ModeBucket::Ps,
+            PlaybackMode::PitchShift => ModeBucket::Ps,
             PlaybackMode::ZeroCrossing => ModeBucket::Zc,
         }
     }
@@ -195,7 +191,7 @@ impl ModeBucket {
             ModeBucket::Normal => "1:1 — Normal playback",
             ModeBucket::Het => "HET — Heterodyne",
             ModeBucket::Te => "TE — Time Expansion",
-            ModeBucket::Ps => "PS — Pitch Shift / Phase Vocoder",
+            ModeBucket::Ps => "PS — Pitch Shift",
             ModeBucket::Zc => "ZC — Zero Crossing",
         }
     }
@@ -309,13 +305,6 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
                 .transform
                 .ps_factor()
                 .set(PitchFactor::from_signed(ps));
-        }
-        if state.transform.pv_factor_auto().get_untracked() {
-            let pv = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state
-                .transform
-                .pv_factor()
-                .set(PitchFactor::from_signed(pv));
         }
     });
 
@@ -758,19 +747,6 @@ fn ModeSettingsBody() -> impl IntoView {
         }
     };
 
-    let on_pv_change = move |ev: web_sys::Event| {
-        use wasm_bindgen::JsCast;
-        let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-        if let Ok(val) = input.value().parse::<f64>() {
-            state.transform.pv_factor_auto().set(false);
-            state.playback.mode().set(PlaybackMode::PhaseVocoder);
-            state
-                .transform
-                .pv_factor()
-                .set(PitchFactor::from_signed(val));
-        }
-    };
-
     let on_zc_change = move |ev: web_sys::Event| {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -797,18 +773,6 @@ fn ModeSettingsBody() -> impl IntoView {
             state
                 .transform
                 .ps_factor()
-                .set(PitchFactor::from_signed(val));
-        }
-    };
-
-    let on_pv_text = move |ev: web_sys::Event| {
-        use wasm_bindgen::JsCast;
-        let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
-        if let Some(val) = parse_factor_input(&input.value()) {
-            state.transform.pv_factor_auto().set(false);
-            state
-                .transform
-                .pv_factor()
                 .set(PitchFactor::from_signed(val));
         }
     };
@@ -1005,134 +969,56 @@ fn ModeSettingsBody() -> impl IntoView {
                         </Show>
                     }.into_any(),
 
-                    PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
-                        // PS bucket — shared settings panel for PitchShift +
-                        // PhaseVocoder, with an Algorithm toggle at the top.
+                    PlaybackMode::PitchShift => {
                         view! {
                             <div class="layer-panel-title">"Pitch Shift"</div>
-                            <div class="layer-panel-slider-row algo-row">
-                                <label>"Algorithm"</label>
-                                <button class=move || if state.playback.mode().get() == PlaybackMode::PitchShift { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.playback.mode().set(PlaybackMode::PitchShift)
-                                    title="Pitch shift in short grains: keeps the timing and shape of short calls"
-                                >"PS"</button>
-                                <button class=move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.playback.mode().set(PlaybackMode::PhaseVocoder)
-                                    title="Phase vocoder: smears short calls in time"
-                                >"PV"</button>
+                            <div class="layer-panel-slider-row">
+                                <label>"Factor"</label>
+                                <input type="range" min="-20" max="20" step="1"
+                                    prop:value=move || (state.transform.ps_factor().get().signed() as i32).to_string()
+                                    on:input=on_ps_change
+                                />
+                                <input type="text" class="factor-input"
+                                    prop:value=move || format_factor_value(state.transform.ps_factor().get().signed())
+                                    on:change=on_ps_text
+                                    on:focus=move |ev: web_sys::FocusEvent| {
+                                        use wasm_bindgen::JsCast;
+                                        if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                            input.select();
+                                        }
+                                    }
+                                    title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
+                                />
+                                <button class=move || if state.transform.ps_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
+                                    on:click=move |_| state.transform.ps_factor_auto().update(|v| *v = !*v)
+                                    title="Auto: picks best factor for audible output"
+                                >"A"</button>
                             </div>
-                            {move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder {
-                                view! {
-                                    <div class="layer-panel-slider-row">
-                                        <label>"Factor"</label>
-                                        <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.transform.pv_factor().get().signed() as i32).to_string()
-                                            on:input=on_pv_change
-                                        />
-                                        <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.transform.pv_factor().get().signed())
-                                            on:change=on_pv_text
-                                            on:focus=move |ev: web_sys::FocusEvent| {
-                                                use wasm_bindgen::JsCast;
-                                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                    input.select();
-                                                }
-                                            }
-                                            title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
-                                        />
-                                        <button class=move || if state.transform.pv_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                                            on:click=move |_| state.transform.pv_factor_auto().update(|v| *v = !*v)
-                                            title="Auto: picks best factor for audible output"
-                                        >"A"</button>
-                                    </div>
-                                    <div class="factor-presets">
-                                        {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state, state.transform.pv_factor(), state.transform.pv_factor_auto(), PlaybackMode::PhaseVocoder, PitchFactor::from_signed(val));
-                                            let is_sel = move || (state.transform.pv_factor().get().signed() - val).abs() < 0.01 && !state.transform.pv_factor_auto().get();
-                                            view! {
-                                                <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
-                                                    on:click=on_click
-                                                >{label}</button>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </div>
-                                }.into_any()
-                            } else {
-                                view! {
-                                    <div class="layer-panel-slider-row">
-                                        <label>"Factor"</label>
-                                        <input type="range" min="-20" max="20" step="1"
-                                            prop:value=move || (state.transform.ps_factor().get().signed() as i32).to_string()
-                                            on:input=on_ps_change
-                                        />
-                                        <input type="text" class="factor-input"
-                                            prop:value=move || format_factor_value(state.transform.ps_factor().get().signed())
-                                            on:change=on_ps_text
-                                            on:focus=move |ev: web_sys::FocusEvent| {
-                                                use wasm_bindgen::JsCast;
-                                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                    input.select();
-                                                }
-                                            }
-                                            title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
-                                        />
-                                        <button class=move || if state.transform.ps_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                                            on:click=move |_| state.transform.ps_factor_auto().update(|v| *v = !*v)
-                                            title="Auto: picks best factor for audible output"
-                                        >"A"</button>
-                                    </div>
-                                    <div class="factor-presets">
-                                        {preset_values.iter().map(|&(val, label)| {
-                                            let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, PitchFactor::from_signed(val));
-                                            let is_sel = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
-                                            view! {
-                                                <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
-                                                    on:click=on_click
-                                                >{label}</button>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </div>
-                                }.into_any()
-                            }}
+                            <div class="factor-presets">
+                                {preset_values.iter().map(|&(val, label)| {
+                                    let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, PitchFactor::from_signed(val));
+                                    let is_sel = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
+                                    view! {
+                                        <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                            on:click=on_click
+                                        >{label}</button>
+                                    }
+                                }).collect::<Vec<_>>()}
+                            </div>
                             <Show when=move || state.band_ff_range().is_some()>
                                 <div class="freq-summary">
                                     <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                     <div class="freq-summary-output"
-                                        on:mouseenter=move |ev: web_sys::MouseEvent| {
-                                            // pv_factor()/ps_factor() are distinct subfield types, so
-                                            // dispatch in separate branches rather than a unified handle.
-                                            if state.playback.mode().get_untracked() == PlaybackMode::PhaseVocoder {
-                                                set_output_highlight(state, state.transform.pv_factor())(ev);
-                                            } else {
-                                                set_output_highlight(state, state.transform.ps_factor())(ev);
-                                            }
-                                        }
+                                        on:mouseenter=set_output_highlight(state, state.transform.ps_factor())
                                         on:mouseleave=clear_output_highlight
                                     >"Output: "{move || {
-                                        let mode = state.playback.mode().get();
-                                        let f = if mode == PlaybackMode::PhaseVocoder { state.transform.pv_factor().get().signed() } else { state.transform.ps_factor().get().signed() };
+                                        let f = state.transform.ps_factor().get().signed();
                                         let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
                                         let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
                                         let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
                                         format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
                                     }}</div>
                                 </div>
-                            </Show>
-                            // Quality sets how the phase vocoder joins its
-                            // chunks. Pitch shift has one way, so the row is
-                            // hidden for it.
-                            <Show when=move || state.playback.mode().get() == PlaybackMode::PhaseVocoder>
-                            <div class="layer-panel-slider-row">
-                                <label>"Quality"</label>
-                                <button class=move || if !state.transform.pv_hq().get() { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.transform.pv_hq().set(false)
-                                    title="Standard mode — uses filter warmup to reduce boundary clicks"
-                                >"Std"</button>
-                                <button class=move || if state.transform.pv_hq().get() { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.transform.pv_hq().set(true)
-                                    title="HQ mode — overlapping crossfade eliminates boundary clicks"
-                                >"HQ"</button>
-                            </div>
                             </Show>
                         }.into_any()
                     },

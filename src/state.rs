@@ -445,7 +445,6 @@ pub enum PlaybackMode {
     Heterodyne,
     TimeExpansion,
     PitchShift,
-    PhaseVocoder,
     ZeroCrossing,
 }
 
@@ -1892,7 +1891,7 @@ pub struct ExportState {
 }
 
 /// Transform / DSP playback parameters (heterodyne, time-expansion, pitch
-/// shift, phase vocoder, zero-crossing) plus their BandFF-derived auto flags.
+/// shift, zero-crossing) plus their BandFF-derived auto flags.
 #[derive(Clone, Debug, Store)]
 pub struct TransformState {
     pub het_frequency: f64,
@@ -1910,11 +1909,8 @@ pub struct TransformState {
     pub te_factor_auto: bool,
     pub ps_factor: PitchFactor,
     pub ps_factor_auto: bool,
-    /// Output-side shift (Hz) applied AFTER pitch shifting in PS/PV modes.
+    /// Output-side shift (Hz) applied AFTER pitch shifting in PS mode.
     pub ps_shift_hz: f64,
-    pub pv_factor: PitchFactor,
-    pub pv_factor_auto: bool,
-    pub pv_hq: bool,
     pub zc_factor: f64,
 }
 
@@ -2096,8 +2092,6 @@ pub struct MicState {
     pub channel_mode: ChannelMode,
     /// Information about the selected mic device.
     pub device_info: Option<MicDeviceInfo>,
-    /// Context window size in samples for PS/PV overlap-save buffering.
-    pub listen_context_samples: usize,
     /// When true, mic input is processed but the speakers stay silent.
     pub mute_output: bool,
 }
@@ -2422,7 +2416,7 @@ pub struct AppState {
     pub chroma: Store<ChromaState>,
     /// Resonator-view settings.
     pub resonator: Store<ResonatorState>,
-    /// Transform / DSP playback parameters (het, TE, PS, PV, ZC + auto flags).
+    /// Transform / DSP playback parameters (het, TE, PS, ZC + auto flags).
     pub transform: Store<TransformState>,
     /// Bandpass / EQ filter + BandFF gutter settings.
     pub filter: Store<FilterState>,
@@ -2563,9 +2557,6 @@ impl AppState {
                 ps_factor: PitchFactor::down(10.0),
                 ps_factor_auto: true,
                 ps_shift_hz: 0.0,
-                pv_factor: PitchFactor::down(10.0),
-                pv_factor_auto: true,
-                pv_hq: true,
                 zc_factor: 8.0,
             }),
             view: Store::new(ViewState {
@@ -2720,7 +2711,6 @@ impl AppState {
                     .map(|v| ChannelMode::from_key(&v))
                     .unwrap_or_default(),
                 device_info: None,
-                listen_context_samples: 65536,
                 mute_output: false,
             }),
             recording_meta: Store::new(RecordingMetaState {
@@ -3337,10 +3327,8 @@ impl AppState {
         let _ = self.playback.mode().get();
         let _ = self.transform.te_factor().get();
         let _ = self.transform.ps_factor().get();
-        let _ = self.transform.pv_factor().get();
-        let _ = self.transform.pv_hq().get();
         let _ = self.transform.ps_shift_hz().get();
-        // BandFF lower edge affects the effective output-shift clamp for PS/PV.
+        // BandFF lower edge affects the effective output-shift clamp for PS.
         let _ = self.filter.band_ff_freq_lo().get();
         let _ = self.transform.zc_factor().get();
         let _ = self.transform.het_frequency().get();
@@ -3367,7 +3355,7 @@ impl AppState {
     }
 
     /// Read (and subscribe to) the params whose change requires clearing live
-    /// DSP state (PS/PV overlap buffers, HET delay lines, IIR bandpass warmup)
+    /// DSP state (PS overlap buffers, HET delay lines, IIR bandpass warmup)
     /// so the previous mode's artefacts don't carry into the new one. A SUBSET
     /// of `track_replay_params` — deliberately separate, because gain / notch /
     /// channel changes must NOT clear the live buffers. Returns the current

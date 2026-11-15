@@ -324,19 +324,12 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let _het_spacing = state.transform.het_comb_spacing().get();
             let _te = state.transform.te_factor().get();
             let _ps = state.transform.ps_factor().get();
-            let _pv = state.transform.pv_factor().get();
-            // The PS and PV output shift and, while one is set, the band
+            // The PS output shift and, while one is set, the band
             // edge that limits it and the filter edge its low-pass is set
             // from. The edges are read only then: they change on every step
             // of a drag of the band, and each run here redraws every tile.
             let ps_shift = state.transform.ps_shift_hz().get();
-            if ps_shift.abs() >= 1.0
-                && matches!(
-                    mode,
-                    crate::state::PlaybackMode::PitchShift
-                        | crate::state::PlaybackMode::PhaseVocoder
-                )
-            {
+            if ps_shift.abs() >= 1.0 && mode == crate::state::PlaybackMode::PitchShift {
                 let _band_lo = state.filter.band_ff_freq_lo().get();
                 let _filter_hi = state.filter.freq_high().get();
             }

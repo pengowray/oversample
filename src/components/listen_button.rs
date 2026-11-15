@@ -4,19 +4,16 @@
 //   ready / muted state.
 // Right half (caret): "…" — opens this popup of listen-specific knobs.
 //
-// Mode (HET/PS/PV/ZC/1:1), heterodyne freq/cutoff, factors, bandpass,
-// and the Output On/Mute toggle live in the Mode and HFR buttons. This
-// popup only carries settings that have nowhere else to go:
-//   • PS/PV overlap-save buffer size (latency vs smoothness tradeoff)
+// Mode (HET/PS/ZC/1:1), heterodyne freq/cutoff, factors, bandpass,
+// and bandpass live in the Mode and HFR buttons. This popup has the
+// Listen output On / Mute toggle.
 
 use crate::audio::microphone;
 use crate::components::combo_button::ComboButton;
 use crate::components::icons::Icon;
 use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
-use crate::state::{
-    AppState, LayerPanel, MicAcquisitionState, MicStrategy, PlaybackMode, RecordReadyState,
-};
+use crate::state::{AppState, LayerPanel, MicAcquisitionState, MicStrategy, RecordReadyState};
 use leptos::prelude::*;
 
 #[component]
@@ -132,34 +129,6 @@ pub fn ListenButton() -> impl IntoView {
                     title="Mute speaker output (mic warm-up). Spectrogram still updates."
                 >"Mute (warm-up)"</button>
             </div>
-
-            // ── Buffer size (PS/PV only) ──
-            <Show when=move || matches!(state.playback.mode().get(), PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)>
-                <hr />
-                <div class="layer-panel-title">"PS/PV Buffer"</div>
-                <div style="display: flex; gap: 2px; padding: 0 6px 4px;">
-                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 4096)
-                        on:click=move |_| state.mic.listen_context_samples().set(4096)
-                        title="4096 samples \u{2014} minimum context (more artifacts, lowest latency)"
-                    >"4K"</button>
-                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 8192)
-                        on:click=move |_| state.mic.listen_context_samples().set(8192)
-                        title="8192 samples"
-                    >"8K"</button>
-                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 16384)
-                        on:click=move |_| state.mic.listen_context_samples().set(16384)
-                        title="16384 samples (default)"
-                    >"16K"</button>
-                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 32768)
-                        on:click=move |_| state.mic.listen_context_samples().set(32768)
-                        title="32768 samples (smoother, more CPU)"
-                    >"32K"</button>
-                    <button class=move || layer_opt_class(state.mic.listen_context_samples().get() == 65536)
-                        on:click=move |_| state.mic.listen_context_samples().set(65536)
-                        title="65536 samples (smoothest, most CPU)"
-                    >"64K"</button>
-                </div>
-            </Show>
 
             <hr />
             <div class="layer-panel-hint" style="padding: 4px 8px; font-size: 11px; opacity: 0.65;">

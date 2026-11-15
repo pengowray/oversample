@@ -8,7 +8,6 @@
 use crate::audio::playback::{apply_gain, snapshot_params};
 use crate::audio::streaming_playback::{apply_filters, PlaybackParams};
 use crate::dsp::heterodyne::RealtimeCombHet;
-use crate::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use crate::dsp::pitch_shift::pitch_shift_realtime;
 use crate::dsp::zc_divide::zc_divide;
 use crate::state::store_fields::*;
@@ -303,9 +302,6 @@ async fn fetch_recorded_samples() -> Vec<f32> {
 const MIC_IS_MONO_MESSAGE: &str =
     "Live listening and recordings will be mono: this mic has 1 channel.";
 
-/// Absolute minimum context for PS/PV (must cover at least one PV FFT window).
-const LISTEN_CONTEXT_FLOOR: usize = 4096;
-
 /// Crossfade length (samples) between consecutive output chunks to
 /// eliminate any residual boundary discontinuity after overlap-save.
 const LISTEN_CROSSFADE: usize = 256;
@@ -318,9 +314,10 @@ const PS_LISTEN_WARMUP: usize = 2048;
 /// without warmup the per-chunk transients click at chunk boundaries.
 const FILTER_WARMUP_SAMPLES: usize = 1024;
 
-/// Persistent state for overlap-save PS/PV live processing.
+/// Persistent state for live pitch shift and the live filter.
 struct ListenDspState {
-    /// Accumulated raw input samples (sliding context window).
+    /// The newest input samples: the last chunk and the
+    /// [`PS_LISTEN_WARMUP`] samples before it.
     context: Vec<f32>,
     /// Tail of the previous returned chunk, used for crossfade.
     prev_tail: Vec<f32>,
@@ -347,7 +344,7 @@ impl ListenDspState {
 }
 
 /// Stateful live DSP for one channel. Heterodyne oscillators and filters, and
-/// the PS/PV overlap context, all carry over between chunks, so each channel
+/// the pitch shifter's earlier samples, all carry over between chunks, so each channel
 /// needs its own or the channels would feed into each other.
 struct LiveChannelDsp {
     het: RealtimeCombHet,
@@ -427,7 +424,6 @@ fn process_live_audio(
     input: &[f32],
     sample_rate: u32,
     channel_dsp: &mut LiveChannelDsp,
-    context_samples: usize,
     params: &PlaybackParams,
     mute_output: bool,
 ) -> Vec<f32> {
@@ -461,35 +457,19 @@ fn process_live_audio(
             );
             out
         }
-        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
-            // Accumulate input into sliding context window
+        PlaybackMode::PitchShift => {
+            // The pitch shifter's cost grows with the audio it is given and
+            // it needs only a few grains before the new samples, so it gets
+            // the new samples and PS_LISTEN_WARMUP before them.
             dsp_state.context.extend_from_slice(&filtered);
-            let max_ctx = LISTEN_CONTEXT_FLOOR.max(context_samples);
-            if dsp_state.context.len() > max_ctx {
-                let excess = dsp_state.context.len() - max_ctx;
+            let needed = input.len() + PS_LISTEN_WARMUP;
+            if dsp_state.context.len() > needed {
+                let excess = dsp_state.context.len() - needed;
                 dsp_state.context.drain(..excess);
             }
+            let full_output = pitch_shift_realtime(&dsp_state.context, params.ps_factor);
 
-            // Run the batch DSP on the full context
-            let full_output = if params.mode == PlaybackMode::PitchShift {
-                // The pitch shifter's cost grows with the audio it is given
-                // and it needs only a few grains before the new samples, so
-                // it gets the new samples and 2048 before them, not the
-                // whole context.
-                let needed = input.len() + PS_LISTEN_WARMUP;
-                let from = dsp_state.context.len().saturating_sub(needed);
-                pitch_shift_realtime(&dsp_state.context[from..], params.ps_factor)
-            } else {
-                let mut out = phase_vocoder_pitch_shift(&dsp_state.context, params.pv_factor);
-                let boost =
-                    10.0f32.powf(crate::audio::streaming_playback::PV_MODE_BOOST_DB as f32 / 20.0);
-                for s in &mut out {
-                    *s *= boost;
-                }
-                out
-            };
-
-            // Extract the last chunk_len samples (deep interior of OLA = clean)
+            // Keep the output for the new samples
             let chunk_len = input.len();
             let extracted = if full_output.len() >= chunk_len {
                 &full_output[full_output.len() - chunk_len..]
@@ -548,7 +528,6 @@ fn process_live_channels(
     inputs: &[&[f32]],
     sample_rate: u32,
     dsp: &mut LiveDsp,
-    context_samples: usize,
     params: &PlaybackParams,
     mute_output: bool,
 ) -> Vec<Vec<f32>> {
@@ -556,14 +535,7 @@ fn process_live_channels(
         .iter()
         .zip(dsp.iter_mut())
         .map(|(input, channel_dsp)| {
-            process_live_audio(
-                input,
-                sample_rate,
-                channel_dsp,
-                context_samples,
-                params,
-                mute_output,
-            )
+            process_live_audio(input, sample_rate, channel_dsp, params, mute_output)
         })
         .collect()
 }
@@ -593,7 +565,7 @@ impl MicBackend {
         }
     }
 
-    /// Reset DSP state (heterodyne, phase vocoder, listen overlap buffers)
+    /// Reset DSP state (heterodyne, pitch shift, filter warmup)
     /// to prevent stale audio from a previous session leaking into a new one.
     pub fn clear_dsp_state(&self) {
         match self {
@@ -1059,14 +1031,12 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
         let sr = state_cb.mic.sample_rate().get_untracked();
         let params = snapshot_params(&state_cb, None, sr);
         let mute = state_cb.mic.mute_output().get_untracked();
-        let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
         let inputs: Vec<&[f32]> = match &stereo_input {
             Some((left, right)) => vec![left, right],
             None => vec![mono],
         };
-        let out_channels = NATIVE_LIVE_DSP.with(|d| {
-            process_live_channels(&inputs, sr, &mut d.borrow_mut(), ctx_samples, &params, mute)
-        });
+        let out_channels = NATIVE_LIVE_DSP
+            .with(|d| process_live_channels(&inputs, sr, &mut d.borrow_mut(), &params, mute));
 
         // Schedule playback via AudioBuffer with bounded look-ahead so a
         // backgrounded-then-resumed burst of queued chunks can't build a
@@ -1134,7 +1104,7 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
 
 /// Target wall-clock interval between native audio pulls. Matches the old 80 ms
 /// event-emit cadence so each chunk holds ~the same number of samples — heavy
-/// modes (pitch-shift / phase-vocoder) were tuned around that chunk size, and
+/// modes (pitch shift) were tuned around that chunk size, and
 /// smaller/more-frequent chunks raised their per-chunk overhead enough to stutter.
 const AUDIO_PULL_INTERVAL_MS: f64 = 80.0;
 /// Floor on the post-processing sleep so the loop can't busy-spin when the DSP
@@ -1217,8 +1187,8 @@ fn start_audio_pull_loop(state: AppState) {
             }
 
             // Hold a steady wall-clock cadence: subtract the time spent
-            // pulling + running the DSP so a heavy chunk (e.g. pitch-shift /
-            // phase-vocoder) doesn't push the next pull out and starve the
+            // pulling + running the DSP so a heavy chunk (e.g. pitch shift)
+            // doesn't push the next pull out and starve the
             // playback buffer. Under the old event-push the native side emitted
             // every 80 ms regardless of frontend processing time; this restores
             // that decoupling for the pull model.
@@ -1435,16 +1405,8 @@ async fn open_web(state: &AppState) -> bool {
                 let sr = state_cb.mic.sample_rate().get_untracked();
                 let params = snapshot_params(&state_cb, None, sr);
                 let mute = state_cb.mic.mute_output().get_untracked();
-                let ctx_samples = state_cb.mic.listen_context_samples().get_untracked();
                 let out_channels = WEB_LIVE_DSP.with(|d| {
-                    process_live_channels(
-                        &inputs,
-                        sr,
-                        &mut d.borrow_mut(),
-                        ctx_samples,
-                        &params,
-                        mute,
-                    )
+                    process_live_channels(&inputs, sr, &mut d.borrow_mut(), &params, mute)
                 });
                 for (ch, samples) in out_channels.iter().enumerate() {
                     let _ = output_buffer.copy_to_channel(samples, ch as i32);
@@ -1942,8 +1904,6 @@ mod tests {
             het_comb_spacing: 0.0,
             te_factor: 10.0,
             ps_factor: PitchFactor::down(10.0),
-            pv_factor: PitchFactor::down(10.0),
-            pv_hq: false,
             ps_shift_hz: 0.0,
             zc_factor: 8.0,
             zc_lowest_bat_hz: crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ,
@@ -1988,8 +1948,7 @@ mod tests {
             .map(|c| {
                 let input = tone(freq, c * CHUNK, CHUNK);
                 let inputs: [&[f32]; 1] = [&input];
-                process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false)
-                    .remove(0)
+                process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, &params, false).remove(0)
             })
             .collect()
     }
@@ -2008,8 +1967,7 @@ mod tests {
             let left = tone(left_freq, c * CHUNK, CHUNK);
             let right = tone(right_freq, c * CHUNK, CHUNK);
             let inputs: [&[f32]; 2] = [&left, &right];
-            let mut out =
-                process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false);
+            let mut out = process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, &params, false);
             right_out.push(out.remove(1));
             left_out.push(out.remove(0));
         }
@@ -2034,18 +1992,13 @@ mod tests {
     }
 
     #[test]
-    fn phase_vocoder_channels_are_independent() {
-        assert_channels_independent(PlaybackMode::PhaseVocoder);
-    }
-
-    #[test]
     fn silence_on_one_channel_stays_silent() {
         let params = params(PlaybackMode::Heterodyne);
         let mut dsp = new_live_dsp();
         let left = tone(38_000.0, 0, CHUNK);
         let right = vec![0.0f32; CHUNK];
         let inputs: [&[f32]; 2] = [&left, &right];
-        let out = process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, 16_384, &params, false);
+        let out = process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, &params, false);
         assert!(out[0].iter().any(|s| s.abs() > 1e-3));
         assert!(out[1].iter().all(|&s| s == 0.0));
     }

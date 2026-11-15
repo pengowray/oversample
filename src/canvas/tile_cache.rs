@@ -33,7 +33,6 @@
 //! bump `tile_ready_signal` to trigger re-rendering and schedule remaining
 //! missing tiles.
 
-use crate::audio::streaming_playback::PV_HQ_OVERLAP;
 use crate::audio::streaming_source;
 use crate::canvas::display_dc::{self, DcTarget};
 use crate::canvas::spectrogram_renderer::{self, FlowAlgo, PreRendered};
@@ -48,6 +47,10 @@ use wasm_bindgen_futures::spawn_local;
 
 /// Number of spectrogram columns per tile (constant across all LODs).
 pub const TILE_COLS: usize = 256;
+
+/// Samples read before a tile's own when XForm shows pitch-shifted audio.
+/// A multiple of the pitch shifter's grain length.
+const XFORM_TILE_PAD: usize = 8192;
 
 /// Main magnitude spectrogram cache budget.
 /// Sized for adaptive FFT modes where L0/L1 tiles can be 4–8× larger than base.
@@ -895,22 +898,18 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let sample_start = col_start * config_hop;
         let sample_len = TILE_COLS * config_hop + actual_fft * decim_m;
 
-        // When xform is active with a DSP mode that has per-chunk edge artifacts
-        // (phase vocoder, pitch shift), read extra pre-padding samples so the
+        // When xform is active with pitch shift, whose output differs at the
+        // start of each chunk, read extra pre-padding samples so the
         // transform's onset fade/warmup falls on discarded samples rather than
         // visible tile content.
         let xform_on = state.display.transform().get_untracked();
         let xform_mode = state.playback.mode().get_untracked();
-        let needs_padding = xform_on
-            && matches!(
-                xform_mode,
-                PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
-            );
-        // Pad by PV_HQ_OVERLAP to ensure complete overlap-add warmup
-        // before the tile's actual samples begin. A tile starts on a
+        let needs_padding = xform_on && matches!(xform_mode, PlaybackMode::PitchShift);
+        // Pad by XFORM_TILE_PAD so the shifter has settled before the
+        // tile's actual samples begin. A tile starts on a
         // multiple of 256 samples and so does its padding, which puts the
         // pitch shifter's grains at the same samples in every tile.
-        let xform_pad = if needs_padding { PV_HQ_OVERLAP } else { 0 };
+        let xform_pad = if needs_padding { XFORM_TILE_PAD } else { 0 };
         let padded_start = sample_start.saturating_sub(xform_pad);
         let pre_pad_used = sample_start - padded_start;
         // The pitch shifter's last grains are taken from just inside the
@@ -2467,7 +2466,7 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
         }
         // Playback's own steps: the shifter, then the output shift when
         // one is set (OUT button), with playback's parameters.
-        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
+        PlaybackMode::PitchShift => {
             let params = crate::audio::playback::snapshot_dsp_params(&state, None, sample_rate);
             crate::audio::streaming_playback::apply_dsp_mode(samples, sample_rate, &params)
         }

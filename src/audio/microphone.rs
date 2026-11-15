@@ -965,7 +965,7 @@ pub async fn toggle_listen(state: &AppState) {
 
 /// Reset the DSP state on whichever mic backend is currently active. Use this
 /// when a live-audio parameter change (mode switch, filter knob) would
-/// otherwise leak stale buffer contents into the new mode (PS/PV overlap
+/// otherwise leak stale buffer contents into the new mode (PS overlap
 /// buffers, HET filter delay lines, IIR warmup tail).
 pub fn clear_live_dsp_state(state: &AppState) {
     if let Some(backend) = resolve_active_backend(state) {

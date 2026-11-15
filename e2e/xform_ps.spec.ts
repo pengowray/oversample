@@ -33,7 +33,6 @@ async function openWithPs(page: Page, preset: string) {
   const ps = page.getByTitle(/^PS —/).first();
   await ps.click();
   await ps.click();
-  await page.locator(".algo-row button").filter({ hasText: /^PS$/ }).click();
   await page
     .locator(".factor-presets button")
     .filter({ hasText: new RegExp(`^${preset}$`) })

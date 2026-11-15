@@ -102,15 +102,9 @@ pub(crate) fn process_region(
 
 /// The gain stage of playback, applied to a whole processed region: none when
 /// gain is Off, the slider for Manual, the measured peak gain plus the slider
-/// for Peak, and the slider then the AGC leveler for Adaptive. The phase
-/// vocoder's level boost applies in every mode, as in playback.
+/// for Peak, and the slider then the AGC leveler for Adaptive.
 fn apply_output_gain(channels: &mut [Vec<f32>], output_rate: u32, params: &PlaybackParams) {
-    let gain_db = fixed_gain_db(
-        params.mode,
-        params.gain_mode,
-        params.gain_db,
-        params.auto_peak_gain_db,
-    );
+    let gain_db = fixed_gain_db(params.gain_mode, params.gain_db, params.auto_peak_gain_db);
     for ch in channels.iter_mut() {
         apply_gain(ch, gain_db);
     }
@@ -393,17 +387,13 @@ pub(crate) fn transform_suffix(params: &PlaybackParams) -> String {
                 format!("_TE{}", factor_tag(1.0 / ratio))
             }
         }
-        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
-            let (tag, factor) = if params.mode == PlaybackMode::PitchShift {
-                ("PS", params.ps_factor)
-            } else {
-                ("PV", params.pv_factor)
-            };
+        PlaybackMode::PitchShift => {
+            let factor = params.ps_factor;
             if factor.is_bypass() {
                 String::new()
             } else {
                 let dir = if factor.is_up() { "up" } else { "" };
-                format!("_{tag}{dir}{}", factor_tag(factor.magnitude()))
+                format!("_PS{dir}{}", factor_tag(factor.magnitude()))
             }
         }
         PlaybackMode::Heterodyne => {
@@ -997,17 +987,11 @@ mod tests {
 
     #[test]
     fn export_gain_follows_the_gain_mode() {
-        use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
         use GainMode::*;
-        let normal = PlaybackMode::Normal;
-        assert_eq!(fixed_gain_db(normal, Off, 6.0, 9.0), 0.0);
-        assert_eq!(fixed_gain_db(normal, Manual, 6.0, 9.0), 6.0);
-        assert_eq!(fixed_gain_db(normal, Adaptive, 6.0, 9.0), 6.0);
-        assert_eq!(fixed_gain_db(normal, AutoPeak, 6.0, 9.0), 15.0);
-        assert_eq!(
-            fixed_gain_db(PlaybackMode::PhaseVocoder, Off, 6.0, 9.0),
-            PV_MODE_BOOST_DB
-        );
+        assert_eq!(fixed_gain_db(Off, 6.0, 9.0), 0.0);
+        assert_eq!(fixed_gain_db(Manual, 6.0, 9.0), 6.0);
+        assert_eq!(fixed_gain_db(Adaptive, 6.0, 9.0), 6.0);
+        assert_eq!(fixed_gain_db(AutoPeak, 6.0, 9.0), 15.0);
     }
 
     #[test]
@@ -1050,8 +1034,6 @@ mod tests {
             het_comb_spacing: 0.0,
             te_factor: 10.0,
             ps_factor: PitchFactor::down(10.0),
-            pv_factor: PitchFactor::down(10.0),
-            pv_hq: true,
             ps_shift_hz: 0.0,
             zc_factor: 8.0,
             zc_lowest_bat_hz: crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ,

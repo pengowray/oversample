@@ -62,7 +62,6 @@ pub fn XformButton() -> impl IntoView {
                 PlaybackMode::Heterodyne => "HET",
                 PlaybackMode::TimeExpansion => "TE",
                 PlaybackMode::PitchShift => "PS",
-                PlaybackMode::PhaseVocoder => "PV",
                 PlaybackMode::ZeroCrossing => "ZC",
                 PlaybackMode::Normal => "XF",
             });
@@ -94,7 +93,6 @@ pub fn XformButton() -> impl IntoView {
             PlaybackMode::Heterodyne => "HET",
             PlaybackMode::TimeExpansion => "TE",
             PlaybackMode::PitchShift => "PS",
-            PlaybackMode::PhaseVocoder => "PV",
             PlaybackMode::ZeroCrossing => "ZC",
         }
         .to_string()
@@ -164,7 +162,6 @@ pub fn XformButton() -> impl IntoView {
                 // the sentence added after the list.
                 PlaybackMode::TimeExpansion => {}
                 PlaybackMode::PitchShift => parts.push("pitch-shift".to_string()),
-                PlaybackMode::PhaseVocoder => parts.push("phase-vocoder shift".to_string()),
                 PlaybackMode::ZeroCrossing => parts.push("zero-crossing".to_string()),
                 PlaybackMode::Normal => {}
             }

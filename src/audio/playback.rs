@@ -575,8 +575,6 @@ pub(crate) fn snapshot_dsp_params(
         het_comb_spacing: state.transform.het_comb_spacing().get_untracked(),
         te_factor: state.transform.te_factor().get_untracked(),
         ps_factor: state.transform.ps_factor().get_untracked(),
-        pv_factor: state.transform.pv_factor().get_untracked(),
-        pv_hq: state.transform.pv_hq().get_untracked(),
         ps_shift_hz: {
             // Clamp stored shift to the post-divide low edge so the
             // heterodyne stage never folds output below zero. The user's
@@ -587,9 +585,6 @@ pub(crate) fn snapshot_dsp_params(
             let f = match state.playback.mode().get_untracked() {
                 crate::state::PlaybackMode::PitchShift => {
                     state.transform.ps_factor().get_untracked().signed()
-                }
-                crate::state::PlaybackMode::PhaseVocoder => {
-                    state.transform.pv_factor().get_untracked().signed()
                 }
                 _ => 1.0,
             };

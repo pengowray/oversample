@@ -26,7 +26,6 @@ use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
-use crate::audio::streaming_playback::PV_MODE_BOOST_DB;
 use crate::components::hfr_button::RangeButton;
 use crate::components::mode_button::ModeRadioGroup;
 use crate::components::noise_button::NoiseButton;
@@ -121,16 +120,11 @@ pub(crate) fn GainCombo() -> impl IntoView {
         }
         let mode = state.gain.mode().get();
         let manual_db = state.gain.db().get();
-        let pv_boost = if state.playback.mode().get() == PlaybackMode::PhaseVocoder {
-            PV_MODE_BOOST_DB
-        } else {
-            0.0
-        };
         match mode {
             GainMode::Off => state.gain.mode_last_auto().get().label().to_string(),
-            GainMode::Manual => db_text(manual_db + pv_boost),
+            GainMode::Manual => db_text(manual_db),
             GainMode::AutoPeak => {
-                let total = state.compute_auto_gain() + manual_db + pv_boost;
+                let total = state.compute_auto_gain() + manual_db;
                 // "…" while the DSP peak is measured (the raw peak is used
                 // meanwhile); the Peak from row says "measuring…".
                 let pending = if state.processed_peak_measuring() {
@@ -141,8 +135,8 @@ pub(crate) fn GainCombo() -> impl IntoView {
                 format!("Peak {}{pending}", db_text(total))
             }
             GainMode::Adaptive => {
-                if manual_db > 0.0 || pv_boost > 0.0 {
-                    format!("AGC {}", db_text(manual_db + pv_boost))
+                if manual_db > 0.0 {
+                    format!("AGC {}", db_text(manual_db))
                 } else {
                     "AGC".to_string()
                 }
@@ -220,9 +214,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
                         let db = state.gain.live_db().get();
                         return if db > 0.0 { format!("+{:.0}dB", db) } else { format!("{:.0}dB", db) };
                     }
-                    let db = state.gain.db().get();
-                    let pv = if state.playback.mode().get() == PlaybackMode::PhaseVocoder { PV_MODE_BOOST_DB } else { 0.0 };
-                    let total = db + pv;
+                    let total = state.gain.db().get();
                     if total > 0.0 { format!("+{:.0}dB", total) }
                     else { format!("{:.0}dB", total) }
                 }}</label>

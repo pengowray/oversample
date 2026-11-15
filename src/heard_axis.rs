@@ -11,7 +11,7 @@
 //! labels are scaled. Pointer positions, the HFR band, selections and
 //! annotations stay in the recording's Hz and seconds.
 //!
-//! Pitch shift (PS, and its phase vocoder) changes the audio: the picture is
+//! Pitch shift (PS) changes the audio: the picture is
 //! of the shifted audio, so a 50 kHz call is drawn at 5 kHz at ÷10. The
 //! frequency labels are the picture's own, marked as heard values. Time is
 //! unchanged and its strip stays the recording's.
@@ -265,7 +265,6 @@ fn mode_axis(state: &AppState, track: Track) -> Option<HeardAxis> {
     let mode = read!(state.playback.mode());
     let te_factor = read!(state.transform.te_factor());
     let ps_factor = read!(state.transform.ps_factor());
-    let pv_factor = read!(state.transform.pv_factor());
     let stored_shift = read!(state.transform.ps_shift_hz());
     let band_lo = read!(state.filter.band_ff_freq_lo());
     let sample_rate = current_sample_rate(state, track);
@@ -284,7 +283,6 @@ fn mode_axis(state: &AppState, track: Track) -> Option<HeardAxis> {
             None => HeardAxis::for_te_factor(te_factor),
         },
         PlaybackMode::PitchShift => HeardAxis::for_pitch_shift(ps_factor, shift(ps_factor)),
-        PlaybackMode::PhaseVocoder => HeardAxis::for_pitch_shift(pv_factor, shift(pv_factor)),
         _ => None,
     }
 }
@@ -349,7 +347,7 @@ pub struct HeardView {
     file_id: Option<u64>,
 }
 
-/// Under XForm with PS or PV the picture is of the shifted audio, which
+/// Under XForm with PS the picture is of the shifted audio, which
 /// fills only the bottom of the recording's frequency range (the bottom
 /// sixteenth at ÷16). This is the view that shows it: from 0 to
 /// [`heard_view_top`] of the recording's top frequency after the shift.

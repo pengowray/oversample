@@ -10,7 +10,7 @@
 // that visualises the current output band and is itself draggable.
 //
 // Two playback styles are handled in Phase 1:
-//   • Divide (TE / PS / PV / ZC) — output_freq = input_freq / factor
+//   • Divide (TE / PS / ZC) — output_freq = input_freq / factor
 //   • Linear shift (Heterodyne)  — output_freq = |input_freq − carrier|
 //
 // Each style edits the same underlying signals the mode's own popup
@@ -53,7 +53,7 @@ const HET_SNAP_STEP_HZ: f64 = 5_000.0;
 enum Style {
     /// No mapping — output is the same as input (Normal mode).
     Passthrough,
-    /// output = input / factor (TE, PS, PV, ZC).
+    /// output = input / factor (TE, PS, ZC).
     Divide,
     /// output = |input − carrier| (Heterodyne).
     LinearShift,
@@ -63,10 +63,9 @@ fn style_for(mode: PlaybackMode) -> Style {
     match mode {
         PlaybackMode::Normal => Style::Passthrough,
         PlaybackMode::Heterodyne => Style::LinearShift,
-        PlaybackMode::TimeExpansion
-        | PlaybackMode::PitchShift
-        | PlaybackMode::PhaseVocoder
-        | PlaybackMode::ZeroCrossing => Style::Divide,
+        PlaybackMode::TimeExpansion | PlaybackMode::PitchShift | PlaybackMode::ZeroCrossing => {
+            Style::Divide
+        }
     }
 }
 
@@ -74,14 +73,11 @@ fn style_for(mode: PlaybackMode) -> Style {
 // a single `RwSignal<f64>` handle selected at runtime. These mode-dispatch
 // value/action helpers replace the former `factor_signal`/`auto_signal`.
 
-/// Whether `mode` has a divide-factor (TE/PS/PV/ZC).
+/// Whether `mode` has a divide-factor (TE/PS/ZC).
 fn has_factor(mode: PlaybackMode) -> bool {
     matches!(
         mode,
-        PlaybackMode::TimeExpansion
-            | PlaybackMode::PitchShift
-            | PlaybackMode::PhaseVocoder
-            | PlaybackMode::ZeroCrossing
+        PlaybackMode::TimeExpansion | PlaybackMode::PitchShift | PlaybackMode::ZeroCrossing
     )
 }
 
@@ -90,7 +86,6 @@ fn factor_value(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
         PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get()),
         PlaybackMode::PitchShift => Some(state.transform.ps_factor().get().signed()),
-        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get().signed()),
         PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get()),
         _ => None,
     }
@@ -101,7 +96,6 @@ fn factor_value_untracked(state: &AppState, mode: PlaybackMode) -> Option<f64> {
     match mode {
         PlaybackMode::TimeExpansion => Some(state.transform.te_factor().get_untracked()),
         PlaybackMode::PitchShift => Some(state.transform.ps_factor().get_untracked().signed()),
-        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor().get_untracked().signed()),
         PlaybackMode::ZeroCrossing => Some(state.transform.zc_factor().get_untracked()),
         _ => None,
     }
@@ -112,7 +106,6 @@ fn set_factor(state: &AppState, mode: PlaybackMode, v: f64) {
     match mode {
         PlaybackMode::TimeExpansion => state.transform.te_factor().set(v),
         PlaybackMode::PitchShift => state.transform.ps_factor().set(PitchFactor::from_signed(v)),
-        PlaybackMode::PhaseVocoder => state.transform.pv_factor().set(PitchFactor::from_signed(v)),
         PlaybackMode::ZeroCrossing => state.transform.zc_factor().set(v),
         _ => {}
     }
@@ -123,7 +116,6 @@ fn auto_value(state: &AppState, mode: PlaybackMode) -> Option<bool> {
     match mode {
         PlaybackMode::TimeExpansion => Some(state.transform.te_factor_auto().get()),
         PlaybackMode::PitchShift => Some(state.transform.ps_factor_auto().get()),
-        PlaybackMode::PhaseVocoder => Some(state.transform.pv_factor_auto().get()),
         PlaybackMode::Heterodyne => Some(state.transform.het_freq_auto().get()),
         _ => None,
     }
@@ -134,7 +126,6 @@ fn set_auto(state: &AppState, mode: PlaybackMode, v: bool) {
     match mode {
         PlaybackMode::TimeExpansion => state.transform.te_factor_auto().set(v),
         PlaybackMode::PitchShift => state.transform.ps_factor_auto().set(v),
-        PlaybackMode::PhaseVocoder => state.transform.pv_factor_auto().set(v),
         PlaybackMode::Heterodyne => state.transform.het_freq_auto().set(v),
         _ => {}
     }
@@ -145,7 +136,6 @@ fn toggle_auto(state: &AppState, mode: PlaybackMode) {
     match mode {
         PlaybackMode::TimeExpansion => state.transform.te_factor_auto().update(|v| *v = !*v),
         PlaybackMode::PitchShift => state.transform.ps_factor_auto().update(|v| *v = !*v),
-        PlaybackMode::PhaseVocoder => state.transform.pv_factor_auto().update(|v| *v = !*v),
         PlaybackMode::Heterodyne => state.transform.het_freq_auto().update(|v| *v = !*v),
         _ => {}
     }
@@ -159,11 +149,10 @@ fn band(state: &AppState) -> (f64, f64) {
 }
 
 /// Whether this mode supports a compound scale + shift mapping.
-/// Only the PS bucket (PitchShift / PhaseVocoder) does today — the
-/// `ps_shift_hz` signal is honoured by `apply_dsp_mode`'s PS/PV
-/// branches via a heterodyne pre-shift stage.
+/// Only pitch shift does today: `apply_dsp_mode`'s PS branch applies
+/// `ps_shift_hz` with a heterodyne stage after the shifter.
 fn supports_shift(mode: PlaybackMode) -> bool {
-    matches!(mode, PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder)
+    mode == PlaybackMode::PitchShift
 }
 
 /// Clamp the user's stored output-shift to the post-divide low edge so
@@ -197,7 +186,7 @@ fn current_output_range(state: &AppState, mode: PlaybackMode) -> Option<(f64, f6
         Style::Passthrough => Some((in_lo, in_hi)),
         Style::Divide => {
             let f = factor_value(state, mode)?;
-            // Optional output-side shift for PS/PV — divide first, then
+            // Optional output-side shift for PS — divide first, then
             // subtract. Clamped to the post-divide low edge so the
             // output band never folds below zero.
             let shift = if supports_shift(mode) {
@@ -431,7 +420,7 @@ fn DivideControls(#[prop(into)] mode: Signal<PlaybackMode>) -> impl IntoView {
                 }
             }).collect::<Vec<_>>()}
         </div>
-        // ── Optional output-side shift (PS / PV only) ──
+        // ── Optional output-side shift (PS only) ──
         // The user thinks/sets in output-Hz space ("shift the output
         // down by 500 Hz"); the DSP applies it as a post-pitch
         // heterodyne, which keeps the LP cutoff small and well-behaved.
@@ -584,7 +573,7 @@ fn BandSummary() -> impl IntoView {
                 }}
             </div>
             // Intermediate "after divide, before output shift" range —
-            // only shown for PS / PV when a shift is active. With the
+            // only shown for PS when a shift is active. With the
             // effective-shift clamp the post-shift output never folds
             // below zero, but if the user's stored shift exceeds what
             // the current factor/BandFF allows, we annotate "(capped)"
