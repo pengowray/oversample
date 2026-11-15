@@ -69,8 +69,9 @@
     }
 
     // ── The hand that acts out a step's drag ────────────────────────────
-    // A step with gesture 'drag-up' gets a large hand that drags up its
-    // control, over and over, until the user starts a drag there.
+    // A step with a gesture gets a large hand that drags along its control,
+    // over and over, until the user starts a drag there: 'drag-up' for the
+    // frequency strip, 'drag-right' for the time strip.
     //
     // The hand is a child of <body>, not of the control: the strips clip
     // their contents, and driver.css turns pointer events back on inside
@@ -100,36 +101,78 @@
         gesture = null;
     }
 
-    // Put the hand at the start of its drag and set how far it travels.
-    function placeGesture() {
-        if (!gesture) return;
-        var r = gesture.el.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) return;
+    function popoverRect() {
+        var pop = document.querySelector('.driver-popover');
+        var p = pop && pop.getBoundingClientRect();
+        return p && p.width > 0 ? p : null;
+    }
+
+    // Up the middle of a tall strip. The hand hangs below the fingertip.
+    function placeDragUp(r) {
         var size = Math.max(88, Math.min(150, r.height * 0.22));
         var x = r.left + r.width / 2;
         var startY = r.top + r.height * 0.8;
         var endY = r.top + r.height * 0.3;
         // Stop below the popover when the hand would pass under it.
-        var pop = document.querySelector('.driver-popover');
-        if (pop) {
-            var p = pop.getBoundingClientRect();
+        var p = popoverRect();
+        if (p) {
             var below = p.bottom + size * 0.3;
-            if (p.width > 0 && p.left < x + size && below > endY && startY - below >= 40) {
-                endY = below;
+            if (p.left < x + size && below > endY && startY - below >= 40) endY = below;
+        }
+        return { size: size, x: x, y: startY, dx: 0, dy: endY - startY, above: false };
+    }
+
+    // Along a wide strip at the bottom of the view. The hand hangs below the
+    // fingertip when the window has room under the strip (a phone). When it
+    // does not, the hand reaches down from above, and stops short of the
+    // popover, which sits over the right end of the strip.
+    function placeDragRight(r) {
+        var size = Math.max(88, Math.min(150, r.width * 0.12));
+        var y = r.top + r.height / 2;
+        var startX = r.left + r.width * 0.1;
+        var endX = r.left + r.width * 0.55;
+        // The leaning hand is about 1.05 of its width across and down.
+        var reach = size * 1.05;
+        var room = window.innerHeight - y;
+        var above = room < reach;
+        if (above) {
+            var p = popoverRect();
+            if (p && p.bottom > y - reach) {
+                var stop = p.left - reach - 8;
+                if (stop - startX >= 60) {
+                    endX = Math.min(endX, stop);
+                } else {
+                    // No room beside the popover either: a smaller hand below.
+                    above = false;
+                    size = Math.max(56, Math.min(size, room / 1.05));
+                }
             }
         }
+        return { size: size, x: startX, y: y, dx: endX - startX, dy: 0, above: above };
+    }
+
+    var PLACE = { 'drag-up': placeDragUp, 'drag-right': placeDragRight };
+
+    // Put the hand at the start of its drag and set how far it travels.
+    function placeGesture() {
+        if (!gesture) return;
+        var r = gesture.el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        var g = PLACE[gesture.kind](r);
+        gesture.node.classList.toggle('tour-gesture-above', g.above);
         var s = gesture.node.style;
-        s.left = x + 'px';
-        s.top = startY + 'px';
-        s.setProperty('--tour-hand-size', size + 'px');
-        s.setProperty('--tour-hand-left', -size * HAND_TIP_X + 'px');
-        s.setProperty('--tour-hand-top', -size * 1.3 * HAND_TIP_Y + 'px');
-        s.setProperty('--tour-drag-y', endY - startY + 'px');
+        s.left = g.x + 'px';
+        s.top = g.y + 'px';
+        s.setProperty('--tour-hand-size', g.size + 'px');
+        s.setProperty('--tour-hand-left', -g.size * HAND_TIP_X + 'px');
+        s.setProperty('--tour-hand-top', -g.size * 1.3 * HAND_TIP_Y + 'px');
+        s.setProperty('--tour-drag-x', g.dx + 'px');
+        s.setProperty('--tour-drag-y', g.dy + 'px');
     }
 
     function showGesture(el, kind) {
         removeGesture();
-        if (kind !== 'drag-up' || !el) return;
+        if (!PLACE[kind] || !el) return;
         var node = document.createElement('div');
         node.className = 'tour-gesture';
         node.innerHTML = HAND_SVG;
@@ -170,7 +213,8 @@
 
     window.oversampleTour = {
         // steps: [{ selector, title, description, side, align, wait_ms, gesture }]
-        // gesture: 'drag-up' shows a hand dragging up the control.
+        // gesture: 'drag-up' or 'drag-right' shows a hand dragging along
+        // the control.
         // labels: { next, done, close, progress } ("{{current}} of {{total}}")
         // on_step(index) runs as each step starts; on_end() once at the end.
         start: function (steps, labels, onStep, onEnd) {

@@ -9654,7 +9654,7 @@ button.canvas-overflow-action-btn.disabled {
 }
 
 /* The hand that acts out a tutorial step's drag (js/hfr-tour.js): it presses
-   the strip, drags up, lifts off, and starts again. Large on purpose, so the
+   the strip, drags along it, lifts off, and starts again. Large on purpose, so the
    step reads as "drag here" before the text is read. Above driver's overlay
    (10000) and below its popover, so it never covers the instructions. It
    takes no pointer events: the user drags the strip under it. */
@@ -9664,13 +9664,17 @@ button.canvas-overflow-action-btn.disabled {
     width: 0;
     height: 0;
     pointer-events: none;
+    /* Here and not on .tour-hand, so a flipped hand keeps its shadow below. */
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
     animation: tour-gesture-drag 2.8s ease-in-out infinite;
 }
 .tour-gesture[hidden] {
     display: none;
 }
 /* The fingertip sits on .tour-gesture's point; the hand leans to the right
-   so it lies over the recording and leaves the strip in view. */
+   so it lies over the recording and leaves the strip in view. On the time
+   strip in a window with no room under it, the hand is flipped to reach down
+   from above (.tour-gesture-above). */
 .tour-hand {
     position: absolute;
     left: var(--tour-hand-left);
@@ -9683,26 +9687,29 @@ button.canvas-overflow-action-btn.disabled {
     stroke-width: 4;
     stroke-linejoin: round;
     stroke-linecap: round;
-    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
+    --tour-hand-lean: rotate(-24deg);
     transform-origin: 46% 4.6%;
-    transform: rotate(-24deg);
+    transform: var(--tour-hand-lean);
     animation: tour-hand-press 2.8s ease-in-out infinite;
+}
+.tour-gesture-above .tour-hand {
+    --tour-hand-lean: scaleY(-1) rotate(-24deg);
 }
 .tour-hand-lines {
     fill: none;
     stroke-width: 3;
 }
 @keyframes tour-gesture-drag {
-    0% { opacity: 0; transform: translateY(0); }
-    10%, 24% { opacity: 1; transform: translateY(0); }
-    68%, 82% { opacity: 1; transform: translateY(var(--tour-drag-y)); }
-    94%, 100% { opacity: 0; transform: translateY(var(--tour-drag-y)); }
+    0% { opacity: 0; transform: translate(0, 0); }
+    10%, 24% { opacity: 1; transform: translate(0, 0); }
+    68%, 82% { opacity: 1; transform: translate(var(--tour-drag-x), var(--tour-drag-y)); }
+    94%, 100% { opacity: 0; transform: translate(var(--tour-drag-x), var(--tour-drag-y)); }
 }
 /* Smaller while the finger is down on the strip. */
 @keyframes tour-hand-press {
-    0%, 10% { transform: rotate(-24deg) scale(1.18); }
-    24%, 68% { transform: rotate(-24deg) scale(1); }
-    82%, 100% { transform: rotate(-24deg) scale(1.18); }
+    0%, 10% { transform: var(--tour-hand-lean) scale(1.18); }
+    24%, 68% { transform: var(--tour-hand-lean) scale(1); }
+    82%, 100% { transform: var(--tour-hand-lean) scale(1.18); }
 }
 /* Reduced motion: the hand rests on the strip without moving. */
 @media (prefers-reduced-motion: reduce) {

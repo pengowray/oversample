@@ -44,8 +44,10 @@
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.iife.js"/>
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.css"/>
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.LICENSE"/>
-    <link data-trunk rel="copy-file" href="js/hfr-tour.js"/>
-    <script src="hfr-tour.js"></script>
+    <!-- data-trunk: Trunk puts a content hash in the file name, so a new
+         build never runs with an old cached copy of the script. The driver
+         files it loads carry their version in their names. -->
+    <script data-trunk src="js/hfr-tour.js"></script>
     <script>
     // .fit-text — auto-shrink text to fit its container.
     //
