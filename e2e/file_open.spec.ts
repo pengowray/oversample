@@ -249,6 +249,59 @@ test.describe("Opening another file", () => {
     expect((await snap(page)).selection).toEqual(made);
   });
 
+  test("playback carries on in another channel of the same recording", async ({ page }) => {
+    await start(page, "rec_Ch1.wav", 20);
+    await open(page, "rec_Ch2.wav", 20, 99);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    expect((await snap(page)).streamFile).toBe("rec_Ch2.wav");
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(0.5);
+    const before = (await snap(page)).playheadTime;
+
+    // The other channel plays on from the same position.
+    await show(page, "rec_Ch1.wav");
+    await expect.poll(async () => (await snap(page)).streamFile).toBe("rec_Ch1.wav");
+    const after = await snap(page);
+    expect(after.isPlaying).toBe(true);
+    expect(after.playheadTime).toBeGreaterThanOrEqual(before);
+    expect(after.playheadTime).toBeLessThan(before + 3);
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(after.playheadTime + 0.3);
+    expect((await snap(page)).isPlaying).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+  });
+
+  test("the track menu in the heading switches channel like the file list", async ({ page }) => {
+    await start(page, "rec_Ch1.wav", 20);
+    await open(page, "rec_Ch2.wav", 20, 99);
+    const place = await makeHistory(page);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+
+    await page.locator(".toolbar-badge-row > button.file-badge-track").click();
+    await page.locator(".badge-dropdown-item", { hasText: "rec_Ch1.wav" }).click();
+    await expect.poll(async () => (await snap(page)).currentFile).toBe("rec_Ch1.wav");
+    // Playback carries on in the other channel, and the history is shared.
+    await expect.poll(async () => (await snap(page)).streamFile).toBe("rec_Ch1.wav");
+    expect((await snap(page)).isPlaying).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+    expect(await canGoBack(page)).toBe(true);
+    await goBack(page);
+    await expect.poll(async () => (await snap(page)).scrollOffset).toBeCloseTo(place, 6);
+  });
+
+  test("the next recording of a sequence opens stopped at the start", async ({ page }) => {
+    await start(page, "260212_0041_1.wav", 20);
+    await open(page, "260212_0042_1.wav", 20, 99);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(0.5);
+
+    await show(page, "260212_0041_1.wav");
+    await expectStoppedAtStart(page);
+  });
+
   test("a file keeps its scroll after a shorter file is opened", async ({ page }) => {
     await start(page, "alpha.wav", 20);
     const before = await scrollAway(page, 30);

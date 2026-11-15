@@ -1001,10 +1001,10 @@ pub fn App() -> impl IntoView {
                 }
             }
 
-            // The playhead is shared between an original and its denoised
-            // copy: if audio is playing, carry on from the same position in
-            // the incoming file, so the two can be compared by ear. (Any
-            // other switch stopped playback above.)
+            // The playhead is shared by the channels of one recording, and by
+            // an original and its denoised copy: if audio is playing, carry
+            // on from the same position in the incoming file, so they can be
+            // compared by ear. (Any other switch stopped playback above.)
             if state.playback.is_playing().get_untracked()
                 && shares(crate::scope::Setting::Playhead)
             {
