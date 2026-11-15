@@ -5553,7 +5553,8 @@ a.open-link-btn {
     display: block;
     font-size: 10px;
     font-weight: 400;
-    color: #7a7a7a;
+    /* #808080 on the panel's #101010 is 4.8:1, above the 4.5:1 minimum. */
+    color: #808080;
     margin-top: 1px;
     padding-left: 10px;
 }

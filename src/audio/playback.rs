@@ -14,6 +14,9 @@ thread_local! {
     /// `LoadedFile.id` of the file the newest audio stream reads from.
     /// `None` for a timeline, or before anything has played.
     static STREAM_FILE_ID: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// `LoadedFile.id` of each file the newest timeline stream reads from, in
+    /// timeline order. Empty when the newest stream is not a timeline.
+    static STREAM_TIMELINE_FILE_IDS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
 }
 
 /// `LoadedFile.id` of the file the newest audio stream was started on (it may
@@ -23,12 +26,28 @@ pub fn stream_file_id() -> Option<u64> {
     STREAM_FILE_ID.with(|c| c.get())
 }
 
+/// `LoadedFile.id` of each file the newest timeline stream was built from (it
+/// may have finished since). For the e2e hook: after the timeline's channel is
+/// switched during playback, this shows which channel's files are heard.
+pub fn stream_timeline_file_ids() -> Vec<u64> {
+    STREAM_TIMELINE_FILE_IDS.with(|c| c.borrow().clone())
+}
+
+/// Record which file or timeline files the stream about to start reads from.
+fn note_stream_source(target: &PlaybackTarget) {
+    STREAM_FILE_ID.with(|c| c.set(target.file_id));
+    STREAM_TIMELINE_FILE_IDS.with(|c| c.borrow_mut().clone_from(&target.timeline_file_ids));
+}
+
 struct PlaybackTarget {
     source: Arc<dyn AudioSource>,
     sample_rate: u32,
     duration_secs: f64,
     /// The file the source belongs to. `None` for a timeline.
     file_id: Option<u64>,
+    /// The files a timeline's source reads from, in timeline order. Empty for
+    /// a single file.
+    timeline_file_ids: Vec<u64>,
 }
 
 fn timeline_selection(state: &AppState) -> Option<Selection> {
@@ -41,6 +60,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
     if let Some(timeline) = state.timeline.active().get_untracked() {
         let mut sample_rate = None;
         let mut segments = Vec::with_capacity(timeline.segments.len());
+        let mut timeline_file_ids = Vec::with_capacity(timeline.segments.len());
 
         for seg in &timeline.segments {
             let file = files.get(seg.file_index)?;
@@ -53,6 +73,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
             } else {
                 sample_rate = Some(sr);
             }
+            timeline_file_ids.push(file.id);
             segments.push((
                 file.audio.source.clone(),
                 seg.timeline_offset_secs,
@@ -67,6 +88,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
             sample_rate: sr,
             duration_secs: timeline.total_duration_secs,
             file_id: None,
+            timeline_file_ids,
         });
     }
 
@@ -77,6 +99,7 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
         sample_rate: file.audio.sample_rate,
         duration_secs: file.audio.duration_secs,
         file_id: Some(file.id),
+        timeline_file_ids: Vec::new(),
     })
 }
 
@@ -252,7 +275,7 @@ pub fn replay_live(state: &AppState) {
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
-    STREAM_FILE_ID.with(|c| c.set(target.file_id));
+    note_stream_source(&target);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -392,7 +415,7 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
-    STREAM_FILE_ID.with(|c| c.set(target.file_id));
+    note_stream_source(&target);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -461,7 +484,7 @@ pub fn play(state: &AppState) {
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
-    STREAM_FILE_ID.with(|c| c.set(target.file_id));
+    note_stream_source(&target);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,

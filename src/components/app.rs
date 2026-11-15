@@ -425,6 +425,19 @@ pub fn App() -> impl IntoView {
         });
     }
 
+    // A file opened while a timeline is shown can be the channel file one of
+    // its takes was missing. Rebuild the timeline so the take's empty place
+    // shows that file and the Channel menu counts it. (Removing a file
+    // rebuilds the timeline itself, after it has renumbered the files.)
+    let file_count = Memo::new(move |_| state.library.files().with(|f| f.len()));
+    Effect::new(move |prev: Option<usize>| {
+        let count = file_count.get();
+        if prev.is_some_and(|p| count > p) && state.timeline.active().get_untracked().is_some() {
+            crate::timeline::rebuild_active(&state);
+        }
+        count
+    });
+
     // Keep scroll valid for the active file/timeline when the viewport, zoom,
     // or target duration changes. Without this, switching to a shorter file or
     // resizing while a non-spectrogram view is active can leave scroll outside
@@ -998,7 +1011,9 @@ pub fn App() -> impl IntoView {
             }
             if ev.key() == " " {
                 ev.prevent_default();
-                if state_kb.library.current_index().get_untracked().is_some() {
+                if state_kb.library.current_index().get_untracked().is_some()
+                    || state_kb.timeline.active().get_untracked().is_some()
+                {
                     if state_kb.playback.is_playing().get_untracked() {
                         playback::stop(&state_kb);
                     } else {
@@ -1204,6 +1219,11 @@ pub fn App() -> impl IntoView {
                 }
             }
             if ev.key() == "Escape" {
+                // An open toolbar menu (Channel, View, HFR and the others).
+                if state_kb.panels.layer_panel_open().get_untracked().is_some() {
+                    state_kb.panels.layer_panel_open().set(None);
+                    return;
+                }
                 if state_kb.bat_book.ref_open().get_untracked() {
                     state_kb.bat_book.ref_open().set(false);
                     return;

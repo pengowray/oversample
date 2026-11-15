@@ -192,6 +192,38 @@ pub fn install(state: AppState) {
             "streamFile",
             name_of(crate::audio::playback::stream_file_id()),
         );
+        // The open timeline: the files its clips show for the chosen channel,
+        // the takes left empty because that channel's file is not loaded, and
+        // the files the newest timeline audio stream reads from.
+        let names = |ids: &mut dyn Iterator<Item = u64>| -> JsValue {
+            let arr = js_sys::Array::new();
+            for id in ids {
+                arr.push(&name_of(Some(id)));
+            }
+            arr.into()
+        };
+        if let Some(tl) = state.timeline.active().get_untracked() {
+            set(
+                &o,
+                "timelineFiles",
+                names(
+                    &mut tl
+                        .segments
+                        .iter()
+                        .filter_map(|s| files.get(s.file_index).map(|f| f.id)),
+                ),
+            );
+            let missing = js_sys::Array::new();
+            for m in &tl.missing {
+                missing.push(&JsValue::from_str(&m.take));
+            }
+            set(&o, "timelineMissing", missing.into());
+        }
+        set(
+            &o,
+            "timelineStreamFiles",
+            names(&mut crate::audio::playback::stream_timeline_file_ids().into_iter()),
+        );
         // The HFR band in force (0 to 0 when HFR is off).
         set(
             &o,

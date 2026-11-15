@@ -452,15 +452,7 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
 
     // Timeline segments hold each file's duration.
     if state.timeline.active().get_untracked().is_some() {
-        let sel = state.timeline.selected_file_indices().get_untracked();
-        let rebuilt = state
-            .library
-            .files()
-            .with_untracked(|files| crate::timeline::TimelineView::from_files(&sel, files));
-        if rebuilt.is_none() {
-            state.timeline.active_track().set(None);
-        }
-        state.timeline.active().set(rebuilt);
+        crate::timeline::rebuild_active(&state);
     }
 
     // The effect that clamps the HFR band to the file's Nyquist frequency
