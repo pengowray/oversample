@@ -83,8 +83,8 @@ test("a 16 kHz recording cannot be denoised, and the menu says why", async ({ pa
   await openRecording(page, "low-rate.wav", batLikeWav(16_000, 2));
   await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toBeDisabled();
   // The space before "kHz" is a no-break space.
-  await expect(page.getByText(/Sample rate too low: 16\skHz/)).toBeVisible();
-  await expect(page.getByText(/The model is untested below 22\.05\skHz\./)).toBeVisible();
+  await expect(page.getByText(/Sample rate too low/)).toBeVisible();
+  await expect(page.getByText(/Needs 22\.05\skHz or more\. This recording: 16\skHz\./)).toBeVisible();
   await page.screenshot({ path: "test-results/denoise-refused.png" });
 });
 

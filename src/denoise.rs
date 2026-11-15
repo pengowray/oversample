@@ -120,9 +120,9 @@ pub mod text {
     /// "22.05 kHz" and not the "22.1 kHz" of the app's sample rate text.
     pub fn rate_too_low(rate: u32, min_rate: u32) -> String {
         format!(
-            "Sample rate too low: {}\nThe model is untested below {}.",
-            sample_rate_khz(rate),
-            khz(i64::from(min_rate), 2)
+            "Sample rate too low\nNeeds {} or more. This recording: {}.",
+            khz(i64::from(min_rate), 2),
+            sample_rate_khz(rate)
         )
     }
     /// Two lines. `frames` and `max_frames` are samples in one channel. The
@@ -541,12 +541,12 @@ mod tests {
         assert!(refusal(22_050, 1_000_000, 2).is_none());
         assert_eq!(
             refusal(16_000, 1_000_000, 1).unwrap(),
-            "Sample rate too low: 16\u{a0}kHz\nThe model is untested below 22.05\u{a0}kHz."
+            "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 16\u{a0}kHz."
         );
         // 22,000 Hz is under the limit, and the two rates must not read alike.
         assert_eq!(
             refusal(22_000, 1_000_000, 1).unwrap(),
-            "Sample rate too low: 22\u{a0}kHz\nThe model is untested below 22.05\u{a0}kHz."
+            "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 22\u{a0}kHz."
         );
         assert_eq!(
             refusal(384_000, MAX_SAMPLES + 1, 1).unwrap(),
