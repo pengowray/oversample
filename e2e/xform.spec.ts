@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * The XForm switch in the view bar and the rows of its Display Processing
+ * The XForm switch in the view bar and the rows of its
  * menu (src/components/xform_button.rs).
  */
 
@@ -41,7 +41,7 @@ function sweepWav(rate: number, seconds: number): Buffer {
   return Buffer.concat([h, data]);
 }
 
-const ROWS = ["EQ", "Notch", "NR", "Xform", "Gain", "Resam"];
+const ROWS = ["PASS filter", "Notch filter", "Noise reduction", "Playback mode", "Gain", "Resampling"];
 
 async function openRecording(page: Page) {
   await page.goto("/");
@@ -54,7 +54,7 @@ async function openRecording(page: Page) {
 
 const xformSwitch = (page: Page) => page.getByRole("switch", { name: "XForm" });
 
-/** One row of the Display Processing menu, by its label. */
+/** One row of the XForm menu, by its label. */
 const row = (page: Page, label: string) =>
   page.locator(".dsp-filter-row", {
     has: page.locator(".dsp-filter-label", { hasText: new RegExp(`^${label}$`) }),
@@ -64,28 +64,28 @@ const row = (page: Page, label: string) =>
 async function selected(page: Page): Promise<string[]> {
   const out: string[] = [];
   for (const label of ROWS) {
-    out.push((await row(page, label).locator("button.sel").innerText()).trim());
+    out.push((await row(page, label).locator("button.sel").getAttribute("aria-label")) ?? "");
   }
   return out;
 }
 
-test("switching XForm on for the first time sets every row to sam", async ({ page }) => {
+test("switching XForm on for the first time sets every row to As heard", async ({ page }) => {
   await openRecording(page);
   await xformSwitch(page).click();
   await expect(xformSwitch(page)).toHaveAttribute("aria-checked", "true");
-  await page.getByTitle("Display Processing settings").click();
-  expect(await selected(page)).toEqual(["sam", "sam", "sam", "sam", "sam", "sam"]);
+  await page.getByTitle("XForm settings").click();
+  expect(await selected(page)).toEqual(Array(6).fill("As heard"));
 });
 
 test("the rows keep their settings when XForm is switched off and on", async ({ page }) => {
   await openRecording(page);
   await xformSwitch(page).click();
-  await page.getByTitle("Display Processing settings").click();
+  await page.getByTitle("XForm settings").click();
 
-  await row(page, "NR").getByRole("button", { name: "off" }).click();
-  await row(page, "Gain").getByRole("button", { name: "aut" }).click();
-  await row(page, "Resam").getByRole("button", { name: "off" }).click();
-  const chosen = ["sam", "sam", "off", "sam", "aut", "off"];
+  await row(page, "Noise reduction").getByRole("button", { name: "Off", exact: true }).click();
+  await row(page, "Gain").getByRole("button", { name: "Auto", exact: true }).click();
+  await row(page, "Resampling").getByRole("button", { name: "Off", exact: true }).click();
+  const chosen = ["As heard", "As heard", "Off", "As heard", "Auto", "Off"];
   expect(await selected(page)).toEqual(chosen);
 
   await xformSwitch(page).click();

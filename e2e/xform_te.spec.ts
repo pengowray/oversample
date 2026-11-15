@@ -97,18 +97,18 @@ function numberLabels(drawn: Drawn[], where: string, unit = ""): Map<number, Dra
 
 const xformSwitch = (page: Page) => page.getByRole("switch", { name: "XForm" });
 
-/** One row of the Display Processing menu, by its label. */
+/** One row of the XForm menu, by its label. */
 const row = (page: Page, label: string) =>
   page.locator(".dsp-filter-row", {
     has: page.locator(".dsp-filter-label", { hasText: new RegExp(`^${label}$`) }),
   });
 
-/** Sets rows of the Display Processing menu, then closes the menu. */
+/** Sets rows of the XForm menu, then closes the menu. */
 async function setRows(page: Page, rows: Record<string, string>) {
-  const menu = page.getByTitle("Display Processing settings");
+  const menu = page.getByTitle("XForm settings");
   await menu.click();
   for (const [label, value] of Object.entries(rows)) {
-    await row(page, label).getByRole("button", { name: value }).click();
+    await row(page, label).getByRole("button", { name: value, exact: true }).click();
   }
   await menu.click();
 }
@@ -180,18 +180,25 @@ test("TE under XForm draws the recording's own picture", async ({ page }) => {
   expect(shareBright(raw)).toBeGreaterThan(0.002);
 
   await xformSwitch(page).click();
-  await setRows(page, { EQ: "off", Notch: "off", NR: "off", Gain: "off", Resam: "off", Xform: "sam" });
+  await setRows(page, {
+    "PASS filter": "Off",
+    "Notch filter": "Off",
+    "Noise reduction": "Off",
+    Gain: "Off",
+    Resampling: "Off",
+    "Playback mode": "As heard",
+  });
   await page.mouse.move(700, 20);
   await expect
     .poll(async () => shareDifferent(raw, await callPixels(page)), { timeout: 15_000 })
     .toBeLessThan(0.005);
 });
 
-test("TE under XForm with every row on sam still shows the calls", async ({ page }) => {
+test("TE under XForm with every row on As heard still shows the calls", async ({ page }) => {
   await openWithTe10(page);
   const raw = await callPixels(page);
 
-  // Every row starts on "sam" the first time XForm is switched on.
+  // Every row starts on "As heard" the first time XForm is switched on.
   await xformSwitch(page).click();
   await page.mouse.move(700, 20);
   await page.waitForTimeout(3000);
@@ -208,7 +215,14 @@ test("TE under XForm labels the axes with the values heard", async ({ page }) =>
   expect(rawTime.size).toBeGreaterThanOrEqual(3);
 
   await xformSwitch(page).click();
-  await setRows(page, { EQ: "off", Notch: "off", NR: "off", Gain: "off", Resam: "off", Xform: "sam" });
+  await setRows(page, {
+    "PASS filter": "Off",
+    "Notch filter": "Off",
+    "Noise reduction": "Off",
+    Gain: "Off",
+    Resampling: "Off",
+    "Playback mode": "As heard",
+  });
   await page.mouse.move(700, 20);
   await page.waitForTimeout(1500);
   const after = await drawnNow(page);

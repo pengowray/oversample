@@ -2,27 +2,32 @@ use leptos::prelude::*;
 
 use crate::state::DisplayFilterMode;
 
-/// A single row in the DSP filter grid: label + 4-way segmented control + playback indicator.
+/// One row of the XForm menu's grid: the control's name, then a cell for
+/// each choice (Off, Auto, As heard, Custom) under the header's columns.
+///
+/// A choice the row does not have leaves its cell empty. The "As heard" cell
+/// always shows what the Hear bar is set to for this control ("on", "HET"),
+/// because that is what the choice gives. The other cells show their name
+/// only while selected.
 #[component]
 pub fn DspFilterRow<S>(
+    /// The control's name, as the Hear bar and its menus give it.
     label: &'static str,
     /// The mode signal — generic so it accepts both `RwSignal<DisplayFilterMode>`
     /// and a `Store<DisplayState>` subfield (distinct types).
     signal: S,
-    /// Whether the corresponding playback filter is currently active
+    /// What the Hear bar is set to for this control, shown in the "As heard"
+    /// cell: "on", "off", "HET", "48 kHz".
     #[prop(into)]
-    playback_active: Signal<bool>,
-    /// Whether 'custom' is available (greyed out if false)
+    heard: Signal<String>,
+    /// Whether the row has a Custom choice.
     custom_available: bool,
-    /// Whether 'auto' is available (greyed out if false)
+    /// Whether the row has an Auto choice.
     #[prop(default = true)]
     auto_available: bool,
-    /// When true, the sam-dot shows orange instead of green (browser handling resampling)
+    /// Tooltip for the "As heard" cell, in place of the choice's name.
     #[prop(optional, into)]
-    browser_resampling: Option<Signal<bool>>,
-    /// Extra tooltip text for the sam-dot
-    #[prop(optional, into)]
-    sam_tooltip: Option<Signal<String>>,
+    heard_tooltip: Option<Signal<String>>,
 ) -> impl IntoView
 where
     S: leptos::prelude::Get<Value = DisplayFilterMode>
@@ -32,60 +37,57 @@ where
         + Sync
         + 'static,
 {
-    let modes = DisplayFilterMode::ALL;
-
     view! {
         <div class="dsp-filter-row">
             <span class="dsp-filter-label">{label}</span>
-            <div class="dsp-filter-seg">
-                {modes.iter().copied().map(|mode| {
-                    let is_custom = mode == DisplayFilterMode::Custom;
-                    let is_auto = mode == DisplayFilterMode::Auto;
-                    let disabled = (is_custom && !custom_available) || (is_auto && !auto_available);
-                    let is_same = mode == DisplayFilterMode::Same;
-                    view! {
-                        <button
-                            class=move || {
-                                let sel = signal.get() == mode;
-                                match (sel, disabled) {
-                                    (true, _) => "sel",
-                                    (_, true) => "disabled",
-                                    _ => "",
-                                }
+            {DisplayFilterMode::ALL.iter().copied().map(|mode| {
+                let is_same = mode == DisplayFilterMode::Same;
+                let available = match mode {
+                    DisplayFilterMode::Custom => custom_available,
+                    DisplayFilterMode::Auto => auto_available,
+                    DisplayFilterMode::Off | DisplayFilterMode::Same => true,
+                };
+                if !available {
+                    return view! { <span class="dsp-cell-none"></span> }.into_any();
+                }
+                let selected = move || signal.get() == mode;
+                view! {
+                    <button
+                        class="dsp-cell"
+                        class:sel=selected
+                        aria-label=mode.label()
+                        aria-pressed=move || selected().to_string()
+                        title=move || match (is_same, heard_tooltip) {
+                            (true, Some(tip)) if !tip.get().is_empty() => tip.get(),
+                            _ => mode.label().to_string(),
+                        }
+                        on:click=move |_| signal.set(mode)
+                    >
+                        {move || {
+                            if is_same {
+                                heard.get()
+                            } else if selected() {
+                                mode.label().to_lowercase()
+                            } else {
+                                String::new()
                             }
-                            title=mode.label()
-                            disabled=disabled
-                            on:click=move |_| {
-                                if !disabled {
-                                    signal.set(mode);
-                                }
-                            }
-                        >
-                            {mode.short_label()}
-                            {is_same.then(|| {
-                                let br = browser_resampling;
-                                let tip = sam_tooltip;
-                                view! {
-                                    <span
-                                        class=move || {
-                                            if let Some(br_sig) = br {
-                                                if br_sig.get() {
-                                                    return "sam-dot browser-resample";
-                                                }
-                                            }
-                                            if playback_active.get() { "sam-dot active" } else { "sam-dot inactive" }
-                                        }
-                                        title=move || tip.as_ref().map(|t| t.get()).unwrap_or_default()
-                                    ></span>
-                                }
-                            })}
-                        </button>
-                    }
-                }).collect_view()}
-            </div>
-            <div class=move || {
-                if playback_active.get() { "dsp-filter-indicator active" } else { "dsp-filter-indicator inactive" }
-            }></div>
+                        }}
+                    </button>
+                }.into_any()
+            }).collect_view()}
+        </div>
+    }
+}
+
+/// The grid's header: the names of the four choices over their columns.
+#[component]
+pub fn DspFilterHeader() -> impl IntoView {
+    view! {
+        <div class="dsp-filter-row dsp-filter-header">
+            <span class="dsp-filter-label"></span>
+            {DisplayFilterMode::ALL.iter().map(|mode| view! {
+                <span class="dsp-filter-col">{mode.label()}</span>
+            }).collect_view()}
         </div>
     }
 }

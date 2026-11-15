@@ -8019,32 +8019,67 @@ button.toolbar-overflow-btn {
 
 /* ── DSP Display Filter Panel ──────────────────────────────────────────────── */
 
+/* The XForm menu's grid (src/components/display_filter_button.rs): a row for
+   each Hear bar control, a column for each choice. Every row is its own grid
+   with the same columns, so the cells line up under the header. */
 .dsp-filter-row {
     display: grid;
-    grid-template-columns: 42px 1fr 16px;
-    gap: 4px 6px;
+    grid-template-columns: 104px repeat(4, minmax(0, 1fr));
+    gap: 3px;
     align-items: center;
-    padding: 2px 6px;
+    padding: 2px 8px;
 }
 
 .dsp-filter-header {
     padding-bottom: 0;
-    margin-bottom: -2px;
 }
 
-.dsp-filter-header .dsp-filter-seg span {
-    font-size: 8px;
-    text-transform: uppercase;
-    color: #555;
+.dsp-filter-col {
+    font-size: 10px;
+    /* 5.6:1 on the panel's #101010. */
+    color: #8a8a8a;
     text-align: center;
-    flex: 1;
+    white-space: nowrap;
 }
 
 .dsp-filter-label {
+    font-size: 11px;
+    color: #ccc;
+    white-space: nowrap;
+}
+
+/* One choice in a row. Empty until selected, except "As heard", which
+   always shows what the Hear bar is set to. 24px tall for a mouse, 36px for
+   a finger. */
+.dsp-cell {
+    min-height: 24px;
+    padding: 2px;
+    background: rgba(40, 40, 40, 0.9);
+    color: #9a9a9a;
+    border: 1px solid rgba(70, 70, 70, 0.5);
+    border-radius: 3px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
     font-size: 10px;
-    text-transform: uppercase;
-    color: #999;
-    letter-spacing: 0.5px;
+    line-height: 1;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.dsp-cell:hover {
+    background: rgba(60, 60, 60, 0.9);
+    color: #ddd;
+}
+.dsp-cell.sel {
+    background: rgba(40, 80, 60, 0.9);
+    color: #6da;
+    border-color: rgba(100, 200, 160, 0.4);
+    font-weight: 700;
+}
+@media (pointer: coarse), (max-width: 640px) {
+    .dsp-cell {
+        min-height: 36px;
+    }
 }
 
 .dsp-filter-seg {
@@ -8054,10 +8089,11 @@ button.toolbar-overflow-btn {
 
 .dsp-filter-seg button {
     flex: 1;
-    font-size: 9px;
+    font-size: 10px;
     padding: 3px 4px;
     background: rgba(40, 40, 40, 0.9);
-    color: #777;
+    /* 5.3:1 on the button's background (#777 was 3.4:1). */
+    color: #9a9a9a;
     border: 1px solid rgba(70, 70, 70, 0.5);
     border-radius: 3px;
     cursor: pointer;
@@ -8083,48 +8119,6 @@ button.toolbar-overflow-btn {
     opacity: 0.25;
     pointer-events: none;
     cursor: default;
-}
-
-.dsp-filter-indicator {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    justify-self: center;
-}
-
-.dsp-filter-indicator.active {
-    background: #6da;
-    box-shadow: 0 0 4px rgba(102, 221, 170, 0.6);
-}
-
-.dsp-filter-indicator.inactive {
-    background: #333;
-}
-
-.sam-dot {
-    display: inline-block;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    margin-left: 2px;
-    vertical-align: middle;
-}
-.sam-dot.active {
-    background: #6da;
-    box-shadow: 0 0 3px rgba(102, 221, 170, 0.6);
-}
-.sam-dot.inactive {
-    background: #555;
-}
-.sam-dot.browser-resample {
-    background: #f0a030;
-    box-shadow: 0 0 3px rgba(240, 160, 48, 0.6);
-}
-
-.dsp-filter-indicator-header {
-    font-size: 8px;
-    text-align: center;
-    line-height: 1;
 }
 
 .dsp-custom-section {

@@ -73,7 +73,7 @@ impl HeardAxis {
         format!("heard time = recording {}", self.time_op())
     }
 
-    /// The sentence in the Display Processing menu.
+    /// The sentence in the XForm menu.
     pub fn blurb(self) -> String {
         let factor = self.time_scale.max(self.freq_scale);
         format!(
@@ -149,7 +149,7 @@ pub fn heard_axis_untracked(state: &AppState) -> Option<HeardAxis> {
     heard_axis_inner(state, false)
 }
 
-/// A Resam target rate, given as the rate of the audio heard, as a rate of
+/// A Resampling target rate, given as the rate of the audio heard, as a rate of
 /// the recording, for a display whose Xform row is applied. Under TE ×10 the
 /// output's 48 kHz holds what the recording has up to 480 kHz. Other modes
 /// keep the rate, and 0 (no resampling) stays 0. Reads the mode and the TE
