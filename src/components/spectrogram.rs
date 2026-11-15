@@ -413,7 +413,6 @@ pub fn Spectrogram() -> impl IntoView {
             let _dsp_eq = state.display.filter_eq().get();
             let _dsp_notch = state.display.filter_notch().get();
             let _dsp_gain = state.display.filter_gain().get();
-            let _dsp_nr_strength = state.display.nr_strength().get();
             let _dsp_auto_floor = state.display.auto_noise_floor().get();
             let _dsp_transform = state.display.transform().get();
             let _dsp_decimate = state.display.decimate_effective().get();

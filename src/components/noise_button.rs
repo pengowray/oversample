@@ -41,78 +41,94 @@ async fn yield_to_browser() {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
-/// Detect the notch filter's noise bands, with `threshold` as the prominence
-/// a band needs. Turns the notch filter on when it finds any.
-fn run_detect(state: AppState, threshold: f64) {
+/// What started a detection of the notch filter's noise bands.
+#[derive(Clone, Copy, PartialEq)]
+enum DetectFrom {
+    /// The Detect button, or a switch turned on with no bands yet. Says what
+    /// it found in a toast and turns the notch filter on when it finds bands.
+    Press,
+    /// The Sensitivity slider moved. Updates the bands and nothing else: no
+    /// toast, the filter stays on or off, and a band the user turned off
+    /// stays off.
+    Slider,
+}
+
+thread_local! {
+    /// Counts moves of the Sensitivity slider, so that only the last move of
+    /// a drag starts a detection. Not a signal: the menu, and any signal it
+    /// owns, is gone as soon as it closes.
+    static SLIDER_MOVES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A band that was detected before keeps the user's on/off choice. Two
+/// detections give slightly different centres for one tone, so a band counts
+/// as the same when the centres are within half the wider bandwidth.
+fn keep_band_switches(old: &[notch::NoiseBand], new: &mut [notch::NoiseBand]) {
+    for band in new.iter_mut() {
+        let same = old.iter().find(|o| {
+            (o.center_hz - band.center_hz).abs() <= o.bandwidth_hz.max(band.bandwidth_hz) / 2.0
+        });
+        if let Some(o) = same {
+            band.enabled = o.enabled;
+        }
+    }
+}
+
+/// Detect the notch filter's noise bands, with the Sensitivity slider's value
+/// as the prominence a band needs. While one detection runs, another does
+/// not start: the running one detects again at its end if the slider has
+/// moved since it began.
+fn run_detect(state: AppState, sensitivity: RwSignal<f64>, from: DetectFrom) {
+    if state.notch.detecting().get_untracked() {
+        return;
+    }
+    let quiet = from == DetectFrom::Slider;
     // While live, detect from the circular buffer so the bands reflect
     // current ambient noise rather than stale file content.
     let is_live = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
-    if is_live {
-        let is_tauri = state.is_tauri;
+    let (samples, sample_rate, analysis_secs) = if is_live {
         let sample_rate = state.mic.sample_rate().get_untracked();
-        let snapshot = crate::audio::mic_backend::with_live_samples(is_tauri, |s| s.to_vec());
+        let snapshot = crate::audio::mic_backend::with_live_samples(state.is_tauri, |s| s.to_vec());
         if sample_rate == 0 || snapshot.is_empty() {
-            state.show_error_toast("Not enough live audio yet");
+            if !quiet {
+                state.show_error_toast("Not enough live audio yet");
+            }
             return;
         }
-        state.notch.detecting().set(true);
-        let samples = Arc::new(snapshot);
-        spawn_local(async move {
-            yield_to_browser().await;
-            let duration = samples.len() as f64 / sample_rate as f64;
-            let config = DetectionConfig {
-                analysis_duration_secs: duration.min(10.0),
-                prominence_threshold: threshold,
-                ..DetectionConfig::default()
-            };
-            let bands = notch::detect_noise_bands_async(
-                &samples,
-                sample_rate,
-                &config,
-                crate::canvas::tile_cache::yield_to_browser,
-            )
-            .await;
-            let count = bands.len();
-            state.notch.bands().set(bands);
-            if count > 0 {
-                state.notch.enabled().set(true);
-                state.show_info_toast(format!(
-                    "Found {} noise band{} from live",
-                    count,
-                    if count == 1 { "" } else { "s" }
-                ));
-            } else {
-                state.show_info_toast("No persistent noise bands detected");
+        let duration = snapshot.len() as f64 / sample_rate as f64;
+        (snapshot, sample_rate, duration.min(10.0))
+    } else {
+        let Some(file) = state.current_file() else {
+            if !quiet {
+                state.show_error_toast("No file loaded");
             }
-            state.notch.detecting().set(false);
-        });
-        return;
-    }
-
-    let files = state.library.files().get_untracked();
-    let idx = state.library.current_index().get_untracked();
-    let Some(file) = idx.and_then(|i| files.get(i).cloned()) else {
-        state.show_error_toast("No file loaded");
+            return;
+        };
+        let sample_rate = file.audio.sample_rate;
+        let duration = file.audio.duration_secs;
+        let analysis_secs = if duration > 30.0 { 10.0 } else { duration };
+        // Detection looks at the first `analysis_secs` only, so read no more.
+        let total = file.audio.source.total_samples() as usize;
+        let wanted = (analysis_secs * sample_rate as f64).ceil() as usize;
+        let samples = file
+            .audio
+            .source
+            .read_region(ChannelView::MonoMix, 0, total.min(wanted));
+        (samples, sample_rate, analysis_secs)
+    };
+    let Some(threshold) = sensitivity.try_get_untracked() else {
         return;
     };
-    state.notch.detecting().set(true);
-    let total = file.audio.source.total_samples() as usize;
-    let samples = Arc::new(
-        file.audio
-            .source
-            .read_region(ChannelView::MonoMix, 0, total),
-    );
-    let sample_rate = file.audio.sample_rate;
-    let duration = file.audio.duration_secs;
 
+    state.notch.detecting().set(true);
     spawn_local(async move {
         yield_to_browser().await;
         let config = DetectionConfig {
-            analysis_duration_secs: if duration > 30.0 { 10.0 } else { duration },
+            analysis_duration_secs: analysis_secs,
             prominence_threshold: threshold,
             ..DetectionConfig::default()
         };
-        let bands = notch::detect_noise_bands_async(
+        let mut bands = notch::detect_noise_bands_async(
             &samples,
             sample_rate,
             &config,
@@ -120,18 +136,30 @@ fn run_detect(state: AppState, threshold: f64) {
         )
         .await;
         let count = bands.len();
+        if quiet {
+            keep_band_switches(&state.notch.bands().get_untracked(), &mut bands);
+        }
         state.notch.bands().set(bands);
-        if count > 0 {
-            state.notch.enabled().set(true);
-            state.show_info_toast(format!(
-                "Found {} noise band{}",
-                count,
-                if count == 1 { "" } else { "s" }
-            ));
-        } else {
-            state.show_info_toast("No persistent noise bands detected");
+        if !quiet {
+            if count > 0 {
+                state.notch.enabled().set(true);
+                state.show_info_toast(format!(
+                    "Found {} noise band{}{}",
+                    count,
+                    if count == 1 { "" } else { "s" },
+                    if is_live { " from live" } else { "" }
+                ));
+            } else {
+                state.show_info_toast("No persistent noise bands detected");
+            }
         }
         state.notch.detecting().set(false);
+        if sensitivity
+            .try_get_untracked()
+            .is_some_and(|now| now != threshold)
+        {
+            run_detect(state, sensitivity, DetectFrom::Slider);
+        }
     });
 }
 
@@ -218,13 +246,13 @@ fn run_learn(state: AppState) {
 
 /// Turn the notch filter on or off. Turning it on with no bands defined runs
 /// detection first (live or file, whichever applies), so one press is enough.
-fn set_notch_enabled(state: AppState, on: bool, threshold: f64) {
+fn set_notch_enabled(state: AppState, on: bool, sensitivity: RwSignal<f64>) {
     state.notch.enabled().set(on);
     if on
         && state.notch.bands().get_untracked().is_empty()
         && !state.notch.detecting().get_untracked()
     {
-        run_detect(state, threshold);
+        run_detect(state, sensitivity, DetectFrom::Press);
     }
 }
 
@@ -296,7 +324,7 @@ pub fn NoiseButton() -> impl IntoView {
                 set_nr_enabled(state, true);
             }
             if notch {
-                set_notch_enabled(state, true, sensitivity.get_untracked());
+                set_notch_enabled(state, true, sensitivity);
             }
         }
     });
@@ -305,11 +333,7 @@ pub fn NoiseButton() -> impl IntoView {
         set_nr_enabled(state, !state.noise_reduce.enabled().get_untracked())
     });
     let toggle_notch = Callback::new(move |()| {
-        set_notch_enabled(
-            state,
-            !state.notch.enabled().get_untracked(),
-            sensitivity.get_untracked(),
-        )
+        set_notch_enabled(state, !state.notch.enabled().get_untracked(), sensitivity)
     });
 
     view! {
@@ -342,21 +366,33 @@ pub fn NoiseButton() -> impl IntoView {
 // ─── Notch filter settings ──────────────────────────────────────────────
 //
 // What the filter removes, the Bands row (how many bands are on, and the
-// Detect button), the band list with its bulk buttons, and the sensitivity
-// that the next Detect uses.
+// Detect button), the band list with its bulk buttons, and the Sensitivity
+// slider, which detects again as it moves.
 
 #[component]
 fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let on_detect = move |_: web_sys::MouseEvent| {
-        run_detect(state, sensitivity.get_untracked());
+        run_detect(state, sensitivity, DetectFrom::Press);
     };
 
     let on_sensitivity_change = move |ev: web_sys::Event| {
         let target: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(val) = target.value().parse::<f64>() {
             sensitivity.set((150.0 - val) / 10.0);
+            // Detect again 200 ms after the slider's last move, so the Bands
+            // row and the marks on the spectrogram follow the slider.
+            let n = SLIDER_MOVES.with(|c| {
+                c.set(c.get().wrapping_add(1));
+                c.get()
+            });
+            spawn_local(async move {
+                crate::web_util::sleep_ms(200).await;
+                if SLIDER_MOVES.with(|c| c.get()) == n {
+                    run_detect(state, sensitivity, DetectFrom::Slider);
+                }
+            });
         }
     };
 
@@ -479,14 +515,14 @@ fn NotchSettings(sensitivity: RwSignal<f64>) -> impl IntoView {
             })
         }}
 
-        // ── Sensitivity of the next Detect ──
+        // ── Sensitivity: moving it detects again ──
         <div class="layer-panel-slider-row">
             <label>"Sensitivity"</label>
             <input type="range" min="30" max="120" step="5"
                 prop:value=move || (150.0 - sensitivity.get() * 10.0) as i32
                 on:input=on_sensitivity_change
                 title=move || format!(
-                    "Detect finds tones at least {:.0} dB above the sound around them",
+                    "Finds tones at least {:.0} dB above the sound around them",
                     20.0 * sensitivity.get().log10()
                 )
             />
@@ -523,7 +559,10 @@ fn NrSettings() -> impl IntoView {
         // ── Strength ──
         <div class="layer-panel-slider-row">
             <label>"Strength"</label>
-            <input type="range" min="0" max="300" step="5"
+            // 0 to 200%, so the 100% default is the middle of the slider. A
+            // recording saved with more keeps its value: the slider sits at
+            // its end and the number beside it shows the value.
+            <input type="range" min="0" max="200" step="5"
                 prop:value=move || (state.noise_reduce.strength().get() * 100.0) as i32
                 on:input=on_strength_change
             />

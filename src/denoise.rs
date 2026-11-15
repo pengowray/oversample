@@ -57,7 +57,7 @@ pub const BAT_MODEL: Model = Model {
     min_rate: 22_050,
 };
 
-/// The model "Make Denoised Copy" uses. There is one model today; a choice
+/// The model "Make denoised copy" uses. There is one model today; a choice
 /// between models would be made here.
 pub fn model() -> &'static Model {
     &BAT_MODEL
@@ -108,8 +108,8 @@ pub fn copy_channels(channels: u32) -> u32 {
 pub mod text {
     use crate::format_units::{khz, sample_rate_khz};
 
-    pub const TITLE: &str = "Denoised Copy";
-    pub const BUTTON: &str = "Make Denoised Copy";
+    pub const TITLE: &str = "Denoised copy";
+    pub const BUTTON: &str = "Make denoised copy";
     pub const CANCEL: &str = "Cancel";
     pub const STARTING: &str = "Loading recording and model\u{2026}";
     pub const ADDED: &str = "Denoised copy added to the file list";

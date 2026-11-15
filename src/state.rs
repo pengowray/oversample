@@ -2238,8 +2238,6 @@ pub struct DisplayState {
     pub decimate_effective: u32,
     /// Browser's default audio output sample rate.
     pub browser_sample_rate: u32,
-    /// Custom NR strength (display-only).
-    pub nr_strength: f64,
     /// Auto-learned noise floor for display (from first ~500ms of file).
     pub auto_noise_floor: Option<crate::dsp::spectral_sub::NoiseFloor>,
 }
@@ -2902,7 +2900,6 @@ impl AppState {
                 decimate_rate: 48000,
                 decimate_effective: 0,
                 browser_sample_rate: 0,
-                nr_strength: 0.8,
                 auto_noise_floor: None,
             }),
 

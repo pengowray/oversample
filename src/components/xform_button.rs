@@ -11,7 +11,6 @@
 use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::components::app::{disable_xform, enable_xform};
 use crate::components::display_filter_button::DspFilterRow;
@@ -136,10 +135,6 @@ pub fn XformButton() -> impl IntoView {
         }
     });
 
-    let show_nr_custom = Signal::derive(move || {
-        state.display.xform_enabled().get()
-            && state.display.filter_nr().get() == DisplayFilterMode::Custom
-    });
     let show_decim_custom = Signal::derive(move || {
         state.display.xform_enabled().get()
             && state.display.filter_decimate().get() == DisplayFilterMode::Custom
@@ -244,32 +239,6 @@ pub fn XformButton() -> impl IntoView {
                 <crate::components::hearing_bar::PeakSourceRow />
             })}
 
-            // Custom NR strength
-            {move || show_nr_custom.get().then(|| {
-                let strength = state.display.nr_strength();
-                view! {
-                    <div class="dsp-custom-section">
-                        <div class="dsp-custom-title">"NR Strength"</div>
-                        <div class="dsp-custom-slider-row">
-                            <input
-                                type="range"
-                                class="setting-range"
-                                min="0" max="2" step="0.05"
-                                prop:value=move || strength.get().to_string()
-                                on:input=move |ev: web_sys::Event| {
-                                    let target = ev.target().unwrap();
-                                    let input: web_sys::HtmlInputElement = target.unchecked_into();
-                                    if let Ok(v) = input.value().parse::<f64>() {
-                                        strength.set(v);
-                                    }
-                                }
-                                on:dblclick=move |_| strength.set(0.8)
-                            />
-                            <span class="dsp-custom-value">{move || format!("{:.2}", strength.get())}</span>
-                        </div>
-                    </div>
-                }
-            })}
 
             // Custom decimate rate
             {move || show_decim_custom.get().then(|| {
