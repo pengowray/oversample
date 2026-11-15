@@ -961,7 +961,9 @@ pub fn App() -> impl IntoView {
             }
             if ev.key() == " " {
                 ev.prevent_default();
-                if state_kb.library.current_index().get_untracked().is_some() {
+                if state_kb.library.current_index().get_untracked().is_some()
+                    || state_kb.timeline.active().get_untracked().is_some()
+                {
                     if state_kb.playback.is_playing().get_untracked() {
                         playback::stop(&state_kb);
                     } else {
@@ -1167,6 +1169,11 @@ pub fn App() -> impl IntoView {
                 }
             }
             if ev.key() == "Escape" {
+                // An open toolbar menu (Channel, View, HFR and the others).
+                if state_kb.panels.layer_panel_open().get_untracked().is_some() {
+                    state_kb.panels.layer_panel_open().set(None);
+                    return;
+                }
                 if state_kb.bat_book.ref_open().get_untracked() {
                     state_kb.bat_book.ref_open().set(false);
                     return;
