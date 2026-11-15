@@ -246,7 +246,7 @@ impl Default for FileSettings {
             notch_profile_name: String::new(),
             notch_harmonic_suppression: 0.0,
             noise_reduce_enabled: false,
-            noise_reduce_strength: 0.6,
+            noise_reduce_strength: 1.0,
             noise_reduce_floor: None,
             filter: FilterSettings::default(),
         }
@@ -2821,7 +2821,7 @@ impl AppState {
             }),
             noise_reduce: Store::new(NoiseReduceState {
                 enabled: false,
-                strength: 0.6,
+                strength: 1.0,
                 floor: None,
                 learning: false,
             }),
