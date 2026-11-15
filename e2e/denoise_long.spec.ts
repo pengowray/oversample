@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, chromium, type Page } from "@playwright/test";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -14,7 +14,10 @@ import path from "path";
  *
  * The last test measures memory and time on recordings of 10 and 30 minutes.
  * It takes a long time and needs several GB of disk, so it runs only with
- * DENOISE_MEASURE=1.
+ * DENOISE_MEASURE=1. It uses a browser profile on disk. Playwright's usual
+ * page is like a private window, where Chromium keeps the site's storage in
+ * memory, so there the copy's file adds its whole size to the browser's
+ * memory. DENOISE_MEASURE=private measures that case.
  */
 const modelPath =
   process.env.DENOISE_MODEL ??
@@ -424,9 +427,18 @@ for (const shape of [
   { sampleRate: 44_100, seconds: 1800, channels: 2, quietFrom: 900, quietTo: 902 },
 ] satisfies Shape[]) {
   const label = `${shape.seconds / 60} min at ${shape.sampleRate / 1000} kHz, ${shape.channels} ch`;
-  test(`memory and time: ${label}`, async ({ page }) => {
+  test(`memory and time: ${label}`, async ({ page: privatePage, baseURL }) => {
     test.skip(!process.env.DENOISE_MEASURE, "set DENOISE_MEASURE=1 to run the measurements");
     test.setTimeout(3 * 3600_000);
+    const inPrivate = process.env.DENOISE_MEASURE === "private";
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-profile-"));
+    const context = inPrivate
+      ? null
+      : await chromium.launchPersistentContext(profile, {
+          baseURL,
+          viewport: { width: 1280, height: 720 },
+        });
+    const page = context ? await context.newPage() : privatePage;
     const file = writeWav("measure.wav", shape);
     await serveModel(page);
     // The app reads a recording of this size from its file for as long as
@@ -469,10 +481,13 @@ for (const shape of [
     await expect.poll(async () => (await snapshot(page)).currentFile).toBe("measure (denoised).wav");
     await page.screenshot({ path: `test-results/denoise-measure-${shape.sampleRate}.png` });
 
+    await context?.close();
+    fs.rmSync(profile, { recursive: true });
     fs.rmSync(path.dirname(file), { recursive: true });
     console.log(
       JSON.stringify({
         label,
+        storage: inPrivate ? "in memory (private window)" : "on disk",
         baselineMb: Math.round(baseline),
         peakMb: Math.round(peak),
         aboveBaselineMb: Math.round(peak - baseline),
