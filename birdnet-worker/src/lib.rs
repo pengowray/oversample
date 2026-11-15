@@ -54,7 +54,9 @@ mod wasm {
             Some(e) => {
                 let arr = js_sys::Float32Array::from(e);
                 let name = match msg {
-                    FromWorker::Denoised { .. } => attach::SAMPLES,
+                    FromWorker::Denoised { .. } | FromWorker::DenoisedPiece { .. } => {
+                        attach::SAMPLES
+                    }
                     _ => attach::EMBEDDING,
                 };
                 let _ = js_sys::Reflect::set(&obj, &name.into(), &arr);

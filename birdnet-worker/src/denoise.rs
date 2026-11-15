@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tract_onnx::prelude::*;
 
+pub mod stream;
+
 /// STFT window length in samples.
 pub const WINDOW: usize = 512;
 /// Samples between STFT frames.
@@ -144,6 +146,219 @@ fn reflect_padded(samples: &[f32]) -> Vec<f32> {
     padded
 }
 
+/// The window and the FFTs, and the steps that [`Denoiser`] (a recording held
+/// whole) and [`stream::StreamDenoiser`] (a recording that arrives in pieces)
+/// both take, so that the two give the same samples.
+struct Tools {
+    window: Vec<f32>,
+    forward: Arc<dyn RealToComplex<f32>>,
+    inverse: Arc<dyn ComplexToReal<f32>>,
+}
+
+impl Tools {
+    fn new() -> Tools {
+        let mut planner = RealFftPlanner::<f32>::new();
+        Tools {
+            window: periodic_hann(),
+            forward: planner.plan_fft_forward(WINDOW),
+            inverse: planner.plan_fft_inverse(WINDOW),
+        }
+    }
+
+    /// STFT of frames `lo..hi` of `padded`, frame after frame, `BINS` values
+    /// each. Frame `t` starts at `padded[t * HOP]`.
+    fn stft(&self, padded: &[f32], lo: usize, hi: usize) -> Vec<Complex<f32>> {
+        let mut input = self.forward.make_input_vec();
+        let mut spectrum = self.forward.make_output_vec();
+        let mut out = Vec::with_capacity((hi - lo) * BINS);
+        for t in lo..hi {
+            let start = t * HOP;
+            for (i, x) in input.iter_mut().enumerate() {
+                *x = padded[start + i] * self.window[i];
+            }
+            self.forward
+                .process(&mut input, &mut spectrum)
+                .expect("FFT sizes are fixed");
+            out.extend_from_slice(&spectrum);
+        }
+        out
+    }
+
+    /// Adds to `power` the power of one frame's bins from `SCALE_LOW_BIN` up.
+    /// The frame starts at `padded[0]`.
+    fn scale_frame(&self, padded: &[f32], power: &mut Vec<f32>) {
+        let frame = self.stft(padded, 0, 1);
+        power.extend(frame[SCALE_LOW_BIN..].iter().map(|c| c.norm_sqr()));
+    }
+
+    /// The gains for a block of `frames` frames: 2 * sigmoid(logit) - 1,
+    /// floored, and for each cell the largest that any channel gives it.
+    /// `spectra` has each channel's STFT of those frames. A channel whose
+    /// scale is zero is left out.
+    fn block_gains(
+        &self,
+        spectra: &[Vec<Complex<f32>>],
+        scales: &[f32],
+        frames: usize,
+        model: &mut dyn MaskModel,
+    ) -> Result<Vec<f32>, String> {
+        let mut gains: Vec<f32> = Vec::new();
+        let mut feat = vec![0.0f32; BINS * frames];
+        let mut column = vec![0.0f32; frames];
+        for (spectrum, scale) in spectra.iter().zip(scales) {
+            if *scale <= 0.0 {
+                continue;
+            }
+            // Features: log magnitude, less each bin's median over these
+            // frames.
+            for bin in 0..BINS {
+                let row = &mut feat[bin * frames..(bin + 1) * frames];
+                for (t, value) in row.iter_mut().enumerate() {
+                    *value = (spectrum[t * BINS + bin].norm() + LOG_OFFSET).ln();
+                }
+                column.copy_from_slice(row);
+                let median = lower_median(&mut column);
+                for value in row.iter_mut() {
+                    *value -= median;
+                }
+            }
+            let logits = model.logits(&feat, frames)?;
+            let gain = |logit: &f32| (2.0 / (1.0 + (-logit).exp()) - 1.0).max(GAIN_FLOOR);
+            if gains.is_empty() {
+                gains = logits.iter().map(gain).collect();
+            } else {
+                for (shared, logit) in gains.iter_mut().zip(&logits) {
+                    *shared = shared.max(gain(logit));
+                }
+            }
+        }
+        Ok(gains)
+    }
+
+    /// Adds `count` frames of `spectrum`, from its frame `first` on, to `out`
+    /// with `gains` on them. `spectrum` and `gains` cover `frames` frames,
+    /// and the first frame added starts at `out[0]`.
+    fn add_frames(
+        &self,
+        spectrum: &[Complex<f32>],
+        gains: &[f32],
+        frames: usize,
+        first: usize,
+        count: usize,
+        out: &mut [f32],
+    ) {
+        let mut bins = self.inverse.make_input_vec();
+        let mut time = self.inverse.make_output_vec();
+        for n in 0..count {
+            let local = first + n;
+            for (bin, value) in bins.iter_mut().enumerate() {
+                *value = spectrum[local * BINS + bin] * gains[bin * frames + local];
+            }
+            // realfft wants the imaginary parts at DC and Nyquist to be zero.
+            bins[0].im = 0.0;
+            bins[BINS - 1].im = 0.0;
+            self.inverse
+                .process(&mut bins, &mut time)
+                .expect("FFT sizes are fixed");
+            let at = n * HOP;
+            for i in 0..WINDOW {
+                out[at + i] += time[i] / WINDOW as f32 * self.window[i];
+            }
+        }
+    }
+
+    /// Adds the squared window of `count` frames to `window_sum`, the first
+    /// frame starting at `window_sum[0]`.
+    fn add_window(&self, count: usize, window_sum: &mut [f32]) {
+        for n in 0..count {
+            let at = n * HOP;
+            for i in 0..WINDOW {
+                window_sum[at + i] += self.window[i] * self.window[i];
+            }
+        }
+    }
+}
+
+/// One output sample: what the frames added up to, over the window sum, at
+/// the channel's own level again.
+fn output_sample(added: f32, window_sum: f32, scale: f32) -> f32 {
+    if window_sum > 1e-8 {
+        added / window_sum * scale
+    } else {
+        0.0
+    }
+}
+
+/// How many frames apart the noise scale samples a recording of `frames`
+/// frames: every frame, until that is more than `SCALE_MAX_VALUES` values.
+fn scale_stride(frames: u64) -> u64 {
+    let per_frame = (BINS - SCALE_LOW_BIN) as u64;
+    (frames * per_frame)
+        .div_ceil(SCALE_MAX_VALUES as u64)
+        .max(1)
+}
+
+/// The noise scale from the power of the sampled frames: `BINS -
+/// SCALE_LOW_BIN` values for each frame, frame after frame. What it works
+/// out is described at [`Denoiser::noise_scale`].
+fn scale_from_power(power: Vec<f32>) -> f32 {
+    let per_frame = BINS - SCALE_LOW_BIN;
+    // Each bin's median power over the frames that are not digital
+    // silence. The reference bins' median of those is the level of a bin
+    // with sound in it, and a bin far under it is empty.
+    let sounding: Vec<&[f32]> = power
+        .chunks_exact(per_frame)
+        .filter(|frame| frame.iter().any(|p| *p > 0.0))
+        .collect();
+    if sounding.is_empty() {
+        return 0.0;
+    }
+    let mut column = Vec::with_capacity(sounding.len());
+    let medians: Vec<f32> = (0..per_frame)
+        .map(|bin| {
+            column.clear();
+            column.extend(sounding.iter().map(|frame| frame[bin]));
+            lower_median(&mut column)
+        })
+        .collect();
+    let empty_under = lower_median(&mut medians[..SCALE_REFERENCE_BINS].to_vec()) * EMPTY_BIN_RATIO;
+
+    // The plain median, over a copy: `sounding` needs `power` in order.
+    let plain = lower_median(&mut power.clone());
+    let median = if plain > empty_under {
+        plain
+    } else {
+        let Some(top) = medians.iter().rposition(|m| *m > empty_under) else {
+            return 0.0;
+        };
+        let mut values: Vec<f32> = sounding
+            .iter()
+            .flat_map(|frame| &frame[..=top])
+            .copied()
+            .collect();
+        lower_median(&mut values)
+    };
+    median.sqrt() / UNIT_NOISE_MEDIAN
+}
+
+/// A measured scale as the denoiser uses it: zero for a channel with no
+/// sound in it.
+fn usable_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        0.0
+    }
+}
+
+/// Why a recording of `len` samples is refused.
+fn too_short(len: u64) -> String {
+    format!("the recording has {len} samples; the denoiser needs {MIN_SAMPLES}")
+}
+
+/// Why a recording with no sound in any channel is refused.
+const SILENT: &str = "the recording is silent";
+
 /// One channel of the recording being denoised.
 struct Channel {
     /// The channel reflected by half a window at each end, divided by `scale`.
@@ -154,7 +369,9 @@ struct Channel {
     out: Vec<f32>,
 }
 
-/// One recording being denoised, a block per [`Denoiser::step`].
+/// One recording being denoised, a block per [`Denoiser::step`]. It holds the
+/// whole recording. [`stream::StreamDenoiser`] gives the same samples from a
+/// recording that arrives in pieces.
 ///
 /// A recording with more than one channel gets one gain for all of its
 /// channels: each channel has its own noise scale, features and run of the
@@ -169,9 +386,7 @@ pub struct Denoiser {
     /// First frame of the next block.
     next: usize,
     window_sum: Vec<f32>,
-    window: Vec<f32>,
-    forward: Arc<dyn RealToComplex<f32>>,
-    inverse: Arc<dyn ComplexToReal<f32>>,
+    tools: Tools,
 }
 
 impl Denoiser {
@@ -191,21 +406,16 @@ impl Denoiser {
         }
         let len = samples.len() / channels;
         if len < MIN_SAMPLES {
-            return Err(format!(
-                "the recording has {len} samples; the denoiser needs {MIN_SAMPLES}"
-            ));
+            return Err(too_short(len as u64));
         }
         let padded_len = len + WINDOW;
-        let mut planner = RealFftPlanner::<f32>::new();
         let mut denoiser = Denoiser {
             channels: Vec::with_capacity(channels),
             len,
             frames: 1 + len / HOP,
             next: 0,
             window_sum: vec![0.0; padded_len],
-            window: periodic_hann(),
-            forward: planner.plan_fft_forward(WINDOW),
-            inverse: planner.plan_fft_inverse(WINDOW),
+            tools: Tools::new(),
         };
         for c in 0..channels {
             let mut padded = if channels == 1 {
@@ -214,15 +424,12 @@ impl Denoiser {
                 let one: Vec<f32> = samples.iter().skip(c).step_by(channels).copied().collect();
                 reflect_padded(&one)
             };
-            let scale = denoiser.noise_scale(&padded);
-            let scale = if scale.is_finite() && scale > 0.0 {
+            let scale = usable_scale(denoiser.noise_scale(&padded));
+            if scale > 0.0 {
                 for s in &mut padded {
                     *s /= scale;
                 }
-                scale
-            } else {
-                0.0
-            };
+            }
             denoiser.channels.push(Channel {
                 padded,
                 scale,
@@ -230,7 +437,7 @@ impl Denoiser {
             });
         }
         if denoiser.channels.iter().all(|c| c.scale == 0.0) {
-            return Err("the recording is silent".to_string());
+            return Err(SILENT.to_string());
         }
         Ok(denoiser)
     }
@@ -249,25 +456,6 @@ impl Denoiser {
     /// Steps done so far.
     pub fn blocks_done(&self) -> usize {
         self.next.div_ceil(BLOCK)
-    }
-
-    /// STFT of frames `lo..hi` of `padded`, frame after frame, `BINS` values
-    /// each.
-    fn stft(&self, padded: &[f32], lo: usize, hi: usize) -> Vec<Complex<f32>> {
-        let mut input = self.forward.make_input_vec();
-        let mut spectrum = self.forward.make_output_vec();
-        let mut out = Vec::with_capacity((hi - lo) * BINS);
-        for t in lo..hi {
-            let start = t * HOP;
-            for (i, x) in input.iter_mut().enumerate() {
-                *x = padded[start + i] * self.window[i];
-            }
-            self.forward
-                .process(&mut input, &mut spectrum)
-                .expect("FFT sizes are fixed");
-            out.extend_from_slice(&spectrum);
-        }
-        out
     }
 
     /// The factor that brings the recording's noise to about unit variance:
@@ -289,50 +477,12 @@ impl Denoiser {
     /// all.
     fn noise_scale(&self, padded: &[f32]) -> f32 {
         let per_frame = BINS - SCALE_LOW_BIN;
-        let stride = (self.frames * per_frame).div_ceil(SCALE_MAX_VALUES).max(1);
+        let stride = scale_stride(self.frames as u64) as usize;
         let mut power = Vec::with_capacity(self.frames / stride * per_frame + per_frame);
         for t in (0..self.frames).step_by(stride) {
-            let frame = self.stft(padded, t, t + 1);
-            power.extend(frame[SCALE_LOW_BIN..].iter().map(|c| c.norm_sqr()));
+            self.tools.scale_frame(&padded[t * HOP..], &mut power);
         }
-
-        // Each bin's median power over the frames that are not digital
-        // silence. The reference bins' median of those is the level of a bin
-        // with sound in it, and a bin far under it is empty.
-        let sounding: Vec<&[f32]> = power
-            .chunks_exact(per_frame)
-            .filter(|frame| frame.iter().any(|p| *p > 0.0))
-            .collect();
-        if sounding.is_empty() {
-            return 0.0;
-        }
-        let mut column = Vec::with_capacity(sounding.len());
-        let medians: Vec<f32> = (0..per_frame)
-            .map(|bin| {
-                column.clear();
-                column.extend(sounding.iter().map(|frame| frame[bin]));
-                lower_median(&mut column)
-            })
-            .collect();
-        let empty_under =
-            lower_median(&mut medians[..SCALE_REFERENCE_BINS].to_vec()) * EMPTY_BIN_RATIO;
-
-        // The plain median, over a copy: `sounding` needs `power` in order.
-        let plain = lower_median(&mut power.clone());
-        let median = if plain > empty_under {
-            plain
-        } else {
-            let Some(top) = medians.iter().rposition(|m| *m > empty_under) else {
-                return 0.0;
-            };
-            let mut values: Vec<f32> = sounding
-                .iter()
-                .flat_map(|frame| &frame[..=top])
-                .copied()
-                .collect();
-            lower_median(&mut values)
-        };
-        median.sqrt() / UNIT_NOISE_MEDIAN
+        scale_from_power(power)
     }
 
     /// Denoises the next block. False once the recording is finished.
@@ -346,71 +496,31 @@ impl Denoiser {
         let hi = (end + CONTEXT).min(self.frames);
         let frames = hi - lo;
 
-        // Each channel's gains, 2 * sigmoid(logit) - 1, floored; a cell's
-        // gain is the largest that any channel gives it.
-        let mut spectra = Vec::with_capacity(self.channels.len());
-        let mut gains: Vec<f32> = Vec::new();
-        let mut feat = vec![0.0f32; BINS * frames];
-        let mut column = vec![0.0f32; frames];
-        for channel in &self.channels {
-            let spectrum = self.stft(&channel.padded, lo, hi);
-            if channel.scale > 0.0 {
-                // Features: log magnitude, less each bin's median over these
-                // frames.
-                for bin in 0..BINS {
-                    let row = &mut feat[bin * frames..(bin + 1) * frames];
-                    for (t, value) in row.iter_mut().enumerate() {
-                        *value = (spectrum[t * BINS + bin].norm() + LOG_OFFSET).ln();
-                    }
-                    column.copy_from_slice(row);
-                    let median = lower_median(&mut column);
-                    for value in row.iter_mut() {
-                        *value -= median;
-                    }
-                }
-                let logits = model.logits(&feat, frames)?;
-                let gain = |logit: &f32| (2.0 / (1.0 + (-logit).exp()) - 1.0).max(GAIN_FLOOR);
-                if gains.is_empty() {
-                    gains = logits.iter().map(gain).collect();
-                } else {
-                    for (shared, logit) in gains.iter_mut().zip(&logits) {
-                        *shared = shared.max(gain(logit));
-                    }
-                }
-            }
-            spectra.push(spectrum);
-        }
+        let spectra: Vec<_> = self
+            .channels
+            .iter()
+            .map(|channel| self.tools.stft(&channel.padded, lo, hi))
+            .collect();
+        let gains = self
+            .tools
+            .block_gains(&spectra, &self.scales(), frames, model)?;
 
         // The gains on this block's own frames, the same for every channel.
-        let mut bins = self.inverse.make_input_vec();
-        let mut time = self.inverse.make_output_vec();
         for (channel, spectrum) in self.channels.iter_mut().zip(&spectra) {
             if channel.scale == 0.0 {
                 continue;
             }
-            for t in start..end {
-                let local = t - lo;
-                for (bin, value) in bins.iter_mut().enumerate() {
-                    *value = spectrum[local * BINS + bin] * gains[bin * frames + local];
-                }
-                // realfft wants the imaginary parts at DC and Nyquist to be zero.
-                bins[0].im = 0.0;
-                bins[BINS - 1].im = 0.0;
-                self.inverse
-                    .process(&mut bins, &mut time)
-                    .expect("FFT sizes are fixed");
-                let at = t * HOP;
-                for i in 0..WINDOW {
-                    channel.out[at + i] += time[i] / WINDOW as f32 * self.window[i];
-                }
-            }
+            self.tools.add_frames(
+                spectrum,
+                &gains,
+                frames,
+                start - lo,
+                end - start,
+                &mut channel.out[start * HOP..],
+            );
         }
-        for t in start..end {
-            let at = t * HOP;
-            for i in 0..WINDOW {
-                self.window_sum[at + i] += self.window[i] * self.window[i];
-            }
-        }
+        self.tools
+            .add_window(end - start, &mut self.window_sum[start * HOP..]);
         self.next = end;
         Ok(self.next < self.frames)
     }
@@ -424,11 +534,7 @@ impl Denoiser {
         for i in half..half + self.len {
             let sum = self.window_sum[i];
             for channel in &self.channels {
-                out.push(if sum > 1e-8 {
-                    channel.out[i] / sum * channel.scale
-                } else {
-                    0.0
-                });
+                out.push(output_sample(channel.out[i], sum, channel.scale));
             }
         }
         out
