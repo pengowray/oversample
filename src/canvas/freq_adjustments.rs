@@ -207,8 +207,14 @@ fn compute_freq_adjustments_inner(
             // the playback floor (`from_playback`) still holds it.
             let (nf_opt, strength, from_playback) =
                 if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
-                    // Auto: use display-specific auto-learned floor
-                    (state.display.auto_noise_floor().get_untracked(), 0.8, false)
+                    // Auto: the display's own auto-learned floor, at the
+                    // Noise menu's Strength, so the picture follows the one
+                    // strength setting there is.
+                    (
+                        state.display.auto_noise_floor().get_untracked(),
+                        state.noise_reduce.strength().get_untracked(),
+                        false,
+                    )
                 } else if state.noise_reduce.enabled().get_untracked() {
                     // Same/fallback: use playback noise floor
                     (
