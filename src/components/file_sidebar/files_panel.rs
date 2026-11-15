@@ -38,8 +38,8 @@ use super::suggestions::BatsForYou;
 pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
     tile_cache::clear_all_caches();
     crate::canvas::spectral_store::clear();
-    // Drop the stored view state (scroll, focus, view history, bookmarks) of
-    // files that are no longer loaded. The ids are read first: `files` and
+    // Drop the stored view state (scroll, focus, view history, bookmarks,
+    // selection) of files that are no longer loaded. The ids are read first: `files` and
     // `per_file_view` are fields of one store.
     let loaded: Vec<u64> = state
         .library

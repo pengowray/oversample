@@ -406,6 +406,7 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
             for bm in scope.bookmarks.iter_mut() {
                 bm.time = rc.time(bm.time);
             }
+            scope.selection = scope.selection.take().map(|s| rc.selection(s));
         }
     });
     state.annotations.store().update(|store| {

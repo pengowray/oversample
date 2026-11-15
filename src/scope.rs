@@ -68,6 +68,7 @@ impl Relationship {
 /// | horizontal scroll                               | PerFile | Multitrack, DenoisedPair  |
 /// | view history (Back and Forward)                 | PerFile | Multitrack, DenoisedPair  |
 /// | bookmarks                                       | PerFile | Multitrack, DenoisedPair  |
+/// | selection                                       | PerFile | Multitrack, DenoisedPair  |
 /// | frequency-focus selections                      | PerFile | DenoisedPair              |
 /// | playhead (position, and playing or stopped)     | Global  | Multitrack, DenoisedPair  |
 ///
@@ -78,20 +79,19 @@ impl Relationship {
 /// be compared by ear. Any other switch (an unrelated file, or the next
 /// recording of a sequence) stops playback and puts the playhead at the start.
 ///
-/// The view history and the bookmarks hold times in a recording, so they
-/// go with the horizontal scroll: each file has its own, and files that show
-/// the same recording at the same place share them. The file-switch Effect
-/// stores the outgoing file's and brings back the incoming file's, so Back
-/// never goes to a position from another recording.
-///
-/// The selection (`interaction.selection`) is also one global signal. It is
-/// kept on a switch between files that share the horizontal scroll, and
-/// cleared on any other switch.
+/// The view history, the bookmarks and the selection
+/// (`interaction.selection`) hold times in a recording, so they go with the
+/// horizontal scroll: each file has its own, and files that show the same
+/// recording at the same place share them. The file-switch Effect stores
+/// the outgoing file's and brings back the incoming file's. So Back never
+/// goes to a position from another recording, a file shown for the first
+/// time has nothing selected (Play starts at its start), and a file the user
+/// returns to has the selection they left.
 ///
 /// Global (not modelled here): HFR on/off, playback mode + transform params,
 /// `bandpass_mode` (HFR-coupled, pending the split), channel view, colormap.
-/// Transient: annotation selection, hover/marker, and the selection and
-/// playback outside the files described above.
+/// Transient: annotation selection, hover/marker, and playback outside the
+/// files described above.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
     /// Gain mode and gain values (the gain fields of `FileSettings`).
@@ -105,6 +105,9 @@ pub enum Setting {
     ViewHistory,
     /// Bookmarks: times marked during playback (`viewmode.bookmarks`).
     Bookmarks,
+    /// The selection: a time range, with or without a frequency range
+    /// (`interaction.selection`).
+    Selection,
     FocusSelections,
     /// Where the playhead is, and whether it is playing. Within the files that
     /// share it, a switch during playback keeps playing from the same position
@@ -122,6 +125,7 @@ impl Setting {
             Setting::HorizontalScroll => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::ViewHistory => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::Bookmarks => (Scope::PerFile, &[Multitrack, DenoisedPair]),
+            Setting::Selection => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::FocusSelections => (Scope::PerFile, &[DenoisedPair]),
             Setting::Playhead => (Scope::Global, &[Multitrack, DenoisedPair]),
         }
@@ -163,13 +167,14 @@ mod tests {
         compute_all_groups(&names, &[])
     }
 
-    const ALL: [Setting; 8] = [
+    const ALL: [Setting; 9] = [
         Setting::Gain,
         Setting::NoiseFilters,
         Setting::VerticalRange,
         Setting::HorizontalScroll,
         Setting::ViewHistory,
         Setting::Bookmarks,
+        Setting::Selection,
         Setting::FocusSelections,
         Setting::Playhead,
     ];
@@ -209,6 +214,7 @@ mod tests {
         assert_eq!(share_members(Setting::HorizontalScroll, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::ViewHistory, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::Bookmarks, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::Selection, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::FocusSelections, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::Playhead, &g, 1), vec![1]);
     }
@@ -221,9 +227,10 @@ mod tests {
             vec![0, 1, 2]
         );
         assert_eq!(share_members(Setting::VerticalRange, &g, 1), vec![0, 1, 2]);
-        // The view history and bookmarks go with the scroll.
+        // The view history, bookmarks and selection go with the scroll.
         assert_eq!(share_members(Setting::ViewHistory, &g, 0), vec![0, 1, 2]);
         assert_eq!(share_members(Setting::Bookmarks, &g, 2), vec![0, 1, 2]);
+        assert_eq!(share_members(Setting::Selection, &g, 1), vec![0, 1, 2]);
         // Channels do not share gain or focus; the pair does.
         assert_eq!(share_members(Setting::Gain, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::Gain, &g, 2), vec![0, 2]);

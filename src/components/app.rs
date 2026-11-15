@@ -838,13 +838,34 @@ pub fn App() -> impl IntoView {
             }
 
             // The selection is a time and frequency range in the outgoing
-            // file. It stays only for a file that shows the same recording at
-            // the same place (another channel, or the denoised copy). On any
-            // other file it would be a box left over from a different file,
-            // and Play would start from it.
-            if !shares(crate::scope::Setting::HorizontalScroll) {
-                state.interaction.selection().set(None);
+            // file. Each file has its own, shared with the files that show
+            // the same recording at the same place (another channel, or the
+            // denoised copy). Store the outgoing file's (to it and those
+            // files) and bring back the incoming file's. A file shown for
+            // the first time has none: the outgoing file's would be a box
+            // left over from a different file, and Play would start from it.
+            if let Some(oi) = old_oi {
+                let members = state.share_members(crate::scope::Setting::Selection, oi);
+                let ids = state.library.files().with_untracked(|files| {
+                    members
+                        .iter()
+                        .filter_map(|&j| files.get(j).map(|f| f.id))
+                        .collect::<Vec<u64>>()
+                });
+                let selection = state.interaction.selection().get_untracked();
+                state.library.per_file_view().update(|m| {
+                    for id in ids {
+                        m.entry(id).or_default().selection = selection.clone();
+                    }
+                });
             }
+            let incoming_selection = new_id.and_then(|nid| {
+                state
+                    .library
+                    .per_file_view()
+                    .with_untracked(|m| m.get(&nid).and_then(|s| s.selection.clone()))
+            });
+            state.interaction.selection().set(incoming_selection);
 
             // Genuine switch: clear the annotation selection (its focus override
             // is cleared below by the focus reset — note we do NOT call

@@ -4,7 +4,7 @@ import { test, expect, type Page } from "@playwright/test";
  * How a file opens when another file was open before it: stopped, with the
  * view and the playhead at the start, without the previous file's selection,
  * and with its own annotations. The previous file keeps its own scroll,
- * view history and bookmarks.
+ * selection, view history and bookmarks.
  * (The file-switch Effect in src/components/app.rs; the rules are in
  * src/scope.rs.)
  */
@@ -235,6 +235,55 @@ test.describe("Opening another file", () => {
     await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
     expect((await snap(page)).playheadTime).toBeLessThan(made!.timeStart - 0.5);
     await page.keyboard.press("Space");
+  });
+
+  test("each file keeps its own selection", async ({ page }) => {
+    await start(page, "alpha.wav");
+    await selectTool(page);
+    await select(page, 0.5, 0.7, 0.3, 0.6);
+    const inAlpha = (await snap(page)).selection;
+    expect(inAlpha).not.toBeNull();
+
+    // A file shown for the first time has nothing selected.
+    await open(page, "beta.wav", 8, 99);
+    expect((await snap(page)).selection).toBeNull();
+    // Going back brings the first file's selection back.
+    await show(page, "alpha.wav");
+    expect((await snap(page)).selection).toEqual(inAlpha);
+    await show(page, "beta.wav");
+    expect((await snap(page)).selection).toBeNull();
+
+    // Play in the second file starts at its start, not at the first
+    // file's selection.
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    expect((await snap(page)).playheadTime).toBeLessThan(inAlpha!.timeStart - 0.5);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+
+    // The second file's own selection is kept the same way.
+    await select(page, 0.2, 0.3, 0.3, 0.6);
+    const inBeta = (await snap(page)).selection;
+    expect(inBeta).not.toBeNull();
+    expect(inBeta).not.toEqual(inAlpha);
+    await show(page, "alpha.wav");
+    expect((await snap(page)).selection).toEqual(inAlpha);
+    await show(page, "beta.wav");
+    expect((await snap(page)).selection).toEqual(inBeta);
+  });
+
+  test("a channel opened later takes the selection of its recording", async ({ page }) => {
+    await start(page, "rec_Ch1.wav");
+    await selectTool(page);
+    await select(page, 0.5, 0.7, 0.3, 0.6);
+    const made = (await snap(page)).selection;
+    expect(made).not.toBeNull();
+    await open(page, "other.wav", 8, 7);
+    expect((await snap(page)).selection).toBeNull();
+
+    // Opened while an unrelated file is shown.
+    await open(page, "rec_Ch2.wav", 8, 99);
+    expect((await snap(page)).selection).toEqual(made);
   });
 
   test("another channel of the same recording keeps the selection", async ({ page }) => {
