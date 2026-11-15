@@ -3,6 +3,7 @@ pub use oversample_core::audio::{guano, loader, source, wamd, wav};
 
 pub mod browser_decode;
 pub mod chunk_params;
+pub mod context;
 pub mod export;
 pub mod live_recording;
 pub mod mic_backend;

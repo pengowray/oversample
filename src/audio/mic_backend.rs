@@ -168,6 +168,9 @@ thread_local! {
     static NATIVE_MIC_OPEN: RefCell<Option<NativeMode>> = const { RefCell::new(None) };
     /// AudioContext for HET playback (output only, no mic input).
     static HET_CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
+    /// Whether a refused live-playback buffer has been logged, so the log
+    /// gets one line and not one per chunk.
+    static BUFFER_REFUSED_LOGGED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Next scheduled playback time for HET audio buffers (the schedule cursor).
     static HET_NEXT_TIME: RefCell<f64> = const { RefCell::new(0.0) };
     /// Scheduled live-playback sources paired with their scheduled end time, so
@@ -1073,6 +1076,10 @@ fn process_native_chunk(state_cb: AppState, input_data: Vec<f32>) {
             let Ok(buffer) =
                 ctx.create_buffer(out_channels.len() as u32, out_len as u32, sr as f32)
             else {
+                // Without this the live sound would be missing with no sign why.
+                if !BUFFER_REFUSED_LOGGED.with(|l| l.replace(true)) {
+                    log::error!("Live listening: the browser refused an audio buffer at {sr} Hz");
+                }
                 return;
             };
             for (ch, samples) in out_channels.iter().enumerate() {
@@ -1314,9 +1321,15 @@ async fn open_web(state: &AppState) -> bool {
         }
     };
 
-    if let Ok(promise) = ctx.resume() {
-        let _ = JsFuture::from(promise).await;
-    }
+    // A context that does not start would leave the mic open and silent.
+    // If one at the browser's default rate does start, use that one.
+    let ctx = match super::context::default_if_not_started(&ctx).await {
+        Some(default_ctx) => {
+            let _ = ctx.close();
+            default_ctx
+        }
+        None => ctx,
+    };
 
     let sample_rate = ctx.sample_rate() as u32;
     state.mic.sample_rate().set(sample_rate);
@@ -1473,18 +1486,18 @@ fn track_channel_count(stream: &web_sys::MediaStream) -> Option<u32> {
 
 /// An AudioContext running at the mic's own sample rate, so the browser doesn't
 /// resample it (a default context runs at the output device's rate, often
-/// 48 kHz, which would cut a bat mic's ultrasound). Falls back to the default
-/// rate when the browser doesn't report the mic's rate or rejects it.
+/// 48 kHz, which would cut a bat mic's ultrasound). A mic above the highest
+/// rate a context is asked for (384 kHz) gets a context at that rate, and the
+/// browser resamples the mic to it. Falls back to the default rate when the
+/// browser doesn't report the mic's rate or rejects it.
+///
+/// Everything after this reads the context's own rate, not the mic's: the
+/// DSP, the live display and recordings all use `ctx.sample_rate()`.
 fn mic_audio_context(stream: &web_sys::MediaStream) -> Result<AudioContext, JsValue> {
-    if let Some(rate) = track_setting(stream, "sampleRate").filter(|r| *r > 0.0) {
-        let opts = web_sys::AudioContextOptions::new();
-        opts.set_sample_rate(rate as f32);
-        match AudioContext::new_with_context_options(&opts) {
-            Ok(ctx) => return Ok(ctx),
-            Err(e) => log::warn!("AudioContext at the mic's {rate} Hz failed: {e:?}"),
-        }
+    match track_setting(stream, "sampleRate").filter(|r| *r > 0.0) {
+        Some(rate) => super::context::new_context(rate as u32),
+        None => AudioContext::new(),
     }
-    AudioContext::new()
 }
 
 fn close_web(state: &AppState) {

@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{AudioContext, AudioContextOptions};
+use web_sys::AudioContext;
 
 use crate::audio::playback::{apply_bandpass, apply_gain};
 use crate::audio::source::{AudioSource, ChannelView};
@@ -317,7 +317,7 @@ pub(crate) fn start_stream(
 
     // The rate asked of the audio context. Buffers keep `final_rate`; the
     // browser resamples them when the context runs at another rate.
-    let context_rate = context_rate_for(final_rate);
+    let context_rate = super::context::context_rate(final_rate);
 
     // Reuse existing AudioContext if its sample rate matches; otherwise create new.
     let ctx = STREAM_CTX.with(|c| {
@@ -331,11 +331,7 @@ pub(crate) fn start_stream(
             let _ = ctx.close();
             *c.borrow_mut() = None;
         }
-        let opts = AudioContextOptions::new();
-        opts.set_sample_rate(context_rate as f32);
-        let new_ctx = AudioContext::new_with_context_options(&opts)
-            .or_else(|_| AudioContext::new())
-            .ok()?;
+        let new_ctx = super::context::new_context(final_rate).ok()?;
         *c.borrow_mut() = Some(new_ctx.clone());
         Some(new_ctx)
     });
@@ -447,6 +443,12 @@ async fn chunk_loop(
         yield_to_browser().await;
     }
 
+    // A context that has not started by now plays nothing. If one at the
+    // browser's default rate does start, play through that one.
+    let Some((ctx, gain_node)) = started_context(ctx, gain_node, generation).await else {
+        return;
+    };
+
     // Now schedule all pre-buffered chunks at once, starting slightly in the future
     let mut scheduled_time = ctx.current_time() + 0.02;
     SCHEDULED_END.with(|s| s.set(scheduled_time));
@@ -536,6 +538,35 @@ async fn chunk_loop(
     if current_gen == generation {
         SCHEDULER_DONE.with(|d| d.set(true));
     }
+}
+
+/// The context and gain node to schedule a stream on: the ones given when
+/// the context is running or starts, or a context at the browser's default
+/// rate (with a new gain node) when the given one does not start and that
+/// one does. `None` when the stream was stopped while waiting.
+async fn started_context(
+    ctx: AudioContext,
+    gain_node: web_sys::GainNode,
+    generation: u32,
+) -> Option<(AudioContext, web_sys::GainNode)> {
+    if ctx.state() == web_sys::AudioContextState::Running {
+        return Some((ctx, gain_node));
+    }
+    let default_ctx = super::context::default_if_not_started(&ctx).await;
+    let stopped = STREAM_GEN.with(|g| *g.borrow()) != generation;
+    let Some(default_ctx) = default_ctx else {
+        return (!stopped).then_some((ctx, gain_node));
+    };
+    if stopped {
+        let _ = default_ctx.close();
+        return None;
+    }
+    let new_gain = default_ctx.create_gain().ok()?;
+    let _ = new_gain.connect_with_audio_node(&default_ctx.destination());
+    let _ = ctx.close();
+    STREAM_CTX.with(|c| *c.borrow_mut() = Some(default_ctx.clone()));
+    STREAM_GAIN.with(|g| *g.borrow_mut() = Some(new_gain.clone()));
+    Some((default_ctx, new_gain))
 }
 
 /// Audio for one scheduled chunk.
