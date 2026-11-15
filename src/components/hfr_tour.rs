@@ -435,7 +435,10 @@ pub fn HfrNudge() -> impl IntoView {
     // Show on the start of playback, once per session.
     Effect::new(move |was_playing: Option<bool>| {
         let playing = state.playback.is_playing().get();
-        if playing && was_playing == Some(false) && nudge_allowed(state) && playing_ultrasound_at_1_1(state)
+        if playing
+            && was_playing == Some(false)
+            && nudge_allowed(state)
+            && playing_ultrasound_at_1_1(state)
         {
             show_nudge(state);
         }
@@ -449,7 +452,11 @@ pub fn HfrNudge() -> impl IntoView {
         let out = state.mic.listening().get()
             && !state.mic.mute_output().get()
             && state.mic.sample_rate().get() > 0;
-        if out && was_out == Some(false) && nudge_allowed(state) && listening_ultrasound_at_1_1(state) {
+        if out
+            && was_out == Some(false)
+            && nudge_allowed(state)
+            && listening_ultrasound_at_1_1(state)
+        {
             show_nudge(state);
         } else if !out && was_out == Some(true) {
             hide_nudge(state);
