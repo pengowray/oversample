@@ -317,7 +317,7 @@ pub fn setup_cache_clearing_effects(state: AppState) {
         let prev_decim = RwSignal::new(0u32);
         Effect::new(move || {
             let xform_on = state.display.transform().get();
-            let _mode = state.playback.mode().get();
+            let mode = state.playback.mode().get();
             let _het = state.transform.het_frequency().get();
             let _het_cut = state.transform.het_cutoff().get();
             let _het_comb = state.transform.het_comb_count().get();
@@ -325,6 +325,21 @@ pub fn setup_cache_clearing_effects(state: AppState) {
             let _te = state.transform.te_factor().get();
             let _ps = state.transform.ps_factor().get();
             let _pv = state.transform.pv_factor().get();
+            // The PS and PV output shift and, while one is set, the band
+            // edge that limits it and the filter edge its low-pass is set
+            // from. The edges are read only then: they change on every step
+            // of a drag of the band, and each run here redraws every tile.
+            let ps_shift = state.transform.ps_shift_hz().get();
+            if ps_shift.abs() >= 1.0
+                && matches!(
+                    mode,
+                    crate::state::PlaybackMode::PitchShift
+                        | crate::state::PlaybackMode::PhaseVocoder
+                )
+            {
+                let _band_lo = state.filter.band_ff_freq_lo().get();
+                let _filter_hi = state.filter.freq_high().get();
+            }
             let _zc = state.transform.zc_factor().get();
             // ZC division filters from just below the lowest bat frequency.
             let _lowest = lowest_bat_hz.get();

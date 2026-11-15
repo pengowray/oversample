@@ -900,17 +900,27 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // transform's onset fade/warmup falls on discarded samples rather than
         // visible tile content.
         let xform_on = state.display.transform().get_untracked();
+        let xform_mode = state.playback.mode().get_untracked();
         let needs_padding = xform_on
             && matches!(
-                state.playback.mode().get_untracked(),
+                xform_mode,
                 PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
             );
         // Pad by PV_HQ_OVERLAP to ensure complete overlap-add warmup
-        // before the tile's actual samples begin.
+        // before the tile's actual samples begin. A tile starts on a
+        // multiple of 256 samples and so does its padding, which puts the
+        // pitch shifter's grains at the same samples in every tile.
         let xform_pad = if needs_padding { PV_HQ_OVERLAP } else { 0 };
         let padded_start = sample_start.saturating_sub(xform_pad);
         let pre_pad_used = sample_start - padded_start;
-        let padded_len = pre_pad_used + sample_len;
+        // The pitch shifter's last grains are taken from just inside the
+        // buffer. Reading two grains past the tile keeps those out of it.
+        let post_pad = if xform_on && xform_mode == PlaybackMode::PitchShift {
+            2 * crate::dsp::pitch_shift::GRAIN
+        } else {
+            0
+        };
+        let padded_len = pre_pad_used + sample_len + post_pad;
 
         let read = streaming_source::read_views_ready(
             audio.source.as_ref(),
@@ -934,9 +944,10 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         // Apply DSP transform (heterodyne, pitch shift, etc.) when display_transform is active
         let samples = if xform_on {
             let transformed = apply_display_transform(&raw_samples, audio.sample_rate, state);
-            // Trim pre-padding so only the tile's actual transformed samples remain
-            if pre_pad_used > 0 && transformed.len() > pre_pad_used {
-                transformed[pre_pad_used..].to_vec()
+            // Trim the padding so only the tile's actual transformed samples remain
+            if (pre_pad_used > 0 || post_pad > 0) && transformed.len() > pre_pad_used {
+                let end = (pre_pad_used + sample_len).min(transformed.len());
+                transformed[pre_pad_used..end].to_vec()
             } else {
                 transformed
             }
@@ -2454,13 +2465,11 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             let cutoff = state.transform.het_cutoff().get_untracked();
             crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff)
         }
-        PlaybackMode::PitchShift => {
-            let factor = state.transform.ps_factor().get_untracked();
-            crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
-        }
-        PlaybackMode::PhaseVocoder => {
-            let factor = state.transform.pv_factor().get_untracked();
-            crate::dsp::phase_vocoder::phase_vocoder_pitch_shift(samples, factor)
+        // Playback's own steps: the shifter, then the output shift when
+        // one is set (OUT button), with playback's parameters.
+        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder => {
+            let params = crate::audio::playback::snapshot_dsp_params(&state, None, sample_rate);
+            crate::audio::streaming_playback::apply_dsp_mode(samples, sample_rate, &params)
         }
         PlaybackMode::ZeroCrossing => {
             let factor = state.transform.zc_factor().get_untracked() as u32;
