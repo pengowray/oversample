@@ -1,6 +1,7 @@
 //! The worker's state and message handling, without any browser types, so the
 //! native tests drive the same code the Web Worker runs.
 
+use crate::denoise::stream::StreamDenoiser;
 use crate::denoise::{Denoiser, TractMask};
 use crate::engine::{top_scores, Backbone, Head};
 use crate::perch;
@@ -55,6 +56,8 @@ pub struct Session {
     /// The denoiser's model, and the recording it is working through.
     denoiser: Option<(String, TractMask)>,
     denoising: Option<(u32, Denoiser)>,
+    /// The recording it is working through that arrives in pieces.
+    streaming: Option<(u32, StreamDenoiser)>,
 }
 
 impl Session {
@@ -79,6 +82,7 @@ impl Session {
                     ModelSlot::Denoise => {
                         self.denoiser = None;
                         self.denoising = None;
+                        self.streaming = None;
                     }
                 }
                 let t = now_ms();
@@ -177,6 +181,9 @@ impl Session {
                 if self.denoising.as_ref().is_some_and(|(id, _)| *id == run) {
                     self.denoising = None;
                 }
+                if self.streaming.as_ref().is_some_and(|(id, _)| *id == run) {
+                    self.streaming = None;
+                }
             }
             ToWorker::DenoiseStart { run } | ToWorker::DenoiseStartChannels { run, .. } => {
                 let channels = match msg {
@@ -184,6 +191,7 @@ impl Session {
                     _ => 1,
                 };
                 self.denoising = None;
+                self.streaming = None;
                 if self.denoiser.is_none() {
                     out.send(inference_error(run, "no denoiser loaded".into()), None);
                     return;
@@ -228,6 +236,76 @@ impl Session {
                     }
                     Err(message) => {
                         self.denoising = None;
+                        out.send(inference_error(run, message), None);
+                    }
+                }
+            }
+            ToWorker::DenoiseStreamStart {
+                run,
+                channels,
+                frames,
+            } => {
+                self.denoising = None;
+                self.streaming = None;
+                if self.denoiser.is_none() {
+                    out.send(inference_error(run, "no denoiser loaded".into()), None);
+                    return;
+                }
+                let whole = frames.is_finite() && frames >= 0.0 && frames.fract() == 0.0;
+                let started = if whole {
+                    StreamDenoiser::new(frames as u64, channels as usize)
+                } else {
+                    Err(format!("{frames} is not a number of samples"))
+                };
+                match started {
+                    Ok(d) => {
+                        let total = progress_count(d.blocks());
+                        self.streaming = Some((run, d));
+                        out.send(
+                            FromWorker::DenoiseProgress {
+                                run,
+                                done: 0,
+                                total,
+                            },
+                            None,
+                        );
+                    }
+                    Err(message) => out.send(inference_error(run, message), None),
+                }
+            }
+            ToWorker::DenoiseMeasure { run } => {
+                let Some((_, d)) = self.streaming.as_mut().filter(|(id, _)| *id == run) else {
+                    return;
+                };
+                match d.measure(att.samples.as_deref().unwrap_or_default()) {
+                    Ok(_) => out.send(FromWorker::DenoiseMeasured { run }, None),
+                    Err(message) => {
+                        self.streaming = None;
+                        out.send(inference_error(run, message), None);
+                    }
+                }
+            }
+            ToWorker::DenoisePiece { run } => {
+                let Some((_, model)) = self.denoiser.as_mut() else {
+                    return;
+                };
+                let Some((_, d)) = self.streaming.as_mut().filter(|(id, _)| *id == run) else {
+                    return;
+                };
+                match d.push(att.samples.as_deref().unwrap_or_default(), model) {
+                    Ok(samples) => {
+                        let msg = FromWorker::DenoisedPiece {
+                            run,
+                            done: progress_count(d.blocks_done()),
+                            total: progress_count(d.blocks()),
+                        };
+                        if d.finished() {
+                            self.streaming = None;
+                        }
+                        out.send(msg, Some(&samples));
+                    }
+                    Err(message) => {
+                        self.streaming = None;
                         out.send(inference_error(run, message), None);
                     }
                 }
@@ -344,6 +422,12 @@ impl Session {
         }
         true
     }
+}
+
+/// A count of blocks for a progress message. A recording has fewer than
+/// `u32::MAX` blocks unless it is over 17 years long at 1 MHz.
+fn progress_count(blocks: u64) -> u32 {
+    blocks.min(u64::from(u32::MAX)) as u32
 }
 
 fn load_error(message: String) -> FromWorker {

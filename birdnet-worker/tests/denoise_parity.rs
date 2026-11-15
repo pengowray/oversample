@@ -89,7 +89,8 @@ fn the_worker_matches_the_python_reference() {
     assert_eq!(steps, total);
     assert_eq!(output.len(), expected.len());
 
-    let rms = |v: &[f32]| (v.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt();
+    let rms =
+        |v: &[f32]| (v.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt();
     let diff: Vec<f32> = output.iter().zip(&expected).map(|(a, b)| a - b).collect();
     let relative = rms(&diff) / rms(&expected);
     // tract and onnxruntime round differently; the audio paths are the same.

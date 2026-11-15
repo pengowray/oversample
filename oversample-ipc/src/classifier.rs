@@ -318,7 +318,10 @@ pub mod attach {
     /// and [`super::ToWorker::DenoiseStart`] (the whole recording), and the
     /// denoised recording on [`super::FromWorker::Denoised`]. With
     /// [`super::ToWorker::DenoiseStartChannels`] the recording and its
-    /// denoised copy have their channels interleaved.
+    /// denoised copy have their channels interleaved. Also a piece of a
+    /// recording on [`super::ToWorker::DenoiseMeasure`] and
+    /// [`super::ToWorker::DenoisePiece`], and denoised samples on
+    /// [`super::FromWorker::DenoisedPiece`].
     pub const SAMPLES: &str = "samples";
     /// `Float32Array` of the method's [`super::Method::embedding_len`] values per
     /// window, on [`super::FromWorker::Window`] (one window) and
@@ -372,6 +375,26 @@ pub enum ToWorker {
     /// after the last block. One block per message, so a `Cancel` between two
     /// of them stops the work.
     DenoiseStep { run: u32 },
+    /// Begin a recording that arrives in pieces and is never held whole:
+    /// `frames` samples in each of `channels` channels. Any recording before
+    /// it is dropped. Answered by `DenoiseProgress` with `done` 0. The
+    /// recording then comes twice, start to end both times: first as
+    /// `DenoiseMeasure` pieces, then as `DenoisePiece` pieces. The denoised
+    /// samples are the same as `DenoiseStart` gives for the whole recording.
+    /// `frames` is a float because a 64-bit integer does not cross to
+    /// JavaScript as a number.
+    DenoiseStreamStart {
+        run: u32,
+        channels: u32,
+        frames: f64,
+    },
+    /// The recording's next samples ([`attach::SAMPLES`], channels
+    /// interleaved), for the noise scale, which is measured over the whole
+    /// recording before any of it is denoised. Answered by `DenoiseMeasured`.
+    DenoiseMeasure { run: u32 },
+    /// The recording's next samples ([`attach::SAMPLES`], channels
+    /// interleaved), to denoise. Answered by `DenoisedPiece`.
+    DenoisePiece { run: u32 },
 }
 
 /// Worker to app.
@@ -404,6 +427,14 @@ pub enum FromWorker {
     /// The denoised recording is in [`attach::SAMPLES`], the same length as
     /// what was sent.
     Denoised { run: u32 },
+    /// A `DenoiseMeasure` piece has been used.
+    DenoiseMeasured { run: u32 },
+    /// A `DenoisePiece` has been used. The denoised samples that are
+    /// finished are in [`attach::SAMPLES`], channels interleaved; they follow
+    /// on from the last answer's, run about one block behind the pieces, and
+    /// can be none. `done` of the recording's `total` blocks are denoised,
+    /// and when the two are equal the recording is complete.
+    DenoisedPiece { run: u32, done: u32, total: u32 },
     /// Something failed. `run` is `None` for model loading.
     Error {
         run: Option<u32>,

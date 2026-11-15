@@ -6,6 +6,12 @@
 //! restarts don't touch it. The worker is stopped after every recording, which
 //! gives its memory back.
 //!
+//! A recording of up to [`IN_MEMORY_MAX_SAMPLES`] samples goes to the worker
+//! whole and comes back whole. A longer one goes a piece at a time, twice
+//! (once for its noise level, once to be denoised), and the copy is written
+//! to a file as it comes back (`crate::denoise_copy`), so memory does not
+//! grow with the recording's length. Both ways give the same samples.
+//!
 //! One recording at a time. A stereo recording gives a stereo copy: the
 //! worker works out each channel's gains and gives both channels the larger
 //! one, so the level difference between left and right stays as it was. A
@@ -51,18 +57,40 @@ pub const BAT_MODEL: Model = Model {
     min_rate: 22_050,
 };
 
-/// The model "Make Denoised Copy" uses. There is one model today; a choice
+/// The model "Make denoised copy" uses. There is one model today; a choice
 /// between models would be made here.
 pub fn model() -> &'static Model {
     &BAT_MODEL
 }
 
-/// Longest recording, in samples over all the channels that are denoised:
-/// 62 s at 384 kHz and 9 min 4 s at 44.1 kHz in mono, half that in stereo.
-/// It is a memory limit, and memory goes by the number of samples, whichever
-/// channels they are in. The worker holds the recording four times over
-/// while it works.
-pub const MAX_SAMPLES: usize = 24_000_000;
+/// Longest recording that is denoised in memory, in samples over all the
+/// channels of the copy: 62 s at 384 kHz and 9 min 4 s at 44.1 kHz in mono,
+/// half that in stereo. In memory the app and the worker hold the recording
+/// several times over (about 25 bytes for each sample). A longer recording is
+/// denoised a piece at a time and written to a file. Where the device cannot
+/// write such a file, this is the longest recording it can denoise.
+pub const IN_MEMORY_MAX_SAMPLES: usize = 24_000_000;
+
+/// Samples of one channel in each piece of a long recording: one block of
+/// the worker's denoiser, so the progress moves with every piece.
+const PIECE_FRAMES: usize = 1024 * 128;
+
+/// [`IN_MEMORY_MAX_SAMPLES`], or the number in
+/// `window.__oversample_denoise_in_memory_max` when a test has set one, so a
+/// short recording can go through the long recording's code.
+fn in_memory_max() -> usize {
+    web_sys::window()
+        .and_then(|w| js_sys::Reflect::get(&w, &"__oversample_denoise_in_memory_max".into()).ok())
+        .and_then(|v| v.as_f64())
+        .map_or(IN_MEMORY_MAX_SAMPLES, |n| n as usize)
+}
+
+/// The most samples a recording can have here, over all the channels of the
+/// copy. `None` on a device that can write a long copy to a file, where the
+/// length has no limit of its own.
+pub fn sample_limit(state: AppState) -> Option<usize> {
+    (!crate::denoise_copy::supported(state)).then(in_memory_max)
+}
 
 /// Channels in the copy of a recording with `channels` channels: stereo
 /// stays stereo, and anything else is one channel (a mono mix).
@@ -80,8 +108,8 @@ pub fn copy_channels(channels: u32) -> u32 {
 pub mod text {
     use crate::format_units::{khz, sample_rate_khz};
 
-    pub const TITLE: &str = "Denoised Copy";
-    pub const BUTTON: &str = "Make Denoised Copy";
+    pub const TITLE: &str = "Denoised copy";
+    pub const BUTTON: &str = "Make denoised copy";
     pub const CANCEL: &str = "Cancel";
     pub const STARTING: &str = "Loading recording and model\u{2026}";
     pub const ADDED: &str = "Denoised copy added to the file list";
@@ -107,8 +135,22 @@ pub mod text {
     pub fn downloading(percent: u32) -> String {
         format!("Downloading model: {percent}%")
     }
-    pub fn running(percent: u32) -> String {
-        format!("Denoising: {percent}%")
+    /// The line under the progress bar. `seconds_left` is an estimate, and
+    /// `None` until enough of the recording is done to make one.
+    pub fn running(percent: u32, seconds_left: Option<u64>) -> String {
+        match seconds_left {
+            Some(seconds) => format!("Denoising: {percent}%, {}", time_left(seconds)),
+            None => format!("Denoising: {percent}%"),
+        }
+    }
+    /// "about 3 min left", rounded up to the minute; "about 1 h 5 min left".
+    fn time_left(seconds: u64) -> String {
+        let minutes = seconds.div_ceil(60).max(1);
+        if minutes < 60 {
+            format!("about {minutes} min left")
+        } else {
+            format!("about {} h {} min left", minutes / 60, minutes % 60)
+        }
     }
     pub fn download_failed(error: &str) -> String {
         format!("Model download failed: {error}")
@@ -125,19 +167,46 @@ pub mod text {
             sample_rate_khz(rate)
         )
     }
-    /// Two lines. `frames` and `max_frames` are samples in one channel. The
-    /// recording's length is rounded up and the maximum down, so the two
-    /// never read the same. A stereo recording's maximum is half a mono
-    /// one's, so its line says "stereo".
-    pub fn too_long(frames: usize, max_frames: usize, rate: u32, stereo: bool) -> String {
+    /// For a browser that cannot write the copy to a file as it is made, so
+    /// the copy has to fit in memory. A headline, then the numbers. `frames` and `max_frames`
+    /// are samples in one channel. The recording's length is rounded up and
+    /// the maximum down, so the two never read the same. A stereo
+    /// recording's maximum is half a mono one's, so its line says "stereo".
+    pub fn too_long(frames: u64, max_frames: u64, rate: u32, stereo: bool) -> String {
         let rate_f = f64::from(rate.max(1));
         format!(
-            "Recording too long: {}\nMaximum at {}{}: {}",
-            minutes_seconds((frames as f64 / rate_f).ceil() as u64),
+            "Recording too long for this browser\nMaximum at {}{}: {}. This recording: {}.",
             sample_rate_khz(rate),
             if stereo { " stereo" } else { "" },
-            minutes_seconds((max_frames as f64 / rate_f).floor() as u64)
+            minutes_seconds((max_frames as f64 / rate_f).floor() as u64),
+            minutes_seconds((frames as f64 / rate_f).ceil() as u64)
         )
+    }
+    /// For a browser whose storage has too little room for the copy's file.
+    /// A headline, then the numbers. A long copy that is open in the file
+    /// list has a file in that storage, which closing it deletes.
+    pub fn no_space(needed_bytes: u64, free_bytes: u64) -> String {
+        format!(
+            "Not enough browser storage\nCopy needs {}. Free: {}. Closing an earlier denoised copy can free storage.",
+            megabytes(needed_bytes, true),
+            megabytes(free_bytes, false)
+        )
+    }
+    /// "921 MB" or "1.2 GB". What is needed rounds up and what is free rounds
+    /// down, so the two never read the same.
+    fn megabytes(bytes: u64, round_up: bool) -> String {
+        let mb = if round_up {
+            bytes.div_ceil(1_000_000)
+        } else {
+            bytes / 1_000_000
+        };
+        if mb < 1000 {
+            format!("{mb} MB")
+        } else if round_up {
+            format!("{:.1} GB", (mb as f64 / 100.0).ceil() / 10.0)
+        } else {
+            format!("{:.1} GB", (mb as f64 / 100.0).floor() / 10.0)
+        }
     }
     /// "62 s" or "9 min 4 s": seconds alone under two minutes.
     fn minutes_seconds(seconds: u64) -> String {
@@ -297,23 +366,40 @@ pub fn is_busy(state: AppState) -> bool {
 }
 
 /// Why the open recording can't be denoised, or `None` when it can. `frames`
-/// is the recording's length in samples of one channel.
-pub fn refusal(sample_rate: u32, frames: usize, channels: u32) -> Option<String> {
+/// is the recording's length in samples of one channel, and `limit` is
+/// [`sample_limit`]'s answer for this device.
+pub fn refusal(
+    sample_rate: u32,
+    frames: u64,
+    channels: u32,
+    limit: Option<usize>,
+) -> Option<String> {
     let min_rate = model().min_rate;
     if sample_rate < min_rate {
         return Some(text::rate_too_low(sample_rate, min_rate));
     }
-    let copy_channels = copy_channels(channels) as usize;
-    let max_frames = MAX_SAMPLES / copy_channels;
-    if frames > max_frames {
-        return Some(text::too_long(
-            frames,
-            max_frames,
-            sample_rate,
-            copy_channels == 2,
-        ));
+    let copy_channels = u64::from(copy_channels(channels));
+    let max_frames = limit? as u64 / copy_channels;
+    (frames > max_frames)
+        .then(|| text::too_long(frames, max_frames, sample_rate, copy_channels == 2))
+}
+
+/// Seconds the rest of a run should take, when `fraction` of it took
+/// `elapsed_s` seconds. `None` in the first seconds, when the rate is not
+/// yet steady enough to say.
+fn seconds_left(fraction: f64, elapsed_s: f64) -> Option<u64> {
+    (elapsed_s >= 5.0 && fraction > 0.0 && fraction <= 1.0)
+        .then(|| (elapsed_s * (1.0 - fraction) / fraction).ceil() as u64)
+}
+
+/// The status for `done` of `total` blocks, with the time left as worked out
+/// from `started_ms`, the time (`Date.now()`) the first block began.
+fn running_status(done: u32, total: u32, started_ms: f64) -> DenoiseStatus {
+    let fraction = f64::from(done) / f64::from(total.max(1));
+    DenoiseStatus::Running {
+        fraction,
+        seconds_left: seconds_left(fraction, (js_sys::Date::now() - started_ms) / 1000.0),
     }
-    None
 }
 
 /// Stop the recording in progress, if any.
@@ -334,11 +420,12 @@ pub fn start(state: AppState) {
     });
     wasm_bindgen_futures::spawn_local(async move {
         let result = run(state, generation).await;
-        stop_worker();
         if GENERATION.with(|g| g.get()) != generation {
-            // Cancelled, or another recording started: its status stands.
+            // Cancelled, or another recording started: its status stands,
+            // and the worker that is running now is the other recording's.
             return;
         }
+        stop_worker();
         match result {
             Ok(()) => state.denoise.status().set(DenoiseStatus::Idle),
             Err(message) => state.denoise.status().set(DenoiseStatus::Failed(message)),
@@ -355,11 +442,19 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         .current_file()
         .ok_or_else(|| text::failed("no recording is open"))?;
     let sample_rate = file.audio.sample_rate;
-    let total = file.audio.source.total_samples() as usize;
-    if let Some(why) = refusal(sample_rate, total, file.audio.channels) {
+    let frames = file.audio.source.total_samples();
+    if let Some(why) = refusal(
+        sample_rate,
+        frames,
+        file.audio.channels,
+        sample_limit(state),
+    ) {
         return Err(why);
     }
     let channels = copy_channels(file.audio.channels);
+    let in_pieces = frames.saturating_mul(u64::from(channels)) > in_memory_max() as u64;
+    // In memory, the recording is short enough to count in a `usize`.
+    let total = frames as usize;
 
     let model = model().file;
     if !store::is_downloaded(model).await {
@@ -391,6 +486,9 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     } else {
         (0..channels).map(ChannelView::Channel).collect()
     };
+    if in_pieces {
+        return run_in_pieces(state, generation, &file, bytes, &views).await;
+    }
     let read =
         crate::audio::streaming_source::read_views_ready(&*file.audio.source, &views, 0, total)
             .await
@@ -408,6 +506,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     let run_id = generation;
     let mut sent_model = false;
     let mut sent_audio = false;
+    let mut started_ms = None;
     let denoised = loop {
         let Some(item) = next().await else {
             return Err(cancelled());
@@ -444,10 +543,11 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
                 post_samples(&start, &array, &obj_value);
             }
             FromWorker::DenoiseProgress { run, done, total } if run == run_id => {
+                let started_ms = *started_ms.get_or_insert_with(js_sys::Date::now);
                 state
                     .denoise
                     .status()
-                    .set(DenoiseStatus::Running(done as f64 / total.max(1) as f64));
+                    .set(running_status(done, total, started_ms));
                 post(&ToWorker::DenoiseStep { run: run_id }, None);
             }
             FromWorker::Denoised { run } if run == run_id => {
@@ -479,6 +579,179 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// [`run`] for a recording too long to hold several times over: the worker
+/// gets it a piece at a time, and the copy is written to a file as the
+/// worker gives it back. `bytes` is the model and `views` are the channels
+/// the copy has.
+async fn run_in_pieces(
+    state: AppState,
+    generation: u32,
+    file: &crate::state::LoadedFile,
+    bytes: js_sys::Uint8Array,
+    views: &[ChannelView],
+) -> Result<(), String> {
+    use crate::denoise_copy::{CopyFile, CreateError};
+    let live = || GENERATION.with(|g| g.get()) == generation;
+    let cancelled = String::new;
+
+    let name = denoised_name(&file.name);
+    let total = file.audio.source.total_samples();
+    let mut copy = CopyFile::create(
+        state,
+        &name,
+        total,
+        views.len() as u32,
+        file.audio.sample_rate,
+        generation,
+    )
+    .await
+    .map_err(|e| match e {
+        CreateError::NoSpace { needed, free } => text::no_space(needed, free),
+        CreateError::Other(e) => text::failed(&format!("the copy could not be started ({e})")),
+    })?;
+    // A cancel, or a failure, deletes what was written.
+    let denoised = if live() {
+        denoise_into(state, generation, file, bytes, views, &mut copy).await
+    } else {
+        Err(cancelled())
+    };
+    let denoised = denoised.and_then(|()| if live() { Ok(()) } else { Err(cancelled()) });
+    if let Err(e) = denoised {
+        copy.discard().await;
+        return Err(e);
+    }
+    stop_worker();
+    let written = copy
+        .finish()
+        .await
+        .map_err(|e| text::failed(&format!("the copy could not be written ({e})")))?;
+    crate::denoise_copy::open(state, written, &name)
+        .await
+        .map_err(|e| text::failed(&format!("the copy could not be opened ({e})")))?;
+    state.show_info_toast(text::ADDED);
+    Ok(())
+}
+
+/// Sends the recording to a new worker a piece at a time, first for its
+/// noise level and then to be denoised, and writes the denoised samples to
+/// `copy` as they come back. One piece is with the worker at a time.
+async fn denoise_into(
+    state: AppState,
+    generation: u32,
+    file: &crate::state::LoadedFile,
+    bytes: js_sys::Uint8Array,
+    views: &[ChannelView],
+    copy: &mut crate::denoise_copy::CopyFile,
+) -> Result<(), String> {
+    let live = || GENERATION.with(|g| g.get()) == generation;
+    let cancelled = String::new;
+    let source = &*file.audio.source;
+    let total = source.total_samples();
+    let channels = views.len() as u32;
+    // Samples the copy has, over all its channels.
+    let all = total * u64::from(channels);
+
+    start_worker().map_err(|e| text::failed(&format!("the worker could not start ({e})")))?;
+    let key = model().file.id.to_string();
+    let run_id = generation;
+    // Reads the piece that starts at sample `at` and posts it with `msg`.
+    // Returns the samples of one channel that it sent.
+    let send = |msg: ToWorker, at: u64| async move {
+        let len = (total - at).min(PIECE_FRAMES as u64) as usize;
+        let read = crate::audio::streaming_source::read_views_ready(source, views, at, len)
+            .await
+            .views
+            // A recording that turns out shorter than its file said gives a
+            // short piece.
+            .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == len))
+            .ok_or_else(|| text::failed("the recording could not be read"))?;
+        if !live() {
+            return Err(cancelled());
+        }
+        let array = js_sys::Float32Array::from(interleave(read).as_slice());
+        post_samples(&msg, &array, &array.buffer().into());
+        Ok(len as u64)
+    };
+
+    let mut sent_model = false;
+    let mut sent_start = false;
+    // Samples of one channel sent to be measured, and sent to be denoised.
+    let mut measured = 0u64;
+    let mut sent = 0u64;
+    // Samples written to the copy, over all its channels.
+    let mut written = 0u64;
+    let mut started_ms = 0.0;
+    loop {
+        let Some(item) = next().await else {
+            return Err(cancelled());
+        };
+        let (msg, attached) = item.map_err(|e| text::failed(&e))?;
+        match msg {
+            FromWorker::Ready if !sent_model => {
+                sent_model = true;
+                post(
+                    &ToWorker::Load {
+                        key: key.clone(),
+                        part: ModelPart::Denoiser,
+                    },
+                    Some((attach::BYTES, &bytes.buffer())),
+                );
+            }
+            FromWorker::Loaded { .. } if !sent_start => {
+                sent_start = true;
+                post(
+                    &ToWorker::DenoiseStreamStart {
+                        run: run_id,
+                        channels,
+                        frames: total as f64,
+                    },
+                    None,
+                );
+            }
+            FromWorker::DenoiseProgress { run, done: 0, .. } if run == run_id && measured == 0 => {
+                measured += send(ToWorker::DenoiseMeasure { run: run_id }, 0).await?;
+            }
+            FromWorker::DenoiseMeasured { run } if run == run_id && sent == 0 => {
+                if measured < total {
+                    measured += send(ToWorker::DenoiseMeasure { run: run_id }, measured).await?;
+                } else {
+                    started_ms = js_sys::Date::now();
+                    sent += send(ToWorker::DenoisePiece { run: run_id }, 0).await?;
+                }
+            }
+            FromWorker::DenoisedPiece {
+                run,
+                done,
+                total: blocks,
+            } if run == run_id => {
+                let samples = attached.ok_or_else(|| text::failed("the worker sent no audio"))?;
+                if samples.length() > 0 {
+                    copy.write(&samples).await.map_err(|e| {
+                        text::failed(&format!("the copy could not be written ({e})"))
+                    })?;
+                    if !live() {
+                        return Err(cancelled());
+                    }
+                    written += u64::from(samples.length());
+                }
+                state
+                    .denoise
+                    .status()
+                    .set(running_status(done, blocks, started_ms));
+                if written == all {
+                    return Ok(());
+                }
+                if sent >= total {
+                    return Err(text::failed("the worker sent too little audio"));
+                }
+                sent += send(ToWorker::DenoisePiece { run: run_id }, sent).await?;
+            }
+            FromWorker::Error { error, .. } => return Err(text::failed(&error.to_string())),
+            _ => {}
+        }
+    }
+}
+
 /// The channels' samples as one list: the first sample of every channel, then
 /// the second of every channel, and so on. One channel is returned as it is.
 fn interleave(mut channels: Vec<Vec<f32>>) -> Vec<f32> {
@@ -493,8 +766,8 @@ fn interleave(mut channels: Vec<Vec<f32>>) -> Vec<f32> {
     out
 }
 
-/// `start` (a `DenoiseStart` or `DenoiseStartChannels`) with the recording's
-/// samples, transferred.
+/// `start` (a message that takes samples) with the samples in `array`,
+/// transferred.
 fn post_samples(start: &ToWorker, array: &js_sys::Float32Array, buffer: &JsValue) {
     LINK.with(|l| {
         let l = l.borrow();
@@ -533,9 +806,15 @@ mod tests {
 
     #[test]
     fn low_rates_and_long_recordings_are_refused() {
+        // A device that can write a long copy to a file has no limit, and
+        // one that cannot has the most that fits in memory.
+        let (none, max) = (None, Some(IN_MEMORY_MAX_SAMPLES));
+        let refusal = |rate, frames, channels| refusal(rate, frames, channels, max);
         assert!(refusal(384_000, 1_000_000, 1).is_none());
         assert!(refusal(44_100, 1_000_000, 1).is_none());
         assert!(refusal(22_050, 1_000_000, 2).is_none());
+        assert!(super::refusal(384_000, 1_000_000_000, 2, none).is_none());
+        assert!(super::refusal(16_000, 1_000_000, 1, none).is_some());
         assert_eq!(
             refusal(16_000, 1_000_000, 1).unwrap(),
             "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 16\u{a0}kHz."
@@ -546,21 +825,54 @@ mod tests {
             "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 22\u{a0}kHz."
         );
         assert_eq!(
-            refusal(384_000, MAX_SAMPLES + 1, 1).unwrap(),
-            "Recording too long: 63 s\nMaximum at 384\u{a0}kHz: 62 s"
+            refusal(384_000, IN_MEMORY_MAX_SAMPLES as u64 + 1, 1).unwrap(),
+            "Recording too long for this browser\nMaximum at 384\u{a0}kHz: 62 s. This recording: 63 s."
         );
         assert_eq!(
             refusal(44_100, 44_100 * 750, 1).unwrap(),
-            "Recording too long: 12 min 30 s\nMaximum at 44.1\u{a0}kHz: 9 min 4 s"
+            "Recording too long for this browser\nMaximum at 44.1\u{a0}kHz: 9 min 4 s. This recording: 12 min 30 s."
         );
         // The limit counts the samples of both channels of a stereo copy.
-        assert!(refusal(44_100, MAX_SAMPLES / 2, 2).is_none());
+        assert!(refusal(44_100, IN_MEMORY_MAX_SAMPLES as u64 / 2, 2).is_none());
         assert_eq!(
             refusal(44_100, 44_100 * 300, 2).unwrap(),
-            "Recording too long: 5 min 0 s\nMaximum at 44.1\u{a0}kHz stereo: 4 min 32 s"
+            "Recording too long for this browser\nMaximum at 44.1\u{a0}kHz stereo: 4 min 32 s. This recording: 5 min 0 s."
         );
         // More than two channels are mixed to one, so the mono limit applies.
         assert!(refusal(44_100, 44_100 * 300, 4).is_none());
+    }
+
+    #[test]
+    fn the_progress_line_gets_the_time_left_once_there_is_an_estimate() {
+        assert_eq!(seconds_left(0.5, 4.0), None);
+        assert_eq!(seconds_left(0.0, 30.0), None);
+        assert_eq!(seconds_left(0.25, 30.0), Some(90));
+        assert_eq!(seconds_left(1.0, 30.0), Some(0));
+        assert_eq!(text::running(3, None), "Denoising: 3%");
+        assert_eq!(
+            text::running(25, Some(90)),
+            "Denoising: 25%, about 2 min left"
+        );
+        assert_eq!(
+            text::running(99, Some(4)),
+            "Denoising: 99%, about 1 min left"
+        );
+        assert_eq!(
+            text::running(10, Some(3900)),
+            "Denoising: 10%, about 1 h 5 min left"
+        );
+    }
+
+    #[test]
+    fn the_storage_refusal_gives_what_is_needed_and_what_is_free() {
+        assert_eq!(
+            text::no_space(921_600_080, 310_999_999),
+            "Not enough browser storage\nCopy needs 922 MB. Free: 310 MB. Closing an earlier denoised copy can free storage."
+        );
+        assert_eq!(
+            text::no_space(2_540_160_080, 1_999_000_000),
+            "Not enough browser storage\nCopy needs 2.6 GB. Free: 1.9 GB. Closing an earlier denoised copy can free storage."
+        );
     }
 
     #[test]

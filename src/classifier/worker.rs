@@ -296,7 +296,10 @@ fn on_message(ev: MessageEvent) {
             }
             // The denoiser's answers go to its own worker's client
             // (`crate::denoise`), never to this one.
-            FromWorker::DenoiseProgress { .. } | FromWorker::Denoised { .. } => {}
+            FromWorker::DenoiseProgress { .. }
+            | FromWorker::Denoised { .. }
+            | FromWorker::DenoiseMeasured { .. }
+            | FromWorker::DenoisedPiece { .. } => {}
             FromWorker::Error { run, error } => {
                 flush = client.take_flush();
                 // Fail every waiter the error concerns: the run's, or (for a

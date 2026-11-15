@@ -370,7 +370,6 @@ pub fn Spectrogram() -> impl IntoView {
             let notch_bands = state.notch.bands().get();
             let notch_enabled = state.notch.enabled().get();
             let notch_hovering = state.notch.hovering_band().get();
-            let harmonic_suppression = state.notch.harmonic_suppression().get();
             // Detected calls are drawn by reference below; only subscribe here.
             state.call_detection.detected().with(|_| ());
             state.call_detection.trains().with(|_| ());
@@ -414,7 +413,6 @@ pub fn Spectrogram() -> impl IntoView {
             let _dsp_eq = state.display.filter_eq().get();
             let _dsp_notch = state.display.filter_notch().get();
             let _dsp_gain = state.display.filter_gain().get();
-            let _dsp_nr_strength = state.display.nr_strength().get();
             let _dsp_auto_floor = state.display.auto_noise_floor().get();
             let _dsp_transform = state.display.transform().get();
             let _dsp_decimate = state.display.decimate_effective().get();
@@ -1435,7 +1433,6 @@ pub fn Spectrogram() -> impl IntoView {
                         &notch_bands,
                         notch_enabled,
                         notch_hovering,
-                        harmonic_suppression,
                     );
                 }
 

@@ -58,12 +58,6 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         b.enabled.hash(&mut h);
         (b.strength_db as i32).hash(&mut h);
     }
-    state
-        .notch
-        .harmonic_suppression()
-        .get_untracked()
-        .to_bits()
-        .hash(&mut h);
     state.display.xform_enabled().get_untracked().hash(&mut h);
     (state.display.filter_nr().get_untracked() as u8).hash(&mut h);
     (state.display.filter_notch().get_untracked() as u8).hash(&mut h);
@@ -87,12 +81,6 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         .hash(&mut h);
     // The playback floor's lowest bins depend on the offset the display removes.
     current_display_offset(state).map(f32::to_bits).hash(&mut h);
-    state
-        .display
-        .nr_strength()
-        .get_untracked()
-        .to_bits()
-        .hash(&mut h);
     h.finish()
 }
 
@@ -193,7 +181,6 @@ fn compute_freq_adjustments_inner(
         };
         if show_notch {
             let bands = state.notch.bands().get_untracked();
-            let harm_supp = state.notch.harmonic_suppression().get_untracked();
             for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                 let bin = tile_height - 1 - row;
                 let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
@@ -206,21 +193,12 @@ fn compute_freq_adjustments_inner(
                     if (freq - band.center_hz).abs() <= half_bw {
                         *adj_val -= band.strength_db as f32;
                     }
-                    // Harmonic suppression at 2x and 3x
-                    if harm_supp > 0.0 {
-                        for harmonic in [2.0, 3.0] {
-                            let hfreq = band.center_hz * harmonic;
-                            if (freq - hfreq).abs() <= half_bw * harmonic {
-                                *adj_val -= (band.strength_db * harm_supp) as f32;
-                            }
-                        }
-                    }
                 }
             }
         }
 
         // Spectral subtraction: use display auto noise floor when DSP NR is Auto,
-        // custom strength when Custom, or playback noise floor when Same/fallback.
+        // or playback noise floor and strength when Same/fallback.
         {
             let dsp_enabled = state.display.xform_enabled().get_untracked();
             let nr_mode = state.display.filter_nr().get_untracked();
@@ -229,15 +207,14 @@ fn compute_freq_adjustments_inner(
             // the playback floor (`from_playback`) still holds it.
             let (nf_opt, strength, from_playback) =
                 if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Auto) {
-                    // Auto: use display-specific auto-learned floor
-                    (state.display.auto_noise_floor().get_untracked(), 0.8, false)
-                } else if dsp_enabled && matches!(nr_mode, DisplayFilterMode::Custom) {
-                    // Custom: prefer display auto floor with custom strength
-                    let strength = state.display.nr_strength().get_untracked();
-                    match state.display.auto_noise_floor().get_untracked() {
-                        Some(floor) => (Some(floor), strength, false),
-                        None => (state.noise_reduce.floor().get_untracked(), strength, true),
-                    }
+                    // Auto: the display's own auto-learned floor, at the
+                    // Noise menu's Strength, so the picture follows the one
+                    // strength setting there is.
+                    (
+                        state.display.auto_noise_floor().get_untracked(),
+                        state.noise_reduce.strength().get_untracked(),
+                        false,
+                    )
                 } else if state.noise_reduce.enabled().get_untracked() {
                     // Same/fallback: use playback noise floor
                     (

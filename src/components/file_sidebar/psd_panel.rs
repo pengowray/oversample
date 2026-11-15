@@ -1019,10 +1019,8 @@ fn start_psd_compute(
 
     if apply_notch && state.notch.enabled().get_untracked() {
         let bands = state.notch.bands().get_untracked();
-        let harm_supp = state.notch.harmonic_suppression().get_untracked();
         if !bands.is_empty() {
-            samples =
-                crate::dsp::notch::apply_notch_filters(&samples, sample_rate, &bands, harm_supp);
+            samples = crate::dsp::notch::apply_notch_filters(&samples, sample_rate, &bands);
         }
     }
 
@@ -1035,7 +1033,6 @@ fn start_psd_compute(
                 &nf,
                 strength,
                 0.01,
-                0.0,
             );
         }
     }

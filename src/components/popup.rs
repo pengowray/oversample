@@ -3,7 +3,8 @@
 //! `PopupPanel` portals its content to `<body>` and computes placement against
 //! the viewport: flip to the opposite side when the preferred side has no
 //! room, shift along the cross-axis to stay on-screen, and cap `max-height`
-//! to the remaining space. This replaces the ad-hoc `position: absolute` +
+//! to the remaining space. It places the popup again when the window or the
+//! popup's own content changes size. This replaces the ad-hoc `position: absolute` +
 //! fixed pixel offsets pattern that broke on narrow viewports (notably
 //! Android portrait) when neither below-left nor below-right had room.
 //!
@@ -99,6 +100,11 @@ pub fn compute_placement(
     }
 }
 
+/// The observer of an open panel's size, with the callback it calls, kept
+/// until the panel closes.
+type PanelObserver =
+    std::rc::Rc<std::cell::RefCell<Option<(web_sys::ResizeObserver, Closure<dyn Fn()>)>>>;
+
 /// Schedule `cb` to run on the next animation frame. The closure is consumed.
 fn raf_once<F: FnOnce() + 'static>(cb: F) {
     let Some(win) = web_sys::window() else { return };
@@ -124,8 +130,10 @@ fn add_resize_listener<F: Fn() + 'static>(cb: F) -> Option<(web_sys::Window, Clo
 /// signal for open/closed.
 ///
 /// When `is_open` is true, the children are rendered into a portal under
-/// `<body>` at a viewport-aware position. The popup re-measures on window
-/// resize while open. When `is_open` is false, the portal is unmounted.
+/// `<body>` at a viewport-aware position. The popup re-measures while open
+/// when the window is resized or its own content changes size (a row that
+/// gets longer, a list that fills in). When `is_open` is false, the portal is
+/// unmounted.
 ///
 /// `extra_style` is appended to the inline style on the popup `<div>` (useful
 /// for `min-width`, etc.). `class` defaults to `"layer-panel"` so the popup
@@ -144,7 +152,8 @@ pub fn PopupPanel(
     let panel_ref = NodeRef::<leptos::html::Div>::new();
 
     // Measurement: runs once the panel is mounted (on rAF after is_open flips),
-    // and again on every window resize while open.
+    // and again while open on every window resize and every change of the
+    // panel's own size.
     let measure = move || {
         // `try_get_untracked`: `measure` is deferred via a leaked `raf_once` (and
         // re-run from the resize listener), so it can fire after PopupPanel is
@@ -190,7 +199,29 @@ pub fn PopupPanel(
             return;
         }
         // Defer one frame so the portal has actually mounted the children.
-        raf_once(measure);
+        // Then watch the panel's size: content that grows after the first
+        // placement (a button whose label gets longer, a list that fills in)
+        // would otherwise run past the edge of a narrow screen, because the
+        // popup stayed where its first, smaller size put it.
+        let observer: PanelObserver = Default::default();
+        let observer_slot = observer.clone();
+        raf_once(move || {
+            measure();
+            let Some(Some(panel_el)) = panel_ref.try_get_untracked() else {
+                return;
+            };
+            let on_resize = Closure::wrap(Box::new(move || raf_once(measure)) as Box<dyn Fn()>);
+            if let Ok(ro) = web_sys::ResizeObserver::new(on_resize.as_ref().unchecked_ref()) {
+                ro.observe(&panel_el);
+                *observer_slot.borrow_mut() = Some((ro, on_resize));
+            }
+        });
+        let observer = send_wrapper::SendWrapper::new(observer);
+        Owner::on_cleanup(move || {
+            if let Some((ro, _on_resize)) = observer.take().borrow_mut().take() {
+                ro.disconnect();
+            }
+        });
         // Attach a resize listener for the lifetime of this open state.
         // SendWrapper is needed because wasm-bindgen Closure is !Send (which
         // is irrelevant on single-threaded WASM but is enforced by Leptos's

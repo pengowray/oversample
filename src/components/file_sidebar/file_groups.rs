@@ -47,7 +47,7 @@ pub struct FileGroupInfo {
     pub denoise: DenoiseLinks,
 }
 
-/// What "Make Denoised Copy" adds to the end of a recording's stem:
+/// What "Make denoised copy" adds to the end of a recording's stem:
 /// "bat.flac" becomes "bat (denoised).wav".
 pub const DENOISED_SUFFIX: &str = " (denoised)";
 

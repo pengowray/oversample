@@ -1965,7 +1965,6 @@ mod tests {
             has_selection: false,
             notch_enabled: false,
             notch_bands: Vec::new(),
-            notch_harmonic_suppression: 0.0,
             noise_reduce_enabled: false,
             noise_reduce_strength: 0.0,
             noise_reduce_floor: None,

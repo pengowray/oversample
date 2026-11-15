@@ -35,7 +35,9 @@ fn total_open_file_bytes(state: AppState) -> u64 {
     })
 }
 
-pub(super) async fn read_and_load_file(
+/// Open a file the browser gave: streamed from the file when it is large,
+/// decoded into memory otherwise.
+pub(crate) async fn read_and_load_file(
     file: File,
     state: AppState,
     load_id: u64,
@@ -150,6 +152,63 @@ pub(super) async fn read_and_load_file(
         finalize_loaded_file(state, last_modified_ms);
     }
     result
+}
+
+/// Open a WAV of `size` bytes at `path` on disk (Tauri): streamed from disk
+/// when it is large, as [`read_and_load_file`] does for a file the browser
+/// gave, and read into memory otherwise.
+pub(crate) async fn load_native_wav(
+    path: String,
+    size: u64,
+    state: AppState,
+    load_id: u64,
+) -> Result<(), String> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+    let force_streaming =
+        total_open_file_bytes(state).saturating_add(size) >= TOTAL_OPEN_FILE_STREAMING_THRESHOLD;
+    state.loading_update(load_id, crate::state::LoadingStage::Streaming);
+    let handle = crate::audio::streaming_source::FileHandle::TauriPath(path.clone());
+    match super::streaming_load::try_streaming_wav_handle(
+        handle,
+        size,
+        &name,
+        state,
+        force_streaming,
+        load_id,
+    )
+    .await
+    {
+        Ok(()) => {
+            // The streaming path leaves the file's identity to its caller.
+            let file_index = state
+                .library
+                .files()
+                .get_untracked()
+                .len()
+                .saturating_sub(1);
+            let (data_offset, data_size) = state.library.files().with_untracked(|files| {
+                files
+                    .get(file_index)
+                    .map(|f| (f.audio.metadata.data_offset, f.audio.metadata.data_size))
+                    .unwrap_or((None, None))
+            });
+            crate::file_identity::start_identity_computation(
+                state,
+                file_index,
+                name,
+                size,
+                None,
+                data_offset,
+                data_size,
+                None,
+            );
+            Ok(())
+        }
+        Err(e) => {
+            log::info!("WAV streaming not applicable for {}: {}", name, e);
+            load_native_file(path, state, load_id).await
+        }
+    }
 }
 
 /// Decode `bytes` and add them to the library as a new file.

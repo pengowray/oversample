@@ -265,7 +265,6 @@ fn sync_noise_profile_from_state(
         source_sample_rate: sample_rate,
         created: crate::annotations::now_iso8601(),
         noise_floor,
-        harmonic_suppression: state.notch.harmonic_suppression().get_untracked(),
     })
 }
 
@@ -554,7 +553,6 @@ fn apply_loaded_sidecar(
                 if let Some(ref profile) = loaded.noise_profile {
                     f.settings.notch_bands = profile.bands.clone();
                     f.settings.notch_profile_name = profile.name.clone();
-                    f.settings.notch_harmonic_suppression = profile.harmonic_suppression;
                     if !profile.bands.is_empty() {
                         f.settings.notch_enabled = true;
                     }
