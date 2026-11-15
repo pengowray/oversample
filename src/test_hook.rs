@@ -59,6 +59,22 @@ pub fn install(state: AppState) {
             "maxFreq",
             opt_f64(state.view.max_display_freq().get_untracked()),
         );
+        // The Back/Forward history of view positions, and the bookmarks.
+        set(
+            &o,
+            "navIndex",
+            JsValue::from_f64(state.viewmode.nav_index().get_untracked() as f64),
+        );
+        set(
+            &o,
+            "navLength",
+            JsValue::from_f64(state.viewmode.nav_history().get_untracked().len() as f64),
+        );
+        let bookmarks = js_sys::Array::new();
+        for bm in state.viewmode.bookmarks().get_untracked() {
+            bookmarks.push(&JsValue::from_f64(bm.time));
+        }
+        set(&o, "bookmarks", bookmarks.into());
         // The open file, its per-file settings, and playback.
         let files = state.library.files().get_untracked();
         let name_of = |id: Option<u64>| {

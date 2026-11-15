@@ -267,6 +267,38 @@ pub fn import_set(
     out
 }
 
+/// Whether an annotation was made by `import_set`: every group and region it
+/// makes carries the `#xc:set` tag.
+fn is_from_xc(a: &Annotation) -> bool {
+    tags::value_of(&a.tags, Some(tags::XC_NS), tags::XC_SET).is_some()
+}
+
+/// Add to `saved` (a file's annotations as read from its saved file) the
+/// annotations in `in_memory` that the user added while the saved file was
+/// still being read. Returns how many were added.
+///
+/// Left out: annotations `saved` already has (same id), and annotations
+/// imported from Xeno-canto. `import_set` adds the Xeno-canto ones again
+/// afterwards, skipping those the saved file already holds, so they are
+/// not doubled.
+pub fn carry_over_unsaved(saved: &mut Vec<Annotation>, in_memory: Vec<Annotation>) -> usize {
+    let mut added = 0;
+    for mut a in in_memory {
+        if is_from_xc(&a) || saved.iter().any(|s| s.id == a.id) {
+            continue;
+        }
+        // Its group may have been one of the Xeno-canto groups left out.
+        if let Some(parent) = &a.parent_id {
+            if !saved.iter().any(|s| &s.id == parent) {
+                a.parent_id = None;
+            }
+        }
+        saved.push(a);
+        added += 1;
+    }
+    added
+}
+
 /// What an export needs to know beyond the annotations.
 #[derive(Clone, Debug, Default)]
 pub struct ExportContext {
@@ -512,15 +544,16 @@ pub fn attach_xc_set(state: crate::state::AppState, file_id: u64, set: AnnotaSet
 
 /// Add any XC annotations of `file_id` that aren't in its annotation set yet.
 /// Safe to call more than once: annotations already present are skipped.
-pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool) {
+/// Returns the number of annotations added (groups and regions).
+pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool) -> usize {
     use crate::state::store_fields::*;
     use leptos::prelude::*;
 
     let Some(set) = XC_SETS.with(|m| m.borrow().get(&file_id).cloned()) else {
-        return;
+        return 0;
     };
     let Some(file_idx) = state.file_idx_for_id(file_id) else {
-        return;
+        return 0;
     };
     let new_set = state.library.files().with_untracked(|files| {
         files.get(file_idx).map(|f| {
@@ -536,7 +569,7 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
         })
     });
     let Some(new_set) = new_set else {
-        return;
+        return 0;
     };
     // Xeno-canto's times and frequencies are in the file's own seconds and
     // Hz; convert them if the user corrected the file's time expansion.
@@ -554,14 +587,17 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
         &crate::annotations::now_iso8601(),
     );
     if out.added.is_empty() {
-        return;
+        return 0;
     }
     let n = out.regions_added();
+    let added = out.added.len();
     state.annotations.store().update(|store| {
         let s = store.entry_or_insert_with(file_id, || new_set);
         s.annotations.extend(out.added);
     });
-    state.annotations.dirty().set(true);
+    // Saved for this file, which need not be the open one. The save waits
+    // until the file's saved annotations have been read (`opfs::hold_saves`).
+    crate::opfs::save_annotations(state, file_idx);
     if announce {
         state.show_info_toast(if n == 1 {
             "Added 1 annotation from XC".to_string()
@@ -569,6 +605,7 @@ pub fn merge_xc_set(state: crate::state::AppState, file_id: u64, announce: bool)
             format!("Added {n} annotations from XC")
         });
     }
+    added
 }
 
 #[cfg(test)]
@@ -644,6 +681,44 @@ mod tests {
         assert!(tags::has_flag(&buzz.tags, tags::CALL));
         assert!(!tags::has_flag(&buzz.tags, tags::TRAIN));
         assert_eq!(buzz.notes.as_deref(), Some("close pass"));
+    }
+
+    #[test]
+    fn unsaved_annotations_join_the_saved_ones_without_doubling_xc() {
+        // The saved file: the user's region and the XC set, imported earlier.
+        let xc_then = import_set(&sample_set(), &[], ids(), "then");
+        let mut saved = xc_then.added.clone();
+        saved.push(user_region("mine", &[], Some("mine")));
+
+        // In memory when the saved file arrives: the XC set imported again
+        // (new ids), a region drawn just now inside the new XC group, and
+        // the user's saved region.
+        let mut n = 100;
+        let xc_now = import_set(
+            &sample_set(),
+            &[],
+            || {
+                n += 1;
+                AnnotationId::from(format!("now{n}"))
+            },
+            "now",
+        );
+        let mut in_memory = xc_now.added.clone();
+        let mut fresh = user_region("fresh", &[], Some("fresh"));
+        fresh.parent_id = Some(in_memory[0].id.clone());
+        in_memory.push(fresh);
+        in_memory.push(user_region("mine", &[], Some("mine")));
+
+        let before = saved.len();
+        assert_eq!(carry_over_unsaved(&mut saved, in_memory), 1);
+        assert_eq!(saved.len(), before + 1);
+        let fresh = saved.last().unwrap();
+        assert_eq!(fresh.id, AnnotationId::from("fresh"));
+        // Its group was a copy of the XC group and was left out.
+        assert_eq!(fresh.parent_id, None);
+        // The XC set is then merged again and adds nothing.
+        let again = import_set(&sample_set(), &saved, ids(), "later");
+        assert!(again.added.is_empty());
     }
 
     #[test]

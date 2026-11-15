@@ -169,6 +169,34 @@ pub(crate) async fn load_named_bytes(
     load_id: u64,
     is_demo: bool,
 ) -> Result<(), String> {
+    load_named_bytes_id(
+        name,
+        bytes,
+        site_metadata,
+        xc_hashes,
+        time_expansion,
+        state,
+        load_id,
+        is_demo,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `load_named_bytes`, returning the new file's id (`LoadedFile.id`). A
+/// caller that goes on to work with the file finds it by this id: its
+/// position in the list changes when other files are closed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn load_named_bytes_id(
+    name: String,
+    bytes: &[u8],
+    site_metadata: Option<SiteMetadata>,
+    xc_hashes: Option<crate::state::SidecarHashes>,
+    time_expansion: Option<f64>,
+    state: AppState,
+    load_id: u64,
+    is_demo: bool,
+) -> Result<u64, String> {
     let mut wav_markers = crate::audio::loader::parse_wav_markers(bytes);
     let is_m4a = crate::audio::loader::is_m4a(bytes);
     // For M4A, prefer the browser's AudioContext decoder: it handles every AAC
@@ -456,7 +484,7 @@ pub(crate) async fn load_named_bytes(
         .tile_ready_signal()
         .update(|n| *n = n.wrapping_add(1));
 
-    Ok(())
+    Ok(new_id)
 }
 
 const DEMO_SOUNDS_BASE: &str = "https://archive.oversample.com";

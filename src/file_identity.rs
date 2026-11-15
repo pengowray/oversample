@@ -417,6 +417,38 @@ fn run_verification(
     VerifyOutcome::Mismatch
 }
 
+/// Whether the identity stored in a saved annotation set can be that of
+/// `file`, going by the hashes both hold.
+///
+/// The kinds of hash are compared in turn: content hash, full BLAKE3, spot
+/// hash, and the old SHA-256 spot hash. One equal pair is enough: an edit to
+/// a file's header changes its file hashes but not its content hash. The
+/// answer is false only when both sides hold at least one kind in common and
+/// no common kind is equal.
+///
+/// With no kind in common there is nothing to compare, and the answer is
+/// true. That is the case for a set saved before the file's hash was known
+/// (or by a version that stored none): it goes to a file of the same name
+/// and size, as it always did.
+pub fn saved_identity_agrees(saved: &FileIdentity, file: &FileIdentity) -> bool {
+    let pairs = [
+        (&saved.content_hash, &file.content_hash),
+        (&saved.full_blake3, &file.full_blake3),
+        (&saved.spot_hash_b3, &file.spot_hash_b3),
+        (&saved.legacy_spot_hash, &file.legacy_spot_hash),
+    ];
+    let mut compared = false;
+    for (a, b) in pairs {
+        if let (Some(a), Some(b)) = (a, b) {
+            if a == b {
+                return true;
+            }
+            compared = true;
+        }
+    }
+    !compared
+}
+
 /// Read the current reference hashes for a file from state.
 fn get_merged_reference(state: AppState, file_index: usize) -> crate::state::SidecarHashes {
     let xc_hashes = state
@@ -441,6 +473,22 @@ fn set_verify_outcome(state: AppState, file_index: usize, outcome: crate::state:
     });
 }
 
+thread_local! {
+    /// Files (by `LoadedFile.id`) whose spot hash is being computed.
+    static SPOT_HASH_PENDING: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Whether the spot hash of file `file_id` is still being computed. Its
+/// saved annotations are looked up when the hash is known
+/// (`start_identity_computation`), so a lookup asked for before then is
+/// left to that one: without the hash, a set stored under the file's name
+/// and size cannot be told from the set of another file with that name and
+/// size.
+pub fn spot_hash_pending(file_id: u64) -> bool {
+    SPOT_HASH_PENDING.with(|s| s.borrow().contains(&file_id))
+}
+
 /// Compute Layer 1 identity and kick off async Layer 2 (spot-check) computation.
 /// Call this after a file is added to state.library.files().
 pub fn start_identity_computation(
@@ -462,13 +510,19 @@ pub fn start_identity_computation(
         return;
     };
 
+    // The file's annotations are not saved until its saved annotations have
+    // been looked up under its hash, below (see `opfs::SaveHold`).
+    let save_hold = crate::opfs::hold_saves(state, file_id);
+
     // Skip if identity already computed (e.g. by load_named_bytes)
     let already_has_identity = state
         .library
         .files()
         .with_untracked(|files| files.get(file_index).is_some_and(|f| f.identity.is_some()));
     if already_has_identity {
-        // Still try loading saved annotations even if identity was already set
+        // Still try loading saved annotations even if identity was already set.
+        // (Does nothing while the first call's spot hash is being computed:
+        // that call reads them when it has the hash.)
         let identity = state
             .library
             .files()
@@ -491,11 +545,13 @@ pub fn start_identity_computation(
         }
     });
 
-    // Try loading annotations with Layer 1 key
-    crate::opfs::load_annotations(state, file_index, identity);
+    // The saved annotations are read once, after the spot hash below: they
+    // are stored under the hash. (With no hash, under the name and size.)
 
     // Layer 2: compute BLAKE3 spot hash async (+ Layers 3+4 when bytes available)
+    SPOT_HASH_PENDING.with(|s| s.borrow_mut().insert(file_id));
     wasm_bindgen_futures::spawn_local(async move {
+        let save_hold = save_hold;
         let spot_hash = if let Some(ref bytes) = file_bytes {
             // In-memory: compute synchronously
             Some(compute_spot_hash_b3_sync(bytes, data_offset, data_size))
@@ -515,6 +571,9 @@ pub fn start_identity_computation(
             }
         };
 
+        // The hash is known, or cannot be computed: lookups go ahead.
+        SPOT_HASH_PENDING.with(|s| s.borrow_mut().remove(&file_id));
+
         let Some(file_index) = state.file_idx_for_id(file_id) else {
             return;
         };
@@ -526,16 +585,19 @@ pub fn start_identity_computation(
                     }
                 }
             });
-
-            // Try loading annotations again with the better spot_hash_b3 key
-            let identity = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
-            if let Some(id) = identity {
-                crate::opfs::load_annotations(state, file_index, id);
-            }
         }
+
+        // Read the saved annotations: under the spot hash, or under the name
+        // and size if the hash could not be computed. The read holds the
+        // file's saves itself until it is done.
+        let identity = state
+            .library
+            .files()
+            .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
+        if let Some(id) = identity {
+            crate::opfs::load_annotations(state, file_index, id);
+        }
+        drop(save_hold);
 
         let is_small = file_size < SMALL_FILE_THRESHOLD;
 
@@ -781,6 +843,49 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_set_goes_to_the_file_whose_hash_it_holds() {
+        let with = |spot: Option<&str>, content: Option<&str>| {
+            let mut id = identity_layer1("rec.wav", 12345);
+            id.spot_hash_b3 = spot.map(str::to_string);
+            id.content_hash = content.map(str::to_string);
+            id
+        };
+        // Same spot hash.
+        assert!(saved_identity_agrees(
+            &with(Some("aa"), None),
+            &with(Some("aa"), None)
+        ));
+        // Same name and size, different spot hash: another file.
+        assert!(!saved_identity_agrees(
+            &with(Some("aa"), None),
+            &with(Some("bb"), None)
+        ));
+        // The header was edited: the spot hash changed, the audio did not.
+        assert!(saved_identity_agrees(
+            &with(Some("aa"), Some("cc")),
+            &with(Some("bb"), Some("cc"))
+        ));
+        assert!(!saved_identity_agrees(
+            &with(Some("aa"), Some("cc")),
+            &with(Some("bb"), Some("dd"))
+        ));
+        // Nothing to compare: a set saved with no hash, or a file with none.
+        assert!(saved_identity_agrees(
+            &with(None, None),
+            &with(Some("bb"), None)
+        ));
+        assert!(saved_identity_agrees(
+            &with(Some("aa"), None),
+            &with(None, None)
+        ));
+        // The saved set has only a content hash and the file only a spot hash.
+        assert!(saved_identity_agrees(
+            &with(None, Some("cc")),
+            &with(Some("bb"), None)
+        ));
+    }
 
     #[test]
     fn identity_layer1_only_carries_filename_and_size() {
