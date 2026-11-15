@@ -389,10 +389,12 @@ test("a stereo recording gives the same samples in pieces as in memory", async (
   expect((await snapshot(page)).channels).toBe(2);
 });
 
-/** Resident memory of the browser's processes, in MB, from /proc (Linux). */
-function browserRssMb(page: Page): number {
-  const browserPid = page.context().browser()?.process?.()?.pid;
-  if (!browserPid) return NaN;
+/**
+ * Resident memory of the browser's processes, in MB, from /proc (Linux). The
+ * browser is started by this test's own process, so its processes are the
+ * ones that descend from it.
+ */
+function browserRssMb(): number {
   const children = new Map<number, number[]>();
   const rss = new Map<number, number>();
   for (const entry of fs.readdirSync("/proc")) {
@@ -408,10 +410,12 @@ function browserRssMb(page: Page): number {
   }
   let total = 0;
   const add = (pid: number) => {
-    total += rss.get(pid) ?? 0;
-    for (const child of children.get(pid) ?? []) add(child);
+    for (const child of children.get(pid) ?? []) {
+      total += rss.get(child) ?? 0;
+      add(child);
+    }
   };
-  add(browserPid);
+  add(process.pid);
   return total;
 }
 
@@ -425,16 +429,20 @@ for (const shape of [
     test.setTimeout(3 * 3600_000);
     const file = writeWav("measure.wav", shape);
     await serveModel(page);
+    // The app reads a recording of this size from its file for as long as
+    // it is open, so the file stays until the test is over.
     await openRecording(page, file);
-    fs.rmSync(path.dirname(file), { recursive: true });
     // Let the opened recording settle before the baseline.
     await page.waitForTimeout(15_000);
-    const baseline = browserRssMb(page);
+    const baseline = browserRssMb();
+    console.log(`${label}: ${Math.round(baseline)} MB before the copy is started`);
     let peak = baseline;
     const readings: number[] = [];
+    // A reading every 2 s for the peak, and one in 15 kept for the report.
+    let tick = 0;
     const timer = setInterval(() => {
-      const now = browserRssMb(page);
-      readings.push(Math.round(now));
+      const now = browserRssMb();
+      if (tick++ % 15 === 0) readings.push(Math.round(now));
       peak = Math.max(peak, now);
     }, 2000);
 
@@ -461,6 +469,7 @@ for (const shape of [
     await expect.poll(async () => (await snapshot(page)).currentFile).toBe("measure (denoised).wav");
     await page.screenshot({ path: `test-results/denoise-measure-${shape.sampleRate}.png` });
 
+    fs.rmSync(path.dirname(file), { recursive: true });
     console.log(
       JSON.stringify({
         label,
