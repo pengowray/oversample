@@ -453,6 +453,15 @@ pub fn start_identity_computation(
     data_size: Option<u64>,
     last_modified_ms: Option<f64>,
 ) {
+    // The async work below outlives changes to the file list, so it finds
+    // the file again by its id after every await. Closing another file moves
+    // this one to a new position, and writing by the old position would put
+    // this file's hashes (the key its annotations are saved under) on a
+    // different file.
+    let Some(file_id) = state.file_id_at(file_index) else {
+        return;
+    };
+
     // Skip if identity already computed (e.g. by load_named_bytes)
     let already_has_identity = state
         .library
@@ -506,6 +515,9 @@ pub fn start_identity_computation(
             }
         };
 
+        let Some(file_index) = state.file_idx_for_id(file_id) else {
+            return;
+        };
         if let Some(hash) = spot_hash {
             state.library.files().update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
@@ -531,6 +543,9 @@ pub fn start_identity_computation(
         if is_small {
             if let Some(bytes) = file_bytes {
                 yield_now().await;
+                let Some(file_index) = state.file_idx_for_id(file_id) else {
+                    return;
+                };
 
                 // Layer 3: content hash (audio samples only) + Layer 4: full BLAKE3
                 let audio_start = data_offset.unwrap_or(0) as usize;
@@ -568,6 +583,9 @@ pub fn start_identity_computation(
         }
 
         // Run verification against reference hashes
+        let Some(file_index) = state.file_idx_for_id(file_id) else {
+            return;
+        };
         let reference = get_merged_reference(state, file_index);
         let identity = state
             .library
@@ -596,6 +614,9 @@ pub fn start_identity_computation(
                     )
                     .await
                     {
+                        let Some(file_index) = state.file_idx_for_id(file_id) else {
+                            return;
+                        };
                         state.library.files().update(|files| {
                             if let Some(f) = files.get_mut(file_index) {
                                 if let Some(ref mut fid) = f.identity {
@@ -617,7 +638,9 @@ pub fn start_identity_computation(
                 }
             }
 
-            set_verify_outcome(state, file_index, outcome);
+            if let Some(file_index) = state.file_idx_for_id(file_id) {
+                set_verify_outcome(state, file_index, outcome);
+            }
         }
     });
 }
@@ -664,6 +687,11 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         state.status.hash_computing().set(false);
         return;
     };
+    // Found again by id after each await, as in `start_identity_computation`.
+    let Some(file_id) = state.file_id_at(file_index) else {
+        state.status.hash_computing().set(false);
+        return;
+    };
 
     wasm_bindgen_futures::spawn_local(async move {
         let reader = reader_from_handle(&handle);
@@ -681,8 +709,9 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         .await
         {
             Ok((content_hash, full_blake3)) => {
+                let file_index = state.file_idx_for_id(file_id);
                 state.library.files().update(|files| {
-                    if let Some(f) = files.get_mut(file_index) {
+                    if let Some(f) = file_index.and_then(|i| files.get_mut(i)) {
                         if let Some(ref mut id) = f.identity {
                             id.content_hash = Some(content_hash);
                             id.full_blake3 = Some(full_blake3);
@@ -702,8 +731,9 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
             let reader2 = reader_from_handle(&handle);
             match compute_full_sha256(reader2.as_ref(), file_size, gen, &check).await {
                 Ok(sha256) => {
+                    let file_index = state.file_idx_for_id(file_id);
                     state.library.files().update(|files| {
-                        if let Some(f) = files.get_mut(file_index) {
+                        if let Some(f) = file_index.and_then(|i| files.get_mut(i)) {
                             if let Some(ref mut id) = f.identity {
                                 id.full_sha256 = Some(sha256);
                             }
@@ -721,6 +751,9 @@ pub fn start_full_hash_computation(state: AppState, file_index: usize, include_s
         // Only clear computing flag if this is still the current generation
         if !check(gen) {
             state.status.hash_computing().set(false);
+            let Some(file_index) = state.file_idx_for_id(file_id) else {
+                return;
+            };
 
             // Mark all hashes as verified and run verification
             state.library.files().update(|files| {

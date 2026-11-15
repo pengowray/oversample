@@ -30,7 +30,8 @@ use super::suggestions::BatsForYou;
 /// - `selected_file_indices` — drop `removed`, shift higher indices down.
 /// - `active_timeline` / `active_timeline_track` — segments embed `file_index`,
 ///   so the timeline is rebuilt from the reconciled selection; dropping below
-///   two files tears it (and the track selection) down.
+///   two files tears it (and the track selection) down. The chosen channel is
+///   kept while the remaining files still offer it.
 ///
 /// Callers remain responsible for `current_file_index` / `mic_live_file_idx`,
 /// which have path-specific fixup rules. Must be called AFTER `files` is
@@ -47,15 +48,7 @@ pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
         }
     });
     if state.timeline.active().get_untracked().is_some() {
-        let sel = state.timeline.selected_file_indices().get_untracked();
-        let rebuilt = state
-            .library
-            .files()
-            .with_untracked(|files| crate::timeline::TimelineView::from_files(&sel, files));
-        if rebuilt.is_none() {
-            state.timeline.active_track().set(None);
-        }
-        state.timeline.active().set(rebuilt);
+        crate::timeline::rebuild_active(state);
     }
 }
 
