@@ -274,6 +274,15 @@ test("a stereo recording gives a stereo copy with the same balance between its c
   await expect.poll(async () => (await snapshot()).currentFile).toBe("stereo (denoised).wav");
   expect((await snapshot()).channels).toBe(2);
 
+  // The D key goes to the stereo original and back to the copy.
+  await page.locator('button[title="Noise filter settings"]').click();
+  await expect(page.getByRole("button", { name: "Make Denoised Copy" })).toHaveCount(0);
+  await page.keyboard.press("d");
+  await expect.poll(async () => (await snapshot()).currentFile).toBe("stereo.wav");
+  expect((await snapshot()).channels).toBe(2);
+  await page.keyboard.press("d");
+  await expect.poll(async () => (await snapshot()).currentFile).toBe("stereo (denoised).wav");
+
   const copy = await page.evaluate(() => (window as unknown as { __denoised: number[] }).__denoised);
   expect(copy.length).toBe(left.length * 2);
   const copyLeft = copy.filter((_, i) => i % 2 === 0);
