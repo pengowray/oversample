@@ -182,4 +182,29 @@ test.describe("timeline channel switch", () => {
 
     expect(errors).toEqual([]);
   });
+
+  test("opening a take's missing channel file fills its empty place", async ({ page }) => {
+    test.setTimeout(180_000);
+    await openTimelineOfChannel1(page);
+    await chip(page).click();
+    await page.locator(".layer-panel").getByRole("button", { name: /^Channel 2/ }).click();
+    await expect.poll(() => drawn(page), { timeout: 30_000 }).toEqual([2, 0, 2]);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-tracks-"));
+    const late = path.join(dir, "260401_0011_2.wav");
+    fs.writeFileSync(late, toneWav(TONE[2], 2000));
+    const end = Date.UTC(2026, 3, 1, 20, 0, 0) / 1000 + 10 + SECS;
+    fs.utimesSync(late, end, end);
+    await page.getByRole("button", { name: /^Files/ }).first().click();
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(late);
+
+    await expect.poll(() => drawn(page), { timeout: 30_000 }).toEqual([2, 2, 2]);
+    const snap = await snapshot(page);
+    expect(snap.timelineFiles).toEqual([
+      "260401_0010_2.wav",
+      "260401_0011_2.wav",
+      "260401_0012_2.wav",
+    ]);
+    expect(snap.timelineMissing).toEqual([]);
+  });
 });
