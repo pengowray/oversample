@@ -1341,7 +1341,9 @@ pub fn Spectrogram() -> impl IntoView {
                 // the axis gives the frequencies heard: every frequency handed
                 // to the axis is scaled, so its steps are round heard values.
                 let heard = crate::heard_axis::heard_axis_untracked(&state);
-                let axis_scale = heard.map_or(1.0, |h| h.freq_scale);
+                // Under XForm with PS the picture is of the audio heard: the
+                // axis is marked as heard values and not scaled.
+                let axis_scale = heard.map_or(1.0, |h| h.label_scale());
                 let marker_state = match heard {
                     Some(h) => FreqMarkerState {
                         mouse_freq: marker_state.mouse_freq.map(|f| f * axis_scale),

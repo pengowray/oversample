@@ -183,7 +183,7 @@ pub fn XformButton() -> impl IntoView {
         // With heard axes the rate is given as heard, like the axis labels.
         let heard = crate::heard_axis::heard_axis(&state);
         if let Some(rate) = display_resample_rate(&state) {
-            let shown = rate as f64 * heard.map_or(1.0, |h| h.freq_scale);
+            let shown = rate as f64 * heard.map_or(1.0, |h| h.label_scale());
             parts.push(format!("resample to {:.0} kHz", shown / 1000.0));
         }
         let picture = if parts.is_empty() {

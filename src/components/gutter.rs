@@ -146,8 +146,10 @@ pub fn BandGutter() -> impl IntoView {
         let (min_freq, max_freq) = display_range();
         // Under XForm with TE the labels give the frequencies heard. Only
         // what is drawn is scaled: pointer positions stay in the recording's Hz.
+        // Under XForm with PS the picture is of the audio heard, so its
+        // labels are marked as heard values and not scaled.
         let heard = crate::heard_axis::heard_axis(&state);
-        let axis_scale = heard.map_or(1.0, |h| h.freq_scale);
+        let axis_scale = heard.map_or(1.0, |h| h.label_scale());
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
@@ -701,8 +703,9 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let show_clock = state.timeline.show_clock_time().get();
         let _size_tick = canvas_size_tick.get();
         // Under XForm with TE the labels give the times heard. Clock-time
-        // labels are times of day and stay as they are.
-        let heard = crate::heard_axis::heard_axis(&state);
+        // labels are times of day and stay as they are. PS leaves time
+        // unchanged, so its strip keeps the recording's times.
+        let heard = crate::heard_axis::heard_axis(&state).filter(|h| h.scales_time());
         let Some((scroll, visible_time, duration, _time_res, clock)) = time_window() else {
             return;
         };
@@ -773,7 +776,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         // On a strip too narrow to keep two thirds for tick labels (a
         // phone), the note is left out; the labels are still green.
         ctx.set_font("10px sans-serif");
-        let caption = heard.map(|h| h.time_caption()).and_then(|c| {
+        let caption = heard.and_then(|h| h.time_caption()).and_then(|c| {
             let width = ctx.measure_text(&c).ok()?.width();
             (width + 16.0 <= data_w / 3.0).then_some((c, width))
         });

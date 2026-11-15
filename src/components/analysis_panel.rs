@@ -123,9 +123,11 @@ pub fn AnalysisPanel() -> impl IntoView {
                 if let (Some(start), Some(current)) = (state.interaction.axis_drag_start_freq().get(), state.interaction.axis_drag_current_freq().get()) {
                     let lo = start.min(current);
                     let hi = start.max(current);
-                    // The range is the recording's. Say so when the axes give
-                    // heard frequencies (XForm with TE).
-                    let whose = if crate::heard_axis::heard_axis(&state).is_some() {
+                    // The range is the recording's. Say so when the axis
+                    // labels are scaled to heard frequencies (XForm with TE).
+                    let whose = if crate::heard_axis::heard_axis(&state)
+                        .is_some_and(|h| h.picture == crate::heard_axis::Picture::Recording)
+                    {
                         "recording "
                     } else {
                         ""
@@ -170,7 +172,7 @@ pub fn AnalysisPanel() -> impl IntoView {
                         Some(h) => format!(
                             "heard {:.3}s  {}",
                             t * h.time_scale,
-                            fmt_freq(f * h.freq_scale)
+                            fmt_freq(f * h.label_scale())
                         ),
                         None => format!("{:.3}s  {}", t, fmt_freq(f)),
                     };
