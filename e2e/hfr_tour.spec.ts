@@ -148,10 +148,15 @@ test.describe("HFR card and tutorial", () => {
     await expect(hfrOn(page)).toHaveCount(1);
 
     await expect(popoverTitle(page)).toHaveText("Choose frequencies");
+    // A hand acts out the drag on this step only, and lets the pointer through.
+    const hand = page.locator(".tour-hand");
+    await expect(hand).toBeVisible();
+    await expect(page.locator(".tour-gesture")).toHaveCSS("pointer-events", "none");
     // Ends to the right of the strip: the release lands outside the cut-out.
     await dragOn(page, ".band-gutter", [0.7, 0.3], [3, 0.6]);
 
     await expect(popoverTitle(page)).toHaveText("Choose a time range");
+    await expect(hand).toHaveCount(0);
     await dragOn(page, ".time-gutter", [0.1, 0.5], [0.5, 0.5]);
 
     await expect(popoverTitle(page)).toHaveText("Press Play");

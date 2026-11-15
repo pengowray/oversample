@@ -37,6 +37,20 @@
       "port": 21262
     },
     {
+      "name": "static-own-dist",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "21263",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "target/dist-own"
+      ],
+      "port": 21263
+    },
+    {
       "name": "api-local",
       "runtimeExecutable": "bash",
       "runtimeArgs": [

@@ -9653,6 +9653,65 @@ button.canvas-overflow-action-btn.disabled {
     outline-offset: 2px;
 }
 
+/* The hand that acts out a tutorial step's drag (js/hfr-tour.js): it presses
+   the strip, drags up, lifts off, and starts again. Large on purpose, so the
+   step reads as "drag here" before the text is read. Above driver's overlay
+   (10000) and below its popover, so it never covers the instructions. It
+   takes no pointer events: the user drags the strip under it. */
+.tour-gesture {
+    position: fixed;
+    z-index: 100000;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    animation: tour-gesture-drag 2.8s ease-in-out infinite;
+}
+.tour-gesture[hidden] {
+    display: none;
+}
+/* The fingertip sits on .tour-gesture's point; the hand leans to the right
+   so it lies over the recording and leaves the strip in view. */
+.tour-hand {
+    position: absolute;
+    left: var(--tour-hand-left);
+    top: var(--tour-hand-top);
+    width: var(--tour-hand-size);
+    height: calc(var(--tour-hand-size) * 1.3);
+    overflow: visible;
+    fill: #fff;
+    stroke: #111;
+    stroke-width: 4;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
+    transform-origin: 46% 4.6%;
+    transform: rotate(-24deg);
+    animation: tour-hand-press 2.8s ease-in-out infinite;
+}
+.tour-hand-lines {
+    fill: none;
+    stroke-width: 3;
+}
+@keyframes tour-gesture-drag {
+    0% { opacity: 0; transform: translateY(0); }
+    10%, 24% { opacity: 1; transform: translateY(0); }
+    68%, 82% { opacity: 1; transform: translateY(var(--tour-drag-y)); }
+    94%, 100% { opacity: 0; transform: translateY(var(--tour-drag-y)); }
+}
+/* Smaller while the finger is down on the strip. */
+@keyframes tour-hand-press {
+    0%, 10% { transform: rotate(-24deg) scale(1.18); }
+    24%, 68% { transform: rotate(-24deg) scale(1); }
+    82%, 100% { transform: rotate(-24deg) scale(1.18); }
+}
+/* Reduced motion: the hand rests on the strip without moving. */
+@media (prefers-reduced-motion: reduce) {
+    .tour-gesture,
+    .tour-hand {
+        animation: none;
+    }
+}
+
 /* Settings: a checkbox label long enough to wrap. Wrapping keeps the box at
    the right edge, in line with the other Settings checkboxes. */
 .setting-label.wraps {
