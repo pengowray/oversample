@@ -87,7 +87,9 @@ pub fn supported() -> bool {
 }
 
 /// Bytes the site may still store. `None` when the browser does not say.
+/// What closed tabs left behind is deleted first, so it does not count.
 pub async fn free_bytes() -> Option<u64> {
+    let _ = tab_dir().await;
     let bytes = JsFuture::from(opfs_audio_free_bytes())
         .await
         .ok()?

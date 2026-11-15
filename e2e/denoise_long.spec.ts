@@ -352,6 +352,127 @@ test("too little browser storage for the copy is reported, with the sizes", asyn
   await page.screenshot({ path: "test-results/denoise-long-no-storage.png" });
 });
 
+/**
+ * A 480 MB WAV of quiet noise, 10 min 25 s at 384 kHz. With it open, the app
+ * has over 500 MB of files open and reads every file opened after it from
+ * the file a part at a time, as it does a file of 512 MB or more.
+ */
+function writeBallast(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-denoise-"));
+  const file = path.join(dir, "ballast.wav");
+  const shape: Shape = { sampleRate: 384_000, seconds: 1, channels: 1, quietFrom: 0, quietTo: 1 };
+  const second = samples(shape);
+  const bytes = Buffer.from(second.buffer, second.byteOffset, second.byteLength);
+  const seconds = 625;
+  const out = fs.openSync(file, "w");
+  fs.writeSync(out, wavHeader(shape, bytes.length * seconds));
+  for (let i = 0; i < seconds; i++) fs.writeSync(out, bytes);
+  fs.closeSync(out);
+  return file;
+}
+
+type Shared = Snap & {
+  scrollOffset: number;
+  zoom: number;
+  minFreq: number | null;
+  maxFreq: number | null;
+  gainDb: number;
+  gainMode: string;
+};
+
+/** The view and gain that a copy shares with its original. */
+async function sharedSettings(page: Page) {
+  const s = (await snapshot(page)) as Shared;
+  return {
+    scrollOffset: s.scrollOffset,
+    zoom: s.zoom,
+    minFreq: s.minFreq,
+    maxFreq: s.maxFreq,
+    gainDb: s.gainDb,
+    gainMode: s.gainMode,
+  };
+}
+
+test("a copy that is read from its file pairs with its original, and closing it deletes the file", async ({
+  page,
+}) => {
+  test.setTimeout(600_000);
+  const ballast = writeBallast();
+  const shape: Shape = { sampleRate: 384_000, seconds: 20, channels: 1, quietFrom: 8, quietTo: 9 };
+  const data = samples(shape);
+  const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  await serveModel(page);
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, number>).__oversample_denoise_in_memory_max = 1_000_000;
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await page.goto("/");
+  const input = page.locator('input[type="file"][accept*=".wav"]').first();
+  await input.setInputFiles(ballast);
+  await expect(page.locator(".file-item", { hasText: "ballast.wav" })).toBeVisible({
+    timeout: 120_000,
+  });
+  await input.setInputFiles({
+    name: "paired.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.concat([wavHeader(shape, bytes.length), bytes]),
+  });
+  await expect(page.locator(".file-item", { hasText: "paired.wav" })).toBeVisible({
+    timeout: 60_000,
+  });
+  await page.waitForFunction(
+    () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+  );
+  await expect.poll(async () => (await snapshot(page)).currentFile).toBe("paired.wav");
+
+  // A manual gain and a scroll position for the copy to take over.
+  await page.locator('button[title="Gain settings"]').click();
+  await page.locator('.layer-panel input[type="range"][max="60"]').fill("7");
+  await page.getByRole("button", { name: /^Manual/ }).click();
+  await page.locator('button[title="Gain settings"]').click();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  const before = await sharedSettings(page);
+  expect(before.gainDb).toBe(7);
+  expect(before.scrollOffset).toBeGreaterThan(0);
+
+  await page.locator('button[title="Noise filter settings"]').click();
+  await page.getByRole("button", { name: "Make Denoised Copy" }).click();
+  const copy = page.locator(".file-item", { hasText: "paired (denoised).wav" });
+  await expect(copy).toBeVisible({ timeout: 400_000 });
+  await page.locator('button[title="Noise filter settings"]').click();
+  await expect.poll(async () => (await snapshot(page)).currentFile).toBe("paired (denoised).wav");
+
+  // The copy is read from its file in the browser's storage: the file is
+  // still there, with every sample.
+  await expect
+    .poll(() => storedFiles(page))
+    .toEqual([{ path: expect.stringMatching(/\/paired \(denoised\)\.wav$/), size: 80 + data.length * 4 }]);
+  const opened = await snapshot(page);
+  expect(opened.channels).toBe(1);
+  expect(opened.duration).toBeCloseTo(20, 3);
+
+  // It opens on its original's view and gain, and the Denoised switch and
+  // the D key go between the two.
+  expect(await sharedSettings(page)).toEqual(before);
+  const denoised = page.getByRole("switch", { name: "Denoised" });
+  await expect(denoised).toHaveAttribute("aria-checked", "true");
+  await denoised.click();
+  await expect.poll(async () => (await snapshot(page)).currentFile).toBe("paired.wav");
+  await expect(denoised).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("d");
+  await expect.poll(async () => (await snapshot(page)).currentFile).toBe("paired (denoised).wav");
+
+  // Closing the copy deletes its file.
+  await copy.locator(".file-item-close").click();
+  await expect(copy).toHaveCount(0);
+  await expect.poll(() => storedFiles(page)).toEqual([]);
+  fs.rmSync(path.dirname(ballast), { recursive: true });
+  expect(errors).toEqual([]);
+});
+
 test("a stereo recording gives the same samples in pieces as in memory", async ({ page }) => {
   test.setTimeout(400_000);
   // 7 s and a bit: several blocks, and not a whole number of them.
