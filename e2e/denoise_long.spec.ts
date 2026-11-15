@@ -157,7 +157,7 @@ async function openRecording(page: Page, file: string | { name: string; buffer: 
     () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
   );
   await page.locator('button[title="Noise filter settings"]').click();
-  await expect(page.getByText("Denoised Copy", { exact: true })).toBeVisible();
+  await expect(page.getByText("Denoised copy", { exact: true })).toBeVisible();
 }
 
 type Snap = { currentFile: string; channels: number; sampleRate: number; duration: number };
