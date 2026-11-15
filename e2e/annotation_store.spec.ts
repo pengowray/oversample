@@ -378,3 +378,104 @@ test.describe("Saved annotations of a file", () => {
       .toEqual([both]);
   });
 });
+
+// ── Two files with the same name and size ───────────────────────────────────
+
+test.describe("Two different files with the same name and size", () => {
+  test("each keeps its own annotations", async ({ page }) => {
+    await page.goto("/");
+    await open(page, "same.wav", 8, 1);
+    const mine = await annotate(page, 0.3, 0.4);
+    await waitSaved(page, mine);
+
+    await page.reload();
+    await open(page, "same.wav", 8, 2);
+    await page.waitForTimeout(1500);
+    expect(await starts(page)).toEqual([]);
+    const other = await annotate(page, 0.75, 0.9);
+    await waitSaved(page, other);
+
+    await page.reload();
+    await open(page, "same.wav", 8, 1);
+    await expect.poll(() => starts(page)).toEqual([mine]);
+  });
+
+  test("a set saved under the name and size goes only to the file whose hash it holds", async ({ page }) => {
+    await page.goto("/");
+    await open(page, "same.wav", 8, 1);
+    const mine = await annotate(page, 0.3, 0.4);
+    await waitSaved(page, mine);
+    // Move the saved set to the key made of the name and size, where a set
+    // saved before the file's hash was known is kept.
+    const files = await savedFiles(page);
+    const [hashKey, text] = Object.entries(files).find(([, t]) => savedStarts(t).length === 1)!;
+    expect(hashKey).toMatch(/^b3_/);
+    expect(text).toContain("spot_hash_b3");
+    const size = 44 + 96_000 * 8 * 2;
+    const nameKey = `same.wav_${size}.batm`;
+    await writeSavedFile(page, nameKey, text);
+    await page.evaluate(async (key) => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("oversample-annotations");
+      await dir.removeEntry(key);
+    }, hashKey);
+
+    // The other file with that name and size does not get the set.
+    await page.reload();
+    await open(page, "same.wav", 8, 2);
+    await page.waitForTimeout(1500);
+    expect(await starts(page)).toEqual([]);
+    const other = await annotate(page, 0.75, 0.9);
+    await waitSaved(page, other);
+    // The first file's set is still stored, unchanged.
+    expect(savedStarts((await savedFiles(page))[nameKey])).toEqual([mine]);
+
+    // The file it belongs to still gets it.
+    await page.reload();
+    await open(page, "same.wav", 8, 1);
+    await expect.poll(() => starts(page)).toEqual([mine]);
+  });
+
+  test("a set saved with no hash in it still loads", async ({ page }) => {
+    await page.goto("/");
+    await open(page, "same.wav", 8, 1);
+    const mine = await annotate(page, 0.3, 0.4);
+    await waitSaved(page, mine);
+    const files = await savedFiles(page);
+    const [hashKey, text] = Object.entries(files).find(([, t]) => savedStarts(t).length === 1)!;
+    // As an old version saved it: under the name and size, with no hashes.
+    const old = text
+      .split("\n")
+      .filter((line) => !/^\s*(spot_hash_b3|content_hash|full_blake3|full_sha256):/.test(line))
+      .join("\n");
+    expect(old).not.toContain("spot_hash_b3");
+    const size = 44 + 96_000 * 8 * 2;
+    await writeSavedFile(page, `same.wav_${size}.batm`, old);
+    await page.evaluate(async (key) => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("oversample-annotations");
+      await dir.removeEntry(key);
+    }, hashKey);
+
+    // There is no hash to compare, so a different file of that name and
+    // size is also given the set. It saves its copy under its own hash and
+    // leaves the set as it was.
+    const nameKey = `same.wav_${size}.batm`;
+    await page.reload();
+    await open(page, "same.wav", 8, 2);
+    await expect.poll(() => starts(page)).toEqual([mine]);
+    await expect
+      .poll(async () => Object.keys(await savedFiles(page)).filter((k) => k.startsWith("b3_")).length)
+      .toBe(1);
+    expect((await savedFiles(page))[nameKey]).toBe(old);
+
+    // The file the set was made for still gets it afterwards.
+    await page.reload();
+    await open(page, "same.wav", 8, 1);
+    await expect.poll(() => starts(page)).toEqual([mine]);
+    await expect
+      .poll(async () => Object.keys(await savedFiles(page)).filter((k) => k.startsWith("b3_")).length)
+      .toBe(2);
+    expect((await savedFiles(page))[nameKey]).toBe(old);
+  });
+});

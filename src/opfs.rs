@@ -341,7 +341,6 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             return;
         }
     };
-
     if state.is_tauri {
         // Tauri: always save to central annotations directory
         wasm_bindgen_futures::spawn_local(async move {
@@ -592,6 +591,11 @@ pub fn load_annotations(
     let Some(file_id) = state.file_id_at(file_idx) else {
         return;
     };
+    // The file's hash is still being computed: the lookup is done when it
+    // is known, with the hash (see `file_identity::spot_hash_pending`).
+    if crate::file_identity::spot_hash_pending(file_id) {
+        return;
+    }
     if state.is_tauri {
         load_annotations_tauri(state, file_id, identity);
     } else {
@@ -609,6 +613,17 @@ pub fn load_annotations_from_opfs(
 }
 
 /// Browser: try OPFS with fallback key chain.
+///
+/// A set is used only if the identity stored in it agrees with the file's
+/// (`file_identity::saved_identity_agrees`). The name-and-size key can hold
+/// the set of a different file with the same name and size; that set is left
+/// where it is, and this file's annotations are saved under its own hash.
+///
+/// A set with no hash stored in it (saved before the file's hash was known,
+/// or by an old version) cannot be told apart this way. It is given to any
+/// file of its name and size, as before, and that file saves its copy under
+/// its own hash. The set itself is never rewritten, so the file it was made
+/// for still gets it.
 fn load_annotations_opfs(
     state: crate::state::AppState,
     file_id: u64,
@@ -643,11 +658,23 @@ fn load_annotations_opfs(
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
                             loaded.warn_if_future_version();
+                            // Another file's set (same name and size, or an
+                            // old-style key): leave it alone and look on.
+                            if !crate::file_identity::saved_identity_agrees(
+                                &loaded.file_identity,
+                                &identity,
+                            ) {
+                                log::info!(
+                                    "Saved annotations under {try_key} belong to another file; not used"
+                                );
+                                continue;
+                            }
                             if apply_saved_set(state, file_id, loaded) {
                                 log::debug!(
                                     "OPFS loaded annotations for file id {file_id}: {try_key}"
                                 );
-                                // If found via fallback key, re-save under primary key
+                                // If found via fallback key, re-save under primary key.
+                                // The set under the fallback key stays as it is.
                                 if i > 0 {
                                     if let Some(idx) = state.file_idx_for_id(file_id) {
                                         save_annotations(state, idx);
@@ -731,6 +758,17 @@ fn load_annotations_tauri(
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
                             loaded.warn_if_future_version();
+                            // Another file's set (same name and size): leave
+                            // it alone and look on.
+                            if !crate::file_identity::saved_identity_agrees(
+                                &loaded.file_identity,
+                                &identity,
+                            ) {
+                                log::info!(
+                                    "Saved annotations under {try_key} belong to another file; not used"
+                                );
+                                continue;
+                            }
                             central = Some(loaded);
                             central_via_fallback = i > 0;
                         }
