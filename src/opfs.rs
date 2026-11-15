@@ -58,6 +58,81 @@ fn opfs_fallback_key(filename: &str, file_size: u64) -> String {
     format!("{}_{}.batm", safe_name, file_size)
 }
 
+// ── Saves wait until a file's saved annotations have been read ──────────
+
+/// For one file: how many `SaveHold`s exist, and whether a save was asked
+/// for while they did.
+#[derive(Default)]
+struct HeldSaves {
+    holds: usize,
+    save_wanted: bool,
+}
+
+thread_local! {
+    /// Files (by `LoadedFile.id`) whose saves are held.
+    static HELD_SAVES: std::cell::RefCell<std::collections::HashMap<u64, HeldSaves>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Files (by `LoadedFile.id`) whose saved annotations have been put in
+    /// the annotation store. A file's saved annotations are read more than
+    /// once while it opens; only the first read that finds them is used.
+    static SAVED_SET_APPLIED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// While one of these exists for a file, `save_annotations` does not write
+/// the file's annotations. It writes them when the last one is dropped, if a
+/// save was asked for in the meantime.
+///
+/// A file's saved annotations are read in the background after it opens.
+/// Until that read is done, the store holds only what was added since the
+/// file opened (for example the annotations a Xeno-canto recording arrives
+/// with), and saving that would replace the saved file and lose the rest.
+///
+/// Dropping releases the hold, so a hold moved into an async block is
+/// released on every way out of the block.
+pub struct SaveHold {
+    state: crate::state::AppState,
+    file_id: u64,
+}
+
+/// Hold the saves of file `file_id` (see `SaveHold`).
+pub fn hold_saves(state: crate::state::AppState, file_id: u64) -> SaveHold {
+    HELD_SAVES.with(|m| m.borrow_mut().entry(file_id).or_default().holds += 1);
+    SaveHold { state, file_id }
+}
+
+impl Drop for SaveHold {
+    fn drop(&mut self) {
+        let save_now = HELD_SAVES.with(|m| {
+            let mut m = m.borrow_mut();
+            let Some(held) = m.get_mut(&self.file_id) else {
+                return false;
+            };
+            held.holds = held.holds.saturating_sub(1);
+            if held.holds > 0 {
+                return false;
+            }
+            m.remove(&self.file_id).is_some_and(|h| h.save_wanted)
+        });
+        if save_now {
+            if let Some(idx) = self.state.file_idx_for_id(self.file_id) {
+                save_annotations(self.state, idx);
+            }
+        }
+    }
+}
+
+/// If saves of `file_id` are held, note that one is wanted and return true.
+fn defer_save_if_held(file_id: u64) -> bool {
+    HELD_SAVES.with(|m| match m.borrow_mut().get_mut(&file_id) {
+        Some(held) => {
+            held.save_wanted = true;
+            true
+        }
+        None => false,
+    })
+}
+
 /// Save annotation YAML to OPFS.
 pub async fn opfs_save(key: &str, yaml: &str) -> Result<(), String> {
     opfs_save_in(OPFS_DIR, key, yaml).await
@@ -229,6 +304,11 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         None => return,
     };
 
+    // The file's saved annotations are still being read: save after that.
+    if defer_save_if_held(file_id) {
+        return;
+    }
+
     // Sync file identity, noise profile, and touch modified_at before saving
     state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
@@ -394,15 +474,38 @@ pub fn save_annotations_to_opfs(state: crate::state::AppState, file_idx: usize) 
     save_annotations(state, file_idx);
 }
 
+/// Put a file's saved annotations in the store, unless a saved set was put
+/// there before (the saved annotations are read more than once while a file
+/// opens). Returns whether `loaded` was used.
+fn apply_saved_set(
+    state: crate::state::AppState,
+    file_id: u64,
+    loaded: crate::annotations::AnnotationSet,
+) -> bool {
+    if !SAVED_SET_APPLIED.with(|s| s.borrow_mut().insert(file_id)) {
+        return false;
+    }
+    apply_loaded_sidecar(state, file_id, loaded);
+    true
+}
+
+/// Whether a saved set has been put in the store for `file_id`.
+fn saved_set_applied(file_id: u64) -> bool {
+    SAVED_SET_APPLIED.with(|s| s.borrow().contains(&file_id))
+}
+
 /// Apply a loaded sidecar to the annotation store and restore NR profile to file settings.
 /// Keyed by the file's STABLE id; the list position is re-resolved here because
 /// an async load may have completed after the list changed.
+///
+/// Annotations added to the file since it opened are kept: the saved set is
+/// the base and they are added to it.
 fn apply_loaded_sidecar(
     state: crate::state::AppState,
     file_id: u64,
     loaded: crate::annotations::AnnotationSet,
 ) {
-    use leptos::prelude::Update;
+    use leptos::prelude::{Update, WithUntracked};
 
     // Re-resolve the file's CURRENT position from its stable id. If it's gone
     // (closed during the load), drop the loaded set rather than applying it to
@@ -412,7 +515,25 @@ fn apply_loaded_sidecar(
     };
     // The file on disk is in the file's own seconds and Hz. If the user
     // corrected the file's rate before it finished loading, convert it.
-    let loaded = crate::te_correction::from_file_units_at(state, file_idx, loaded);
+    let mut loaded = crate::te_correction::from_file_units_at(state, file_idx, loaded);
+
+    // What the file got while its saved annotations were being read: the
+    // user's own new annotations, and the ones a Xeno-canto recording came
+    // with. The user's are added to the saved set here. The Xeno-canto ones
+    // are added below by `merge_xc_set`, which leaves out those the saved
+    // set already holds.
+    let since_open = state
+        .annotations
+        .store()
+        .with_untracked(|store| store.get(file_id).cloned());
+    let mut carried = 0;
+    if let Some(since_open) = since_open {
+        if loaded.lowest_bat_hz.is_none() {
+            loaded.lowest_bat_hz = since_open.lowest_bat_hz;
+        }
+        carried =
+            crate::annota::carry_over_unsaved(&mut loaded.annotations, since_open.annotations);
+    }
 
     // If the sidecar has a noise profile, store it in the file's per-file settings.
     // Also restore cached peak values from sidecar metadata if not yet computed.
@@ -450,9 +571,12 @@ fn apply_loaded_sidecar(
     state.annotations.store().update(|store| {
         store.insert(file_id, loaded);
     });
-    // Saved annotations replace the file's set; add back any XC annotations
-    // that came with the recording and aren't in the saved file.
-    crate::annota::merge_xc_set(state, file_id, false);
+    // Add any XC annotations that came with the recording and aren't in the
+    // saved file (`merge_xc_set` saves if it adds any).
+    let from_xc = crate::annota::merge_xc_set(state, file_id, false);
+    if carried > 0 && from_xc == 0 {
+        save_annotations(state, file_idx);
+    }
 }
 
 /// Try to load annotations for a file (OPFS on browser, central store + sidecar on Tauri).
@@ -490,11 +614,12 @@ fn load_annotations_opfs(
     file_id: u64,
     identity: crate::annotations::FileIdentity,
 ) {
-    use leptos::prelude::GetUntracked;
-
     let key = opfs_key(&identity);
+    let hold = hold_saves(state, file_id);
 
     wasm_bindgen_futures::spawn_local(async move {
+        // Saves of this file wait until this read is done.
+        let _hold = hold;
         // Build fallback key chain: try primary key, then legacy spot_hash, then filename+size
         let mut keys_to_try = vec![key.clone()];
         // If we searched by b3 key, also try old SHA-256 spot_hash key
@@ -518,10 +643,7 @@ fn load_annotations_opfs(
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
                             loaded.warn_if_future_version();
-                            let already_has =
-                                state.annotations.store().get_untracked().contains(file_id);
-                            if !already_has {
-                                apply_loaded_sidecar(state, file_id, loaded);
+                            if apply_saved_set(state, file_id, loaded) {
                                 log::debug!(
                                     "OPFS loaded annotations for file id {file_id}: {try_key}"
                                 );
@@ -551,12 +673,15 @@ fn load_annotations_tauri(
     file_id: u64,
     identity: crate::annotations::FileIdentity,
 ) {
-    use leptos::prelude::{GetUntracked, Update};
+    use leptos::prelude::Update;
 
     let key = opfs_key(&identity);
     let file_path = identity.file_path.clone();
+    let hold = hold_saves(state, file_id);
 
     wasm_bindgen_futures::spawn_local(async move {
+        // Saves of this file wait until this read is done.
+        let _hold = hold;
         // Read file-adjacent sidecar once (if path known) for both existence check and fallback
         let sidecar_yaml = if let Some(ref path) = file_path {
             match tauri_load_sidecar(path).await {
@@ -579,9 +704,10 @@ fn load_annotations_tauri(
             }
         }
 
-        // Don't clobber a store that already has this file (user edits in
-        // progress, or a prior load already applied).
-        if state.annotations.store().get_untracked().contains(file_id) {
+        // An earlier read already found this file's saved annotations.
+        // (Annotations added since the file opened do not stop the read:
+        // `apply_loaded_sidecar` adds them to the saved ones.)
+        if saved_set_applied(file_id) {
             return;
         }
 
@@ -646,7 +772,9 @@ fn load_annotations_tauri(
         };
 
         if let Some(loaded) = winner {
-            apply_loaded_sidecar(state, file_id, loaded);
+            if !apply_saved_set(state, file_id, loaded) {
+                return;
+            }
             log::debug!("Tauri loaded annotations for file id {file_id} (resave={needs_resave})");
             // Promote to the primary central key when we loaded from the sidecar
             // or a fallback key, so it's found directly next time.

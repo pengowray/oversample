@@ -1392,7 +1392,7 @@ pub fn XcBrowser() -> impl IntoView {
             let result: Result<(), String> = async {
                 // Use the standard loading pipeline (WASM-side decode, spectrogram, etc.)
                 let load_id = state.loading_start(&dl.filename);
-                let load_result = crate::components::file_sidebar::load_named_bytes(
+                let load_result = crate::components::file_sidebar::load_named_bytes_id(
                     dl.filename.clone(),
                     &dl.bytes,
                     Some(SiteMetadata::new(SourceSite::XenoCanto, dl.metadata)),
@@ -1404,17 +1404,15 @@ pub fn XcBrowser() -> impl IntoView {
                 )
                 .await;
                 state.loading_done(load_id);
-                load_result?;
+                let file_id = load_result?;
 
-                // Switch to the newly loaded file
-                let file_count = state.library.files().with_untracked(|files| files.len());
-                if file_count > 0 {
-                    state.library.current_index().set(Some(file_count - 1));
-                    if let (Some(set), Some(file_id)) =
-                        (rec.annotation_set.clone(), state.file_id_at(file_count - 1))
-                    {
-                        crate::annota::attach_xc_set(state, file_id, set);
-                    }
+                // Switch to the newly loaded file, found by its id, and give
+                // it the annotation set it came with.
+                if let Some(idx) = state.file_idx_for_id(file_id) {
+                    state.library.current_index().set(Some(idx));
+                }
+                if let Some(set) = rec.annotation_set.clone() {
+                    crate::annota::attach_xc_set(state, file_id, set);
                 }
 
                 cached_ids.try_update(|s| {

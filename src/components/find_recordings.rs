@@ -442,7 +442,7 @@ async fn load_xc(state: AppState, id: u64) -> Result<(), String> {
         .await
         .map_err(|e| crate::components::xc_browser::error_text(&e, &src))?;
     let load_id = state.loading_start(&dl.filename);
-    let result = load_named_bytes(
+    let result = crate::components::file_sidebar::load_named_bytes_id(
         dl.filename.clone(),
         &dl.bytes,
         Some(SiteMetadata::new(SourceSite::XenoCanto, dl.metadata)),
@@ -454,12 +454,13 @@ async fn load_xc(state: AppState, id: u64) -> Result<(), String> {
     )
     .await;
     state.loading_done(load_id);
-    result?;
-    let count = select_last_file(state);
-    if let (Some(set), Some(last)) = (rec.annotation_set, count.checked_sub(1)) {
-        if let Some(file_id) = state.file_id_at(last) {
-            crate::annota::attach_xc_set(state, file_id, set);
-        }
+    let file_id = result?;
+    // The recording is found by its id, not as "the last file in the list".
+    if let Some(idx) = state.file_idx_for_id(file_id) {
+        state.library.current_index().set(Some(idx));
+    }
+    if let Some(set) = rec.annotation_set {
+        crate::annota::attach_xc_set(state, file_id, set);
     }
     Ok(())
 }

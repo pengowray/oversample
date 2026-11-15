@@ -462,6 +462,10 @@ pub fn start_identity_computation(
         return;
     };
 
+    // The file's annotations are not saved until its saved annotations have
+    // been looked up under its hash, below (see `opfs::SaveHold`).
+    let save_hold = crate::opfs::hold_saves(state, file_id);
+
     // Skip if identity already computed (e.g. by load_named_bytes)
     let already_has_identity = state
         .library
@@ -491,11 +495,12 @@ pub fn start_identity_computation(
         }
     });
 
-    // Try loading annotations with Layer 1 key
-    crate::opfs::load_annotations(state, file_index, identity);
+    // The saved annotations are read once, after the spot hash below: they
+    // are stored under the hash. (With no hash, under the name and size.)
 
     // Layer 2: compute BLAKE3 spot hash async (+ Layers 3+4 when bytes available)
     wasm_bindgen_futures::spawn_local(async move {
+        let save_hold = save_hold;
         let spot_hash = if let Some(ref bytes) = file_bytes {
             // In-memory: compute synchronously
             Some(compute_spot_hash_b3_sync(bytes, data_offset, data_size))
@@ -526,16 +531,19 @@ pub fn start_identity_computation(
                     }
                 }
             });
-
-            // Try loading annotations again with the better spot_hash_b3 key
-            let identity = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
-            if let Some(id) = identity {
-                crate::opfs::load_annotations(state, file_index, id);
-            }
         }
+
+        // Read the saved annotations: under the spot hash, or under the name
+        // and size if the hash could not be computed. The read holds the
+        // file's saves itself until it is done.
+        let identity = state
+            .library
+            .files()
+            .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
+        if let Some(id) = identity {
+            crate::opfs::load_annotations(state, file_index, id);
+        }
+        drop(save_hold);
 
         let is_small = file_size < SMALL_FILE_THRESHOLD;
 
