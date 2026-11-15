@@ -277,6 +277,18 @@ pub struct FocusSnapshot {
 pub struct PerFileScope {
     pub view: Option<ViewPos>,
     pub focus: Option<FocusSnapshot>,
+    /// The file's Back/Forward history. Empty for a file not shown yet.
+    pub history: ViewHistory,
+    /// The file's bookmarks.
+    pub bookmarks: Vec<Bookmark>,
+}
+
+/// The Back/Forward history of view positions (`viewmode.nav_history` and
+/// `viewmode.nav_index`) as stored for a file that is not the open one.
+#[derive(Clone, Debug, Default)]
+pub struct ViewHistory {
+    pub entries: VecDeque<NavEntry>,
+    pub index: usize,
 }
 
 thread_local! {
@@ -2293,8 +2305,9 @@ pub struct LibraryState {
     pub show_previews: bool,
     pub loading: Vec<LoadingEntry>,
     pub loading_next_id: u64,
-    /// Per-file viewport + focus selections, keyed by `LoadedFile.id`
-    /// (cross-file state-scoping side-table). Entries are pruned on file removal.
+    /// Per-file viewport, focus selections, view history and bookmarks, keyed
+    /// by `LoadedFile.id` (cross-file state-scoping side-table). A closed
+    /// file's entry is removed.
     pub per_file_view: std::collections::HashMap<u64, PerFileScope>,
 }
 
@@ -3234,10 +3247,10 @@ impl AppState {
     /// Without this the new file holds defaults, and the file-switch Effect
     /// copies them over its relatives' values when the user leaves it.
     ///
-    /// If a relative is the open file, its scroll, gain and focus are still in
-    /// the live signals; the file-switch Effect writes those to its relatives
-    /// when the new file opens. The vertical range is only stored when it
-    /// changes, so it must be copied here.
+    /// If a relative is the open file, its scroll, gain, focus, view history
+    /// and bookmarks are still in the live signals; the file-switch Effect
+    /// writes those to its relatives when the new file opens. The vertical
+    /// range is only stored when it changes, so it must be copied here.
     pub fn adopt_shared_settings(&self, idx: usize) {
         use crate::scope::Setting;
         let groups = self.file_groups_untracked();
@@ -3252,6 +3265,8 @@ impl AppState {
         let noise_from = source(Setting::NoiseFilters);
         let scroll_from = source(Setting::HorizontalScroll);
         let focus_from = source(Setting::FocusSelections);
+        let history_from = source(Setting::ViewHistory);
+        let bookmarks_from = source(Setting::Bookmarks);
         let mut ids = None;
         self.library.files().update(|files| {
             let range = range_from
@@ -3265,6 +3280,7 @@ impl AppState {
                 .map(|s| s.settings.clone());
             let id_of = |m: Option<usize>| m.and_then(|m| files.get(m)).map(|s| s.id);
             let (scroll_id, focus_id) = (id_of(scroll_from), id_of(focus_from));
+            let (history_id, bookmarks_id) = (id_of(history_from), id_of(bookmarks_from));
             let Some(f) = files.get_mut(idx) else {
                 return;
             };
@@ -3278,15 +3294,21 @@ impl AppState {
             if let Some(src) = noise {
                 f.settings.set_noise_filters_from(&src);
             }
-            ids = Some((f.id, scroll_id, focus_id));
+            ids = Some((f.id, scroll_id, focus_id, history_id, bookmarks_id));
         });
         // Outside the `files` update: `per_file_view` is a sibling field of
         // the same store.
-        if let Some((to_id, scroll_id, focus_id)) = ids {
+        if let Some((to_id, scroll_id, focus_id, history_id, bookmarks_id)) = ids {
             self.library.per_file_view().update(|m| {
                 let view = scroll_id.and_then(|id| m.get(&id)).map(|v| v.view.clone());
                 let focus = focus_id.and_then(|id| m.get(&id)).map(|v| v.focus.clone());
-                if view.is_none() && focus.is_none() {
+                let history = history_id
+                    .and_then(|id| m.get(&id))
+                    .map(|v| v.history.clone());
+                let bookmarks = bookmarks_id
+                    .and_then(|id| m.get(&id))
+                    .map(|v| v.bookmarks.clone());
+                if view.is_none() && focus.is_none() && history.is_none() && bookmarks.is_none() {
                     return;
                 }
                 let entry = m.entry(to_id).or_default();
@@ -3295,6 +3317,12 @@ impl AppState {
                 }
                 if let Some(focus) = focus {
                     entry.focus = focus;
+                }
+                if let Some(history) = history {
+                    entry.history = history;
+                }
+                if let Some(bookmarks) = bookmarks {
+                    entry.bookmarks = bookmarks;
                 }
             });
         }

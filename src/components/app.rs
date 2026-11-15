@@ -939,6 +939,53 @@ pub fn App() -> impl IntoView {
                 .scroll_offset()
                 .set(incoming_view.map(|v| v.scroll_offset).unwrap_or(0.0));
 
+            // The Back/Forward history and the bookmarks hold times in the
+            // outgoing file. Each file has its own, shared with the files that
+            // share its scroll position. Store the outgoing file's (to it and
+            // those files) and bring back the incoming file's; a file shown
+            // for the first time starts with none. Every way of changing the
+            // open file comes through here, so none of them clears these.
+            if let Some(oi) = old_oi {
+                let ids_sharing = |setting: crate::scope::Setting| -> Vec<u64> {
+                    let members = state.share_members(setting, oi);
+                    state.library.files().with_untracked(|files| {
+                        members
+                            .iter()
+                            .filter_map(|&j| files.get(j).map(|f| f.id))
+                            .collect()
+                    })
+                };
+                let history_ids = ids_sharing(crate::scope::Setting::ViewHistory);
+                let bookmark_ids = ids_sharing(crate::scope::Setting::Bookmarks);
+                let history = crate::state::ViewHistory {
+                    entries: state.viewmode.nav_history().get_untracked(),
+                    index: state.viewmode.nav_index().get_untracked(),
+                };
+                let bookmarks = state.viewmode.bookmarks().get_untracked();
+                state.library.per_file_view().update(|m| {
+                    for id in history_ids {
+                        m.entry(id).or_default().history = history.clone();
+                    }
+                    for id in bookmark_ids {
+                        m.entry(id).or_default().bookmarks = bookmarks.clone();
+                    }
+                });
+            }
+            let (history, bookmarks) = new_id
+                .and_then(|nid| {
+                    state.library.per_file_view().with_untracked(|m| {
+                        m.get(&nid)
+                            .map(|s| (s.history.clone(), s.bookmarks.clone()))
+                    })
+                })
+                .unwrap_or_default();
+            state.viewmode.nav_history().set(history.entries);
+            state.viewmode.nav_index().set(history.index);
+            state.viewmode.bookmarks().set(bookmarks);
+            // The list of bookmarks that shows after playback is of the
+            // outgoing file.
+            state.dialogs.bookmark_popup().set(false);
+
             // (No HFR-exit reset on switch anymore: HFR is global, so playback
             // mode + bandpass persist; the per-file vertical-range Effect restores
             // min/max_display_freq.)
@@ -962,6 +1009,13 @@ pub fn App() -> impl IntoView {
                 && shares(crate::scope::Setting::Playhead)
             {
                 playback::schedule_replay_live(&state);
+            }
+
+            // A closed file's stored view state is dropped.
+            if let (Some(oid), None) = (old_id, old_oi) {
+                state.library.per_file_view().update(|m| {
+                    m.remove(&oid);
+                });
             }
 
             // `scroll_offset` now belongs to the incoming file.

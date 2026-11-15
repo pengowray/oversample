@@ -400,6 +400,12 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
                     layer.range = rc.focus_range(layer.range);
                 }
             }
+            for entry in scope.history.entries.iter_mut() {
+                entry.scroll_offset = rc.time(entry.scroll_offset);
+            }
+            for bm in scope.bookmarks.iter_mut() {
+                bm.time = rc.time(bm.time);
+            }
         }
     });
     state.annotations.store().update(|store| {

@@ -38,6 +38,17 @@ use super::suggestions::BatsForYou;
 pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
     tile_cache::clear_all_caches();
     crate::canvas::spectral_store::clear();
+    // Drop the stored view state (scroll, focus, view history, bookmarks) of
+    // files that are no longer loaded. The ids are read first: `files` and
+    // `per_file_view` are fields of one store.
+    let loaded: Vec<u64> = state
+        .library
+        .files()
+        .with_untracked(|files| files.iter().map(|f| f.id).collect());
+    state
+        .library
+        .per_file_view()
+        .update(|m| m.retain(|id, _| loaded.contains(id)));
     state.timeline.selected_file_indices().update(|sel| {
         sel.retain(|&x| x != removed);
         for x in sel.iter_mut() {
@@ -392,9 +403,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             state.timeline.selected_file_indices().set(Vec::new());
                             state.timeline.active().set(None);
                             state.timeline.active_track().set(None);
-                            state.viewmode.nav_history().set(std::collections::VecDeque::new());
-                            state.viewmode.nav_index().set(0);
-                            state.viewmode.bookmarks().set(vec![]);
+                            // The view history and bookmarks are stored and
+                            // brought back per file by the file-switch Effect
+                            // in app.rs.
                             current_idx.set(Some(i));
                         };
                         let on_close = move |ev: MouseEvent| {

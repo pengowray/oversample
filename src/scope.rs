@@ -65,6 +65,8 @@ impl Relationship {
 /// | gain                                            | PerFile | Sequential, DenoisedPair  |
 /// | vertical frequency range                        | PerFile | Multitrack, DenoisedPair  |
 /// | horizontal scroll                               | PerFile | Multitrack, DenoisedPair  |
+/// | view history (Back and Forward)                 | PerFile | Multitrack, DenoisedPair  |
+/// | bookmarks                                       | PerFile | Multitrack, DenoisedPair  |
 /// | frequency-focus selections                      | PerFile | DenoisedPair              |
 /// | playhead (position, and playing or stopped)     | Global  | DenoisedPair (see below)  |
 ///
@@ -72,6 +74,12 @@ impl Relationship {
 /// A switch within a `DenoisedPair` keeps it: during playback the file-switch
 /// Effect restarts the audio in the other file at the same position. Any
 /// other switch stops playback and puts the playhead at the start.
+///
+/// The view history and the bookmarks hold times in a recording, so they
+/// go with the horizontal scroll: each file has its own, and files that show
+/// the same recording at the same place share them. The file-switch Effect
+/// stores the outgoing file's and brings back the incoming file's, so Back
+/// never goes to a position from another recording.
 ///
 /// The selection (`interaction.selection`) is also one global signal. It is
 /// kept on a switch between files that share the horizontal scroll, and
@@ -90,6 +98,10 @@ pub enum Setting {
     NoiseFilters,
     VerticalRange,
     HorizontalScroll,
+    /// The Back/Forward history of view positions (`viewmode.nav_history`).
+    ViewHistory,
+    /// Bookmarks: times marked during playback (`viewmode.bookmarks`).
+    Bookmarks,
     FocusSelections,
     /// Where the playhead is, and whether it is playing. Within the files that
     /// share it, a switch during playback keeps playing from the same position
@@ -105,6 +117,8 @@ impl Setting {
             Setting::NoiseFilters => (Scope::PerFile, &[Sequential]),
             Setting::VerticalRange => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::HorizontalScroll => (Scope::PerFile, &[Multitrack, DenoisedPair]),
+            Setting::ViewHistory => (Scope::PerFile, &[Multitrack, DenoisedPair]),
+            Setting::Bookmarks => (Scope::PerFile, &[Multitrack, DenoisedPair]),
             Setting::FocusSelections => (Scope::PerFile, &[DenoisedPair]),
             Setting::Playhead => (Scope::Global, &[DenoisedPair]),
         }
@@ -146,11 +160,13 @@ mod tests {
         compute_all_groups(&names, &[])
     }
 
-    const ALL: [Setting; 6] = [
+    const ALL: [Setting; 8] = [
         Setting::Gain,
         Setting::NoiseFilters,
         Setting::VerticalRange,
         Setting::HorizontalScroll,
+        Setting::ViewHistory,
+        Setting::Bookmarks,
         Setting::FocusSelections,
         Setting::Playhead,
     ];
@@ -188,6 +204,8 @@ mod tests {
         assert_eq!(share_members(Setting::Gain, &g, 1), vec![0, 1, 2]);
         // A sequence alone does not share the view, focus or playhead.
         assert_eq!(share_members(Setting::HorizontalScroll, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::ViewHistory, &g, 1), vec![1]);
+        assert_eq!(share_members(Setting::Bookmarks, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::FocusSelections, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::Playhead, &g, 1), vec![1]);
     }
@@ -200,6 +218,9 @@ mod tests {
             vec![0, 1, 2]
         );
         assert_eq!(share_members(Setting::VerticalRange, &g, 1), vec![0, 1, 2]);
+        // The view history and bookmarks go with the scroll.
+        assert_eq!(share_members(Setting::ViewHistory, &g, 0), vec![0, 1, 2]);
+        assert_eq!(share_members(Setting::Bookmarks, &g, 2), vec![0, 1, 2]);
         // Channels do not share gain, focus or the playhead; the pair does.
         assert_eq!(share_members(Setting::Gain, &g, 1), vec![1]);
         assert_eq!(share_members(Setting::Gain, &g, 2), vec![0, 2]);
