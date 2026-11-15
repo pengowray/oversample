@@ -894,6 +894,55 @@ pub(crate) fn apply_dsp_mode(
     }
 }
 
+/// A sample rate every browser accepts for an audio buffer: the Web Audio
+/// specification requires support up to 96 kHz, and no more.
+const SAFE_BUFFER_RATE: u32 = 96_000;
+
+/// How many input samples go into one output sample when a buffer at
+/// `sample_rate` has to be lowered to [`SAFE_BUFFER_RATE`] or under.
+fn safe_rate_divisor(sample_rate: u32) -> u32 {
+    sample_rate.div_ceil(SAFE_BUFFER_RATE).max(1)
+}
+
+/// An audio buffer holding `channels` (all the same length) at `sample_rate`.
+///
+/// Chrome takes buffers up to 768 kHz. Firefox refuses the rates of most bat
+/// recordings, and playback of a 500 kHz file was silent there in every mode
+/// but TE. When the browser refuses the rate, the samples are low-passed and
+/// thinned to a rate it must accept. The buffer lasts as long either way, so
+/// the scheduling does not change. Sound above half the lower rate is lost,
+/// which no speaker would have played.
+fn make_buffer(
+    ctx: &AudioContext,
+    channels: &[&[f32]],
+    sample_rate: u32,
+) -> Option<web_sys::AudioBuffer> {
+    let len = channels.iter().map(|c| c.len()).min()?;
+    let count = channels.len() as u32;
+    if let Ok(buffer) = ctx.create_buffer(count, len as u32, sample_rate as f32) {
+        for (i, ch) in channels.iter().enumerate() {
+            let _ = buffer.copy_to_channel(&ch[..len], i as i32);
+        }
+        return Some(buffer);
+    }
+    let m = safe_rate_divisor(sample_rate);
+    if m <= 1 {
+        return None;
+    }
+    let thinned: Vec<Vec<f32>> = channels
+        .iter()
+        .map(|ch| crate::dsp::filters::decimate(&ch[..len], sample_rate, sample_rate / m))
+        .collect();
+    let out_len = thinned.iter().map(|c| c.len()).min()?;
+    let buffer = ctx
+        .create_buffer(count, out_len as u32, sample_rate as f32 / m as f32)
+        .ok()?;
+    for (i, ch) in thinned.iter().enumerate() {
+        let _ = buffer.copy_to_channel(&ch[..out_len], i as i32);
+    }
+    Some(buffer)
+}
+
 fn schedule_buffer(
     ctx: &AudioContext,
     dest: &web_sys::GainNode,
@@ -901,10 +950,9 @@ fn schedule_buffer(
     sample_rate: u32,
     when: f64,
 ) {
-    let Ok(buffer) = ctx.create_buffer(1, samples.len() as u32, sample_rate as f32) else {
+    let Some(buffer) = make_buffer(ctx, &[samples], sample_rate) else {
         return;
     };
-    let _ = buffer.copy_to_channel(samples, 0);
     let Ok(source) = ctx.create_buffer_source() else {
         return;
     };
@@ -921,12 +969,9 @@ fn schedule_buffer_stereo(
     sample_rate: u32,
     when: f64,
 ) {
-    let len = left.len().min(right.len());
-    let Ok(buffer) = ctx.create_buffer(2, len as u32, sample_rate as f32) else {
+    let Some(buffer) = make_buffer(ctx, &[left, right], sample_rate) else {
         return;
     };
-    let _ = buffer.copy_to_channel(&left[..len], 0);
-    let _ = buffer.copy_to_channel(&right[..len], 1);
     let Ok(source) = ctx.create_buffer_source() else {
         return;
     };
@@ -973,6 +1018,19 @@ mod tests {
         assert_eq!(te_output_rate(256_000, -2.0), 384_000);
         assert!((te_applied_factor(256_000, -2.0) + 1.5).abs() < 1e-12);
         assert!((te_playback_speed(256_000, -2.0) - 1.5).abs() < 1e-12);
+    }
+
+    /// A refused buffer rate is divided down to 96 kHz or under.
+    #[test]
+    fn a_refused_buffer_rate_is_divided_down_to_a_safe_one() {
+        use super::{safe_rate_divisor, SAFE_BUFFER_RATE};
+        for rate in [44_100, 96_000, 192_000, 256_000, 384_000, 500_000] {
+            let m = safe_rate_divisor(rate);
+            assert!(rate / m <= SAFE_BUFFER_RATE, "{rate} / {m}");
+            assert!(m == 1 || rate / (m - 1) > SAFE_BUFFER_RATE, "{rate} / {m}");
+        }
+        assert_eq!(safe_rate_divisor(500_000), 6);
+        assert_eq!(safe_rate_divisor(96_000), 1);
     }
 
     #[test]
