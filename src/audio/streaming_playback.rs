@@ -315,11 +315,15 @@ pub(crate) fn start_stream(
     // Stereo output: stereo source + Stereo view (all modes, not just Normal)
     let stereo_out = source.channel_count() >= 2 && channel_view == ChannelView::Stereo;
 
+    // The rate asked of the audio context. Buffers keep `final_rate`; the
+    // browser resamples them when the context runs at another rate.
+    let context_rate = context_rate_for(final_rate);
+
     // Reuse existing AudioContext if its sample rate matches; otherwise create new.
     let ctx = STREAM_CTX.with(|c| {
         let existing = c.borrow().clone();
         if let Some(ref ctx) = existing {
-            if (ctx.sample_rate() - final_rate as f32).abs() < 1.0 {
+            if (ctx.sample_rate() - context_rate as f32).abs() < 1.0 {
                 let _ = ctx.resume();
                 return Some(ctx.clone());
             }
@@ -328,7 +332,7 @@ pub(crate) fn start_stream(
             *c.borrow_mut() = None;
         }
         let opts = AudioContextOptions::new();
-        opts.set_sample_rate(final_rate as f32);
+        opts.set_sample_rate(context_rate as f32);
         let new_ctx = AudioContext::new_with_context_options(&opts)
             .or_else(|_| AudioContext::new())
             .ok()?;
@@ -852,6 +856,20 @@ pub(crate) fn apply_dsp_mode(
     }
 }
 
+/// The highest sample rate an audio context is asked to run at.
+///
+/// Firefox makes a context at 500 kHz without any error, but the context
+/// never starts: its clock stays at 0 and nothing plays, so a 500 kHz
+/// recording was silent in every mode but TE. At 384 kHz it runs (measured in
+/// Firefox 160). Chrome runs at 500 kHz, but no sound card does, so the cap
+/// costs nothing there.
+pub(crate) const MAX_CONTEXT_RATE: u32 = 384_000;
+
+/// The sample rate to ask of the audio context for buffers at `buffer_rate`.
+pub(crate) fn context_rate_for(buffer_rate: u32) -> u32 {
+    buffer_rate.min(MAX_CONTEXT_RATE)
+}
+
 /// A sample rate every browser accepts for an audio buffer: the Web Audio
 /// specification requires support up to 96 kHz, and no more.
 const SAFE_BUFFER_RATE: u32 = 96_000;
@@ -976,6 +994,15 @@ mod tests {
         assert_eq!(te_output_rate(256_000, -2.0), 384_000);
         assert!((te_applied_factor(256_000, -2.0) + 1.5).abs() < 1e-12);
         assert!((te_playback_speed(256_000, -2.0) - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_context_is_never_asked_to_run_above_384_khz() {
+        use super::context_rate_for;
+        assert_eq!(context_rate_for(500_000), 384_000);
+        assert_eq!(context_rate_for(384_000), 384_000);
+        assert_eq!(context_rate_for(256_000), 256_000);
+        assert_eq!(context_rate_for(44_100), 44_100);
     }
 
     /// A refused buffer rate is divided down to 96 kHz or under.
