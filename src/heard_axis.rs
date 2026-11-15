@@ -327,6 +327,57 @@ pub fn heard_axis_untracked(state: &AppState) -> Option<HeardAxis> {
     heard_axis_inner(state, false)
 }
 
+/// The tops the frequency view can snap to when the picture is of pitch-
+/// shifted audio, in Hz, smallest first.
+const HEARD_VIEW_TOPS: [f64; 3] = [11_000.0, 22_000.0, 44_000.0];
+
+/// The top of the frequency view for a picture whose audio reaches
+/// `heard_top_hz`: the smallest of 11, 22 and 44 kHz that holds all of it.
+/// `None` when it reaches over 44 kHz, where the view is left as it is.
+pub fn heard_view_top(heard_top_hz: f64) -> Option<f64> {
+    HEARD_VIEW_TOPS.into_iter().find(|top| heard_top_hz <= *top)
+}
+
+/// The frequency view of a picture of pitch-shifted audio: see
+/// [`heard_view`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeardView {
+    /// The top of the view, in Hz of the picture. Its bottom is 0.
+    pub top_hz: f64,
+    /// What the view was chosen for. A change in either chooses it again.
+    freq_scale: f64,
+    file_id: Option<u64>,
+}
+
+/// Under XForm with PS or PV the picture is of the shifted audio, which
+/// fills only the bottom of the recording's frequency range (the bottom
+/// sixteenth at ÷16). This is the view that shows it: from 0 to
+/// [`heard_view_top`] of the recording's top frequency after the shift.
+/// `None` in every other state, and when the shifted audio reaches over
+/// 44 kHz.
+///
+/// The top is taken from the recording's top frequency, not from the HFR
+/// band's: the Xform row draws the whole shifted recording, whether or not
+/// the EQ row has cut it to the band.
+///
+/// The value changes only when the state is entered or left, or the factor
+/// or the open file changes. `app.rs` sets the view to it on each change and
+/// does not save it to the file, so the user's own zoom in between is kept
+/// and the file's stored range is what comes back on leaving.
+/// Subscribes the calling Memo.
+pub fn heard_view(state: &AppState) -> Option<HeardView> {
+    let axis = heard_axis(state);
+    let sample_rate = current_sample_rate(state, Track::SettingsAndFiles);
+    let file_id = state.current_file_id_tracked();
+    let axis = axis.filter(|a| a.picture == Picture::Heard)?;
+    let top_hz = heard_view_top(f64::from(sample_rate?) / 2.0 * axis.freq_scale)?;
+    Some(HeardView {
+        top_hz,
+        freq_scale: axis.freq_scale,
+        file_id,
+    })
+}
+
 /// A Resam target rate, given as the rate of the audio heard, as a rate of
 /// the picture's audio, for a display whose Xform row is applied. Under TE
 /// ×10 the picture is the recording's, and the output's 48 kHz holds what
@@ -483,6 +534,21 @@ mod tests {
         let cut = HeardAxis::for_te(192_000, 7.0).unwrap();
         assert_eq!(cut.freq_caption(), "heard kHz = recording ÷7");
         assert!(!cut.blurb().contains("This file"));
+    }
+
+    /// The view's top is the smallest of 11, 22 and 44 kHz that holds the
+    /// shifted audio.
+    #[test]
+    fn heard_view_top_is_the_smallest_that_holds_the_audio() {
+        // A 256 kHz file (128 kHz top) at ÷10 and ÷16.
+        assert_eq!(heard_view_top(12_800.0), Some(22_000.0));
+        assert_eq!(heard_view_top(8_000.0), Some(11_000.0));
+        // Never closer than 11 kHz: a 44.1 kHz file at ÷10.
+        assert_eq!(heard_view_top(2_205.0), Some(11_000.0));
+        assert_eq!(heard_view_top(11_000.0), Some(11_000.0));
+        // A 384 kHz file at ÷8 and at ÷4.
+        assert_eq!(heard_view_top(24_000.0), Some(44_000.0));
+        assert_eq!(heard_view_top(48_000.0), None);
     }
 
     #[test]

@@ -146,9 +146,11 @@ pub fn BandGutter() -> impl IntoView {
         let (min_freq, max_freq) = display_range();
         // Under XForm with TE the labels give the frequencies heard. Only
         // what is drawn is scaled: pointer positions stay in the recording's Hz.
-        // Under XForm with PS the picture is of the audio heard, so its
-        // labels are marked as heard values and not scaled.
-        let heard = crate::heard_axis::heard_axis(&state);
+        // Under XForm with PS the picture is of the audio heard and has its
+        // own axis and range. This strip keeps the recording's whole range
+        // and its labels, since the band set on it is the recording's.
+        let heard = crate::heard_axis::heard_axis(&state)
+            .filter(|h| h.picture == crate::heard_axis::Picture::Recording);
         let axis_scale = heard.map_or(1.0, |h| h.label_scale());
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();

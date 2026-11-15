@@ -534,12 +534,24 @@ pub fn App() -> impl IntoView {
         state.sync_annotation_auto_focus();
     });
 
+    // The view of a picture of pitch-shifted audio (XForm with PS or PV),
+    // which fills only the bottom of the recording's range. `None` in every
+    // other state.
+    let heard_view = Memo::new(move |_| crate::heard_axis::heard_view(&state));
+
     // Per-file vertical zoom: on file switch, load the new file's stored
     // min/max_display_freq into the global signals. New files have None,
     // so they default to full range rather than inheriting the previous file.
+    //
+    // While the picture is of pitch-shifted audio the view is set to
+    // `heard_view` instead: once when that state is entered, and again when
+    // the factor or the file changes. Leaving the state loads the file's
+    // stored range, which the Effect below left alone meanwhile.
     Effect::new(move |_| {
         let idx = state.library.current_index().get();
-        let (min, max) = if let Some(i) = idx {
+        let (min, max) = if let Some(view) = heard_view.get() {
+            (Some(0.0), Some(view.top_hz))
+        } else if let Some(i) = idx {
             state.library.files().with_untracked(|files| {
                 files
                     .get(i)
@@ -561,6 +573,12 @@ pub fn App() -> impl IntoView {
     Effect::new(move |_| {
         let min = state.view.min_display_freq().get();
         let max = state.view.max_display_freq().get();
+        // The view of a picture of pitch-shifted audio, and the user's zoom
+        // inside it, are not the file's range: they are not saved to the
+        // file or shared with its group.
+        if heard_view.get_untracked().is_some() {
+            return;
+        }
         let idx = state.library.current_index().get_untracked();
         if let Some(i) = idx {
             let needs_write = state.library.files().with_untracked(|files| {

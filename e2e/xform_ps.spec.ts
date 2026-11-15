@@ -14,7 +14,8 @@ import {
  * of the shifted audio: each 90 to 30 kHz sweep of the test file is drawn
  * once, at 22.5 to 7.5 kHz at ÷4, in the place in time it has in the
  * recording. The frequency labels are the picture's own and are marked as
- * heard values. The time labels are the recording's.
+ * heard values. The time labels are the recording's. The frequency view
+ * goes to the heard range (0 to 11, 22 or 44 kHz) while in that state.
  */
 
 /** Opens the sweep file with PS at the factor preset `preset` ("4x"). */
@@ -107,17 +108,15 @@ test("PS under XForm draws each call once, with no copies and no gaps", async ({
       { timeout: 20_000 },
     )
     .toBeGreaterThan(100);
-  expect(bright.maxFreq).toBe(128_000);
+  // The shifted audio reaches 32 kHz, so the view is 0 to 44 kHz.
+  expect([bright.minFreq, bright.maxFreq]).toEqual([0, 44_000]);
   const call = brightBetween(bright, 7_500, 22_500);
 
   // A resampler that does not band-limit adds mirror images of the call
-  // about each multiple of 64 kHz: at 41.5 to 56.5 kHz, 71.5 to 86.5 kHz
-  // and 105.5 to 120.5 kHz. Nothing of the call is drawn there, or anywhere
-  // above the shifted audio's own range.
-  expect(brightBetween(bright, 41_500, 56_500)).toBeLessThanOrEqual(call * 0.01);
-  expect(brightBetween(bright, 71_500, 86_500)).toBeLessThanOrEqual(call * 0.01);
-  // (The top 8 kHz of the picture holds the note about heard kHz.)
-  expect(brightBetween(bright, 36_000, 120_000)).toBeLessThanOrEqual(call * 0.02);
+  // about each multiple of 64 kHz, the first at 41.5 to 56.5 kHz. Nothing
+  // of the call is drawn there, or anywhere above the shifted audio's own
+  // range. (The top 2 kHz of the picture holds the note about heard kHz.)
+  expect(brightBetween(bright, 36_000, 42_000)).toBeLessThanOrEqual(call * 0.01);
 
   // The whole sweep is drawn: every 1.5 kHz step from 9 to 21 kHz has part
   // of it. A shifter that drops pieces of each call leaves steps empty.
@@ -143,12 +142,26 @@ test("PS under XForm marks the frequency labels as heard and keeps the time labe
   await page.waitForTimeout(1500);
   const after = await drawnNow(page);
 
-  // The picture is of the shifted audio on its own frequency scale, so the
-  // labels keep their numbers and places: a call drawn at the 5 kHz label
-  // is heard at 5 kHz.
-  const heardFreq = numberLabels(after, "band-gutter");
-  expect([...heardFreq.keys()].sort()).toEqual([...rawFreq.keys()].sort());
-  for (const [khz, label] of heardFreq) {
+  // The picture is of the shifted audio on its own frequency scale, drawn
+  // from 0 to 22 kHz. The axis on its right edge is that scale's: a call
+  // drawn at the 6 kHz label is heard at 6 kHz. Each label sits just above
+  // its frequency's height.
+  const height = await page.evaluate(
+    () => (document.querySelector(".chart-stage canvas") as HTMLCanvasElement).height,
+  );
+  const axis = numberLabels(after, "chart-stage");
+  expect(axis.size).toBeGreaterThanOrEqual(5);
+  expect(Math.max(...axis.keys())).toBeLessThanOrEqual(22);
+  for (const [khz, label] of axis) {
+    const line = height * (1 - khz / 22);
+    expect(Math.abs(line - label.y), `${khz} kHz label`).toBeLessThanOrEqual(20);
+  }
+
+  // The frequency strip on the left is where the band of the recording is
+  // set. It keeps the recording's whole range and labels.
+  const strip = numberLabels(after, "band-gutter");
+  expect([...strip.keys()].sort()).toEqual([...rawFreq.keys()].sort());
+  for (const [khz, label] of strip) {
     expect(Math.abs(rawFreq.get(khz)!.y - label.y)).toBeLessThanOrEqual(1);
   }
 
@@ -173,4 +186,77 @@ test("PS under XForm marks the frequency labels as heard and keeps the time labe
     await page.waitForTimeout(4000);
     await page.screenshot({ path: `${process.env.PS_SHOT_DIR}/after-ps-x16-xform.png` });
   }
+});
+
+/** The bottom and top of the frequency view, in Hz. `null` is the file's full range. */
+async function freqView(page: Page): Promise<[number | null, number | null]> {
+  return page.evaluate(() => {
+    const s = (window as any).__oversample_test();
+    return [s.minFreq, s.maxFreq] as [number | null, number | null];
+  });
+}
+
+/** Zooms the frequency view in by one step, with shift and the wheel over the frequency strip. */
+async function zoomFreqIn(page: Page) {
+  const box = (await page.locator(".band-gutter canvas").first().boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.75);
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, -100);
+  await page.keyboard.up("Shift");
+  await page.mouse.move(700, 20);
+}
+
+/** Sets the PS factor from the preset buttons of the PS settings. */
+async function setPsFactor(page: Page, preset: string) {
+  await page.getByTitle(/^PS —/).first().click();
+  await page
+    .locator(".factor-presets button")
+    .filter({ hasText: new RegExp(`^${preset}$`) })
+    .first()
+    .click();
+  await page.keyboard.press("Escape");
+  await page.mouse.move(700, 20);
+}
+
+test("PS under XForm shows the heard range, keeps the user's zoom, and puts the view back", async ({ page }) => {
+  await openWithPs(page, "10x");
+  // The range the user had before: zoomed in one step from the full range.
+  await zoomFreqIn(page);
+  await expect.poll(async () => (await freqView(page))[1]).not.toBeNull();
+  const earlier = await freqView(page);
+  expect(earlier[1]!).toBeGreaterThan(100_000);
+
+  // At ÷10 the 256 kHz file's 128 kHz becomes 12.8 kHz: the view is 0 to 22 kHz.
+  await xformRowOnly(page);
+  await expect.poll(() => freqView(page)).toEqual([0, 22_000]);
+  await page.waitForTimeout(2500);
+  if (process.env.PS_SHOT_DIR) {
+    await page.screenshot({ path: `${process.env.PS_SHOT_DIR}/view-ps-x10-xform.png` });
+  }
+
+  // The user's own zoom in that state stays.
+  await zoomFreqIn(page);
+  await expect.poll(async () => (await freqView(page))[1]).toBeLessThan(21_000);
+  const own = await freqView(page);
+  await page.waitForTimeout(1500);
+  expect(await freqView(page)).toEqual(own);
+
+  // A new factor sets the view again. At ÷16 the top is 8 kHz: 0 to 11 kHz.
+  await setPsFactor(page, "16x");
+  await expect.poll(() => freqView(page)).toEqual([0, 11_000]);
+  await page.waitForTimeout(2500);
+  if (process.env.PS_SHOT_DIR) {
+    await page.screenshot({ path: `${process.env.PS_SHOT_DIR}/view-ps-x16-xform.png` });
+  }
+
+  // Switching XForm off puts back the range the user had before.
+  await xformSwitch(page).click();
+  await expect.poll(() => freqView(page)).toEqual(earlier);
+
+  // So does leaving PS for another mode while XForm stays on.
+  await xformSwitch(page).click();
+  await expect.poll(() => freqView(page)).toEqual([0, 11_000]);
+  await page.getByTitle(/^TE —/).first().click();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => freqView(page)).toEqual(earlier);
 });
