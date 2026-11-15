@@ -71,29 +71,85 @@ pub enum TourStep {
     Play,
 }
 
+/// What js/hfr-tour.js needs to show one step.
+struct StepSpec {
+    /// CSS selector of the control. The first match that is on screen gets
+    /// the highlight.
+    selector: &'static str,
+    title: &'static str,
+    description: &'static str,
+    /// Where the popover sits beside the control (driver.js names).
+    side: &'static str,
+    align: &'static str,
+    /// The side to use instead when the control is short (a phone, a small
+    /// window): a popover beside a short strip covers most of it.
+    short_side: Option<&'static str>,
+    /// The drag a hand acts out over the control while the step shows:
+    /// "drag-up" or "drag-right". None: no hand.
+    gesture: Option<&'static str>,
+}
+
+impl StepSpec {
+    fn to_js(&self) -> Object {
+        let o = Object::new();
+        set(&o, "selector", &self.selector.into());
+        set(&o, "title", &self.title.into());
+        set(&o, "description", &self.description.into());
+        set(&o, "side", &self.side.into());
+        set(&o, "align", &self.align.into());
+        if let Some(short_side) = self.short_side {
+            set(&o, "short_side", &short_side.into());
+        }
+        if let Some(gesture) = self.gesture {
+            set(&o, "gesture", &gesture.into());
+        }
+        o
+    }
+}
+
 impl TourStep {
-    /// (CSS selector, title, description, popover side, popover align).
-    /// js/hfr-tour.js highlights the first match that is on screen.
-    fn spec(
-        self,
-    ) -> (
-        &'static str,
-        &'static str,
-        &'static str,
-        &'static str,
-        &'static str,
-    ) {
+    fn spec(self) -> StepSpec {
         match self {
-            TourStep::Hfr => (
-                ".hearing-bar .band-cell-hfr",
-                T_HFR,
-                D_HFR,
-                "bottom",
-                "start",
-            ),
-            TourStep::BandGutter => (".band-gutter", T_BAND, D_BAND, "right", "start"),
-            TourStep::TimeGutter => (".time-gutter", T_TIME, D_TIME, "top", "center"),
-            TourStep::Play => (".play-main-btn", T_PLAY, D_PLAY, "top", "start"),
+            TourStep::Hfr => StepSpec {
+                selector: ".hearing-bar .band-cell-hfr",
+                title: T_HFR,
+                description: D_HFR,
+                side: "bottom",
+                align: "start",
+                short_side: None,
+                gesture: None,
+            },
+            TourStep::BandGutter => StepSpec {
+                selector: ".band-gutter",
+                title: T_BAND,
+                description: D_BAND,
+                side: "right",
+                align: "start",
+                // Above the strip, the popover leaves the whole strip and
+                // the calls beside it in view.
+                short_side: Some("top"),
+                gesture: Some("drag-up"),
+            },
+            // The popover sits over the right end of the strip, so the hand
+            // has the left end to drag along.
+            TourStep::TimeGutter => StepSpec {
+                selector: ".time-gutter",
+                title: T_TIME,
+                description: D_TIME,
+                side: "top",
+                align: "end",
+                short_side: None,
+                gesture: Some("drag-right"),
+            },
+            TourStep::Play => StepSpec {
+                selector: ".play-main-btn",
+                title: T_PLAY,
+                description: D_PLAY,
+                side: "top",
+                align: "start",
+                short_side: None,
+                gesture: None,
+            },
         }
     }
 }
@@ -181,14 +237,7 @@ pub fn start_tour(state: AppState) {
     let steps = plan(state);
     let js_steps = Array::new();
     for step in &steps {
-        let (selector, title, description, side, align) = step.spec();
-        let o = Object::new();
-        set(&o, "selector", &selector.into());
-        set(&o, "title", &title.into());
-        set(&o, "description", &description.into());
-        set(&o, "side", &side.into());
-        set(&o, "align", &align.into());
-        js_steps.push(&o);
+        js_steps.push(&step.spec().to_js());
     }
     let labels = Object::new();
     set(&labels, "next", &L_NEXT.into());
@@ -386,7 +435,10 @@ pub fn HfrNudge() -> impl IntoView {
     // Show on the start of playback, once per session.
     Effect::new(move |was_playing: Option<bool>| {
         let playing = state.playback.is_playing().get();
-        if playing && was_playing == Some(false) && nudge_allowed(state) && playing_ultrasound_at_1_1(state)
+        if playing
+            && was_playing == Some(false)
+            && nudge_allowed(state)
+            && playing_ultrasound_at_1_1(state)
         {
             show_nudge(state);
         }
@@ -400,7 +452,11 @@ pub fn HfrNudge() -> impl IntoView {
         let out = state.mic.listening().get()
             && !state.mic.mute_output().get()
             && state.mic.sample_rate().get() > 0;
-        if out && was_out == Some(false) && nudge_allowed(state) && listening_ultrasound_at_1_1(state) {
+        if out
+            && was_out == Some(false)
+            && nudge_allowed(state)
+            && listening_ultrasound_at_1_1(state)
+        {
             show_nudge(state);
         } else if !out && was_out == Some(true) {
             hide_nudge(state);

@@ -1390,7 +1390,9 @@ fn chime_heading(chime: &FoundChime) -> String {
         None => CHIME_OTHER.to_string(),
     };
     // Format version 2: the phone page had the X8's code typed in.
-    let coded = chime.remote().is_some_and(|remote| remote.check().is_some());
+    let coded = chime
+        .remote()
+        .is_some_and(|remote| remote.check().is_some());
     let code = if coded { CHIME_WITH_CODE } else { "" };
     format!("{what}{code} at {}", file_position(chime.start_secs))
 }

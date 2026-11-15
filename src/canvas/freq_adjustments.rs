@@ -58,12 +58,6 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         b.enabled.hash(&mut h);
         (b.strength_db as i32).hash(&mut h);
     }
-    state
-        .notch
-        .harmonic_suppression()
-        .get_untracked()
-        .to_bits()
-        .hash(&mut h);
     state.display.xform_enabled().get_untracked().hash(&mut h);
     (state.display.filter_nr().get_untracked() as u8).hash(&mut h);
     (state.display.filter_notch().get_untracked() as u8).hash(&mut h);
@@ -193,7 +187,6 @@ fn compute_freq_adjustments_inner(
         };
         if show_notch {
             let bands = state.notch.bands().get_untracked();
-            let harm_supp = state.notch.harmonic_suppression().get_untracked();
             for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                 let bin = tile_height - 1 - row;
                 let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
@@ -205,15 +198,6 @@ fn compute_freq_adjustments_inner(
                     // Primary notch
                     if (freq - band.center_hz).abs() <= half_bw {
                         *adj_val -= band.strength_db as f32;
-                    }
-                    // Harmonic suppression at 2x and 3x
-                    if harm_supp > 0.0 {
-                        for harmonic in [2.0, 3.0] {
-                            let hfreq = band.center_hz * harmonic;
-                            if (freq - hfreq).abs() <= half_bw * harmonic {
-                                *adj_val -= (band.strength_db * harm_supp) as f32;
-                            }
-                        }
                     }
                 }
             }

@@ -3,7 +3,8 @@ import { test, expect, type Page } from "@playwright/test";
 /**
  * How a file opens when another file was open before it: stopped, with the
  * view and the playhead at the start, without the previous file's selection,
- * and with its own annotations. The previous file keeps its own scroll.
+ * and with its own annotations. The previous file keeps its own scroll,
+ * selection, view history and bookmarks.
  * (The file-switch Effect in src/components/app.rs; the rules are in
  * src/scope.rs.)
  */
@@ -20,6 +21,9 @@ type Snap = {
   streamFile: string | null;
   selection: Range | null;
   regions: Range[];
+  navIndex: number;
+  navLength: number;
+  bookmarks: number[];
 };
 
 function noiseWav(sampleRate: number, seconds: number, seed = 4321): Buffer {
@@ -233,6 +237,55 @@ test.describe("Opening another file", () => {
     await page.keyboard.press("Space");
   });
 
+  test("each file keeps its own selection", async ({ page }) => {
+    await start(page, "alpha.wav");
+    await selectTool(page);
+    await select(page, 0.5, 0.7, 0.3, 0.6);
+    const inAlpha = (await snap(page)).selection;
+    expect(inAlpha).not.toBeNull();
+
+    // A file shown for the first time has nothing selected.
+    await open(page, "beta.wav", 8, 99);
+    expect((await snap(page)).selection).toBeNull();
+    // Going back brings the first file's selection back.
+    await show(page, "alpha.wav");
+    expect((await snap(page)).selection).toEqual(inAlpha);
+    await show(page, "beta.wav");
+    expect((await snap(page)).selection).toBeNull();
+
+    // Play in the second file starts at its start, not at the first
+    // file's selection.
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    expect((await snap(page)).playheadTime).toBeLessThan(inAlpha!.timeStart - 0.5);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+
+    // The second file's own selection is kept the same way.
+    await select(page, 0.2, 0.3, 0.3, 0.6);
+    const inBeta = (await snap(page)).selection;
+    expect(inBeta).not.toBeNull();
+    expect(inBeta).not.toEqual(inAlpha);
+    await show(page, "alpha.wav");
+    expect((await snap(page)).selection).toEqual(inAlpha);
+    await show(page, "beta.wav");
+    expect((await snap(page)).selection).toEqual(inBeta);
+  });
+
+  test("a channel opened later takes the selection of its recording", async ({ page }) => {
+    await start(page, "rec_Ch1.wav");
+    await selectTool(page);
+    await select(page, 0.5, 0.7, 0.3, 0.6);
+    const made = (await snap(page)).selection;
+    expect(made).not.toBeNull();
+    await open(page, "other.wav", 8, 7);
+    expect((await snap(page)).selection).toBeNull();
+
+    // Opened while an unrelated file is shown.
+    await open(page, "rec_Ch2.wav", 8, 99);
+    expect((await snap(page)).selection).toEqual(made);
+  });
+
   test("another channel of the same recording keeps the selection", async ({ page }) => {
     await start(page, "rec_Ch1.wav");
     await open(page, "rec_Ch2.wav", 8, 99);
@@ -243,6 +296,59 @@ test.describe("Opening another file", () => {
 
     await show(page, "rec_Ch1.wav");
     expect((await snap(page)).selection).toEqual(made);
+  });
+
+  test("playback carries on in another channel of the same recording", async ({ page }) => {
+    await start(page, "rec_Ch1.wav", 20);
+    await open(page, "rec_Ch2.wav", 20, 99);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    expect((await snap(page)).streamFile).toBe("rec_Ch2.wav");
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(0.5);
+    const before = (await snap(page)).playheadTime;
+
+    // The other channel plays on from the same position.
+    await show(page, "rec_Ch1.wav");
+    await expect.poll(async () => (await snap(page)).streamFile).toBe("rec_Ch1.wav");
+    const after = await snap(page);
+    expect(after.isPlaying).toBe(true);
+    expect(after.playheadTime).toBeGreaterThanOrEqual(before);
+    expect(after.playheadTime).toBeLessThan(before + 3);
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(after.playheadTime + 0.3);
+    expect((await snap(page)).isPlaying).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+  });
+
+  test("the track menu in the heading switches channel like the file list", async ({ page }) => {
+    await start(page, "rec_Ch1.wav", 20);
+    await open(page, "rec_Ch2.wav", 20, 99);
+    const place = await makeHistory(page);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+
+    await page.locator(".toolbar-badge-row > button.file-badge-track").click();
+    await page.locator(".badge-dropdown-item", { hasText: "rec_Ch1.wav" }).click();
+    await expect.poll(async () => (await snap(page)).currentFile).toBe("rec_Ch1.wav");
+    // Playback carries on in the other channel, and the history is shared.
+    await expect.poll(async () => (await snap(page)).streamFile).toBe("rec_Ch1.wav");
+    expect((await snap(page)).isPlaying).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+    expect(await canGoBack(page)).toBe(true);
+    await goBack(page);
+    await expect.poll(async () => (await snap(page)).scrollOffset).toBeCloseTo(place, 6);
+  });
+
+  test("the next recording of a sequence opens stopped at the start", async ({ page }) => {
+    await start(page, "260212_0041_1.wav", 20);
+    await open(page, "260212_0042_1.wav", 20, 99);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    await expect.poll(async () => (await snap(page)).playheadTime).toBeGreaterThan(0.5);
+
+    await show(page, "260212_0041_1.wav");
+    await expectStoppedAtStart(page);
   });
 
   test("a file keeps its scroll after a shorter file is opened", async ({ page }) => {
@@ -299,5 +405,155 @@ test.describe("Opening another file", () => {
     await show(page, "XC222");
     expect((await snap(page)).regions).toEqual([]);
     expect((await snap(page)).scrollOffset).toBe(0);
+  });
+});
+
+// ── View history (Back and Forward) and bookmarks ───────────────────────────
+
+/** The Back or Forward item of the top bar's menu; the menu is left open. */
+async function historyItem(page: Page, label: "Back" | "Forward") {
+  if (!(await page.locator(".toolbar-overflow-menu").count())) {
+    await page.locator(".toolbar-overflow-btn").click();
+  }
+  return page.locator(".toolbar-overflow-item", { hasText: label });
+}
+
+async function closeMenu(page: Page) {
+  if (await page.locator(".toolbar-overflow-backdrop").count()) {
+    await page.locator(".toolbar-overflow-backdrop").click();
+  }
+}
+
+async function canGoBack(page: Page): Promise<boolean> {
+  const enabled = await (await historyItem(page, "Back")).isEnabled();
+  await closeMenu(page);
+  return enabled;
+}
+
+/** Clicks the overview strip at fraction `f` of its width: the view jumps there. */
+async function jumpTo(page: Page, f: number): Promise<number> {
+  const box = (await page.locator(".overview-strip canvas").last().boundingBox())!;
+  await page.mouse.click(box.x + box.width * f, box.y + box.height / 2);
+  return (await snap(page)).scrollOffset;
+}
+
+/**
+ * Makes a view history in the open file by jumping to three places. Returns
+ * the place Back goes to (the first of the three: each jump records the
+ * place it left, and Back goes to the one recorded before the newest).
+ */
+async function makeHistory(page: Page): Promise<number> {
+  await zoomIn(page);
+  const first = await jumpTo(page, 0.3);
+  const second = await jumpTo(page, 0.6);
+  const third = await jumpTo(page, 0.8);
+  expect(first).toBeGreaterThan(2);
+  expect(second).toBeGreaterThan(first + 1);
+  expect(third).toBeGreaterThan(second + 1);
+  expect(await canGoBack(page)).toBe(true);
+  return first;
+}
+
+async function goBack(page: Page) {
+  await (await historyItem(page, "Back")).click();
+}
+
+test.describe("View history and bookmarks belong to a file", () => {
+  test("Back in a newly opened file does not go to the previous file's position", async ({
+    page,
+  }) => {
+    await start(page, "alpha.wav", 20);
+    const place = await makeHistory(page);
+    const left = (await snap(page)).scrollOffset;
+
+    await open(page, "beta.wav", 20, 99);
+    expect(await canGoBack(page)).toBe(false);
+    expect((await snap(page)).navLength).toBe(0);
+    expect((await snap(page)).scrollOffset).toBe(0);
+
+    // The first file is where it was left, with its history.
+    await show(page, "alpha.wav");
+    expect((await snap(page)).scrollOffset).toBeCloseTo(left, 6);
+    expect(await canGoBack(page)).toBe(true);
+    await goBack(page);
+    await expect.poll(async () => (await snap(page)).scrollOffset).toBeCloseTo(place, 6);
+  });
+
+  test("closing the open file does not leave its history to the next file", async ({ page }) => {
+    await start(page, "alpha.wav", 20);
+    await open(page, "beta.wav", 20, 99);
+    await show(page, "alpha.wav");
+    await makeHistory(page);
+
+    await page.locator(".file-item", { hasText: "alpha.wav" }).locator(".file-item-close").click();
+    await expect.poll(async () => (await snap(page)).currentFile).toBe("beta.wav");
+    expect(await canGoBack(page)).toBe(false);
+  });
+
+  test("channels of one recording share the history", async ({ page }) => {
+    await start(page, "rec_Ch1.wav", 20);
+    await open(page, "rec_Ch2.wav", 20, 99);
+    const place = await makeHistory(page);
+
+    await show(page, "rec_Ch1.wav");
+    expect(await canGoBack(page)).toBe(true);
+    await goBack(page);
+    await expect.poll(async () => (await snap(page)).scrollOffset).toBeCloseTo(place, 6);
+  });
+
+  test("a recording and its denoised copy share the history, also with the D key", async ({
+    page,
+  }) => {
+    await start(page, "bat.wav", 20);
+    await open(page, "bat (denoised).wav", 20, 99);
+    await open(page, "other.wav", 20, 7);
+    await show(page, "bat.wav");
+    const place = await makeHistory(page);
+    const history = (await snap(page)).navLength;
+
+    // D shows the denoised copy: same recording, same history.
+    await page.keyboard.press("d");
+    await expect.poll(async () => (await snap(page)).currentFile).toBe("bat (denoised).wav");
+    expect((await snap(page)).navLength).toBe(history);
+    // An unrelated file has none, and the pair has it again afterwards.
+    await show(page, "other.wav");
+    expect((await snap(page)).navLength).toBe(0);
+    await show(page, "bat (denoised).wav");
+    expect((await snap(page)).navLength).toBe(history);
+    await goBack(page);
+    await expect.poll(async () => (await snap(page)).scrollOffset).toBeCloseTo(place, 6);
+  });
+
+  test("a bookmark made in one file is not shown in another", async ({ page }) => {
+    // A click on the spectrogram during playback makes a bookmark. The list
+    // of bookmarks shows for a few seconds when playback reaches the end.
+    const playToEnd = async () => {
+      await page.keyboard.press("Space");
+      await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+      await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+    };
+    await start(page, "alpha.wav", 2);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(true);
+    const box = (await page.locator(".main-view .chart-stage > canvas").boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect.poll(async () => (await snap(page)).isPlaying).toBe(false);
+    await expect(page.locator(".bookmark-popup .bookmark-item")).toHaveCount(1);
+    const made = (await snap(page)).bookmarks;
+    expect(made.length).toBe(1);
+
+    await open(page, "beta.wav", 2, 99);
+    expect((await snap(page)).bookmarks).toEqual([]);
+    await expect(page.locator(".bookmark-popup")).toHaveCount(0);
+    await playToEnd();
+    // Counted once, without waiting: the list goes away by itself after a
+    // few seconds.
+    await page.waitForTimeout(300);
+    expect(await page.locator(".bookmark-popup").count()).toBe(0);
+
+    // The first file has its bookmark again. (The list is not checked here:
+    // the timer that hid the first list can hide a second one early.)
+    await show(page, "alpha.wav");
+    expect((await snap(page)).bookmarks).toEqual(made);
   });
 });

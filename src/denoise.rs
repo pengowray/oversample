@@ -458,10 +458,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
 
     let model = model().file;
     if !store::is_downloaded(model).await {
-        state
-            .denoise
-            .status()
-            .set(DenoiseStatus::Downloading(0.0));
+        state.denoise.status().set(DenoiseStatus::Downloading(0.0));
         store::download(model, |fraction| {
             if live() {
                 state

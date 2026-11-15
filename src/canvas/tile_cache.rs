@@ -903,7 +903,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let needs_padding = xform_on
             && matches!(
                 state.playback.mode().get_untracked(),
-                PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift | PlaybackMode::TimeExpansion
+                PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
             );
         // Pad by PV_HQ_OVERLAP to ensure complete overlap-add warmup
         // before the tile's actual samples begin.
@@ -2427,16 +2427,10 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
     let mode = state.playback.mode().get_untracked();
     match mode {
         PlaybackMode::Normal => samples.to_vec(),
-        PlaybackMode::TimeExpansion => {
-            let factor = crate::dsp::pitch_shift::PitchFactor::from_signed(
-                state.transform.te_factor().get_untracked(),
-            );
-            if factor.is_bypass() {
-                samples.to_vec()
-            } else {
-                crate::dsp::pitch_shift::pitch_shift_realtime(samples, factor)
-            }
-        }
+        // Time expansion only plays the recording at another speed, so the
+        // picture is the recording's own. The axes are labelled with the
+        // values heard instead (`crate::heard_axis`).
+        PlaybackMode::TimeExpansion => samples.to_vec(),
         PlaybackMode::Heterodyne => {
             // The same carriers playback uses, retuned to the selection's
             // band when it has one (tile_scheduler redraws once the band

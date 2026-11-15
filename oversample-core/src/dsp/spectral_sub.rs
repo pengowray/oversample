@@ -139,14 +139,12 @@ where
 /// - `noise_floor`: the learned noise floor spectrum
 /// - `strength`: 0.0 = no reduction, 1.0 = full subtraction, >1.0 = over-subtraction
 /// - `floor_factor`: minimum residual as a fraction of original magnitude (prevents musical noise)
-/// - `harmonic_suppression`: 0.0–1.0, propagates noise floor to 2x and 3x harmonic bins
 pub fn apply_spectral_subtraction(
     samples: &[f32],
     sample_rate: u32,
     noise_floor: &NoiseFloor,
     strength: f64,
     floor_factor: f64,
-    harmonic_suppression: f64,
 ) -> Vec<f32> {
     if samples.is_empty() || strength <= 0.0 {
         return samples.to_vec();
@@ -171,26 +169,6 @@ pub fn apply_spectral_subtraction(
 
     let window = hann_window(fft_size);
     let num_bins = fft_size / 2 + 1;
-
-    // Build enhanced noise floor with harmonic propagation
-    let effective_floor = if harmonic_suppression > 0.0 {
-        let mut enhanced = noise_floor.bin_magnitudes.clone();
-        for b in 0..num_bins {
-            let mag = noise_floor.bin_magnitudes[b];
-            if mag < 1e-20 {
-                continue;
-            }
-            for multiplier in [2usize, 3usize] {
-                let harmonic_bin = b * multiplier;
-                if harmonic_bin < num_bins {
-                    enhanced[harmonic_bin] += harmonic_suppression * mag;
-                }
-            }
-        }
-        enhanced
-    } else {
-        noise_floor.bin_magnitudes.clone()
-    };
 
     let (fft_fwd, fft_inv) = (plan_fft_forward(fft_size), plan_fft_inverse(fft_size));
 
@@ -227,7 +205,7 @@ pub fn apply_spectral_subtraction(
         for (bin, c) in spectrum.iter_mut().enumerate() {
             let mag = c.norm() as f64;
             let noise_mag = if bin < num_bins {
-                effective_floor[bin] * strength
+                noise_floor.bin_magnitudes[bin] * strength
             } else {
                 0.0
             };
@@ -392,7 +370,7 @@ mod tests {
         let sr = 384_000u32;
         let x = noise(96_000, 4);
         let floor = learn(&x, sr);
-        let out = apply_spectral_subtraction(&x, sr, &floor, 0.6, 0.05, 0.0);
+        let out = apply_spectral_subtraction(&x, sr, &floor, 0.6, 0.05);
         let rms = |v: &[f32]| {
             (v.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
         };
@@ -415,7 +393,7 @@ mod tests {
     fn strength_zero_is_passthrough() {
         let floor = synthetic_floor(4096, 44_100, 1.0);
         let samples = vec![0.5f32; 4096];
-        let out = apply_spectral_subtraction(&samples, 44_100, &floor, 0.0, 0.1, 0.0);
+        let out = apply_spectral_subtraction(&samples, 44_100, &floor, 0.0, 0.1);
         assert_eq!(out, samples);
     }
 
@@ -424,14 +402,14 @@ mod tests {
         // Floor learned at 44.1k, audio at 48k → must not be applied.
         let floor = synthetic_floor(4096, 44_100, 1.0);
         let samples = vec![0.5f32; 4096];
-        let out = apply_spectral_subtraction(&samples, 48_000, &floor, 1.0, 0.1, 0.0);
+        let out = apply_spectral_subtraction(&samples, 48_000, &floor, 1.0, 0.1);
         assert_eq!(out, samples);
     }
 
     #[test]
     fn empty_input_is_empty_output() {
         let floor = synthetic_floor(4096, 44_100, 1.0);
-        let out = apply_spectral_subtraction(&[], 44_100, &floor, 1.0, 0.1, 0.0);
+        let out = apply_spectral_subtraction(&[], 44_100, &floor, 1.0, 0.1);
         assert!(out.is_empty());
     }
 
@@ -446,7 +424,7 @@ mod tests {
         let samples: Vec<f32> = (0..n)
             .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin())
             .collect();
-        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1, 0.0);
+        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1);
         // Steady-state region (skip windowing transients at the head/tail).
         let head = fft_size;
         let tail = out.len() - fft_size;
@@ -481,7 +459,7 @@ mod tests {
         let samples: Vec<f32> = (0..n)
             .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 1500.0 * i as f32 / sr as f32).sin())
             .collect();
-        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1, 0.0);
+        let out = apply_spectral_subtraction(&samples, sr, &floor, 1.0, 0.1);
         let head = fft_size;
         let tail = out.len() - fft_size;
         let diff_rms: f64 = (samples[head..tail]

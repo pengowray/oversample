@@ -674,6 +674,14 @@ pub fn App() -> impl IntoView {
             }
             DisplayFilterMode::Custom => state.display.decimate_rate().get(),
         };
+        // The Resam rates are rates of the audio heard. Under TE the picture
+        // is the recording's own, so the target becomes the recording rate
+        // that is heard at that rate (48 kHz heard is 480 kHz at ×10).
+        let decim_rate = if xform_on {
+            crate::heard_axis::resample_target_in_recording(&state, decim_rate)
+        } else {
+            decim_rate
+        };
         state.display.decimate_effective().set(decim_rate);
     });
 
@@ -851,13 +859,34 @@ pub fn App() -> impl IntoView {
             }
 
             // The selection is a time and frequency range in the outgoing
-            // file. It stays only for a file that shows the same recording at
-            // the same place (another channel, or the denoised copy). On any
-            // other file it would be a box left over from a different file,
-            // and Play would start from it.
-            if !shares(crate::scope::Setting::HorizontalScroll) {
-                state.interaction.selection().set(None);
+            // file. Each file has its own, shared with the files that show
+            // the same recording at the same place (another channel, or the
+            // denoised copy). Store the outgoing file's (to it and those
+            // files) and bring back the incoming file's. A file shown for
+            // the first time has none: the outgoing file's would be a box
+            // left over from a different file, and Play would start from it.
+            if let Some(oi) = old_oi {
+                let members = state.share_members(crate::scope::Setting::Selection, oi);
+                let ids = state.library.files().with_untracked(|files| {
+                    members
+                        .iter()
+                        .filter_map(|&j| files.get(j).map(|f| f.id))
+                        .collect::<Vec<u64>>()
+                });
+                let selection = state.interaction.selection().get_untracked();
+                state.library.per_file_view().update(|m| {
+                    for id in ids {
+                        m.entry(id).or_default().selection = selection.clone();
+                    }
+                });
             }
+            let incoming_selection = new_id.and_then(|nid| {
+                state
+                    .library
+                    .per_file_view()
+                    .with_untracked(|m| m.get(&nid).and_then(|s| s.selection.clone()))
+            });
+            state.interaction.selection().set(incoming_selection);
 
             // Genuine switch: clear the annotation selection (its focus override
             // is cleared below by the focus reset — note we do NOT call
@@ -952,6 +981,53 @@ pub fn App() -> impl IntoView {
                 .scroll_offset()
                 .set(incoming_view.map(|v| v.scroll_offset).unwrap_or(0.0));
 
+            // The Back/Forward history and the bookmarks hold times in the
+            // outgoing file. Each file has its own, shared with the files that
+            // share its scroll position. Store the outgoing file's (to it and
+            // those files) and bring back the incoming file's; a file shown
+            // for the first time starts with none. Every way of changing the
+            // open file comes through here, so none of them clears these.
+            if let Some(oi) = old_oi {
+                let ids_sharing = |setting: crate::scope::Setting| -> Vec<u64> {
+                    let members = state.share_members(setting, oi);
+                    state.library.files().with_untracked(|files| {
+                        members
+                            .iter()
+                            .filter_map(|&j| files.get(j).map(|f| f.id))
+                            .collect()
+                    })
+                };
+                let history_ids = ids_sharing(crate::scope::Setting::ViewHistory);
+                let bookmark_ids = ids_sharing(crate::scope::Setting::Bookmarks);
+                let history = crate::state::ViewHistory {
+                    entries: state.viewmode.nav_history().get_untracked(),
+                    index: state.viewmode.nav_index().get_untracked(),
+                };
+                let bookmarks = state.viewmode.bookmarks().get_untracked();
+                state.library.per_file_view().update(|m| {
+                    for id in history_ids {
+                        m.entry(id).or_default().history = history.clone();
+                    }
+                    for id in bookmark_ids {
+                        m.entry(id).or_default().bookmarks = bookmarks.clone();
+                    }
+                });
+            }
+            let (history, bookmarks) = new_id
+                .and_then(|nid| {
+                    state.library.per_file_view().with_untracked(|m| {
+                        m.get(&nid)
+                            .map(|s| (s.history.clone(), s.bookmarks.clone()))
+                    })
+                })
+                .unwrap_or_default();
+            state.viewmode.nav_history().set(history.entries);
+            state.viewmode.nav_index().set(history.index);
+            state.viewmode.bookmarks().set(bookmarks);
+            // The list of bookmarks that shows after playback is of the
+            // outgoing file.
+            state.dialogs.bookmark_popup().set(false);
+
             // (No HFR-exit reset on switch anymore: HFR is global, so playback
             // mode + bandpass persist; the per-file vertical-range Effect restores
             // min/max_display_freq.)
@@ -967,14 +1043,21 @@ pub fn App() -> impl IntoView {
                 }
             }
 
-            // The playhead is shared between an original and its denoised
-            // copy: if audio is playing, carry on from the same position in
-            // the incoming file, so the two can be compared by ear. (Any
-            // other switch stopped playback above.)
+            // The playhead is shared by the channels of one recording, and by
+            // an original and its denoised copy: if audio is playing, carry
+            // on from the same position in the incoming file, so they can be
+            // compared by ear. (Any other switch stopped playback above.)
             if state.playback.is_playing().get_untracked()
                 && shares(crate::scope::Setting::Playhead)
             {
                 playback::schedule_replay_live(&state);
+            }
+
+            // A closed file's stored view state is dropped.
+            if let (Some(oid), None) = (old_id, old_oi) {
+                state.library.per_file_view().update(|m| {
+                    m.remove(&oid);
+                });
             }
 
             // `scroll_offset` now belongs to the incoming file.

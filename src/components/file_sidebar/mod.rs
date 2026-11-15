@@ -36,8 +36,9 @@ pub(crate) use export_section::ExportPanel;
 use files_panel::FilesPanel;
 pub(crate) use harmonics::HarmonicsPanel;
 pub(crate) use loading::{
-    fetch_bytes, fetch_demo_index, fetch_text, find_open_demo, load_named_bytes, load_native_file,
-    load_native_wav, load_single_demo, read_and_load_file, DemoEntry,
+    fetch_bytes, fetch_demo_index, fetch_text, find_open_demo, load_named_bytes,
+    load_named_bytes_id, load_native_file, load_native_wav, load_single_demo, read_and_load_file,
+    DemoEntry,
 };
 pub(crate) use metadata_panel::MetadataPanel;
 use project_panel::ProjectPanel;
