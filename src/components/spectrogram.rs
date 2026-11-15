@@ -897,10 +897,14 @@ pub fn Spectrogram() -> impl IntoView {
                     }
 
                     // A recording whose file for the chosen channel is not
-                    // loaded: outline its place and say which file is missing,
-                    // so the empty stretch does not read as a fault.
+                    // open: outline its place and say which file is missing,
+                    // so the empty stretch does not read as a fault. "Open"
+                    // is the app's word for a file in the Files list ("Open
+                    // files"); "not loaded" read as a load that failed.
                     if let Some(track) = tl.track.as_deref() {
-                        let channel = crate::timeline::track_name(track);
+                        // "channel 2" inside a sentence; "MIX" stays as it is.
+                        let channel =
+                            crate::timeline::track_name(track).replace("Channel ", "channel ");
                         for m in &tl.missing {
                             let x1 = (m.timeline_offset_secs - scroll) * px_per_sec;
                             let x2 =
@@ -929,11 +933,12 @@ pub fn Spectrogram() -> impl IntoView {
                                     .map(|tm| tm.width() <= room)
                                     .unwrap_or(false)
                             };
-                            let long = format!("{channel} of {} is not loaded", m.take);
+                            let long = format!("No {channel} file is open for {}", m.take);
+                            let short = format!("No {channel}");
                             let lines: Vec<&str> = if fits(&long) {
                                 vec![long.as_str()]
-                            } else if fits(&channel) && fits("not loaded") {
-                                vec![channel.as_str(), "not loaded"]
+                            } else if fits(&short) && fits("file open") {
+                                vec![short.as_str(), "file open"]
                             } else {
                                 Vec::new()
                             };

@@ -606,7 +606,10 @@ pub fn BottomToolbar() -> impl IntoView {
                             if let Some(shown) = timeline_tracks() {
                                 return match shown {
                                     Some(label) => crate::timeline::track_short_name(&label),
-                                    None => "Mixed".to_string(),
+                                    // The clips show different channels.
+                                    // Not "Mixed": that reads as the
+                                    // channels mixed down into one.
+                                    None => "Varies".to_string(),
                                 };
                             }
                             match state.viewmode.channel_view().get() {
@@ -681,7 +684,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                         // this channel: their place on the
                                         // timeline will be empty.
                                         let partly_loaded = (track.takes_loaded < take_count).then(|| {
-                                            format!("Loaded for {} of {} recordings", track.takes_loaded, take_count)
+                                            format!("File open for {} of {} recordings", track.takes_loaded, take_count)
                                         });
                                         view! {
                                             <button
