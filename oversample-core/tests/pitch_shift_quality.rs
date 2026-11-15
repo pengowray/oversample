@@ -20,7 +20,6 @@
 //!   the factor, step by step through each call.
 
 use oversample_core::dsp::heterodyne::heterodyne_mix;
-use oversample_core::dsp::phase_vocoder::phase_vocoder_pitch_shift;
 use oversample_core::dsp::pitch_shift::{pitch_shift_realtime, PitchFactor};
 use realfft::RealFftPlanner;
 use std::f64::consts::PI;
@@ -291,10 +290,6 @@ fn ps_before(x: &[f32], f: PitchFactor) -> Vec<f32> {
     pitch_shift_before(x, f)
 }
 
-fn pv(x: &[f32], f: PitchFactor) -> Vec<f32> {
-    phase_vocoder_pitch_shift(x, f)
-}
-
 /// Pitch shift, then the output shift playback applies when "shift" is set:
 /// a heterodyne mix down by 1 kHz with the low-pass playback uses.
 fn ps_shifted(x: &[f32], f: PitchFactor) -> Vec<f32> {
@@ -372,15 +367,10 @@ fn report() {
     // both f - 1 kHz and f + 1 kHz, 6 dB down each, which the copies and
     // on-track columns of this table show.
     report_for("pitch shift (PS) + 1 kHz output shift", ps_shifted, 1_000.0);
-    report_for("phase vocoder (PV)", pv, 0.0);
 
     // Other cases at one factor each.
-    println!("\n== other cases (PS, then PV) ==");
-    for (label, shift) in [
-        ("PS before", ps_before as Shifter),
-        ("PS", ps as Shifter),
-        ("PV", pv as Shifter),
-    ] {
+    println!("\n== other cases ==");
+    for (label, shift) in [("PS before", ps_before as Shifter), ("PS", ps as Shifter)] {
         // A sweep with a second harmonic 12 dB down, over noise 40 dB down.
         let x = sweeps(RATE, 1.0, 0.25, 0.005);
         let out = shift(&x, PitchFactor::down(10.0));
@@ -414,11 +404,7 @@ fn report() {
     println!("\n== time per 108 288-sample chunk, native ==");
     let chunk = &sweeps(RATE, 1.0, 0.0, 0.005)[..96_000 + 4096 + 8192];
     for factor in [2.0, 10.0, 16.0, -4.0] {
-        for (label, shift) in [
-            ("PS before", ps_before as Shifter),
-            ("PS", ps as Shifter),
-            ("PV", pv as Shifter),
-        ] {
+        for (label, shift) in [("PS before", ps_before as Shifter), ("PS", ps as Shifter)] {
             let f = PitchFactor::from_signed(factor);
             let t = std::time::Instant::now();
             let reps = 20;
@@ -440,7 +426,6 @@ fn report() {
         for (label, shift) in [
             ("ps-before", ps_before as Shifter),
             ("ps-after", ps as Shifter),
-            ("pv", pv as Shifter),
         ] {
             let out = shift(&x, PitchFactor::down(10.0));
             let out = oversample_core::dsp::filters::decimate(&out, RATE, 51_200);

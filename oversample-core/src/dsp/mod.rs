@@ -15,7 +15,6 @@ pub mod harmonics;
 pub mod heterodyne;
 pub mod lsb_autocorr;
 pub mod notch;
-pub mod phase_vocoder;
 pub mod pipistrelle;
 pub mod pitch_shift;
 pub mod psd;
