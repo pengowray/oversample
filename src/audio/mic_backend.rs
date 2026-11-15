@@ -309,6 +309,9 @@ const LISTEN_CONTEXT_FLOOR: usize = 4096;
 /// Crossfade length (samples) between consecutive output chunks to
 /// eliminate any residual boundary discontinuity after overlap-save.
 const LISTEN_CROSSFADE: usize = 256;
+/// Samples of earlier audio the pitch shifter is given before each new live
+/// chunk: 8 grains, by which its grains have lined up with each other.
+const PS_LISTEN_WARMUP: usize = 2048;
 
 /// How many recent input samples to prepend to each chunk before applying
 /// the bandpass/EQ filter. The IIR filters are stateless across calls, so
@@ -469,7 +472,13 @@ fn process_live_audio(
 
             // Run the batch DSP on the full context
             let full_output = if params.mode == PlaybackMode::PitchShift {
-                pitch_shift_realtime(&dsp_state.context, params.ps_factor)
+                // The pitch shifter's cost grows with the audio it is given
+                // and it needs only a few grains before the new samples, so
+                // it gets the new samples and 2048 before them, not the
+                // whole context.
+                let needed = input.len() + PS_LISTEN_WARMUP;
+                let from = dsp_state.context.len().saturating_sub(needed);
+                pitch_shift_realtime(&dsp_state.context[from..], params.ps_factor)
             } else {
                 let mut out = phase_vocoder_pitch_shift(&dsp_state.context, params.pv_factor);
                 let boost =

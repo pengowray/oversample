@@ -32,6 +32,41 @@ use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 /// needing the warmup-trim hack.
 pub(crate) const PV_HQ_OVERLAP: usize = 8192;
 
+/// Samples by which each chunk runs past its nominal end, to be crossfaded
+/// with the start of the next chunk. 0 when chunks are trimmed and placed
+/// end to end.
+///
+/// Pitch shift always crossfades, over one grain: two chunks line their
+/// grains up differently, so their waveforms differ where they meet, and
+/// placed end to end they would click. The phase vocoder crossfades over
+/// [`PV_HQ_OVERLAP`] when its Quality is HQ.
+pub(crate) fn chunk_overlap(params: &PlaybackParams) -> usize {
+    match params.mode {
+        PlaybackMode::PitchShift => crate::dsp::pitch_shift::GRAIN,
+        PlaybackMode::PhaseVocoder if params.pv_hq => PV_HQ_OVERLAP,
+        _ => 0,
+    }
+}
+
+/// Where a chunk that nominally ends at `chunk_end` stops being kept and
+/// stops being read: `(keep_end, read_end)`. Samples from `chunk_end` to
+/// `keep_end` are the crossfade overlap. Samples from `keep_end` to
+/// `read_end` are read so the shifter has audio after the part that is
+/// kept, and are cut off after processing.
+pub(crate) fn chunk_tail(
+    params: &PlaybackParams,
+    chunk_end: usize,
+    end_sample: usize,
+) -> (usize, usize) {
+    let keep_end = (chunk_end + chunk_overlap(params)).min(end_sample);
+    let read_end = match params.mode {
+        PlaybackMode::PitchShift => (keep_end + FILTER_WARMUP).min(end_sample),
+        PlaybackMode::PhaseVocoder if !params.pv_hq => (keep_end + FILTER_WARMUP).min(end_sample),
+        _ => keep_end,
+    };
+    (keep_end, read_end)
+}
+
 /// Compensatory gain boost for PhaseVocoder mode (dB).
 /// PV's STFT bin-shifting inherently loses ~6-12 dB compared to PitchShift.
 pub(crate) const PV_MODE_BOOST_DB: f64 = 6.0;
@@ -252,6 +287,40 @@ pub(crate) fn te_speed_ratio(te_factor: f64) -> f64 {
     }
 }
 
+/// The lowest and highest sample rates TE playback gives the audio output.
+const TE_OUTPUT_RATE_RANGE: (u32, u32) = (8_000, 384_000);
+
+/// The sample rate TE playback gives the audio output for a file at
+/// `sample_rate`: the file's rate times [`te_speed_ratio`], kept inside
+/// 8 to 384 kHz. A 44.1 kHz file at ×10 plays at 8 kHz, not 4.41 kHz.
+pub(crate) fn te_output_rate(sample_rate: u32, te_factor: f64) -> u32 {
+    let rate = sample_rate as f64 * te_speed_ratio(te_factor);
+    (rate as u32).clamp(TE_OUTPUT_RATE_RANGE.0, TE_OUTPUT_RATE_RANGE.1)
+}
+
+/// The TE factor playback really applies to a file at `sample_rate`, in
+/// `te_factor`'s convention (above 1 slower, below -1 faster, 1 unchanged).
+/// It is `te_factor` unless [`te_output_rate`] had to limit the rate.
+/// Playback, the playhead and the axis labels (`crate::heard_axis`) all take
+/// the factor from the output rate, so they cannot disagree.
+pub(crate) fn te_applied_factor(sample_rate: u32, te_factor: f64) -> f64 {
+    let out = te_output_rate(sample_rate, te_factor) as f64;
+    let rate = sample_rate as f64;
+    if out < rate {
+        rate / out
+    } else if out > rate {
+        -(out / rate)
+    } else {
+        1.0
+    }
+}
+
+/// How fast TE playback of a file at `sample_rate` runs, as a multiple of
+/// the recording's own speed: [`te_speed_ratio`] of [`te_applied_factor`].
+pub(crate) fn te_playback_speed(sample_rate: u32, te_factor: f64) -> f64 {
+    te_speed_ratio(te_applied_factor(sample_rate, te_factor))
+}
+
 /// Start streaming playback of a sample range.
 ///
 /// `source` provides sample data; `channel_view` selects which channel(s) to play.
@@ -269,10 +338,7 @@ pub(crate) fn start_stream(
     stop_stream();
 
     let final_rate = match params.mode {
-        PlaybackMode::TimeExpansion => {
-            let rate = sample_rate as f64 * te_speed_ratio(params.te_factor);
-            (rate as u32).clamp(8000, 384_000)
-        }
+        PlaybackMode::TimeExpansion => te_output_rate(sample_rate, params.te_factor),
         _ => sample_rate,
     };
 
@@ -346,11 +412,7 @@ async fn chunk_loop(
     play_to_eof: bool,
 ) {
     let mut pos = start_sample;
-    let pv_hq_mode = params.pv_hq
-        && matches!(
-            params.mode,
-            PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
-        );
+    let crossfade_mode = chunk_overlap(&params) > 0;
 
     // Gain computation depends on mode:
     // - Off: no gain at all (0 dB)
@@ -422,12 +484,12 @@ async fn chunk_loop(
         let _ = param.linear_ramp_to_value_at_time(1.0, scheduled_time + FADE_IN_MS / 1000.0);
     }
 
-    // In PV HQ mode, stride duration is CHUNK_SAMPLES/rate (the overlap is
-    // extra audio that blends with the next chunk via crossfade).
+    // With crossfaded chunks, stride duration is CHUNK_SAMPLES/rate (the
+    // overlap is extra audio that blends with the next chunk via crossfade).
     let stride_duration = CHUNK_SAMPLES as f64 / final_rate as f64;
 
     let advance = |chunk: &ChunkAudio| {
-        if pv_hq_mode {
+        if crossfade_mode {
             // Advance by stride only; the trailing overlap is summed with the
             // next chunk's fade-in by Web Audio.
             stride_duration
@@ -541,30 +603,18 @@ async fn process_one_chunk(
     start_sample: usize,
     end_sample: usize,
 ) -> (ChunkAudio, usize) {
-    let pv_hq_mode = params.pv_hq
-        && matches!(
-            params.mode,
-            PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
-        );
+    let overlap = chunk_overlap(params);
 
     let warmup_start = pos.saturating_sub(FILTER_WARMUP);
     let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
     let warmup_len = pos - warmup_start;
 
-    // In PV HQ mode, extend the chunk past its nominal end by PV_HQ_OVERLAP.
-    // The trailing overlap will be crossfaded with the next chunk's leading
-    // overlap instead of being trimmed.
-    let trailing_end = if pv_hq_mode {
-        (chunk_end + PV_HQ_OVERLAP).min(end_sample)
-    } else if matches!(
-        params.mode,
-        PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder
-    ) {
-        (chunk_end + FILTER_WARMUP).min(end_sample)
-    } else {
-        chunk_end
-    };
-    let trailing_len = trailing_end - chunk_end;
+    // With crossfaded chunks, the chunk is kept past its nominal end by the
+    // overlap, which is crossfaded with the next chunk's start. Anything
+    // read after that is cut off again once it has been processed.
+    let (keep_end, trailing_end) = chunk_tail(params, chunk_end, end_sample);
+    let trailing_len = keep_end - chunk_end;
+    let discard_len = trailing_end - keep_end;
 
     // One read per channel view: L and R in stereo, otherwise the chosen view.
     let views: &[ChannelView] = if stereo_out {
@@ -587,12 +637,12 @@ async fn process_one_chunk(
             });
     let mut raw_views = raw_views.into_iter();
 
-    // Hann fades for the PV HQ overlap, applied after the warmup is trimmed.
+    // Hann fades for the crossfade overlap, applied after the warmup is trimmed.
     let core_len = chunk_end - pos; // nominal chunk length (without overlap)
     let apply_pv_hq_fading = |buf: &mut Vec<f32>| {
         // Hann fade-in on leading overlap (first chunk's start is clean)
         if pos > start_sample {
-            let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(buf.len());
+            let fade_in_len = overlap.min(core_len).min(buf.len());
             for (i, sample) in buf.iter_mut().enumerate().take(fade_in_len) {
                 let t = i as f32 / fade_in_len as f32;
                 let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
@@ -615,24 +665,16 @@ async fn process_one_chunk(
     let process_view = |raw: Vec<f32>| -> Vec<f32> {
         let filtered = apply_filters(&raw, source_rate, params);
         let processed = apply_dsp_mode(&filtered, source_rate, params);
-        let mut out = if pv_hq_mode {
-            // HQ mode: trim warmup but keep trailing overlap for the crossfade.
-            let mut out = if warmup_len < processed.len() {
-                processed[warmup_len..].to_vec()
-            } else {
-                processed
-            };
-            apply_pv_hq_fading(&mut out);
-            out
+        // Trim the warmup and what was read past the part that is kept.
+        let trim_end = processed.len().saturating_sub(discard_len);
+        let mut out = if warmup_len < trim_end {
+            processed[warmup_len..trim_end].to_vec()
         } else {
-            // Standard mode: trim warmup and trailing
-            let trim_end = processed.len().saturating_sub(trailing_len);
-            if warmup_len < trim_end {
-                processed[warmup_len..trim_end].to_vec()
-            } else {
-                processed
-            }
+            processed
         };
+        if overlap > 0 {
+            apply_pv_hq_fading(&mut out);
+        }
         apply_gain(&mut out, global_gain);
         out
     };
@@ -913,6 +955,25 @@ async fn sleep(ms: u32) {
 
 #[cfg(test)]
 mod tests {
+
+    /// The factor TE applies is the one asked for while the output rate is
+    /// inside 8 to 384 kHz, and the one the limited rate gives outside it.
+    #[test]
+    fn te_applied_factor_follows_the_output_rate() {
+        use super::{te_applied_factor, te_output_rate, te_playback_speed};
+        assert_eq!(te_output_rate(256_000, 10.0), 25_600);
+        assert_eq!(te_applied_factor(256_000, 10.0), 10.0);
+        assert_eq!(te_applied_factor(256_000, 1.0), 1.0);
+        assert_eq!(te_applied_factor(48_000, -4.0), -4.0);
+        // 44.1 kHz at x10 would be 4.41 kHz: limited to 8 kHz.
+        assert_eq!(te_output_rate(44_100, 10.0), 8_000);
+        assert!((te_applied_factor(44_100, 10.0) - 5.5125).abs() < 1e-12);
+        assert!((te_playback_speed(44_100, 10.0) - 8_000.0 / 44_100.0).abs() < 1e-12);
+        // 256 kHz sped up x2 would be 512 kHz: limited to 384 kHz.
+        assert_eq!(te_output_rate(256_000, -2.0), 384_000);
+        assert!((te_applied_factor(256_000, -2.0) + 1.5).abs() < 1e-12);
+        assert!((te_playback_speed(256_000, -2.0) - 1.5).abs() < 1e-12);
+    }
 
     #[test]
     fn ps_post_shift_cutoff_fits_under_nyquist() {

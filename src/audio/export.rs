@@ -22,9 +22,6 @@ use crate::types::FileMetadata;
 // and live DSP pipelines stay consistent. See audio::chunk_params.
 use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
 
-/// Overlap samples for PV/PS crossfade (same as streaming_playback::PV_HQ_OVERLAP).
-const PV_HQ_OVERLAP: usize = 8192;
-
 /// The bits per sample and float flag a WAV export of a file with `meta` is
 /// written at, after the encoder's own rounding (an 8- or 12-bit file and a
 /// lossy file are written as 16-bit).
@@ -171,11 +168,9 @@ fn process_region_view(
     let end_sample =
         ((end_time * sample_rate as f64) as usize).min(source.total_samples() as usize);
 
-    let crossfade_mode = params.pv_hq
-        && matches!(
-            params.mode,
-            PlaybackMode::PhaseVocoder | PlaybackMode::PitchShift
-        );
+    // The same crossfade between chunks as playback.
+    let chunk_overlap = crate::audio::streaming_playback::chunk_overlap(params);
+    let crossfade_mode = chunk_overlap > 0;
 
     let mut all_samples: Vec<f32> = Vec::new();
     let mut pos = start_sample;
@@ -186,23 +181,17 @@ fn process_region_view(
         let warmup_start = pos.saturating_sub(FILTER_WARMUP);
         let warmup_len = pos - warmup_start;
 
-        // In crossfade mode, extend the read past the nominal end
-        let trailing_end = if crossfade_mode {
-            (chunk_end + PV_HQ_OVERLAP).min(end_sample)
-        } else if matches!(
-            params.mode,
-            PlaybackMode::PitchShift | PlaybackMode::PhaseVocoder
-        ) {
-            (chunk_end + FILTER_WARMUP).min(end_sample)
-        } else {
-            chunk_end
-        };
-        let trailing_len = trailing_end - chunk_end;
+        // In crossfade mode the chunk is kept past its nominal end by the
+        // overlap. Anything read after that is cut off once it is processed.
+        let (keep_end, trailing_end) =
+            crate::audio::streaming_playback::chunk_tail(params, chunk_end, end_sample);
+        let trailing_len = keep_end - chunk_end;
 
         let chunk_with_warmup =
             source.read_region(view, warmup_start as u64, trailing_end - warmup_start);
         let filtered = apply_filters(&chunk_with_warmup, sample_rate, params);
-        let processed = apply_dsp_mode(&filtered, sample_rate, params);
+        let mut processed = apply_dsp_mode(&filtered, sample_rate, params);
+        processed.truncate(processed.len().saturating_sub(trailing_end - keep_end));
 
         if crossfade_mode {
             // Trim warmup but keep trailing overlap
@@ -217,7 +206,7 @@ fn process_region_view(
 
             // Hann fade-in on leading overlap (skip for first chunk)
             if !is_first_chunk {
-                let fade_in_len = PV_HQ_OVERLAP.min(core_len).min(chunk_samples.len());
+                let fade_in_len = chunk_overlap.min(core_len).min(chunk_samples.len());
                 for (i, sample) in chunk_samples.iter_mut().enumerate().take(fade_in_len) {
                     let t = i as f32 / fade_in_len as f32;
                     let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
@@ -240,10 +229,10 @@ fn process_region_view(
             if is_first_chunk {
                 all_samples.extend_from_slice(&chunk_samples);
             } else {
-                // The overlap region is the last PV_HQ_OVERLAP samples of the
+                // The overlap region is the last `chunk_overlap` samples of the
                 // existing output, which fade out. Sum with this chunk's
                 // fade-in region.
-                let overlap = PV_HQ_OVERLAP
+                let overlap = chunk_overlap
                     .min(all_samples.len())
                     .min(chunk_samples.len());
                 let out_start = all_samples.len() - overlap;
@@ -1048,6 +1037,168 @@ mod tests {
         assert_eq!(factor_tag(1.0 / 3.0), "0.33");
         assert_eq!(factor_tag(45.0), "45");
         assert_eq!(factor_tag(42.5), "42.5");
+    }
+
+    /// Playback parameters for pitch shift down by 10 with nothing else on.
+    fn ps_params() -> PlaybackParams {
+        use crate::dsp::pitch_shift::PitchFactor;
+        PlaybackParams {
+            mode: PlaybackMode::PitchShift,
+            het_freq: 40_000.0,
+            het_cutoff: 15_000.0,
+            het_comb_count: 1,
+            het_comb_spacing: 0.0,
+            te_factor: 10.0,
+            ps_factor: PitchFactor::down(10.0),
+            pv_factor: PitchFactor::down(10.0),
+            pv_hq: true,
+            ps_shift_hz: 0.0,
+            zc_factor: 8.0,
+            zc_lowest_bat_hz: crate::dsp::ultrasonic::DEFAULT_LOWEST_BAT_HZ,
+            gain_db: 0.0,
+            gain_mode: GainMode::Off,
+            auto_peak_gain_db: 0.0,
+            live_gain_db: 0.0,
+            filter_enabled: false,
+            filter_freq_low: 0.0,
+            filter_freq_high: 128_000.0,
+            filter_db_below: 0.0,
+            filter_db_selected: 0.0,
+            filter_db_harmonics: 0.0,
+            filter_db_above: 0.0,
+            filter_band_mode: Default::default(),
+            filter_quality: crate::state::FilterQuality::Fast,
+            sel_freq_low: 0.0,
+            sel_freq_high: 0.0,
+            has_selection: false,
+            notch_enabled: false,
+            notch_bands: Vec::new(),
+            notch_harmonic_suppression: 0.0,
+            noise_reduce_enabled: false,
+            noise_reduce_strength: 0.0,
+            noise_reduce_floor: None,
+        }
+    }
+
+    fn mono_source(samples: Vec<f32>, sample_rate: u32) -> crate::audio::source::InMemorySource {
+        crate::audio::source::InMemorySource {
+            samples: std::sync::Arc::new(samples),
+            raw_samples: None,
+            sample_rate,
+            channels: 1,
+        }
+    }
+
+    /// The lowest level of `out` near each chunk join, in dB relative to its
+    /// level over the whole signal: RMS over 128-sample blocks from 1024
+    /// samples before each join to 1024 after it.
+    fn worst_dip_at_joins_db(out: &[f32]) -> f32 {
+        let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
+        let whole = rms(&out[8192..out.len() - 8192]);
+        let mut worst = f32::MAX;
+        let mut join = CHUNK_SAMPLES;
+        while join + 1024 < out.len() {
+            for block in out[join - 1024..join + 1024].chunks_exact(128) {
+                worst = worst.min(rms(block));
+            }
+            join += CHUNK_SAMPLES;
+        }
+        20.0 * (worst / whole).log10()
+    }
+
+    /// Playback and export shift 96 000-sample chunks one at a time and
+    /// crossfade them over one grain. A steady tone that runs across the
+    /// joins is the hardest case: each chunk lines its grains up on its own.
+    /// The level at a join stays within 3 dB of the rest, at every tone
+    /// tried, and the output has the input's length.
+    #[test]
+    fn pitch_shift_chunks_join_without_a_gap() {
+        let rate = 256_000u32;
+        let len = CHUNK_SAMPLES * 3 + 20_000;
+        let params = ps_params();
+        let mut worst_of_all = 0.0f32;
+        for khz in [20.0f32, 33.7, 40.0, 47.3, 61.1, 80.0, 95.9] {
+            let samples: Vec<f32> = (0..len)
+                .map(|i| {
+                    0.5 * (std::f32::consts::TAU * khz * 1000.0 * i as f32 / rate as f32).sin()
+                })
+                .collect();
+            let source = mono_source(samples, rate);
+            let out = process_region_view(
+                &source,
+                ChannelView::MonoMix,
+                rate,
+                0.0,
+                len as f64 / rate as f64,
+                &params,
+            );
+            assert_eq!(out.len(), len);
+            let dip = worst_dip_at_joins_db(&out);
+            println!("{khz} kHz tone at x10: worst level at a chunk join {dip:.2} dB");
+            worst_of_all = worst_of_all.min(dip);
+        }
+        assert!(worst_of_all > -3.0, "worst dip {worst_of_all:.2} dB");
+    }
+
+    /// Writes what pitch shift at x10 gives through export's chunks, for
+    /// listening: `PS_WAV_DIR=<folder> cargo test -p oversample --lib
+    /// pitch_shift_chunked_wav -- --ignored`. The signal is 5 ms sweeps from
+    /// 90 to 30 kHz every 60 ms, and a 40 kHz tone from 0.30 to 0.50 s that
+    /// crosses the chunk join at 0.375 s. The WAV is at 51.2 kHz.
+    #[test]
+    #[ignore]
+    fn pitch_shift_chunked_wav() {
+        let Ok(dir) = std::env::var("PS_WAV_DIR") else {
+            return;
+        };
+        let rate = 256_000u32;
+        let len = rate as usize * 3;
+        let (period, call) = (15_360usize, 1_280usize);
+        let mut phase = 0.0f64;
+        let samples: Vec<f32> = (0..len)
+            .map(|i| {
+                let k = i % period;
+                let mut s = 0.0f64;
+                if k < call {
+                    let u = k as f64 / call as f64;
+                    phase +=
+                        std::f64::consts::TAU * 90_000.0 * (30.0f64 / 90.0).powf(u) / rate as f64;
+                    s += 0.5 * (std::f64::consts::PI * u).sin() * phase.sin();
+                } else {
+                    phase = 0.0;
+                }
+                let t = i as f64 / rate as f64;
+                if (0.30..0.50).contains(&t) {
+                    s += 0.25 * (std::f64::consts::TAU * 40_000.0 * t).sin();
+                }
+                s as f32
+            })
+            .collect();
+        let source = mono_source(samples, rate);
+        let out = process_region_view(&source, ChannelView::MonoMix, rate, 0.0, 3.0, &ps_params());
+        let out = crate::dsp::filters::decimate(&out, rate, 51_200);
+        let out_rate = crate::dsp::filters::decimated_rate(rate, 51_200);
+        let pcm: Vec<u8> = out
+            .iter()
+            .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes())
+            .collect();
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&out_rate.to_le_bytes());
+        wav.extend_from_slice(&(out_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&pcm);
+        let path = std::path::Path::new(&dir).join("ps-after-x10-chunked-as-played.wav");
+        std::fs::write(&path, wav).unwrap();
+        println!("wrote {}", path.display());
     }
 
     #[test]

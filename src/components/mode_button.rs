@@ -1014,11 +1014,11 @@ fn ModeSettingsBody() -> impl IntoView {
                                 <label>"Algorithm"</label>
                                 <button class=move || if state.playback.mode().get() == PlaybackMode::PitchShift { "auto-toggle on" } else { "auto-toggle" }
                                     on:click=move |_| state.playback.mode().set(PlaybackMode::PitchShift)
-                                    title="Standard pitch shift — lower latency"
+                                    title="Pitch shift in short grains: keeps the timing and shape of short calls"
                                 >"PS"</button>
                                 <button class=move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder { "auto-toggle on" } else { "auto-toggle" }
                                     on:click=move |_| state.playback.mode().set(PlaybackMode::PhaseVocoder)
-                                    title="Phase Vocoder — preserves transients better, higher quality"
+                                    title="Phase vocoder: smears short calls in time"
                                 >"PV"</button>
                             </div>
                             {move || if state.playback.mode().get() == PlaybackMode::PhaseVocoder {
@@ -1118,6 +1118,10 @@ fn ModeSettingsBody() -> impl IntoView {
                                     }}</div>
                                 </div>
                             </Show>
+                            // Quality sets how the phase vocoder joins its
+                            // chunks. Pitch shift has one way, so the row is
+                            // hidden for it.
+                            <Show when=move || state.playback.mode().get() == PlaybackMode::PhaseVocoder>
                             <div class="layer-panel-slider-row">
                                 <label>"Quality"</label>
                                 <button class=move || if !state.transform.pv_hq().get() { "auto-toggle on" } else { "auto-toggle" }
@@ -1129,6 +1133,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                     title="HQ mode — overlapping crossfade eliminates boundary clicks"
                                 >"HQ"</button>
                             </div>
+                            </Show>
                         }.into_any()
                     },
 

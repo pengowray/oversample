@@ -292,7 +292,8 @@ pub fn replay_live(state: &AppState) {
     // Compute correct playback speed for the current mode
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
+        // The speed playback really runs at, which the output rate limits.
+        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
         _ => 1.0,
     };
 
@@ -432,7 +433,8 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
+        // The speed playback really runs at, which the output rate limits.
+        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
         _ => 1.0,
     };
 
@@ -499,7 +501,8 @@ pub fn play(state: &AppState) {
 
     let te_factor = state.transform.te_factor().get_untracked();
     let playback_speed = match state.playback.mode().get_untracked() {
-        PlaybackMode::TimeExpansion => streaming_playback::te_speed_ratio(te_factor),
+        // The speed playback really runs at, which the output rate limits.
+        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
         _ => 1.0,
     };
 

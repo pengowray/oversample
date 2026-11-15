@@ -59,10 +59,12 @@ impl From<PitchFactor> for f64 {
 /// enough for two cycles of 2 kHz. At 44.1 kHz it is 5.8 ms.
 ///
 /// Two runs of the shifter over the same audio that start at different
-/// samples (two playback chunks, two spectrogram tiles) line their grains up
-/// differently, so their outputs have the same spectrum but not the same
-/// waveform. Where playback joins two chunks it crossfades them over one
-/// grain.
+/// samples (two playback chunks, two spectrogram tiles) can line their
+/// grains up differently, so their outputs have the same spectrum but not
+/// always the same waveform. Runs that start a multiple of 128 samples apart
+/// usually give the same samples once both have passed a call or some
+/// noise, but not on a long steady tone. Where playback joins two chunks it
+/// crossfades them over one grain.
 pub const GRAIN: usize = 256;
 /// Output samples between grain starts. Two grains overlap at every sample,
 /// and their Hann windows add up to exactly 1.
@@ -171,12 +173,13 @@ fn sample_at(samples: &[f32], pos: f64, table: &[f32]) -> f32 {
 ///
 /// The output is made of short overlapping grains. Each grain is a piece of
 /// the input, resampled so it plays `factor` times slower (shift down) or
-/// faster (shift up), and placed at the time it was taken from. A grain
-/// lasts as long in the output as the others, so shifted down by 10 it holds
-/// a tenth of the input it replaces: every grain-based shifter that keeps
-/// the duration plays one cycle in `factor`. What it must not do is leave
-/// gaps, add copies of the signal at other frequencies, or let neighbouring
-/// grains cancel:
+/// faster (shift up), and placed at the time it was taken from. Shifted down
+/// by 10, a 256-sample grain is made from 25.6 input samples and a grain
+/// starts every 128 samples, so a fifth of the input is played. That is
+/// what dividing the frequencies by 10 in the same duration means: there is
+/// room for a tenth of the cycles. What the shifter must not do is leave
+/// gaps in the output, add copies of the signal at other frequencies, or let
+/// neighbouring grains cancel:
 ///
 /// - grains start every [`GRAIN_HOP`] samples, from before the buffer's start
 ///   to its end, so every output sample is covered by two of them and the
