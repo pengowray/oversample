@@ -1064,7 +1064,7 @@ pub enum DisplayFilterMode {
     Off,
     /// Automatic/smart defaults for display.
     Auto,
-    /// Use same settings as playback.
+    /// Use same settings as playback. Named "As heard" in the XForm menu.
     Same,
     /// Custom display-only settings (NR strength, Gain brightness).
     Custom,
@@ -1078,20 +1078,11 @@ impl DisplayFilterMode {
         DisplayFilterMode::Custom,
     ];
 
-    pub fn short_label(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Auto => "aut",
-            Self::Same => "sam",
-            Self::Custom => "cst",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
             Self::Auto => "Auto",
-            Self::Same => "Same",
+            Self::Same => "As heard",
             Self::Custom => "Custom",
         }
     }

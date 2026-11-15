@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 
 /**
  * Shared by the XForm specs: a test recording of bat-like sweeps, a record of
- * the text drawn on canvases (the axis labels), and the Display Processing
+ * the text drawn on canvases (the axis labels), and the XForm
  * menu's rows.
  */
 
@@ -96,18 +96,18 @@ export function numberLabels(drawn: Drawn[], where: string, unit = ""): Map<numb
 
 export const xformSwitch = (page: Page) => page.getByRole("switch", { name: "XForm" });
 
-/** One row of the Display Processing menu, by its label. */
+/** One row of the XForm menu, by its label. */
 export const row = (page: Page, label: string) =>
   page.locator(".dsp-filter-row", {
     has: page.locator(".dsp-filter-label", { hasText: new RegExp(`^${label}$`) }),
   });
 
-/** Sets rows of the Display Processing menu, then closes the menu. */
+/** Sets rows of the XForm menu, then closes the menu. */
 export async function setRows(page: Page, rows: Record<string, string>) {
-  const menu = page.getByTitle("Display Processing settings");
+  const menu = page.getByTitle("XForm settings");
   await menu.click();
   for (const [label, value] of Object.entries(rows)) {
-    await row(page, label).getByRole("button", { name: value }).click();
+    await row(page, label).getByRole("button", { name: value, exact: true }).click();
   }
   await menu.click();
 }

@@ -1,7 +1,14 @@
 // XForm toggle — a switch button in the View bar. The top row turns XForm
-// display-processing on or off; the bottom row opens the "Display
-// Processing" panel (per-stage EQ / Notch / NR / Xform / Gain / Resam modes +
-// custom sub-controls + a dynamic blurb describing what's currently applied).
+// display-processing on or off; the bottom row opens its menu: a sentence
+// saying what the spectrogram shows now, then a grid with a row for each
+// Hear bar control (PASS filter, Notch filter, Noise reduction, Playback
+// mode, Gain, Resampling) and a column for each choice (Off, Auto, As heard,
+// Custom), then the custom rate.
+//
+// The rows use the Hear bar's names and the columns are whole words
+// (2026-11-15; they were EQ / Notch / NR / Xform / Gain / Resam and
+// off / aut / sam / cst). The "As heard" cell shows what the Hear bar is set
+// to for that row, which replaced a column of dots.
 //
 // XForm used to be a separate `MainView::XformedSpec` that duplicated all the
 // spectrogram settings. It is now an independent toggle layered over any
@@ -13,7 +20,7 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::app::{disable_xform, enable_xform};
-use crate::components::display_filter_button::DspFilterRow;
+use crate::components::display_filter_button::{DspFilterHeader, DspFilterRow};
 use crate::components::switch_button::SwitchButton;
 use crate::state::{AppState, DisplayFilterMode, GainMode, LayerPanel, PlaybackMode};
 
@@ -76,36 +83,27 @@ pub fn XformButton() -> impl IntoView {
     let toggle = Callback::new(move |()| toggle_xform());
     let disabled = Signal::derive(move || no_file() || !supported());
 
-    // ── Playback-active indicators (drive the green dots on each DSP row) ──
-    let eq_active = Signal::derive(move || state.filter.enabled().get());
-    let notch_active = Signal::derive(move || state.notch.enabled().get());
-    let nr_active = Signal::derive(move || state.noise_reduce.enabled().get());
-    let transform_active =
-        Signal::derive(move || state.playback.mode().get() != PlaybackMode::Normal);
-    let gain_active = Signal::derive(move || state.gain.mode().get() != GainMode::Off);
-    let decim_active = Signal::derive(move || false);
-
-    let browser_is_resampling = Signal::derive(move || {
-        let bsr = state.display.browser_sample_rate().get();
-        if bsr == 0 {
-            return false;
+    // ── What the Hear bar is set to for each row: its "As heard" cell ──
+    let on_off = |on: bool| if on { "on" } else { "off" }.to_string();
+    let pass_heard = Signal::derive(move || on_off(state.filter.enabled().get()));
+    let notch_heard = Signal::derive(move || on_off(state.notch.enabled().get()));
+    let nr_heard = Signal::derive(move || on_off(state.noise_reduce.enabled().get()));
+    let mode_heard = Signal::derive(move || {
+        match state.playback.mode().get() {
+            PlaybackMode::Normal => "1:1",
+            PlaybackMode::Heterodyne => "HET",
+            PlaybackMode::TimeExpansion => "TE",
+            PlaybackMode::PitchShift => "PS",
+            PlaybackMode::PhaseVocoder => "PV",
+            PlaybackMode::ZeroCrossing => "ZC",
         }
-        let files = state.library.files().get();
-        let idx = state.library.current_index().get();
-        let file_rate = idx
-            .and_then(|i| files.get(i))
-            .map(|f| f.audio.sample_rate)
-            .unwrap_or(0);
-        if file_rate == 0 {
-            return false;
-        }
-        let decim = state.display.decimate_effective().get();
-        let effective = if decim > 0 && decim < file_rate {
-            crate::dsp::filters::decimated_rate(file_rate, decim)
-        } else {
-            file_rate
-        };
-        effective != bsr
+        .to_string()
+    });
+    let gain_heard = Signal::derive(move || on_off(state.gain.mode().get() != GainMode::Off));
+    // "As heard" resamples to the rate the browser plays at.
+    let resample_heard = Signal::derive(move || match state.display.browser_sample_rate().get() {
+        0 => "off".to_string(),
+        rate => crate::format_units::sample_rate_khz(rate),
     });
 
     let resam_tooltip = Signal::derive(move || {
@@ -194,7 +192,8 @@ pub fn XformButton() -> impl IntoView {
             (None, Some(heard)) => format!("The recording's own spectrogram. {}", heard.blurb()),
             (Some(picture), None) => picture,
             (None, None) => "Showing the spectrogram of the unmodified signal — no processing \
-                             stages are active. Switch a row below to \"sam\" to mirror playback."
+                             stages are active. A row set to \"As heard\" uses that control's \
+                             setting from the Hear bar."
                 .to_string(),
         }
     });
@@ -210,37 +209,27 @@ pub fn XformButton() -> impl IntoView {
             disabled=disabled
             width="92px"
             switch_title="XForm: show the spectrogram of the signal as transformed for playback"
-            menu_title="Display Processing settings"
-            panel_style="min-width: 230px;"
+            menu_title="XForm settings"
+            // A fixed width, like the Noise menu: nothing moves when a cell's
+            // text changes.
+            panel_style="width: min(340px, calc(100vw - 16px));"
         >
             <div class="xform-blurb">{move || blurb.get()}</div>
-            <div class="layer-panel-title">"Display Processing"</div>
-            <div class="dsp-filter-row dsp-filter-header">
-                <span class="dsp-filter-label"></span>
-                <div class="dsp-filter-seg">
-                    <span>"off"</span>
-                    <span>"aut"</span>
-                    <span>"sam"</span>
-                    <span>"cst"</span>
-                </div>
-                <div class="dsp-filter-indicator-header" title="Playback active">
-                    {"\u{1F50A}"}
-                </div>
-            </div>
-            <DspFilterRow label="EQ" signal=state.display.filter_eq() playback_active=eq_active custom_available=false />
-            <DspFilterRow label="Notch" signal=state.display.filter_notch() playback_active=notch_active custom_available=false auto_available=false />
-            <DspFilterRow label="NR" signal=state.display.filter_nr() playback_active=nr_active custom_available=false />
-            <DspFilterRow label="Xform" signal=state.display.filter_transform() playback_active=transform_active custom_available=false auto_available=false />
-            <DspFilterRow label="Gain" signal=state.display.filter_gain() playback_active=gain_active custom_available=true />
-            <DspFilterRow label="Resam" signal=state.display.filter_decimate() playback_active=decim_active custom_available=true browser_resampling=browser_is_resampling sam_tooltip=resam_tooltip />
+            <div class="layer-panel-title">"Show in the spectrogram"</div>
+            <DspFilterHeader />
+            <DspFilterRow label="PASS filter" signal=state.display.filter_eq() heard=pass_heard custom_available=false />
+            <DspFilterRow label="Notch filter" signal=state.display.filter_notch() heard=notch_heard custom_available=false auto_available=false />
+            <DspFilterRow label="Noise reduction" signal=state.display.filter_nr() heard=nr_heard custom_available=false />
+            <DspFilterRow label="Playback mode" signal=state.display.filter_transform() heard=mode_heard custom_available=false auto_available=false />
+            <DspFilterRow label="Gain" signal=state.display.filter_gain() heard=gain_heard custom_available=true />
+            <DspFilterRow label="Resampling" signal=state.display.filter_decimate() heard=resample_heard custom_available=true heard_tooltip=resam_tooltip />
 
             // Display Gain Auto takes its peak from the shared "Peak from".
             {move || state.display.auto_gain().get().then(|| view! {
                 <crate::components::hearing_bar::PeakSourceRow />
             })}
 
-
-            // Custom decimate rate
+            // Custom resampling rate
             {move || show_decim_custom.get().then(|| {
                 let rate = state.display.decimate_rate();
                 let rates: [(u32, &str); 4] = [
@@ -251,7 +240,7 @@ pub fn XformButton() -> impl IntoView {
                 ];
                 view! {
                     <div class="dsp-custom-section">
-                        <div class="dsp-custom-title">"Decimate Rate"</div>
+                        <div class="dsp-custom-title">"Custom resampling rate"</div>
                         <div class="dsp-filter-seg" style="justify-content: center; gap: 2px; padding: 2px 4px;">
                             {rates.into_iter().map(|(r, label)| {
                                 view! {

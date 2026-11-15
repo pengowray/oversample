@@ -82,18 +82,25 @@ test("TE under XForm draws the recording's own picture", async ({ page }) => {
   expect(shareBright(raw)).toBeGreaterThan(0.002);
 
   await xformSwitch(page).click();
-  await setRows(page, { EQ: "off", Notch: "off", NR: "off", Gain: "off", Resam: "off", Xform: "sam" });
+  await setRows(page, {
+    "PASS filter": "Off",
+    "Notch filter": "Off",
+    "Noise reduction": "Off",
+    Gain: "Off",
+    Resampling: "Off",
+    "Playback mode": "As heard",
+  });
   await page.mouse.move(700, 20);
   await expect
     .poll(async () => shareDifferent(raw, await callPixels(page)), { timeout: 15_000 })
     .toBeLessThan(0.005);
 });
 
-test("TE under XForm with every row on sam still shows the calls", async ({ page }) => {
+test("TE under XForm with every row on As heard still shows the calls", async ({ page }) => {
   await openWithTe10(page);
   const raw = await callPixels(page);
 
-  // Every row starts on "sam" the first time XForm is switched on.
+  // Every row starts on "As heard" the first time XForm is switched on.
   await xformSwitch(page).click();
   await page.mouse.move(700, 20);
   await page.waitForTimeout(3000);
@@ -110,7 +117,14 @@ test("TE under XForm labels the axes with the values heard", async ({ page }) =>
   expect(rawTime.size).toBeGreaterThanOrEqual(3);
 
   await xformSwitch(page).click();
-  await setRows(page, { EQ: "off", Notch: "off", NR: "off", Gain: "off", Resam: "off", Xform: "sam" });
+  await setRows(page, {
+    "PASS filter": "Off",
+    "Notch filter": "Off",
+    "Noise reduction": "Off",
+    Gain: "Off",
+    Resampling: "Off",
+    "Playback mode": "As heard",
+  });
   await page.mouse.move(700, 20);
   await page.waitForTimeout(1500);
   const after = await drawnNow(page);

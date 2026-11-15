@@ -48,7 +48,14 @@ async function openWithPs(page: Page, preset: string) {
 /** XForm on, with only its Xform row applied. */
 async function xformRowOnly(page: Page) {
   await xformSwitch(page).click();
-  await setRows(page, { EQ: "off", Notch: "off", NR: "off", Gain: "off", Resam: "off", Xform: "sam" });
+  await setRows(page, {
+    "PASS filter": "Off",
+    "Notch filter": "Off",
+    "Noise reduction": "Off",
+    Gain: "Off",
+    Resampling: "Off",
+    "Playback mode": "As heard",
+  });
   await page.mouse.move(700, 20);
 }
 
