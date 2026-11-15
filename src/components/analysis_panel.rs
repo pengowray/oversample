@@ -123,7 +123,14 @@ pub fn AnalysisPanel() -> impl IntoView {
                 if let (Some(start), Some(current)) = (state.interaction.axis_drag_start_freq().get(), state.interaction.axis_drag_current_freq().get()) {
                     let lo = start.min(current);
                     let hi = start.max(current);
-                    let msg = format!("Selecting frequency range: {} – {}", fmt_freq(lo), fmt_freq(hi));
+                    // The range is the recording's. Say so when the axes give
+                    // heard frequencies (XForm with TE).
+                    let whose = if crate::heard_axis::heard_axis(&state).is_some() {
+                        "recording "
+                    } else {
+                        ""
+                    };
+                    let msg = format!("Selecting frequency range: {whose}{} – {}", fmt_freq(lo), fmt_freq(hi));
                     return view! {
                         <span style="color: #888">{msg}</span>
                     }.into_any();
@@ -158,8 +165,17 @@ pub fn AnalysisPanel() -> impl IntoView {
                 let freq = state.interaction.mouse_freq().get();
                 let time = state.interaction.cursor_time().get();
                 if let (Some(f), Some(t)) = (freq, time) {
+                    // The same values as the axes: heard ones under XForm with TE.
+                    let text = match crate::heard_axis::heard_axis(&state) {
+                        Some(h) => format!(
+                            "heard {:.3}s  {}",
+                            t * h.time_scale,
+                            fmt_freq(f * h.freq_scale)
+                        ),
+                        None => format!("{:.3}s  {}", t, fmt_freq(f)),
+                    };
                     return view! {
-                        <span style="color: #777">{format!("{:.3}s  {}", t, fmt_freq(f))}</span>
+                        <span style="color: #777">{text}</span>
                     }.into_any();
                 }
 

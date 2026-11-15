@@ -93,6 +93,7 @@ pub fn draw_band_gutter(
     hfr_on: bool,
     shield_style: ShieldStyle,
     drag_range: Option<(f64, f64)>,
+    heard: bool,
 ) {
     // Clear the label column to the container background so the fog/shield
     // strip reads as a distinct interactive surface.
@@ -116,8 +117,19 @@ pub fn draw_band_gutter(
     // Label divisions use the visible range's span — same adaptive rule as
     // the spectrogram's own axis labels, so ticks sit at identical y's.
     let range = (max_freq - min_freq).max(1.0);
-    let div_for_labels = pick_div_interval(range);
-    draw_left_axis_labels(ctx, h, min_freq, max_freq, div_for_labels);
+    // A strip in heard values (`heard`, see `crate::heard_axis`) has amber
+    // labels, stepped by that module's rule.
+    let div_for_labels = if heard {
+        crate::heard_axis::heard_div_interval(range, h)
+    } else {
+        pick_div_interval(range)
+    };
+    let label_rgb = if heard {
+        crate::heard_axis::HEARD_RGB
+    } else {
+        "230,230,230"
+    };
+    draw_left_axis_labels(ctx, h, min_freq, max_freq, div_for_labels, label_rgb);
 
     // Pick the range to paint: prefer the live drag range over the stored
     // band, so a fresh drag lights up immediately (before it's committed).
@@ -358,6 +370,7 @@ fn draw_left_axis_labels(
     min_freq: f64,
     max_freq: f64,
     div_interval: f64,
+    label_rgb: &str,
 ) {
     let range = (max_freq - min_freq).max(1.0);
     if h <= 0.0 || range <= 0.0 {
@@ -400,10 +413,10 @@ fn draw_left_axis_labels(
         ctx.stroke();
 
         // Shadow first (for contrast), then the label in soft white.
-        let label = format!("{}", (freq / 1000.0).round() as u32);
+        let label = crate::heard_axis::div_label(freq, div_interval);
         ctx.set_fill_style_str("rgba(0,0,0,0.85)");
         let _ = ctx.fill_text(&label, label_right_x + 0.5, y + 0.5);
-        ctx.set_fill_style_str("rgba(230,230,230,0.92)");
+        ctx.set_fill_style_str(&format!("rgba({label_rgb},0.92)"));
         let _ = ctx.fill_text(&label, label_right_x, y);
 
         freq += div_interval;

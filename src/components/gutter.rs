@@ -144,6 +144,10 @@ pub fn BandGutter() -> impl IntoView {
             _ => None,
         };
         let (min_freq, max_freq) = display_range();
+        // Under XForm with TE the labels give the frequencies heard. Only
+        // what is drawn is scaled: pointer positions stay in the recording's Hz.
+        let heard = crate::heard_axis::heard_axis(&state);
+        let axis_scale = heard.map_or(1.0, |h| h.freq_scale);
         let _sidebar = state.panels.left_collapsed().get();
         let _sidebar_width = state.panels.left_width().get();
         let _rsidebar = state.panels.right_collapsed().get();
@@ -187,13 +191,14 @@ pub fn BandGutter() -> impl IntoView {
             &ctx,
             display_w as f64,
             display_h as f64,
-            min_freq,
-            max_freq,
-            band_lo,
-            band_hi,
+            min_freq * axis_scale,
+            max_freq * axis_scale,
+            band_lo * axis_scale,
+            band_hi * axis_scale,
             hfr_on,
             shield_style,
-            drag_range,
+            drag_range.map(|(s, c)| (s * axis_scale, c * axis_scale)),
+            heard.is_some(),
         );
     });
 
@@ -573,7 +578,14 @@ pub fn BandGutter() -> impl IntoView {
         if hi <= lo {
             return String::new();
         }
-        format!("{:.1} – {:.1} kHz", lo / 1000.0, hi / 1000.0)
+        let range = format!("{:.1} – {:.1} kHz", lo / 1000.0, hi / 1000.0);
+        // The band is kept in the recording's frequencies. When the strip's
+        // labels give heard frequencies, say which these are.
+        if crate::heard_axis::heard_axis(&state).is_some() {
+            format!("recording {range}")
+        } else {
+            range
+        }
     };
 
     view! {
@@ -688,9 +700,13 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         let _main_view = state.viewmode.main_view().get();
         let show_clock = state.timeline.show_clock_time().get();
         let _size_tick = canvas_size_tick.get();
+        // Under XForm with TE the labels give the times heard. Clock-time
+        // labels are times of day and stay as they are.
+        let heard = crate::heard_axis::heard_axis(&state);
         let Some((scroll, visible_time, duration, _time_res, clock)) = time_window() else {
             return;
         };
+        let heard = heard.filter(|_| !(show_clock && clock.is_some()));
 
         let Some(canvas_el) = canvas_ref.get() else {
             return;
@@ -752,7 +768,18 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         // label positions aligned with whatever the host draws above.
         ctx.save();
         let _ = ctx.translate(data_x, 0.0);
-        crate::canvas::time_markers::draw_time_markers(
+        // The note that the labels give heard times sits at the right end,
+        // and the tick labels stop short of it.
+        // On a strip too narrow to keep two thirds for tick labels (a
+        // phone), the note is left out; the labels are still amber.
+        ctx.set_font("10px sans-serif");
+        let caption = heard.map(|h| h.time_caption()).and_then(|c| {
+            let width = ctx.measure_text(&c).ok()?.width();
+            (width + 16.0 <= data_w / 3.0).then_some((c, width))
+        });
+        let caption_w = caption.as_ref().map_or(0.0, |(_, width)| *width);
+        let caption_x = data_w - caption_w - 6.0;
+        crate::canvas::time_markers::draw_time_markers_styled(
             &ctx,
             scroll,
             visible_time,
@@ -761,8 +788,23 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
             duration,
             clock,
             show_clock,
-            1.0,
+            heard.map_or(1.0, |h| h.time_scale),
+            match heard {
+                Some(_) => crate::canvas::time_markers::TimeLabelStyle {
+                    rgb: crate::heard_axis::HEARD_RGB,
+                    labels_end_x: caption.as_ref().map(|_| caption_x - 6.0),
+                },
+                None => Default::default(),
+            },
         );
+        if let Some((caption, _)) = caption {
+            ctx.set_fill_style_str("rgba(0,0,0,0.75)");
+            ctx.fill_rect(caption_x - 4.0, 0.0, caption_w + 10.0, h);
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_baseline("middle");
+            ctx.set_fill_style_str(&format!("rgba({},0.95)", crate::heard_axis::HEARD_RGB));
+            let _ = ctx.fill_text(&caption, caption_x, h / 2.0);
+        }
         ctx.restore();
     });
 

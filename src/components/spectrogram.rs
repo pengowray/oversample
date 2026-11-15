@@ -1245,6 +1245,7 @@ pub fn Spectrogram() -> impl IntoView {
                     band_ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
                     shield_style: state.viewmode.shield_style().get_untracked(),
                     tuned_hz,
+                    heard_caption: None,
                 };
 
                 // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
@@ -1277,11 +1278,27 @@ pub fn Spectrogram() -> impl IntoView {
                     lo > 1.0 || (nyq - hi).abs() > 1.0
                 };
                 let show_freq_axis = vertically_zoomed || xform_on || decim_effective > 0;
+                // Under XForm with TE the picture is the recording's own and
+                // the axis gives the frequencies heard: every frequency handed
+                // to the axis is scaled, so its steps are round heard values.
+                let heard = crate::heard_axis::heard_axis_untracked(&state);
+                let axis_scale = heard.map_or(1.0, |h| h.freq_scale);
+                let marker_state = match heard {
+                    Some(h) => FreqMarkerState {
+                        mouse_freq: marker_state.mouse_freq.map(|f| f * axis_scale),
+                        file_max_freq: marker_state.file_max_freq * axis_scale,
+                        axis_drag_lo: marker_state.axis_drag_lo.map(|f| f * axis_scale),
+                        axis_drag_hi: marker_state.axis_drag_hi.map(|f| f * axis_scale),
+                        heard_caption: Some(h.freq_caption()),
+                        ..marker_state
+                    },
+                    None => marker_state,
+                };
                 if show_freq_axis {
                     spectrogram_renderer::draw_freq_markers(
                         &ctx,
-                        min_freq,
-                        max_freq,
+                        min_freq * axis_scale,
+                        max_freq * axis_scale,
                         display_h as f64,
                         display_w as f64,
                         if xform_on {

@@ -493,6 +493,7 @@ pub fn ZcDotChart() -> impl IntoView {
             shield_style: state.viewmode.shield_style().get_untracked(),
             // The ZC chart's axis is always in its divided playback mode.
             tuned_hz: None,
+            heard_caption: None,
         };
 
         spectrogram_renderer::draw_freq_markers(

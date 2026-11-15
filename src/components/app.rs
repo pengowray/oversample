@@ -649,6 +649,14 @@ pub fn App() -> impl IntoView {
             }
             DisplayFilterMode::Custom => state.display.decimate_rate().get(),
         };
+        // The Resam rates are rates of the audio heard. Under TE the picture
+        // is the recording's own, so the target becomes the recording rate
+        // that is heard at that rate (48 kHz heard is 480 kHz at ×10).
+        let decim_rate = if xform_on {
+            crate::heard_axis::resample_target_in_recording(&state, decim_rate)
+        } else {
+            decim_rate
+        };
         state.display.decimate_effective().set(decim_rate);
     });
 

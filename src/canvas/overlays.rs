@@ -47,6 +47,12 @@ pub struct FreqMarkerState {
     /// instead of "10 kHz". `None` wherever the axis shows other frequencies
     /// than the file's own.
     pub tuned_hz: Option<u32>,
+    /// Set when the axis is drawn in heard values (`crate::heard_axis`): the
+    /// note written at the top of the axis ("heard = recording ÷10"). The
+    /// labels are then amber and their step is
+    /// `crate::heard_axis::heard_div_interval`'s. Every frequency passed to the drawing function is then a
+    /// heard frequency.
+    pub heard_caption: Option<String>,
 }
 
 /// Returns true if two RGB colors are perceptually similar enough to need fimbriation.
@@ -226,12 +232,20 @@ pub fn draw_freq_markers(
     // Collect all division freqs within visible range.
     // Adapt division interval to visible range so we always get ~3-12 markers.
     let range = max_freq - min_freq;
-    let div_interval = if range <= 5_000.0 {
+    let div_interval = if ms.heard_caption.is_some() {
+        crate::heard_axis::heard_div_interval(range, canvas_height)
+    } else if range <= 5_000.0 {
         1_000.0
     } else if range <= 25_000.0 {
         5_000.0
     } else {
         10_000.0
+    };
+    // Amber for heard values, white for the recording's own.
+    let label_rgb = if ms.heard_caption.is_some() {
+        crate::heard_axis::HEARD_RGB
+    } else {
+        crate::heard_axis::RECORDING_RGB
     };
     let mut divisions: Vec<f64> = Vec::new();
     let first_div = ((min_freq / div_interval).ceil() * div_interval).max(div_interval);
@@ -354,7 +368,7 @@ pub fn draw_freq_markers(
         label_bottoms.push(label_y);
         ctx.set_font("11px sans-serif");
         ctx.set_text_baseline("bottom"); // the text's bottom edge is at label_y
-        let base_label = freq_marker_label(freq);
+        let base_label = crate::heard_axis::div_label(freq, div_interval);
         let label_alpha = base_alpha;
 
         // Build label with optional kHz suffix and shift info
@@ -432,13 +446,13 @@ pub fn draw_freq_markers(
             ctx.set_fill_style_str("rgba(0,0,0,0.6)");
             ctx.fill_rect(bg_x, label_y - bg_h, bg_w, bg_h);
 
-            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
+            ctx.set_fill_style_str(&format!("rgba({label_rgb},{:.2})", label_alpha));
             let _ = ctx.fill_text(&base_label, text_x, label_y);
             let khz_alpha = label_alpha * khz_fade;
             if khz_alpha > 0.002 {
                 let metrics = ctx.measure_text(&base_label).unwrap();
                 let num_w = metrics.width();
-                ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", khz_alpha));
+                ctx.set_fill_style_str(&format!("rgba({label_rgb},{:.2})", khz_alpha));
                 let _ = ctx.fill_text(&suffix, text_x + num_w, label_y);
             }
         } else {
@@ -454,7 +468,7 @@ pub fn draw_freq_markers(
             ctx.set_fill_style_str("rgba(0,0,0,0.6)");
             ctx.fill_rect(bg_x, label_y - bg_h, bg_w, bg_h);
 
-            ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha));
+            ctx.set_fill_style_str(&format!("rgba({label_rgb},{:.2})", label_alpha));
             let _ = ctx.fill_text(&label, text_x, label_y);
         }
 
@@ -539,7 +553,7 @@ pub fn draw_freq_markers(
                     ctx.set_font("9px sans-serif");
                     ctx.set_text_baseline("bottom");
                     let label_alpha_m = 0.4 * ms.label_hover_opacity;
-                    ctx.set_fill_style_str(&format!("rgba(255,255,255,{:.2})", label_alpha_m));
+                    ctx.set_fill_style_str(&format!("rgba({label_rgb},{:.2})", label_alpha_m));
                     let text_x = if labels_on_right {
                         let m = ctx.measure_text(&mlabel).unwrap();
                         label_x - m.width()
@@ -617,8 +631,29 @@ pub fn draw_freq_markers(
         }
     }
 
+    // --- Note that the axis gives heard values ---
+    // Written on the top line, left of the MAX marker when that is drawn, so
+    // it is read before any number on the axis. Amber like the labels.
+    let show_max = is_nyquist_top && !ms.mouse_in_label_area;
+    if let Some(caption) = &ms.heard_caption {
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_baseline("top");
+        let caption_w = ctx.measure_text(caption).unwrap().width();
+        // Room for the widest MAX marker ("25.6k MAX") and a gap.
+        let max_room = if show_max { 62.0 } else { 0.0 };
+        let caption_x = if labels_on_right {
+            label_x - max_room - caption_w
+        } else {
+            label_x + max_room
+        };
+        ctx.set_fill_style_str("rgba(0,0,0,0.6)");
+        ctx.fill_rect(caption_x - 3.0, 0.0, caption_w + 6.0, 14.0);
+        ctx.set_fill_style_str(&format!("rgba({},0.95)", crate::heard_axis::HEARD_RGB));
+        let _ = ctx.fill_text(caption, caption_x, 2.0);
+    }
+
     // --- Nyquist / MAX marker ---
-    if is_nyquist_top && !ms.mouse_in_label_area {
+    if show_max {
         let ny_y = 2.0; // just below top edge
         let ny_khz = ms.file_max_freq / 1000.0;
         let ny_label = if ny_khz == ny_khz.round() {
@@ -626,7 +661,7 @@ pub fn draw_freq_markers(
         } else {
             format!("{:.1}k MAX", ny_khz)
         };
-        ctx.set_fill_style_str("rgba(255,255,255,0.45)");
+        ctx.set_fill_style_str(&format!("rgba({label_rgb},0.45)"));
         ctx.set_font("10px sans-serif");
         ctx.set_text_baseline("top");
         let ny_text_x = if labels_on_right {

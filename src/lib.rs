@@ -13,6 +13,7 @@ pub mod file_identity;
 pub mod focus_stack;
 pub mod format_time;
 pub mod format_units;
+pub mod heard_axis;
 pub mod heterodyne;
 pub mod license;
 pub mod markdown;

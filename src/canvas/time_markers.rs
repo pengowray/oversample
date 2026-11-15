@@ -116,6 +116,54 @@ pub fn draw_time_markers(
     show_clock_time: bool,
     time_scale: f64,
 ) {
+    draw_time_markers_styled(
+        ctx,
+        scroll_offset,
+        visible_time,
+        canvas_width,
+        canvas_height,
+        duration,
+        clock,
+        show_clock_time,
+        time_scale,
+        TimeLabelStyle::default(),
+    );
+}
+
+/// The colour of the tick labels and how far right they may reach.
+#[derive(Clone, Copy)]
+pub struct TimeLabelStyle {
+    /// "r,g,b" of the label text.
+    pub rgb: &'static str,
+    /// Labels that would reach past this x are left out. `None` means the
+    /// canvas width. The time strip keeps its right end clear for a note.
+    pub labels_end_x: Option<f64>,
+}
+
+impl Default for TimeLabelStyle {
+    fn default() -> Self {
+        Self {
+            rgb: crate::heard_axis::RECORDING_RGB,
+            labels_end_x: None,
+        }
+    }
+}
+
+/// [`draw_time_markers`] with the label colour and right limit given.
+pub fn draw_time_markers_styled(
+    ctx: &CanvasRenderingContext2d,
+    scroll_offset: f64,
+    visible_time: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    duration: f64,
+    clock: Option<ClockTimeConfig>,
+    show_clock_time: bool,
+    time_scale: f64,
+    style: TimeLabelStyle,
+) {
+    let label_rgb = style.rgb;
+    let labels_end_x = style.labels_end_x.unwrap_or(canvas_width);
     if visible_time <= 0.0 || canvas_width <= 0.0 {
         return;
     }
@@ -243,14 +291,14 @@ pub fn draw_time_markers(
             if let Ok(metrics) = ctx.measure_text(&label) {
                 let tw = metrics.width();
                 let lx = x + 3.0;
-                if lx + tw < canvas_width - 2.0 {
+                if lx + tw < labels_end_x - 2.0 {
                     let label_top = label_top(canvas_height, current_tick_h);
                     // Dark background for readability
                     ctx.set_fill_style_str("rgba(0,0,0,0.6)");
                     ctx.fill_rect(lx - 1.0, label_top, tw + 2.0, LABEL_H);
                     // Text with emphasis for key markers
                     let text_alpha = if use_relative && is_key { "0.9" } else { "0.7" };
-                    ctx.set_fill_style_str(&format!("rgba(255,255,255,{})", text_alpha));
+                    ctx.set_fill_style_str(&format!("rgba({label_rgb},{text_alpha})"));
                     let _ = ctx.fill_text(&label, lx, label_top + LABEL_H - 1.0);
                 }
             }
@@ -270,11 +318,11 @@ pub fn draw_time_markers(
             if let Ok(metrics) = ctx.measure_text(&label) {
                 let tw = metrics.width();
                 let lx = 3.0;
-                if lx + tw < canvas_width - 2.0 {
+                if lx + tw < labels_end_x - 2.0 {
                     let label_top = label_top(canvas_height, key_tick_h);
                     ctx.set_fill_style_str("rgba(0,0,0,0.75)");
                     ctx.fill_rect(lx - 1.0, label_top, tw + 2.0, LABEL_H);
-                    ctx.set_fill_style_str("rgba(255,255,255,0.9)");
+                    ctx.set_fill_style_str(&format!("rgba({label_rgb},0.9)"));
                     let _ = ctx.fill_text(&label, lx, label_top + LABEL_H - 1.0);
                 }
             }
