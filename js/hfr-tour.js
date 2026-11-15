@@ -64,6 +64,11 @@
         });
     }
 
+    // A control under this height counts as short: a step with short_side
+    // puts its popover on that side, because a popover beside the control
+    // (about 170 px tall) would cover most of it.
+    var SHORT_PX = 460;
+
     function onKeydown(ev) {
         if (ev.key === 'Escape' && tour && tour.isActive()) tour.destroy();
     }
@@ -212,7 +217,9 @@
     }
 
     window.oversampleTour = {
-        // steps: [{ selector, title, description, side, align, wait_ms, gesture }]
+        // steps: [{ selector, title, description, side, align, short_side,
+        //           wait_ms, gesture }]
+        // short_side: the side to use when the control is under SHORT_PX tall.
         // gesture: 'drag-up' or 'drag-right' shows a hand dragging along
         // the control.
         // labels: { next, done, close, progress } ("{{current}} of {{total}}")
@@ -258,6 +265,11 @@
                     smoothScroll: false,
                     onHighlightStarted: function (el, step, opts) {
                         removeGesture();
+                        var st = steps[opts.index];
+                        if (st && st.short_side && el && step.popover) {
+                            var short = el.getBoundingClientRect().height < SHORT_PX;
+                            step.popover.side = short ? st.short_side : st.side;
+                        }
                         if (hooks && hooks.onStep) hooks.onStep(opts.index);
                     },
                     onHighlighted: function (el, step, opts) {

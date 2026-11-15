@@ -81,6 +81,9 @@ struct StepSpec {
     /// Where the popover sits beside the control (driver.js names).
     side: &'static str,
     align: &'static str,
+    /// The side to use instead when the control is short (a phone, a small
+    /// window): a popover beside a short strip covers most of it.
+    short_side: Option<&'static str>,
     /// The drag a hand acts out over the control while the step shows:
     /// "drag-up" or "drag-right". None: no hand.
     gesture: Option<&'static str>,
@@ -94,6 +97,9 @@ impl StepSpec {
         set(&o, "description", &self.description.into());
         set(&o, "side", &self.side.into());
         set(&o, "align", &self.align.into());
+        if let Some(short_side) = self.short_side {
+            set(&o, "short_side", &short_side.into());
+        }
         if let Some(gesture) = self.gesture {
             set(&o, "gesture", &gesture.into());
         }
@@ -110,6 +116,7 @@ impl TourStep {
                 description: D_HFR,
                 side: "bottom",
                 align: "start",
+                short_side: None,
                 gesture: None,
             },
             TourStep::BandGutter => StepSpec {
@@ -118,6 +125,9 @@ impl TourStep {
                 description: D_BAND,
                 side: "right",
                 align: "start",
+                // Above the strip, the popover leaves the whole strip and
+                // the calls beside it in view.
+                short_side: Some("top"),
                 gesture: Some("drag-up"),
             },
             // The popover sits over the right end of the strip, so the hand
@@ -128,6 +138,7 @@ impl TourStep {
                 description: D_TIME,
                 side: "top",
                 align: "end",
+                short_side: None,
                 gesture: Some("drag-right"),
             },
             TourStep::Play => StepSpec {
@@ -136,6 +147,7 @@ impl TourStep {
                 description: D_PLAY,
                 side: "top",
                 align: "start",
+                short_side: None,
                 gesture: None,
             },
         }
