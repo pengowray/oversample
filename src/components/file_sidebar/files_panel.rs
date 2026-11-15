@@ -83,7 +83,9 @@ fn remove_file_at(state: &AppState, i: usize) {
     let was_current = state.library.current_index().get_untracked() == Some(i);
     state.library.files().update(|files| {
         if i < files.len() {
-            files.remove(i);
+            // A denoised copy that is read from the browser's storage has
+            // its file there deleted.
+            crate::denoise_copy::file_closed(files.remove(i).id);
         }
     });
     // Read files len OUTSIDE the current_index().update() guard — siblings in

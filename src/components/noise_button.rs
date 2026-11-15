@@ -614,13 +614,15 @@ fn DenoiseSection() -> impl IntoView {
         state.current_file().map(|f| {
             (
                 f.audio.sample_rate,
-                f.audio.source.total_samples() as usize,
+                f.audio.source.total_samples(),
                 f.audio.channels,
             )
         })
     };
     let refusal = move || {
-        open().and_then(|(rate, samples, channels)| denoise::refusal(rate, samples, channels))
+        open().and_then(|(rate, samples, channels)| {
+            denoise::refusal(rate, samples, channels, denoise::sample_limit(state))
+        })
     };
     let busy = move || denoise::is_busy(state);
 
@@ -652,7 +654,9 @@ fn DenoiseSection() -> impl IntoView {
             match state.denoise.status().get() {
                 DenoiseStatus::Downloading(f) => progress(f, text::downloading(percent(f))),
                 DenoiseStatus::Starting => muted(text::STARTING.to_string()),
-                DenoiseStatus::Running(f) => progress(f, text::running(percent(f))),
+                DenoiseStatus::Running { fraction, seconds_left } => {
+                    progress(fraction, text::running(percent(fraction), seconds_left))
+                }
                 DenoiseStatus::Failed(error) => view! {
                     <div class="denoise-note denoise-error">{error}</div>
                 }.into_any(),

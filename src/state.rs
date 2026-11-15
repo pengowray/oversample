@@ -1675,8 +1675,12 @@ pub enum DenoiseStatus {
     Downloading(f64),
     /// Reading the recording and starting the worker.
     Starting,
-    /// The fraction of the recording done, 0 to 1.
-    Running(f64),
+    /// The fraction of the recording done, 0 to 1, and an estimate of the
+    /// seconds the rest will take, once there is one.
+    Running {
+        fraction: f64,
+        seconds_left: Option<u64>,
+    },
     /// The last recording failed, with the message to show.
     Failed(String),
 }

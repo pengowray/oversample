@@ -1,5 +1,6 @@
 mod cmd_annotations;
 mod cmd_audio_files;
+mod cmd_denoise;
 mod cmd_mic;
 mod cmd_models;
 mod cmd_noise_presets;
@@ -113,6 +114,9 @@ pub fn run() {
             cmd_models::models_commit,
             cmd_models::models_read,
             cmd_models::models_delete,
+            cmd_denoise::denoise_copy_write,
+            cmd_denoise::denoise_copy_commit,
+            cmd_denoise::denoise_copy_discard,
             device_info,
         ])
         .run(tauri::generate_context!())

@@ -48,7 +48,8 @@ pub(super) struct NewStreamingFile {
     pub preview: crate::types::PreviewImage,
     pub cached_peak_db: Option<f64>,
     pub wav_markers: Vec<crate::types::WavMarker>,
-    pub file: File,
+    /// Where the audio is read from: a file the browser gave, or a path.
+    pub handle: FileHandle,
     pub load_id: u64,
     pub total_cols: usize,
     pub fft_size: usize,
@@ -138,7 +139,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         preview,
         cached_peak_db,
         wav_markers,
-        file,
+        handle,
         load_id,
         total_cols,
         fft_size,
@@ -164,7 +165,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         add_order: 0,
         last_modified_ms: None,
         identity: None,
-        file_handle: Some(FileHandle::WebFile(file)),
+        file_handle: Some(handle),
         cached_peak_db,
         cached_full_peak_db: None,
         read_only: false,
@@ -262,9 +263,30 @@ pub(super) async fn try_streaming_wav(
     force_streaming: bool,
     load_id: u64,
 ) -> Result<(), String> {
+    try_streaming_wav_handle(
+        FileHandle::WebFile(file.clone()),
+        file.size() as u64,
+        name,
+        state,
+        force_streaming,
+        load_id,
+    )
+    .await
+}
+
+/// [`try_streaming_wav`] for a file of `file_size` bytes behind any handle: a
+/// file the browser gave, or a path on disk that Tauri reads.
+pub(super) async fn try_streaming_wav_handle(
+    handle: FileHandle,
+    file_size: u64,
+    name: &str,
+    state: AppState,
+    force_streaming: bool,
+    load_id: u64,
+) -> Result<(), String> {
     // Read first 64KB for header parsing
-    let header_size = 65536.0f64.min(file.size());
-    let header_bytes = read_blob_range(file, 0.0, header_size).await?;
+    let header_size = 65536u64.min(file_size);
+    let header_bytes = handle.read_range(0, header_size).await?;
 
     if header_bytes.len() < 12 {
         return Err("Header too small".into());
@@ -274,7 +296,7 @@ pub(super) async fn try_streaming_wav(
         return Err("Not a RIFF/RF64 file".into());
     }
 
-    let header = parse_wav_header_with_file_size(&header_bytes, Some(file.size() as u64))?;
+    let header = parse_wav_header_with_file_size(&header_bytes, Some(file_size))?;
     // Streaming reads one contiguous run of samples. Files with several data
     // chunks or a wave list are rare and small: load them in memory.
     if header.segments.len() > 1 || header.details.wave_list {
@@ -298,12 +320,12 @@ pub(super) async fn try_streaming_wav(
     if force_streaming && decoded_bytes < STREAMING_DECODED_THRESHOLD {
         state.show_info_toast(format!(
             "Streaming file to keep total open files under control ({:.0} MB)",
-            file.size() / 1_000_000.0
+            file_size as f64 / 1_000_000.0
         ));
     } else {
         state.show_info_toast(format!(
             "Streaming large file ({:.0} MB)",
-            file.size() / 1_000_000.0
+            file_size as f64 / 1_000_000.0
         ));
     }
 
@@ -314,10 +336,8 @@ pub(super) async fn try_streaming_wav(
     let bytes_per_frame = header.block_align as u64;
     let head_byte_len = head_frames * bytes_per_frame;
     let head_byte_start = header.data_offset;
-    let head_byte_end = head_byte_start + head_byte_len;
 
-    let head_pcm_bytes =
-        read_blob_range(file, head_byte_start as f64, head_byte_end as f64).await?;
+    let head_pcm_bytes = handle.read_range(head_byte_start, head_byte_len).await?;
 
     // Decode PCM to f32
     let head_interleaved = crate::audio::wav::decode_pcm(&head_pcm_bytes, header.encoding);
@@ -338,13 +358,11 @@ pub(super) async fn try_streaming_wav(
     let mut guano = header.guano.clone();
     let mut details = header.details.clone();
     if guano.is_none() || details.wamd.is_none() {
-        let file_size = file.size();
         let data_end = header.data_offset + header.data_size;
-        if (data_end as f64) < file_size {
-            let tail_start = data_end as f64;
+        if data_end < file_size {
             // Read up to 64KB from after the data chunk
-            let tail_end = file_size.min(tail_start + 65536.0);
-            if let Ok(tail_bytes) = read_blob_range(file, tail_start, tail_end).await {
+            let tail_len = (file_size - data_end).min(65536);
+            if let Ok(tail_bytes) = handle.read_range(data_end, tail_len).await {
                 if guano.is_none() {
                     guano = scan_tail_for_guano(&tail_bytes, header.data_size);
                 }
@@ -386,7 +404,7 @@ pub(super) async fn try_streaming_wav(
 
     // Create StreamingWavSource
     let source = Arc::new(StreamingWavSource::new(
-        FileHandle::WebFile(file.clone()),
+        handle.clone(),
         &header,
         head_mono.clone(),
         head_raw,
@@ -406,7 +424,7 @@ pub(super) async fn try_streaming_wav(
         channels: header.channels as u32,
         duration_secs,
         metadata: crate::types::FileMetadata {
-            file_size: file.size() as usize,
+            file_size: file_size as usize,
             format: crate::types::AudioFormat::Wav,
             bits_per_sample: header.bits_per_sample,
             is_float: header.is_float,
@@ -485,7 +503,7 @@ pub(super) async fn try_streaming_wav(
             preview,
             cached_peak_db,
             wav_markers,
-            file: file.clone(),
+            handle,
             load_id,
             total_cols,
             fft_size,
@@ -747,7 +765,7 @@ pub(super) async fn try_streaming_flac(
             preview,
             cached_peak_db,
             wav_markers: Vec::new(),
-            file: file.clone(),
+            handle: FileHandle::WebFile(file.clone()),
             load_id,
             total_cols,
             fft_size,
@@ -1094,7 +1112,7 @@ pub(super) async fn try_streaming_mp3(
             preview,
             cached_peak_db,
             wav_markers: Vec::new(),
-            file: file.clone(),
+            handle: FileHandle::WebFile(file.clone()),
             load_id,
             total_cols,
             fft_size,
@@ -1460,7 +1478,7 @@ pub(super) async fn try_streaming_ogg(
             preview,
             cached_peak_db,
             wav_markers: Vec::new(),
-            file: file.clone(),
+            handle: FileHandle::WebFile(file.clone()),
             load_id,
             total_cols,
             fft_size,
@@ -2138,7 +2156,7 @@ pub(super) async fn try_streaming_m4a(
             preview,
             cached_peak_db,
             wav_markers,
-            file: file.clone(),
+            handle: FileHandle::WebFile(file.clone()),
             load_id,
             total_cols,
             fft_size,
