@@ -375,7 +375,7 @@ fn factor_tag(f: f64) -> String {
 /// Empty when the audio is 1:1 (Normal mode, or a factor of 1).
 ///
 /// `_TE10` (10x slower), `_TE0.1` (10x faster), `_PS10` / `_PSup10`,
-/// `_PV10`, `_HET45k`, `_HET20k-comb4`, `_ZC8`.
+/// `_HET45k`, `_HET20k-comb4`, `_ZC8`.
 pub(crate) fn transform_suffix(params: &PlaybackParams) -> String {
     match params.mode {
         PlaybackMode::Normal => String::new(),

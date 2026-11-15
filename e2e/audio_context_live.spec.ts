@@ -85,3 +85,36 @@ for (const stall of [false, true]) {
     }
   });
 }
+
+test("a mic that reports 500 kHz gets a context at 384 kHz, and Listen starts", async ({ page }) => {
+  await page.addInitScript(watchContexts, false);
+  // The fake mic runs at the browser's own rate. Its reported rate is what
+  // the app asks the context for.
+  await page.addInitScript(() => {
+    const real = MediaStreamTrack.prototype.getSettings;
+    MediaStreamTrack.prototype.getSettings = function (this: MediaStreamTrack) {
+      return { ...real.call(this), sampleRate: 500_000 };
+    };
+  });
+  await page.goto("/");
+  await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForFunction(
+    () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.locator('button[title="Toggle live listening (L)"]').first().click();
+  await page.waitForFunction(
+    () => {
+      const s = (window as unknown as { __oversample_test: () => Snap }).__oversample_test();
+      return s.listening && s.liveActive && s.liveTotalTime > 0.05;
+    },
+    undefined,
+    { timeout: 25_000 },
+  );
+  const made = await page.evaluate(
+    () => (window as unknown as { __contextsMade: Made[] }).__contextsMade,
+  );
+  const asked = made.map((m) => m.asked ?? 0);
+  expect(Math.max(...asked), "highest context rate asked for").toBe(384_000);
+});

@@ -105,6 +105,12 @@ pub(crate) async fn default_if_not_started(ctx: &AudioContext) -> Option<AudioCo
     let rate = ctx.sample_rate() as u32;
     let default_rate = default_ctx.sample_rate() as u32;
     if starts(&default_ctx).await {
+        // A slow audio device can take longer than the wait. If `ctx` has
+        // started by now, it is the one to use.
+        if ctx.state() == AudioContextState::Running {
+            let _ = default_ctx.close();
+            return None;
+        }
         // The log goes to the browser console.
         log::warn!(
             "An audio context at {rate} Hz did not start in this browser. \
