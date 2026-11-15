@@ -8236,11 +8236,14 @@ button.toolbar-overflow-btn {
     width: 0;
     min-width: 100%;
     box-sizing: border-box;
+    /* A refusal is two lines with a line break between them. */
+    white-space: pre-line;
 }
-/* Room for two lines of note or the progress bar with its text, so the notch
-   controls below stay where they are while the status changes. */
+/* Room for three lines of note (the model, what the button does, and the
+   download before the model is stored) or the progress bar with its text, so
+   the notch controls below stay where they are while the status changes. */
 .denoise-status {
-    min-height: 32px;
+    min-height: 49px;
 }
 .denoise-note.denoise-error {
     color: #e88;

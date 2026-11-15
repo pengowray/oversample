@@ -316,7 +316,9 @@ pub mod attach {
     pub const BYTES: &str = "bytes";
     /// `Float32Array` of source-rate mono samples, on [`super::ToWorker::Chunk`]
     /// and [`super::ToWorker::DenoiseStart`] (the whole recording), and the
-    /// denoised recording on [`super::FromWorker::Denoised`].
+    /// denoised recording on [`super::FromWorker::Denoised`]. With
+    /// [`super::ToWorker::DenoiseStartChannels`] the recording and its
+    /// denoised copy have their channels interleaved.
     pub const SAMPLES: &str = "samples";
     /// `Float32Array` of the method's [`super::Method::embedding_len`] values per
     /// window, on [`super::FromWorker::Window`] (one window) and
@@ -362,6 +364,10 @@ pub enum ToWorker {
     /// the loaded denoiser. Any recording before it is dropped. Answered by
     /// `DenoiseProgress` with `done` 0.
     DenoiseStart { run: u32 },
+    /// `DenoiseStart` for a recording of `channels` channels, its samples
+    /// interleaved in [`attach::SAMPLES`]. Every channel gets the same gains,
+    /// and `Denoised` carries the channels interleaved again.
+    DenoiseStartChannels { run: u32, channels: u32 },
     /// Denoise the next block. Answered by `DenoiseProgress`, or by `Denoised`
     /// after the last block. One block per message, so a `Cancel` between two
     /// of them stops the work.
