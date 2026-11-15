@@ -1,4 +1,4 @@
-//! The learned bat-call denoiser, from the app's side.
+//! The learned denoiser, from the app's side.
 //!
 //! The network runs in a Web Worker of its own: the same WASM as the
 //! classifier worker (`birdnet-worker`), started a second time, so a denoise
@@ -6,8 +6,11 @@
 //! restarts don't touch it. The worker is stopped after every recording, which
 //! gives its memory back.
 //!
-//! One recording at a time. The result is added to the file list as a new
-//! recording, so playback, the spectrogram, export and the call detector all
+//! One recording at a time. A stereo recording gives a stereo copy: the
+//! worker works out each channel's gains and gives both channels the larger
+//! one, so the level difference between left and right stays as it was. A
+//! recording with more than two channels is mixed to mono first. The result
+//! is added to the file list as a new recording, so playback, the spectrogram, export and the call detector all
 //! work on it without knowing about the denoiser.
 
 use crate::audio::source::ChannelView;
@@ -26,31 +29,80 @@ use web_sys::{MessageEvent, Worker};
 /// The loader Trunk writes for the model worker.
 const WORKER_URL: &str = "birdnet-worker_loader.js";
 
-/// Lowest sample rate the denoiser takes. It was trained on recordings from
-/// 250 to 500 kHz, used sample for sample, and checked by eye on recordings
-/// at 192, 256, 384 and 500 kHz (2026-11-14). Not tried below 192 kHz.
-pub const MIN_RATE: u32 = 192_000;
-/// Longest recording, in samples (62 s at 384 kHz). The worker holds the
-/// recording four times over while it works.
+/// A denoising model the menu can use: its file, and what the menu says and
+/// checks for it.
+pub struct Model {
+    pub file: &'static catalog::ModelFile,
+    /// What the model was trained on, for the menu's "Model:" line.
+    pub trained_on: &'static str,
+    /// Lowest sample rate the model is run at, in Hz.
+    pub min_rate: u32,
+}
+
+/// The bat model. It was trained on bat recordings from 250 to 500 kHz, used
+/// sample for sample, and checked by eye at 192, 256, 384 and 500 kHz
+/// (2026-11-14). It works on spectrogram bins and frames, not on hertz, and in
+/// a trial on bird recordings at 22.05, 32, 44.1 and 48 kHz it took about
+/// 12 dB off the hiss and kept loud song (2026-11-15, the "Bird pilot" section
+/// of batchi-noisier2noise's README). Not tried below 22.05 kHz.
+pub const BAT_MODEL: Model = Model {
+    file: &catalog::DENOISER,
+    trained_on: "bat recordings",
+    min_rate: 22_050,
+};
+
+/// The model "Make Denoised Copy" uses. There is one model today; a choice
+/// between models would be made here.
+pub fn model() -> &'static Model {
+    &BAT_MODEL
+}
+
+/// Longest recording, in samples over all the channels that are denoised:
+/// 62 s at 384 kHz and 9 min 4 s at 44.1 kHz in mono, half that in stereo.
+/// It is a memory limit, and memory goes by the number of samples, whichever
+/// channels they are in. The worker holds the recording four times over
+/// while it works.
 pub const MAX_SAMPLES: usize = 24_000_000;
 
+/// Channels in the copy of a recording with `channels` channels: stereo
+/// stays stereo, and anything else is one channel (a mono mix).
+pub fn copy_channels(channels: u32) -> u32 {
+    if channels == 2 {
+        2
+    } else {
+        1
+    }
+}
+
 /// The menu's strings, in one place. Drafted from a brief by a writer that
-/// had not seen the code (2026-11-14).
+/// had not seen the code (2026-11-14, and again 2026-11-15 when the section
+/// began to take recordings at bird sample rates).
 pub mod text {
-    pub const TITLE: &str = "Bat Call Model";
+    use crate::format_units::{khz, sample_rate_khz};
+
+    pub const TITLE: &str = "Denoised Copy";
     pub const BUTTON: &str = "Make Denoised Copy";
     pub const CANCEL: &str = "Cancel";
     pub const STARTING: &str = "Loading recording and model\u{2026}";
-    pub const STEREO: &str = "The denoised copy will be mono.";
     pub const ADDED: &str = "Denoised copy added to the file list";
-    pub const TOOLTIP: &str = "Keeps 10% of the original sound, so noise is lowered, not removed.";
+    pub const TOOLTIP: &str = "Lowers steady background noise such as hiss, keeping at least 10% of the original sound at every frequency.";
 
-    pub fn help(model_stored: bool, size: &str) -> String {
-        if model_stored {
-            "Adds a new recording and keeps the original.".to_string()
+    /// The status area's first line: "Model: trained on bat recordings".
+    pub fn model_line(trained_on: &str) -> String {
+        format!("Model: trained on {trained_on}")
+    }
+    /// What the button does. A recording with more than two channels gives a
+    /// mono copy.
+    pub fn result_line(mono_mix: bool) -> &'static str {
+        if mono_mix {
+            "Adds a mono copy and keeps the original."
         } else {
-            format!("Adds a new recording. Downloads a {size} model first.")
+            "Adds a copy and keeps the original."
         }
+    }
+    /// Shown until the model file is on this device.
+    pub fn download_line(size: &str) -> String {
+        format!("Downloads the model first: {size}, once.")
     }
     pub fn downloading(percent: u32) -> String {
         format!("Downloading model: {percent}%")
@@ -64,13 +116,36 @@ pub mod text {
     pub fn failed(error: &str) -> String {
         format!("Denoising failed: {error}")
     }
-    pub fn rate_too_low(min_khz: u32, khz: u32) -> String {
-        format!("Needs a sample rate of {min_khz} kHz or more. This recording: {khz} kHz.")
-    }
-    pub fn too_long(seconds: f64, max_seconds: f64) -> String {
+    /// Two lines. `min_rate` keeps two decimals, so 22,050 Hz reads
+    /// "22.05 kHz" and not the "22.1 kHz" of the app's sample rate text.
+    pub fn rate_too_low(rate: u32, min_rate: u32) -> String {
         format!(
-            "Recording is too long: {seconds:.0} s. Maximum at this sample rate: {max_seconds:.0} s."
+            "Sample rate too low\nNeeds {} or more. This recording: {}.",
+            khz(i64::from(min_rate), 2),
+            sample_rate_khz(rate)
         )
+    }
+    /// Two lines. `frames` and `max_frames` are samples in one channel. The
+    /// recording's length is rounded up and the maximum down, so the two
+    /// never read the same. A stereo recording's maximum is half a mono
+    /// one's, so its line says "stereo".
+    pub fn too_long(frames: usize, max_frames: usize, rate: u32, stereo: bool) -> String {
+        let rate_f = f64::from(rate.max(1));
+        format!(
+            "Recording too long: {}\nMaximum at {}{}: {}",
+            minutes_seconds((frames as f64 / rate_f).ceil() as u64),
+            sample_rate_khz(rate),
+            if stereo { " stereo" } else { "" },
+            minutes_seconds((max_frames as f64 / rate_f).floor() as u64)
+        )
+    }
+    /// "62 s" or "9 min 4 s": seconds alone under two minutes.
+    fn minutes_seconds(seconds: u64) -> String {
+        if seconds < 120 {
+            format!("{seconds} s")
+        } else {
+            format!("{} min {} s", seconds / 60, seconds % 60)
+        }
     }
 }
 
@@ -203,14 +278,14 @@ fn stop_worker() {
 /// Look up whether the model file is on this device, for the menu's help line.
 pub fn check_model_stored(state: AppState) {
     wasm_bindgen_futures::spawn_local(async move {
-        let stored = store::is_downloaded(&catalog::DENOISER).await;
+        let stored = store::is_downloaded(model().file).await;
         state.denoise.model_stored().set(Some(stored));
     });
 }
 
 /// The model file's size, as the menu shows it: "0.3 MB".
 pub fn model_size_text() -> String {
-    format!("{:.1} MB", catalog::DENOISER.size as f64 / 1e6)
+    format!("{:.1} MB", model().file.size as f64 / 1e6)
 }
 
 /// True while a recording is being denoised (or its model downloaded).
@@ -221,15 +296,21 @@ pub fn is_busy(state: AppState) -> bool {
     )
 }
 
-/// Why the open recording can't be denoised, or `None` when it can.
-pub fn refusal(sample_rate: u32, samples: usize) -> Option<String> {
-    if sample_rate < MIN_RATE {
-        return Some(text::rate_too_low(MIN_RATE / 1000, sample_rate / 1000));
+/// Why the open recording can't be denoised, or `None` when it can. `frames`
+/// is the recording's length in samples of one channel.
+pub fn refusal(sample_rate: u32, frames: usize, channels: u32) -> Option<String> {
+    let min_rate = model().min_rate;
+    if sample_rate < min_rate {
+        return Some(text::rate_too_low(sample_rate, min_rate));
     }
-    if samples > MAX_SAMPLES {
+    let copy_channels = copy_channels(channels) as usize;
+    let max_frames = MAX_SAMPLES / copy_channels;
+    if frames > max_frames {
         return Some(text::too_long(
-            samples as f64 / sample_rate as f64,
-            MAX_SAMPLES as f64 / sample_rate as f64,
+            frames,
+            max_frames,
+            sample_rate,
+            copy_channels == 2,
         ));
     }
     None
@@ -275,11 +356,12 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         .ok_or_else(|| text::failed("no recording is open"))?;
     let sample_rate = file.audio.sample_rate;
     let total = file.audio.source.total_samples() as usize;
-    if let Some(why) = refusal(sample_rate, total) {
+    if let Some(why) = refusal(sample_rate, total, file.audio.channels) {
         return Err(why);
     }
+    let channels = copy_channels(file.audio.channels);
 
-    let model = &catalog::DENOISER;
+    let model = model().file;
     if !store::is_downloaded(model).await {
         state
             .denoise
@@ -305,14 +387,21 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     let bytes = store::read_js(model)
         .await
         .map_err(|e| text::failed(&e.to_string()))?;
-    let samples = crate::audio::streaming_source::read_region_ready(
-        &*file.audio.source,
-        ChannelView::MonoMix,
-        0,
-        total,
-    )
-    .await
-    .ok_or_else(|| text::failed("the recording could not be read"))?;
+    // The channels the copy will have, read from the source the app already
+    // holds, and interleaved for the worker.
+    let views: Vec<ChannelView> = if channels == 1 {
+        vec![ChannelView::MonoMix]
+    } else {
+        (0..channels).map(ChannelView::Channel).collect()
+    };
+    let read =
+        crate::audio::streaming_source::read_views_ready(&*file.audio.source, &views, 0, total)
+            .await
+            .views
+            // A read that runs past the end of the file gives shorter channels.
+            .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == v[0].len()))
+            .ok_or_else(|| text::failed("the recording could not be read"))?;
+    let mut samples = Some(interleave(read));
     if !live() {
         return Err(cancelled());
     }
@@ -341,10 +430,21 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
             }
             FromWorker::Loaded { .. } if !sent_audio => {
                 sent_audio = true;
+                // The worker has the samples from here on, so this copy goes.
+                let samples = samples.take().unwrap_or_default();
                 let array = js_sys::Float32Array::from(samples.as_slice());
+                drop(samples);
                 // Posted by its buffer so the samples move instead of copying.
                 let obj_value: JsValue = array.buffer().into();
-                post_samples(run_id, &array, &obj_value);
+                let start = if channels == 1 {
+                    ToWorker::DenoiseStart { run: run_id }
+                } else {
+                    ToWorker::DenoiseStartChannels {
+                        run: run_id,
+                        channels,
+                    }
+                };
+                post_samples(&start, &array, &obj_value);
             }
             FromWorker::DenoiseProgress { run, done, total } if run == run_id => {
                 state
@@ -368,7 +468,9 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     }
 
     let name = denoised_name(&file.name);
-    let wav = crate::audio::wav_encoder::encode_wav_at(&denoised, 1, sample_rate, 32, true);
+    let wav =
+        crate::audio::wav_encoder::encode_wav_at(&denoised, channels as u16, sample_rate, 32, true);
+    drop(denoised);
     let load_id = state.loading_start(&name);
     let loaded = crate::components::file_sidebar::load_named_bytes(
         name, &wav, None, None, None, state, load_id, false,
@@ -380,14 +482,29 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// `DenoiseStart` with the recording's samples, transferred.
-fn post_samples(run: u32, array: &js_sys::Float32Array, buffer: &JsValue) {
+/// The channels' samples as one list: the first sample of every channel, then
+/// the second of every channel, and so on. One channel is returned as it is.
+fn interleave(mut channels: Vec<Vec<f32>>) -> Vec<f32> {
+    if channels.len() == 1 {
+        return channels.pop().unwrap_or_default();
+    }
+    let frames = channels.first().map_or(0, Vec::len);
+    let mut out = Vec::with_capacity(frames * channels.len());
+    for i in 0..frames {
+        out.extend(channels.iter().map(|c| c[i]));
+    }
+    out
+}
+
+/// `start` (a `DenoiseStart` or `DenoiseStartChannels`) with the recording's
+/// samples, transferred.
+fn post_samples(start: &ToWorker, array: &js_sys::Float32Array, buffer: &JsValue) {
     LINK.with(|l| {
         let l = l.borrow();
         let Some(link) = l.as_ref() else {
             return;
         };
-        let Ok(inner) = serde_wasm_bindgen::to_value(&ToWorker::DenoiseStart { run }) else {
+        let Ok(inner) = serde_wasm_bindgen::to_value(start) else {
             return;
         };
         let obj = js_sys::Object::new();
@@ -419,8 +536,42 @@ mod tests {
 
     #[test]
     fn low_rates_and_long_recordings_are_refused() {
-        assert!(refusal(384_000, 1_000_000).is_none());
-        assert!(refusal(96_000, 1_000_000).unwrap().contains("192 kHz"));
-        assert!(refusal(384_000, MAX_SAMPLES + 1).unwrap().contains("62 s"));
+        assert!(refusal(384_000, 1_000_000, 1).is_none());
+        assert!(refusal(44_100, 1_000_000, 1).is_none());
+        assert!(refusal(22_050, 1_000_000, 2).is_none());
+        assert_eq!(
+            refusal(16_000, 1_000_000, 1).unwrap(),
+            "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 16\u{a0}kHz."
+        );
+        // 22,000 Hz is under the limit, and the two rates must not read alike.
+        assert_eq!(
+            refusal(22_000, 1_000_000, 1).unwrap(),
+            "Sample rate too low\nNeeds 22.05\u{a0}kHz or more. This recording: 22\u{a0}kHz."
+        );
+        assert_eq!(
+            refusal(384_000, MAX_SAMPLES + 1, 1).unwrap(),
+            "Recording too long: 63 s\nMaximum at 384\u{a0}kHz: 62 s"
+        );
+        assert_eq!(
+            refusal(44_100, 44_100 * 750, 1).unwrap(),
+            "Recording too long: 12 min 30 s\nMaximum at 44.1\u{a0}kHz: 9 min 4 s"
+        );
+        // The limit counts the samples of both channels of a stereo copy.
+        assert!(refusal(44_100, MAX_SAMPLES / 2, 2).is_none());
+        assert_eq!(
+            refusal(44_100, 44_100 * 300, 2).unwrap(),
+            "Recording too long: 5 min 0 s\nMaximum at 44.1\u{a0}kHz stereo: 4 min 32 s"
+        );
+        // More than two channels are mixed to one, so the mono limit applies.
+        assert!(refusal(44_100, 44_100 * 300, 4).is_none());
+    }
+
+    #[test]
+    fn channels_are_interleaved_for_the_worker() {
+        assert_eq!(interleave(vec![vec![1.0, 2.0]]), [1.0, 2.0]);
+        assert_eq!(
+            interleave(vec![vec![1.0, 2.0], vec![-1.0, -2.0]]),
+            [1.0, -1.0, 2.0, -2.0]
+        );
     }
 }

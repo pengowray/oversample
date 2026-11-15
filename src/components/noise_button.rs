@@ -595,11 +595,12 @@ fn NrSettings() -> impl IntoView {
     }
 }
 
-// ─── The learned bat denoiser ───────────────────────────────────────────
+// ─── The learned denoiser ───────────────────────────────────────────────
 //
 // A second method, in the same menu: one button that makes a denoised copy of
-// the open recording (`crate::denoise`). The line under the button says what
-// the press will do, why it can't be pressed, or how far the work has got.
+// the open recording (`crate::denoise`). The lines under the button name the
+// model and say what the press will do, why it can't be pressed, or how far
+// the work has got. The "Model:" line is where a choice of model would go.
 
 #[component]
 fn DenoiseSection() -> impl IntoView {
@@ -618,7 +619,9 @@ fn DenoiseSection() -> impl IntoView {
             )
         })
     };
-    let refusal = move || open().and_then(|(rate, samples, _)| denoise::refusal(rate, samples));
+    let refusal = move || {
+        open().and_then(|(rate, samples, channels)| denoise::refusal(rate, samples, channels))
+    };
     let busy = move || denoise::is_busy(state);
 
     view! {
@@ -657,13 +660,17 @@ fn DenoiseSection() -> impl IntoView {
                     Some(why) => muted(why),
                     None => {
                         let stored = state.denoise.model_stored().get().unwrap_or(true);
-                        let stereo = open().is_some_and(|(_, _, channels)| channels > 1);
+                        // More than two channels are mixed to one.
+                        let mono_mix = open().is_some_and(|(_, _, channels)| channels > 2);
                         view! {
                             <div class="denoise-note">
-                                {text::help(stored, &denoise::model_size_text())}
+                                {text::model_line(denoise::model().trained_on)}
                             </div>
-                            {stereo.then(|| view! {
-                                <div class="denoise-note">{text::STEREO}</div>
+                            <div class="denoise-note">{text::result_line(mono_mix)}</div>
+                            {(!stored).then(|| view! {
+                                <div class="denoise-note">
+                                    {text::download_line(&denoise::model_size_text())}
+                                </div>
                             })}
                         }.into_any()
                     }

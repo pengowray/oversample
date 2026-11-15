@@ -180,6 +180,19 @@ fn parse_track_in(stem: &str) -> Option<TrackInfo> {
     None
 }
 
+/// The take and channel a file's name gives it, whether or not the take's
+/// other channels are loaded. `None` for a file that is not a channel of a
+/// multitrack recording, and for a denoised copy: its name would otherwise
+/// parse like its original's ("rec_1 (denoised).wav" reads as track "1"),
+/// because the parser ignores text after a space.
+pub fn channel_of(filename: &str) -> Option<TrackInfo> {
+    if denoised_original_stem(filename).is_some() {
+        None
+    } else {
+        parse_track_suffix(filename)
+    }
+}
+
 /// Compute file groups from a list of filenames.
 ///
 /// Returns a parallel Vec: `Some(TrackInfo)` for files that belong to a group
@@ -188,16 +201,7 @@ pub fn compute_file_groups(names: &[String]) -> Vec<Option<TrackInfo>> {
     // A denoised copy is never a channel of a multitrack recording. Its name
     // would otherwise parse like its original's ("rec_1 (denoised).wav" reads
     // as track "1"), because the parser ignores text after a space.
-    let parsed: Vec<Option<TrackInfo>> = names
-        .iter()
-        .map(|n| {
-            if denoised_original_stem(n).is_some() {
-                None
-            } else {
-                parse_track_suffix(n)
-            }
-        })
-        .collect();
+    let parsed: Vec<Option<TrackInfo>> = names.iter().map(|n| channel_of(n)).collect();
 
     // Count occurrences per group_key
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -267,12 +271,7 @@ pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGro
     // take whose other channel is missing would fall out of its sequence.
     let channel_labels: Vec<String> = names
         .iter()
-        .map(|n| {
-            if denoised_original_stem(n).is_some() {
-                return String::new();
-            }
-            parse_track_suffix(n).map(|t| t.label).unwrap_or_default()
-        })
+        .map(|n| channel_of(n).map(|t| t.label).unwrap_or_default())
         .collect();
 
     // Parse sequence stems for each file

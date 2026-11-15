@@ -178,13 +178,18 @@ impl Session {
                     self.denoising = None;
                 }
             }
-            ToWorker::DenoiseStart { run } => {
+            ToWorker::DenoiseStart { run } | ToWorker::DenoiseStartChannels { run, .. } => {
+                let channels = match msg {
+                    ToWorker::DenoiseStartChannels { channels, .. } => channels as usize,
+                    _ => 1,
+                };
                 self.denoising = None;
                 if self.denoiser.is_none() {
                     out.send(inference_error(run, "no denoiser loaded".into()), None);
                     return;
                 }
-                match Denoiser::new(att.samples.as_deref().unwrap_or_default()) {
+                let samples = att.samples.as_deref().unwrap_or_default();
+                match Denoiser::interleaved(samples, channels) {
                     Ok(d) => {
                         let total = d.blocks() as u32;
                         self.denoising = Some((run, d));

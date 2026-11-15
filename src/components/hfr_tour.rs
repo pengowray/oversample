@@ -96,6 +96,15 @@ impl TourStep {
             TourStep::Play => (".play-main-btn", T_PLAY, D_PLAY, "top", "start"),
         }
     }
+
+    /// The drag a hand acts out over the control while the step shows, for
+    /// js/hfr-tour.js. None: no hand.
+    fn gesture(self) -> Option<&'static str> {
+        match self {
+            TourStep::BandGutter => Some("drag-up"),
+            TourStep::Hfr | TourStep::TimeGutter | TourStep::Play => None,
+        }
+    }
 }
 
 /// The steps for this screen. The HFR steps are left out when HFR is on.
@@ -188,6 +197,9 @@ pub fn start_tour(state: AppState) {
         set(&o, "description", &description.into());
         set(&o, "side", &side.into());
         set(&o, "align", &align.into());
+        if let Some(gesture) = step.gesture() {
+            set(&o, "gesture", &gesture.into());
+        }
         js_steps.push(&o);
     }
     let labels = Object::new();

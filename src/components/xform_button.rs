@@ -64,7 +64,7 @@ pub fn XformButton() -> impl IntoView {
         if state.display.gain_boost().get().abs() >= 0.5 {
             parts.push("G");
         }
-        if state.display.decimate_effective().get() > 0 {
+        if display_resample_rate(&state).is_some() {
             parts.push("RS");
         }
         if parts.is_empty() {
@@ -167,10 +167,9 @@ pub fn XformButton() -> impl IntoView {
                     let f = state.transform.het_frequency().get();
                     parts.push(format!("heterodyne @ {:.0} kHz", f / 1000.0));
                 }
-                PlaybackMode::TimeExpansion => {
-                    let n = state.transform.te_factor().get();
-                    parts.push(format!("{:.0}\u{00D7} time-expansion", n));
-                }
+                // TE leaves the picture as it is and relabels the axes: see
+                // the sentence added after the list.
+                PlaybackMode::TimeExpansion => {}
                 PlaybackMode::PitchShift => parts.push("pitch-shift".to_string()),
                 PlaybackMode::PhaseVocoder => parts.push("phase-vocoder shift".to_string()),
                 PlaybackMode::ZeroCrossing => parts.push("zero-crossing".to_string()),
@@ -181,27 +180,27 @@ pub fn XformButton() -> impl IntoView {
         if boost.abs() >= 0.5 {
             parts.push(format!("{:+.0} dB gain", boost));
         }
-        let decim = state.display.decimate_effective().get();
-        if decim > 0 {
-            let files = state.library.files().get();
-            let idx = state.library.current_index().get();
-            let file_rate = idx
-                .and_then(|i| files.get(i))
-                .map(|f| f.audio.sample_rate)
-                .unwrap_or(0);
-            let effective = if file_rate > 0 && decim < file_rate {
-                crate::dsp::filters::decimated_rate(file_rate, decim)
-            } else {
-                decim
-            };
-            parts.push(format!("resample to {:.0} kHz", effective as f64 / 1000.0));
+        // With heard axes the rate is given as heard, like the axis labels.
+        let heard = crate::heard_axis::heard_axis(&state);
+        if let Some(rate) = display_resample_rate(&state) {
+            let shown = rate as f64 * heard.map_or(1.0, |h| h.freq_scale);
+            parts.push(format!("resample to {:.0} kHz", shown / 1000.0));
         }
-        if parts.is_empty() {
-            "Showing the spectrogram of the unmodified signal — no processing stages \
-             are active. Switch a row below to \"sam\" to mirror playback."
-                .to_string()
+        let picture = if parts.is_empty() {
+            None
         } else {
-            format!("Spectrogram of the signal after {}.", join_clauses(&parts))
+            Some(format!(
+                "Spectrogram of the signal after {}.",
+                join_clauses(&parts)
+            ))
+        };
+        match (picture, heard) {
+            (Some(picture), Some(heard)) => format!("{picture} {}", heard.blurb()),
+            (None, Some(heard)) => format!("The recording's own spectrogram. {}", heard.blurb()),
+            (Some(picture), None) => picture,
+            (None, None) => "Showing the spectrogram of the unmodified signal — no processing \
+                             stages are active. Switch a row below to \"sam\" to mirror playback."
+                .to_string(),
         }
     });
 
@@ -302,6 +301,19 @@ pub fn XformButton() -> impl IntoView {
 }
 
 /// Join clause fragments into "a", "a and b", or "a, b and c".
+/// The rate the display is resampled to, in the recording's Hz, or `None`
+/// when Resam is off or its target is at or above the file's rate (so
+/// nothing is resampled). Tracked.
+fn display_resample_rate(state: &AppState) -> Option<u32> {
+    let decim = state.display.decimate_effective().get();
+    let files = state.library.files().get();
+    let idx = state.library.current_index().get();
+    let file_rate = idx
+        .and_then(|i| files.get(i))
+        .map(|f| f.audio.sample_rate)?;
+    (decim > 0 && decim < file_rate).then(|| crate::dsp::filters::decimated_rate(file_rate, decim))
+}
+
 fn join_clauses(parts: &[String]) -> String {
     match parts.len() {
         0 => String::new(),

@@ -865,15 +865,13 @@ pub fn Spectrogram() -> impl IntoView {
                         }
                     }
 
-                    // Draw gap indicators
-                    let segments = &tl.segments;
-                    for i in 0..segments.len() {
-                        let seg_end = segments[i].timeline_offset_secs + segments[i].duration_secs;
-                        let next_start = if i + 1 < segments.len() {
-                            segments[i + 1].timeline_offset_secs
-                        } else {
-                            continue;
-                        };
+                    // Draw gap indicators between recordings. A place left
+                    // empty by a channel that is not loaded is not a gap: it
+                    // gets its own message below.
+                    let spans = tl.clip_spans();
+                    for pair in spans.windows(2) {
+                        let seg_end = pair[0].1;
+                        let next_start = pair[1].0;
                         if next_start > seg_end + 0.001 {
                             // There's a gap
                             let gap_x1 = (seg_end - scroll) * px_per_sec;
@@ -895,6 +893,67 @@ pub fn Spectrogram() -> impl IntoView {
                                 ctx.stroke();
                                 let _ = ctx.set_line_dash(&js_sys::Array::new());
                             }
+                        }
+                    }
+
+                    // A recording whose file for the chosen channel is not
+                    // open: outline its place and say which file is missing,
+                    // so the empty stretch does not read as a fault. "Open"
+                    // is the app's word for a file in the Files list ("Open
+                    // files"); "not loaded" read as a load that failed.
+                    if let Some(track) = tl.track.as_deref() {
+                        // "channel 2" inside a sentence; "MIX" stays as it is.
+                        let channel =
+                            crate::timeline::track_name(track).replace("Channel ", "channel ");
+                        for m in &tl.missing {
+                            let x1 = (m.timeline_offset_secs - scroll) * px_per_sec;
+                            let x2 =
+                                (m.timeline_offset_secs + m.duration_secs - scroll) * px_per_sec;
+                            if x2 <= 0.0 || x1 >= display_w as f64 {
+                                continue;
+                            }
+                            let h = display_h as f64;
+                            ctx.set_fill_style_str("rgba(255, 255, 255, 0.04)");
+                            ctx.fill_rect(x1, 0.0, x2 - x1, h);
+                            ctx.set_stroke_style_str("#444");
+                            ctx.set_line_width(1.0);
+                            let _ = ctx.set_line_dash(&js_sys::Array::of2(
+                                &JsValue::from_f64(4.0),
+                                &JsValue::from_f64(4.0),
+                            ));
+                            ctx.stroke_rect(x1 + 0.5, 0.5, x2 - x1 - 1.0, h - 1.0);
+                            let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+                            // The full sentence when it fits the place,
+                            // two short lines when it does not.
+                            ctx.set_font("12px sans-serif");
+                            let room = x2 - x1 - 12.0;
+                            let fits = |text: &str| {
+                                ctx.measure_text(text)
+                                    .map(|tm| tm.width() <= room)
+                                    .unwrap_or(false)
+                            };
+                            let long = format!("No {channel} file is open for {}", m.take);
+                            let short = format!("No {channel}");
+                            let lines: Vec<&str> = if fits(&long) {
+                                vec![long.as_str()]
+                            } else if fits(&short) && fits("file open") {
+                                vec![short.as_str(), "file open"]
+                            } else {
+                                Vec::new()
+                            };
+                            // #9a9a9a on black is 7.4:1.
+                            ctx.set_fill_style_str("#9a9a9a");
+                            ctx.set_text_align("center");
+                            ctx.set_text_baseline("middle");
+                            let line_h = 16.0;
+                            let top = h / 2.0 - line_h * (lines.len() as f64 - 1.0) / 2.0;
+                            for (i, line) in lines.iter().enumerate() {
+                                let _ =
+                                    ctx.fill_text(line, (x1 + x2) / 2.0, top + line_h * i as f64);
+                            }
+                            ctx.set_text_align("start");
+                            ctx.set_text_baseline("alphabetic");
                         }
                     }
 
@@ -1245,6 +1304,7 @@ pub fn Spectrogram() -> impl IntoView {
                     band_ff_handles_active: spec_hover.is_some() || spec_drag.is_some(),
                     shield_style: state.viewmode.shield_style().get_untracked(),
                     tuned_hz,
+                    heard_caption: None,
                 };
 
                 // When xform/decim is on, adjust marker state: right-side labels, hide focus handles
@@ -1277,11 +1337,27 @@ pub fn Spectrogram() -> impl IntoView {
                     lo > 1.0 || (nyq - hi).abs() > 1.0
                 };
                 let show_freq_axis = vertically_zoomed || xform_on || decim_effective > 0;
+                // Under XForm with TE the picture is the recording's own and
+                // the axis gives the frequencies heard: every frequency handed
+                // to the axis is scaled, so its steps are round heard values.
+                let heard = crate::heard_axis::heard_axis_untracked(&state);
+                let axis_scale = heard.map_or(1.0, |h| h.freq_scale);
+                let marker_state = match heard {
+                    Some(h) => FreqMarkerState {
+                        mouse_freq: marker_state.mouse_freq.map(|f| f * axis_scale),
+                        file_max_freq: marker_state.file_max_freq * axis_scale,
+                        axis_drag_lo: marker_state.axis_drag_lo.map(|f| f * axis_scale),
+                        axis_drag_hi: marker_state.axis_drag_hi.map(|f| f * axis_scale),
+                        heard_caption: Some(h.freq_caption()),
+                        ..marker_state
+                    },
+                    None => marker_state,
+                };
                 if show_freq_axis {
                     spectrogram_renderer::draw_freq_markers(
                         &ctx,
-                        min_freq,
-                        max_freq,
+                        min_freq * axis_scale,
+                        max_freq * axis_scale,
                         display_h as f64,
                         display_w as f64,
                         if xform_on {
