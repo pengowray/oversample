@@ -20,13 +20,25 @@ use crate::state::store_fields::*;
 use leptos::prelude::*;
 
 use crate::components::app::{disable_xform, enable_xform};
-use crate::components::display_filter_button::{DspFilterHeader, DspFilterRow};
+use crate::components::display_filter_button::{DspFilterHeader, DspFilterRow, HEARD_OFF};
 use crate::components::switch_button::SwitchButton;
 use crate::state::{AppState, DisplayFilterMode, GainMode, LayerPanel, PlaybackMode};
+
+/// The most characters of summary the button's bottom row holds beside its
+/// caret, at the button's fixed 92px.
+const SUMMARY_MAX_CHARS: usize = 11;
 
 #[component]
 pub fn XformButton() -> impl IntoView {
     let state = expect_context::<AppState>();
+
+    // The PASS filter row has no Auto: it did the same as "As heard". A row
+    // left on Auto from before moves to "As heard".
+    Effect::new(move |_| {
+        if state.display.filter_eq().get() == DisplayFilterMode::Auto {
+            state.display.filter_eq().set(DisplayFilterMode::Same);
+        }
+    });
 
     let is_open =
         Signal::derive(move || state.panels.layer_panel_open().get() == Some(LayerPanel::Xform));
@@ -47,15 +59,17 @@ pub fn XformButton() -> impl IntoView {
         }
     };
 
-    // Compact summary of the stages XForm applies, shown on the bottom row.
-    // "Raw" while XForm is off or applies nothing.
+    // What XForm applies, shown on the button's bottom row: "Raw" while it
+    // is off or applies nothing, the names of what it applies when they fit
+    // the button ("PASS + HET"), and their number when they don't
+    // ("3 stages"; the sentence at the top of the menu calls them stages).
     let value = Signal::derive(move || {
         let mut parts: Vec<&'static str> = Vec::new();
         if state.display.eq().get() {
-            parts.push("EQ");
+            parts.push("PASS");
         }
         if state.display.noise_filter().get() {
-            parts.push("NF");
+            parts.push("Noise");
         }
         if state.display.transform().get() {
             parts.push(match state.playback.mode().get() {
@@ -64,19 +78,22 @@ pub fn XformButton() -> impl IntoView {
                 PlaybackMode::PitchShift => "PS",
                 PlaybackMode::PhaseVocoder => "PV",
                 PlaybackMode::ZeroCrossing => "ZC",
-                PlaybackMode::Normal => "XF",
+                PlaybackMode::Normal => "1:1",
             });
         }
         if state.display.gain_boost().get().abs() >= 0.5 {
-            parts.push("G");
+            parts.push("Gain");
         }
         if display_resample_rate(&state).is_some() {
-            parts.push("RS");
+            parts.push("Resample");
         }
+        let names = parts.join(" + ");
         if parts.is_empty() {
             "Raw".to_string()
+        } else if names.chars().count() <= SUMMARY_MAX_CHARS {
+            names
         } else {
-            parts.join("+")
+            format!("{} stages", parts.len())
         }
     });
     let toggle_menu = Callback::new(move |()| toggle_panel(&state, LayerPanel::Xform));
@@ -84,7 +101,7 @@ pub fn XformButton() -> impl IntoView {
     let disabled = Signal::derive(move || no_file() || !supported());
 
     // ── What the Hear bar is set to for each row: its "As heard" cell ──
-    let on_off = |on: bool| if on { "on" } else { "off" }.to_string();
+    let on_off = |on: bool| if on { "on" } else { HEARD_OFF }.to_string();
     let pass_heard = Signal::derive(move || on_off(state.filter.enabled().get()));
     let notch_heard = Signal::derive(move || on_off(state.notch.enabled().get()));
     let nr_heard = Signal::derive(move || on_off(state.noise_reduce.enabled().get()));
@@ -102,7 +119,7 @@ pub fn XformButton() -> impl IntoView {
     let gain_heard = Signal::derive(move || on_off(state.gain.mode().get() != GainMode::Off));
     // "As heard" resamples to the rate the browser plays at.
     let resample_heard = Signal::derive(move || match state.display.browser_sample_rate().get() {
-        0 => "off".to_string(),
+        0 => HEARD_OFF.to_string(),
         rate => crate::format_units::sample_rate_khz(rate),
     });
 
@@ -217,7 +234,7 @@ pub fn XformButton() -> impl IntoView {
             <div class="xform-blurb">{move || blurb.get()}</div>
             <div class="layer-panel-title">"Show in the spectrogram"</div>
             <DspFilterHeader />
-            <DspFilterRow label="PASS filter" signal=state.display.filter_eq() heard=pass_heard custom_available=false />
+            <DspFilterRow label="PASS filter" signal=state.display.filter_eq() heard=pass_heard custom_available=false auto_available=false />
             <DspFilterRow label="Notch filter" signal=state.display.filter_notch() heard=notch_heard custom_available=false auto_available=false />
             <DspFilterRow label="Noise reduction" signal=state.display.filter_nr() heard=nr_heard custom_available=false />
             <DspFilterRow label="Playback mode" signal=state.display.filter_transform() heard=mode_heard custom_available=false auto_available=false />

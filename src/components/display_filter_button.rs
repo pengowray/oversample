@@ -2,13 +2,17 @@ use leptos::prelude::*;
 
 use crate::state::DisplayFilterMode;
 
+/// The "As heard" cell's text for a Hear bar control that is off.
+pub const HEARD_OFF: &str = "off";
+
 /// One row of the XForm menu's grid: the control's name, then a cell for
 /// each choice (Off, Auto, As heard, Custom) under the header's columns.
 ///
 /// A choice the row does not have leaves its cell empty. The "As heard" cell
 /// always shows what the Hear bar is set to for this control ("on", "HET"),
 /// because that is what the choice gives. The other cells show their name
-/// only while selected.
+/// only while selected. A row set to Off whose Hear bar control is also off
+/// leaves the "As heard" cell empty, so the row does not say "off" twice.
 #[component]
 pub fn DspFilterRow<S>(
     /// The control's name, as the Hear bar and its menus give it.
@@ -65,7 +69,12 @@ where
                     >
                         {move || {
                             if is_same {
-                                heard.get()
+                                let heard = heard.get();
+                                if heard == HEARD_OFF && signal.get() == DisplayFilterMode::Off {
+                                    String::new()
+                                } else {
+                                    heard
+                                }
                             } else if selected() {
                                 mode.label().to_lowercase()
                             } else {
