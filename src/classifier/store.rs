@@ -4,6 +4,7 @@
 //! - Browser: the OPFS directory `oversample-models`.
 //! - Tauri: the app data folder's `models/` (WebKitGTK, the Linux webview, has
 //!   no OPFS), through the `models_*` commands in `src-tauri/src/cmd_models.rs`.
+//!   Android sends the bytes as base64 text, since its webview has no raw IPC bodies.
 //!
 //! Bytes stay in JS `Uint8Array`s from the download to the worker, so a 67 MB
 //! model never passes through (and never grows) the app's WASM memory.
@@ -19,9 +20,20 @@ const OPFS_DIR: &str = "oversample-models";
 /// Bytes per Tauri write. Smaller pieces keep each IPC message modest, which
 /// matters on Android, where raw bodies go through `postMessage`.
 const TAURI_PART: u32 = 8 * 1024 * 1024;
+/// Bytes per write on Android, where each part goes as base64 text inside a
+/// JSON message (about 1.4 MB of text).
+const ANDROID_PART: u32 = 1024 * 1024;
 
 fn is_tauri() -> bool {
     crate::tauri_bridge::get_tauri_internals().is_some()
+}
+
+/// Android's webview cannot send raw IPC bodies (Tauri turns a `Uint8Array`
+/// into a JSON array of numbers there), so parts go as base64 text.
+fn is_android() -> bool {
+    web_sys::window()
+        .and_then(|w| w.navigator().user_agent().ok())
+        .is_some_and(|ua| ua.to_ascii_lowercase().contains("android"))
 }
 
 fn storage_err(file: &ModelFile, message: impl Into<String>) -> ClassifierError {
@@ -166,19 +178,32 @@ pub async fn delete_retired() {
 async fn write(file: &ModelFile, bytes: &js_sys::Uint8Array) -> Result<(), ClassifierError> {
     if is_tauri() {
         let len = bytes.length();
+        let android = is_android();
+        let step = if android { ANDROID_PART } else { TAURI_PART };
         let mut at = 0u32;
         loop {
-            let end = (at + TAURI_PART).min(len);
+            let end = (at + step).min(len);
             let part = bytes.subarray(at, end);
-            crate::tauri_bridge::tauri_invoke_raw(
-                "models_write_part",
-                &part,
-                &[
-                    ("x-model-file", file.id.to_string()),
-                    ("x-model-offset", at.to_string()),
-                ],
-            )
-            .await
+            if android {
+                use base64::Engine;
+                let args = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
+                let _ =
+                    js_sys::Reflect::set(&args, &"offset".into(), &JsValue::from_f64(at as f64));
+                let data = base64::engine::general_purpose::STANDARD.encode(part.to_vec());
+                let _ = js_sys::Reflect::set(&args, &"data".into(), &data.into());
+                crate::tauri_bridge::tauri_invoke("models_write_part_b64", &args.into()).await
+            } else {
+                crate::tauri_bridge::tauri_invoke_raw(
+                    "models_write_part",
+                    &part,
+                    &[
+                        ("x-model-file", file.id.to_string()),
+                        ("x-model-offset", at.to_string()),
+                    ],
+                )
+                .await
+            }
             .map_err(|e| storage_err(file, e))?;
             at = end;
             if at >= len {

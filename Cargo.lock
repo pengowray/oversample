@@ -3452,8 +3452,9 @@ checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
 
 [[package]]
 name = "oversample"
-version = "0.5.190"
+version = "0.5.191"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "claxon",
  "console_error_panic_hook",
@@ -3498,8 +3499,9 @@ dependencies = [
 
 [[package]]
 name = "oversample-desktop"
-version = "0.5.190"
+version = "0.5.191"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "claxon",
  "cpal",

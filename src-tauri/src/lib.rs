@@ -111,6 +111,7 @@ pub fn run() {
             cmd_annotations::open_file_dialog,
             cmd_models::models_sizes,
             cmd_models::models_write_part,
+            cmd_models::models_write_part_b64,
             cmd_models::models_commit,
             cmd_models::models_read,
             cmd_models::models_delete,
