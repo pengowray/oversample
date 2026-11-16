@@ -201,35 +201,37 @@ pub async fn read_media_store_range(
         )
         .await
         .map_err(|e| format!("readRecordingRange failed: {:?}", e))?;
-    base64_decode(&res.data)
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(res.data)
+        .map_err(|e| format!("readRecordingRange returned bad base64: {e}"))
 }
 
-/// Minimal standard-alphabet base64 decoder (no external dep). Ignores
-/// whitespace; accepts with or without `=` padding.
-fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
-    fn val(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
+/// The most bytes [`FileHandle::read_range`] asks the native side for at once.
+/// A single 92 MB read ran Android's Java heap out of memory: the media-store
+/// plugin holds the bytes and their base64 text (4/3 as large) together.
+const NATIVE_READ_PART: u64 = 8 * 1024 * 1024;
+
+/// Read `[byte_start, byte_start + byte_len)` with `read` in parts of at most
+/// [`NATIVE_READ_PART`] bytes. Stops early at the end of the file.
+async fn read_in_parts<F, Fut>(byte_start: u64, byte_len: u64, read: F) -> Result<Vec<u8>, String>
+where
+    F: Fn(u64, u64) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    if byte_len <= NATIVE_READ_PART {
+        return read(byte_start, byte_len).await;
     }
-    let mut out = Vec::with_capacity(s.len() / 4 * 3);
-    let mut buf = 0u32;
-    let mut bits = 0u32;
-    for &c in s.as_bytes() {
-        if c == b'=' || c.is_ascii_whitespace() {
-            continue;
-        }
-        let v = val(c).ok_or_else(|| format!("invalid base64 char: {}", c as char))?;
-        buf = (buf << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
+    let mut out = Vec::with_capacity(byte_len as usize);
+    let mut at = 0u64;
+    while at < byte_len {
+        let want = NATIVE_READ_PART.min(byte_len - at);
+        let part = read(byte_start + at, want).await?;
+        let got = part.len() as u64;
+        out.extend_from_slice(&part);
+        at += got;
+        if got < want {
+            break;
         }
     }
     Ok(out)
@@ -244,10 +246,16 @@ impl FileHandle {
                 read_blob_range(file, byte_start as f64, (byte_start + byte_len) as f64).await
             }
             FileHandle::TauriPath(path) => {
-                crate::tauri_bridge::read_file_range(path, byte_start, byte_len).await
+                read_in_parts(byte_start, byte_len, |at, len| {
+                    crate::tauri_bridge::read_file_range(path, at, len)
+                })
+                .await
             }
             FileHandle::MediaStoreUri(uri) => {
-                read_media_store_range(uri, byte_start, byte_len).await
+                read_in_parts(byte_start, byte_len, |at, len| {
+                    read_media_store_range(uri, at, len)
+                })
+                .await
             }
             FileHandle::Bytes(b) => slice_bytes(b, byte_start, byte_start + byte_len),
         }
