@@ -128,7 +128,7 @@
           type: 'text',
           left: 16,
           top: rowsH + 3,
-          style: { text: 'Change in what BirdNET hears', fill: MUTED, fontSize: 10 },
+          style: { text: 'Change in phase space', fill: MUTED, fontSize: 10 },
         },
       ],
       series: [
