@@ -7,21 +7,23 @@
 //!
 //! - `Plain`: `max(g, 0.1)`.
 //! - `Smoothed`: `g` (at least 0) becomes the median of the 5 bins x 9 frames
-//!   round the cell, with the recording's first and last frame and the
-//!   lowest and highest bin repeated past the edges; that is capped at the
-//!   largest `g` of the cell's 3 x 3 neighbours that are inside the
-//!   recording; then floored at 0.1.
+//!   round the cell (or another odd number of frames, the start message's
+//!   `smooth_frames`; the app asks for 3 above 96 kHz), with the recording's
+//!   first and last frame and the lowest and highest bin repeated past the
+//!   edges; that is capped at the largest `g` of the cell's 3 x 3
+//!   neighbours that are inside the recording; then floored at 0.1.
 //! - `Heavy`: the smoothed gain before its floor, squared; then each bin's
 //!   gain falls by at most 0.16 dB from one frame to the next (it may rise
 //!   at once); then floored at 0.01.
 //!
 //! The smoothing and the release run over the gains of the whole recording,
-//! each frame's gain taken from the block whose own frame it is. A block's
-//! last 4 frames need the next block's first 4 frames, so [`GainChain`]
-//! gives out a block's gains 4 frames late, and the last block gives out
-//! everything left. The release carries each bin's gain from one block into
-//! the next. A recording held whole and one that arrives in pieces push the
-//! same blocks, so they get the same gains bit for bit.
+//! each frame's gain taken from the block whose own frame it is. With a
+//! median of 9 frames, a block's last 4 frames need the next block's first 4
+//! frames, so [`GainChain`] gives out a block's gains 4 frames late (1 frame
+//! late with 3 frames), and the last block gives out everything left. The
+//! release carries each bin's gain from one block into the next. A
+//! recording held whole and one that arrives in pieces push the same blocks,
+//! so they get the same gains bit for bit.
 //!
 //! With more than one channel, each channel is smoothed by itself, and every
 //! cell then takes the largest of the channels' smoothed gains; the floor,
@@ -34,14 +36,29 @@ use super::{BINS, GAIN_FLOOR};
 
 /// Bins each side of a cell that the median takes in.
 const MEDIAN_BINS: usize = 2;
-/// Frames each side of a cell that the median takes in.
-const MEDIAN_FRAMES: usize = 4;
-/// Cells in the median: 5 bins x 9 frames.
-const MEDIAN_CELLS: usize = (2 * MEDIAN_BINS + 1) * (2 * MEDIAN_FRAMES + 1);
+/// Fewest frames the median may take in. The cap reads the frame after the
+/// cell, so the chain must wait for at least one frame.
+pub const MIN_SMOOTH_FRAMES: u32 = 3;
+/// Most frames the median may take in.
+pub const MAX_SMOOTH_FRAMES: u32 = 31;
+/// Most cells in the median: 5 bins x 31 frames.
+const MAX_MEDIAN_CELLS: usize = (2 * MEDIAN_BINS + 1) * MAX_SMOOTH_FRAMES as usize;
 /// The heavy chain's gain floor (-40 dB).
 pub const HEAVY_FLOOR: f32 = 0.01;
 /// The most the heavy chain's gain falls from one frame to the next, in dB.
 pub const RELEASE_DB_PER_FRAME: f64 = 0.16;
+
+/// Checks a start message's `smooth_frames`: an odd number from
+/// [`MIN_SMOOTH_FRAMES`] to [`MAX_SMOOTH_FRAMES`].
+pub fn check_smooth_frames(frames: u32) -> Result<usize, String> {
+    if frames % 2 == 1 && (MIN_SMOOTH_FRAMES..=MAX_SMOOTH_FRAMES).contains(&frames) {
+        Ok(frames as usize)
+    } else {
+        Err(format!(
+            "smooth_frames must be an odd number from {MIN_SMOOTH_FRAMES} to {MAX_SMOOTH_FRAMES}, not {frames}"
+        ))
+    }
+}
 
 /// The gains for frames `first..first + count`, `count` values for each bin,
 /// bin after bin.
@@ -55,6 +72,10 @@ pub(super) struct Ready {
 /// module's notes.
 pub(super) struct GainChain {
     kind: DenoiseGain,
+    /// Frames each side of a cell that the median takes in: 4 for a median
+    /// of 9 frames, 1 for 3. Also how many frames late a block's gains are
+    /// given out.
+    half: usize,
     /// The next frame to give out.
     next: u64,
     /// The smoothed chains' `max(g, 0)` for frames `held_from..held_to`, one
@@ -70,9 +91,13 @@ pub(super) struct GainChain {
 }
 
 impl GainChain {
-    pub(super) fn new(kind: DenoiseGain) -> GainChain {
+    /// `frames` is the number of frames in the median, checked by
+    /// [`check_smooth_frames`]. The plain chain does not use it.
+    pub(super) fn new(kind: DenoiseGain, frames: usize) -> GainChain {
+        debug_assert!(check_smooth_frames(frames as u32).is_ok(), "{frames}");
         GainChain {
             kind,
+            half: frames / 2,
             next: 0,
             held: Vec::new(),
             held_from: 0,
@@ -111,21 +136,27 @@ impl GainChain {
         let limit = if last {
             self.held_to
         } else {
-            self.held_to
-                .saturating_sub(MEDIAN_FRAMES as u64)
-                .max(self.next)
+            self.held_to.saturating_sub(self.half as u64).max(self.next)
         };
         let ready = self.smoothed(limit);
-        // Frames from `limit - MEDIAN_FRAMES` on are still needed.
-        let keep_from = limit
-            .saturating_sub(MEDIAN_FRAMES as u64)
-            .max(self.held_from);
+        // Frames from `limit - half` on are still needed.
+        let keep_from = limit.saturating_sub(self.half as u64).max(self.held_from);
         let gone = ((keep_from - self.held_from) as usize) * BINS;
         for held in &mut self.held {
             held.drain(..gone);
         }
         self.held_from = keep_from;
         ready
+    }
+
+    /// The chain's kind.
+    pub(super) fn kind(&self) -> DenoiseGain {
+        self.kind
+    }
+
+    /// Frames in the median.
+    pub(super) fn frames(&self) -> usize {
+        2 * self.half + 1
     }
 
     /// Frames of gains held for the next block.
@@ -176,7 +207,11 @@ impl GainChain {
         let last_frame = self.held_to - 1;
         let mut shared = [0.0f32; BINS];
         let mut one = [0.0f32; BINS];
-        let mut cells = [0.0f32; MEDIAN_CELLS];
+        let half = self.half;
+        let window = 2 * half + 1;
+        let mut cells_store = [0.0f32; MAX_MEDIAN_CELLS];
+        let cells = &mut cells_store[..(2 * MEDIAN_BINS + 1) * window];
+        let middle = cells.len() / 2;
         for n in 0..count {
             let t = first + n as u64;
             for (c, held) in self.held.iter().enumerate() {
@@ -184,12 +219,16 @@ impl GainChain {
                     let at = (frame - self.held_from) as usize * BINS;
                     &held[at..at + BINS]
                 };
-                // The median's 9 frames, the first and last frame repeated
-                // past the recording's ends.
-                let median_columns: [&[f32]; 2 * MEDIAN_FRAMES + 1] = std::array::from_fn(|i| {
-                    let frame = (t + i as u64).saturating_sub(MEDIAN_FRAMES as u64);
-                    column(frame.min(last_frame))
-                });
+                // The median's frames, the first and last frame repeated
+                // past the recording's ends. Only the first `window` are used.
+                let median_columns: [&[f32]; MAX_SMOOTH_FRAMES as usize] =
+                    std::array::from_fn(|i| {
+                        if i >= window {
+                            return &[][..];
+                        }
+                        let frame = (t + i as u64).saturating_sub(half as u64);
+                        column(frame.min(last_frame))
+                    });
                 // The cap's frames, only those inside the recording.
                 let before = (t > 0).then(|| column(t - 1));
                 let after = (t < last_frame).then(|| column(t + 1));
@@ -206,16 +245,14 @@ impl GainChain {
                         continue;
                     }
                     let mut k = 0;
-                    for col in &median_columns {
+                    for col in &median_columns[..window] {
                         for d in 0..=2 * MEDIAN_BINS {
                             let b = (bin + d).saturating_sub(MEDIAN_BINS).min(BINS - 1);
                             cells[k] = col[b];
                             k += 1;
                         }
                     }
-                    let median = *cells
-                        .select_nth_unstable_by(MEDIAN_CELLS / 2, f32::total_cmp)
-                        .1;
+                    let median = *cells.select_nth_unstable_by(middle, f32::total_cmp).1;
                     *out = median.min(cap);
                 }
                 if c == 0 {
@@ -258,10 +295,22 @@ mod tests {
             .collect()
     }
 
-    /// The chain's gains for `raws` pushed as blocks of the given lengths.
+    /// The chain's gains for `raws` pushed as blocks of the given lengths,
+    /// with the median of 9 frames.
     fn run(kind: DenoiseGain, raws: &[Vec<f32>], frames: usize, blocks: &[usize]) -> Vec<f32> {
+        run_with(kind, 9, raws, frames, blocks)
+    }
+
+    /// [`run`] with a median of `window` frames.
+    fn run_with(
+        kind: DenoiseGain,
+        window: usize,
+        raws: &[Vec<f32>],
+        frames: usize,
+        blocks: &[usize],
+    ) -> Vec<f32> {
         assert_eq!(blocks.iter().sum::<usize>(), frames);
-        let mut chain = GainChain::new(kind);
+        let mut chain = GainChain::new(kind, window);
         let mut out = vec![f32::NAN; BINS * frames];
         let mut from = 0;
         for (i, own) in blocks.iter().enumerate() {
@@ -281,6 +330,12 @@ mod tests {
     /// The smoothed gain (no floor) of one channel over the whole map,
     /// worked out the slow way: sort all 45 values, take the 23rd.
     fn slow_smooth(g: &[f32], frames: usize) -> Vec<f32> {
+        slow_smooth_with(g, frames, 9)
+    }
+
+    /// [`slow_smooth`] with a median of 5 bins x `window` frames.
+    fn slow_smooth_with(g: &[f32], frames: usize, window: usize) -> Vec<f32> {
+        let half = (window / 2) as isize;
         let at = |bin: isize, t: isize| {
             let bin = bin.clamp(0, BINS as isize - 1) as usize;
             let t = t.clamp(0, frames as isize - 1) as usize;
@@ -290,11 +345,12 @@ mod tests {
             let (bin, t) = (bin as isize, t as isize);
             let mut cells = Vec::new();
             for db in -2..=2 {
-                for dt in -4..=4 {
+                for dt in -half..=half {
                     cells.push(at(bin + db, t + dt));
                 }
             }
             cells.sort_by(f32::total_cmp);
+            let middle = cells.len() / 2;
             let mut cap = 0.0f32;
             for db in -1..=1 {
                 for dt in -1..=1 {
@@ -304,7 +360,7 @@ mod tests {
                     }
                 }
             }
-            cells[22].min(cap)
+            cells[middle].min(cap)
         })
     }
 
@@ -415,10 +471,15 @@ mod tests {
     /// The whole chain worked out the slow way, with every median taken:
     /// each channel smoothed, the largest of the channels, then the floor,
     /// or the square, the release and the floor.
-    fn slow_chain(kind: DenoiseGain, channels: &[Vec<f32>], frames: usize) -> Vec<f32> {
+    fn slow_chain(
+        kind: DenoiseGain,
+        window: usize,
+        channels: &[Vec<f32>],
+        frames: usize,
+    ) -> Vec<f32> {
         let mut s = vec![0.0f32; BINS * frames];
         for g in channels {
-            for (s, v) in s.iter_mut().zip(slow_smooth(g, frames)) {
+            for (s, v) in s.iter_mut().zip(slow_smooth_with(g, frames, window)) {
                 *s = s.max(v);
             }
         }
@@ -470,11 +531,18 @@ mod tests {
         };
         let (left, right) = (quiet(9), quiet(13));
         for kind in [DenoiseGain::Smoothed, DenoiseGain::Heavy] {
-            for channels in [vec![left.clone()], vec![left.clone(), right.clone()]] {
-                let expected = slow_chain(kind, &channels, frames);
-                let out = run(kind, &channels, frames, &[1024, 1024, 452]);
-                let differ = out.iter().zip(&expected).filter(|(a, b)| a != b).count();
-                assert_eq!(differ, 0, "{kind:?}, {} channels", channels.len());
+            for window in [9, 3] {
+                for channels in [vec![left.clone()], vec![left.clone(), right.clone()]] {
+                    let expected = slow_chain(kind, window, &channels, frames);
+                    let out = run_with(kind, window, &channels, frames, &[1024, 1024, 452]);
+                    let differ = out.iter().zip(&expected).filter(|(a, b)| a != b).count();
+                    assert_eq!(
+                        differ,
+                        0,
+                        "{kind:?}, {window} frames, {} channels",
+                        channels.len()
+                    );
+                }
             }
         }
     }
@@ -545,6 +613,85 @@ mod tests {
         // Away from the first and last frames, which repeat.
         for t in 8..frames - 8 {
             assert_eq!(out[100 * frames + t], GAIN_FLOOR, "frame {t}");
+        }
+    }
+
+    #[test]
+    fn three_frames_keep_a_call_two_frames_long() {
+        // Bins 100 to 104 at 0.9 for frames 10 and 11 (256 samples, 0.7 ms
+        // at 384 kHz), the rest at 0.05. A median of 5 bins x 3 frames has 15
+        // cells and keeps 0.9 where at least 8 of them are in the band.
+        let frames = 30;
+        let inside = |bin: usize, t: usize| (100..105).contains(&bin) && (10..12).contains(&t);
+        let g = map(frames, |bin, t| if inside(bin, t) { 0.9 } else { 0.05 });
+        let out = run_with(DenoiseGain::Smoothed, 3, &[g.clone()], frames, &[frames]);
+        let at = |bin: usize, t: usize| out[bin * frames + t];
+        assert_eq!(at(102, 10), 0.9, "5 bins x 2 frames: 10 of 15 cells");
+        assert_eq!(at(102, 11), 0.9, "10 of 15 cells");
+        assert_eq!(at(101, 10), 0.9, "4 bins x 2 frames: 8 of 15 cells");
+        assert_eq!(at(100, 10), GAIN_FLOOR, "3 bins x 2 frames: 6 of 15 cells");
+        assert_eq!(at(102, 9), GAIN_FLOOR, "5 bins x 1 frame: 5 of 15 cells");
+        assert_eq!(at(102, 12), GAIN_FLOOR, "5 of 15 cells");
+        assert_eq!(at(50, 10), GAIN_FLOOR);
+        // A median of 9 frames has 45 cells, only 10 of them in the band, so
+        // it takes the call away.
+        let out = run_with(DenoiseGain::Smoothed, 9, &[g], frames, &[frames]);
+        assert_eq!(out[102 * frames + 10], GAIN_FLOOR);
+    }
+
+    #[test]
+    fn three_frames_in_blocks_and_pieces_give_the_gains_of_the_map_held_whole() {
+        // As `blocks_give_the_gains_of_the_map_held_whole`, with the median of
+        // 3 frames, and also with the map pushed in pieces of 1 to 7 frames.
+        let frames = 3000;
+        let mut state = 0x6a09_e667_f3bc_c908u64;
+        let g = map(frames, |_, _| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 40) as f32 / (1u64 << 24) as f32 * 1.2 - 0.2
+        });
+        let expected: Vec<f32> = slow_smooth_with(&g, frames, 3)
+            .iter()
+            .map(|v| v.max(GAIN_FLOOR))
+            .collect();
+        let whole = run_with(DenoiseGain::Smoothed, 3, &[g.clone()], frames, &[frames]);
+        assert!(whole == expected);
+        let mut pieces = Vec::new();
+        let mut left = frames;
+        for size in [1, 2, 3, 7, 1, 1, 5].iter().cycle() {
+            let size = (*size).min(left);
+            pieces.push(size);
+            left -= size;
+            if left == 0 {
+                break;
+            }
+        }
+        for kind in [DenoiseGain::Smoothed, DenoiseGain::Heavy] {
+            let whole = run_with(kind, 3, &[g.clone()], frames, &[frames]);
+            for blocks in [
+                &[1024, 1024, 952][..],
+                &[1024, 1024, 950, 2],
+                &[1024, 1024, 951, 1],
+                &[1, 1023, 1976],
+                &pieces,
+            ] {
+                assert!(
+                    run_with(kind, 3, &[g.clone()], frames, blocks) == whole,
+                    "{kind:?} {:?}",
+                    &blocks[..blocks.len().min(5)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_number_of_frames_is_odd_and_from_3_to_31() {
+        assert_eq!(check_smooth_frames(3), Ok(3));
+        assert_eq!(check_smooth_frames(9), Ok(9));
+        assert_eq!(check_smooth_frames(31), Ok(31));
+        for bad in [0, 1, 2, 4, 8, 33, u32::MAX - 1] {
+            assert!(check_smooth_frames(bad).is_err(), "{bad}");
         }
     }
 

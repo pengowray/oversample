@@ -11,9 +11,9 @@
 //! `Denoiser::noise_scale`.
 //!
 //! The audio is used sample for sample at whatever rate it has. The network
-//! was trained that way on bat recordings from 250 to 500 kHz. It sees bins
-//! and frames, not hertz, and it also lowers the hiss in bird recordings at
-//! 22.05 to 48 kHz (the "Bird pilot" section of that project's README).
+//! (v2, `oversample-denoise-v2.onnx`) was trained that way on bat recordings
+//! at 250 to 500 kHz and bird recordings at 22 to 96 kHz. It sees bins and
+//! frames, not hertz.
 
 use realfft::num_complex::Complex;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
@@ -24,8 +24,9 @@ use tract_onnx::prelude::*;
 pub mod chain;
 pub mod stream;
 
-pub use chain::DenoiseGain;
 use chain::GainChain;
+pub use chain::{check_smooth_frames, DenoiseGain};
+pub use oversample_ipc::classifier::DEFAULT_SMOOTH_FRAMES;
 
 /// STFT window length in samples.
 pub const WINDOW: usize = 512;
@@ -421,7 +422,7 @@ impl Denoiser {
             next: 0,
             window_sum: vec![0.0; padded_len],
             tools: Tools::new(),
-            chain: GainChain::new(DenoiseGain::Plain),
+            chain: GainChain::new(DenoiseGain::Plain, DEFAULT_SMOOTH_FRAMES as usize),
         };
         for c in 0..channels {
             let mut padded = if channels == 1 {
@@ -452,7 +453,16 @@ impl Denoiser {
     /// it the chain is [`DenoiseGain::Plain`]. Called before the first step.
     pub fn with_gain(mut self, gain: DenoiseGain) -> Denoiser {
         debug_assert_eq!(self.next, 0, "the chain is chosen before the first step");
-        self.chain = GainChain::new(gain);
+        self.chain = GainChain::new(gain, self.chain.frames());
+        self
+    }
+
+    /// The same recording with a median of `frames` frames in the smoothed
+    /// and heavy chains, checked by [`check_smooth_frames`]. Without it the
+    /// median takes [`DEFAULT_SMOOTH_FRAMES`]. Called before the first step.
+    pub fn with_smooth_frames(mut self, frames: usize) -> Denoiser {
+        debug_assert_eq!(self.next, 0, "the chain is chosen before the first step");
+        self.chain = GainChain::new(self.chain.kind(), frames);
         self
     }
 

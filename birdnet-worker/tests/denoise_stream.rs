@@ -5,7 +5,9 @@
 //! `denoise_parity.rs`), and is skipped when the folder is missing.
 
 use birdnet_worker::session::{Attached, Session};
-use oversample_ipc::classifier::{DenoiseGain, FromWorker, ModelPart, ToWorker};
+use oversample_ipc::classifier::{
+    DenoiseGain, FromWorker, ModelPart, ToWorker, DEFAULT_SMOOTH_FRAMES,
+};
 use std::path::PathBuf;
 
 fn parity_dir() -> Option<PathBuf> {
@@ -75,12 +77,17 @@ impl Worker {
     fn whole(&mut self, input: &[f32], channels: u32) -> Vec<f32> {
         let gain = self.gain;
         let start = if channels == 1 {
-            ToWorker::DenoiseStart { run: 7, gain }
+            ToWorker::DenoiseStart {
+                run: 7,
+                gain,
+                smooth_frames: DEFAULT_SMOOTH_FRAMES,
+            }
         } else {
             ToWorker::DenoiseStartChannels {
                 run: 7,
                 channels,
                 gain,
+                smooth_frames: DEFAULT_SMOOTH_FRAMES,
             }
         };
         let started = self.send(start, Worker::samples(input));
@@ -107,6 +114,7 @@ impl Worker {
                 channels,
                 frames: frames as f64,
                 gain: self.gain,
+                smooth_frames: DEFAULT_SMOOTH_FRAMES,
             },
             Attached::default(),
         );

@@ -15,7 +15,7 @@
 
 use super::{
     output_sample, scale_from_power, scale_stride, too_short, usable_scale, DenoiseGain, GainChain,
-    MaskModel, Tools, BLOCK, CONTEXT, HOP, MIN_SAMPLES, SILENT, WINDOW,
+    MaskModel, Tools, BLOCK, CONTEXT, DEFAULT_SMOOTH_FRAMES, HOP, MIN_SAMPLES, SILENT, WINDOW,
 };
 
 const HALF: usize = WINDOW / 2;
@@ -143,6 +143,8 @@ pub struct StreamDenoiser {
     len: u64,
     frames: u64,
     gain: DenoiseGain,
+    /// Frames in the smoothed and heavy chains' median.
+    smooth_frames: usize,
     stage: Stage,
 }
 
@@ -168,6 +170,7 @@ impl StreamDenoiser {
             len,
             frames: 1 + len / HOP as u64,
             gain: DenoiseGain::Plain,
+            smooth_frames: DEFAULT_SMOOTH_FRAMES as usize,
             stage: Stage::Measuring(meters),
         })
     }
@@ -176,6 +179,13 @@ impl StreamDenoiser {
     /// [`super::Denoiser::with_gain`]. Called before the first piece.
     pub fn with_gain(mut self, gain: DenoiseGain) -> StreamDenoiser {
         self.gain = gain;
+        self
+    }
+
+    /// The same recording with a median of `frames` frames, as
+    /// [`super::Denoiser::with_smooth_frames`]. Called before the first piece.
+    pub fn with_smooth_frames(mut self, frames: usize) -> StreamDenoiser {
+        self.smooth_frames = frames;
         self
     }
 
@@ -272,7 +282,7 @@ impl StreamDenoiser {
             next: 0,
             emitted: HALF as u64,
             scales,
-            chain: GainChain::new(self.gain),
+            chain: GainChain::new(self.gain, self.smooth_frames),
         });
         Ok(true)
     }
@@ -430,11 +440,17 @@ mod tests {
         left.iter().zip(right).flat_map(|(l, r)| [*l, *r]).collect()
     }
 
-    /// The recording held whole.
-    fn whole(samples: &[f32], channels: usize, gain: DenoiseGain) -> (Vec<f32>, Vec<f32>) {
+    /// The recording held whole, with a median of `window` frames.
+    fn whole(
+        samples: &[f32],
+        channels: usize,
+        gain: DenoiseGain,
+        window: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
         let mut d = Denoiser::interleaved(samples, channels)
             .unwrap()
-            .with_gain(gain);
+            .with_gain(gain)
+            .with_smooth_frames(window);
         let scales = d.scales();
         while d.step(&mut Neighbours).unwrap() {}
         (scales, d.finish())
@@ -446,10 +462,12 @@ mod tests {
         channels: usize,
         piece: usize,
         gain: DenoiseGain,
+        window: usize,
     ) -> (Vec<f32>, Vec<f32>) {
         let mut d = StreamDenoiser::new((samples.len() / channels) as u64, channels)
             .unwrap()
-            .with_gain(gain);
+            .with_gain(gain)
+            .with_smooth_frames(window);
         let pieces: Vec<&[f32]> = samples.chunks(piece * channels).collect();
         for (i, p) in pieces.iter().enumerate() {
             let measured = d.measure(p).unwrap();
@@ -470,30 +488,33 @@ mod tests {
     }
 
     /// Every piece size gives the samples of the recording held whole, bit
-    /// for bit, with each of the gain chains.
+    /// for bit, with each of the gain chains, and the smoothed chains with a
+    /// median of 9 frames and of 3.
     fn same_in_pieces(samples: &[f32], channels: usize, pieces: &[usize]) {
-        for gain in [
-            DenoiseGain::Plain,
-            DenoiseGain::Smoothed,
-            DenoiseGain::Heavy,
+        for (gain, window) in [
+            (DenoiseGain::Plain, 9),
+            (DenoiseGain::Smoothed, 9),
+            (DenoiseGain::Heavy, 9),
+            (DenoiseGain::Smoothed, 3),
+            (DenoiseGain::Heavy, 3),
         ] {
-            let (scales, expected) = whole(samples, channels, gain);
+            let (scales, expected) = whole(samples, channels, gain, window);
             assert_eq!(expected.len(), samples.len());
             for &piece in pieces {
-                let (piece_scales, out) = in_pieces(samples, channels, piece, gain);
+                let (piece_scales, out) = in_pieces(samples, channels, piece, gain, window);
                 assert_eq!(
                     bits(&piece_scales),
                     bits(&scales),
-                    "{gain:?} scales, pieces of {piece}"
+                    "{gain:?} {window} frames: scales, pieces of {piece}"
                 );
                 assert_eq!(
                     out.len(),
                     expected.len(),
-                    "{gain:?} length, pieces of {piece}"
+                    "{gain:?} {window} frames: length, pieces of {piece}"
                 );
                 assert!(
                     bits(&out) == bits(&expected),
-                    "{gain:?} samples, pieces of {piece}"
+                    "{gain:?} {window} frames: samples, pieces of {piece}"
                 );
             }
         }
@@ -564,14 +585,17 @@ mod tests {
     #[test]
     fn what_the_denoiser_holds_does_not_grow_with_the_recording() {
         let x = noise(HOP * 6 * BLOCK, 8);
-        for gain in [
-            DenoiseGain::Plain,
-            DenoiseGain::Smoothed,
-            DenoiseGain::Heavy,
+        for (gain, window) in [
+            (DenoiseGain::Plain, 9),
+            (DenoiseGain::Smoothed, 9),
+            (DenoiseGain::Heavy, 9),
+            (DenoiseGain::Smoothed, 3),
+            (DenoiseGain::Heavy, 3),
         ] {
             let mut d = StreamDenoiser::new(x.len() as u64, 1)
                 .unwrap()
-                .with_gain(gain);
+                .with_gain(gain)
+                .with_smooth_frames(window);
             for p in x.chunks(CHUNK) {
                 d.measure(p).unwrap();
             }
@@ -584,9 +608,10 @@ mod tests {
                 }
             }
             assert!(most < 3 * CHUNK, "{gain:?}: {most} samples held");
+            // The frames each side of a cell: 4 with 9 frames, 1 with 3.
             assert!(
-                most_gains <= 8,
-                "{gain:?}: gains of {most_gains} frames held"
+                most_gains <= (window - 1) as u64,
+                "{gain:?} {window} frames: gains of {most_gains} frames held"
             );
         }
     }

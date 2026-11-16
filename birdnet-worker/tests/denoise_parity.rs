@@ -7,7 +7,9 @@
 //! missing. `DENOISE_PARITY_DIR` names another folder.
 
 use birdnet_worker::session::{Attached, Session};
-use oversample_ipc::classifier::{DenoiseGain, FromWorker, ModelPart, ToWorker};
+use oversample_ipc::classifier::{
+    DenoiseGain, FromWorker, ModelPart, ToWorker, DEFAULT_SMOOTH_FRAMES,
+};
 use std::path::PathBuf;
 
 fn parity_dir() -> Option<PathBuf> {
@@ -66,6 +68,7 @@ fn the_worker_matches_the_python_reference() {
         ToWorker::DenoiseStart {
             run: 7,
             gain: DenoiseGain::Plain,
+            smooth_frames: DEFAULT_SMOOTH_FRAMES,
         },
         Attached {
             samples: Some(input.clone()),

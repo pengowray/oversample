@@ -9,7 +9,7 @@
 //! - [`resample`]: band-limited resampling to the model rate (rubato), with the
 //!   resampler's delay removed so times line up.
 //! - [`windows`]: cutting the resampled audio into the method's windows.
-//! - [`denoise`]: the learned bat-call denoiser.
+//! - [`denoise`]: the learned denoiser for bat and bird recordings.
 //! - [`engine`]: BirdNET's backbone and the regional heads in tract.
 //! - [`perch`]: Perch's embedding model in tract and its classifier.
 //! - [`session`]: the worker's state and message handling, browser-free so the

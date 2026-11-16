@@ -120,8 +120,9 @@ pub enum ModelPart {
     PerchEmbedding,
     /// Perch 2.0's int8 classifier.
     PerchClassifier,
-    /// The learned bat-call denoiser. It is not a classifier and runs in a
-    /// worker of its own (see `src/denoise.rs` in the app).
+    /// The learned denoiser for bat and bird recordings. It is not a
+    /// classifier and runs in a worker of its own (see `src/denoise.rs` in the
+    /// app).
     Denoiser,
 }
 
@@ -337,13 +338,23 @@ pub enum DenoiseGain {
     /// `max(g, 0.1)`: the gain as the network gives it, at least -20 dB.
     #[default]
     Plain,
-    /// `g` smoothed by the median of 5 bins x 9 frames, capped at the largest
+    /// `g` smoothed by the median of 5 bins x `smooth_frames` frames (a field
+    /// of the start message, 9 when it is left out), capped at the largest
     /// `g` of the cell's 3 x 3 neighbours, at least -20 dB. It leaves fewer
     /// patches of noise.
     Smoothed,
     /// The smoothed gain squared, falling by at most 0.16 dB a frame, at
     /// least -40 dB. It takes out more of the noise.
     Heavy,
+}
+
+/// Frames in the smoothed and heavy chains' median when a start message does
+/// not say: 9 frames of 128 samples. The app asks for 3 at sample rates over
+/// 96 kHz, where 9 frames are longer than a short bat call.
+pub const DEFAULT_SMOOTH_FRAMES: u32 = 9;
+
+fn default_smooth_frames() -> u32 {
+    DEFAULT_SMOOTH_FRAMES
 }
 
 /// App to worker.
@@ -383,11 +394,15 @@ pub enum ToWorker {
     /// Take a whole recording ([`attach::SAMPLES`], mono, at its own rate) for
     /// the loaded denoiser. Any recording before it is dropped. Answered by
     /// `DenoiseProgress` with `done` 0. `gain` picks what is done to the
-    /// network's gain.
+    /// network's gain. `smooth_frames` is the number of frames in the
+    /// smoothed and heavy chains' median: an odd number from 3 to 31, 9 when
+    /// it is left out. The plain chain does not use it.
     DenoiseStart {
         run: u32,
         #[serde(default)]
         gain: DenoiseGain,
+        #[serde(default = "default_smooth_frames")]
+        smooth_frames: u32,
     },
     /// `DenoiseStart` for a recording of `channels` channels, its samples
     /// interleaved in [`attach::SAMPLES`]. Every channel gets the same gains,
@@ -397,6 +412,8 @@ pub enum ToWorker {
         channels: u32,
         #[serde(default)]
         gain: DenoiseGain,
+        #[serde(default = "default_smooth_frames")]
+        smooth_frames: u32,
     },
     /// Denoise the next block. Answered by `DenoiseProgress`, or by `Denoised`
     /// after the last block. One block per message, so a `Cancel` between two
@@ -409,13 +426,16 @@ pub enum ToWorker {
     /// `DenoiseMeasure` pieces, then as `DenoisePiece` pieces. The denoised
     /// samples are the same as `DenoiseStart` gives for the whole recording.
     /// `frames` is a float because a 64-bit integer does not cross to
-    /// JavaScript as a number. `gain` as for `DenoiseStart`.
+    /// JavaScript as a number. `gain` and `smooth_frames` as for
+    /// `DenoiseStart`.
     DenoiseStreamStart {
         run: u32,
         channels: u32,
         frames: f64,
         #[serde(default)]
         gain: DenoiseGain,
+        #[serde(default = "default_smooth_frames")]
+        smooth_frames: u32,
     },
     /// The recording's next samples ([`attach::SAMPLES`], channels
     /// interleaved), for the noise scale, which is measured over the whole
@@ -489,6 +509,41 @@ mod tests {
         assert_eq!(week_of(1, 31), 4);
         assert_eq!(week_of(6, 1), 21);
         assert_eq!(week_of(12, 31), 48);
+    }
+
+    #[test]
+    fn a_start_message_without_smooth_frames_gets_9() {
+        let msg: ToWorker =
+            serde_json::from_str(r#"{"cmd":"DenoiseStart","run":1,"gain":"Smoothed"}"#).unwrap();
+        assert!(matches!(
+            msg,
+            ToWorker::DenoiseStart {
+                gain: DenoiseGain::Smoothed,
+                smooth_frames: 9,
+                ..
+            }
+        ));
+        let msg: ToWorker = serde_json::from_str(
+            r#"{"cmd":"DenoiseStreamStart","run":1,"channels":2,"frames":10.0,"smooth_frames":3}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            msg,
+            ToWorker::DenoiseStreamStart {
+                gain: DenoiseGain::Plain,
+                smooth_frames: 3,
+                ..
+            }
+        ));
+        let msg: ToWorker =
+            serde_json::from_str(r#"{"cmd":"DenoiseStartChannels","run":1,"channels":2}"#).unwrap();
+        assert!(matches!(
+            msg,
+            ToWorker::DenoiseStartChannels {
+                smooth_frames: DEFAULT_SMOOTH_FRAMES,
+                ..
+            }
+        ));
     }
 
     #[test]

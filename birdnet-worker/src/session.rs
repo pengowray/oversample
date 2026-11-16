@@ -2,7 +2,7 @@
 //! native tests drive the same code the Web Worker runs.
 
 use crate::denoise::stream::StreamDenoiser;
-use crate::denoise::{Denoiser, TractMask};
+use crate::denoise::{check_smooth_frames, Denoiser, TractMask};
 use crate::engine::{top_scores, Backbone, Head};
 use crate::perch;
 use crate::windows::{Window, Windower};
@@ -185,8 +185,17 @@ impl Session {
                     self.streaming = None;
                 }
             }
-            ToWorker::DenoiseStart { run, gain }
-            | ToWorker::DenoiseStartChannels { run, gain, .. } => {
+            ToWorker::DenoiseStart {
+                run,
+                gain,
+                smooth_frames,
+            }
+            | ToWorker::DenoiseStartChannels {
+                run,
+                gain,
+                smooth_frames,
+                ..
+            } => {
                 let channels = match msg {
                     ToWorker::DenoiseStartChannels { channels, .. } => channels as usize,
                     _ => 1,
@@ -198,9 +207,12 @@ impl Session {
                     return;
                 }
                 let samples = att.samples.as_deref().unwrap_or_default();
-                match Denoiser::interleaved(samples, channels) {
+                let started = check_smooth_frames(smooth_frames).and_then(|smooth_frames| {
+                    Denoiser::interleaved(samples, channels)
+                        .map(|d| d.with_gain(gain).with_smooth_frames(smooth_frames))
+                });
+                match started {
                     Ok(d) => {
-                        let d = d.with_gain(gain);
                         let total = d.blocks() as u32;
                         self.denoising = Some((run, d));
                         out.send(
@@ -247,6 +259,7 @@ impl Session {
                 channels,
                 frames,
                 gain,
+                smooth_frames,
             } => {
                 self.denoising = None;
                 self.streaming = None;
@@ -256,7 +269,10 @@ impl Session {
                 }
                 let whole = frames.is_finite() && frames >= 0.0 && frames.fract() == 0.0;
                 let started = if whole {
-                    StreamDenoiser::new(frames as u64, channels as usize).map(|d| d.with_gain(gain))
+                    check_smooth_frames(smooth_frames).and_then(|smooth_frames| {
+                        StreamDenoiser::new(frames as u64, channels as usize)
+                            .map(|d| d.with_gain(gain).with_smooth_frames(smooth_frames))
+                    })
                 } else {
                     Err(format!("{frames} is not a number of samples"))
                 };
