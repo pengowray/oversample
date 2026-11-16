@@ -187,6 +187,7 @@ pub fn RightSidebar() -> impl IntoView {
                 RightSidebarTab::Analysis => view! { <SidebarAnalysisPanel /> }.into_any(),
                 RightSidebarTab::Harmonics => view! { <HarmonicsPanel /> }.into_any(),
                 RightSidebarTab::CallDetection => view! { <CallDetectionPanel /> }.into_any(),
+                RightSidebarTab::LiveExplorer => view! { <crate::components::live_explorer::LiveExplorerPanel /> }.into_any(),
                 RightSidebarTab::Metadata => view! { <MetadataPanel /> }.into_any(),
                 RightSidebarTab::DebugLog => view! { <DebugPanel /> }.into_any(),
             }}

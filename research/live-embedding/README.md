@@ -84,7 +84,8 @@ In the app, the live view and the classifier agreed on the test recordings:
   axis has a name a user would recognise, so none were added. PCA on
   embeddings of recordings was not tried; the change trace already shows "the
   sound is changing", which was the remaining use for unnamed axes.
-- **UMAP with out-of-sample projection.** Not built. It kept less of the
+- **UMAP of the class rows, with new readings projected onto it** (for the
+  live view's map). Not built. It kept less of the
   genus grouping than t-SNE (0.19 against 0.33 same-genus share), shipping
   the fitted model to the browser costs megabytes, and placing the marker from
   the class scores already puts it among the right species (it agrees with
@@ -93,6 +94,49 @@ In the app, the live view and the classifier agreed on the test recordings:
 - **Fixed non-bird rows in the strip** (see 2).
 - **A row label column.** The sidebar is too narrow; names are written over
   the left end of each row instead.
+
+## Live explorer tab
+
+A separate right-sidebar tab, "Live explorer (beta)", for exploring the
+readings rather than reading off a species (`src/live_explorer.rs`,
+`live-explorer.js`, `src/components/live_explorer.rs`). It shares the live
+view's worker: the worker runs while either view is shown, and the tab keeps
+the last 5 minutes of readings (1,200). Panels:
+
+1. **Frequency peaks**: Welch power spectrum of the same last 3 s
+   (`oversample_core::dsp::psd`, about 25 Hz per bin, every 0.5 s), with the
+   strongest peaks marked. Works without BirdNET and for bat recordings. The
+   axis ends at the highest frequency within 40 dB of the loudest bin.
+2. **Top classes now**: the newest reading's scores of 0.02 or more, up to 15,
+   with the minimum confidence as a dashed line.
+3. **This session's readings**: every reading as a dot. PCA is fitted on the
+   session's own embeddings (refitted as the session grows by a tenth, with
+   axis signs kept, so the picture does not flip), and each new reading is
+   projected. On the Pauraque recording PC1 and PC2 hold 36% and 18% of the
+   variation, against 1.8% and 1.3% for PCA of the class rows: fitted on one
+   recording, the first axes do separate its sounds (call against gap).
+   "UMAP" runs umap-js (vendored, MIT, loaded on first use) on the session's
+   embeddings once, as a snapshot; it needs 10 or more readings. This is a
+   different use from the class-row UMAP dropped above: it costs 83 KB of
+   script and a second or two, only when asked for.
+4. **Similarity, last 15 s**: cosine similarity between every pair of the
+   last 60 readings. A repeated call shows as bright blocks away from the
+   diagonal. The colour scale starts at the lowest similarity in view.
+5. **Embedding, last 15 s**: the 48 of the 1,024 values with the most variance
+   in the last 60 readings, one row each, as z-scores per row (blue below the
+   row's mean, amber above).
+
+Redraws are spaced (spectrum 0.45 s, map 0.9 s, the two heatmaps 1.5 s):
+redrawing all five at every reading dropped 4% of playback frames; spaced, the
+Pauraque test dropped 6 of 1,117 frames, and the bat and duck tests none.
+
+Each reading covers 3 s, so a short call changes the embedding twice: when it
+enters the window and 3 s later when it leaves. The change trace and the
+similarity matrix both show this double step.
+
+Not done yet: adding the file's classifier windows
+(`state.classifier.embeddings()`) to the session map, which share the same
+space (see the parity test).
 
 ## Limits
 

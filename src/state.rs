@@ -597,6 +597,7 @@ pub enum RightSidebarTab {
     Analysis,
     Harmonics,
     CallDetection,
+    LiveExplorer,
     DebugLog,
 }
 
@@ -610,6 +611,7 @@ impl RightSidebarTab {
             Self::Analysis => "Data analysis",
             Self::Harmonics => "Harmonics (beta)",
             Self::CallDetection => "Call detection",
+            Self::LiveExplorer => "Live explorer (beta)",
             Self::DebugLog => "Debug Log",
         }
     }
@@ -622,6 +624,7 @@ impl RightSidebarTab {
         Self::CallDetection,
         Self::Analysis,
         Self::Harmonics,
+        Self::LiveExplorer,
         Self::Export,
         Self::DebugLog,
     ];

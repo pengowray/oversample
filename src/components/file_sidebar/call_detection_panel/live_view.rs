@@ -15,15 +15,10 @@ pub(super) fn LiveView() -> impl IntoView {
     let state = expect_context::<AppState>();
     let on = move || state.classifier.live_on().get();
     if state.classifier.live_on().get_untracked() {
-        live_embedding::set_enabled(state, true);
+        live_embedding::set_user(state, live_embedding::LIVE_VIEW, true);
     }
-    on_cleanup(move || {
-        if state.classifier.live_on().get_untracked() {
-            // Stop the worker but remember the switch for when the tab opens again.
-            live_embedding::set_enabled(state, false);
-            state.classifier.live_on().set(true);
-        }
-    });
+    // Leaving the tab stops this view's readings; the switch is remembered.
+    on_cleanup(move || live_embedding::set_user(state, live_embedding::LIVE_VIEW, false));
 
     // Start once BirdNET has been downloaded, if the switch was turned on before.
     Effect::new(move |_| {
@@ -36,8 +31,8 @@ pub(super) fn LiveView() -> impl IntoView {
             .classifier
             .live()
             .with_untracked(|s| *s == LiveStatus::NeedsDownload);
-        if ready && waiting && state.classifier.live_on().get_untracked() {
-            live_embedding::set_enabled(state, true);
+        if ready && waiting {
+            live_embedding::restart(state);
         }
     });
 

@@ -115,6 +115,43 @@ thread_local! {
     static LAST_READING: Cell<f64> = const { Cell::new(0.0) };
     /// Sample rate of the audio last sent.
     static RATE: Cell<u32> = const { Cell::new(0) };
+    /// Which views want readings ([`LIVE_VIEW`], [`EXPLORER`]). The worker
+    /// runs while this is not 0.
+    static USERS: Cell<u8> = const { Cell::new(0) };
+    /// Readings of this session for the Live explorer: embedding and top
+    /// classes, the newest last, at most [`SESSION_MAX`].
+    static SESSION: RefCell<VecDeque<SessionPoint>> = const { RefCell::new(VecDeque::new()) };
+    /// The explorer's chart element, while its tab is shown.
+    static EXPLORER_EL: RefCell<Option<web_sys::HtmlElement>> = const { RefCell::new(None) };
+    /// Power spectrum of the last 3 s, for the explorer.
+    static SPECTRUM: RefCell<Option<Spectrum>> = const { RefCell::new(None) };
+    static LAST_SPECTRUM: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+}
+
+/// The live view in the Call detection tab.
+pub const LIVE_VIEW: u8 = 1;
+/// The Live explorer tab.
+pub const EXPLORER: u8 = 2;
+/// Readings kept for the explorer: 5 minutes at 4 a second.
+pub const SESSION_MAX: usize = 1200;
+/// Shortest gap between two spectra.
+const SPECTRUM_GAP_MS: f64 = 500.0;
+
+/// One reading kept for the session.
+pub struct SessionPoint {
+    /// `performance.now()` in ms.
+    pub t: f64,
+    pub embedding: Vec<f32>,
+    /// The top 5 classes and their scores.
+    pub top: Vec<(usize, f32)>,
+    /// All scores of the newest reading only (kept for the explorer's bars).
+    pub scores: Option<Vec<f32>>,
+}
+
+/// Power spectrum of the last 3 s.
+pub struct Spectrum {
+    pub rate: u32,
+    pub psd: oversample_core::dsp::psd::PsdResult,
 }
 
 fn now_ms() -> f64 {
@@ -127,30 +164,89 @@ fn generation() -> u32 {
     GENERATION.with(|g| g.get())
 }
 
-/// Turn the view on or off. Off stops the worker and clears the readings.
+/// The live view's switch: remembers it and starts or stops the readings.
 pub fn set_enabled(state: AppState, on: bool) {
+    state.classifier.live_on().set(on);
+    set_user(state, LIVE_VIEW, on);
+}
+
+/// Say whether view `who` ([`LIVE_VIEW`] or [`EXPLORER`]) wants readings. The
+/// worker starts with the first view and stops with the last; readings are
+/// cleared when it stops.
+pub fn set_user(state: AppState, who: u8, on: bool) {
+    let before = USERS.with(|u| u.get());
+    let after = if on { before | who } else { before & !who };
+    USERS.with(|u| u.set(after));
+    if (before == 0) != (after == 0) {
+        restart(state);
+    }
+}
+
+/// Stop, and start again if any view wants readings (for example after the
+/// model was downloaded).
+pub fn restart(state: AppState) {
     GENERATION.with(|g| g.set(g.get().wrapping_add(1)));
     LINK.with(|l| *l.borrow_mut() = None);
     IN_FLIGHT.with(|f| f.set(None));
     HISTORY.with(|h| h.borrow_mut().clear());
+    SESSION.with(|h| h.borrow_mut().clear());
+    SPECTRUM.with(|h| *h.borrow_mut() = None);
+    crate::live_explorer::reset();
     ROWS.with(|r| r.borrow_mut().clear());
     INTERVAL.with(|i| i.set(0.0));
-    state.classifier.live_on().set(on);
-    if !on {
+    if USERS.with(|u| u.get()) == 0 {
         state.classifier.live().set(LiveStatus::Off);
         return;
     }
     let gen = generation();
     spawn_local(async move {
+        // Without the model the loop still runs, for the explorer's spectrum.
         if let Err(e) = start(state, gen).await {
-            if generation() == gen {
-                LINK.with(|l| *l.borrow_mut() = None);
-                state.classifier.live().set(e);
+            if generation() != gen {
+                return;
             }
-            return;
+            LINK.with(|l| *l.borrow_mut() = None);
+            state.classifier.live().set(e);
         }
         run_loop(state, gen).await;
     });
+}
+
+/// True while the worker has the model and takes requests.
+fn worker_ready() -> bool {
+    LINK.with(|l| l.borrow().as_ref().is_some_and(|l| l.loaded.is_none()))
+}
+
+/// Register the explorer's element (`None` when its tab closes).
+pub fn set_explorer(el: Option<web_sys::HtmlElement>) {
+    EXPLORER_EL.with(|c| *c.borrow_mut() = el);
+}
+
+/// The explorer's element, while its tab is shown.
+pub fn explorer_el() -> Option<web_sys::HtmlElement> {
+    EXPLORER_EL.with(|c| c.borrow().clone())
+}
+
+/// Read this session's readings.
+pub fn with_session<R>(f: impl FnOnce(&VecDeque<SessionPoint>) -> R) -> R {
+    SESSION.with(|s| f(&s.borrow()))
+}
+
+/// Read the last spectrum.
+pub fn with_spectrum<R>(f: impl FnOnce(Option<&Spectrum>) -> R) -> R {
+    SPECTRUM.with(|s| f(s.borrow().as_ref()))
+}
+
+/// The name of BirdNET class `c`.
+pub fn class_name(c: usize) -> String {
+    LABELS
+        .with(|l| {
+            l.borrow()
+                .as_ref()
+                .and_then(|l| l.get(c))
+                .map(|l| l.common.clone())
+        })
+        .unwrap_or_else(|| format!("Class {c}"))
 }
 
 /// Register the element the readings are drawn into (`None` when it goes).
@@ -172,7 +268,10 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     LABELS.with(|l| *l.borrow_mut() = Some(labels));
     if MAP.with(|m| m.borrow().is_none()) {
         // The map is optional: without it the strip still works.
-        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(classifier::species_map::BIRDNET_MAP.file).await {
+        if let Ok(bytes) =
+            crate::components::file_sidebar::fetch_bytes(classifier::species_map::BIRDNET_MAP.file)
+                .await
+        {
             let m = classifier::species_map::parse_map(&bytes);
             MAP.with(|c| *c.borrow_mut() = Some(Arc::new(m)));
         }
@@ -372,7 +471,11 @@ async fn run_loop(state: AppState, gen: u32) {
         // A request lost (the worker answered with something else) is given up
         // after 5 s, so the view never stalls for good.
         let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
-        if busy || now - LAST_SENT.with(|l| l.get()) < MIN_GAP_MS {
+        let want_reading =
+            worker_ready() && !busy && now - LAST_SENT.with(|l| l.get()) >= MIN_GAP_MS;
+        let want_spectrum = USERS.with(|u| u.get()) & EXPLORER != 0
+            && now - LAST_SPECTRUM.with(|l| l.get()) >= SPECTRUM_GAP_MS;
+        if !want_reading && !want_spectrum {
             continue;
         }
         let Some((samples, rate)) = current_audio(state).await else {
@@ -380,6 +483,20 @@ async fn run_loop(state: AppState, gen: u32) {
         };
         if generation() != gen {
             return;
+        }
+        if want_spectrum {
+            LAST_SPECTRUM.with(|l| l.set(now));
+            let tail = &samples[samples.len().saturating_sub((rate as f64 * 3.0) as usize)..];
+            // About 25 Hz per bin for birds, coarser for bats, within 512 to 8192.
+            let nfft = ((rate as f64 / 25.0) as usize)
+                .next_power_of_two()
+                .clamp(512, 8192);
+            let psd = oversample_core::dsp::psd::compute_psd(tail, rate, nfft, None);
+            SPECTRUM.with(|s| *s.borrow_mut() = Some(Spectrum { rate, psd }));
+            if !want_reading {
+                crate::live_explorer::draw(state);
+                continue;
+            }
         }
         let req = NEXT_REQ.with(|n| {
             let r = n.get();
@@ -433,6 +550,23 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
             })
         });
     }
+    if USERS.with(|u| u.get()) & EXPLORER != 0 {
+        SESSION.with(|ss| {
+            let mut ss = ss.borrow_mut();
+            if let Some(last) = ss.back_mut() {
+                last.scores = None;
+            }
+            ss.push_back(SessionPoint {
+                t,
+                embedding: embedding.clone(),
+                top: top_classes(&scores, 5),
+                scores: Some(scores.clone()),
+            });
+            while ss.len() > SESSION_MAX {
+                ss.pop_front();
+            }
+        });
+    }
     HISTORY.with(|h| {
         let mut h = h.borrow_mut();
         h.push_back(Reading {
@@ -458,6 +592,7 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
         state.classifier.live().set(status);
     }
     draw(state);
+    crate::live_explorer::draw(state);
 }
 
 /// Cosine distance between two embeddings: 0 for the same direction, 1 for

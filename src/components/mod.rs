@@ -22,6 +22,7 @@ pub mod icons;
 pub mod inertia;
 pub mod layer_panel;
 pub mod listen_button;
+pub mod live_explorer;
 pub mod modal;
 pub mod mode_button;
 pub mod noise_button;

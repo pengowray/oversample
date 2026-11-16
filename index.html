@@ -35,11 +35,14 @@
     <link data-trunk rel="copy-file" href="research/species-map/birdnet-map.bin"/>
     <link data-trunk rel="copy-file" href="research/species-map/perch-map.bin"/>
     <link data-trunk rel="copy-file" href="vendor/echarts.min.js"/>
+    <!-- umap-js (MIT), which live-explorer.js loads only when UMAP is asked for. -->
+    <link data-trunk rel="copy-file" href="vendor/umap-js-1.4.0.min.js"/>
     <!-- <script data-trunk>: Trunk puts a content hash in the file name, so
          a new build never runs with an old cached copy of the script. The
          libraries these scripts load later are plain copies. -->
     <script data-trunk src="species-map.js"></script>
     <script data-trunk src="live-embedding.js"></script>
+    <script data-trunk src="live-explorer.js"></script>
     <script data-trunk src="mp4-muxer.js"></script>
     <link data-trunk rel="copy-file" href="js/plotly-gl3d-4.1.2.min.js"/>
     <script data-trunk src="js/surface-3d.js"></script>
