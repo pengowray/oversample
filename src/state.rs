@@ -2113,8 +2113,8 @@ pub struct MicState {
     /// Mono or stereo channel mode for mic recording.
     pub channel_mode: ChannelMode,
     /// The channels (0-based, 1 or 2) to record from a USB device with more
-    /// than 2 channels. Empty means channels 1 and 2, mixed or not by
-    /// `channel_mode`; a pair picked here is always stereo.
+    /// than 2 channels: a pair in stereo, one channel in mono. Empty means
+    /// channels 1 and 2 in stereo.
     pub usb_channels: Vec<u32>,
     /// Channels in the widest input setting of the connected USB device, as
     /// read from its descriptors. 0 when not known.

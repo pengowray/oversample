@@ -1805,23 +1805,17 @@ async fn open_usb(state: &AppState) -> bool {
         p.plan.alternate_setting as i32 == info.alternate_setting
             && p.plan.interface_number as i32 == info.interface_number
     });
-    let (channels, stereo) = match &plan {
-        Some(p) => {
-            // A pair the user picked is stereo; the default pair follows Channels.
-            let picked_pair = p.plan.picked.len() == 2 && !saved_pick.is_empty() && !p.plan.fell_back;
-            let stereo = p.plan.picked.len() == 2 && (picked_pair || stereo_requested);
-            if p.plan.fell_back {
-                state
-                    .status
-                    .message()
-                    .set(Some(usb_fallback_message(&saved_pick, p, stereo)));
-            }
-            (p.plan.picked.clone(), stereo)
-        }
-        // Today's choice: 1 or 2 channels as before. A wider setting keeps
-        // channels 1 and 2 (the decoder's default).
-        None => (Vec::new(), stereo_requested && info.num_channels >= 2),
-    };
+    if let Some(p) = plan.as_ref().filter(|p| p.plan.fell_back) {
+        state
+            .status
+            .message()
+            .set(Some(usb_fallback_message(&saved_pick, p)));
+    }
+    let (channels, stereo) = usb_stream_channels(
+        plan.as_ref().map(|p| p.plan.picked.as_slice()),
+        info.num_channels,
+        stereo_requested,
+    );
     if stereo_requested && !stereo && plan.is_none() {
         state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
     }
@@ -2006,6 +2000,25 @@ fn usb_plan_for(
     })
 }
 
+/// The channels to keep from a USB stream and whether they stay separate.
+/// `picked` is the plan for a device with more than 2 channels: a pair is
+/// stereo, one channel mono. Without a plan, the decoder's default applies:
+/// a device sending more than 2 channels records channels 1 and 2 in stereo,
+/// and a 2-channel device follows the Mono/Stereo setting.
+fn usb_stream_channels(
+    picked: Option<&[u32]>,
+    num_channels: i32,
+    stereo_requested: bool,
+) -> (Vec<u32>, bool) {
+    match picked {
+        Some(p) => (p.to_vec(), p.len() == 2),
+        None => (
+            Vec::new(),
+            num_channels > 2 || (stereo_requested && num_channels == 2),
+        ),
+    }
+}
+
 /// "Channels 5 and 6" or "Channel 5" for 0-based channels.
 fn usb_channel_names(picked: &[u32]) -> String {
     match picked {
@@ -2017,13 +2030,9 @@ fn usb_channel_names(picked: &[u32]) -> String {
 
 /// The status message when the saved USB channel pick can't be streamed and
 /// channels 1 and 2 are used instead. The saved pick is kept for next time.
-fn usb_fallback_message(saved: &[u32], p: &UsbPlan, stereo: bool) -> String {
+fn usb_fallback_message(saved: &[u32], p: &UsbPlan) -> String {
     let saved_names = usb_channel_names(saved);
-    let used = if stereo {
-        "Using channels 1 and 2 (stereo)."
-    } else {
-        "Using channels 1 and 2 mixed (mono)."
-    };
+    let used = "Using channels 1 and 2 (stereo).";
     if saved.iter().any(|&c| c >= p.device_channels) {
         format!(
             "{saved_names} not available: this device has {} channels. {used}",
@@ -2227,5 +2236,26 @@ mod tests {
     fn mono_input_uses_one_channel() {
         let out = run_mono(PlaybackMode::Heterodyne, 38_000.0, 1);
         assert_eq!(out[0].len(), CHUNK);
+    }
+}
+
+#[cfg(test)]
+mod usb_channel_tests {
+    use super::usb_stream_channels;
+
+    #[test]
+    fn a_wide_device_records_its_pick_or_channels_1_and_2_in_stereo() {
+        assert_eq!(usb_stream_channels(Some(&[4, 5]), 8, false), (vec![4, 5], true));
+        assert_eq!(usb_stream_channels(Some(&[0, 1]), 8, false), (vec![0, 1], true));
+        assert_eq!(usb_stream_channels(Some(&[6]), 8, true), (vec![6], false));
+        // No plan (the plugin chose the setting): channels 1 and 2 in stereo.
+        assert_eq!(usb_stream_channels(None, 8, false), (vec![], true));
+    }
+
+    #[test]
+    fn one_and_two_channel_devices_follow_the_mono_stereo_setting() {
+        assert_eq!(usb_stream_channels(None, 2, true), (vec![], true));
+        assert_eq!(usb_stream_channels(None, 2, false), (vec![], false));
+        assert_eq!(usb_stream_channels(None, 1, true), (vec![], false));
     }
 }

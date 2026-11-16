@@ -1088,53 +1088,37 @@ fn usb_picker_channels(state: &AppState) -> Option<u32> {
     (n > 2 && !other_backend).then_some(n)
 }
 
-/// The Channels row for a USB device with more than 2 channels: a mono mix of
-/// channels 1 and 2, each pair (1 and 2, 3 and 4, ...) in stereo, or one
-/// channel in mono. The device names its channels only by number.
+/// The Channels row for a USB device with more than 2 channels: each pair
+/// (1 and 2, 3 and 4, ...) in stereo, or one channel in mono. The device names
+/// its channels only by number. With nothing saved, channels 1 and 2 in stereo.
 #[component]
 fn UsbChannelRow(channels: u32) -> impl IntoView {
     let state = expect_context::<AppState>();
-    // The option value: "mix" for the mono mix of 1 and 2 (no pick, Channels
-    // Mono), otherwise the pick as saved ("5,6" or "5").
+    // The option value: the pick as saved ("5,6" or "5"), or "1,2" when
+    // nothing usable is saved.
     let current = move || {
         let pick = state.mic.usb_channels().get();
         if !pick.is_empty() && pick.iter().all(|&c| c < channels) {
             crate::state::format_usb_channels(&pick)
-        } else if state.mic.channel_mode().get() == ChannelMode::Stereo {
-            "1,2".to_string()
         } else {
-            "mix".to_string()
+            "1,2".to_string()
         }
     };
     let on_change = move |ev: leptos::ev::Event| {
         let val = leptos::prelude::event_target_value(&ev);
-        if val == "mix" {
-            state.mic.usb_channels().set(Vec::new());
-            crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, "");
-            state.mic.channel_mode().set(ChannelMode::Mono);
-            crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_MODE, ChannelMode::Mono.key());
-        } else {
-            state.mic.usb_channels().set(crate::state::parse_usb_channels(&val));
-            crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, &val);
-        }
+        state.mic.usb_channels().set(crate::state::parse_usb_channels(&val));
+        crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, &val);
         restart_listening(state);
     };
     let pairs: Vec<u32> = (1..channels).step_by(2).collect();
     let singles: Vec<u32> = (1..=channels).collect();
-    let tooltip = format!(
-        "Sets which of this device's {channels} channels are used for live listening and saved recordings. \
-         Pairs are stereo, with the first channel on the left and the second on the right. \
-         Single channels are mono. With one mic, choose the channel it is plugged into. \
-         The live spectrogram always shows a mix of left and right."
-    );
     view! {
         <div class="layer-panel-slider-row het-text-row">
-            <label style="font-size: 11px;" title=tooltip>"Channels"</label>
+            <label style="font-size: 11px;" title="Channels used for listening and recording. The live spectrogram shows left and right combined.">"Channels"</label>
             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px; max-width: 150px;"
                 on:change=on_change
                 prop:value=current
             >
-                <option value="mix" selected=move || current() == "mix">"1 and 2 mixed (mono)"</option>
                 <optgroup label="Stereo pairs (left, right)">
                     {pairs.into_iter().map(|a| {
                         let value = format!("{},{}", a, a + 1);
