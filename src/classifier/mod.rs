@@ -155,7 +155,7 @@ async fn download_file(state: AppState, file: &'static ModelFile) -> Result<(), 
     }
     set_download(state, file, DownloadStatus::Downloading { fraction: 0.0 });
     let mut shown = 0.0;
-    let res = store::download(file, |f| {
+    let res = store::download(file, move |f| {
         // About 200 updates for the backbone, not one per network chunk.
         if f - shown >= 0.005 || f >= 1.0 {
             shown = f;

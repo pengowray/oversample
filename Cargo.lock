@@ -3452,7 +3452,7 @@ checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
 
 [[package]]
 name = "oversample"
-version = "0.5.196"
+version = "0.5.197"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "oversample-desktop"
-version = "0.5.196"
+version = "0.5.197"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3516,6 +3516,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "symphonia",
  "tauri",
  "tauri-build",

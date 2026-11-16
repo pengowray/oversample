@@ -523,8 +523,8 @@ async fn run(state: AppState, generation: u32, strength: DenoiseStrength) -> Res
     let model = model().file;
     if !store::is_downloaded(model).await {
         state.denoise.status().set(DenoiseStatus::Downloading(0.0));
-        store::download(model, |fraction| {
-            if live() {
+        store::download(model, move |fraction| {
+            if GENERATION.with(|g| g.get()) == generation {
                 state
                     .denoise
                     .status()

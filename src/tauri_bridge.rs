@@ -15,22 +15,27 @@ pub fn get_tauri_internals() -> Option<JsValue> {
 
 /// Invoke a Tauri command and return the result as a JsValue.
 pub async fn tauri_invoke(cmd: &str, args: &JsValue) -> Result<JsValue, String> {
+    tauri_invoke_js(cmd, args)
+        .await
+        .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
+}
+
+/// Like [`tauri_invoke`], but an error is the value the command rejected
+/// with, so a command's serialized error type can be read back with
+/// `serde_wasm_bindgen`.
+pub async fn tauri_invoke_js(cmd: &str, args: &JsValue) -> Result<JsValue, JsValue> {
     let tauri = get_tauri_internals().ok_or("Not running in Tauri")?;
     let invoke = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke"))
         .map_err(|_| "No invoke function")?;
     let invoke_fn = js_sys::Function::from(invoke);
 
-    let promise_val = invoke_fn
-        .call2(&tauri, &JsValue::from_str(cmd), args)
-        .map_err(|e| format!("Invoke call failed: {:?}", e))?;
+    let promise_val = invoke_fn.call2(&tauri, &JsValue::from_str(cmd), args)?;
 
     let promise: js_sys::Promise = promise_val
         .dyn_into()
         .map_err(|_| "Result is not a Promise")?;
 
-    JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
+    JsFuture::from(promise).await
 }
 
 /// True in Android's webview, which cannot send raw IPC bodies: Tauri turns a

@@ -1,21 +1,38 @@
 //! Model files on this device: download (with progress and a SHA-256 check),
 //! check, read and delete.
 //!
-//! - Browser: the OPFS directory `oversample-models`.
-//! - Tauri: the app data folder's `models/` (WebKitGTK, the Linux webview, has
-//!   no OPFS), through the `models_*` commands in `src-tauri/src/cmd_models.rs`.
+//! - Browser: the webview fetches the file, checks it, and keeps it in the OPFS
+//!   directory `oversample-models`.
+//! - Tauri: native code downloads and checks the file and keeps it in the app
+//!   data folder's `models/` (WebKitGTK, the Linux webview, has no OPFS). The
+//!   `models_*` commands in `src-tauri/src/cmd_models.rs` do the work; the
+//!   `models-download-progress` event reports progress.
 //!
-//! Bytes stay in JS `Uint8Array`s from the download to the worker, so a 67 MB
-//! model never passes through (and never grows) the app's WASM memory.
+//! Bytes stay in JS `Uint8Array`s from the download (or `models_read`) to the
+//! worker, so a 67 MB model never passes through (and never grows) the app's
+//! WASM memory.
 
 use super::catalog::ModelFile;
 use super::ClassifierError;
 use sha2::{Digest, Sha256};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemWritableFileStream};
 
 const OPFS_DIR: &str = "oversample-models";
+/// The event `models_download` sends `{file, fraction}` with.
+const PROGRESS_EVENT: &str = "models-download-progress";
+
+thread_local! {
+    /// The progress callback of each native download in progress, by file id.
+    static NATIVE_PROGRESS: RefCell<HashMap<String, Box<dyn FnMut(f64)>>> =
+        RefCell::new(HashMap::new());
+    /// Whether the app-wide [`PROGRESS_EVENT`] listener is registered.
+    static PROGRESS_LISTENING: Cell<bool> = const { Cell::new(false) };
+}
 
 fn is_tauri() -> bool {
     crate::tauri_bridge::get_tauri_internals().is_some()
@@ -160,37 +177,7 @@ pub async fn delete_retired() {
     }
 }
 
-async fn write(file: &ModelFile, bytes: &js_sys::Uint8Array) -> Result<(), ClassifierError> {
-    if is_tauri() {
-        let len = bytes.length();
-        let step = crate::tauri_bridge::raw_part_limit();
-        let mut at = 0u32;
-        loop {
-            let end = (at + step).min(len);
-            let part = bytes.subarray(at, end);
-            crate::tauri_bridge::tauri_invoke_raw(
-                "models_write_part",
-                &part,
-                &[
-                    ("x-model-file", file.id.to_string()),
-                    ("x-model-offset", at.to_string()),
-                ],
-            )
-            .await
-            .map_err(|e| storage_err(file, e))?;
-            at = end;
-            if at >= len {
-                break;
-            }
-        }
-        let args = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
-        let _ = js_sys::Reflect::set(&args, &"size".into(), &JsValue::from_f64(len as f64));
-        crate::tauri_bridge::tauri_invoke("models_commit", &args.into())
-            .await
-            .map_err(|e| storage_err(file, e))?;
-        return Ok(());
-    }
+async fn write_opfs(file: &ModelFile, bytes: &js_sys::Uint8Array) -> Result<(), ClassifierError> {
     let dir = opfs_dir().await.map_err(|e| storage_err(file, e))?;
     let opts = web_sys::FileSystemGetFileOptions::new();
     opts.set_create(true);
@@ -217,12 +204,88 @@ async fn write(file: &ModelFile, bytes: &js_sys::Uint8Array) -> Result<(), Class
     Ok(())
 }
 
+/// Register the app-wide listener that passes [`PROGRESS_EVENT`]s to the
+/// callbacks in [`NATIVE_PROGRESS`]. Events for files with no callback (a
+/// download that has finished) are ignored.
+fn listen_native_progress() {
+    if PROGRESS_LISTENING.with(|l| l.replace(true)) {
+        return;
+    }
+    let callback = Closure::<dyn FnMut(JsValue)>::new(|event: JsValue| {
+        let Ok(payload) = js_sys::Reflect::get(&event, &"payload".into()) else {
+            return;
+        };
+        let get = |key: &str| js_sys::Reflect::get(&payload, &key.into()).ok();
+        let (Some(file), Some(fraction)) = (
+            get("file").and_then(|v| v.as_string()),
+            get("fraction").and_then(|v| v.as_f64()),
+        ) else {
+            return;
+        };
+        // Take the callback out while it runs, so it can never meet a
+        // borrowed map.
+        let Some(mut cb) = NATIVE_PROGRESS.with(|m| m.borrow_mut().remove(&file)) else {
+            return;
+        };
+        cb(fraction);
+        NATIVE_PROGRESS.with(|m| {
+            m.borrow_mut().entry(file).or_insert(cb);
+        });
+    });
+    if !crate::tauri_bridge::tauri_listen(PROGRESS_EVENT, callback) {
+        PROGRESS_LISTENING.with(|l| l.set(false));
+    }
+}
+
+/// Removes a file's progress callback from [`NATIVE_PROGRESS`] when its
+/// download ends, however it ends.
+struct ProgressRoute(&'static str);
+
+impl Drop for ProgressRoute {
+    fn drop(&mut self) {
+        NATIVE_PROGRESS.with(|m| {
+            m.borrow_mut().remove(self.0);
+        });
+    }
+}
+
+/// Tauri: download `file` in native code (`models_download`).
+async fn download_native(
+    file: &'static ModelFile,
+    on_progress: impl FnMut(f64) + 'static,
+) -> Result<(), ClassifierError> {
+    listen_native_progress();
+    NATIVE_PROGRESS.with(|m| {
+        m.borrow_mut()
+            .insert(file.id.to_string(), Box::new(on_progress));
+    });
+    let _route = ProgressRoute(file.id);
+    let args = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
+    match crate::tauri_bridge::tauri_invoke_js("models_download", &args.into()).await {
+        Ok(_) => Ok(()),
+        // The command fails with a `ClassifierError`; anything else (the
+        // command missing, say) is shown as a download error.
+        Err(e) => Err(
+            serde_wasm_bindgen::from_value(e.clone()).unwrap_or_else(|_| {
+                ClassifierError::Download {
+                    file: file.id.to_string(),
+                    message: js_msg(&e),
+                }
+            }),
+        ),
+    }
+}
+
 /// Download `file`, check its size and SHA-256, and store it. `on_progress`
 /// gets the fraction downloaded (0 to 1) as chunks arrive.
 pub async fn download(
-    file: &ModelFile,
-    mut on_progress: impl FnMut(f64),
+    file: &'static ModelFile,
+    mut on_progress: impl FnMut(f64) + 'static,
 ) -> Result<(), ClassifierError> {
+    if is_tauri() {
+        return download_native(file, on_progress).await;
+    }
     let dl_err = |message: String| ClassifierError::Download {
         file: file.id.to_string(),
         message,
@@ -279,5 +342,5 @@ pub async fn download(
             file: file.id.to_string(),
         });
     }
-    write(file, &all).await
+    write_opfs(file, &all).await
 }
