@@ -526,50 +526,19 @@ async fn save_export_to_media_store(
     relative_path: &str,
     mime: &str,
 ) -> ExportSave {
-    use crate::tauri_bridge::tauri_invoke_typed;
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("filename"),
-        &JsValue::from_str(filename),
-    )
-    .ok();
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("relativePath"),
-        &JsValue::from_str(relative_path),
-    )
-    .ok();
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("mimeType"),
-        &JsValue::from_str(mime),
-    )
-    .ok();
-    let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
-    array.copy_from(data);
-    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
-
-    match tauri_invoke_typed::<oversample_ipc::plugins::SavePathResult>(
-        "plugin:media-store|saveExportBytes",
-        &args.into(),
-    )
-    .await
-    {
-        Ok(result) => {
-            if result.path.is_empty() {
-                // e.g. pre-Q first run: storage permission was just granted and
-                // nothing is written yet (the plugin asks the UI to retry). Don't
-                // report this as a successful save.
-                log::warn!("Export not saved (permission/retry) — needs another tap");
-                ExportSave::Cancelled
-            } else {
-                log::info!("Export saved to shared storage: {}", result.path);
-                ExportSave::Saved(result.path)
-            }
+    match crate::shared_storage::save(data, filename, relative_path, mime).await {
+        Ok(crate::shared_storage::SharedSave::Saved(path)) => {
+            log::info!("Export saved to shared storage: {path}");
+            ExportSave::Saved(path)
+        }
+        Ok(crate::shared_storage::SharedSave::NeedsRetry) => {
+            // Pre-Q first run: storage permission was just granted and nothing
+            // is written yet. Don't report this as a successful save.
+            log::warn!("Export not saved (permission/retry) — needs another tap");
+            ExportSave::Cancelled
         }
         Err(e) => {
-            log::error!("Export save failed: {}", e);
+            log::error!("Export save failed: {e}");
             ExportSave::Failed
         }
     }

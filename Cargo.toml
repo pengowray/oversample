@@ -3,7 +3,7 @@ members = [".", "src-tauri", "xc-lib", "xc-cli", "oversample-core", "oversample-
 
 [package]
 name = "oversample"
-version = "0.5.195"
+version = "0.5.196"
 edition = "2021"
 license = "GPL-3.0-only"
 

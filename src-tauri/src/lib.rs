@@ -5,6 +5,7 @@ mod cmd_mic;
 mod cmd_models;
 mod cmd_noise_presets;
 mod cmd_playback;
+mod cmd_save;
 mod cmd_usb;
 mod ipc_bytes;
 mod native_playback;
@@ -43,6 +44,7 @@ pub fn run() {
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))
         .manage(Mutex::new(Vec::<f32>::new()))
+        .manage(cmd_save::SaveFiles::default())
         .setup(|app| {
             let cache_root = app
                 .path()
@@ -83,6 +85,10 @@ pub fn run() {
             cmd_audio_files::read_file_bytes,
             cmd_audio_files::read_file_range,
             cmd_audio_files::read_fd_range,
+            cmd_save::save_adopt_fd,
+            cmd_save::save_write,
+            cmd_save::save_close,
+            cmd_save::save_discard,
             cmd_playback::native_play,
             cmd_playback::native_stop,
             xc::xc_set_api_key,

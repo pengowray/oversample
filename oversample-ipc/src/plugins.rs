@@ -238,9 +238,9 @@ pub struct PermissionGranted {
 
 // ── media-store plugin ──────────────────────────────────────────────────
 //
-// NOTE: the byte payloads (`saveWavBytes.data`, `saveExportBytes.data`) are NOT
-// modelled here — they are attached as a JS `Uint8Array` directly (serializing a
-// Vec<u8> as a JSON number array would be huge/slow). Raw-bytes IPC is Phase 4.
+// Exports are written through a file descriptor: `createExportEntry` returns
+// one, Rust takes it over (`save_adopt_fd`) and the webview sends the bytes in
+// parts (`save_write`).
 
 /// Args for `plugin:media-store|createRecordingEntry`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -256,11 +256,35 @@ pub struct CreateRecordingEntryResult {
     pub uri: String,
 }
 
-/// Result of `plugin:media-store|saveWavBytes` / `saveExportBytes`. An empty
-/// `path` means a permission-retry (pre-Q first run), not a real save.
+/// Args for `plugin:media-store|createExportEntry`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SavePathResult {
+#[serde(rename_all = "camelCase")]
+pub struct CreateExportEntryArgs {
+    pub filename: String,
+    pub mime_type: String,
+    /// Folder under shared storage, e.g. `Movies/Oversample/exports`.
+    pub relative_path: String,
+}
+
+/// Result of `plugin:media-store|createExportEntry`. No `fd` means the pre-Q
+/// storage permission was just asked for and nothing was created: the user
+/// has to try again.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CreateExportEntryResult {
+    #[serde(default)]
+    pub fd: Option<i32>,
+    #[serde(default)]
+    pub uri: String,
+    #[serde(default)]
     pub path: String,
+}
+
+/// Args for `plugin:media-store|finishExportEntry` / `cancelExportEntry`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportEntryArgs {
+    pub uri: String,
+    pub mime_type: String,
 }
 
 /// Result of `plugin:media-store|cleanupPendingEntries`.

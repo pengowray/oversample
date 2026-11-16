@@ -29,6 +29,7 @@ pub mod rate_notes;
 pub mod scope;
 pub mod search_client;
 pub mod settings;
+pub mod shared_storage;
 pub mod source_site;
 pub mod species_check;
 pub mod state;
