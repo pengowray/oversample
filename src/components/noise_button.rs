@@ -650,7 +650,7 @@ fn DenoiseSection() -> impl IntoView {
 
     view! {
         <hr />
-        <div class="layer-panel-title">{text::TITLE}</div>
+        <div class="noise-group-title">{text::TITLE}</div>
         <StrengthRow can_start=can_start />
         <div class="noise-row">
             {move || if busy() {

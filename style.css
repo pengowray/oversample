@@ -4379,6 +4379,14 @@ a.open-link-btn {
     font-weight: 600;
     cursor: pointer;
 }
+/* A group heading in the Noise menu ("Denoised copy"), the same size and
+   weight as the switch rows ("Notch filter") above it. */
+.noise-group-title {
+    padding: 5px 8px;
+    color: #ccc;
+    font-size: 12px;
+    font-weight: 600;
+}
 .switch-row:hover {
     background: #202020;
 }
