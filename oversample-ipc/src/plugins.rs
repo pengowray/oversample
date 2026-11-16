@@ -270,22 +270,18 @@ pub struct CleanupResult {
     pub skipped: bool,
 }
 
-/// Args for `plugin:media-store|readRecordingRange` — read a byte range from a
-/// MediaStore `content://` recording for streaming display. `offset`/`length`
-/// are f64 so the JS bridge can carry > 2^31 byte offsets for long recordings.
+/// Args for `plugin:media-store|openRecordingForRead`: open a MediaStore
+/// `content://` recording for reading, for streaming display.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ReadRecordingRangeArgs {
+pub struct OpenRecordingForReadArgs {
     pub uri: String,
-    pub offset: f64,
-    pub length: f64,
 }
 
-/// Result of `plugin:media-store|readRecordingRange` — the requested bytes,
-/// base64-encoded (Kotlin plugin commands return JSON, not raw buffers).
+/// Result of `plugin:media-store|openRecordingForRead`: a raw POSIX fd that
+/// the `read_fd_range` command reads byte ranges from.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ReadRecordingRangeResult {
-    #[serde(default)]
-    pub data: String,
+pub struct OpenRecordingForReadResult {
+    pub fd: i32,
 }
 
 #[cfg(test)]

@@ -176,6 +176,20 @@ pub async fn read_file_range(path: &str, offset: u64, length: u64) -> Result<Vec
     Ok(uint8.to_vec())
 }
 
+/// Read a byte range from a file descriptor the media-store plugin opened, as
+/// raw bytes (the `read_fd_range` command). Fewer bytes at the end of the file.
+pub async fn read_fd_range(fd: i32, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    let args = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&args, &"fd".into(), &JsValue::from(fd));
+    let _ = js_sys::Reflect::set(&args, &"offset".into(), &JsValue::from_f64(offset as f64));
+    let _ = js_sys::Reflect::set(&args, &"length".into(), &JsValue::from_f64(length as f64));
+    let result = tauri_invoke("read_fd_range", &args.into()).await?;
+    let array_buffer = result
+        .dyn_into::<js_sys::ArrayBuffer>()
+        .map_err(|_| "Expected ArrayBuffer from read_fd_range".to_string())?;
+    Ok(js_sys::Uint8Array::new(&array_buffer).to_vec())
+}
+
 /// Subscribe to a Tauri event. The closure is leaked (via `forget`) so the
 /// listener lives for the lifetime of the app.  Returns `true` if the
 /// listener was registered successfully.

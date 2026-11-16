@@ -82,6 +82,7 @@ pub fn run() {
             cmd_mic::mic_recover_recordings,
             cmd_audio_files::read_file_bytes,
             cmd_audio_files::read_file_range,
+            cmd_audio_files::read_fd_range,
             cmd_playback::native_play,
             cmd_playback::native_stop,
             xc::xc_set_api_key,

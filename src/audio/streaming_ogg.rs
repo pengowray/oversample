@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::streaming_source::{
-    mix_to_mono, read_blob_range, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES,
+    mix_to_mono, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES,
 };
 use crate::audio::loader::OggHeader;
 use crate::audio::source::{AudioSource, ChannelView};
@@ -162,23 +162,10 @@ impl StreamingOggSource {
         let read_start = byte_cursor.saturating_sub(OGG_OVERLAP_BYTES);
         let read_end = (read_start + OGG_WINDOW_BYTES + OGG_OVERLAP_BYTES).min(self.file_size);
 
-        let bytes = match &self.handle {
-            FileHandle::WebFile(file) => {
-                read_blob_range(file, read_start as f64, read_end as f64).await
-            }
-            FileHandle::TauriPath(path) => {
-                crate::tauri_bridge::read_file_range(path, read_start, read_end - read_start).await
-            }
-            FileHandle::Bytes(b) => super::streaming_source::slice_bytes(b, read_start, read_end),
-            FileHandle::MediaStoreUri(uri) => {
-                super::streaming_source::read_media_store_range(
-                    uri,
-                    read_start,
-                    read_end - read_start,
-                )
-                .await
-            }
-        };
+        let bytes = self
+            .handle
+            .read_range(read_start, read_end - read_start)
+            .await;
         let bytes = match bytes {
             Ok(b) if b.is_empty() => {
                 self.reached_eof.set(true);

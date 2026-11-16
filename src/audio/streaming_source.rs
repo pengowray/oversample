@@ -171,9 +171,9 @@ pub enum FileHandle {
     WebFile(web_sys::File),
     /// Tauri desktop/mobile: uses native `read_file_range` IPC command.
     TauriPath(String),
-    /// Android MediaStore `content://` URI: ranges are read back via the
-    /// `plugin:media-store|readRecordingRange` Kotlin command (base64). Used to
-    /// display a recording that lives only in public shared storage.
+    /// Android MediaStore `content://` URI: read through a file descriptor the
+    /// media-store plugin opens ([`read_media_store_range`]). Used to display a
+    /// recording that lives only in public shared storage.
     MediaStoreUri(String),
     /// In-memory bytes — holds the whole file; range reads just slice it. Used
     /// by host tests of the streaming sources (the WebFile / Tauri handles can't
@@ -181,35 +181,46 @@ pub enum FileHandle {
     Bytes(std::sync::Arc<Vec<u8>>),
 }
 
-/// Read a byte range from an Android MediaStore `content://` URI via the
-/// media-store plugin (which returns base64, since Kotlin plugin commands can't
-/// return raw buffers). Used by [`FileHandle::MediaStoreUri`].
+thread_local! {
+    /// File descriptors the media-store plugin opened, by `content://` URI.
+    /// Opened on first read and kept for the rest of the session.
+    static MEDIA_STORE_FDS: std::cell::RefCell<std::collections::HashMap<String, i32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+async fn media_store_fd(uri: &str) -> Result<i32, String> {
+    if let Some(fd) = MEDIA_STORE_FDS.with(|m| m.borrow().get(uri).copied()) {
+        return Ok(fd);
+    }
+    let args = oversample_ipc::plugins::OpenRecordingForReadArgs {
+        uri: uri.to_string(),
+    };
+    let res: oversample_ipc::plugins::OpenRecordingForReadResult =
+        crate::tauri_bridge::tauri_invoke_typed_args(
+            "plugin:media-store|openRecordingForRead",
+            &args,
+        )
+        .await?;
+    MEDIA_STORE_FDS.with(|m| m.borrow_mut().insert(uri.to_string(), res.fd));
+    Ok(res.fd)
+}
+
+/// Read a byte range from an Android MediaStore `content://` URI. The
+/// media-store plugin opens the URI once; after that Rust reads ranges from the
+/// file descriptor and returns them as raw bytes. Used by
+/// [`FileHandle::MediaStoreUri`].
 pub async fn read_media_store_range(
     uri: &str,
     byte_start: u64,
     byte_len: u64,
 ) -> Result<Vec<u8>, String> {
-    let args = oversample_ipc::plugins::ReadRecordingRangeArgs {
-        uri: uri.to_string(),
-        offset: byte_start as f64,
-        length: byte_len as f64,
-    };
-    let res: oversample_ipc::plugins::ReadRecordingRangeResult =
-        crate::tauri_bridge::tauri_invoke_typed_args(
-            "plugin:media-store|readRecordingRange",
-            &args,
-        )
-        .await
-        .map_err(|e| format!("readRecordingRange failed: {:?}", e))?;
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(res.data)
-        .map_err(|e| format!("readRecordingRange returned bad base64: {e}"))
+    let fd = media_store_fd(uri).await?;
+    crate::tauri_bridge::read_fd_range(fd, byte_start, byte_len).await
 }
 
 /// The most bytes [`FileHandle::read_range`] asks the native side for at once.
-/// A single 92 MB read ran Android's Java heap out of memory: the media-store
-/// plugin holds the bytes and their base64 text (4/3 as large) together.
+/// Android copies each read through Java, and a single 92 MB read ran its heap
+/// out of memory.
 const NATIVE_READ_PART: u64 = 8 * 1024 * 1024;
 
 /// Read `[byte_start, byte_start + byte_len)` with `read` in parts of at most

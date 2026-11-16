@@ -2361,10 +2361,10 @@
           "markdownDescription": "Enables the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
-          "description": "Enables the readRecordingRange command without any pre-configured scope.",
+          "description": "Enables the openRecordingForRead command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:allow-readRecordingRange",
-          "markdownDescription": "Enables the readRecordingRange command without any pre-configured scope."
+          "const": "media-store:allow-openRecordingForRead",
+          "markdownDescription": "Enables the openRecordingForRead command without any pre-configured scope."
         },
         {
           "description": "Enables the saveExportBytes command without any pre-configured scope.",
@@ -2409,10 +2409,10 @@
           "markdownDescription": "Denies the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
-          "description": "Denies the readRecordingRange command without any pre-configured scope.",
+          "description": "Denies the openRecordingForRead command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:deny-readRecordingRange",
-          "markdownDescription": "Denies the readRecordingRange command without any pre-configured scope."
+          "const": "media-store:deny-openRecordingForRead",
+          "markdownDescription": "Denies the openRecordingForRead command without any pre-configured scope."
         },
         {
           "description": "Denies the saveExportBytes command without any pre-configured scope.",
