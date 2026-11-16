@@ -9834,3 +9834,57 @@ button.canvas-overflow-action-btn.disabled {
     align-items: center;
     gap: 8px;
 }
+
+/* Live BirdNET view (Call detection tab, BirdNET only). Experimental. */
+.live-emb {
+    padding: 4px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.live-emb-switch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+/* A plain grey box, like the other badges (badge style A). */
+.live-emb-tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #3a3a3a;
+    color: #ccc;
+}
+.live-emb-readout {
+    /* Room for the name and two lines below it, so the charts under it do
+       not jump as the text changes. */
+    min-height: 52px;
+    font-size: 12px;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+.live-emb-name {
+    font-size: 14px;
+    color: #50dc96;
+}
+.live-emb-score {
+    color: #ddd;
+}
+.live-emb-none {
+    color: #aaa;
+}
+.live-emb-next {
+    font-size: 11px;
+    color: #999;
+}
+.live-emb-strip {
+    width: 100%;
+}
+/* Square, so the map is not stretched. */
+.live-emb-map {
+    width: 100%;
+    aspect-ratio: 1;
+    max-height: 340px;
+    border: 1px solid #2c2c2c;
+    border-radius: 3px;
+}

@@ -241,6 +241,11 @@ thread_local! {
     static PERCH_NAMES_FETCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// BirdNET's labels, read from the stored label file.
+pub async fn birdnet_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
+    labels(state, &catalog::BIRDNET_LABELS).await
+}
+
 async fn labels(
     state: AppState,
     file: &'static ModelFile,

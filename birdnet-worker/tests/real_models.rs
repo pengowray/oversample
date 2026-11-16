@@ -372,3 +372,66 @@ fn heads_match_their_labels() {
     }
     eprintln!("{checked} heads checked");
 }
+
+/// The live view's `Live` request on the 3 s ending at a window's end gives the
+/// same top class and nearly the same score as the run's window, so the live
+/// view and the classifier agree. Also prints the time per reading.
+#[test]
+fn live_matches_the_run() {
+    let Some(models) = models_dir() else {
+        eprintln!("BIRDNET_MODELS_DIR not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_model(
+        &mut s,
+        false,
+        &models.join("birdnet-v2.4-embeddings-fp32.onnx"),
+    );
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("no-bat-sounds/sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav"),
+        30.0,
+    );
+    let out = analyse(&mut s, Method::BirdNet, &samples, rate);
+    for (k, (start, end, top)) in out.windows.iter().enumerate().take(4) {
+        let a = (start * rate as f64) as usize;
+        let b = ((end * rate as f64) as usize).min(samples.len());
+        if b - a < 3 * rate as usize {
+            continue;
+        }
+        let mut live: Option<Vec<f32>> = None;
+        let mut sink = |m: FromWorker, emb: Option<&[f32]>| {
+            if let FromWorker::Live { .. } = m {
+                live = emb.map(<[f32]>::to_vec);
+            }
+        };
+        let t = std::time::Instant::now();
+        s.handle(
+            ToWorker::Live {
+                req: k as u32,
+                source_rate: rate,
+            },
+            Attached {
+                samples: Some(samples[a..b].to_vec()),
+                ..Default::default()
+            },
+            &mut sink,
+            &|| 0.0,
+        );
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let live = live.expect("a Live answer");
+        let scores = &live[EMBEDDING_LEN..];
+        let (best, score) = scores
+            .iter()
+            .enumerate()
+            .max_by(|x, y| x.1.total_cmp(y.1))
+            .unwrap();
+        eprintln!(
+            "window {k}: run {} {:.3}, live {best} {score:.3}, {ms:.0} ms",
+            top[0].class, top[0].confidence
+        );
+        assert_eq!(best, top[0].class as usize);
+        assert!((score - top[0].confidence).abs() < 0.05);
+    }
+}

@@ -12,6 +12,7 @@
 //! showing them.
 
 mod classifier_section;
+mod live_view;
 mod species_map;
 
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
@@ -868,6 +869,9 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species for one region")}
                 {region_select}
             </div>
+            <Show when=move || method() == DetectionMethod::BirdNet>
+                <live_view::LiveView />
+            </Show>
             {move || match method() {
                 DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),
                 DetectionMethod::BirdNet => view! { <ClassifierSection method=Method::BirdNet /> }.into_any(),
