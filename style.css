@@ -5709,8 +5709,8 @@ a.open-link-btn {
     background: #1a1a1a;
     color: #999;
 }
-/* Two lines of room for the line under Strength (Heavy's is two lines in
-   the 340px menu), so the menu keeps its height when the pick changes. */
+/* Two lines of room for the line under Strength (Heavy's has a sentence on
+   each line), so the menu keeps its height when the pick changes. */
 .denoise-strength-line {
     /* Two lines at line-height 1.3, and the 2px bottom padding, since
        .denoise-note is border-box. */

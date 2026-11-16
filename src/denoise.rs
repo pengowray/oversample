@@ -156,11 +156,13 @@ pub mod text {
         }
     }
     /// The line under the Strength control: what the picked strength does.
+    /// Heavy's two sentences go on two lines. In one line they wrap in the
+    /// menu with "out." alone on the second line.
     pub fn strength_line(strength: DenoiseStrength) -> &'static str {
         match strength {
             DenoiseStrength::Normal => "Lowers noise by up to 20 dB.",
             DenoiseStrength::Heavy => {
-                "Lowers noise by up to 40 dB. Faint sounds may cut in and out."
+                "Lowers noise by up to 40 dB.\nFaint sounds may cut in and out."
             }
         }
     }
@@ -945,7 +947,7 @@ mod tests {
         );
         assert_eq!(
             text::strength_line(DenoiseStrength::Heavy),
-            "Lowers noise by up to 40 dB. Faint sounds may cut in and out."
+            "Lowers noise by up to 40 dB.\nFaint sounds may cut in and out."
         );
         assert_eq!(DenoiseStrength::default(), DenoiseStrength::Normal);
         for strength in DenoiseStrength::ALL {
