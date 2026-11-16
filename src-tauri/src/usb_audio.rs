@@ -1091,7 +1091,7 @@ mod tests {
     }
 
     #[test]
-    fn mixes_a_float_pair_to_mono_without_clamping() {
+    fn averages_a_float_pair_to_mono_without_clamping() {
         let mut frames = vec![0.0f32; 8];
         frames[4] = 3.0;
         frames[5] = 1.0;
@@ -1167,7 +1167,7 @@ mod tests {
     }
 
     #[test]
-    fn a_16_bit_pair_mixed_to_mono_keeps_its_half_step() {
+    fn a_16_bit_pair_averaged_to_mono_keeps_its_half_step() {
         // 4 channels; channels 3 and 4 are -2 and -1.
         let bytes = le_bytes(&[50, 60, -2, -1], 2);
         let buf = decode_pick(NativeSampleFormat::I16, 4, &[2, 3], false, &bytes);

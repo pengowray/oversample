@@ -1089,16 +1089,17 @@ fn usb_picker_channels(state: &AppState) -> Option<u32> {
 }
 
 /// The Channels row for a USB device with more than 2 channels: each pair
-/// (1 and 2, 3 and 4, ...) in stereo, or one channel in mono. The device names
-/// its channels only by number. With nothing saved, channels 1 and 2 in stereo.
+/// (1 and 2, 3 and 4, ...) in stereo, channels 1 and 2 averaged into one, or
+/// one channel in mono. The device names its channels only by number. With
+/// nothing saved, channels 1 and 2 in stereo.
 #[component]
 fn UsbChannelRow(channels: u32) -> impl IntoView {
     let state = expect_context::<AppState>();
-    // The option value: the pick as saved ("5,6" or "5"), or "1,2" when
-    // nothing usable is saved.
+    // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
+    // when nothing usable is saved.
     let current = move || {
         let pick = state.mic.usb_channels().get();
-        if !pick.is_empty() && pick.iter().all(|&c| c < channels) {
+        if !pick.channels.is_empty() && pick.channels.iter().all(|&c| c < channels) {
             crate::state::format_usb_channels(&pick)
         } else {
             "1,2".to_string()
@@ -1110,26 +1111,30 @@ fn UsbChannelRow(channels: u32) -> impl IntoView {
         crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, &val);
         restart_listening(state);
     };
-    let pairs: Vec<u32> = (1..channels).step_by(2).collect();
+    let pairs: Vec<u32> = (3..channels).step_by(2).collect();
     let singles: Vec<u32> = (1..=channels).collect();
     view! {
         <div class="layer-panel-slider-row het-text-row">
-            <label style="font-size: 11px;" title="Channels used for listening and recording. The live spectrogram shows left and right combined.">"Channels"</label>
+            <label style="font-size: 11px;" title="Channels used for listening and recording. The live spectrogram shows left and right averaged.">"Channels"</label>
             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px; max-width: 150px;"
                 on:change=on_change
                 prop:value=current
             >
-                <optgroup label="Stereo pairs (left, right)">
-                    {pairs.into_iter().map(|a| {
-                        let value = format!("{},{}", a, a + 1);
-                        let v = value.clone();
-                        view! {
-                            <option value=value selected=move || current() == v>
-                                {format!("{} and {} (stereo)", a, a + 1)}
-                            </option>
-                        }
-                    }).collect::<Vec<_>>()}
-                </optgroup>
+                <option value="1,2" selected=move || current() == "1,2">"1 and 2 (stereo)"</option>
+                <option value="avg" selected=move || current() == "avg">"1 and 2 averaged (mono)"</option>
+                {(!pairs.is_empty()).then(|| view! {
+                    <optgroup label="Other stereo pairs (left, right)">
+                        {pairs.into_iter().map(|a| {
+                            let value = format!("{},{}", a, a + 1);
+                            let v = value.clone();
+                            view! {
+                                <option value=value selected=move || current() == v>
+                                    {format!("{} and {} (stereo)", a, a + 1)}
+                                </option>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </optgroup>
+                })}
                 <optgroup label="Single channels (mono)">
                     {singles.into_iter().map(|a| {
                         let value = a.to_string();

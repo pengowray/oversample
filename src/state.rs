@@ -1503,22 +1503,44 @@ pub enum ChannelMode {
     Stereo,
 }
 
-/// The `MIC_USB_CHANNELS` setting ("5,6" or "5", 1-based) as 0-based
-/// channels. Anything else is empty (the default).
-pub fn parse_usb_channels(v: &str) -> Vec<u32> {
+/// The channels to record from a USB device with more than 2 channels.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UsbChannelPick {
+    /// 0-based, 1 or 2 of them. Empty means channels 1 and 2 in stereo.
+    pub channels: Vec<u32>,
+    /// Record the 2 channels averaged into one (mono) instead of in stereo.
+    pub averaged: bool,
+}
+
+/// The `MIC_USB_CHANNELS` setting: "5,6" or "5" (1-based), or "avg" for
+/// channels 1 and 2 averaged. Anything else, including an empty value and the
+/// old "mix", is the default (channels 1 and 2 in stereo).
+pub fn parse_usb_channels(v: &str) -> UsbChannelPick {
+    if v == "avg" {
+        return UsbChannelPick {
+            channels: vec![0, 1],
+            averaged: true,
+        };
+    }
     let picked: Option<Vec<u32>> = v
         .split(',')
         .map(|c| c.trim().parse::<u32>().ok().filter(|&c| c >= 1).map(|c| c - 1))
         .collect();
     match picked {
-        Some(p) if (1..=2).contains(&p.len()) => p,
-        _ => Vec::new(),
+        Some(p) if (1..=2).contains(&p.len()) => UsbChannelPick {
+            channels: p,
+            averaged: false,
+        },
+        _ => UsbChannelPick::default(),
     }
 }
 
-/// 0-based channels as the `MIC_USB_CHANNELS` setting.
-pub fn format_usb_channels(picked: &[u32]) -> String {
-    picked
+/// A pick as the `MIC_USB_CHANNELS` setting.
+pub fn format_usb_channels(pick: &UsbChannelPick) -> String {
+    if pick.averaged {
+        return "avg".to_string();
+    }
+    pick.channels
         .iter()
         .map(|c| (c + 1).to_string())
         .collect::<Vec<_>>()
@@ -2112,10 +2134,8 @@ pub struct MicState {
     pub max_bit_depth: u16,
     /// Mono or stereo channel mode for mic recording.
     pub channel_mode: ChannelMode,
-    /// The channels (0-based, 1 or 2) to record from a USB device with more
-    /// than 2 channels: a pair in stereo, one channel in mono. Empty means
-    /// channels 1 and 2 in stereo.
-    pub usb_channels: Vec<u32>,
+    /// The channels to record from a USB device with more than 2 channels.
+    pub usb_channels: UsbChannelPick,
     /// Channels in the widest input setting of the connected USB device, as
     /// read from its descriptors. 0 when not known.
     pub usb_device_channels: u32,
@@ -4351,17 +4371,26 @@ impl AppState {
 
 #[cfg(test)]
 mod usb_channel_setting_tests {
-    use super::{format_usb_channels, parse_usb_channels};
+    use super::{format_usb_channels, parse_usb_channels, UsbChannelPick};
+
+    fn pick(channels: &[u32], averaged: bool) -> UsbChannelPick {
+        UsbChannelPick {
+            channels: channels.to_vec(),
+            averaged,
+        }
+    }
 
     #[test]
-    fn reads_a_pair_or_one_channel_and_rejects_the_rest() {
-        assert_eq!(parse_usb_channels("5,6"), vec![4, 5]);
-        assert_eq!(parse_usb_channels("7"), vec![6]);
-        assert_eq!(parse_usb_channels(""), Vec::<u32>::new());
-        assert_eq!(parse_usb_channels("0"), Vec::<u32>::new());
-        assert_eq!(parse_usb_channels("1,2,3"), Vec::<u32>::new());
-        assert_eq!(parse_usb_channels("x"), Vec::<u32>::new());
-        assert_eq!(format_usb_channels(&[4, 5]), "5,6");
-        assert_eq!(format_usb_channels(&[]), "");
+    fn reads_a_pair_one_channel_or_averaged_and_defaults_the_rest() {
+        assert_eq!(parse_usb_channels("5,6"), pick(&[4, 5], false));
+        assert_eq!(parse_usb_channels("7"), pick(&[6], false));
+        assert_eq!(parse_usb_channels("avg"), pick(&[0, 1], true));
+        // An empty value and the old "mix" are the default: 1 and 2 in stereo.
+        for v in ["", "mix", "0", "1,2,3", "x"] {
+            assert_eq!(parse_usb_channels(v), UsbChannelPick::default(), "{v}");
+        }
+        assert_eq!(format_usb_channels(&pick(&[4, 5], false)), "5,6");
+        assert_eq!(format_usb_channels(&pick(&[0, 1], true)), "avg");
+        assert_eq!(format_usb_channels(&UsbChannelPick::default()), "");
     }
 }

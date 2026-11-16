@@ -196,7 +196,7 @@ thread_local! {
     /// The Channels setting the open mic was opened with.
     static OPENED_CHANNEL_MODE: std::cell::Cell<ChannelMode> = const { std::cell::Cell::new(ChannelMode::Mono) };
     /// The USB channel pick the open mic was opened with.
-    static OPENED_USB_CHANNELS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+    static OPENED_USB_CHANNELS: RefCell<crate::state::UsbChannelPick> = RefCell::new(Default::default());
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -1724,7 +1724,7 @@ async fn open_usb(state: &AppState) -> bool {
     let dev_info = query_usb_device_info(state, &device_name).await;
     let plan = dev_info
         .as_ref()
-        .and_then(|dev| usb_plan_for(dev, &saved_pick, max_sr, max_bits));
+        .and_then(|dev| usb_plan_for(dev, &saved_pick.channels, max_sr, max_bits));
     if let Some(dev) = &dev_info {
         let alts: Vec<String> = usb_alts(dev)
             .iter()
@@ -1809,10 +1809,15 @@ async fn open_usb(state: &AppState) -> bool {
         state
             .status
             .message()
-            .set(Some(usb_fallback_message(&saved_pick, p)));
+            .set(Some(usb_fallback_message(
+                &saved_pick.channels,
+                p,
+                saved_pick.averaged,
+            )));
     }
     let (channels, stereo) = usb_stream_channels(
         plan.as_ref().map(|p| p.plan.picked.as_slice()),
+        saved_pick.averaged,
         info.num_channels,
         stereo_requested,
     );
@@ -2002,16 +2007,18 @@ fn usb_plan_for(
 
 /// The channels to keep from a USB stream and whether they stay separate.
 /// `picked` is the plan for a device with more than 2 channels: a pair is
-/// stereo, one channel mono. Without a plan, the decoder's default applies:
-/// a device sending more than 2 channels records channels 1 and 2 in stereo,
-/// and a 2-channel device follows the Mono/Stereo setting.
+/// stereo unless `averaged` (the user picked channels 1 and 2 averaged), one
+/// channel mono. Without a plan, the decoder's default applies: a device
+/// sending more than 2 channels records channels 1 and 2 in stereo, and a
+/// 2-channel device follows the Mono/Stereo setting.
 fn usb_stream_channels(
     picked: Option<&[u32]>,
+    averaged: bool,
     num_channels: i32,
     stereo_requested: bool,
 ) -> (Vec<u32>, bool) {
     match picked {
-        Some(p) => (p.to_vec(), p.len() == 2),
+        Some(p) => (p.to_vec(), p.len() == 2 && !averaged),
         None => (
             Vec::new(),
             num_channels > 2 || (stereo_requested && num_channels == 2),
@@ -2030,9 +2037,13 @@ fn usb_channel_names(picked: &[u32]) -> String {
 
 /// The status message when the saved USB channel pick can't be streamed and
 /// channels 1 and 2 are used instead. The saved pick is kept for next time.
-fn usb_fallback_message(saved: &[u32], p: &UsbPlan) -> String {
+fn usb_fallback_message(saved: &[u32], p: &UsbPlan, averaged: bool) -> String {
     let saved_names = usb_channel_names(saved);
-    let used = "Using channels 1 and 2 (stereo).";
+    let used = if averaged {
+        "Using channels 1 and 2 averaged (mono)."
+    } else {
+        "Using channels 1 and 2 (stereo)."
+    };
     if saved.iter().any(|&c| c >= p.device_channels) {
         format!(
             "{saved_names} not available: this device has {} channels. {used}",
@@ -2245,17 +2256,22 @@ mod usb_channel_tests {
 
     #[test]
     fn a_wide_device_records_its_pick_or_channels_1_and_2_in_stereo() {
-        assert_eq!(usb_stream_channels(Some(&[4, 5]), 8, false), (vec![4, 5], true));
-        assert_eq!(usb_stream_channels(Some(&[0, 1]), 8, false), (vec![0, 1], true));
-        assert_eq!(usb_stream_channels(Some(&[6]), 8, true), (vec![6], false));
+        assert_eq!(usb_stream_channels(Some(&[4, 5]), false, 8, false), (vec![4, 5], true));
+        assert_eq!(usb_stream_channels(Some(&[0, 1]), false, 8, false), (vec![0, 1], true));
+        assert_eq!(usb_stream_channels(Some(&[6]), false, 8, true), (vec![6], false));
         // No plan (the plugin chose the setting): channels 1 and 2 in stereo.
-        assert_eq!(usb_stream_channels(None, 8, false), (vec![], true));
+        assert_eq!(usb_stream_channels(None, false, 8, false), (vec![], true));
+    }
+
+    #[test]
+    fn channels_1_and_2_averaged_record_one_channel() {
+        assert_eq!(usb_stream_channels(Some(&[0, 1]), true, 8, true), (vec![0, 1], false));
     }
 
     #[test]
     fn one_and_two_channel_devices_follow_the_mono_stereo_setting() {
-        assert_eq!(usb_stream_channels(None, 2, true), (vec![], true));
-        assert_eq!(usb_stream_channels(None, 2, false), (vec![], false));
-        assert_eq!(usb_stream_channels(None, 1, true), (vec![], false));
+        assert_eq!(usb_stream_channels(None, false, 2, true), (vec![], true));
+        assert_eq!(usb_stream_channels(None, false, 2, false), (vec![], false));
+        assert_eq!(usb_stream_channels(None, false, 1, true), (vec![], false));
     }
 }
