@@ -159,7 +159,7 @@ pub fn BatBookStrip() -> impl IntoView {
                     title=move || {
                         let resolved = state.bat_book.auto_resolved().get()?;
                         let place = resolved.recording_place.as_ref()?;
-                        let mut tip = place.detail(resolved.region);
+                        let mut tip = place.detail(resolved.region.label());
                         if let BatBookMode::Manual(r) = state.bat_book.mode().get() {
                             if r != resolved.region {
                                 tip.push_str(&format!(
@@ -340,7 +340,7 @@ fn RegionMenu(region_menu_open: RwSignal<bool>) -> impl IntoView {
             {move || recording().map(|(region, place)| view! {
                 <div class="bat-book-region-recording">
                     <div>{format!("This recording: {}", region.label())}</div>
-                    <div class="bat-book-region-recording-src">{place.detail(region)}</div>
+                    <div class="bat-book-region-recording-src">{place.detail(region.label())}</div>
                 </div>
                 <div class="bat-book-region-separator"></div>
                 <div class="bat-book-region-heading">"For recordings without location data"</div>

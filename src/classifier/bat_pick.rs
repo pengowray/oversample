@@ -2,7 +2,6 @@
 //! "Auto" the one for the place the recording was made.
 
 use super::BatScope;
-use crate::bat_book::auto_resolve;
 use crate::bat_book::country_map::country_to_region;
 use crate::bat_book::types::BatBookRegion;
 use crate::state::store_fields::*;
@@ -50,7 +49,7 @@ pub struct AutoScope {
 /// to a smaller region when it has a position, or all regions for a
 /// recording with no place or a place with no classifier.
 pub fn auto_scope(file: Option<&LoadedFile>) -> AutoScope {
-    let Some(place) = file.and_then(auto_resolve::get_country) else {
+    let Some(place) = file.and_then(super::place::recording_country) else {
         return AutoScope {
             scope: BatScope::All,
             note: "This recording has no location".to_string(),
@@ -82,7 +81,7 @@ pub fn auto_scope(file: Option<&LoadedFile>) -> AutoScope {
         },
         _ => AutoScope {
             scope: country_scope,
-            note: place.detail(book),
+            note: place.detail(book.label()),
         },
     }
 }

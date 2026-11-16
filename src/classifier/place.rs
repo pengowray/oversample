@@ -2,6 +2,9 @@
 //! location list: the BirdNET+ Geomodel's species expected at that place and
 //! week. Nothing here leaves the device.
 //!
+//! [`recording_country`] gives the country, for picking a region (the bat
+//! book's, and BattyBirdNET's).
+//!
 //! Sources, first found wins:
 //! - Place: GUANO `Loc Position` ("lat lon"), or `Loc|Lat` with `Loc|Lon`;
 //!   then a Wildlife Acoustics `wamd` chunk's GPS position; then Xeno-Canto's
@@ -10,6 +13,9 @@
 //!   "Date" (all start "YYYY-MM-DD"). Without a date the whole year is used (week 0). A file's
 //!   modified time is not used: copying a file changes it.
 
+use crate::bat_book::countries::country_names_at;
+use crate::bat_book::country_map::country_to_region;
+use crate::source_site::SourceSite;
 use crate::state::LoadedFile;
 
 /// A recording's place and week.
@@ -129,6 +135,81 @@ pub fn file_week(file: &LoadedFile) -> u32 {
         })
         .or_else(|| xc.and_then(|x| field(x, "Date")).and_then(week_of_date))
         .unwrap_or(0)
+}
+
+/// Where a recording's country came from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlaceSource {
+    /// Its GPS position (GUANO or source-site coordinates), looked up offline.
+    Gps { lat: f32, lon: f32 },
+    /// The "Country" field of the site the recording came from.
+    Metadata { site: SourceSite },
+}
+
+/// The country a recording was made in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordingPlace {
+    pub source: PlaceSource,
+    pub country: String,
+}
+
+impl RecordingPlace {
+    /// Where the place came from, for a reader who is shown `region` (a
+    /// region's name) beside it: "From GPS position 52.48, -1.90", with the
+    /// country added when `region` is not the country itself, or "From
+    /// iNaturalist country: Australia".
+    pub fn detail(&self, region: &str) -> String {
+        match &self.source {
+            &PlaceSource::Gps { lat, lon } if self.country == region => {
+                format!("From GPS position {lat:.2}, {lon:.2}")
+            }
+            &PlaceSource::Gps { lat, lon } => {
+                format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
+            }
+            PlaceSource::Metadata { site } => {
+                format!("From {} country: {}", site.name(), self.country)
+            }
+        }
+    }
+}
+
+/// The recording's country and where it came from: the source site's
+/// "Country" (Xeno-canto, iNaturalist, ...), or else the country at its GPS
+/// position ([`file_place`]), looked up offline. Of a country's name variants,
+/// the one the bat book's region map knows is used. The bat book and
+/// BattyBirdNET's "Auto" both pick their region from this.
+pub fn recording_country(file: &LoadedFile) -> Option<RecordingPlace> {
+    let from_site = file.site_metadata.as_ref().and_then(|m| {
+        let country = m
+            .fields
+            .iter()
+            .find(|(k, _)| k == "Country")
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())?;
+        Some((m.site.clone(), country))
+    });
+    // A source-site country the region map doesn't know falls through to the
+    // coordinates.
+    if let Some((site, country)) = from_site.filter(|(_, c)| country_to_region(c).is_some()) {
+        return Some(RecordingPlace {
+            source: PlaceSource::Metadata { site },
+            country,
+        });
+    }
+    let place = file_place(file)?;
+    let names = country_names_at(place.lat, place.lon)?;
+    let country = names
+        .iter()
+        .find(|n| country_to_region(n).is_some())
+        .unwrap_or(&names[0])
+        .clone();
+    Some(RecordingPlace {
+        source: PlaceSource::Gps {
+            lat: place.lat,
+            lon: place.lon,
+        },
+        country,
+    })
 }
 
 #[cfg(test)]

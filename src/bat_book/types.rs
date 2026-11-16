@@ -1,4 +1,4 @@
-use crate::source_site::SourceSite;
+use crate::classifier::place::RecordingPlace;
 use serde::Deserialize;
 
 /// How common a species is in a given region.
@@ -353,38 +353,4 @@ pub struct AutoResolved {
     /// recording with a place of its own keeps its region even when another
     /// region is picked in the menu.
     pub recording_place: Option<RecordingPlace>,
-}
-
-/// Where a recording's country came from.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PlaceSource {
-    /// Its GPS position (GUANO or source-site coordinates), looked up offline.
-    Gps { lat: f32, lon: f32 },
-    /// The "Country" field of the site the recording came from.
-    Metadata { site: SourceSite },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct RecordingPlace {
-    pub source: PlaceSource,
-    pub country: String,
-}
-
-impl RecordingPlace {
-    /// Where the place came from, e.g. "From GPS position 52.48, -1.90" (with
-    /// the country added when the region is not the country itself) or "From
-    /// iNaturalist country: Australia".
-    pub fn detail(&self, region: BatBookRegion) -> String {
-        match &self.source {
-            &PlaceSource::Gps { lat, lon } if self.country == region.label() => {
-                format!("From GPS position {lat:.2}, {lon:.2}")
-            }
-            &PlaceSource::Gps { lat, lon } => {
-                format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
-            }
-            PlaceSource::Metadata { site } => {
-                format!("From {} country: {}", site.name(), self.country)
-            }
-        }
-    }
 }

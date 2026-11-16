@@ -1,6 +1,7 @@
 use super::country_map::country_to_region;
 use super::data::{get_manifest, species, species_matching, NameQuery};
-use super::types::{AutoResolved, BatBookRegion, BatSpecies, PlaceSource, RecordingPlace};
+use super::types::{AutoResolved, BatBookRegion, BatSpecies};
+use crate::classifier::place::recording_country;
 use crate::state::LoadedFile;
 
 /// Search all regional bat books for a species by scientific name.
@@ -73,7 +74,7 @@ pub(crate) fn find_species(
 /// The region of the recording's country (source site or GPS position), if
 /// the region map knows it.
 pub(crate) fn country_region(file: &LoadedFile) -> Option<BatBookRegion> {
-    let place = get_country(file)?;
+    let place = recording_country(file)?;
     country_to_region(&place.country).map(|m| m.region)
 }
 
@@ -110,45 +111,6 @@ pub(crate) fn get_scientific_name(file: &LoadedFile) -> Option<String> {
         }
     }
     None
-}
-
-/// The recording's country and where it came from: the source site's
-/// "Country" (Xeno-canto, iNaturalist, ...), or else the country at its GPS
-/// position (GUANO or source-site coordinates),
-/// looked up offline. Of a country's name variants, the one the region map
-/// knows is used.
-pub(crate) fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
-    let from_site = file.site_metadata.as_ref().and_then(|m| {
-        let country = m
-            .fields
-            .iter()
-            .find(|(k, _)| k == "Country")
-            .map(|(_, v)| v.trim().to_string())
-            .filter(|v| !v.is_empty())?;
-        Some((m.site.clone(), country))
-    });
-    // A source-site country the region map doesn't know falls through to the
-    // coordinates.
-    if let Some((site, country)) = from_site.filter(|(_, c)| country_to_region(c).is_some()) {
-        return Some(RecordingPlace {
-            source: PlaceSource::Metadata { site },
-            country,
-        });
-    }
-    let place = crate::classifier::place::file_place(file)?;
-    let names = super::countries::country_names_at(place.lat, place.lon)?;
-    let country = names
-        .iter()
-        .find(|n| country_to_region(n).is_some())
-        .unwrap_or(&names[0])
-        .clone();
-    Some(RecordingPlace {
-        source: PlaceSource::Gps {
-            lat: place.lat,
-            lon: place.lon,
-        },
-        country,
-    })
 }
 
 /// The region for a position, through the country it is in.
@@ -206,7 +168,7 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
     };
 
     let scientific_name = get_scientific_name(file);
-    let place = get_country(file);
+    let place = recording_country(file);
     let country = place.as_ref().map(|p| p.country.clone());
     let country_match = country.as_deref().and_then(country_to_region);
     // Kept only when the region comes from the recording's country.
