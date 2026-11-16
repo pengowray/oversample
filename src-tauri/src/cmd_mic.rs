@@ -68,6 +68,8 @@ pub fn mic_open(
     device_name: Option<String>,
     max_bit_depth: Option<u16>,
     channels: Option<u16>,
+    channel_pick: Option<Vec<u32>>,
+    channel_pick_averaged: Option<bool>,
 ) -> Result<MicInfo, String> {
     let mut mic = state.lock().map_err(|e| e.to_string())?;
     if mic.is_some() {
@@ -82,6 +84,7 @@ pub fn mic_open(
             supported_sample_rates: m.supported_sample_rates.clone(),
             host_name: cpal_host_name(),
             channels: m.channels,
+            device_channels: m.device_channels,
         });
     }
 
@@ -91,6 +94,8 @@ pub fn mic_open(
         device_name.as_deref(),
         max_bit_depth.unwrap_or(0),
         channels.unwrap_or(0),
+        channel_pick.as_deref().unwrap_or(&[]),
+        channel_pick_averaged.unwrap_or(false),
     )?;
     let info = MicInfo {
         device_name: m.device_name.clone(),
@@ -101,6 +106,7 @@ pub fn mic_open(
         supported_sample_rates: m.supported_sample_rates.clone(),
         host_name: cpal_host_name(),
         channels: m.channels,
+        device_channels: m.device_channels,
     };
 
     // Start the emitter thread for streaming audio chunks to the frontend

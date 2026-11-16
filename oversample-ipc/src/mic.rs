@@ -46,6 +46,10 @@ pub struct MicInfo {
     /// Channels in each `mic_pull_audio` payload and in recordings: 2 means
     /// interleaved L/R, 1 means mono or a mono mix.
     pub channels: u16,
+    /// Channels in the device's widest input setting. Above 2, `channel_pick`
+    /// chooses which of them are recorded. 0 when not known.
+    #[serde(default)]
+    pub device_channels: u16,
 }
 
 /// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).
@@ -103,6 +107,15 @@ pub struct MicOpenArgs {
     pub max_bit_depth: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channels: Option<u16>,
+    /// For a device with more than 2 channels: the channels to record,
+    /// 0-based, a pair (stereo) or one (mono). Empty or out of range means
+    /// channels 1 and 2 in stereo. Ignored for devices with 1 or 2 channels,
+    /// which follow `channels`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_pick: Option<Vec<u32>>,
+    /// Record the picked pair averaged into one channel.
+    #[serde(default)]
+    pub channel_pick_averaged: bool,
 }
 
 /// Args for `mic_start_recording` / `usb_start_recording`.

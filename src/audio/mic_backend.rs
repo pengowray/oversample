@@ -196,7 +196,7 @@ thread_local! {
     /// The Channels setting the open mic was opened with.
     static OPENED_CHANNEL_MODE: std::cell::Cell<ChannelMode> = const { std::cell::Cell::new(ChannelMode::Mono) };
     /// The USB channel pick the open mic was opened with.
-    static OPENED_USB_CHANNELS: RefCell<crate::state::UsbChannelPick> = RefCell::new(Default::default());
+    static OPENED_CHANNEL_PICK: RefCell<crate::state::ChannelPick> = RefCell::new(Default::default());
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -585,7 +585,7 @@ impl MicBackend {
     /// Open the mic. Returns true on success.
     pub async fn open(&self, state: &AppState) -> bool {
         let channel_mode = state.mic.channel_mode().get_untracked();
-        let usb_channels = state.mic.usb_channels().get_untracked();
+        let channel_pick = state.mic.channel_pick().get_untracked();
         let opened = match self {
             MicBackend::Browser => open_web(state).await,
             MicBackend::Cpal => open_cpal(state).await,
@@ -593,7 +593,7 @@ impl MicBackend {
         };
         if opened {
             OPENED_CHANNEL_MODE.with(|m| m.set(channel_mode));
-            OPENED_USB_CHANNELS.with(|c| *c.borrow_mut() = usb_channels);
+            OPENED_CHANNEL_PICK.with(|c| *c.borrow_mut() = channel_pick);
         }
         opened
     }
@@ -603,8 +603,8 @@ impl MicBackend {
     /// change needs a reopen.
     pub fn channel_mode_changed(&self, state: &AppState) -> bool {
         OPENED_CHANNEL_MODE.with(|m| m.get()) != state.mic.channel_mode().get_untracked()
-            || (*self == MicBackend::RawUsb
-                && OPENED_USB_CHANNELS.with(|c| *c.borrow() != state.mic.usb_channels().get_untracked()))
+            || (matches!(self, MicBackend::RawUsb | MicBackend::Cpal)
+                && OPENED_CHANNEL_PICK.with(|c| *c.borrow() != state.mic.channel_pick().get_untracked()))
     }
 
     /// Close the mic unconditionally.
@@ -1566,11 +1566,14 @@ async fn open_cpal(state: &AppState) -> bool {
             ChannelMode::Stereo => 2,
         }
     };
+    let pick = state.mic.channel_pick().get_untracked();
     let open_args = oversample_ipc::mic::MicOpenArgs {
         max_sample_rate: (max_sr > 0).then_some(max_sr),
         device_name: selected_device,
         max_bit_depth: (max_bits > 0).then_some(max_bits as u16),
         channels: Some(channels),
+        channel_pick: (!pick.channels.is_empty()).then(|| pick.channels.clone()),
+        channel_pick_averaged: pick.averaged,
     };
     let info =
         match tauri_invoke_typed_args::<_, oversample_ipc::mic::MicInfo>("mic_open", &open_args)
@@ -1587,7 +1590,18 @@ async fn open_cpal(state: &AppState) -> bool {
             }
         };
 
-    if channels == 2 && info.channels != 2 {
+    if info.device_channels > 0 {
+        state.mic.cpal_device_channels().set(info.device_channels as u32);
+    }
+    if info.device_channels > 2 {
+        if pick.channels.iter().any(|&c| c >= info.device_channels as u32) {
+            state.status.message().set(Some(format!(
+                "{} not available: this device has {} channels. Using channels 1 and 2 (stereo).",
+                usb_channel_names(&pick.channels),
+                info.device_channels
+            )));
+        }
+    } else if channels == 2 && info.channels != 2 {
         state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
     }
     NATIVE_CHANNELS.with(|c| c.set(info.channels));
@@ -1720,7 +1734,7 @@ async fn open_usb(state: &AppState) -> bool {
     // more than 2 channels), then open the device via the Kotlin plugin.
     let max_sr = state.mic.max_sample_rate().get_untracked();
     let max_bits = state.mic.max_bit_depth().get_untracked() as u32;
-    let saved_pick = state.mic.usb_channels().get_untracked();
+    let saved_pick = state.mic.channel_pick().get_untracked();
     let dev_info = query_usb_device_info(state, &device_name).await;
     let plan = dev_info
         .as_ref()

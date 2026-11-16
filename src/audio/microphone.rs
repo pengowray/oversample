@@ -220,6 +220,17 @@ pub async fn query_mic_info(state: &AppState) {
             )
             .await
             {
+                // Read the channel count of the chosen device (or the default),
+                // for the Channels row.
+                let selected = state.mic.selected_device().get_untracked();
+                let chosen = result.devices.iter().find(|d| match &selected {
+                    Some(name) => &d.name == name,
+                    None => d.is_default,
+                });
+                let device_channels = chosen
+                    .and_then(|d| d.sample_rate_ranges.iter().map(|r| r.channels).max())
+                    .unwrap_or(0);
+                state.mic.cpal_device_channels().set(device_channels as u32);
                 for dev in &result.devices {
                     if dev.is_default {
                         let n = dev.name.to_lowercase();
