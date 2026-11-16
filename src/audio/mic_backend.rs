@@ -13,8 +13,7 @@ use crate::dsp::zc_divide::zc_divide;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ChannelMode, MicAcquisitionState, MicBackend, PlaybackMode};
 use crate::tauri_bridge::{
-    get_tauri_internals, tauri_invoke_args, tauri_invoke_no_args, tauri_invoke_typed_args,
-    tauri_invoke_typed_no_args,
+    tauri_invoke_args, tauri_invoke_no_args, tauri_invoke_typed_args, tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
@@ -202,8 +201,9 @@ thread_local! {
 // ── Thread-local state: USB-specific ────────────────────────────────────
 
 thread_local! {
-    /// Keep the USB stream error event listener closure alive.
-    static USB_ERROR_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
+    /// The `usb-stream-error` subscription while a USB stream is open.
+    /// `close_usb` drops it, which unsubscribes.
+    static USB_ERROR_LISTENER: RefCell<Option<crate::tauri_bridge::TauriListener>> = const { RefCell::new(None) };
     /// The last `getUsbDeviceInfo` answer, by device name. Reused while a USB
     /// stream is open, since the query claims the device's audio interfaces.
     static USB_DEVICE_INFO: RefCell<Option<oversample_ipc::plugins::UsbDeviceInfoResult>> = const { RefCell::new(None) };
@@ -894,37 +894,6 @@ pub(crate) async fn cancel_shared_entry() {
         Ok(_) => log::info!("Cancelled pending shared storage entry"),
         Err(e) => log::warn!("cancelRecordingEntry failed: {}", e),
     }
-}
-
-// ── Tauri event listeners (private) ─────────────────────────────────────
-
-/// Subscribe to a USB stream error event (separate thread-local from tauri_listen).
-fn tauri_listen_usb_error(event_name: &str, callback: Closure<dyn FnMut(JsValue)>) -> Option<()> {
-    let tauri = get_tauri_internals()?;
-
-    let transform_fn =
-        js_sys::Reflect::get(&tauri, &JsValue::from_str("transformCallback")).ok()?;
-    let transform_fn = js_sys::Function::from(transform_fn);
-    let handler_id = transform_fn
-        .call1(&tauri, callback.as_ref().unchecked_ref())
-        .ok()?;
-
-    let invoke_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")).ok()?;
-    let invoke_fn = js_sys::Function::from(invoke_fn);
-
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(&args, &"event".into(), &JsValue::from_str(event_name)).ok();
-    let target = js_sys::Object::new();
-    js_sys::Reflect::set(&target, &"kind".into(), &JsValue::from_str("Any")).ok();
-    js_sys::Reflect::set(&args, &"target".into(), &target).ok();
-    js_sys::Reflect::set(&args, &"handler".into(), &handler_id).ok();
-
-    invoke_fn
-        .call2(&tauri, &JsValue::from_str("plugin:event|listen"), &args)
-        .ok();
-
-    USB_ERROR_CLOSURE.with(|c| *c.borrow_mut() = Some(callback));
-    Some(())
 }
 
 // ── Shared native helpers (used by both cpal and USB) ───────────────────
@@ -1962,7 +1931,8 @@ async fn open_usb(state: &AppState) -> bool {
         reset_live_dsp(&NATIVE_LIVE_DSP);
         NATIVE_REC_BUFFER.with(|buf| buf.borrow_mut().clear());
     });
-    tauri_listen_usb_error("usb-stream-error", error_handler);
+    let listener = crate::tauri_bridge::tauri_listen_scoped("usb-stream-error", error_handler);
+    USB_ERROR_LISTENER.with(|c| *c.borrow_mut() = listener);
 
     // Mark open before starting the pull loop (see the cpal path).
     NATIVE_MIC_OPEN.with(|o| *o.borrow_mut() = Some(NativeMode::Usb));
@@ -2141,8 +2111,8 @@ async fn close_usb(state: &AppState) {
 
     let _ = tauri_invoke_no_args("plugin:usb-audio|closeUsbDevice").await;
 
-    // Also clean up USB error closure
-    USB_ERROR_CLOSURE.with(|c| {
+    // Unsubscribe from usb-stream-error.
+    USB_ERROR_LISTENER.with(|c| {
         c.borrow_mut().take();
     });
 

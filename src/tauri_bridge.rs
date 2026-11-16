@@ -226,39 +226,132 @@ pub async fn read_fd_range(fd: i32, offset: u64, length: u64) -> Result<Vec<u8>,
     Ok(js_sys::Uint8Array::new(&buf).to_vec())
 }
 
-/// Subscribe to a Tauri event. The closure is leaked (via `forget`) so the
-/// listener lives for the lifetime of the app.  Returns `true` if the
-/// listener was registered successfully.
+/// Register `callback` for `event_name` with Tauri's event plugin. Returns the
+/// `plugin:event|listen` promise, which resolves to the event id.
+fn listen_raw(event_name: &str, callback: &Closure<dyn FnMut(JsValue)>) -> Option<js_sys::Promise> {
+    let tauri = get_tauri_internals()?;
+    let transform_fn =
+        js_sys::Reflect::get(&tauri, &JsValue::from_str("transformCallback")).ok()?;
+    let handler_id = js_sys::Function::from(transform_fn)
+        .call1(&tauri, callback.as_ref().unchecked_ref())
+        .ok()?;
+    #[derive(serde::Serialize)]
+    struct Target {
+        kind: &'static str,
+    }
+    #[derive(serde::Serialize)]
+    struct ListenArgs<'a> {
+        event: &'a str,
+        target: Target,
+    }
+    let args = to_args(
+        "plugin:event|listen",
+        &ListenArgs {
+            event: event_name,
+            target: Target { kind: "Any" },
+        },
+    )
+    .ok()?;
+    js_sys::Reflect::set(&args, &"handler".into(), &handler_id).ok()?;
+    let invoke_fn = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")).ok()?;
+    js_sys::Function::from(invoke_fn)
+        .call2(&tauri, &JsValue::from_str("plugin:event|listen"), &args)
+        .ok()?
+        .dyn_into()
+        .ok()
+}
+
+/// Subscribe to a Tauri event for the lifetime of the app. The closure is
+/// leaked (via `forget`). Returns `true` if the listener was registered.
+/// For a subscription that ends, use [`tauri_listen_scoped`].
 pub fn tauri_listen(event_name: &str, callback: Closure<dyn FnMut(JsValue)>) -> bool {
-    let Some(tauri) = get_tauri_internals() else {
+    if listen_raw(event_name, &callback).is_none() {
         return false;
-    };
-
-    let Ok(transform_fn) = js_sys::Reflect::get(&tauri, &JsValue::from_str("transformCallback"))
-    else {
-        return false;
-    };
-    let transform_fn = js_sys::Function::from(transform_fn);
-    let Ok(handler_id) = transform_fn.call1(&tauri, callback.as_ref().unchecked_ref()) else {
-        return false;
-    };
-
-    let Ok(invoke_fn) = js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")) else {
-        return false;
-    };
-    let invoke_fn = js_sys::Function::from(invoke_fn);
-
-    let args = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&args, &"event".into(), &JsValue::from_str(event_name));
-    let target = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&target, &"kind".into(), &JsValue::from_str("Any"));
-    let _ = js_sys::Reflect::set(&args, &"target".into(), &target);
-    let _ = js_sys::Reflect::set(&args, &"handler".into(), &handler_id);
-
-    let _ = invoke_fn.call2(&tauri, &JsValue::from_str("plugin:event|listen"), &args);
-
-    // Leak the closure so it lives forever (event listener for app lifetime)
+    }
     callback.forget();
-
     true
+}
+
+#[derive(Default)]
+struct ListenerState {
+    /// The id `plugin:event|listen` resolved to.
+    event_id: Option<f64>,
+    /// The [`TauriListener`] was dropped before the id arrived.
+    dropped: bool,
+}
+
+/// A Tauri event subscription from [`tauri_listen_scoped`]. Dropping it
+/// unsubscribes and frees the callback.
+pub struct TauriListener {
+    event: String,
+    state: std::rc::Rc<std::cell::RefCell<ListenerState>>,
+    _callback: Closure<dyn FnMut(JsValue)>,
+}
+
+/// Subscribe to a Tauri event until the returned [`TauriListener`] is dropped.
+pub fn tauri_listen_scoped(
+    event_name: &str,
+    callback: Closure<dyn FnMut(JsValue)>,
+) -> Option<TauriListener> {
+    let promise = listen_raw(event_name, &callback)?;
+    let state = std::rc::Rc::new(std::cell::RefCell::new(ListenerState::default()));
+    let (event, st) = (event_name.to_string(), state.clone());
+    wasm_bindgen_futures::spawn_local(async move {
+        let Some(id) = JsFuture::from(promise).await.ok().and_then(|v| v.as_f64()) else {
+            return;
+        };
+        let dropped = st.borrow().dropped;
+        if dropped {
+            unlisten(&event, id);
+        } else {
+            st.borrow_mut().event_id = Some(id);
+        }
+    });
+    Some(TauriListener {
+        event: event_name.to_string(),
+        state,
+        _callback: callback,
+    })
+}
+
+impl Drop for TauriListener {
+    fn drop(&mut self) {
+        let mut st = self.state.borrow_mut();
+        st.dropped = true;
+        if let Some(id) = st.event_id.take() {
+            unlisten(&self.event, id);
+        }
+    }
+}
+
+/// Unsubscribe the way `@tauri-apps/api`'s `unlisten` does: forget the
+/// webview's callback first, so it is never called again, then tell the
+/// native side.
+fn unlisten(event: &str, event_id: f64) {
+    let internals = web_sys::window()
+        .and_then(|w| js_sys::Reflect::get(&w, &"__TAURI_EVENT_PLUGIN_INTERNALS__".into()).ok());
+    if let Some(internals) = internals {
+        if let Ok(f) = js_sys::Reflect::get(&internals, &"unregisterListener".into())
+            .and_then(|f| f.dyn_into::<js_sys::Function>())
+        {
+            let _ = f.call2(
+                &internals,
+                &JsValue::from_str(event),
+                &JsValue::from_f64(event_id),
+            );
+        }
+    }
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UnlistenArgs {
+        event: String,
+        event_id: f64,
+    }
+    let args = UnlistenArgs {
+        event: event.to_string(),
+        event_id,
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = tauri_invoke_args("plugin:event|unlisten", &args).await;
+    });
 }
