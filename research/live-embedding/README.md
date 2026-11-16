@@ -60,7 +60,7 @@ In the app, the live view and the classifier agreed on the test recordings:
    engine, dog, and so on) appear in the same rows when they score; a fixed set
    of non-bird rows was dropped because most of the time they are empty rows
    that push the species rows down.
-3. **"Change in sound"**: the cosine distance between each reading's embedding
+3. **"Change in what BirdNET hears"**: the cosine distance between each reading's embedding
    and the one before. A steady sound stays under 0.1; a new call or a change
    of scene reaches 0.2 to 0.5. It shows change that the scores miss, for
    example a new sound that BirdNET has no class for.

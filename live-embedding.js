@@ -121,14 +121,14 @@
                 type: 'text',
                 left: 16,
                 top: 3,
-                style: { text: 'No class at 0.10 or above in the last 20 s', fill: MUTED, fontSize: 11 },
+                style: { text: 'No class at 0.10 or above', fill: MUTED, fontSize: 11 },
               },
             ]),
         {
           type: 'text',
           left: 16,
           top: rowsH + 3,
-          style: { text: 'Change in sound', fill: MUTED, fontSize: 10 },
+          style: { text: 'Change in what BirdNET hears', fill: MUTED, fontSize: 10 },
         },
       ],
       series: [
@@ -164,8 +164,10 @@
           yAxisIndex: 1,
           data: d.change.map(([t, v]) => [t, Math.min(v, 0.5), v]),
           encode: { x: 0, y: 1 },
-          showSymbol: false,
-          symbolSize: 8,
+          // Small dots, so each reading can be hovered.
+          showSymbol: true,
+          symbolSize: 3,
+          itemStyle: { color: INK },
           lineStyle: { color: INK, width: 1.5 },
           areaStyle: { color: 'rgba(221,221,221,0.12)' },
           tooltip: {
@@ -191,6 +193,7 @@
     return [
       {
         id: 'trailLine',
+        zlevel: 1,
         type: 'line',
         data: line.map((p) => (p ? [p[0], p[1]] : [null, null])),
         connectNulls: false,
@@ -201,6 +204,7 @@
       },
       {
         id: 'trail',
+        zlevel: 1,
         type: 'scatter',
         data: trail.slice(0, -1).map((p) => ({
           value: p,
@@ -214,6 +218,7 @@
       },
       {
         id: 'now',
+        zlevel: 1,
         type: 'scatter',
         data: last
           ? [
@@ -258,6 +263,10 @@
           id: 'species',
           type: 'scatter',
           data: species,
+          // Its own canvas layer (zlevel 0), drawn once: the moving marker
+          // and trail are on zlevel 1, so an update redraws only them.
+          zlevel: 0,
+          large: true,
           symbolSize: 3,
           itemStyle: { color: 'rgba(170,170,170,0.3)' },
           emphasis: { scale: 2, itemStyle: { color: INK } },
@@ -331,12 +340,14 @@
       const strip = chartFor(p.strip);
       strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
       const map = chartFor(p.map);
+      const t0 = performance.now();
       if (!map.__ready && el.__species) {
         map.setOption(mapOptions(el.__species, d));
         map.__ready = true;
       } else if (map.__ready) {
         map.setOption({ series: mapSeries(d) });
       }
+      el.__ms = performance.now() - t0;
     },
     dispose(el) {
       if (!el.__parts) return;
