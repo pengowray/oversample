@@ -329,6 +329,23 @@ pub mod attach {
     pub const EMBEDDING: &str = "embedding";
 }
 
+/// What the denoiser does to its network's gain `g = 2 * sigmoid(logit) - 1`
+/// before the gain goes on the recording. The steps are in
+/// `birdnet-worker/src/denoise/chain.rs`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DenoiseGain {
+    /// `max(g, 0.1)`: the gain as the network gives it, at least -20 dB.
+    #[default]
+    Plain,
+    /// `g` smoothed by the median of 5 bins x 9 frames, capped at the largest
+    /// `g` of the cell's 3 x 3 neighbours, at least -20 dB. It leaves fewer
+    /// patches of noise.
+    Smoothed,
+    /// The smoothed gain squared, falling by at most 0.16 dB a frame, at
+    /// least -40 dB. It takes out more of the noise.
+    Heavy,
+}
+
 /// App to worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd")]
@@ -365,12 +382,22 @@ pub enum ToWorker {
     },
     /// Take a whole recording ([`attach::SAMPLES`], mono, at its own rate) for
     /// the loaded denoiser. Any recording before it is dropped. Answered by
-    /// `DenoiseProgress` with `done` 0.
-    DenoiseStart { run: u32 },
+    /// `DenoiseProgress` with `done` 0. `gain` picks what is done to the
+    /// network's gain.
+    DenoiseStart {
+        run: u32,
+        #[serde(default)]
+        gain: DenoiseGain,
+    },
     /// `DenoiseStart` for a recording of `channels` channels, its samples
     /// interleaved in [`attach::SAMPLES`]. Every channel gets the same gains,
     /// and `Denoised` carries the channels interleaved again.
-    DenoiseStartChannels { run: u32, channels: u32 },
+    DenoiseStartChannels {
+        run: u32,
+        channels: u32,
+        #[serde(default)]
+        gain: DenoiseGain,
+    },
     /// Denoise the next block. Answered by `DenoiseProgress`, or by `Denoised`
     /// after the last block. One block per message, so a `Cancel` between two
     /// of them stops the work.
@@ -382,11 +409,13 @@ pub enum ToWorker {
     /// `DenoiseMeasure` pieces, then as `DenoisePiece` pieces. The denoised
     /// samples are the same as `DenoiseStart` gives for the whole recording.
     /// `frames` is a float because a 64-bit integer does not cross to
-    /// JavaScript as a number.
+    /// JavaScript as a number. `gain` as for `DenoiseStart`.
     DenoiseStreamStart {
         run: u32,
         channels: u32,
         frames: f64,
+        #[serde(default)]
+        gain: DenoiseGain,
     },
     /// The recording's next samples ([`attach::SAMPLES`], channels
     /// interleaved), for the noise scale, which is measured over the whole

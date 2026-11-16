@@ -5,9 +5,10 @@
 //! (`n2n.py`). This file repeats that project's `denoise` step for step, so a
 //! recording comes out the same here as there: `torch.stft` framing (the audio
 //! reflected by half a window at each end, a periodic Hann window), the same
-//! noise scale, features, blocks and gain floor. The one difference is the
-//! noise scale of a recording that is mostly empty upper bins or digital
-//! silence: see `Denoiser::noise_scale`.
+//! noise scale, features, blocks and gain chain (see [`chain`], and
+//! `reference.py --chain` there). The one difference is the noise scale of a
+//! recording that is mostly empty upper bins or digital silence: see
+//! `Denoiser::noise_scale`.
 //!
 //! The audio is used sample for sample at whatever rate it has. The network
 //! was trained that way on bat recordings from 250 to 500 kHz. It sees bins
@@ -20,7 +21,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tract_onnx::prelude::*;
 
+pub mod chain;
 pub mod stream;
+
+pub use chain::DenoiseGain;
+use chain::GainChain;
 
 /// STFT window length in samples.
 pub const WINDOW: usize = 512;
@@ -191,18 +196,19 @@ impl Tools {
         power.extend(frame[SCALE_LOW_BIN..].iter().map(|c| c.norm_sqr()));
     }
 
-    /// The gains for a block of `frames` frames: 2 * sigmoid(logit) - 1,
-    /// floored, and for each cell the largest that any channel gives it.
-    /// `spectra` has each channel's STFT of those frames. A channel whose
-    /// scale is zero is left out.
+    /// The network's gains for a block of `frames` frames, 2 * sigmoid(logit)
+    /// - 1 for each cell, `frames` values for each bin, bin after bin, for
+    /// each channel. `spectra` has each channel's STFT of those frames. A
+    /// channel whose scale is zero is left out. [`GainChain`] makes the
+    /// gains that go on the recording from these.
     fn block_gains(
         &self,
         spectra: &[Vec<Complex<f32>>],
         scales: &[f32],
         frames: usize,
         model: &mut dyn MaskModel,
-    ) -> Result<Vec<f32>, String> {
-        let mut gains: Vec<f32> = Vec::new();
+    ) -> Result<Vec<Vec<f32>>, String> {
+        let mut gains = Vec::new();
         let mut feat = vec![0.0f32; BINS * frames];
         let mut column = vec![0.0f32; frames];
         for (spectrum, scale) in spectra.iter().zip(scales) {
@@ -223,27 +229,24 @@ impl Tools {
                 }
             }
             let logits = model.logits(&feat, frames)?;
-            let gain = |logit: &f32| (2.0 / (1.0 + (-logit).exp()) - 1.0).max(GAIN_FLOOR);
-            if gains.is_empty() {
-                gains = logits.iter().map(gain).collect();
-            } else {
-                for (shared, logit) in gains.iter_mut().zip(&logits) {
-                    *shared = shared.max(gain(logit));
-                }
-            }
+            gains.push(
+                logits
+                    .iter()
+                    .map(|logit| 2.0 / (1.0 + (-logit).exp()) - 1.0)
+                    .collect(),
+            );
         }
         Ok(gains)
     }
 
     /// Adds `count` frames of `spectrum`, from its frame `first` on, to `out`
-    /// with `gains` on them. `spectrum` and `gains` cover `frames` frames,
-    /// and the first frame added starts at `out[0]`.
+    /// with `gains` on them. `gains` has `count` values for each bin, bin
+    /// after bin, and the first frame added starts at `out[0]`.
     fn add_frames(
         &self,
         spectrum: &[Complex<f32>],
-        gains: &[f32],
-        frames: usize,
         first: usize,
+        gains: &[f32],
         count: usize,
         out: &mut [f32],
     ) {
@@ -252,7 +255,7 @@ impl Tools {
         for n in 0..count {
             let local = first + n;
             for (bin, value) in bins.iter_mut().enumerate() {
-                *value = spectrum[local * BINS + bin] * gains[bin * frames + local];
+                *value = spectrum[local * BINS + bin] * gains[bin * count + n];
             }
             // realfft wants the imaginary parts at DC and Nyquist to be zero.
             bins[0].im = 0.0;
@@ -378,6 +381,7 @@ struct Channel {
 /// network, and every time-frequency cell then takes the largest of the
 /// channels' gains. A sound that one channel's gains keep is kept in all of
 /// them, and the level difference between the channels stays as it was.
+/// Where that comes in each [`DenoiseGain`] chain is in [`chain`].
 pub struct Denoiser {
     channels: Vec<Channel>,
     /// Samples in each channel.
@@ -387,6 +391,7 @@ pub struct Denoiser {
     next: usize,
     window_sum: Vec<f32>,
     tools: Tools,
+    chain: GainChain,
 }
 
 impl Denoiser {
@@ -416,6 +421,7 @@ impl Denoiser {
             next: 0,
             window_sum: vec![0.0; padded_len],
             tools: Tools::new(),
+            chain: GainChain::new(DenoiseGain::Plain),
         };
         for c in 0..channels {
             let mut padded = if channels == 1 {
@@ -440,6 +446,14 @@ impl Denoiser {
             return Err(SILENT.to_string());
         }
         Ok(denoiser)
+    }
+
+    /// The same recording with `gain` done to the network's gain. Without
+    /// it the chain is [`DenoiseGain::Plain`]. Called before the first step.
+    pub fn with_gain(mut self, gain: DenoiseGain) -> Denoiser {
+        debug_assert_eq!(self.next, 0, "the chain is chosen before the first step");
+        self.chain = GainChain::new(gain);
+        self
     }
 
     /// The factor each channel was divided by to bring its noise to about
@@ -501,26 +515,32 @@ impl Denoiser {
             .iter()
             .map(|channel| self.tools.stft(&channel.padded, lo, hi))
             .collect();
-        let gains = self
+        let raw = self
             .tools
             .block_gains(&spectra, &self.scales(), frames, model)?;
+        let ready = self
+            .chain
+            .push(&raw, frames, start - lo, end - start, end == self.frames);
 
-        // The gains on this block's own frames, the same for every channel.
+        // The frames whose gains are ready: this block's own frames, or with
+        // the smoothed chains the last few of the block before and all but
+        // the last few of this one. They are inside this block's context, and
+        // the gains are the same for every channel.
+        let first = ready.first as usize;
         for (channel, spectrum) in self.channels.iter_mut().zip(&spectra) {
             if channel.scale == 0.0 {
                 continue;
             }
             self.tools.add_frames(
                 spectrum,
-                &gains,
-                frames,
-                start - lo,
-                end - start,
-                &mut channel.out[start * HOP..],
+                first - lo,
+                &ready.gains,
+                ready.count,
+                &mut channel.out[first * HOP..],
             );
         }
         self.tools
-            .add_window(end - start, &mut self.window_sum[start * HOP..]);
+            .add_window(ready.count, &mut self.window_sum[first * HOP..]);
         self.next = end;
         Ok(self.next < self.frames)
     }
@@ -574,7 +594,11 @@ mod tests {
     }
 
     fn run(samples: &[f32], model: &mut dyn MaskModel) -> Vec<f32> {
-        let mut d = Denoiser::new(samples).unwrap();
+        run_with(samples, model, DenoiseGain::Plain)
+    }
+
+    fn run_with(samples: &[f32], model: &mut dyn MaskModel, gain: DenoiseGain) -> Vec<f32> {
+        let mut d = Denoiser::new(samples).unwrap().with_gain(gain);
         let blocks = d.blocks();
         let mut steps = 0;
         loop {
@@ -602,12 +626,35 @@ mod tests {
     }
 
     #[test]
+    fn a_gain_of_one_gives_the_recording_back_in_every_chain() {
+        let x = noise(HOP * (BLOCK + 300) + 77);
+        for gain in [DenoiseGain::Smoothed, DenoiseGain::Heavy] {
+            let y = run_with(&x, &mut KeepAll, gain);
+            let worst = x
+                .iter()
+                .zip(&y)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(worst < 1e-5, "{gain:?}: largest difference {worst}");
+        }
+    }
+
+    #[test]
     fn rejected_sound_is_left_at_the_gain_floor() {
         let x = noise(HOP * 600);
-        let y = run(&x, &mut KeepNone);
         let rms = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
-        let ratio = rms(&y) / rms(&x);
-        assert!((ratio - GAIN_FLOOR).abs() < 0.005, "ratio {ratio}");
+        for (gain, floor) in [
+            (DenoiseGain::Plain, GAIN_FLOOR),
+            (DenoiseGain::Smoothed, GAIN_FLOOR),
+            (DenoiseGain::Heavy, chain::HEAVY_FLOOR),
+        ] {
+            let y = run_with(&x, &mut KeepNone, gain);
+            let ratio = rms(&y) / rms(&x);
+            assert!(
+                (ratio / floor - 1.0).abs() < 0.05,
+                "{gain:?}: ratio {ratio}"
+            );
+        }
     }
 
     #[test]
@@ -752,7 +799,11 @@ mod tests {
     }
 
     fn run_stereo(samples: &[f32], model: &mut dyn MaskModel) -> Vec<f32> {
-        let mut d = Denoiser::interleaved(samples, 2).unwrap();
+        run_stereo_with(samples, model, DenoiseGain::Plain)
+    }
+
+    fn run_stereo_with(samples: &[f32], model: &mut dyn MaskModel, gain: DenoiseGain) -> Vec<f32> {
+        let mut d = Denoiser::interleaved(samples, 2).unwrap().with_gain(gain);
         while d.step(model).unwrap() {}
         d.finish()
     }
@@ -817,10 +868,30 @@ mod tests {
     #[test]
     fn two_channels_that_are_the_same_come_out_as_the_mono_result() {
         let x = noise(HOP * (BLOCK + 300) + 77);
-        let mono = run(&x, &mut KeepLoud);
-        let y = run_stereo(&interleave(&x, &x), &mut KeepLoud);
-        assert!(channel(&y, 0) == mono);
-        assert!(channel(&y, 1) == mono);
+        for gain in [
+            DenoiseGain::Plain,
+            DenoiseGain::Smoothed,
+            DenoiseGain::Heavy,
+        ] {
+            let mono = run_with(&x, &mut KeepLoud, gain);
+            let y = run_stereo_with(&interleave(&x, &x), &mut KeepLoud, gain);
+            assert!(channel(&y, 0) == mono, "{gain:?}");
+            assert!(channel(&y, 1) == mono, "{gain:?}");
+        }
+    }
+
+    #[test]
+    fn a_silent_channel_adds_nothing_to_the_smoothed_gains() {
+        let x = noise(HOP * 900);
+        let silent = vec![0.0; x.len()];
+        for gain in [DenoiseGain::Smoothed, DenoiseGain::Heavy] {
+            let y = run_stereo_with(&interleave(&silent, &x), &mut KeepLoud, gain);
+            assert!(
+                channel(&y, 1) == run_with(&x, &mut KeepLoud, gain),
+                "{gain:?}"
+            );
+            assert!(channel(&y, 0).iter().all(|s| *s == 0.0));
+        }
     }
 
     #[test]

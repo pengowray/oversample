@@ -5,7 +5,7 @@
 //! `denoise_parity.rs`), and is skipped when the folder is missing.
 
 use birdnet_worker::session::{Attached, Session};
-use oversample_ipc::classifier::{FromWorker, ModelPart, ToWorker};
+use oversample_ipc::classifier::{DenoiseGain, FromWorker, ModelPart, ToWorker};
 use std::path::PathBuf;
 
 fn parity_dir() -> Option<PathBuf> {
@@ -27,15 +27,17 @@ fn read_f32(path: PathBuf) -> Vec<f32> {
 }
 
 /// A session with the model loaded, and a way to send it one message and
-/// get its one answer.
+/// get its one answer. Recordings are started with `gain`.
 struct Worker {
     session: Session,
+    gain: DenoiseGain,
 }
 
 impl Worker {
     fn new(model: Vec<u8>) -> Worker {
         let mut worker = Worker {
             session: Session::new(),
+            gain: DenoiseGain::Plain,
         };
         let loaded = worker.send(
             ToWorker::Load {
@@ -71,10 +73,15 @@ impl Worker {
 
     /// The recording sent whole, as the app sends a short one.
     fn whole(&mut self, input: &[f32], channels: u32) -> Vec<f32> {
+        let gain = self.gain;
         let start = if channels == 1 {
-            ToWorker::DenoiseStart { run: 7 }
+            ToWorker::DenoiseStart { run: 7, gain }
         } else {
-            ToWorker::DenoiseStartChannels { run: 7, channels }
+            ToWorker::DenoiseStartChannels {
+                run: 7,
+                channels,
+                gain,
+            }
         };
         let started = self.send(start, Worker::samples(input));
         assert!(
@@ -99,6 +106,7 @@ impl Worker {
                 run: 9,
                 channels,
                 frames: frames as f64,
+                gain: self.gain,
             },
             Attached::default(),
         );
@@ -149,31 +157,41 @@ fn pieces_give_the_samples_of_the_whole_recording() {
     let input = read_f32(dir.join("input.f32"));
     let mut worker = Worker::new(std::fs::read(dir.join("model.onnx")).unwrap());
 
-    // One block of the denoiser is 131,072 samples: pieces of that size, and
-    // of a size that does not line up with the blocks.
-    let mono = worker.whole(&input, 1);
-    for piece in [131_072, 100_000] {
-        let out = worker.in_pieces(&input, 1, piece);
-        assert_eq!(out.len(), mono.len());
-        assert!(bits(&out) == bits(&mono), "mono, pieces of {piece}");
+    for gain in [
+        DenoiseGain::Plain,
+        DenoiseGain::Smoothed,
+        DenoiseGain::Heavy,
+    ] {
+        worker.gain = gain;
+        // One block of the denoiser is 131,072 samples: pieces of that size,
+        // and of a size that does not line up with the blocks.
+        let mono = worker.whole(&input, 1);
+        for piece in [131_072, 100_000] {
+            let out = worker.in_pieces(&input, 1, piece);
+            assert_eq!(out.len(), mono.len());
+            assert!(
+                bits(&out) == bits(&mono),
+                "{gain:?} mono, pieces of {piece}"
+            );
+        }
+
+        // Two channels: the recording, and the recording from a little later
+        // at a lower level.
+        let n = input.len() - 40_000;
+        let stereo: Vec<f32> = (0..n)
+            .flat_map(|i| [input[i], input[i + 40_000] * 0.5])
+            .collect();
+        let whole = worker.whole(&stereo, 2);
+        let out = worker.in_pieces(&stereo, 2, 100_000);
+        assert_eq!(out.len(), whole.len());
+        assert!(bits(&out) == bits(&whole), "{gain:?} stereo");
+
+        // A recording shorter than one block.
+        let short = &input[..50_000];
+        let whole = worker.whole(short, 1);
+        assert!(
+            bits(&worker.in_pieces(short, 1, 20_000)) == bits(&whole),
+            "{gain:?} short"
+        );
     }
-
-    // Two channels: the recording, and the recording from a little later at
-    // a lower level.
-    let n = input.len() - 40_000;
-    let stereo: Vec<f32> = (0..n)
-        .flat_map(|i| [input[i], input[i + 40_000] * 0.5])
-        .collect();
-    let whole = worker.whole(&stereo, 2);
-    let out = worker.in_pieces(&stereo, 2, 100_000);
-    assert_eq!(out.len(), whole.len());
-    assert!(bits(&out) == bits(&whole), "stereo");
-
-    // A recording shorter than one block.
-    let short = &input[..50_000];
-    let whole = worker.whole(short, 1);
-    assert!(
-        bits(&worker.in_pieces(short, 1, 20_000)) == bits(&whole),
-        "short"
-    );
 }

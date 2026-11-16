@@ -14,8 +14,8 @@
 //! add to it, so the output runs about one block behind the input.
 
 use super::{
-    output_sample, scale_from_power, scale_stride, too_short, usable_scale, MaskModel, Tools,
-    BLOCK, CONTEXT, HOP, MIN_SAMPLES, SILENT, WINDOW,
+    output_sample, scale_from_power, scale_stride, too_short, usable_scale, DenoiseGain, GainChain,
+    MaskModel, Tools, BLOCK, CONTEXT, HOP, MIN_SAMPLES, SILENT, WINDOW,
 };
 
 const HALF: usize = WINDOW / 2;
@@ -118,8 +118,8 @@ struct Pass {
     scales: Vec<f32>,
     /// Each channel divided by its scale.
     padded: Vec<Padded>,
-    /// Each channel's frames added up, from the next block's first frame on.
-    /// Empty for a channel with no sound in it.
+    /// Each channel's frames added up, from the first frame not yet added
+    /// on. Empty for a channel with no sound in it.
     out: Vec<Vec<f32>>,
     /// The squared windows of those frames, added up.
     window_sum: Vec<f32>,
@@ -127,6 +127,7 @@ struct Pass {
     next: u64,
     /// The next padded sample to give out.
     emitted: u64,
+    chain: GainChain,
 }
 
 enum Stage {
@@ -141,6 +142,7 @@ pub struct StreamDenoiser {
     /// Samples in each channel.
     len: u64,
     frames: u64,
+    gain: DenoiseGain,
     stage: Stage,
 }
 
@@ -165,8 +167,16 @@ impl StreamDenoiser {
             channels,
             len,
             frames: 1 + len / HOP as u64,
+            gain: DenoiseGain::Plain,
             stage: Stage::Measuring(meters),
         })
+    }
+
+    /// The same recording with `gain` done to the network's gain, as
+    /// [`super::Denoiser::with_gain`]. Called before the first piece.
+    pub fn with_gain(mut self, gain: DenoiseGain) -> StreamDenoiser {
+        self.gain = gain;
+        self
     }
 
     /// Each channel's noise scale, as [`super::Denoiser::scales`]. Empty
@@ -262,6 +272,7 @@ impl StreamDenoiser {
             next: 0,
             emitted: HALF as u64,
             scales,
+            chain: GainChain::new(self.gain),
         });
         Ok(true)
     }
@@ -328,27 +339,33 @@ impl Pass {
             .iter()
             .map(|p| tools.stft(p.from(lo * hop), 0, count))
             .collect();
-        let gains = tools.block_gains(&spectra, &self.scales, count, model)?;
+        let raw = tools.block_gains(&spectra, &self.scales, count, model)?;
+        let ready = self
+            .chain
+            .push(&raw, count, (start - lo) as usize, own, end == frames);
 
-        // `out` and `window_sum` start at this block's first frame.
-        let reach = (own - 1) * HOP + WINDOW;
+        // `out` and `window_sum` start at `ready.first`, the first frame not
+        // yet added.
+        let added = ready.count;
+        let reach = (added * HOP + WINDOW - HOP).max(self.window_sum.len());
         for ((out, spectrum), scale) in self.out.iter_mut().zip(&spectra).zip(&self.scales) {
             if *scale == 0.0 {
                 continue;
             }
             out.resize(reach, 0.0);
-            tools.add_frames(spectrum, &gains, count, (start - lo) as usize, own, out);
+            let from = (ready.first - lo) as usize;
+            tools.add_frames(spectrum, from, &ready.gains, added, out);
         }
         self.window_sum.resize(reach, 0.0);
-        tools.add_window(own, &mut self.window_sum);
+        tools.add_window(added, &mut self.window_sum);
 
-        // No later frame reaches the samples before the next block's first
-        // frame. After the last block that is all of them.
-        let first = start * hop;
+        // No later frame reaches the samples before the first frame not yet
+        // added. After the last block that is all of them.
+        let first = ready.first * hop;
         let settled = if end == frames {
             HALF as u64 + len
         } else {
-            end * hop
+            (ready.first + added as u64) * hop
         };
         for i in self.emitted..settled {
             let at = (i - first) as usize;
@@ -360,7 +377,7 @@ impl Pass {
         }
         self.emitted = settled;
 
-        let gone = own * HOP;
+        let gone = added * HOP;
         for out in &mut self.out {
             out.drain(..gone.min(out.len()));
         }
@@ -414,16 +431,25 @@ mod tests {
     }
 
     /// The recording held whole.
-    fn whole(samples: &[f32], channels: usize) -> (Vec<f32>, Vec<f32>) {
-        let mut d = Denoiser::interleaved(samples, channels).unwrap();
+    fn whole(samples: &[f32], channels: usize, gain: DenoiseGain) -> (Vec<f32>, Vec<f32>) {
+        let mut d = Denoiser::interleaved(samples, channels)
+            .unwrap()
+            .with_gain(gain);
         let scales = d.scales();
         while d.step(&mut Neighbours).unwrap() {}
         (scales, d.finish())
     }
 
     /// The recording in pieces of `piece` samples of each channel.
-    fn in_pieces(samples: &[f32], channels: usize, piece: usize) -> (Vec<f32>, Vec<f32>) {
-        let mut d = StreamDenoiser::new((samples.len() / channels) as u64, channels).unwrap();
+    fn in_pieces(
+        samples: &[f32],
+        channels: usize,
+        piece: usize,
+        gain: DenoiseGain,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut d = StreamDenoiser::new((samples.len() / channels) as u64, channels)
+            .unwrap()
+            .with_gain(gain);
         let pieces: Vec<&[f32]> = samples.chunks(piece * channels).collect();
         for (i, p) in pieces.iter().enumerate() {
             let measured = d.measure(p).unwrap();
@@ -444,19 +470,32 @@ mod tests {
     }
 
     /// Every piece size gives the samples of the recording held whole, bit
-    /// for bit.
+    /// for bit, with each of the gain chains.
     fn same_in_pieces(samples: &[f32], channels: usize, pieces: &[usize]) {
-        let (scales, expected) = whole(samples, channels);
-        assert_eq!(expected.len(), samples.len());
-        for &piece in pieces {
-            let (piece_scales, out) = in_pieces(samples, channels, piece);
-            assert_eq!(
-                bits(&piece_scales),
-                bits(&scales),
-                "scales, pieces of {piece}"
-            );
-            assert_eq!(out.len(), expected.len(), "length, pieces of {piece}");
-            assert!(bits(&out) == bits(&expected), "samples, pieces of {piece}");
+        for gain in [
+            DenoiseGain::Plain,
+            DenoiseGain::Smoothed,
+            DenoiseGain::Heavy,
+        ] {
+            let (scales, expected) = whole(samples, channels, gain);
+            assert_eq!(expected.len(), samples.len());
+            for &piece in pieces {
+                let (piece_scales, out) = in_pieces(samples, channels, piece, gain);
+                assert_eq!(
+                    bits(&piece_scales),
+                    bits(&scales),
+                    "{gain:?} scales, pieces of {piece}"
+                );
+                assert_eq!(
+                    out.len(),
+                    expected.len(),
+                    "{gain:?} length, pieces of {piece}"
+                );
+                assert!(
+                    bits(&out) == bits(&expected),
+                    "{gain:?} samples, pieces of {piece}"
+                );
+            }
         }
     }
 
@@ -525,18 +564,31 @@ mod tests {
     #[test]
     fn what_the_denoiser_holds_does_not_grow_with_the_recording() {
         let x = noise(HOP * 6 * BLOCK, 8);
-        let mut d = StreamDenoiser::new(x.len() as u64, 1).unwrap();
-        for p in x.chunks(CHUNK) {
-            d.measure(p).unwrap();
-        }
-        let mut most = 0;
-        for p in x.chunks(CHUNK) {
-            d.push(p, &mut Neighbours).unwrap();
-            if let Stage::Denoising(pass) = &d.stage {
-                most = most.max(pass.padded[0].buf.len() + pass.out[0].len());
+        for gain in [
+            DenoiseGain::Plain,
+            DenoiseGain::Smoothed,
+            DenoiseGain::Heavy,
+        ] {
+            let mut d = StreamDenoiser::new(x.len() as u64, 1)
+                .unwrap()
+                .with_gain(gain);
+            for p in x.chunks(CHUNK) {
+                d.measure(p).unwrap();
             }
+            let (mut most, mut most_gains) = (0, 0);
+            for p in x.chunks(CHUNK) {
+                d.push(p, &mut Neighbours).unwrap();
+                if let Stage::Denoising(pass) = &d.stage {
+                    most = most.max(pass.padded[0].buf.len() + pass.out[0].len());
+                    most_gains = most_gains.max(pass.chain.held_frames());
+                }
+            }
+            assert!(most < 3 * CHUNK, "{gain:?}: {most} samples held");
+            assert!(
+                most_gains <= 8,
+                "{gain:?}: gains of {most_gains} frames held"
+            );
         }
-        assert!(most < 3 * CHUNK, "{most} samples held");
     }
 
     #[test]

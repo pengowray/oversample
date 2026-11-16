@@ -185,7 +185,8 @@ impl Session {
                     self.streaming = None;
                 }
             }
-            ToWorker::DenoiseStart { run } | ToWorker::DenoiseStartChannels { run, .. } => {
+            ToWorker::DenoiseStart { run, gain }
+            | ToWorker::DenoiseStartChannels { run, gain, .. } => {
                 let channels = match msg {
                     ToWorker::DenoiseStartChannels { channels, .. } => channels as usize,
                     _ => 1,
@@ -199,6 +200,7 @@ impl Session {
                 let samples = att.samples.as_deref().unwrap_or_default();
                 match Denoiser::interleaved(samples, channels) {
                     Ok(d) => {
+                        let d = d.with_gain(gain);
                         let total = d.blocks() as u32;
                         self.denoising = Some((run, d));
                         out.send(
@@ -244,6 +246,7 @@ impl Session {
                 run,
                 channels,
                 frames,
+                gain,
             } => {
                 self.denoising = None;
                 self.streaming = None;
@@ -253,7 +256,7 @@ impl Session {
                 }
                 let whole = frames.is_finite() && frames >= 0.0 && frames.fract() == 0.0;
                 let started = if whole {
-                    StreamDenoiser::new(frames as u64, channels as usize)
+                    StreamDenoiser::new(frames as u64, channels as usize).map(|d| d.with_gain(gain))
                 } else {
                     Err(format!("{frames} is not a number of samples"))
                 };

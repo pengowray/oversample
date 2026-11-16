@@ -24,7 +24,7 @@ use crate::classifier::{catalog, store, ClassifierError};
 use crate::state::{AppState, DenoiseStateStoreFields, DenoiseStatus};
 use futures_channel::oneshot;
 use leptos::prelude::*;
-use oversample_ipc::classifier::{attach, FromWorker, ModelPart, ToWorker};
+use oversample_ipc::classifier::{attach, DenoiseGain, FromWorker, ModelPart, ToWorker};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -533,11 +533,15 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
                 // Posted by its buffer so the samples move instead of copying.
                 let obj_value: JsValue = array.buffer().into();
                 let start = if channels == 1 {
-                    ToWorker::DenoiseStart { run: run_id }
+                    ToWorker::DenoiseStart {
+                        run: run_id,
+                        gain: DenoiseGain::Plain,
+                    }
                 } else {
                     ToWorker::DenoiseStartChannels {
                         run: run_id,
                         channels,
+                        gain: DenoiseGain::Plain,
                     }
                 };
                 post_samples(&start, &array, &obj_value);
@@ -704,6 +708,7 @@ async fn denoise_into(
                         run: run_id,
                         channels,
                         frames: total as f64,
+                        gain: DenoiseGain::Plain,
                     },
                     None,
                 );
