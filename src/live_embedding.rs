@@ -46,10 +46,10 @@ const ROW_MIN: f32 = 0.1;
 /// Most rows in the strip; the ones with the lowest peak drop out first.
 const MAX_ROWS: usize = 8;
 /// Placement rule of the species map (`classifier::species_map`): the top 3
-/// classes pull the marker, but only those within this many map units of the
+/// classes pull the marker, but only those within the map's radius of the
 /// top class, so the marker never sits between unrelated groups.
 const PLACE_TOP: usize = 3;
-const PLACE_RADIUS: f32 = 0.15;
+const PLACE_RADIUS: f32 = classifier::species_map::BIRDNET_MAP.radius;
 /// Recordings at or above this rate are usually bats or other ultrasound,
 /// which BirdNET (0 to 15 kHz) does not hear.
 pub const ULTRASONIC_RATE: u32 = 96_000;
@@ -107,7 +107,7 @@ thread_local! {
     /// The chart element, while the view is shown.
     static CHART: RefCell<Option<web_sys::HtmlElement>> = const { RefCell::new(None) };
     static LABELS: RefCell<Option<Arc<Vec<SpeciesLabel>>>> = const { RefCell::new(None) };
-    static MAP: RefCell<Option<Arc<Vec<(f32, f32)>>>> = const { RefCell::new(None) };
+    static MAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
     /// The strip's rows, in the order they first appeared.
     static ROWS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     /// Interval between the last two readings, smoothed.
@@ -172,7 +172,7 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     LABELS.with(|l| *l.borrow_mut() = Some(labels));
     if MAP.with(|m| m.borrow().is_none()) {
         // The map is optional: without it the strip still works.
-        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes("birdnet-map.bin").await {
+        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(classifier::species_map::BIRDNET_MAP.file).await {
             let m = classifier::species_map::parse_map(&bytes);
             MAP.with(|c| *c.borrow_mut() = Some(Arc::new(m)));
         }
@@ -477,13 +477,15 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 
 /// The marker's map position: the score-weighted mean of the top classes near
 /// the top class, as the species map places a window.
-pub fn place(scores: &[f32], map: &[(f32, f32)]) -> Option<(f32, f32)> {
+pub fn place(scores: &[f32], map: &[Option<(f32, f32)>]) -> Option<(f32, f32)> {
     let top = top_classes(scores, PLACE_TOP);
     let &(c1, _) = top.first()?;
-    let &(x1, y1) = map.get(c1)?;
+    let (x1, y1) = (*map.get(c1)?)?;
     let (mut sx, mut sy, mut sw) = (0.0f32, 0.0f32, 0.0f32);
     for &(c, s) in &top {
-        let Some(&(x, y)) = map.get(c) else { continue };
+        let Some(&Some((x, y))) = map.get(c) else {
+            continue;
+        };
         if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() > PLACE_RADIUS {
             continue;
         }
@@ -619,7 +621,7 @@ fn draw(state: AppState) {
         let s: Vec<_> = m
             .iter()
             .enumerate()
-            .map(|(i, &(x, y))| (round3(x), round3(y), name(i)))
+            .filter_map(|(i, p)| p.map(|(x, y)| (round3(x), round3(y), name(i))))
             .collect();
         serde_json::json!(s).to_string()
     });
@@ -668,7 +670,7 @@ mod tests {
 
     #[test]
     fn place_ignores_far_classes() {
-        let map = [(0.0, 0.0), (0.1, 0.0), (0.9, 0.9)];
+        let map = [Some((0.0, 0.0)), Some((0.1, 0.0)), Some((0.9, 0.9))];
         let (x, y) = place(&[0.8, 0.8, 0.8], &map).unwrap();
         assert!((x - 0.05).abs() < 1e-6 && y == 0.0, "{x} {y}");
     }
