@@ -146,9 +146,27 @@ pub async fn tauri_invoke_with_args<A: serde::Serialize>(
     tauri_invoke(cmd, &js_args).await
 }
 
+/// The most bytes to ask the native side for in one read. Android copies each
+/// response through Java, and a single 92 MB read ran its heap out of memory.
+pub const NATIVE_READ_PART: u64 = 8 * 1024 * 1024;
+
+/// Read a whole native file, in parts of [`NATIVE_READ_PART`] bytes.
+pub async fn read_whole_file(path: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    loop {
+        let part = read_file_range(path, out.len() as u64, NATIVE_READ_PART).await?;
+        let done = (part.len() as u64) < NATIVE_READ_PART;
+        out.extend_from_slice(&part);
+        if done {
+            return Ok(out);
+        }
+    }
+}
+
 /// Read a byte range from a native file via Tauri IPC.
 ///
-/// Returns the raw bytes for the range `[offset, offset + length)`.
+/// Returns the raw bytes for the range `[offset, offset + length)`, or fewer at
+/// the end of the file.
 pub async fn read_file_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
     let args = js_sys::Object::new();
     js_sys::Reflect::set(&args, &JsValue::from_str("path"), &JsValue::from_str(path))

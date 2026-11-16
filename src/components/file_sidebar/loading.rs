@@ -901,7 +901,8 @@ async fn read_file_bytes(file: &File) -> Result<Vec<u8>, String> {
 /// Generate chunk indices in expanding-ring order from a center chunk.
 /// Returns indices: center, center-1, center+1, center-2, center+2, ...
 /// Load a file from a native filesystem path (Tauri only).
-/// Reads bytes via IPC, decodes in WASM, and stores the original path in FileIdentity.
+/// Reads bytes via IPC in parts, decodes in WASM, and stores the original path
+/// in FileIdentity.
 pub(crate) async fn load_native_file(
     path: String,
     state: AppState,
@@ -912,20 +913,7 @@ pub(crate) async fn load_native_file(
 
     // Read bytes via Tauri IPC
     state.loading_update(load_id, crate::state::LoadingStage::Decoding);
-    let args = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("path"),
-        &wasm_bindgen::JsValue::from_str(&path),
-    );
-    let result = crate::tauri_bridge::tauri_invoke("read_file_bytes", &args.into()).await?;
-
-    // Convert ArrayBuffer to Vec<u8>
-    let array_buffer = result
-        .dyn_into::<js_sys::ArrayBuffer>()
-        .map_err(|_| "Expected ArrayBuffer from read_file_bytes".to_string())?;
-    let uint8 = js_sys::Uint8Array::new(&array_buffer);
-    let bytes = uint8.to_vec();
+    let bytes = crate::tauri_bridge::read_whole_file(&path).await?;
 
     // Decode and add to state using existing pipeline
     load_named_bytes(

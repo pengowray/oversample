@@ -218,10 +218,7 @@ pub async fn read_media_store_range(
     crate::tauri_bridge::read_fd_range(fd, byte_start, byte_len).await
 }
 
-/// The most bytes [`FileHandle::read_range`] asks the native side for at once.
-/// Android copies each read through Java, and a single 92 MB read ran its heap
-/// out of memory.
-const NATIVE_READ_PART: u64 = 8 * 1024 * 1024;
+use crate::tauri_bridge::NATIVE_READ_PART;
 
 /// Read `[byte_start, byte_start + byte_len)` with `read` in parts of at most
 /// [`NATIVE_READ_PART`] bytes. Stops early at the end of the file.

@@ -43,7 +43,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 use crate::settings::{self, keys};
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_args, tauri_invoke_with_args};
+use crate::tauri_bridge::{tauri_invoke_typed_args, tauri_invoke_with_args};
 
 /// Xeno-Canto's search endpoint, used with the user's own key.
 const XC_API_URL: &str = "https://xeno-canto.org/api/3/recordings";
@@ -860,17 +860,12 @@ pub async fn download(src: &XcSource, rec: &XcRecording) -> Result<DownloadedRec
         let cached: XcCachedFile = tauri_invoke_typed_args("xc_download", &XcIdArgs { id })
             .await
             .map_err(XcError::Other)?;
-        let args = js_sys::Object::new();
-        js_sys::Reflect::set(&args, &"path".into(), &cached.path.as_str().into()).ok();
-        let val = tauri_invoke("read_file_bytes", &args.into())
+        let bytes = crate::tauri_bridge::read_whole_file(&cached.path)
             .await
             .map_err(XcError::Other)?;
-        let ab: js_sys::ArrayBuffer = val
-            .dyn_into()
-            .map_err(|_| XcError::Other("read_file_bytes did not return ArrayBuffer".into()))?;
         return Ok(DownloadedRecording {
             filename: cached.filename,
-            bytes: js_sys::Uint8Array::new(&ab).to_vec(),
+            bytes,
             metadata: cached.metadata,
             hashes: cached.hashes,
         });
