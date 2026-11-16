@@ -956,8 +956,8 @@ pub fn BottomToolbar() -> impl IntoView {
                                                 <option value="32" selected=move || state.mic.max_bit_depth().get() == 32>"32-bit"</option>
                                             </select>
                                         </div>
-                                        {move || match usb_picker_channels(&state) {
-                                            Some(n) => view! { <UsbChannelRow channels=n /> }.into_any(),
+                                        {move || match wide_picker_channels(&state) {
+                                            Some(n) => view! { <WideChannelRow channels=n /> }.into_any(),
                                             None => view! {
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;" title="Mono averages left and right into one channel. Stereo keeps them separate. A one-channel mic is mono either way. On a 2-channel interface with one mic plugged in, use Mono. The live spectrogram shows left and right averaged.">"Channels"</label>
@@ -1077,38 +1077,39 @@ fn restart_listening(state: AppState) {
     }
 }
 
-/// The channel count of the USB device the mic uses, when it has more than 2
-/// channels (so the Channels row lists them), or `None`.
-fn usb_picker_channels(state: &AppState) -> Option<u32> {
-    let n = state.mic.usb_device_channels().get();
-    let other_backend = matches!(
-        state.mic.backend().get(),
-        Some(crate::state::MicBackend::Cpal | crate::state::MicBackend::Browser)
-    );
-    (n > 2 && !other_backend).then_some(n)
+/// The channel count of the USB or native device the mic uses, when it has
+/// more than 2 channels (so the Channels row lists them), or `None`.
+fn wide_picker_channels(state: &AppState) -> Option<u32> {
+    use crate::state::MicBackend;
+    let n = match state.mic.backend().get() {
+        Some(MicBackend::Cpal) => state.mic.cpal_device_channels().get(),
+        Some(MicBackend::Browser) => 0,
+        Some(MicBackend::RawUsb) | None => state.mic.usb_device_channels().get(),
+    };
+    (n > 2).then_some(n)
 }
 
-/// The Channels row for a USB device with more than 2 channels: each pair
+/// The Channels row for a device with more than 2 channels: each pair
 /// (1 and 2, 3 and 4, ...) in stereo, channels 1 and 2 averaged into one, or
 /// one channel in mono. The device names its channels only by number. With
 /// nothing saved, channels 1 and 2 in stereo.
 #[component]
-fn UsbChannelRow(channels: u32) -> impl IntoView {
+fn WideChannelRow(channels: u32) -> impl IntoView {
     let state = expect_context::<AppState>();
     // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
     // when nothing usable is saved.
     let current = move || {
-        let pick = state.mic.usb_channels().get();
+        let pick = state.mic.channel_pick().get();
         if !pick.channels.is_empty() && pick.channels.iter().all(|&c| c < channels) {
-            crate::state::format_usb_channels(&pick)
+            crate::state::format_channel_pick(&pick)
         } else {
             "1,2".to_string()
         }
     };
     let on_change = move |ev: leptos::ev::Event| {
         let val = leptos::prelude::event_target_value(&ev);
-        state.mic.usb_channels().set(crate::state::parse_usb_channels(&val));
-        crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, &val);
+        state.mic.channel_pick().set(crate::state::parse_channel_pick(&val));
+        crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_PICK, &val);
         restart_listening(state);
     };
     let pairs: Vec<u32> = (3..channels).step_by(2).collect();

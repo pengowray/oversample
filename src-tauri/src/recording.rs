@@ -82,8 +82,7 @@ fn store_i32_callback(
     rec: &AtomicBool,
     strm: &AtomicBool,
     data: &[i32],
-    channels: usize,
-    stereo: bool,
+    map: &ChannelMap,
 ) {
     let mut buf = buf.lock().unwrap();
     buf.note_i32_bits(data);
@@ -91,25 +90,95 @@ fn store_i32_callback(
     if !recording && !strm.load(Ordering::Relaxed) {
         return;
     }
-    let stored = samples_to_store(data, channels, stereo, |frame| {
-        (frame.iter().map(|&s| s as i64).sum::<i64>() / channels as i64) as i32
+    let stored = map.store(data, |frame| {
+        (frame.iter().map(|&s| s as i64).sum::<i64>() / frame.len() as i64) as i32
     });
     buf.push_i32(&stored, recording);
 }
 
-/// The samples a capture callback stores: `data` as delivered when it is mono or
-/// when stereo is being kept, otherwise a mono mix made by `mix` from each frame.
-fn samples_to_store<T: Clone>(
-    data: &[T],
-    channels: usize,
-    stereo: bool,
-    mix: impl Fn(&[T]) -> T,
-) -> Cow<'_, [T]> {
-    if channels == 1 || stereo {
-        Cow::Borrowed(data)
-    } else {
-        Cow::Owned(data.chunks(channels).map(mix).collect())
+/// Which of a capture stream's channels are stored, and how.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ChannelMap {
+    /// Channels in each frame the device delivers.
+    pub in_channels: usize,
+    /// The device channels kept, 0-based: 1 or 2 of them, or all of them when
+    /// averaged to mono.
+    pub sources: std::ops::Range<usize>,
+    /// Store one channel per frame, the mean of `sources`, instead of each.
+    pub average: bool,
+}
+
+impl ChannelMap {
+    /// Channels stored per frame: 1 or 2.
+    pub fn out_channels(&self) -> usize {
+        if self.average {
+            1
+        } else {
+            self.sources.len()
+        }
     }
+
+    /// The map for a device opened with `in_channels` channels.
+    ///
+    /// `pick` applies only when the device's widest setting (`device_channels`)
+    /// has more than 2 channels: a pair (1 and 2, 3 and 4, ...) is stereo, or
+    /// mono when `pick_averaged`; one channel is mono; and an empty or
+    /// unusable pick is channels 1 and 2 in stereo. Otherwise a 2-channel
+    /// stream is kept in stereo when `stereo_requested`, and anything else is
+    /// averaged to mono.
+    pub fn new(
+        in_channels: usize,
+        device_channels: usize,
+        pick: &[u32],
+        pick_averaged: bool,
+        stereo_requested: bool,
+    ) -> Self {
+        let in_channels = in_channels.max(1);
+        let map = |sources: std::ops::Range<usize>, average: bool| ChannelMap {
+            in_channels,
+            sources,
+            average,
+        };
+        if device_channels > 2 && in_channels >= 2 {
+            let fits = |c: u32| (c as usize) < in_channels;
+            return match *pick {
+                [a] if fits(a) => map(a as usize..a as usize + 1, false),
+                [a, b] if b == a + 1 && fits(b) => map(a as usize..b as usize + 1, pick_averaged),
+                _ => map(0..2, false),
+            };
+        }
+        if in_channels == 1 || (in_channels == 2 && stereo_requested) {
+            map(0..in_channels, false)
+        } else {
+            map(0..in_channels, true)
+        }
+    }
+
+    /// The samples a capture callback stores from interleaved `data`: as
+    /// delivered when every channel is kept, otherwise the kept channels, or
+    /// their mean made by `mix` from each frame's kept channels.
+    pub fn store<'a, T: Copy>(&self, data: &'a [T], mix: impl Fn(&[T]) -> T) -> Cow<'a, [T]> {
+        let n = self.in_channels;
+        if !self.average && self.sources == (0..n) {
+            return Cow::Borrowed(data);
+        }
+        let frames = data.chunks_exact(n);
+        Cow::Owned(if self.average {
+            frames.map(|f| mix(&f[self.sources.clone()])).collect()
+        } else {
+            let mut out = Vec::with_capacity(data.len() / n * self.sources.len());
+            for f in frames {
+                out.extend_from_slice(&f[self.sources.clone()]);
+            }
+            out
+        })
+    }
+}
+
+/// Channels a device needs to deliver for `pick`: one past the highest picked
+/// channel, or 2 for the default (channels 1 and 2).
+fn channels_needed_for_pick(pick: &[u32]) -> u16 {
+    pick.iter().map(|&c| c as u16 + 1).max().unwrap_or(2)
 }
 
 /// Thread-safe sample storage that keeps raw samples in their native format.
@@ -120,8 +189,7 @@ fn samples_to_store<T: Clone>(
 pub struct RecordingBuffer {
     pub format: NativeSampleFormat,
     pub sample_rate: u32,
-    /// 2 for a 2-channel device opened with Channels set to Stereo, otherwise 1
-    /// (a device with more channels is mixed to mono).
+    /// 2 for a stereo recording, otherwise 1 (see `ChannelMap`).
     pub channels: u16,
     // Native-format storage (only one is active, based on format)
     pub samples_i16: Vec<i16>,
@@ -512,8 +580,11 @@ pub struct MicState {
     pub format: NativeSampleFormat,
     pub sample_rate: u32,
     /// Channels in the recording, the pre-roll ring and `pending_f32`: 2 for a
-    /// 2-channel device opened with Channels set to Stereo, otherwise 1.
+    /// stereo pick (a 2-channel device with Channels set to Stereo, or a pair
+    /// from a wider device), otherwise 1.
     pub channels: u16,
+    /// Channels in the device's widest input setting.
+    pub device_channels: u16,
     pub device_name: String,
     pub supported_sample_rates: Vec<u32>,
     /// Crash-recovery writer + shared state. Active between
@@ -700,11 +771,15 @@ fn preferred_formats_for_bit_depth(max_bit_depth: u16) -> &'static [cpal::Sample
 /// If `requested_max_rate` > 0, try to negotiate the highest rate up to that value.
 /// If `max_bit_depth` > 0, prefer a config with matching bit depth (16 -> I16, 24/32 -> I32).
 /// If `requested_channels` > 0, prefer that channel count (1=mono, 2=stereo).
+/// For a device with more than 2 channels, `pick` (0-based channels, a pair or
+/// one) chooses which are recorded instead; see [`ChannelMap::new`].
 pub fn open_mic(
     requested_max_rate: u32,
     device_name: Option<&str>,
     max_bit_depth: u16,
     requested_channels: u16,
+    pick: &[u32],
+    pick_averaged: bool,
 ) -> Result<MicState, String> {
     let host = cpal::default_host();
     let device = if let Some(name) = device_name {
@@ -738,10 +813,29 @@ pub fn open_mic(
         .map(|d| d.name().to_string())
         .unwrap_or_else(|_| "Unknown".into());
     let supported_rates = collect_supported_rates(&device);
+    let device_channels = device
+        .supported_input_configs()
+        .map(|cs| cs.map(|c| c.channels()).max().unwrap_or(0))
+        .unwrap_or(0);
+    // A device with more than 2 channels opens a setting with enough channels
+    // for the pick, whatever the Mono/Stereo setting.
+    let wide = device_channels > 2;
+    let pick: &[u32] = if wide
+        && !pick.is_empty()
+        && pick.iter().all(|&c| (c as u16) < device_channels)
+    {
+        pick
+    } else {
+        &[]
+    };
 
     let pref_fmts = preferred_formats_for_bit_depth(max_bit_depth);
 
-    let config = if requested_max_rate == 0 && pref_fmts.is_empty() && requested_channels == 0 {
+    let config = if requested_max_rate == 0
+        && pref_fmts.is_empty()
+        && requested_channels == 0
+        && !wide
+    {
         // Full auto mode: use the device's preferred/native config.
         // This avoids Android's Oboe backend reporting inflated max rates
         // (e.g. 192kHz for built-in mic) that trigger silent resampling.
@@ -785,8 +879,22 @@ pub fn open_mic(
             }
         };
 
-        // Filter by channel count if set
-        let chan_filtered: Vec<_> = if requested_channels > 0 {
+        // Filter by channel count if set. A wide device needs enough channels
+        // for the pick; the fewest that are enough come first.
+        let chan_filtered: Vec<_> = if wide {
+            let needed = channels_needed_for_pick(pick);
+            let mut filtered: Vec<_> = format_filtered
+                .iter()
+                .filter(|c| c.channels() >= needed)
+                .cloned()
+                .collect();
+            filtered.sort_by_key(|c| c.channels());
+            if filtered.is_empty() {
+                format_filtered
+            } else {
+                filtered
+            }
+        } else if requested_channels > 0 {
             let filtered: Vec<_> = format_filtered
                 .iter()
                 .filter(|c| c.channels() == requested_channels)
@@ -818,7 +926,13 @@ pub fn open_mic(
             // Auto rate: pick the config with the highest max rate
             chan_filtered
                 .iter()
-                .max_by_key(|c| (c.max_sample_rate(), format_depth_rank(c.sample_format())))
+                .max_by_key(|c| {
+                    (
+                        c.max_sample_rate(),
+                        format_depth_rank(c.sample_format()),
+                        std::cmp::Reverse(c.channels()),
+                    )
+                })
                 .map(|c| {
                     let rate = c.max_sample_rate();
                     c.clone().with_sample_rate(rate)
@@ -847,12 +961,20 @@ pub fn open_mic(
     let sample_rate = config.sample_rate();
     let stream_config: cpal::StreamConfig = config.into();
     let channels = stream_config.channels as usize;
-    let stereo = requested_channels == 2 && channels == 2;
-    let stored_channels: usize = if stereo { 2 } else { 1 };
+    let map = ChannelMap::new(
+        channels,
+        device_channels as usize,
+        pick,
+        pick_averaged,
+        requested_channels == 2,
+    );
+    let stored_channels = map.out_channels();
+    let map_desc = format!("{map:?}");
     // A 16-bit device with several channels mixed to mono is stored as 24-bit,
     // keeping the half steps of the mix. Detection still writes it as 16-bit
     // when every channel carries the same audio.
-    let mix_i16_deeper = format == NativeSampleFormat::I16 && channels > 1 && !stereo;
+    let mix_i16_deeper =
+        format == NativeSampleFormat::I16 && map.average && map.sources.len() > 1;
     let storage_format = if mix_i16_deeper {
         NativeSampleFormat::I24
     } else {
@@ -881,7 +1003,10 @@ pub fn open_mic(
             stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 if mix_i16_deeper {
-                    let mixed: Vec<i32> = data.chunks(channels).map(mix_i16_top_aligned).collect();
+                    let mixed: Vec<i32> = data
+                        .chunks_exact(channels)
+                        .map(|f| mix_i16_top_aligned(&f[map.sources.clone()]))
+                        .collect();
                     let mut buf = buf.lock().unwrap();
                     buf.note_i32_bits(&mixed);
                     let recording = rec.load(Ordering::Relaxed);
@@ -895,7 +1020,9 @@ pub fn open_mic(
                 if !recording && !strm.load(Ordering::Relaxed) {
                     return;
                 }
-                buf.push_i16(data, recording);
+                // Not averaged here (that is `mix_i16_deeper`), so `mix` is unused.
+                let stored = map.store(data, |f| f[0]);
+                buf.push_i16(&stored, recording);
             },
             err_callback,
             None,
@@ -906,7 +1033,7 @@ pub fn open_mic(
                 // cpal's I24 holds the value in the low 24 bits; I24 storage uses
                 // the top 24 bits of the i32, as I32 does.
                 let data: Vec<i32> = data.iter().map(|&s| i24_to_top_aligned(s)).collect();
-                store_i32_callback(&buf, &rec, &strm, &data, channels, stereo);
+                store_i32_callback(&buf, &rec, &strm, &data, &map);
             },
             err_callback,
             None,
@@ -914,7 +1041,7 @@ pub fn open_mic(
         NativeSampleFormat::I32 => device.build_input_stream(
             stream_config,
             move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                store_i32_callback(&buf, &rec, &strm, data, channels, stereo);
+                store_i32_callback(&buf, &rec, &strm, data, &map);
             },
             err_callback,
             None,
@@ -925,8 +1052,8 @@ pub fn open_mic(
                 // Detection sees the samples as stored (after any mono mix)
                 // whenever the stream runs, so the depth is known when a
                 // recording starts.
-                let stored = samples_to_store(data, channels, stereo, |frame| {
-                    frame.iter().sum::<f32>() / channels as f32
+                let stored = map.store(data, |frame| {
+                    frame.iter().sum::<f32>() / frame.len() as f32
                 });
                 let mut buf = buf.lock().unwrap();
                 buf.note_f32_bits(&stored);
@@ -947,8 +1074,8 @@ pub fn open_mic(
         .map_err(|e| format!("Failed to start mic stream: {}", e))?;
 
     eprintln!(
-        "Mic opened: {} ch={} sr={} fmt={:?} supported_rates={:?}",
-        device_name, channels, sample_rate, format, supported_rates
+        "Mic opened: {} ch={} map={} sr={} fmt={:?} supported_rates={:?}",
+        device_name, channels, map_desc, sample_rate, format, supported_rates
     );
 
     Ok(MicState {
@@ -960,6 +1087,7 @@ pub fn open_mic(
         format,
         sample_rate,
         channels: stored_channels as u16,
+        device_channels,
         device_name,
         supported_sample_rates: supported_rates,
         recovery: crate::recovery::RecoveryHandle::default(),
@@ -1177,9 +1305,33 @@ mod tests {
     fn stored_samples_are_a_mix_only_when_stereo_is_not_kept() {
         let data = [10i16, 20, 30, 40];
         let mix = |f: &[i16]| (f.iter().map(|&s| s as i32).sum::<i32>() / 2) as i16;
-        assert_eq!(&*samples_to_store(&data, 2, true, mix), &data);
-        assert_eq!(&*samples_to_store(&data, 2, false, mix), &[15, 35]);
-        assert_eq!(&*samples_to_store(&data, 1, false, mix), &data);
+        let stereo = ChannelMap::new(2, 2, &[], false, true);
+        assert_eq!(&*stereo.store(&data, mix), &data);
+        let mono = ChannelMap::new(2, 2, &[], false, false);
+        assert_eq!(&*mono.store(&data, mix), &[15, 35]);
+        let one = ChannelMap::new(1, 1, &[], false, true);
+        assert_eq!(&*one.store(&data, mix), &data);
+    }
+
+    #[test]
+    fn a_wide_device_records_its_pick_or_channels_1_and_2_in_stereo() {
+        // 2 frames of 4 channels: channel c of frame f is 10 * f + c.
+        let data = [0, 1, 2, 3, 10, 11, 12, 13];
+        let mix = |f: &[i32]| f.iter().sum::<i32>() / f.len() as i32;
+        let store = |pick: &[u32], averaged: bool, stereo: bool| {
+            let map = ChannelMap::new(4, 4, pick, averaged, stereo);
+            (map.out_channels(), map.store(&data, mix).into_owned())
+        };
+        // No pick, whatever Mono/Stereo says: channels 1 and 2 in stereo.
+        assert_eq!(store(&[], false, false), (2, vec![0, 1, 10, 11]));
+        assert_eq!(store(&[2, 3], false, false), (2, vec![2, 3, 12, 13]));
+        assert_eq!(store(&[3], false, true), (1, vec![3, 13]));
+        assert_eq!(store(&[0, 1], true, true), (1, vec![0, 10]));
+        // A channel the stream does not have: channels 1 and 2.
+        assert_eq!(store(&[6, 7], false, false), (2, vec![0, 1, 10, 11]));
+        // A wide device opened in a 2-channel setting keeps the pair.
+        let pair = ChannelMap::new(2, 8, &[0, 1], false, false);
+        assert_eq!(&*pair.store(&[5, 6], mix), &[5, 6]);
     }
 
     #[test]
