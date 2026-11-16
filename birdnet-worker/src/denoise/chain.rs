@@ -55,7 +55,7 @@ pub fn check_smooth_frames(frames: u32) -> Result<usize, String> {
         Ok(frames as usize)
     } else {
         Err(format!(
-            "smooth_frames must be an odd number from {MIN_SMOOTH_FRAMES} to {MAX_SMOOTH_FRAMES}, not {frames}"
+            "smooth_frames out of range: {frames} (must be an odd number from {MIN_SMOOTH_FRAMES} to {MAX_SMOOTH_FRAMES})"
         ))
     }
 }
