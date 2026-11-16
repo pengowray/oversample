@@ -1746,6 +1746,38 @@ pub struct DenoiseState {
     pub status: DenoiseStatus,
     /// Whether the model file is on this device. `None` until checked.
     pub model_stored: Option<bool>,
+    /// The Strength picked in the menu, for the next copy. Saved in the
+    /// browser (`settings::keys::DENOISE_STRENGTH`).
+    pub strength: DenoiseStrength,
+}
+
+/// How much noise a denoised copy has taken out (`crate::denoise`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DenoiseStrength {
+    /// The smoothed gain: at least -20 dB.
+    #[default]
+    Normal,
+    /// The heavy gain: at least -40 dB, and faint sounds may cut in and out.
+    Heavy,
+}
+
+impl DenoiseStrength {
+    pub const ALL: [Self; 2] = [Self::Normal, Self::Heavy];
+
+    /// The value saved in the browser.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Heavy => "heavy",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "heavy" => Self::Heavy,
+            _ => Self::Normal,
+        }
+    }
 }
 
 /// Where the denoiser is with the recording it was asked for.
@@ -2891,6 +2923,9 @@ impl AppState {
             denoise: Store::new(DenoiseState {
                 status: DenoiseStatus::Idle,
                 model_stored: None,
+                strength: crate::settings::get_raw(crate::settings::keys::DENOISE_STRENGTH)
+                    .map(|v| DenoiseStrength::from_key(&v))
+                    .unwrap_or_default(),
             }),
             noise_reduce: Store::new(NoiseReduceState {
                 enabled: false,

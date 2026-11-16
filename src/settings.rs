@@ -46,6 +46,8 @@ pub mod keys {
     pub const EXPORT_WAV_DEPTH: &str = "oversample_export_wav_depth";
     /// The Export panel's "Normalize peak to -3 dBFS" checkbox.
     pub const EXPORT_NORMALIZE: &str = "oversample_export_normalize";
+    /// The Noise menu's Denoised copy Strength: "normal" or "heavy".
+    pub const DENOISE_STRENGTH: &str = "oversample_denoise_strength";
     /// Xeno-Canto API key saved in the browser (web build only; the desktop app
     /// keeps its key in a native config file, see `xc_lib::key_store`).
     pub const XC_WEB_API_KEY: &str = "oversample_xc_api_key";

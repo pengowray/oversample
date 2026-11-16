@@ -50,6 +50,8 @@ pub struct FileGroupInfo {
 /// What "Make denoised copy" adds to the end of a recording's stem:
 /// "bat.flac" becomes "bat (denoised).wav".
 pub const DENOISED_SUFFIX: &str = " (denoised)";
+/// The same for a copy made at Heavy strength: "bat (denoised, heavy).wav".
+pub const DENOISED_HEAVY_SUFFIX: &str = " (denoised, heavy)";
 
 /// The file name without its extension.
 fn file_stem(filename: &str) -> &str {
@@ -60,10 +62,12 @@ fn file_stem(filename: &str) -> &str {
 }
 
 /// For a denoised copy's name, the stem of the recording it was made from:
-/// "bat (denoised).wav" gives `Some("bat")`. `None` for any other name.
+/// "bat (denoised).wav" and "bat (denoised, heavy).wav" give `Some("bat")`.
+/// `None` for any other name.
 pub fn denoised_original_stem(filename: &str) -> Option<&str> {
-    file_stem(filename)
-        .strip_suffix(DENOISED_SUFFIX)
+    let stem = file_stem(filename);
+    stem.strip_suffix(DENOISED_SUFFIX)
+        .or_else(|| stem.strip_suffix(DENOISED_HEAVY_SUFFIX))
         .filter(|stem| !stem.is_empty())
 }
 
@@ -626,11 +630,27 @@ mod scope_tests {
         assert_eq!(denoised_original_stem("bat.wav"), None);
         assert_eq!(denoised_original_stem("bat (denoised) take 2.wav"), None);
         assert_eq!(denoised_original_stem(" (denoised).wav"), None);
-        // The suffix is the one `denoised_name` writes.
+        // The suffixes are the ones `denoised_name` writes.
+        for strength in crate::state::DenoiseStrength::ALL {
+            assert_eq!(
+                denoised_original_stem(&crate::denoise::denoised_name("XC1 - Bat.flac", strength)),
+                Some("XC1 - Bat")
+            );
+        }
         assert_eq!(
-            denoised_original_stem(&crate::denoise::denoised_name("XC1 - Bat.flac")),
-            Some("XC1 - Bat")
+            denoised_original_stem("bat (denoised, heavy).wav"),
+            Some("bat")
         );
+        assert_eq!(denoised_original_stem(" (denoised, heavy).wav"), None);
+    }
+
+    #[test]
+    fn a_heavy_copy_pairs_with_its_original_like_a_normal_one() {
+        let n = names(&["bat.wav", "bat (denoised).wav", "bat (denoised, heavy).wav"]);
+        let groups = compute_all_groups(&n, &[]);
+        assert_eq!(groups[0].denoise.copies, vec![1, 2]);
+        assert_eq!(denoise_partner(&groups, 2), Some(0));
+        assert_eq!(denoise_pair_members(&groups, 2), vec![0, 1, 2]);
     }
 
     #[test]

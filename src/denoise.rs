@@ -21,7 +21,7 @@
 
 use crate::audio::source::ChannelView;
 use crate::classifier::{catalog, store, ClassifierError};
-use crate::state::{AppState, DenoiseStateStoreFields, DenoiseStatus};
+use crate::state::{AppState, DenoiseStateStoreFields, DenoiseStatus, DenoiseStrength};
 use futures_channel::oneshot;
 use leptos::prelude::*;
 use oversample_ipc::classifier::{attach, DenoiseGain, FromWorker, ModelPart, ToWorker};
@@ -62,9 +62,17 @@ pub fn model() -> &'static Model {
     &DENOISE_MODEL
 }
 
-/// What the worker does to the network's gain: the smoothed chain, which
-/// leaves fewer patches of noise than the plain gain.
-const GAIN: DenoiseGain = DenoiseGain::Smoothed;
+impl DenoiseStrength {
+    /// What the worker does to the network's gain. Normal is the smoothed
+    /// chain, which leaves fewer patches of noise than the plain gain, at
+    /// least -20 dB. Heavy is the heavy chain, at least -40 dB.
+    pub fn gain(self) -> DenoiseGain {
+        match self {
+            Self::Normal => DenoiseGain::Smoothed,
+            Self::Heavy => DenoiseGain::Heavy,
+        }
+    }
+}
 
 /// Frames in the smoothed gain's median (5 bins by this many frames of 128
 /// samples) for a recording read at `sample_rate` Hz, after any
@@ -120,16 +128,42 @@ pub fn copy_channels(channels: u32) -> u32 {
 
 /// The menu's strings, in one place. Drafted from a brief by a writer that
 /// had not seen the code (2026-11-14, and again 2026-11-15 when the section
-/// began to take recordings at bird sample rates).
+/// began to take recordings at bird sample rates). The Strength strings are
+/// the user's, from the mockup they chose (2026-11-16).
 pub mod text {
     use crate::format_units::{khz, sample_rate_khz};
+    use crate::state::DenoiseStrength;
 
     pub const TITLE: &str = "Denoised copy";
     pub const BUTTON: &str = "Make denoised copy";
     pub const CANCEL: &str = "Cancel";
     pub const STARTING: &str = "Loading recording and model\u{2026}";
     pub const ADDED: &str = "Denoised copy added to the file list";
-    pub const TOOLTIP: &str = "Lowers steady background noise such as hiss, keeping at least 10% of the original sound at every frequency.";
+    /// The button's tooltip. How far each strength lowers the noise is on
+    /// the line under the Strength control, so it is not repeated here.
+    pub const TOOLTIP: &str = "Lowers steady background noise such as hiss.";
+    pub const STRENGTH: &str = "Strength";
+    /// The Strength control's name for screen readers. The Noise reduction
+    /// filter above has a Strength slider too.
+    pub const STRENGTH_GROUP: &str = "Denoised copy strength";
+    pub const STRENGTH_OPTION_TOOLTIP: &str = "Double-click to make a copy at this strength.";
+
+    /// An option's name on the Strength control.
+    pub fn strength_name(strength: DenoiseStrength) -> &'static str {
+        match strength {
+            DenoiseStrength::Normal => "Normal",
+            DenoiseStrength::Heavy => "Heavy",
+        }
+    }
+    /// The line under the Strength control: what the picked strength does.
+    pub fn strength_line(strength: DenoiseStrength) -> &'static str {
+        match strength {
+            DenoiseStrength::Normal => "Lowers noise by up to 20 dB.",
+            DenoiseStrength::Heavy => {
+                "Lowers noise by up to 40 dB. Faint sounds may cut in and out."
+            }
+        }
+    }
 
     /// The status area's first line: "Model: trained on bat and bird
     /// recordings".
@@ -435,17 +469,19 @@ pub fn cancel(state: AppState) {
     state.denoise.status().set(DenoiseStatus::Idle);
 }
 
-/// Denoise the open recording and add the result to the file list.
+/// Denoise the open recording at the Strength picked in the menu, and add
+/// the result to the file list.
 pub fn start(state: AppState) {
     if is_busy(state) {
         return;
     }
+    let strength = state.denoise.strength().get_untracked();
     let generation = GENERATION.with(|g| {
         g.set(g.get().wrapping_add(1));
         g.get()
     });
     wasm_bindgen_futures::spawn_local(async move {
-        let result = run(state, generation).await;
+        let result = run(state, generation, strength).await;
         if GENERATION.with(|g| g.get()) != generation {
             // Cancelled, or another recording started: its status stands,
             // and the worker that is running now is the other recording's.
@@ -460,7 +496,7 @@ pub fn start(state: AppState) {
 }
 
 /// `Err(String::new())` means the task was cancelled.
-async fn run(state: AppState, generation: u32) -> Result<(), String> {
+async fn run(state: AppState, generation: u32, strength: DenoiseStrength) -> Result<(), String> {
     let live = || GENERATION.with(|g| g.get()) == generation;
     let cancelled = String::new;
 
@@ -513,7 +549,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         (0..channels).map(ChannelView::Channel).collect()
     };
     if in_pieces {
-        return run_in_pieces(state, generation, &file, bytes, &views).await;
+        return run_in_pieces(state, generation, &file, bytes, &views, strength).await;
     }
     let read =
         crate::audio::streaming_source::read_views_ready(&*file.audio.source, &views, 0, total)
@@ -558,21 +594,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
                 drop(samples);
                 // Posted by its buffer so the samples move instead of copying.
                 let obj_value: JsValue = array.buffer().into();
-                let smooth_frames = smooth_frames(sample_rate);
-                let start = if channels == 1 {
-                    ToWorker::DenoiseStart {
-                        run: run_id,
-                        gain: GAIN,
-                        smooth_frames,
-                    }
-                } else {
-                    ToWorker::DenoiseStartChannels {
-                        run: run_id,
-                        channels,
-                        gain: GAIN,
-                        smooth_frames,
-                    }
-                };
+                let start = start_message(run_id, channels, sample_rate, strength);
                 post_samples(&start, &array, &obj_value);
             }
             FromWorker::DenoiseProgress { run, done, total } if run == run_id => {
@@ -597,7 +619,7 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
         return Err(cancelled());
     }
 
-    let name = denoised_name(&file.name);
+    let name = denoised_name(&file.name, strength);
     let wav =
         crate::audio::wav_encoder::encode_wav_at(&denoised, channels as u16, sample_rate, 32, true);
     drop(denoised);
@@ -622,12 +644,13 @@ async fn run_in_pieces(
     file: &crate::state::LoadedFile,
     bytes: js_sys::Uint8Array,
     views: &[ChannelView],
+    strength: DenoiseStrength,
 ) -> Result<(), String> {
     use crate::denoise_copy::{CopyFile, CreateError};
     let live = || GENERATION.with(|g| g.get()) == generation;
     let cancelled = String::new;
 
-    let name = denoised_name(&file.name);
+    let name = denoised_name(&file.name, strength);
     let total = file.audio.source.total_samples();
     let mut copy = CopyFile::create(
         state,
@@ -644,7 +667,7 @@ async fn run_in_pieces(
     })?;
     // A cancel, or a failure, deletes what was written.
     let denoised = if live() {
-        denoise_into(state, generation, file, bytes, views, &mut copy).await
+        denoise_into(state, generation, file, bytes, views, strength, &mut copy).await
     } else {
         Err(cancelled())
     };
@@ -674,6 +697,7 @@ async fn denoise_into(
     file: &crate::state::LoadedFile,
     bytes: js_sys::Uint8Array,
     views: &[ChannelView],
+    strength: DenoiseStrength,
     copy: &mut crate::denoise_copy::CopyFile,
 ) -> Result<(), String> {
     let live = || GENERATION.with(|g| g.get()) == generation;
@@ -733,13 +757,13 @@ async fn denoise_into(
             FromWorker::Loaded { .. } if !sent_start => {
                 sent_start = true;
                 post(
-                    &ToWorker::DenoiseStreamStart {
-                        run: run_id,
+                    &stream_start_message(
+                        run_id,
                         channels,
-                        frames: total as f64,
-                        gain: GAIN,
-                        smooth_frames: smooth_frames(file.audio.sample_rate),
-                    },
+                        total,
+                        file.audio.sample_rate,
+                        strength,
+                    ),
                     None,
                 );
             }
@@ -821,11 +845,56 @@ fn post_samples(start: &ToWorker, array: &js_sys::Float32Array, buffer: &JsValue
     });
 }
 
-/// "bat.wav" becomes "bat (denoised).wav".
-pub fn denoised_name(name: &str) -> String {
+/// The message that starts a recording sent whole: `channels` channels at
+/// `sample_rate` Hz, denoised at `strength`.
+fn start_message(run: u32, channels: u32, sample_rate: u32, strength: DenoiseStrength) -> ToWorker {
+    let gain = strength.gain();
+    let smooth_frames = smooth_frames(sample_rate);
+    if channels == 1 {
+        ToWorker::DenoiseStart {
+            run,
+            gain,
+            smooth_frames,
+        }
+    } else {
+        ToWorker::DenoiseStartChannels {
+            run,
+            channels,
+            gain,
+            smooth_frames,
+        }
+    }
+}
+
+/// The message that starts a recording sent a piece at a time: `frames`
+/// samples in each of `channels` channels at `sample_rate` Hz, denoised at
+/// `strength`.
+fn stream_start_message(
+    run: u32,
+    channels: u32,
+    frames: u64,
+    sample_rate: u32,
+    strength: DenoiseStrength,
+) -> ToWorker {
+    ToWorker::DenoiseStreamStart {
+        run,
+        channels,
+        frames: frames as f64,
+        gain: strength.gain(),
+        smooth_frames: smooth_frames(sample_rate),
+    }
+}
+
+/// "bat.wav" becomes "bat (denoised).wav", or "bat (denoised, heavy).wav" at
+/// Heavy strength.
+pub fn denoised_name(name: &str, strength: DenoiseStrength) -> String {
+    use crate::components::file_sidebar::file_groups::{DENOISED_HEAVY_SUFFIX, DENOISED_SUFFIX};
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
     // The suffix pairs the copy with its original in the file list.
-    let suffix = crate::components::file_sidebar::file_groups::DENOISED_SUFFIX;
+    let suffix = match strength {
+        DenoiseStrength::Normal => DENOISED_SUFFIX,
+        DenoiseStrength::Heavy => DENOISED_HEAVY_SUFFIX,
+    };
     format!("{stem}{suffix}.wav")
 }
 
@@ -857,9 +926,68 @@ mod tests {
     }
 
     #[test]
-    fn the_result_is_named_after_the_recording() {
-        assert_eq!(denoised_name("XC1 - Bat.flac"), "XC1 - Bat (denoised).wav");
-        assert_eq!(denoised_name("take"), "take (denoised).wav");
+    fn the_result_is_named_after_the_recording_and_its_strength() {
+        use DenoiseStrength::{Heavy, Normal};
+        assert_eq!(
+            denoised_name("XC1 - Bat.flac", Normal),
+            "XC1 - Bat (denoised).wav"
+        );
+        assert_eq!(denoised_name("take", Normal), "take (denoised).wav");
+        assert_eq!(denoised_name("bat.wav", Heavy), "bat (denoised, heavy).wav");
+        assert_eq!(denoised_name("take", Heavy), "take (denoised, heavy).wav");
+    }
+
+    #[test]
+    fn the_line_under_strength_says_what_the_pick_does() {
+        assert_eq!(
+            text::strength_line(DenoiseStrength::Normal),
+            "Lowers noise by up to 20 dB."
+        );
+        assert_eq!(
+            text::strength_line(DenoiseStrength::Heavy),
+            "Lowers noise by up to 40 dB. Faint sounds may cut in and out."
+        );
+        assert_eq!(DenoiseStrength::default(), DenoiseStrength::Normal);
+        for strength in DenoiseStrength::ALL {
+            assert_eq!(DenoiseStrength::from_key(strength.key()), strength);
+        }
+        assert_eq!(DenoiseStrength::from_key(""), DenoiseStrength::Normal);
+    }
+
+    #[test]
+    fn the_start_messages_carry_the_picked_strength() {
+        use DenoiseStrength::{Heavy, Normal};
+        // The same median rule at both strengths.
+        for (strength, gain) in [(Normal, DenoiseGain::Smoothed), (Heavy, DenoiseGain::Heavy)] {
+            // A recording sent whole, mono and stereo.
+            assert!(matches!(
+                start_message(7, 1, 384_000, strength),
+                ToWorker::DenoiseStart { run: 7, gain: g, smooth_frames: 3 } if g == gain
+            ));
+            assert!(matches!(
+                start_message(7, 2, 44_100, strength),
+                ToWorker::DenoiseStartChannels { run: 7, channels: 2, gain: g, smooth_frames: 9 }
+                    if g == gain
+            ));
+            // A long recording, sent in pieces.
+            match stream_start_message(8, 2, 1_000_000, 384_000, strength) {
+                ToWorker::DenoiseStreamStart {
+                    run: 8,
+                    channels: 2,
+                    frames,
+                    gain: g,
+                    smooth_frames: 3,
+                } => {
+                    assert_eq!(frames, 1_000_000.0);
+                    assert_eq!(g, gain);
+                }
+                other => panic!("unexpected message {other:?}"),
+            }
+            assert!(matches!(
+                stream_start_message(8, 1, 10, 48_000, strength),
+                ToWorker::DenoiseStreamStart { smooth_frames: 9, gain: g, .. } if g == gain
+            ));
+        }
     }
 
     #[test]

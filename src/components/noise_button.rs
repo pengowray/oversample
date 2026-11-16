@@ -616,9 +616,10 @@ fn NrSettings() -> impl IntoView {
 
 // ─── The learned denoiser ───────────────────────────────────────────────
 //
-// The menu's second group, under a rule: one button that makes a denoised
-// copy of the open recording (`crate::denoise`). It is not one of the
-// filters above, and their switches do not change the copy. The lines under the button name the
+// The menu's second group, under a rule: a Strength choice (Normal or Heavy)
+// and one button that makes a denoised copy of the open recording at that
+// strength (`crate::denoise`). It is not one of the filters above, and their
+// switches do not change the copy. The lines under the button name the
 // model and say what the press will do, why it can't be pressed, or how far
 // the work has got. The "Model:" line is where a choice of model would go.
 
@@ -645,10 +646,12 @@ fn DenoiseSection() -> impl IntoView {
         })
     };
     let busy = move || denoise::is_busy(state);
+    let can_start = move || open().is_some() && refusal().is_none() && !busy();
 
     view! {
         <hr />
         <div class="layer-panel-title">{text::TITLE}</div>
+        <StrengthRow can_start=can_start />
         <div class="noise-row">
             {move || if busy() {
                 view! {
@@ -660,7 +663,7 @@ fn DenoiseSection() -> impl IntoView {
                 view! {
                     <button class="noise-btn"
                         title=text::TOOLTIP
-                        disabled=move || open().is_none() || refusal().is_some()
+                        disabled=move || !can_start()
                         on:click=move |_: web_sys::MouseEvent| denoise::start(state)
                     >{text::BUTTON}</button>
                 }.into_any()
@@ -701,6 +704,101 @@ fn DenoiseSection() -> impl IntoView {
                 },
             }
         }}
+        </div>
+    }
+}
+
+/// The Strength row, Normal or Heavy, and the line under it that says what
+/// the picked strength does. The pick is for the next copy and is saved in
+/// the browser. It is a radio group: Tab reaches the picked option and the
+/// arrow keys move the pick. Double-clicking an option picks it and makes the
+/// copy, as the button would when `can_start`. While a copy is made the
+/// options are disabled, so they show the strength in use.
+#[component]
+fn StrengthRow(can_start: impl Fn() -> bool + Copy + Send + Sync + 'static) -> impl IntoView {
+    use crate::denoise::{self, text};
+    use crate::state::{DenoiseStateStoreFields, DenoiseStrength};
+    let state = expect_context::<AppState>();
+
+    let picked = move || state.denoise.strength().get();
+    let pick = move |strength: DenoiseStrength| {
+        if state.denoise.strength().get_untracked() != strength {
+            state.denoise.strength().set(strength);
+            crate::settings::set_raw(crate::settings::keys::DENOISE_STRENGTH, strength.key());
+        }
+    };
+    let busy = move || denoise::is_busy(state);
+
+    // Arrow keys move the pick to the other option, and the focus with it.
+    // These keys and Space stop here: the app's own shortcuts use them to
+    // scroll the recording and to play it.
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        let step: isize = match ev.key().as_str() {
+            "ArrowLeft" | "ArrowUp" => -1,
+            "ArrowRight" | "ArrowDown" => 1,
+            " " => {
+                ev.stop_propagation();
+                return;
+            }
+            _ => return,
+        };
+        ev.prevent_default();
+        ev.stop_propagation();
+        let all = DenoiseStrength::ALL;
+        let at = all
+            .iter()
+            .position(|s| *s == state.denoise.strength().get_untracked())
+            .unwrap_or(0) as isize;
+        let next = all[(at + step).rem_euclid(all.len() as isize) as usize];
+        pick(next);
+        let option = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|group| {
+                group
+                    .query_selector(&format!("[data-strength=\"{}\"]", next.key()))
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
+        if let Some(option) = option {
+            let _ = option.focus();
+        }
+    };
+
+    view! {
+        <div class="noise-row">
+            <span class="noise-row-label">{text::STRENGTH}</span>
+            <div
+                class="denoise-strength"
+                role="radiogroup"
+                aria-label=text::STRENGTH_GROUP
+                on:keydown=on_keydown
+            >
+                {DenoiseStrength::ALL.into_iter().map(|strength| view! {
+                    <button
+                        type="button"
+                        class="peak-src-btn"
+                        class:sel=move || picked() == strength
+                        role="radio"
+                        aria-checked=move || (picked() == strength).to_string()
+                        tabindex=move || if picked() == strength { "0" } else { "-1" }
+                        data-strength=strength.key()
+                        title=text::STRENGTH_OPTION_TOOLTIP
+                        disabled=busy
+                        on:click=move |_| pick(strength)
+                        on:dblclick=move |_| {
+                            pick(strength);
+                            if can_start() {
+                                denoise::start(state);
+                            }
+                        }
+                    >{text::strength_name(strength)}</button>
+                }).collect_view()}
+            </div>
+        </div>
+        <div class="denoise-note denoise-strength-line">
+            {move || text::strength_line(picked())}
         </div>
     }
 }

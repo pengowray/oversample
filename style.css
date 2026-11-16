@@ -5686,9 +5686,38 @@ a.open-link-btn {
 .noise-band-actions {
     justify-content: flex-end;
 }
+/* The Denoised copy group's Strength choice (Normal or Heavy): the Peak from
+   control's look (.peak-src-btn), at the right of its row like the other
+   rows' buttons, and 24px tall like .noise-btn. While a copy is made the
+   options are disabled but keep the pick's colours, so they show the
+   strength in use. */
+.denoise-strength {
+    display: flex;
+    margin-left: auto;
+}
+.denoise-strength .peak-src-btn {
+    min-height: 24px;
+    font-family: inherit;
+    /* A double-click makes the copy; it must not select the option's text. */
+    user-select: none;
+}
+.denoise-strength .peak-src-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.denoise-strength .peak-src-btn:disabled:not(.sel) {
+    background: #1a1a1a;
+    color: #999;
+}
+/* Two lines of room for the line under Strength (Heavy's is two lines in
+   the 340px menu), so the menu keeps its height when the pick changes. */
+.denoise-strength-line {
+    min-height: 2.6em;
+}
 @media (pointer: coarse), (max-width: 640px) {
     .noise-btn,
-    .noise-band-remove {
+    .noise-band-remove,
+    .denoise-strength .peak-src-btn {
         min-height: 36px;
     }
     .noise-band-remove {

@@ -308,3 +308,230 @@ test("a stereo recording gives a stereo copy with the same balance between its c
   }
   expect(errors).toEqual([]);
 });
+
+// ─── Strength: Normal or Heavy ──────────────────────────────────────────
+
+/** A Strength option of the Denoised copy group. */
+function strengthOption(page: Page, name: "Normal" | "Heavy") {
+  return page
+    .getByRole("radiogroup", { name: "Denoised copy strength" })
+    .getByRole("radio", { name });
+}
+
+type TestSnap = { currentFile: string; isPlaying: boolean };
+const testSnap = (page: Page) =>
+  page.evaluate(() =>
+    (window as unknown as { __oversample_test: () => TestSnap }).__oversample_test(),
+  );
+
+/** Open another recording in the same page, and the Noise menu if it closed. */
+async function addRecording(page: Page, name: string, wav: Buffer) {
+  await page
+    .locator('input[type="file"][accept*=".wav"]')
+    .first()
+    .setInputFiles({ name, mimeType: "audio/wav", buffer: wav });
+  await expect.poll(async () => (await testSnap(page)).currentFile).toBe(name);
+  if (!(await page.getByText("Denoised copy", { exact: true }).isVisible())) {
+    await page.locator('button[title="Noise filter settings"]').click();
+  }
+  await expect(page.getByText("Denoised copy", { exact: true })).toBeVisible();
+}
+
+/** Count the start messages the app posts to the worker, and keep the samples
+ * of every denoised copy the worker sends back, in order. */
+async function watchWorker(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __starts: number; __denoised: number[][] };
+    w.__starts = 0;
+    w.__denoised = [];
+    const Original = window.Worker;
+    window.Worker = class extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener("message", (e: MessageEvent) => {
+          if (e.data?.msg?.type === "Denoised" && e.data.samples) {
+            w.__denoised.push(Array.from(e.data.samples as Float32Array));
+          }
+        });
+      }
+      postMessage(message: unknown, transfer?: unknown) {
+        const cmd = (message as { msg?: { cmd?: string } })?.msg?.cmd ?? "";
+        if (cmd.startsWith("DenoiseStart") || cmd === "DenoiseStreamStart") w.__starts += 1;
+        return (super.postMessage as (m: unknown, t?: unknown) => void)(message, transfer);
+      }
+    };
+  });
+}
+
+/** Mono 16-bit WAV of `x` at STEREO_RATE. */
+function monoWav(x: Float32Array): Buffer {
+  const data = Buffer.alloc(x.length * 2);
+  for (let i = 0; i < x.length; i++) data.writeInt16LE(Math.round(x[i] * 32767), i * 2);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(STEREO_RATE, 24);
+  header.writeUInt32LE(STEREO_RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+test("Strength starts at Normal, its line follows the pick, the arrow keys move it, and the menu keeps its height", async ({
+  page,
+}) => {
+  await openRecording(page, "pick.wav", batLikeWav(44_100, 2));
+  const normal = strengthOption(page, "Normal");
+  const heavy = strengthOption(page, "Heavy");
+  await expect(normal).toHaveAttribute("aria-checked", "true");
+  await expect(heavy).toHaveAttribute("aria-checked", "false");
+  await expect(normal).toHaveAttribute("title", "Double-click to make a copy at this strength.");
+  await expect(page.getByText("Lowers noise by up to 20 dB.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Make denoised copy" })).toHaveAttribute(
+    "title",
+    "Lowers steady background noise such as hiss.",
+  );
+  const menuHeight = () =>
+    page.evaluate(
+      () =>
+        document.querySelector(".denoise-strength")!.closest("[class*=panel]")!.getBoundingClientRect()
+          .height,
+    );
+  const height = await menuHeight();
+
+  await heavy.click();
+  await expect(heavy).toHaveAttribute("aria-checked", "true");
+  await expect(normal).toHaveAttribute("aria-checked", "false");
+  await expect(
+    page.getByText("Lowers noise by up to 40 dB. Faint sounds may cut in and out."),
+  ).toBeVisible();
+  expect(await menuHeight()).toBe(height);
+
+  // Tab reaches the picked option only; the arrow keys move the pick and the
+  // focus. Space and the arrows do not reach the app's shortcuts.
+  await expect(heavy).toHaveAttribute("tabindex", "0");
+  await expect(normal).toHaveAttribute("tabindex", "-1");
+  await heavy.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(normal).toHaveAttribute("aria-checked", "true");
+  await expect(normal).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(heavy).toHaveAttribute("aria-checked", "true");
+  await expect(heavy).toBeFocused();
+  await page.keyboard.press(" ");
+  await expect(heavy).toHaveAttribute("aria-checked", "true");
+  expect((await testSnap(page)).isPlaying).toBe(false);
+});
+
+test("Heavy makes a copy named (denoised, heavy), and the pick stays Heavy for the next recording and after a reload", async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+    `no model file at ${modelPath}`,
+  );
+  test.setTimeout(240_000);
+  await serveModel(page);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await openRecording(page, "heavy.wav", batLikeWav(44_100, 3));
+  await strengthOption(page, "Heavy").click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
+  await expect(page.locator(".file-item", { hasText: "heavy (denoised, heavy).wav" })).toBeVisible({
+    timeout: 200_000,
+  });
+  await expect(page.locator(".file-item", { hasText: "heavy (denoised).wav" })).toHaveCount(0);
+
+  await addRecording(page, "next.wav", batLikeWav(44_100, 2));
+  await expect(strengthOption(page, "Heavy")).toHaveAttribute("aria-checked", "true");
+
+  // openRecording loads the page again.
+  await openRecording(page, "after-reload.wav", batLikeWav(44_100, 2));
+  await expect(strengthOption(page, "Heavy")).toHaveAttribute("aria-checked", "true");
+  await expect(
+    page.getByText("Lowers noise by up to 40 dB. Faint sounds may cut in and out."),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a Heavy copy is quieter than a Normal copy where there are no calls", async ({ page }) => {
+  test.skip(
+    !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+    `no model file at ${modelPath}`,
+  );
+  test.setTimeout(300_000);
+  await serveModel(page);
+  await watchWorker(page);
+
+  // Quiet noise with a whistle every 100 ms; the third second has none.
+  const [original] = stereoSamples();
+  await openRecording(page, "quiet.wav", monoWav(original));
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
+  await expect(page.locator(".file-item", { hasText: "quiet (denoised).wav" })).toBeVisible({
+    timeout: 200_000,
+  });
+
+  // Back to the original (the D key, with the menu closed), then Heavy.
+  await page.locator('button[title="Noise filter settings"]').click();
+  await page.keyboard.press("d");
+  await expect.poll(async () => (await testSnap(page)).currentFile).toBe("quiet.wav");
+  await page.locator('button[title="Noise filter settings"]').click();
+  await strengthOption(page, "Heavy").click();
+  await page.getByRole("button", { name: "Make denoised copy" }).click();
+  await expect(page.locator(".file-item", { hasText: "quiet (denoised, heavy).wav" })).toBeVisible({
+    timeout: 200_000,
+  });
+
+  const [normal, heavy] = await page.evaluate(
+    () => (window as unknown as { __denoised: number[][] }).__denoised,
+  );
+  expect(normal.length).toBe(original.length);
+  expect(heavy.length).toBe(original.length);
+  const quietNormal = dB(level(normal, 2.2, 2.8) / level(original, 2.2, 2.8));
+  const quietHeavy = dB(level(heavy, 2.2, 2.8) / level(original, 2.2, 2.8));
+  console.log(`no calls: Normal ${quietNormal.toFixed(1)} dB, Heavy ${quietHeavy.toFixed(1)} dB`);
+  expect(quietHeavy).toBeLessThan(quietNormal - 6);
+});
+
+test("double-clicking Heavy makes a Heavy copy, and a double-click while a copy is made starts nothing", async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+    `no model file at ${modelPath}`,
+  );
+  test.setTimeout(240_000);
+  await serveModel(page);
+  await watchWorker(page);
+  const starts = () => page.evaluate(() => (window as unknown as { __starts: number }).__starts);
+
+  await openRecording(page, "long.wav", batLikeWav(384_000, 20));
+  const heavy = strengthOption(page, "Heavy");
+  const normal = strengthOption(page, "Normal");
+  await heavy.dblclick();
+  await expect(heavy).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByText(/Denoising: \d+%/)).toBeVisible({ timeout: 100_000 });
+  expect(await starts()).toBe(1);
+
+  // While the copy is made, the options are disabled and show Heavy.
+  await expect(heavy).toBeDisabled();
+  await expect(normal).toBeDisabled();
+  await normal.dblclick({ force: true });
+  await heavy.dblclick({ force: true });
+  await expect(heavy).toHaveAttribute("aria-checked", "true");
+  expect(await starts()).toBe(1);
+
+  await expect(page.locator(".file-item", { hasText: "long (denoised, heavy).wav" })).toBeVisible({
+    timeout: 200_000,
+  });
+  expect(await starts()).toBe(1);
+  await expect(page.locator(".file-item", { hasText: "(denoised" })).toHaveCount(1);
+});
