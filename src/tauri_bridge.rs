@@ -120,35 +120,65 @@ pub async fn tauri_invoke_typed_no_args<R: serde::de::DeserializeOwned>(
     tauri_invoke_typed(cmd, &js_sys::Object::new().into()).await
 }
 
+/// Serialize a command's arguments with `serde_wasm_bindgen`.
+fn to_args<A: serde::Serialize>(cmd: &str, args: &A) -> Result<JsValue, String> {
+    serde_wasm_bindgen::to_value(args)
+        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))
+}
+
 /// Invoke a command with serde-serialized `args` and deserialize the result into
 /// `R`. Replaces hand-built `Object` + `Reflect::set` arg plumbing.
 pub async fn tauri_invoke_typed_args<A: serde::Serialize, R: serde::de::DeserializeOwned>(
     cmd: &str,
     args: &A,
 ) -> Result<R, String> {
-    let js_args = serde_wasm_bindgen::to_value(args)
-        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
-    tauri_invoke_typed(cmd, &js_args).await
+    tauri_invoke_typed(cmd, &to_args(cmd, args)?).await
 }
 
 /// Invoke a command with serde-serialized `args`, ignoring the (typed) result —
 /// only success/failure matters.
 pub async fn tauri_invoke_args<A: serde::Serialize>(cmd: &str, args: &A) -> Result<(), String> {
-    let js_args = serde_wasm_bindgen::to_value(args)
-        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
-    tauri_invoke(cmd, &js_args).await.map(|_| ())
+    tauri_invoke(cmd, &to_args(cmd, args)?).await.map(|_| ())
 }
 
 /// Invoke a command with serde-serialized `args`, returning the raw `JsValue`
-/// result for callers that parse it themselves (e.g. binary/ArrayBuffer results
-/// or local `from_value` mapping helpers).
+/// result for callers that parse it themselves.
 pub async fn tauri_invoke_with_args<A: serde::Serialize>(
     cmd: &str,
     args: &A,
 ) -> Result<JsValue, String> {
-    let js_args = serde_wasm_bindgen::to_value(args)
-        .map_err(|e| format!("Failed to serialize args for '{}': {:?}", cmd, e))?;
-    tauri_invoke(cmd, &js_args).await
+    tauri_invoke(cmd, &to_args(cmd, args)?).await
+}
+
+/// Like [`tauri_invoke_with_args`], but an error is the value the command
+/// rejected with (see [`tauri_invoke_js`]).
+pub async fn tauri_invoke_js_args<A: serde::Serialize>(
+    cmd: &str,
+    args: &A,
+) -> Result<JsValue, JsValue> {
+    tauri_invoke_js(cmd, &to_args(cmd, args)?).await
+}
+
+/// Invoke a command that returns raw bytes (`tauri::ipc::Response`), with
+/// serde-serialized `args`.
+pub async fn tauri_invoke_bytes<A: serde::Serialize>(
+    cmd: &str,
+    args: &A,
+) -> Result<js_sys::ArrayBuffer, String> {
+    tauri_invoke_with_args(cmd, args)
+        .await?
+        .dyn_into()
+        .map_err(|_| format!("Expected bytes from '{}'", cmd))
+}
+
+#[derive(serde::Serialize)]
+struct RangeArgs<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fd: Option<i32>,
+    offset: u64,
+    length: u64,
 }
 
 /// The most bytes to ask the native side for in one read. Android copies each
@@ -173,44 +203,27 @@ pub async fn read_whole_file(path: &str) -> Result<Vec<u8>, String> {
 /// Returns the raw bytes for the range `[offset, offset + length)`, or fewer at
 /// the end of the file.
 pub async fn read_file_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(&args, &JsValue::from_str("path"), &JsValue::from_str(path))
-        .map_err(|e| format!("set path: {:?}", e))?;
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("offset"),
-        &JsValue::from_f64(offset as f64),
-    )
-    .map_err(|e| format!("set offset: {:?}", e))?;
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("length"),
-        &JsValue::from_f64(length as f64),
-    )
-    .map_err(|e| format!("set length: {:?}", e))?;
-
-    let result = tauri_invoke("read_file_range", &args.into()).await?;
-
-    // Tauri IPC returns binary data as ArrayBuffer
-    let array_buffer = result
-        .dyn_into::<js_sys::ArrayBuffer>()
-        .map_err(|_| "Expected ArrayBuffer from read_file_range".to_string())?;
-    let uint8 = js_sys::Uint8Array::new(&array_buffer);
-    Ok(uint8.to_vec())
+    let args = RangeArgs {
+        path: Some(path),
+        fd: None,
+        offset,
+        length,
+    };
+    let buf = tauri_invoke_bytes("read_file_range", &args).await?;
+    Ok(js_sys::Uint8Array::new(&buf).to_vec())
 }
 
 /// Read a byte range from a file descriptor the media-store plugin opened, as
 /// raw bytes (the `read_fd_range` command). Fewer bytes at the end of the file.
 pub async fn read_fd_range(fd: i32, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-    let args = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&args, &"fd".into(), &JsValue::from(fd));
-    let _ = js_sys::Reflect::set(&args, &"offset".into(), &JsValue::from_f64(offset as f64));
-    let _ = js_sys::Reflect::set(&args, &"length".into(), &JsValue::from_f64(length as f64));
-    let result = tauri_invoke("read_fd_range", &args.into()).await?;
-    let array_buffer = result
-        .dyn_into::<js_sys::ArrayBuffer>()
-        .map_err(|_| "Expected ArrayBuffer from read_fd_range".to_string())?;
-    Ok(js_sys::Uint8Array::new(&array_buffer).to_vec())
+    let args = RangeArgs {
+        path: None,
+        fd: Some(fd),
+        offset,
+        length,
+    };
+    let buf = tauri_invoke_bytes("read_fd_range", &args).await?;
+    Ok(js_sys::Uint8Array::new(&buf).to_vec())
 }
 
 /// Subscribe to a Tauri event. The closure is leaked (via `forget`) so the

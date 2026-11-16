@@ -12,10 +12,9 @@ use crate::state::{
     AppState, GpsLocation, MicAcquisitionState, MicBackend, MicPendingAction, MicStrategy,
 };
 use crate::tauri_bridge::{
-    tauri_invoke, tauri_invoke_no_args, tauri_invoke_typed_args, tauri_invoke_typed_no_args,
+    tauri_invoke_no_args, tauri_invoke_typed_args, tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
-use wasm_bindgen::prelude::*;
 
 // ── GPS location acquisition ────────────────────────────────────────────
 
@@ -383,9 +382,16 @@ async fn start_foreground_service(state: &AppState, mode: &str) {
     if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
-    let args = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&args, &JsValue::from_str("mode"), &JsValue::from_str(mode));
-    if let Err(e) = tauri_invoke("plugin:audio-service|startForegroundAudio", &args.into()).await {
+    #[derive(serde::Serialize)]
+    struct ModeArgs<'a> {
+        mode: &'a str,
+    }
+    if let Err(e) = crate::tauri_bridge::tauri_invoke_args(
+        "plugin:audio-service|startForegroundAudio",
+        &ModeArgs { mode },
+    )
+    .await
+    {
         state.log_debug("warn", format!("startForegroundAudio failed: {}", e));
     }
 }

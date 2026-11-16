@@ -840,75 +840,67 @@ fn annotation_is_newer(
 
 // ── Tauri IPC helpers for annotation persistence ──────────────────────
 
+/// Arguments of the annotation commands: a central file key or a sidecar's
+/// audio path, and the YAML to write.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnnotationArgs<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    yaml: Option<&'a str>,
+}
+
 /// Save annotations to the Tauri central annotations directory.
 async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(), String> {
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("fileKey"),
-        &wasm_bindgen::JsValue::from_str(file_key),
+    crate::tauri_bridge::tauri_invoke_args(
+        "write_central_annotations",
+        &AnnotationArgs {
+            file_key: Some(file_key),
+            path: None,
+            yaml: Some(yaml),
+        },
     )
-    .map_err(|e| format!("set fileKey: {e:?}"))?;
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("yaml"),
-        &wasm_bindgen::JsValue::from_str(yaml),
-    )
-    .map_err(|e| format!("set yaml: {e:?}"))?;
-    crate::tauri_bridge::tauri_invoke("write_central_annotations", &args.into()).await?;
-    Ok(())
+    .await
 }
 
 /// Load annotations from the Tauri central annotations directory.
 async fn tauri_load_central(file_key: &str) -> Result<Option<String>, String> {
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("fileKey"),
-        &wasm_bindgen::JsValue::from_str(file_key),
+    crate::tauri_bridge::tauri_invoke_typed_args(
+        "read_central_annotations",
+        &AnnotationArgs {
+            file_key: Some(file_key),
+            path: None,
+            yaml: None,
+        },
     )
-    .map_err(|e| format!("set fileKey: {e:?}"))?;
-    let result =
-        crate::tauri_bridge::tauri_invoke("read_central_annotations", &args.into()).await?;
-    if result.is_null() || result.is_undefined() {
-        Ok(None)
-    } else {
-        Ok(result.as_string())
-    }
+    .await
 }
 
 /// Save a file-adjacent sidecar via Tauri IPC.
 async fn tauri_save_sidecar(path: &str, yaml: &str) -> Result<(), String> {
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("path"),
-        &wasm_bindgen::JsValue::from_str(path),
+    crate::tauri_bridge::tauri_invoke_args(
+        "write_sidecar",
+        &AnnotationArgs {
+            file_key: None,
+            path: Some(path),
+            yaml: Some(yaml),
+        },
     )
-    .map_err(|e| format!("set path: {e:?}"))?;
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("yaml"),
-        &wasm_bindgen::JsValue::from_str(yaml),
-    )
-    .map_err(|e| format!("set yaml: {e:?}"))?;
-    crate::tauri_bridge::tauri_invoke("write_sidecar", &args.into()).await?;
-    Ok(())
+    .await
 }
 
 /// Load a file-adjacent sidecar via Tauri IPC.
 async fn tauri_load_sidecar(path: &str) -> Result<Option<String>, String> {
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &wasm_bindgen::JsValue::from_str("path"),
-        &wasm_bindgen::JsValue::from_str(path),
+    crate::tauri_bridge::tauri_invoke_typed_args(
+        "read_sidecar",
+        &AnnotationArgs {
+            file_key: None,
+            path: Some(path),
+            yaml: None,
+        },
     )
-    .map_err(|e| format!("set path: {e:?}"))?;
-    let result = crate::tauri_bridge::tauri_invoke("read_sidecar", &args.into()).await?;
-    if result.is_null() || result.is_undefined() {
-        Ok(None)
-    } else {
-        Ok(result.as_string())
-    }
+    .await
 }

@@ -13,8 +13,8 @@ use crate::dsp::zc_divide::zc_divide;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ChannelMode, MicAcquisitionState, MicBackend, PlaybackMode};
 use crate::tauri_bridge::{
-    get_tauri_internals, tauri_invoke, tauri_invoke_args, tauri_invoke_no_args,
-    tauri_invoke_typed_args, tauri_invoke_typed_no_args,
+    get_tauri_internals, tauri_invoke_args, tauri_invoke_no_args, tauri_invoke_typed_args,
+    tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
@@ -880,8 +880,7 @@ async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
 
 /// Tell the MediaStore plugin to finalize (set IS_PENDING=0) the recording entry.
 async fn finalize_shared_entry() {
-    let args = js_sys::Object::new();
-    match tauri_invoke("plugin:media-store|finalizeRecordingEntry", &args.into()).await {
+    match tauri_invoke_no_args("plugin:media-store|finalizeRecordingEntry").await {
         Ok(_) => log::info!("Finalized shared storage recording entry"),
         Err(e) => log::warn!("finalizeRecordingEntry failed: {}", e),
     }
@@ -891,8 +890,7 @@ async fn finalize_shared_entry() {
 /// Called on error paths to avoid orphaned entries. Safe to call when no entry
 /// is pending (no-op on the Kotlin side).
 pub(crate) async fn cancel_shared_entry() {
-    let args = js_sys::Object::new();
-    match tauri_invoke("plugin:media-store|cancelRecordingEntry", &args.into()).await {
+    match tauri_invoke_no_args("plugin:media-store|cancelRecordingEntry").await {
         Ok(_) => log::info!("Cancelled pending shared storage entry"),
         Err(e) => log::warn!("cancelRecordingEntry failed: {}", e),
     }
@@ -1158,19 +1156,17 @@ fn start_audio_pull_loop(state: AppState) {
                 "cpal"
             };
             let t0 = js_sys::Date::now();
-            let pull_args = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(
-                &pull_args,
-                &JsValue::from_str("source"),
-                &JsValue::from_str(source),
-            );
-            match crate::tauri_bridge::tauri_invoke("mic_pull_audio", &pull_args.into()).await {
-                Ok(val) => {
-                    if let Ok(buf) = val.dyn_into::<js_sys::ArrayBuffer>() {
-                        let samples = js_sys::Float32Array::new(&buf).to_vec();
-                        if !samples.is_empty() {
-                            process_native_chunk(state, samples);
-                        }
+            #[derive(serde::Serialize)]
+            struct PullArgs {
+                source: &'static str,
+            }
+            match crate::tauri_bridge::tauri_invoke_bytes("mic_pull_audio", &PullArgs { source })
+                .await
+            {
+                Ok(buf) => {
+                    let samples = js_sys::Float32Array::new(&buf).to_vec();
+                    if !samples.is_empty() {
+                        process_native_chunk(state, samples);
                     }
                 }
                 Err(e) => log::warn!("mic_pull_audio failed: {}", e),
@@ -2143,11 +2139,7 @@ async fn close_usb(state: &AppState) {
         log::error!("usb_stop_stream failed: {}", e);
     }
 
-    let _ = tauri_invoke(
-        "plugin:usb-audio|closeUsbDevice",
-        &js_sys::Object::new().into(),
-    )
-    .await;
+    let _ = tauri_invoke_no_args("plugin:usb-audio|closeUsbDevice").await;
 
     // Also clean up USB error closure
     USB_ERROR_CLOSURE.with(|c| {

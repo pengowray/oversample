@@ -1157,20 +1157,22 @@ fn export_annotations(state: AppState) {
     if state.is_tauri {
         // Tauri: export via IPC command to app data exports directory
         wasm_bindgen_futures::spawn_local(async move {
-            let args = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(
+            #[derive(serde::Serialize)]
+            struct ExportArgs<'a> {
+                filename: &'a str,
+                yaml: &'a str,
+            }
+            let args = ExportArgs {
+                filename: &filename,
+                yaml: &yaml,
+            };
+            match crate::tauri_bridge::tauri_invoke_typed_args::<_, String>(
+                "export_annotations_file",
                 &args,
-                &wasm_bindgen::JsValue::from_str("filename"),
-                &wasm_bindgen::JsValue::from_str(&filename),
-            );
-            let _ = js_sys::Reflect::set(
-                &args,
-                &wasm_bindgen::JsValue::from_str("yaml"),
-                &wasm_bindgen::JsValue::from_str(&yaml),
-            );
-            match crate::tauri_bridge::tauri_invoke("export_annotations_file", &args.into()).await {
-                Ok(path) => {
-                    let path_str = path.as_string().unwrap_or_default();
+            )
+            .await
+            {
+                Ok(path_str) => {
                     if !path_str.is_empty() {
                         state.show_info_toast(format!("Exported to {path_str}"));
                     }

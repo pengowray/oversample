@@ -15,7 +15,6 @@ use crate::state::store_fields::*;
 use crate::state::AppState;
 use leptos::prelude::*;
 use std::cell::RefCell;
-use wasm_bindgen::{JsCast, JsValue};
 
 /// A copy being written.
 pub struct CopyFile {
@@ -159,11 +158,15 @@ impl CopyFile {
                 Ok(Written::Browser(file, stored))
             }
             Target::Tauri { run, .. } => {
-                let path =
-                    crate::tauri_bridge::tauri_invoke("denoise_copy_commit", &self.args(run))
-                        .await?
-                        .as_string()
-                        .ok_or("no path for the copy")?;
+                let path: String = crate::tauri_bridge::tauri_invoke_typed_args(
+                    "denoise_copy_commit",
+                    &CopyArgs {
+                        name: &self.name,
+                        run,
+                        size: Some(self.size),
+                    },
+                )
+                .await?;
                 Ok(Written::Tauri {
                     path,
                     size: self.size,
@@ -177,20 +180,27 @@ impl CopyFile {
         match self.to {
             Target::Browser(writer) => writer.discard().await,
             Target::Tauri { run, .. } => {
-                let _ = crate::tauri_bridge::tauri_invoke("denoise_copy_discard", &self.args(run))
-                    .await;
+                let _ = crate::tauri_bridge::tauri_invoke_args(
+                    "denoise_copy_discard",
+                    &CopyArgs {
+                        name: &self.name,
+                        run,
+                        size: None,
+                    },
+                )
+                .await;
             }
         }
     }
+}
 
-    /// The arguments of `denoise_copy_commit` and `denoise_copy_discard`.
-    fn args(&self, run: u32) -> JsValue {
-        let args = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&args, &"name".into(), &self.name.as_str().into());
-        let _ = js_sys::Reflect::set(&args, &"run".into(), &JsValue::from_f64(f64::from(run)));
-        let _ = js_sys::Reflect::set(&args, &"size".into(), &JsValue::from_f64(self.size as f64));
-        args.unchecked_into()
-    }
+/// Arguments of `denoise_copy_commit` and `denoise_copy_discard`.
+#[derive(serde::Serialize)]
+struct CopyArgs<'a> {
+    name: &'a str,
+    run: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
 }
 
 /// Adds a finished copy to the file list, the way the app opens any file of

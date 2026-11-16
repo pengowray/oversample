@@ -34,6 +34,18 @@ thread_local! {
     static PROGRESS_LISTENING: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Arguments of the `models_*` commands that take one file.
+#[derive(serde::Serialize)]
+struct FileArgs {
+    file: &'static str,
+}
+
+impl FileArgs {
+    fn of(file: &ModelFile) -> Self {
+        Self { file: file.id }
+    }
+}
+
 fn is_tauri() -> bool {
     crate::tauri_bridge::get_tauri_internals().is_some()
 }
@@ -112,14 +124,9 @@ pub async fn stored_sizes() -> Vec<(String, u64)> {
 /// Read a stored file.
 pub async fn read_js(file: &ModelFile) -> Result<js_sys::Uint8Array, ClassifierError> {
     let bytes = if is_tauri() {
-        let args = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
-        let v = crate::tauri_bridge::tauri_invoke("models_read", &args.into())
+        let buf = crate::tauri_bridge::tauri_invoke_bytes("models_read", &FileArgs::of(file))
             .await
             .map_err(|e| storage_err(file, e))?;
-        let buf: js_sys::ArrayBuffer = v
-            .dyn_into()
-            .map_err(|_| storage_err(file, "expected bytes from models_read"))?;
         js_sys::Uint8Array::new(&buf)
     } else {
         let handle = opfs_handle(file.id)
@@ -152,9 +159,7 @@ pub async fn read(file: &ModelFile) -> Result<Vec<u8>, ClassifierError> {
 /// Delete a stored file. Deleting a file that is not stored is not an error.
 pub async fn delete(file: &ModelFile) -> Result<(), ClassifierError> {
     if is_tauri() {
-        let args = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
-        crate::tauri_bridge::tauri_invoke("models_delete", &args.into())
+        crate::tauri_bridge::tauri_invoke_args("models_delete", &FileArgs::of(file))
             .await
             .map_err(|e| storage_err(file, e))?;
         return Ok(());
@@ -260,9 +265,7 @@ async fn download_native(
             .insert(file.id.to_string(), Box::new(on_progress));
     });
     let _route = ProgressRoute(file.id);
-    let args = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&args, &"file".into(), &file.id.into());
-    match crate::tauri_bridge::tauri_invoke_js("models_download", &args.into()).await {
+    match crate::tauri_bridge::tauri_invoke_js_args("models_download", &FileArgs::of(file)).await {
         Ok(_) => Ok(()),
         // The command fails with a `ClassifierError`; anything else (the
         // command missing, say) is shown as a download error.

@@ -182,13 +182,12 @@ pub(super) fn FilesPanel() -> impl IntoView {
             // Tauri desktop: use native file dialog to get real filesystem paths
             let state = state_for_upload;
             spawn_local(async move {
-                let args = js_sys::Object::new();
-                match crate::tauri_bridge::tauri_invoke("open_file_dialog", &args.into()).await {
-                    Ok(result) => {
-                        let paths: Vec<String> = js_sys::Array::from(&result)
-                            .iter()
-                            .filter_map(|v| v.as_string())
-                            .collect();
+                match crate::tauri_bridge::tauri_invoke_typed_no_args::<Vec<String>>(
+                    "open_file_dialog",
+                )
+                .await
+                {
+                    Ok(paths) => {
                         for path in paths {
                             let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
                             let state = state;

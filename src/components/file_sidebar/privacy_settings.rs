@@ -1,11 +1,10 @@
 use crate::state::store_fields::*;
 use crate::state::AppState;
-use crate::tauri_bridge::{tauri_invoke, tauri_invoke_typed_no_args};
+use crate::tauri_bridge::tauri_invoke_typed_no_args;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
 
 fn persist_home_wifi(state: &AppState) {
     let val = state
@@ -82,12 +81,10 @@ pub fn PrivacySettingsModal() -> impl IntoView {
         adding.set(true);
         spawn_local(async move {
             // Request location permission first (needed for WiFi SSID on Android)
-            let perm_ok = tauri_invoke(
-                "plugin:geolocation|getCurrentLocation",
-                &JsValue::from(js_sys::Object::new()),
-            )
-            .await
-            .is_ok();
+            let perm_ok =
+                crate::tauri_bridge::tauri_invoke_no_args("plugin:geolocation|getCurrentLocation")
+                    .await
+                    .is_ok();
             if !perm_ok {
                 state.show_info_toast("Location permission is needed to detect WiFi network");
                 adding.set(false);
