@@ -458,6 +458,7 @@ fn all_regions_take_each_species_highest_score() {
         });
         bytes.extend(file);
     }
+    let (all_bytes, all_heads) = (bytes.clone(), heads.clone());
     let mut s = Session::new();
     let mut out = new_out();
     send(
@@ -506,6 +507,27 @@ fn all_regions_take_each_species_highest_score() {
         assert!((single - merged_best).abs() < 1e-5, "window {w}");
     }
     eprintln!("a species is the top class in {species_on_top} of {windows} windows");
+    // "noise" and the like still get a score: one head has no such class,
+    // and it must not set them all to 0. They seldom reach a top 10, so read
+    // every merged logit.
+    let merged_heads = birdnet_worker::engine::MergedHeads::load(
+        &all_bytes,
+        &all_heads,
+        merged.species,
+        merged.lines.len(),
+    )
+    .unwrap();
+    let logits = merged_heads.run(&emb[..EMBEDDING_LEN]).unwrap();
+    assert_eq!(logits.len(), merged.lines.len());
+    let scored = logits[merged.species..]
+        .iter()
+        .filter(|l| l.is_finite())
+        .count();
+    eprintln!(
+        "{scored} of {} non-species classes have a score",
+        merged.lines.len() - merged.species
+    );
+    assert_eq!(scored, merged.lines.len() - merged.species);
 }
 
 /// The live view's `Live` request on the 3 s ending at a window's end gives the

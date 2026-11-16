@@ -134,7 +134,11 @@ pub fn merge_bat_logits(heads: &[(&[f32], &[u16])], species: usize, classes: usi
                 head_other = head_other.max(logit);
             }
         }
-        cap = cap.min(head_other);
+        // A head with no non-species class (USA East, high sample rate) says
+        // nothing about noise, so it sets no cap.
+        if head_other > f32::NEG_INFINITY {
+            cap = cap.min(head_other);
+        }
     }
     for class in species.min(classes)..classes {
         if other[class].is_finite() {
@@ -200,6 +204,10 @@ mod tests {
         let b: (&[f32], &[u16]) = (&[-4.0, 5.0], &[1, 2]);
         let m = merge_bat_logits(&[a, b], 2, 3);
         assert_eq!(m, vec![-2.0, -4.0, 3.0]);
+        // A head with species only leaves the other classes as they are.
+        let c: (&[f32], &[u16]) = (&[1.0], &[1]);
+        let m = merge_bat_logits(&[a, b, c], 2, 3);
+        assert_eq!(m, vec![-2.0, 1.0, 3.0]);
         // A class no head has.
         assert_eq!(merge_bat_logits(&[], 1, 2), vec![f32::NEG_INFINITY; 2]);
     }
