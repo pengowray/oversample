@@ -199,7 +199,11 @@ mod tests {
 
     /// The patched Portacapture X8's input settings, in descriptor order.
     fn x8() -> Vec<UsbAlt> {
-        vec![alt(1, 8, 3, false), alt(2, 2, 3, false), alt(3, 8, 4, true)]
+        vec![
+            alt(1, 8, 3, false),
+            alt(2, 2, 3, false),
+            alt(3, 8, 4, true),
+        ]
     }
 
     fn pick(alts: &[UsbAlt], picked: &[u32], max_bits: u32) -> Option<u32> {
@@ -261,12 +265,7 @@ mod tests {
         small.max_packet_size = 13 * 32;
         let alts = vec![alt(1, 8, 3, false), small];
         assert_eq!(pick(&alts, &[4, 5], 0), Some(1));
-        assert_eq!(
-            choose_usb_alt(&alts, 2, &[4, 5], 96_000, 0)
-                .unwrap()
-                .alternate_setting,
-            3
-        );
+        assert_eq!(choose_usb_alt(&alts, 2, &[4, 5], 96_000, 0).unwrap().alternate_setting, 3);
     }
 
     #[test]
@@ -293,19 +292,13 @@ mod tests {
     #[test]
     fn plan_uses_the_pick_when_a_setting_carries_it() {
         let plan = usb_channel_plan(&x8(), 2, &[4, 5], 192_000, 0).unwrap();
-        assert_eq!(
-            (plan.alternate_setting, plan.picked, plan.fell_back),
-            (3, vec![4, 5], false)
-        );
+        assert_eq!((plan.alternate_setting, plan.picked, plan.fell_back), (3, vec![4, 5], false));
     }
 
     #[test]
     fn plan_defaults_to_channels_1_and_2() {
         let plan = usb_channel_plan(&x8(), 2, &[], 192_000, 24).unwrap();
-        assert_eq!(
-            (plan.alternate_setting, plan.picked, plan.fell_back),
-            (2, vec![0, 1], false)
-        );
+        assert_eq!((plan.alternate_setting, plan.picked, plan.fell_back), (2, vec![0, 1], false));
     }
 
     #[test]
@@ -313,10 +306,7 @@ mod tests {
         // A 4-channel device with a saved pick of channels 7 and 8.
         let alts = vec![alt(1, 4, 3, false), alt(2, 2, 3, false)];
         let plan = usb_channel_plan(&alts, 2, &[6, 7], 192_000, 0).unwrap();
-        assert_eq!(
-            (plan.alternate_setting, plan.picked, plan.fell_back),
-            (2, vec![0, 1], true)
-        );
+        assert_eq!((plan.alternate_setting, plan.picked, plan.fell_back), (2, vec![0, 1], true));
     }
 
     #[test]
@@ -331,11 +321,8 @@ mod tests {
         let mut a = alt(1, 4, 2, false);
         a.sample_rate = 48_000;
         a.max_packet_size = 49 * 8; // room for 48 kHz at 1 ms packets
-                                    // The request is above the setting's rate; the setting still qualifies.
-        assert_eq!(
-            choose_usb_alt(&[a], 1, &[2, 3], 384_000, 0).map(|a| a.alternate_setting),
-            Some(1)
-        );
+        // The request is above the setting's rate; the setting still qualifies.
+        assert_eq!(choose_usb_alt(&[a], 1, &[2, 3], 384_000, 0).map(|a| a.alternate_setting), Some(1));
     }
 
     #[test]

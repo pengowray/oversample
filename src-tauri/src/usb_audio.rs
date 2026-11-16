@@ -1060,7 +1060,7 @@ mod tests {
         frames[4] = 1.5;
         frames[5] = -3.0;
         frames[0] = 9.0; // channel 1, dropped
-                         // Frame 2.
+        // Frame 2.
         frames[12] = 0.25;
         frames[13] = f32::from_bits(0x3f80_0001); // just over 1.0
         let bytes = f32_bytes(&frames);
@@ -1077,10 +1077,7 @@ mod tests {
         let wav = crate::recording::encode_native_wav(&buf).unwrap();
         let (h, data) = wav_data(&wav);
         assert_eq!((h.channels, h.bits_per_sample, h.is_float), (2, 32, true));
-        assert_eq!(
-            data,
-            &f32_bytes(&[1.5, -3.0, 0.25, f32::from_bits(0x3f80_0001)])[..]
-        );
+        assert_eq!(data, &f32_bytes(&[1.5, -3.0, 0.25, f32::from_bits(0x3f80_0001)])[..]);
     }
 
     #[test]
@@ -1098,13 +1095,7 @@ mod tests {
         let mut frames = vec![0.0f32; 8];
         frames[4] = 3.0;
         frames[5] = 1.0;
-        let buf = decode_pick(
-            NativeSampleFormat::F32,
-            8,
-            &[4, 5],
-            false,
-            &f32_bytes(&frames),
-        );
+        let buf = decode_pick(NativeSampleFormat::F32, 8, &[4, 5], false, &f32_bytes(&frames));
         assert_eq!((buf.channels, buf.samples_f32.clone()), (1, vec![2.0]));
     }
 
@@ -1137,13 +1128,7 @@ mod tests {
     #[test]
     fn keeps_one_channel_of_8_channel_24_bit() {
         let frames = eight_channel_frames(&[100, 200]);
-        let buf = decode_pick(
-            NativeSampleFormat::I24,
-            8,
-            &[7],
-            true,
-            &le_bytes(&frames, 3),
-        );
+        let buf = decode_pick(NativeSampleFormat::I24, 8, &[7], true, &le_bytes(&frames, 3));
         assert_eq!(buf.channels, 1);
         assert_eq!(buf.samples_i32, vec![107 << 8, 207 << 8]);
     }
@@ -1152,13 +1137,7 @@ mod tests {
     fn drops_a_partial_8_channel_frame() {
         let mut frames = eight_channel_frames(&[10]);
         frames.extend([1, 2, 3]); // 3 of the next frame's 8 samples
-        let buf = decode_pick(
-            NativeSampleFormat::I24,
-            8,
-            &[4, 5],
-            true,
-            &le_bytes(&frames, 3),
-        );
+        let buf = decode_pick(NativeSampleFormat::I24, 8, &[4, 5], true, &le_bytes(&frames, 3));
         assert_eq!(buf.samples_i32, vec![14 << 8, 15 << 8]);
     }
 
@@ -1184,10 +1163,7 @@ mod tests {
         assert_eq!(right.channels, 1);
         assert_eq!(right.samples_i32, vec![-0x12_3457 << 8, -7 << 8]);
         let both = decode_pick(NativeSampleFormat::I24, 2, &[0, 1], true, &bytes);
-        assert_eq!(
-            both.samples_i32,
-            vec![0x12_3456 << 8, -0x12_3457 << 8, 7 << 8, -7 << 8]
-        );
+        assert_eq!(both.samples_i32, vec![0x12_3456 << 8, -0x12_3457 << 8, 7 << 8, -7 << 8]);
     }
 
     #[test]
