@@ -133,13 +133,19 @@ pub async fn ensure_usb_permission(state: &AppState, device_name: &str) {
     )
     .await
     {
-        Ok(r) => state.log_debug(
-            "info",
-            format!(
-                "USB permission for {device_name}: {}",
-                if r.granted { "granted" } else { "denied" }
-            ),
-        ),
+        Ok(r) => {
+            state.log_debug(
+                "info",
+                format!(
+                    "USB permission for {device_name}: {}",
+                    if r.granted { "granted" } else { "denied" }
+                ),
+            );
+            // Read the channel count, for the Channels row.
+            if r.granted {
+                crate::audio::mic_backend::query_usb_device_info(state, device_name).await;
+            }
+        }
         Err(e) => state.log_debug("warn", format!("requestUsbPermission failed: {e}")),
     }
 }
@@ -198,6 +204,11 @@ pub async fn query_mic_info(state: &AppState) {
                     state.mic.device_name().set(Some(dev.product_name.clone()));
                     state.mic.connection_type().set(Some("USB".to_string()));
                     state.mic.usb_connected().set(true);
+                    // Read the channel count, for the Channels row.
+                    if dev.has_permission {
+                        crate::audio::mic_backend::query_usb_device_info(state, &dev.device_name)
+                            .await;
+                    }
                     return;
                 }
             }
@@ -343,6 +354,7 @@ pub async fn handle_usb_hotplug(state: &AppState, event: &str, product: &str, de
             }
             state.mic.new_device_available().set(false);
             state.mic.usb_connected().set(false);
+            crate::audio::mic_backend::forget_usb_device_info(state);
             query_mic_info(state).await;
         }
         other => {

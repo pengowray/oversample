@@ -36,6 +36,9 @@ pub mod keys {
     pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
     /// The mic panel's Channels setting: "mono" or "stereo".
     pub const MIC_CHANNEL_MODE: &str = "oversample_mic_channel_mode";
+    /// The channels to record from a USB device with more than 2 channels:
+    /// 1-based, "5,6" for a pair or "5" for one. Unset means channels 1 and 2.
+    pub const MIC_USB_CHANNELS: &str = "oversample_mic_usb_channels";
     /// The Export panel's WAV bit depth: "same", "16" or "float".
     pub const EXPORT_WAV_DEPTH: &str = "oversample_export_wav_depth";
     /// The Export panel's "Normalize peak to -3 dBFS" checkbox.

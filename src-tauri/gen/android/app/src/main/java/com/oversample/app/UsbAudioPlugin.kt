@@ -392,6 +392,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 epObj.put("sampleRateSettable", ep.sampleRateSettable)
                 epObj.put("interfaceNumber", ep.interfaceNumber)
                 epObj.put("alternateSetting", ep.alternateSetting)
+                epObj.put("interval", ep.interval)
                 endpointsArray.put(epObj)
             }
             result.put("endpoints", endpointsArray)
@@ -485,14 +486,27 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             } else {
                 requestedRate
             }
-            // A device with several input alternate settings (the Portacapture X8 has 8 channels
-            // of 3 or 4 bytes, and 2 channels of 3 bytes) streams the stereo one: Oversample uses
-            // one or two channels.
+            val inputs = audioInfo.endpoints.filter { it.address and 0x80 != 0 }
+            // The app chooses the setting for a device with more than 2 channels, for the
+            // channels the user picked (oversample-core usb_alt.rs).
+            val requested = if (args.alternateSetting >= 0) {
+                inputs.firstOrNull {
+                    it.interfaceNumber == args.interfaceNumber &&
+                            it.alternateSetting == args.alternateSetting
+                }
+            } else {
+                null
+            }
+            if (args.alternateSetting >= 0 && requested == null) {
+                Log.w(TAG, "Requested iface=${args.interfaceNumber} alt=${args.alternateSetting} " +
+                        "not found, using the plugin's own choice")
+            }
+            // Otherwise, a device with several input alternate settings streams a 2-channel
+            // one if it has one, then a 1-channel one.
             // Among settings with the same channels and rate, the deepest samples win (a
             // device may offer 2-byte and 3-byte settings), within the user's max bit depth,
             // and PCM before float of the same size.
-            val endpoint = audioInfo.endpoints
-                .filter { it.address and 0x80 != 0 } // input endpoints only
+            val endpoint = requested ?: inputs
                 .sortedWith(compareBy<AudioEndpointInfo>(
                     { channelRank(it.channels) },
                     { -it.sampleRate },
@@ -836,7 +850,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         val sampleRate: Int,
         val sampleRateSettable: Boolean,
         val interfaceNumber: Int,
-        val alternateSetting: Int
+        val alternateSetting: Int,
+        /** The endpoint's bInterval. */
+        val interval: Int
     )
 
     data class AudioDeviceInfo(
@@ -878,6 +894,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         var sampleRateSettable = false
         var lastEndpointAddress = 0
         var lastMaxPacketSize = 0
+        var lastInterval = 0
         // Set by an input data endpoint, cleared once its class-specific descriptor records it, so
         // an output or feedback endpoint's class-specific descriptor records nothing.
         var inputEndpointPending = false
@@ -1073,6 +1090,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                             Log.d(TAG, "Audio endpoint: addr=0x${bEndpointAddress.toString(16)} maxPkt=$wMaxPacketSize")
                             lastEndpointAddress = bEndpointAddress
                             lastMaxPacketSize = wMaxPacketSize
+                            lastInterval = raw[offset + 6].toInt() and 0xFF
                             expectingEndpoint = false
                             inputEndpointPending = true
                         }
@@ -1100,7 +1118,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 sampleRate = currentSampleRate,
                                 sampleRateSettable = sampleRateSettable,
                                 interfaceNumber = currentInterfaceNumber,
-                                alternateSetting = currentAlternateSetting
+                                alternateSetting = currentAlternateSetting,
+                                interval = lastInterval
                             ))
                         }
                     }
@@ -1182,4 +1201,11 @@ data class RequestPermissionArgs(val deviceName: String = "")
 data class DeviceNameArgs(val deviceName: String = "")
 
 @InvokeArg
-data class OpenUsbDeviceArgs(val deviceName: String = "", val sampleRate: Int = 0, val maxBitDepth: Int = 0)
+data class OpenUsbDeviceArgs(
+    val deviceName: String = "",
+    val sampleRate: Int = 0,
+    val maxBitDepth: Int = 0,
+    /** The input interface and alternate setting to stream, or -1 for the plugin's choice. */
+    val interfaceNumber: Int = -1,
+    val alternateSetting: Int = -1
+)

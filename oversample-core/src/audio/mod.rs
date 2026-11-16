@@ -3,6 +3,7 @@ pub mod live_schedule;
 pub mod loader;
 pub mod source;
 pub mod stereo;
+pub mod usb_alt;
 pub mod wamd;
 pub mod wav;
 pub mod zc;

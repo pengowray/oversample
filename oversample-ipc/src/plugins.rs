@@ -139,6 +139,55 @@ pub struct UsbOpenArgs {
     /// Most bits per sample to stream (16, 24 or 32), or 0 for the deepest
     /// the device offers.
     pub max_bit_depth: i32,
+    /// The input interface and alternate setting to stream, or -1 for the
+    /// plugin's own choice (the deepest 2-channel setting, then 1, then wider).
+    #[serde(default = "no_alt")]
+    pub interface_number: i32,
+    #[serde(default = "no_alt")]
+    pub alternate_setting: i32,
+}
+
+fn no_alt() -> i32 {
+    -1
+}
+
+/// One input endpoint in a `plugin:usb-audio|getUsbDeviceInfo` result: one
+/// alternate setting of an audio streaming interface.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbEndpointEntry {
+    /// bEndpointAddress, direction bit included.
+    pub address: i32,
+    /// Raw wMaxPacketSize, high-bandwidth bits included.
+    pub max_packet_size: i32,
+    pub channels: i32,
+    pub bit_resolution: i32,
+    #[serde(default)]
+    pub subslot_size: i32,
+    #[serde(default)]
+    pub is_float: bool,
+    pub sample_rate: i32,
+    #[serde(default)]
+    pub sample_rate_settable: bool,
+    pub interface_number: i32,
+    pub alternate_setting: i32,
+    /// bInterval. 0 from a plugin that does not report it.
+    #[serde(default)]
+    pub interval: i32,
+}
+
+/// `plugin:usb-audio|getUsbDeviceInfo` result (the fields Oversample reads).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbDeviceInfoResult {
+    pub device_name: String,
+    #[serde(default)]
+    pub product_name: String,
+    pub uac_version: i32,
+    #[serde(default)]
+    pub sample_rates: Vec<i32>,
+    #[serde(default)]
+    pub endpoints: Vec<UsbEndpointEntry>,
 }
 
 /// Args for the native `usb_start_stream` command (Rust, not a plugin), sent
@@ -151,8 +200,12 @@ pub struct UsbStartStreamArgs {
     pub max_packet_size: u32,
     pub sample_rate: u32,
     pub num_channels: u32,
-    /// Keep left and right separate in recordings and `mic_pull_audio` (interleaved
-    /// L/R) instead of a mono mix. Needs a 2-channel device.
+    /// The channels to keep from each frame (0-based), 1 or 2 of them. Empty
+    /// means channel 1 on a 1-channel device, otherwise channels 1 and 2.
+    #[serde(default)]
+    pub channels: Vec<u32>,
+    /// Keep the 2 kept channels separate in recordings and `mic_pull_audio`
+    /// (interleaved L/R) instead of a mono mix.
     pub stereo: bool,
     pub device_name: String,
     pub interface_number: u32,
@@ -247,6 +300,7 @@ mod tests {
             max_packet_size: 576,
             sample_rate: 192_000,
             num_channels: 2,
+            channels: vec![],
             stereo: true,
             device_name: "X8".into(),
             interface_number: 1,
@@ -263,5 +317,26 @@ mod tests {
         assert_eq!(back.max_packet_size, 576);
         assert_eq!(back.device_name, "X8");
         assert!(back.stereo && !back.is_float);
+        assert!(back.channels.is_empty());
+    }
+
+    #[test]
+    fn usb_open_args_default_to_the_plugin_s_own_alt_choice() {
+        let args: UsbOpenArgs =
+            serde_json::from_str(r#"{"deviceName":"x","sampleRate":0,"maxBitDepth":0}"#).unwrap();
+        assert_eq!((args.interface_number, args.alternate_setting), (-1, -1));
+    }
+
+    #[test]
+    fn usb_device_info_reads_the_plugin_s_endpoints() {
+        let json = r#"{"deviceName":"/dev/bus/usb/001/002","productName":"X8","uacVersion":2,
+            "sampleRates":[48000,192000],"fileDescriptor":5,
+            "endpoints":[{"address":129,"maxPacketSize":800,"channels":8,"bitResolution":32,
+            "subslotSize":4,"isFloat":true,"sampleRate":192000,"sampleRateSettable":true,
+            "interfaceNumber":1,"alternateSetting":3,"interval":1}]}"#;
+        let info: UsbDeviceInfoResult = serde_json::from_str(json).unwrap();
+        assert_eq!(info.endpoints[0].channels, 8);
+        assert!(info.endpoints[0].is_float);
+        assert_eq!(info.sample_rates, vec![48_000, 192_000]);
     }
 }

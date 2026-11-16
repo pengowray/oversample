@@ -119,24 +119,27 @@ impl MixSample for f32 {
     }
 }
 
-/// Appends the whole frames in `bytes` to `out`: every sample when `keep_channels`
-/// is true, otherwise one mono mix per frame. A partial frame at the end is
-/// dropped.
+/// Appends the whole frames in `bytes` to `out`: the `pick` channels of each
+/// frame when `keep_channels` is true, otherwise one mono mix of them per frame.
+/// A partial frame at the end is dropped.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn decode_frames<T: MixSample>(
     bytes: &[u8],
     sample_bytes: usize,
     channels: usize,
+    pick: &[usize],
     keep_channels: bool,
     read: fn(&[u8]) -> T,
     out: &mut Vec<T>,
 ) {
     for frame in bytes.chunks_exact(sample_bytes * channels) {
-        let samples = frame.chunks_exact(sample_bytes).map(read);
+        let samples = pick
+            .iter()
+            .map(|&c| read(&frame[c * sample_bytes..(c + 1) * sample_bytes]));
         if keep_channels {
             out.extend(samples);
         } else {
-            out.push(T::mean(samples, channels));
+            out.push(T::mean(samples, pick.len()));
         }
     }
 }
@@ -144,12 +147,15 @@ fn decode_frames<T: MixSample>(
 /// Turns the packets of one USB stream into samples in its own format, without
 /// losing resolution. 3-byte samples go in the top 24 bits of an i32, as cpal
 /// gives 24-bit audio, so they are written as 24-bit WAV and shown at the right
-/// level.
+/// level. Float samples are kept as sent, including values past ±1.0.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) struct UsbDecoder {
     format: NativeSampleFormat,
+    /// Channels in each frame the device sends.
     channels: usize,
-    /// Keep every channel: the device has one, or two with `stereo` asked for.
+    /// The channels kept from each frame (0-based), 1 or 2 of them.
+    pick: Vec<usize>,
+    /// Keep the picked channels separate, rather than one mono mix of them.
     keep_channels: bool,
     i16s: Vec<i16>,
     i32s: Vec<i32>,
@@ -158,12 +164,30 @@ pub(crate) struct UsbDecoder {
 
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 impl UsbDecoder {
-    pub(crate) fn new(format: NativeSampleFormat, channels: usize, stereo: bool) -> Self {
+    /// `pick` lists the channels to keep (0-based). Empty, or naming a channel
+    /// the frame does not have, means the default: channel 1 on a 1-channel
+    /// device, otherwise channels 1 and 2. One picked channel is mono. Two are
+    /// kept separate when `stereo` is true, otherwise mixed to mono.
+    pub(crate) fn new(
+        format: NativeSampleFormat,
+        channels: usize,
+        pick: &[usize],
+        stereo: bool,
+    ) -> Self {
         let channels = channels.max(1);
+        let valid = !pick.is_empty() && pick.len() <= 2 && pick.iter().all(|&c| c < channels);
+        let pick: Vec<usize> = if valid {
+            pick.to_vec()
+        } else if channels == 1 {
+            vec![0]
+        } else {
+            vec![0, 1]
+        };
         Self {
             format,
             channels,
-            keep_channels: channels == 1 || (stereo && channels == 2),
+            keep_channels: pick.len() == 1 || stereo,
+            pick,
             i16s: Vec::new(),
             i32s: Vec::new(),
             f32s: Vec::new(),
@@ -189,7 +213,7 @@ impl UsbDecoder {
     /// Channels stored per frame: 1, or 2 for a stereo stream.
     pub(crate) fn stored_channels(&self) -> u16 {
         if self.keep_channels {
-            self.channels as u16
+            self.pick.len() as u16
         } else {
             1
         }
@@ -207,12 +231,12 @@ impl UsbDecoder {
 
     /// Decode one packet (little-endian samples, channels interleaved).
     pub(crate) fn decode(&mut self, bytes: &[u8]) {
-        let (ch, keep) = (self.channels, self.keep_channels);
+        let (ch, pick, keep) = (self.channels, &self.pick, self.keep_channels);
         if self.mixes_i16() {
             for frame in bytes.chunks_exact(2 * ch) {
-                let samples: Vec<i16> = frame
-                    .chunks_exact(2)
-                    .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                let samples: Vec<i16> = pick
+                    .iter()
+                    .map(|&c| i16::from_le_bytes([frame[2 * c], frame[2 * c + 1]]))
                     .collect();
                 self.i32s
                     .push(crate::recording::mix_i16_top_aligned(&samples));
@@ -224,6 +248,7 @@ impl UsbDecoder {
                 bytes,
                 2,
                 ch,
+                pick,
                 keep,
                 |b| i16::from_le_bytes([b[0], b[1]]),
                 &mut self.i16s,
@@ -232,6 +257,7 @@ impl UsbDecoder {
                 bytes,
                 3,
                 ch,
+                pick,
                 keep,
                 |b| i32::from_le_bytes([0, b[0], b[1], b[2]]),
                 &mut self.i32s,
@@ -240,6 +266,7 @@ impl UsbDecoder {
                 bytes,
                 4,
                 ch,
+                pick,
                 keep,
                 |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
                 &mut self.i32s,
@@ -248,6 +275,7 @@ impl UsbDecoder {
                 bytes,
                 4,
                 ch,
+                pick,
                 keep,
                 |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
                 &mut self.f32s,
@@ -294,6 +322,7 @@ pub fn start_usb_stream(
         max_packet_size,
         sample_rate,
         num_channels,
+        channels,
         stereo,
         device_name,
         interface_number,
@@ -306,15 +335,17 @@ pub fn start_usb_stream(
     let is_streaming = Arc::new(AtomicBool::new(false));
     let is_recording = Arc::new(AtomicBool::new(false));
     let format = usb_sample_format(sample_bytes, is_float);
-    let decoder = UsbDecoder::new(format, num_channels as usize, stereo);
+    let pick: Vec<usize> = channels.iter().map(|&c| c as usize).collect();
+    let decoder = UsbDecoder::new(format, num_channels as usize, &pick, stereo);
     let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
         decoder.storage_format(),
         sample_rate,
         decoder.stored_channels(),
     )));
     eprintln!(
-        "USB stream: {} ch, {} bytes per sample, stored as {:?}",
+        "USB stream: {} ch, keeping {:?}, {} bytes per sample, stored as {:?}",
         num_channels,
+        channels,
         sample_bytes,
         decoder.storage_format()
     );
@@ -864,7 +895,19 @@ mod tests {
         stereo: bool,
         packet: &[u8],
     ) -> RecordingBuffer {
-        let mut decoder = UsbDecoder::new(format, channels, stereo);
+        decode_pick(format, channels, &[], stereo, packet)
+    }
+
+    /// Decode `packet`, keeping the `pick` channels, and return what reaches
+    /// the recording.
+    fn decode_pick(
+        format: NativeSampleFormat,
+        channels: usize,
+        pick: &[usize],
+        stereo: bool,
+        packet: &[u8],
+    ) -> RecordingBuffer {
+        let mut decoder = UsbDecoder::new(format, channels, pick, stereo);
         let mut buf =
             RecordingBuffer::new(decoder.storage_format(), 48_000, decoder.stored_channels());
         decoder.decode(packet);
@@ -973,7 +1016,7 @@ mod tests {
     #[test]
     fn stereo_preroll_ring_keeps_whole_recent_frames_and_seeds_them() {
         // Cap: 1 Hz x 15 s = 15 frames.
-        let mut decoder = UsbDecoder::new(NativeSampleFormat::I24, 2, true);
+        let mut decoder = UsbDecoder::new(NativeSampleFormat::I24, 2, &[], true);
         let mut buf = RecordingBuffer::new(NativeSampleFormat::I24, 1, 2);
         let frames: Vec<i32> = (0..20).flat_map(|i| [i, 100 + i]).collect();
         decoder.decode(&le_bytes(&frames, 3));
@@ -990,11 +1033,148 @@ mod tests {
 
     #[test]
     fn decoder_clears_between_urbs() {
-        let mut decoder = UsbDecoder::new(NativeSampleFormat::I16, 1, false);
+        let mut decoder = UsbDecoder::new(NativeSampleFormat::I16, 1, &[], false);
         assert!(decoder.is_empty());
         decoder.decode(&le_bytes(&[1, 2], 2));
         assert!(!decoder.is_empty());
         decoder.clear();
         assert!(decoder.is_empty());
+    }
+    /// One frame per entry: 8 channels whose samples are `base + channel`.
+    fn eight_channel_frames(bases: &[i32]) -> Vec<i32> {
+        bases
+            .iter()
+            .flat_map(|&b| (0..8).map(move |c| b + c))
+            .collect()
+    }
+
+    fn f32_bytes(samples: &[f32]) -> Vec<u8> {
+        samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+    }
+
+    /// The patched X8's 8-channel float setting, keeping channels 5 and 6.
+    #[test]
+    fn keeps_channels_5_and_6_of_8_channel_float_unclamped() {
+        let mut frames = vec![0.0f32; 16];
+        // Frame 1: channels 5 and 6 past full scale, as the X8 sends them.
+        frames[4] = 1.5;
+        frames[5] = -3.0;
+        frames[0] = 9.0; // channel 1, dropped
+        // Frame 2.
+        frames[12] = 0.25;
+        frames[13] = f32::from_bits(0x3f80_0001); // just over 1.0
+        let bytes = f32_bytes(&frames);
+        let buf = decode_pick(NativeSampleFormat::F32, 8, &[4, 5], true, &bytes);
+        assert_eq!(buf.channels, 2);
+        assert_eq!(buf.total_samples, 2);
+        let bits: Vec<u32> = buf.samples_f32.iter().map(|s| s.to_bits()).collect();
+        let want: Vec<u32> = [1.5f32, -3.0, 0.25, f32::from_bits(0x3f80_0001)]
+            .iter()
+            .map(|s| s.to_bits())
+            .collect();
+        assert_eq!(bits, want);
+
+        let wav = crate::recording::encode_native_wav(&buf).unwrap();
+        let (h, data) = wav_data(&wav);
+        assert_eq!((h.channels, h.bits_per_sample, h.is_float), (2, 32, true));
+        assert_eq!(data, &f32_bytes(&[1.5, -3.0, 0.25, f32::from_bits(0x3f80_0001)])[..]);
+    }
+
+    #[test]
+    fn keeps_one_channel_of_8_channel_float() {
+        let mut frames = vec![0.0f32; 16];
+        frames[6] = 2.5;
+        frames[14] = -0.5;
+        let buf = decode_pick(NativeSampleFormat::F32, 8, &[6], false, &f32_bytes(&frames));
+        assert_eq!(buf.channels, 1);
+        assert_eq!(buf.samples_f32, vec![2.5, -0.5]);
+    }
+
+    #[test]
+    fn mixes_a_float_pair_to_mono_without_clamping() {
+        let mut frames = vec![0.0f32; 8];
+        frames[4] = 3.0;
+        frames[5] = 1.0;
+        let buf = decode_pick(NativeSampleFormat::F32, 8, &[4, 5], false, &f32_bytes(&frames));
+        assert_eq!((buf.channels, buf.samples_f32.clone()), (1, vec![2.0]));
+    }
+
+    /// The X8's 8-channel 24-bit setting.
+    #[test]
+    fn keeps_channels_5_and_6_of_8_channel_24_bit() {
+        let frames = eight_channel_frames(&[0x10_0000, -0x20_0000]);
+        let bytes = le_bytes(&frames, 3);
+        let buf = decode_pick(NativeSampleFormat::I24, 8, &[4, 5], true, &bytes);
+        assert_eq!(buf.channels, 2);
+        assert_eq!(
+            buf.samples_i32,
+            vec![
+                (0x10_0000 + 4) << 8,
+                (0x10_0000 + 5) << 8,
+                (-0x20_0000 + 4) << 8,
+                (-0x20_0000 + 5) << 8
+            ]
+        );
+        let wav = crate::recording::encode_native_wav(&buf).unwrap();
+        let (h, data) = wav_data(&wav);
+        assert_eq!((h.channels, h.bits_per_sample, h.total_frames), (2, 24, 2));
+        let want = le_bytes(
+            &[0x10_0000 + 4, 0x10_0000 + 5, -0x20_0000 + 4, -0x20_0000 + 5],
+            3,
+        );
+        assert_eq!(data, &want[..]);
+    }
+
+    #[test]
+    fn keeps_one_channel_of_8_channel_24_bit() {
+        let frames = eight_channel_frames(&[100, 200]);
+        let buf = decode_pick(NativeSampleFormat::I24, 8, &[7], true, &le_bytes(&frames, 3));
+        assert_eq!(buf.channels, 1);
+        assert_eq!(buf.samples_i32, vec![107 << 8, 207 << 8]);
+    }
+
+    #[test]
+    fn drops_a_partial_8_channel_frame() {
+        let mut frames = eight_channel_frames(&[10]);
+        frames.extend([1, 2, 3]); // 3 of the next frame's 8 samples
+        let buf = decode_pick(NativeSampleFormat::I24, 8, &[4, 5], true, &le_bytes(&frames, 3));
+        assert_eq!(buf.samples_i32, vec![14 << 8, 15 << 8]);
+    }
+
+    #[test]
+    fn an_8_channel_device_defaults_to_channels_1_and_2() {
+        let frames = eight_channel_frames(&[100]);
+        let bytes = le_bytes(&frames, 3);
+        let stereo = decode_pick(NativeSampleFormat::I24, 8, &[], true, &bytes);
+        assert_eq!(stereo.samples_i32, vec![100 << 8, 101 << 8]);
+        // Mono mixes channels 1 and 2 only: 100.5 keeps its half step.
+        let mono = decode_pick(NativeSampleFormat::I24, 8, &[], false, &bytes);
+        assert_eq!(mono.samples_i32, vec![(201 << 8) / 2]);
+        // A pick past the frame's channels also means the default.
+        let past = decode_pick(NativeSampleFormat::I24, 8, &[8, 9], true, &bytes);
+        assert_eq!(past.samples_i32, vec![100 << 8, 101 << 8]);
+    }
+
+    /// The X8's 2-channel 24-bit setting: picking 1 channel keeps just that one.
+    #[test]
+    fn keeps_one_channel_of_2_channel_24_bit() {
+        let bytes = le_bytes(&[0x12_3456, -0x12_3457, 7, -7], 3);
+        let right = decode_pick(NativeSampleFormat::I24, 2, &[1], false, &bytes);
+        assert_eq!(right.channels, 1);
+        assert_eq!(right.samples_i32, vec![-0x12_3457 << 8, -7 << 8]);
+        let both = decode_pick(NativeSampleFormat::I24, 2, &[0, 1], true, &bytes);
+        assert_eq!(both.samples_i32, vec![0x12_3456 << 8, -0x12_3457 << 8, 7 << 8, -7 << 8]);
+    }
+
+    #[test]
+    fn a_16_bit_pair_mixed_to_mono_keeps_its_half_step() {
+        // 4 channels; channels 3 and 4 are -2 and -1.
+        let bytes = le_bytes(&[50, 60, -2, -1], 2);
+        let buf = decode_pick(NativeSampleFormat::I16, 4, &[2, 3], false, &bytes);
+        assert_eq!(buf.format, NativeSampleFormat::I24);
+        assert_eq!(buf.samples_i32, vec![-3 << 15]);
+        // Kept as a pair, 16-bit stays 16-bit.
+        let pair = decode_pick(NativeSampleFormat::I16, 4, &[2, 3], true, &bytes);
+        assert_eq!(pair.samples_i16, vec![-2, -1]);
     }
 }

@@ -195,6 +195,8 @@ thread_local! {
 thread_local! {
     /// The Channels setting the open mic was opened with.
     static OPENED_CHANNEL_MODE: std::cell::Cell<ChannelMode> = const { std::cell::Cell::new(ChannelMode::Mono) };
+    /// The USB channel pick the open mic was opened with.
+    static OPENED_USB_CHANNELS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
 }
 
 // ── Thread-local state: USB-specific ────────────────────────────────────
@@ -202,6 +204,9 @@ thread_local! {
 thread_local! {
     /// Keep the USB stream error event listener closure alive.
     static USB_ERROR_CLOSURE: RefCell<Option<Closure<dyn FnMut(JsValue)>>> = RefCell::new(None);
+    /// The last `getUsbDeviceInfo` answer, by device name. Reused while a USB
+    /// stream is open, since the query claims the device's audio interfaces.
+    static USB_DEVICE_INFO: RefCell<Option<oversample_ipc::plugins::UsbDeviceInfoResult>> = const { RefCell::new(None) };
 }
 
 /// Which native mode is active (stored in NATIVE_MIC_OPEN).
@@ -580,6 +585,7 @@ impl MicBackend {
     /// Open the mic. Returns true on success.
     pub async fn open(&self, state: &AppState) -> bool {
         let channel_mode = state.mic.channel_mode().get_untracked();
+        let usb_channels = state.mic.usb_channels().get_untracked();
         let opened = match self {
             MicBackend::Browser => open_web(state).await,
             MicBackend::Cpal => open_cpal(state).await,
@@ -587,14 +593,18 @@ impl MicBackend {
         };
         if opened {
             OPENED_CHANNEL_MODE.with(|m| m.set(channel_mode));
+            OPENED_USB_CHANNELS.with(|c| *c.borrow_mut() = usb_channels);
         }
         opened
     }
 
-    /// Whether the Channels setting has changed since this mic was opened. The
-    /// channel count is fixed when the mic opens, so a change needs a reopen.
+    /// Whether the Channels setting (or a USB device's channel pick) has changed
+    /// since this mic was opened. The channels are fixed when the mic opens, so a
+    /// change needs a reopen.
     pub fn channel_mode_changed(&self, state: &AppState) -> bool {
         OPENED_CHANNEL_MODE.with(|m| m.get()) != state.mic.channel_mode().get_untracked()
+            || (*self == MicBackend::RawUsb
+                && OPENED_USB_CHANNELS.with(|c| *c.borrow() != state.mic.usb_channels().get_untracked()))
     }
 
     /// Close the mic unconditionally.
@@ -1706,14 +1716,57 @@ async fn open_usb(state: &AppState) -> bool {
         }
     }
 
-    // Step 3: open the device via the Kotlin plugin.
+    // Step 3: choose the input setting for the picked channels (devices with
+    // more than 2 channels), then open the device via the Kotlin plugin.
     let max_sr = state.mic.max_sample_rate().get_untracked();
+    let max_bits = state.mic.max_bit_depth().get_untracked() as u32;
+    let saved_pick = state.mic.usb_channels().get_untracked();
+    let dev_info = query_usb_device_info(state, &device_name).await;
+    let plan = dev_info
+        .as_ref()
+        .and_then(|dev| usb_plan_for(dev, &saved_pick, max_sr, max_bits));
+    if let Some(dev) = &dev_info {
+        let alts: Vec<String> = usb_alts(dev)
+            .iter()
+            .map(|a| {
+                format!(
+                    "alt {}: {} ch x {} B{} pkt {} int {}",
+                    a.alternate_setting,
+                    a.channels,
+                    a.subslot_size,
+                    if a.is_float { " float" } else { "" },
+                    a.max_packet_size,
+                    a.interval
+                )
+            })
+            .collect();
+        state.log_debug(
+            "info",
+            format!(
+                "USB inputs: {}; pick {:?} -> {}",
+                alts.join(", "),
+                saved_pick,
+                match &plan {
+                    Some(p) => format!(
+                        "alt {} channels {:?} at {} Hz{}",
+                        p.plan.alternate_setting,
+                        p.plan.picked,
+                        p.rate,
+                        if p.plan.fell_back { " (fallback)" } else { "" }
+                    ),
+                    None => "plugin's choice".to_string(),
+                }
+            ),
+        );
+    }
     let info = match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbOpenResult>(
         "plugin:usb-audio|openUsbDevice",
         &oversample_ipc::plugins::UsbOpenArgs {
             device_name: device_name.clone(),
             sample_rate: max_sr as i32,
-            max_bit_depth: state.mic.max_bit_depth().get_untracked() as i32,
+            max_bit_depth: max_bits as i32,
+            interface_number: plan.as_ref().map_or(-1, |p| p.plan.interface_number as i32),
+            alternate_setting: plan.as_ref().map_or(-1, |p| p.plan.alternate_setting as i32),
         },
     )
     .await
@@ -1747,8 +1800,29 @@ async fn open_usb(state: &AppState) -> bool {
 
     // Step 4: start the USB stream in the Rust backend.
     let stereo_requested = state.mic.channel_mode().get_untracked() == ChannelMode::Stereo;
-    let stereo = stereo_requested && info.num_channels == 2;
-    if stereo_requested && !stereo {
+    // The plugin opens the requested setting unless it can't find it.
+    let plan = plan.filter(|p| {
+        p.plan.alternate_setting as i32 == info.alternate_setting
+            && p.plan.interface_number as i32 == info.interface_number
+    });
+    let (channels, stereo) = match &plan {
+        Some(p) => {
+            // A pair the user picked is stereo; the default pair follows Channels.
+            let picked_pair = p.plan.picked.len() == 2 && !saved_pick.is_empty() && !p.plan.fell_back;
+            let stereo = p.plan.picked.len() == 2 && (picked_pair || stereo_requested);
+            if p.plan.fell_back {
+                state
+                    .status
+                    .message()
+                    .set(Some(usb_fallback_message(&saved_pick, p, stereo)));
+            }
+            (p.plan.picked.clone(), stereo)
+        }
+        // Today's choice: 1 or 2 channels as before. A wider setting keeps
+        // channels 1 and 2 (the decoder's default).
+        None => (Vec::new(), stereo_requested && info.num_channels >= 2),
+    };
+    if stereo_requested && !stereo && plan.is_none() {
         state.status.message().set(Some(MIC_IS_MONO_MESSAGE.into()));
     }
     let stream_args = oversample_ipc::plugins::UsbStartStreamArgs {
@@ -1757,6 +1831,7 @@ async fn open_usb(state: &AppState) -> bool {
         max_packet_size: info.max_packet_size as u32,
         sample_rate,
         num_channels: info.num_channels as u32,
+        channels,
         stereo,
         // Friendly name (not the /dev/bus/usb/… path) so the native GUANO mic
         // name matches what the app displays.
@@ -1874,6 +1949,138 @@ async fn open_usb(state: &AppState) -> bool {
     log::info!("USB mic opened: {} at {} Hz", product_name, sample_rate);
     true
 }
+
+/// A channel plan for a USB device with more than 2 channels, with the facts the
+/// fallback message needs.
+struct UsbPlan {
+    plan: oversample_core::audio::usb_alt::UsbChannelPlan,
+    /// Channels in the device's widest input setting.
+    device_channels: u32,
+    /// The rate the device will run at.
+    rate: u32,
+}
+
+/// The device's input settings in the form the alt chooser takes.
+fn usb_alts(
+    dev: &oversample_ipc::plugins::UsbDeviceInfoResult,
+) -> Vec<oversample_core::audio::usb_alt::UsbAlt> {
+    dev.endpoints
+        .iter()
+        .filter(|e| e.address & 0x80 != 0)
+        .map(|e| oversample_core::audio::usb_alt::UsbAlt {
+            interface_number: e.interface_number.max(0) as u32,
+            alternate_setting: e.alternate_setting.max(0) as u32,
+            channels: e.channels.max(0) as u32,
+            subslot_size: e.subslot_size.max(0) as u32,
+            is_float: e.is_float,
+            sample_rate: e.sample_rate.max(0) as u32,
+            max_packet_size: e.max_packet_size.max(0) as u32,
+            interval: e.interval.max(0) as u32,
+        })
+        .collect()
+}
+
+/// The setting and channels to stream from a device with more than 2 channels,
+/// or `None` to leave the choice to the plugin (2 channels or fewer, or no
+/// setting carries channels 1 and 2 at the rate).
+fn usb_plan_for(
+    dev: &oversample_ipc::plugins::UsbDeviceInfoResult,
+    pick: &[u32],
+    max_sample_rate: u32,
+    max_bits: u32,
+) -> Option<UsbPlan> {
+    use oversample_core::audio::usb_alt::*;
+    let alts = usb_alts(dev);
+    let device_channels = usb_max_channels(&alts);
+    if device_channels <= 2 {
+        return None;
+    }
+    let listed: Vec<u32> = dev.sample_rates.iter().map(|&r| r.max(0) as u32).collect();
+    let uac = dev.uac_version.max(0) as u32;
+    let rate = usb_target_rate(max_sample_rate, uac, &listed);
+    let plan = usb_channel_plan(&alts, uac, pick, rate, max_bits)?;
+    Some(UsbPlan {
+        plan,
+        device_channels,
+        rate,
+    })
+}
+
+/// "Channels 5 and 6" or "Channel 5" for 0-based channels.
+fn usb_channel_names(picked: &[u32]) -> String {
+    match picked {
+        [a, b] => format!("Channels {} and {}", a + 1, b + 1),
+        [a] => format!("Channel {}", a + 1),
+        _ => String::new(),
+    }
+}
+
+/// The status message when the saved USB channel pick can't be streamed and
+/// channels 1 and 2 are used instead. The saved pick is kept for next time.
+fn usb_fallback_message(saved: &[u32], p: &UsbPlan, stereo: bool) -> String {
+    let saved_names = usb_channel_names(saved);
+    let used = if stereo {
+        "Using channels 1 and 2 (stereo)."
+    } else {
+        "Using channels 1 and 2 mixed (mono)."
+    };
+    if saved.iter().any(|&c| c >= p.device_channels) {
+        format!(
+            "{saved_names} not available: this device has {} channels. {used}",
+            p.device_channels
+        )
+    } else {
+        format!(
+            "{saved_names} not available at {} on this device. {used}",
+            crate::format_units::sample_rate_khz(p.rate)
+        )
+    }
+}
+
+/// The connected USB device's descriptors (`getUsbDeviceInfo`), also setting
+/// `usb_device_channels`. The plugin is asked once per plugged-in device: the
+/// query opens the device and claims its audio interfaces, so the answer is
+/// kept until the device is unplugged. `None` when the query fails (no
+/// permission, or an older plugin).
+pub async fn query_usb_device_info(
+    state: &AppState,
+    device_name: &str,
+) -> Option<oversample_ipc::plugins::UsbDeviceInfoResult> {
+    let cached = USB_DEVICE_INFO.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|d| d.device_name == device_name)
+            .cloned()
+    });
+    if cached.is_some() || NATIVE_MIC_OPEN.with(|o| *o.borrow() == Some(NativeMode::Usb)) {
+        return cached;
+    }
+    let dev = match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbDeviceInfoResult>(
+        "plugin:usb-audio|getUsbDeviceInfo",
+        &oversample_ipc::plugins::UsbDeviceNameArgs {
+            device_name: device_name.to_string(),
+        },
+    )
+    .await
+    {
+        Ok(d) => d,
+        Err(e) => {
+            state.log_debug("warn", format!("getUsbDeviceInfo failed: {e}"));
+            return None;
+        }
+    };
+    let channels = oversample_core::audio::usb_alt::usb_max_channels(&usb_alts(&dev));
+    state.mic.usb_device_channels().set(channels);
+    USB_DEVICE_INFO.with(|c| *c.borrow_mut() = Some(dev.clone()));
+    Some(dev)
+}
+
+/// Forget the USB device's descriptors (it was unplugged).
+pub fn forget_usb_device_info(state: &AppState) {
+    USB_DEVICE_INFO.with(|c| *c.borrow_mut() = None);
+    state.mic.usb_device_channels().set(0);
+}
+
 
 async fn close_usb(state: &AppState) {
     if let Err(e) = tauri_invoke_no_args("usb_stop_stream").await {

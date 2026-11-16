@@ -1503,6 +1503,28 @@ pub enum ChannelMode {
     Stereo,
 }
 
+/// The `MIC_USB_CHANNELS` setting ("5,6" or "5", 1-based) as 0-based
+/// channels. Anything else is empty (the default).
+pub fn parse_usb_channels(v: &str) -> Vec<u32> {
+    let picked: Option<Vec<u32>> = v
+        .split(',')
+        .map(|c| c.trim().parse::<u32>().ok().filter(|&c| c >= 1).map(|c| c - 1))
+        .collect();
+    match picked {
+        Some(p) if (1..=2).contains(&p.len()) => p,
+        _ => Vec::new(),
+    }
+}
+
+/// 0-based channels as the `MIC_USB_CHANNELS` setting.
+pub fn format_usb_channels(picked: &[u32]) -> String {
+    picked
+        .iter()
+        .map(|c| (c + 1).to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 impl ChannelMode {
     pub fn key(self) -> &'static str {
         match self {
@@ -2090,6 +2112,13 @@ pub struct MicState {
     pub max_bit_depth: u16,
     /// Mono or stereo channel mode for mic recording.
     pub channel_mode: ChannelMode,
+    /// The channels (0-based, 1 or 2) to record from a USB device with more
+    /// than 2 channels. Empty means channels 1 and 2, mixed or not by
+    /// `channel_mode`; a pair picked here is always stereo.
+    pub usb_channels: Vec<u32>,
+    /// Channels in the widest input setting of the connected USB device, as
+    /// read from its descriptors. 0 when not known.
+    pub usb_device_channels: u32,
     /// Information about the selected mic device.
     pub device_info: Option<MicDeviceInfo>,
     /// When true, mic input is processed but the speakers stay silent.
@@ -2710,6 +2739,10 @@ impl AppState {
                 channel_mode: crate::settings::get_raw(crate::settings::keys::MIC_CHANNEL_MODE)
                     .map(|v| ChannelMode::from_key(&v))
                     .unwrap_or_default(),
+                usb_channels: crate::settings::get_raw(crate::settings::keys::MIC_USB_CHANNELS)
+                    .map(|v| parse_usb_channels(&v))
+                    .unwrap_or_default(),
+                usb_device_channels: 0,
                 device_info: None,
                 mute_output: false,
             }),
@@ -4313,5 +4346,22 @@ impl AppState {
             .map(|f| f.spectrogram.max_freq)
             .filter(|m| *m > 0.0)
             .unwrap_or(96_000.0)
+    }
+}
+
+#[cfg(test)]
+mod usb_channel_setting_tests {
+    use super::{format_usb_channels, parse_usb_channels};
+
+    #[test]
+    fn reads_a_pair_or_one_channel_and_rejects_the_rest() {
+        assert_eq!(parse_usb_channels("5,6"), vec![4, 5]);
+        assert_eq!(parse_usb_channels("7"), vec![6]);
+        assert_eq!(parse_usb_channels(""), Vec::<u32>::new());
+        assert_eq!(parse_usb_channels("0"), Vec::<u32>::new());
+        assert_eq!(parse_usb_channels("1,2,3"), Vec::<u32>::new());
+        assert_eq!(parse_usb_channels("x"), Vec::<u32>::new());
+        assert_eq!(format_usb_channels(&[4, 5]), "5,6");
+        assert_eq!(format_usb_channels(&[]), "");
     }
 }

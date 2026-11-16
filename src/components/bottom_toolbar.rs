@@ -956,6 +956,9 @@ pub fn BottomToolbar() -> impl IntoView {
                                                 <option value="32" selected=move || state.mic.max_bit_depth().get() == 32>"32-bit"</option>
                                             </select>
                                         </div>
+                                        {move || match usb_picker_channels(&state) {
+                                            Some(n) => view! { <UsbChannelRow channels=n /> }.into_any(),
+                                            None => view! {
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;" title="Sets whether live listening and saved recordings use 1 mixed channel (Mono) or separate left and right channels (Stereo). A mic with only one channel is mono on either setting. On a 2-channel interface with one mic plugged in, use Mono. The live spectrogram always shows a mix of left and right.">"Channels"</label>
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
@@ -964,19 +967,15 @@ pub fn BottomToolbar() -> impl IntoView {
                                                     let mode = ChannelMode::from_key(&val);
                                                     state.mic.channel_mode().set(mode);
                                                     crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_MODE, mode.key());
-                                                    // Restart listening so the new setting applies straight away.
-                                                    if state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
-                                                        wasm_bindgen_futures::spawn_local(async move {
-                                                            crate::audio::microphone::toggle_listen(&state).await;
-                                                            crate::audio::microphone::toggle_listen(&state).await;
-                                                        });
-                                                    }
+                                                    restart_listening(state);
                                                 }
                                             >
                                                 <option value="mono" selected=move || state.mic.channel_mode().get() == ChannelMode::Mono>"Mono"</option>
                                                 <option value="stereo" selected=move || state.mic.channel_mode().get() == ChannelMode::Stereo>"Stereo"</option>
                                             </select>
                                         </div>
+                                            }.into_any(),
+                                        }}
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;">"Pre-roll buffer"</label>
                                             <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
@@ -1063,6 +1062,102 @@ pub fn BottomToolbar() -> impl IntoView {
                 // ── Listen combo button (moved from hearing bar) ──
                 <ListenButton/>
             </div>
+        </div>
+    }
+}
+
+/// Restart live listening (not a recording) so a new channel setting applies
+/// straight away.
+fn restart_listening(state: AppState) {
+    if state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
+        wasm_bindgen_futures::spawn_local(async move {
+            crate::audio::microphone::toggle_listen(&state).await;
+            crate::audio::microphone::toggle_listen(&state).await;
+        });
+    }
+}
+
+/// The channel count of the USB device the mic uses, when it has more than 2
+/// channels (so the Channels row lists them), or `None`.
+fn usb_picker_channels(state: &AppState) -> Option<u32> {
+    let n = state.mic.usb_device_channels().get();
+    let other_backend = matches!(
+        state.mic.backend().get(),
+        Some(crate::state::MicBackend::Cpal | crate::state::MicBackend::Browser)
+    );
+    (n > 2 && !other_backend).then_some(n)
+}
+
+/// The Channels row for a USB device with more than 2 channels: a mono mix of
+/// channels 1 and 2, each pair (1 and 2, 3 and 4, ...) in stereo, or one
+/// channel in mono. The device names its channels only by number.
+#[component]
+fn UsbChannelRow(channels: u32) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    // The option value: "mix" for the mono mix of 1 and 2 (no pick, Channels
+    // Mono), otherwise the pick as saved ("5,6" or "5").
+    let current = move || {
+        let pick = state.mic.usb_channels().get();
+        if !pick.is_empty() && pick.iter().all(|&c| c < channels) {
+            crate::state::format_usb_channels(&pick)
+        } else if state.mic.channel_mode().get() == ChannelMode::Stereo {
+            "1,2".to_string()
+        } else {
+            "mix".to_string()
+        }
+    };
+    let on_change = move |ev: leptos::ev::Event| {
+        let val = leptos::prelude::event_target_value(&ev);
+        if val == "mix" {
+            state.mic.usb_channels().set(Vec::new());
+            crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, "");
+            state.mic.channel_mode().set(ChannelMode::Mono);
+            crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_MODE, ChannelMode::Mono.key());
+        } else {
+            state.mic.usb_channels().set(crate::state::parse_usb_channels(&val));
+            crate::settings::set_raw(crate::settings::keys::MIC_USB_CHANNELS, &val);
+        }
+        restart_listening(state);
+    };
+    let pairs: Vec<u32> = (1..channels).step_by(2).collect();
+    let singles: Vec<u32> = (1..=channels).collect();
+    let tooltip = format!(
+        "Sets which of this device's {channels} channels are used for live listening and saved recordings. \
+         Pairs are stereo, with the first channel on the left and the second on the right. \
+         Single channels are mono. With one mic, choose the channel it is plugged into. \
+         The live spectrogram always shows a mix of left and right."
+    );
+    view! {
+        <div class="layer-panel-slider-row het-text-row">
+            <label style="font-size: 11px;" title=tooltip>"Channels"</label>
+            <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px; max-width: 150px;"
+                on:change=on_change
+                prop:value=current
+            >
+                <option value="mix" selected=move || current() == "mix">"1 and 2 mixed (mono)"</option>
+                <optgroup label="Stereo pairs (left, right)">
+                    {pairs.into_iter().map(|a| {
+                        let value = format!("{},{}", a, a + 1);
+                        let v = value.clone();
+                        view! {
+                            <option value=value selected=move || current() == v>
+                                {format!("{} and {} (stereo)", a, a + 1)}
+                            </option>
+                        }
+                    }).collect::<Vec<_>>()}
+                </optgroup>
+                <optgroup label="Single channels (mono)">
+                    {singles.into_iter().map(|a| {
+                        let value = a.to_string();
+                        let v = value.clone();
+                        view! {
+                            <option value=value selected=move || current() == v>
+                                {format!("{} only (mono)", a)}
+                            </option>
+                        }
+                    }).collect::<Vec<_>>()}
+                </optgroup>
+            </select>
         </div>
     }
 }
