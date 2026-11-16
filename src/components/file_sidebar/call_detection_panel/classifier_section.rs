@@ -117,7 +117,8 @@ pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
     }
 }
 
-/// Download what `choice` still needs (a region's classifier is about 0.1 MB),
+/// Download what `choice` still needs (a region's classifier is about 0.1 MB,
+/// all 11 are 1.1 MB),
 /// then analyse the current file.
 fn analyse(state: AppState, file_id: u64, choice: ModelChoice) {
     state.call_detection.overlay_enabled().set(true);
@@ -263,9 +264,11 @@ fn add_annotations(state: AppState, file_id: u64, method: Method, merge: bool) {
 pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     let state = expect_context::<AppState>();
     let bats = method == Method::Bats;
+    // The BattyBirdNET region in use: the one picked, or Auto's for this file.
+    let bat_scope = Memo::new(move |_| classifier::bat_pick::bat_scope(state));
     let choice = move || match method {
         Method::BirdNet => ModelChoice::BirdNet,
-        Method::Bats => ModelChoice::Bats(state.call_detection.bat_region().get()),
+        Method::Bats => ModelChoice::Bats(bat_scope.get()),
         Method::Perch => ModelChoice::Perch,
     };
 
@@ -327,7 +330,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // embeddings; the backbone does not run again.
     if bats {
         Effect::new(move |_| {
-            let region = state.call_detection.bat_region().get();
+            let region = bat_scope.get();
             let Some(file) = current_file.get() else {
                 return;
             };
@@ -424,8 +427,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         if busy_here() {
             let (text, pct) = match run_status() {
                 RunStatus::LoadingModel { .. } => ("Loading the model\u{2026}".to_string(), None),
-                RunStatus::Rescoring { region, .. } => {
-                    (format!("Relabelling for {}\u{2026}", region.label()), None)
+                RunStatus::Rescoring { scope, .. } => {
+                    (format!("Relabelling for {}\u{2026}", scope.label()), None)
                 }
                 RunStatus::Running { fraction, .. } => {
                     let (done, len) = results_info
@@ -519,7 +522,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // region only while the results are for another one (a relabel is going
     // or failed).
     let results_title = Memo::new(move |_| {
-        let picked = state.call_detection.bat_region().get();
+        let picked = bat_scope.get();
         match results_info.get().and_then(|(_, _, region, _)| region) {
             Some(r) if r != picked => format!("Results for {}", r.label()),
             _ => "Results".to_string(),

@@ -12,7 +12,8 @@
 //! - [`refresh_downloads`]: check which files are on this device. Call when the
 //!   panel opens; until then every status is [`DownloadStatus::Unknown`].
 //! - [`download`]: download what a [`ModelChoice`] needs (the 67 MB backbone,
-//!   plus labels, plus a region's head for bats; Perch's three files, 136 MB).
+//!   plus labels, plus a region's head for bats, or all 11 heads, 1.1 MB, for
+//!   "All regions"; Perch's three files, 136 MB).
 //!   Progress goes to `state.classifier.downloads()`, per file id.
 //! - [`is_ready`]: true when every file a choice needs is downloaded (reads
 //!   `downloads`, so it is reactive).
@@ -24,8 +25,10 @@
 //!   is missing, and with [`ClassifierError::SampleRateTooLow`] for bats below
 //!   96 kHz.
 //! - [`rescore`]: score a file's stored BattyBirdNET results with another
-//!   region's head, without running the backbone again. Downloads the region's
-//!   head and labels first if needed.
+//!   region's head (or every region's), without running the backbone again.
+//!   Downloads the heads and labels first if needed.
+//! - [`bat_pick::bat_scope`]: the region BattyBirdNET uses now: the one picked
+//!   in the tab, or with "Auto" the one for the recording's place.
 //! - [`cancel`]: stop the run; the windows so far are kept, marked incomplete.
 //! - [`unload`]: stop the worker and free its memory (about 300 MB while a
 //!   BirdNET model is loaded, about 400 MB for Perch). The next run starts it
@@ -48,6 +51,7 @@
 //! BirdNET, Apache 2.0 for Perch), the "Powered by" line and link, credits,
 //! citation, source URL and revision, to show with results and in About.
 
+pub mod bat_pick;
 pub mod location;
 pub mod place;
 pub mod species_map;
@@ -57,11 +61,12 @@ pub mod test_hook;
 pub mod types;
 mod worker;
 
+pub use bat_pick::BatPick;
 pub use location::Occurrence;
 
 pub use oversample_ipc::classifier::catalog::{self, Attribution, ModelChoice, ModelFile};
 pub use oversample_ipc::classifier::{
-    BatRegion, ClassifierError, Method, Score, EMBEDDING_LEN, PERCH_CLASSES, TOP_K,
+    BatRegion, BatScope, ClassifierError, Method, Score, EMBEDDING_LEN, PERCH_CLASSES, TOP_K,
 };
 pub use types::{ClassifierRun, DownloadStatus, RunStatus, SpeciesLabel, WindowScores};
 
@@ -281,6 +286,67 @@ async fn labels(
     Ok(l)
 }
 
+thread_local! {
+    /// The label lists of every regional head as one, and the class of each
+    /// head's outputs in it. Built the first time "All regions" is used.
+    static ALL_REGIONS: RefCell<Option<AllRegions>> = const { RefCell::new(None) };
+}
+
+type AllRegions = (
+    Arc<Vec<SpeciesLabel>>,
+    std::rc::Rc<oversample_ipc::classifier::MergedBatLabels>,
+);
+
+async fn all_regions() -> Result<AllRegions, ClassifierError> {
+    if let Some(all) = ALL_REGIONS.with(|a| a.borrow().clone()) {
+        return Ok(all);
+    }
+    let mut texts = Vec::new();
+    for f in catalog::bat_label_files(BatScope::All) {
+        texts.push(String::from_utf8_lossy(&store::read(f).await?).into_owned());
+    }
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let merged = oversample_ipc::classifier::merge_bat_labels(&texts);
+    let labels = Arc::new(types::parse_labels(&merged.lines.join("\n")));
+    let all = (labels, std::rc::Rc::new(merged));
+    ALL_REGIONS.with(|a| *a.borrow_mut() = Some(all.clone()));
+    Ok(all)
+}
+
+/// The head of `scope` as one file; `None` for all regions.
+fn single_bat_head(scope: BatScope) -> Option<&'static ModelFile> {
+    match scope {
+        BatScope::Region(r) => Some(catalog::bat_head(r)),
+        BatScope::All => None,
+    }
+}
+
+/// Put `scope`'s head (or every head, for all regions) in the worker, and
+/// give the labels for the classes it scores. The files must be stored and
+/// the worker started.
+async fn load_bat_heads(
+    state: AppState,
+    scope: BatScope,
+) -> Result<Arc<Vec<SpeciesLabel>>, Stopped> {
+    match scope {
+        BatScope::Region(r) => {
+            let labels = labels(state, catalog::bat_labels(r)).await?;
+            worker::ensure_model(catalog::bat_head(r)).await?;
+            Ok(labels)
+        }
+        BatScope::All => {
+            let (labels, merged) = all_regions().await?;
+            worker::ensure_bat_heads(
+                catalog::ALL_BAT_HEADS_KEY,
+                &catalog::bat_heads(scope),
+                &merged,
+            )
+            .await?;
+            Ok(labels)
+        }
+    }
+}
+
 /// The Xeno-Canto groups whose English names name Perch's classes.
 const XC_GROUPS: [&str; 5] = ["birds", "frogs", "grasshoppers", "land mammals", "bats"];
 
@@ -449,18 +515,35 @@ async fn run_task(
             .into());
         }
     }
-    let labels = labels(state, choice.labels()).await?;
     worker::ensure_family(method == Method::Perch);
     worker::ensure_started(state).await?;
-    let models = choice.models();
-    for m in &models {
-        worker::ensure_model(m).await?;
-    }
-    let backbone = models[0];
-    let head = models.get(1).copied();
-    let region = match choice {
-        ModelChoice::Bats(r) => Some(r),
-        ModelChoice::BirdNet | ModelChoice::Perch => None,
+    let (backbone, head, region, labels) = match choice {
+        ModelChoice::BirdNet => {
+            let labels = labels(state, &catalog::BIRDNET_LABELS).await?;
+            worker::ensure_model(&catalog::BACKBONE).await?;
+            (&catalog::BACKBONE, None, None, labels)
+        }
+        ModelChoice::Bats(scope) => {
+            worker::ensure_model(&catalog::BACKBONE).await?;
+            let labels = load_bat_heads(state, scope).await?;
+            (
+                &catalog::BACKBONE,
+                single_bat_head(scope),
+                Some(scope),
+                labels,
+            )
+        }
+        ModelChoice::Perch => {
+            let labels = labels(state, &catalog::PERCH_LABELS).await?;
+            worker::ensure_model(&catalog::PERCH_EMBEDDING).await?;
+            worker::ensure_model(&catalog::PERCH_CLASSIFIER).await?;
+            (
+                &catalog::PERCH_EMBEDDING,
+                Some(&catalog::PERCH_CLASSIFIER),
+                None,
+                labels,
+            )
+        }
     };
     if !is_latest(state, generation) {
         return Err(Stopped::Superseded);
@@ -570,12 +653,13 @@ async fn run_task(
     Ok(())
 }
 
-/// Score file `file_id`'s stored BattyBirdNET results with `region`'s head,
-/// replacing their scores and labels. Downloads the head and labels if needed.
+/// Score file `file_id`'s stored BattyBirdNET results with `scope`'s head (or
+/// every head), replacing their scores and labels. Downloads the heads and
+/// labels if needed.
 /// Fails at once with [`ClassifierError::Busy`] while a run is going and with
 /// [`ClassifierError::NoResults`] when the file has no bat results; later
 /// errors go to `run()` as [`RunStatus::Failed`].
-pub fn rescore(state: AppState, file_id: u64, region: BatRegion) -> Result<(), ClassifierError> {
+pub fn rescore(state: AppState, file_id: u64, scope: BatScope) -> Result<(), ClassifierError> {
     if state.classifier.run().with_untracked(|r| r.is_busy()) {
         return Err(ClassifierError::Busy);
     }
@@ -591,9 +675,9 @@ pub fn rescore(state: AppState, file_id: u64, region: BatRegion) -> Result<(), C
     state
         .classifier
         .run()
-        .set(RunStatus::Rescoring { file_id, region });
+        .set(RunStatus::Rescoring { file_id, scope });
     spawn_local(async move {
-        let res = rescore_task(state, generation, key, region).await;
+        let res = rescore_task(state, generation, key, scope).await;
         if !is_latest(state, generation) {
             return;
         }
@@ -620,16 +704,17 @@ async fn rescore_task(
     state: AppState,
     generation: u32,
     key: (u64, Method),
-    region: BatRegion,
+    scope: BatScope,
 ) -> Result<(), Stopped> {
-    let head = catalog::bat_head(region);
-    let labels_file = catalog::bat_labels(region);
-    download_file(state, labels_file).await?;
-    download_file(state, head).await?;
-    let labels = labels(state, labels_file).await?;
+    for f in catalog::bat_label_files(scope)
+        .into_iter()
+        .chain(catalog::bat_heads(scope))
+    {
+        download_file(state, f).await?;
+    }
     worker::ensure_family(false);
     worker::ensure_started(state).await?;
-    worker::ensure_model(head).await?;
+    let labels = load_bat_heads(state, scope).await?;
     if !is_latest(state, generation) {
         return Err(Stopped::Superseded);
     }
@@ -651,8 +736,8 @@ async fn rescore_task(
             for (w, t) in r.windows.iter_mut().zip(top) {
                 w.top = t;
             }
-            r.region = Some(region);
-            r.head = Some(head);
+            r.region = Some(scope);
+            r.head = single_bat_head(scope);
             r.labels = labels;
         }
     });

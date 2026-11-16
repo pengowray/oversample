@@ -117,7 +117,7 @@ pub(crate) fn get_scientific_name(file: &LoadedFile) -> Option<String> {
 /// position (GUANO or source-site coordinates),
 /// looked up offline. Of a country's name variants, the one the region map
 /// knows is used.
-fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
+pub(crate) fn get_country(file: &LoadedFile) -> Option<RecordingPlace> {
     let from_site = file.site_metadata.as_ref().and_then(|m| {
         let country = m
             .fields

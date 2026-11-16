@@ -6,7 +6,7 @@
 //! directly. Nothing here is bundled with the app: files are downloaded when the
 //! user asks, then kept (OPFS in the browser, the app data folder in Tauri).
 
-use super::{BatRegion, Method, ModelPart};
+use super::{BatRegion, BatScope, Method, ModelPart};
 
 /// What a file is used for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -271,11 +271,26 @@ pub fn bat_labels(region: BatRegion) -> &'static ModelFile {
     &BAT_LABELS[region_index(region)]
 }
 
-/// What to run: BirdNET, BattyBirdNET with one region's head, or Perch 2.0.
+/// What the worker's head slot is called while it holds every regional head
+/// ([`BatScope::All`]). Not a file.
+pub const ALL_BAT_HEADS_KEY: &str = "BattyBirdNET-all-regions";
+
+/// The heads `scope` scores with, in [`BatRegion::ALL`] order.
+pub fn bat_heads(scope: BatScope) -> Vec<&'static ModelFile> {
+    scope.regions().into_iter().map(bat_head).collect()
+}
+
+/// The label lists of [`bat_heads`], in the same order.
+pub fn bat_label_files(scope: BatScope) -> Vec<&'static ModelFile> {
+    scope.regions().into_iter().map(bat_labels).collect()
+}
+
+/// What to run: BirdNET, BattyBirdNET with one region's head or all of them,
+/// or Perch 2.0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModelChoice {
     BirdNet,
-    Bats(BatRegion),
+    Bats(BatScope),
     Perch,
 }
 
@@ -288,31 +303,15 @@ impl ModelChoice {
         }
     }
 
-    /// Every file a run needs, largest first.
+    /// Every file a run needs: the audio model, then the rest.
     pub fn files(self) -> Vec<&'static ModelFile> {
         match self {
             ModelChoice::BirdNet => vec![&BACKBONE, &BIRDNET_LABELS],
-            ModelChoice::Bats(r) => vec![&BACKBONE, bat_head(r), bat_labels(r)],
+            ModelChoice::Bats(scope) => std::iter::once(&BACKBONE)
+                .chain(bat_heads(scope))
+                .chain(bat_label_files(scope))
+                .collect(),
             ModelChoice::Perch => PERCH_FILES.to_vec(),
-        }
-    }
-
-    /// The models the worker needs, in load order: the audio model, then any
-    /// head.
-    pub fn models(self) -> Vec<&'static ModelFile> {
-        match self {
-            ModelChoice::BirdNet => vec![&BACKBONE],
-            ModelChoice::Bats(r) => vec![&BACKBONE, bat_head(r)],
-            ModelChoice::Perch => vec![&PERCH_EMBEDDING, &PERCH_CLASSIFIER],
-        }
-    }
-
-    /// The label list for the classes this choice scores.
-    pub fn labels(self) -> &'static ModelFile {
-        match self {
-            ModelChoice::BirdNet => &BIRDNET_LABELS,
-            ModelChoice::Bats(r) => bat_labels(r),
-            ModelChoice::Perch => &PERCH_LABELS,
         }
     }
 }
@@ -478,6 +477,26 @@ mod tests {
             bat_labels(BatRegion::UsaEast).url,
             "https://huggingface.co/tphakala/BattyBirdNET-onnx/resolve/f685d7f7de1805ef83f71ffaad7440a8f40b4e10/labels/BattyBirdNET-USA-EAST-256kHz_Labels.txt"
         );
+    }
+
+    #[test]
+    fn all_regions_needs_every_head_and_label_list() {
+        let files = ModelChoice::Bats(BatScope::All).files();
+        assert_eq!(files.len(), 1 + 2 * BatRegion::ALL.len());
+        assert_eq!(files[0], &BACKBONE);
+        for r in BatRegion::ALL {
+            assert!(files.contains(&bat_head(r)) && files.contains(&bat_labels(r)));
+        }
+        let one = ModelChoice::Bats(BatScope::Region(BatRegion::Uk)).files();
+        assert_eq!(
+            one,
+            vec![
+                &BACKBONE,
+                bat_head(BatRegion::Uk),
+                bat_labels(BatRegion::Uk)
+            ]
+        );
+        assert!(file_by_id(ALL_BAT_HEADS_KEY).is_none());
     }
 
     #[test]

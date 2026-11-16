@@ -1,7 +1,7 @@
 //! Data the classifier keeps in [`crate::state::ClassifierState`].
 
 use super::catalog::ModelFile;
-use super::{BatRegion, ClassifierError, Method, Score};
+use super::{BatScope, ClassifierError, Method, Score};
 use std::sync::Arc;
 
 /// Whether one model file is on this device.
@@ -37,10 +37,11 @@ pub enum RunStatus {
         method: Method,
         fraction: f64,
     },
-    /// Scoring stored BattyBirdNET embeddings with another region's head.
+    /// Scoring stored BattyBirdNET embeddings with another region's head, or
+    /// with all of them.
     Rescoring {
         file_id: u64,
-        region: BatRegion,
+        scope: BatScope,
     },
     Done {
         file_id: u64,
@@ -176,13 +177,15 @@ pub struct WindowScores {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassifierRun {
     pub method: Method,
-    /// The region whose head gave the scores (BattyBirdNET only).
-    pub region: Option<BatRegion>,
+    /// The region whose head gave the scores, or all regions (BattyBirdNET
+    /// only).
+    pub region: Option<BatScope>,
     /// The model that took the audio: BirdNET's backbone or Perch's embedding
     /// model (its URL holds the pinned revision).
     pub backbone: &'static ModelFile,
     /// The model that scored it: a BattyBirdNET regional head or Perch's
-    /// classifier. `None` for BirdNET.
+    /// classifier. `None` for BirdNET, and for BattyBirdNET's "All regions",
+    /// which scores with every regional head.
     pub head: Option<&'static ModelFile>,
     /// The recording's sample rate.
     pub source_rate: u32,

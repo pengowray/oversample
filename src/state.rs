@@ -1827,8 +1827,9 @@ pub struct CallDetectionState {
     /// The method picked in the tab. Picking one never downloads or runs
     /// anything; the in-built detector runs on its own, the others on request.
     pub method: DetectionMethod,
-    /// The BattyBirdNET region picked in the tab.
-    pub bat_region: crate::classifier::BatRegion,
+    /// The BattyBirdNET region picked in the tab: "Auto" (the region for the
+    /// recording's place), all regions, or one region.
+    pub bat_pick: crate::classifier::BatPick,
     /// BirdNET and BattyBirdNET: windows whose top class is below this are left
     /// out of the summary, the lists, the annotations and the overlay.
     pub min_confidence: f32,
@@ -2956,7 +2957,7 @@ impl AppState {
                 scan_generation: 0,
                 progress: 0.0,
                 method: DetectionMethod::Inbuilt,
-                bat_region: crate::classifier::BatRegion::Uk,
+                bat_pick: crate::classifier::BatPick::Auto,
                 min_confidence: 0.5,
                 perch_min_confidence: 0.3,
                 mark_unexpected: true,

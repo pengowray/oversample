@@ -3,7 +3,7 @@
 
 use crate::denoise::stream::StreamDenoiser;
 use crate::denoise::{check_smooth_frames, Denoiser, TractMask};
-use crate::engine::{sigmoid, top_scores, Backbone, Head};
+use crate::engine::{sigmoid, top_scores, Backbone, Head, MergedHeads};
 use crate::perch;
 use crate::resample::StreamResampler;
 use crate::windows::{Window, Windower};
@@ -47,7 +47,24 @@ enum AudioModel {
 /// The model that scores the audio model's output.
 enum HeadModel {
     Bat(Head),
+    /// Every regional head, scored as one.
+    BatAll(MergedHeads),
     Perch(perch::Classifier),
+}
+
+impl HeadModel {
+    /// The bat logits for one BirdNET embedding; `None` for Perch's classifier.
+    fn bat_logits(&self, embedding: &[f32]) -> Option<tract_onnx::prelude::TractResult<Vec<f32>>> {
+        match self {
+            HeadModel::Bat(h) => Some(h.run(embedding)),
+            HeadModel::BatAll(h) => Some(h.run(embedding)),
+            HeadModel::Perch(_) => None,
+        }
+    }
+
+    fn is_bat(&self) -> bool {
+        matches!(self, HeadModel::Bat(_) | HeadModel::BatAll(_))
+    }
 }
 
 #[derive(Default)]
@@ -114,6 +131,29 @@ impl Session {
                         None,
                     ),
                     Err(message) => out.send(load_error(message), None),
+                }
+            }
+            ToWorker::LoadBatHeads {
+                key,
+                heads,
+                species,
+                classes,
+            } => {
+                self.head = None;
+                let t = now_ms();
+                let bytes = att.bytes.unwrap_or_default();
+                match MergedHeads::load(&bytes, &heads, species as usize, classes as usize) {
+                    Ok(m) => {
+                        self.head = Some((key.clone(), HeadModel::BatAll(m)));
+                        out.send(
+                            FromWorker::Loaded {
+                                key,
+                                ms: now_ms() - t,
+                            },
+                            None,
+                        );
+                    }
+                    Err(e) => out.send(load_error(format!("{e:#}")), None),
                 }
             }
             ToWorker::Start {
@@ -332,7 +372,7 @@ impl Session {
                 }
             }
             ToWorker::Rescore { run, windows } => {
-                let Some((_, HeadModel::Bat(head))) = self.head.as_ref() else {
+                let Some(head) = self.head.as_ref().map(|(_, h)| h).filter(|h| h.is_bat()) else {
                     out.send(
                         inference_error(run, "no regional model loaded".into()),
                         None,
@@ -350,12 +390,13 @@ impl Session {
                 }
                 let mut top = Vec::with_capacity(windows as usize);
                 for e in emb.chunks_exact(len) {
-                    match head.run(e) {
-                        Ok(logits) => top.push(top_scores(&logits)),
-                        Err(err) => {
+                    match head.bat_logits(e) {
+                        Some(Ok(logits)) => top.push(top_scores(&logits)),
+                        Some(Err(err)) => {
                             out.send(inference_error(run, format!("{err:#}")), None);
                             return;
                         }
+                        None => return,
                     }
                 }
                 out.send(FromWorker::Rescored { run, top }, None);
@@ -423,7 +464,7 @@ impl Session {
         // Check the models once, not per window.
         let ready = match (method, audio, head) {
             (Method::BirdNet, Some(AudioModel::BirdNet(_)), _) => Ok(()),
-            (Method::Bats, Some(AudioModel::BirdNet(_)), Some(HeadModel::Bat(_))) => Ok(()),
+            (Method::Bats, Some(AudioModel::BirdNet(_)), Some(h)) if h.is_bat() => Ok(()),
             (Method::Bats, Some(AudioModel::BirdNet(_)), _) => Err("no regional model loaded"),
             (Method::Perch, Some(AudioModel::Perch(_)), Some(HeadModel::Perch(_))) => Ok(()),
             (Method::Perch, Some(AudioModel::Perch(_)), _) => {
@@ -438,9 +479,13 @@ impl Session {
             let res = match (audio, head) {
                 (Some(AudioModel::BirdNet(backbone)), head) => {
                     backbone.run(&w.samples).and_then(|b| {
-                        let logits = match (method, head) {
-                            (Method::Bats, Some(HeadModel::Bat(h))) => h.run(&b.embedding)?,
-                            _ => b.logits,
+                        let bat = match method {
+                            Method::Bats => head.and_then(|h| h.bat_logits(&b.embedding)),
+                            _ => None,
+                        };
+                        let logits = match bat {
+                            Some(l) => l?,
+                            None => b.logits,
                         };
                         Ok((top_scores(&logits), b.embedding))
                     })

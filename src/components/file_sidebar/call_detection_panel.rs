@@ -20,7 +20,7 @@ use crate::call_annotations::{
     build_call_annotations, count_call_annotations, count_detector_annotations, detector_tags_in,
     kind_label, remove_detector_annotations, AnnotateWhat,
 };
-use crate::classifier::{BatRegion, Method};
+use crate::classifier::{bat_pick, BatPick, BatRegion, BatScope, Method};
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
 };
@@ -824,9 +824,21 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
             </label>
         }
     };
+    // What "Auto" gives the current recording, and where that came from.
+    let auto = Memo::new(move |_| bat_pick::current_auto_scope(state));
     let region_select = move || {
         (method() == DetectionMethod::Bats).then(|| {
             let busy = move || state.classifier.run().with(|r| r.is_busy());
+            let pick = move || state.call_detection.bat_pick().get();
+            // Option values: "auto", "all", or a region's place in `BatRegion::ALL`.
+            let fixed = move |scope: BatScope, value: String, species: usize| {
+                view! {
+                    <option
+                        value=value
+                        prop:selected=move || pick() == BatPick::Fixed(scope)
+                    >{format!("{}: {species} species", scope.label())}</option>
+                }
+            };
             view! {
                 <label class="detection-region">
                     <span class="setting-label">"Region"</span>
@@ -834,26 +846,35 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                         class="setting-select"
                         prop:disabled=busy
                         on:change=move |ev| {
-                            let i: usize = event_target_select_value(&ev).parse().unwrap_or(0);
-                            if let Some(r) = BatRegion::ALL.get(i) {
-                                state.call_detection.bat_region().set(*r);
+                            let value = event_target_select_value(&ev);
+                            let new = match value.as_str() {
+                                "auto" => Some(BatPick::Auto),
+                                "all" => Some(BatPick::Fixed(BatScope::All)),
+                                i => i
+                                    .parse::<usize>()
+                                    .ok()
+                                    .and_then(|i| BatRegion::ALL.get(i))
+                                    .map(|r| BatPick::Fixed(BatScope::Region(*r))),
+                            };
+                            if let Some(new) = new {
+                                state.call_detection.bat_pick().set(new);
                             }
                         }
                     >
+                        <option value="auto" prop:selected=move || pick() == BatPick::Auto>
+                            {move || format!("Auto: {}", auto.get().scope.label())}
+                        </option>
+                        {fixed(BatScope::All, "all".to_string(), ALL_REGIONS_SPECIES)}
                         {BatRegion::ALL
                             .iter()
                             .enumerate()
-                            .map(|(i, r)| {
-                                let r = *r;
-                                view! {
-                                    <option
-                                        value=i.to_string()
-                                        prop:selected=move || state.call_detection.bat_region().get() == r
-                                    >{format!("{}: {} species", r.label(), region_species(r))}</option>
-                                }
-                            })
+                            .map(|(i, r)| fixed(BatScope::Region(*r), i.to_string(), region_species(*r)))
                             .collect::<Vec<_>>()}
                     </select>
+                    // Why Auto picked this region.
+                    {move || (pick() == BatPick::Auto).then(|| view! {
+                        <span class="detection-status-note">{auto.get().note}</span>
+                    })}
                 </label>
             }
         })
@@ -866,7 +887,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 {option(DetectionMethod::BirdNet, "BirdNET", "Bird species, plus some other sounds such as dog and engine")}
                 // Before BattyBirdNET, so the region list stays under it.
                 {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs and insects, plus sounds such as thunder and traffic")}
-                {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species for one region")}
+                {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species of Europe and the USA")}
                 {region_select}
             </div>
             <Show when=move || method() == DetectionMethod::BirdNet>
@@ -881,6 +902,10 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
         </div>
     }
 }
+
+/// Species in the 11 regional label files together, by scientific name
+/// (`merge_bat_labels` in `oversample-ipc`).
+const ALL_REGIONS_SPECIES: usize = 74;
 
 /// Bat species in each region's BattyBirdNET classifier (lines of its label
 /// file with a scientific and a common name; crickets count as one).

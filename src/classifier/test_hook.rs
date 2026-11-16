@@ -8,17 +8,17 @@
 //! - `status()`: a JSON string with downloads, the run status and a summary of
 //!   each result (window count, completeness, best class)
 //!
-//! `choice` is `"birdnet"`, `"perch"` or `"bats:<region>"`, and `region` a
-//! file-name part such as `"EU"`, `"UK"` or `"USA-EAST"` (see
-//! `BatRegion::file_stem`).
+//! `choice` is `"birdnet"`, `"perch"` or `"bats:<region>"`, and `region` is
+//! `"all"` or a file-name part such as `"EU"`, `"UK"` or `"USA-EAST"` (see
+//! `BatScope::stem`).
 
 use super::*;
 use wasm_bindgen::prelude::*;
 
-fn parse_region(s: &str) -> Option<BatRegion> {
-    BatRegion::ALL
-        .into_iter()
-        .find(|r| r.file_stem().eq_ignore_ascii_case(s))
+fn parse_region(s: &str) -> Option<BatScope> {
+    std::iter::once(BatScope::All)
+        .chain(BatRegion::ALL.into_iter().map(BatScope::Region))
+        .find(|r| r.stem().eq_ignore_ascii_case(s))
 }
 
 fn parse_choice(s: &str) -> Option<ModelChoice> {
@@ -63,8 +63,8 @@ fn run_text(s: &RunStatus) -> String {
             method,
             fraction,
         } => format!("Running {file_id} {} {fraction:.3}", method_name(*method)),
-        RunStatus::Rescoring { file_id, region } => {
-            format!("Rescoring {file_id} {}", region.file_stem())
+        RunStatus::Rescoring { file_id, scope } => {
+            format!("Rescoring {file_id} {}", scope.stem())
         }
         RunStatus::Done { file_id, method } => format!("Done {file_id} {}", method_name(*method)),
         RunStatus::Failed {
@@ -105,7 +105,7 @@ fn status_json(state: AppState) -> String {
                 serde_json::json!({
                     "file": file_id,
                     "method": method_name(*method),
-                    "region": r.region.map(|g| g.file_stem()),
+                    "region": r.region.map(|g| g.stem()),
                     "windows": r.windows.len(),
                     "embeddingFloats": emb,
                     "complete": r.complete,

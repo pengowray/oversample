@@ -373,6 +373,141 @@ fn heads_match_their_labels() {
     eprintln!("{checked} heads checked");
 }
 
+/// "All regions": the 11 heads loaded as one give each species the highest
+/// confidence any single head gives it. Scored on made-up embeddings, so it
+/// needs the heads and label lists but not the backbone.
+#[test]
+fn all_regions_take_each_species_highest_score() {
+    use oversample_ipc::classifier::{catalog, merge_bat_labels, BatHeadPart, BatRegion, TOP_K};
+    let Some(models) = models_dir() else {
+        eprintln!("BIRDNET_MODELS_DIR not set; skipped");
+        return;
+    };
+    let head_path = |r| models.join("fp32").join(catalog::bat_head(r).id);
+    let label_path = |r| models.join("labels").join(catalog::bat_labels(r).id);
+    if BatRegion::ALL
+        .iter()
+        .any(|&r| !head_path(r).exists() || !label_path(r).exists())
+    {
+        eprintln!("not every region is in BIRDNET_MODELS_DIR; skipped");
+        return;
+    }
+    let texts: Vec<String> = BatRegion::ALL
+        .iter()
+        .map(|&r| std::fs::read_to_string(label_path(r)).unwrap())
+        .collect();
+    let merged = merge_bat_labels(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+    eprintln!(
+        "{} merged classes, {} of them species",
+        merged.lines.len(),
+        merged.species
+    );
+
+    // Embeddings like the backbone's: most values 0, the rest positive.
+    let windows = 40usize;
+    let mut seed = 0x2545_f491_u32;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32
+    };
+    let emb: Vec<f32> = (0..windows * EMBEDDING_LEN)
+        .map(|_| (next() * 4.0 - 2.5).max(0.0))
+        .collect();
+    let rescore = |s: &mut Session| {
+        let mut out = new_out();
+        send(
+            s,
+            ToWorker::Rescore {
+                run: 1,
+                windows: windows as u32,
+            },
+            Attached {
+                embedding: Some(emb.clone()),
+                ..Default::default()
+            },
+            &mut out,
+        );
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        out.rescored.unwrap()
+    };
+
+    // Each head on its own: the best confidence per merged species.
+    let mut best = vec![vec![0f32; merged.species]; windows];
+    for (r, map) in BatRegion::ALL.iter().zip(&merged.maps) {
+        let mut s = Session::new();
+        load_model(&mut s, true, &head_path(*r));
+        for (w, top) in rescore(&mut s).iter().enumerate() {
+            for score in top {
+                let class = map[score.class as usize] as usize;
+                if class < merged.species {
+                    best[w][class] = best[w][class].max(score.confidence);
+                }
+            }
+        }
+    }
+
+    let mut bytes = Vec::new();
+    let mut heads = Vec::new();
+    for (r, map) in BatRegion::ALL.iter().zip(&merged.maps) {
+        let file = std::fs::read(head_path(*r)).unwrap();
+        heads.push(BatHeadPart {
+            len: file.len() as u32,
+            classes: map.clone(),
+        });
+        bytes.extend(file);
+    }
+    let mut s = Session::new();
+    let mut out = new_out();
+    send(
+        &mut s,
+        ToWorker::LoadBatHeads {
+            key: "all".into(),
+            heads,
+            species: merged.species as u16,
+            classes: merged.lines.len() as u16,
+        },
+        Attached {
+            bytes: Some(bytes),
+            ..Default::default()
+        },
+        &mut out,
+    );
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    let all = rescore(&mut s);
+    assert_eq!(all.len(), windows);
+    let mut species_on_top = 0;
+    for (w, top) in all.iter().enumerate() {
+        assert_eq!(top.len(), TOP_K);
+        assert!(top.windows(2).all(|p| p[0].confidence >= p[1].confidence));
+        species_on_top += usize::from((top[0].class as usize) < merged.species);
+        for score in top {
+            let class = score.class as usize;
+            // A head's own top 10 can leave a species out, so only a species
+            // some head listed can be compared exactly.
+            if class < merged.species && best[w][class] > 0.0 {
+                assert!(
+                    (score.confidence - best[w][class]).abs() < 1e-5,
+                    "window {w}, {}: {} merged, {} best single",
+                    merged.lines[class],
+                    score.confidence,
+                    best[w][class]
+                );
+            }
+        }
+        // The best species of any single head is the best merged species.
+        let single = best[w].iter().copied().fold(0f32, f32::max);
+        let merged_best = top
+            .iter()
+            .filter(|s| (s.class as usize) < merged.species)
+            .map(|s| s.confidence)
+            .fold(0f32, f32::max);
+        assert!((single - merged_best).abs() < 1e-5, "window {w}");
+    }
+    eprintln!("a species is the top class in {species_on_top} of {windows} windows");
+}
+
 /// The live view's `Live` request on the 3 s ending at a window's end gives the
 /// same top class and nearly the same score as the run's window, so the live
 /// view and the classifier agree. Also prints the time per reading.

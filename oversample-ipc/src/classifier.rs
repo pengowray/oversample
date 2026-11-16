@@ -26,7 +26,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod bat_merge;
 pub mod catalog;
+
+pub use bat_merge::{merge_bat_labels, merge_bat_logits, MergedBatLabels};
 
 /// Samples per BirdNET window (BirdNET and BattyBirdNET). Perch's is
 /// [`PERCH_WINDOW_SAMPLES`]; see [`Method::window_samples`].
@@ -224,6 +227,53 @@ impl BatRegion {
     }
 }
 
+/// The regional heads a BattyBirdNET run scores with: one region's, or all 11
+/// merged into one list of species.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BatScope {
+    /// Every head. A species gets the highest confidence any head gives it
+    /// (see [`merge_bat_logits`]).
+    All,
+    Region(BatRegion),
+}
+
+impl BatScope {
+    /// A name to show, e.g. "All regions" or "USA East".
+    pub fn label(self) -> &'static str {
+        match self {
+            BatScope::All => "All regions",
+            BatScope::Region(r) => r.label(),
+        }
+    }
+
+    /// A short name for tags and tests: "all", or the region's
+    /// [`BatRegion::file_stem`].
+    pub fn stem(self) -> &'static str {
+        match self {
+            BatScope::All => "all",
+            BatScope::Region(r) => r.file_stem(),
+        }
+    }
+
+    /// The regions whose heads it uses.
+    pub fn regions(self) -> Vec<BatRegion> {
+        match self {
+            BatScope::All => BatRegion::ALL.to_vec(),
+            BatScope::Region(r) => vec![r],
+        }
+    }
+}
+
+/// One head of [`ToWorker::LoadBatHeads`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatHeadPart {
+    /// Bytes of its model file in [`attach::BYTES`], where the heads' files
+    /// sit back to back in the order of the message.
+    pub len: u32,
+    /// For each of the head's outputs, its class in the merged list.
+    pub classes: Vec<u16>,
+}
+
 /// One class and its confidence, 0 to 1. `class` indexes the label list of the
 /// model that scored it. BirdNET and BattyBirdNET: the sigmoid of the logit.
 /// Perch: the softmax over all its classes, so the confidences of one window
@@ -365,6 +415,16 @@ pub enum ToWorker {
     /// was there. `key` names it, so the app can tell whether the worker
     /// already holds it. Answered by `Loaded`.
     Load { key: String, part: ModelPart },
+    /// Build several BattyBirdNET heads from [`attach::BYTES`] (their files
+    /// back to back) into the head slot, replacing what was there. Their
+    /// scores are merged with [`merge_bat_logits`] into `classes` classes, the
+    /// first `species` of them species. Answered by `Loaded`.
+    LoadBatHeads {
+        key: String,
+        heads: Vec<BatHeadPart>,
+        species: u16,
+        classes: u16,
+    },
     /// Start a run. Any run before it is dropped.
     Start {
         run: u32,

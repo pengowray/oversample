@@ -11,7 +11,9 @@ use super::ClassifierError;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
 use leptos::prelude::*;
-use oversample_ipc::classifier::{attach, FromWorker, Method, ModelSlot, Score, ToWorker};
+use oversample_ipc::classifier::{
+    attach, BatHeadPart, FromWorker, Method, ModelSlot, Score, ToWorker,
+};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -416,6 +418,68 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
                 ModelSlot::Head => cl.head = Some(key),
                 ModelSlot::Denoise => {}
             }
+        }
+    });
+    Ok(())
+}
+
+/// Make sure the worker's head slot holds the regional heads `files` scored as
+/// one (`merged` has the class of each head's outputs), under the name `key`.
+pub async fn ensure_bat_heads(
+    key: &'static str,
+    files: &[&'static super::catalog::ModelFile],
+    merged: &oversample_ipc::classifier::MergedBatLabels,
+) -> Result<(), Stopped> {
+    let loaded = CLIENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|cl| cl.head.as_deref() == Some(key))
+    });
+    if loaded {
+        return Ok(());
+    }
+    let mut heads = Vec::with_capacity(files.len());
+    let mut arrays = Vec::with_capacity(files.len());
+    for (file, classes) in files.iter().zip(&merged.maps) {
+        let bytes = super::store::read_js(file).await?;
+        heads.push(BatHeadPart {
+            len: bytes.length(),
+            classes: classes.clone(),
+        });
+        arrays.push(bytes);
+    }
+    // The files back to back, in the order of `heads`.
+    let all = js_sys::Uint8Array::new_with_length(heads.iter().map(|h| h.len).sum());
+    let mut at = 0;
+    for (bytes, head) in arrays.iter().zip(&heads) {
+        all.set(bytes, at);
+        at += head.len;
+    }
+    let waiter = CLIENT.with(|c| {
+        let mut c = c.borrow_mut();
+        let client = c.as_mut()?;
+        client.head = None;
+        client.perch = Some(false);
+        let buf = all.buffer();
+        client.post(
+            &ToWorker::LoadBatHeads {
+                key: key.to_string(),
+                heads,
+                species: merged.species as u16,
+                classes: merged.lines.len() as u16,
+            },
+            Some((attach::BYTES, &buf)),
+            Some(&buf),
+        );
+        Some(client.wait(Wait::Loaded(key.to_string())))
+    });
+    let Some(waiter) = waiter else {
+        return Err(Stopped::Superseded);
+    };
+    wait(waiter).await?;
+    CLIENT.with(|c| {
+        if let Some(cl) = c.borrow_mut().as_mut() {
+            cl.head = Some(key.to_string());
         }
     });
     Ok(())

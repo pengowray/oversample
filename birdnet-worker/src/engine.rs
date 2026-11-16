@@ -1,7 +1,9 @@
 //! The models, through tract: the BirdNET V2.4 backbone with its embeddings
 //! output, and the BattyBirdNET regional heads.
 
-use oversample_ipc::classifier::{Score, EMBEDDING_LEN, TOP_K, WINDOW_SAMPLES};
+use oversample_ipc::classifier::{
+    merge_bat_logits, BatHeadPart, Score, EMBEDDING_LEN, TOP_K, WINDOW_SAMPLES,
+};
 use tract_onnx::prelude::*;
 
 type Plan = std::sync::Arc<TypedRunnableModel>;
@@ -87,6 +89,75 @@ impl Head {
             .iter()
             .copied()
             .collect())
+    }
+}
+
+/// Several regional heads scored as one: each species gets the highest logit
+/// any head gives it (`merge_bat_logits` has the whole rule).
+pub struct MergedHeads {
+    /// Each head and, for each of its outputs, the class in the merged list.
+    heads: Vec<(Head, Vec<u16>)>,
+    species: usize,
+    classes: usize,
+}
+
+impl MergedHeads {
+    /// Build the heads from their files, back to back in `bytes`. Fails when
+    /// a head's outputs do not line up with its `classes`.
+    pub fn load(
+        bytes: &[u8],
+        parts: &[BatHeadPart],
+        species: usize,
+        classes: usize,
+    ) -> TractResult<MergedHeads> {
+        let mut heads = Vec::with_capacity(parts.len());
+        let mut at = 0usize;
+        for (i, part) in parts.iter().enumerate() {
+            let end = at + part.len as usize;
+            let file = bytes.get(at..end).ok_or_else(|| {
+                TractError::msg(format!("the bytes end before regional model {}", i + 1))
+            })?;
+            at = end;
+            let head = Head::load(file)?;
+            let outputs = head.run(&[0.0; EMBEDDING_LEN])?.len();
+            if outputs != part.classes.len() {
+                return Err(TractError::msg(format!(
+                    "regional model {} has {outputs} outputs; its label list has {}",
+                    i + 1,
+                    part.classes.len()
+                )));
+            }
+            if part.classes.iter().any(|&c| c as usize >= classes) {
+                return Err(TractError::msg(format!(
+                    "regional model {} names a class past the {classes} merged ones",
+                    i + 1
+                )));
+            }
+            heads.push((head, part.classes.clone()));
+        }
+        if heads.is_empty() {
+            return Err(TractError::msg("no regional models were sent"));
+        }
+        Ok(MergedHeads {
+            heads,
+            species,
+            classes,
+        })
+    }
+
+    /// The merged logits for one embedding.
+    pub fn run(&self, embedding: &[f32]) -> TractResult<Vec<f32>> {
+        let logits = self
+            .heads
+            .iter()
+            .map(|(h, _)| h.run(embedding))
+            .collect::<TractResult<Vec<_>>>()?;
+        let heads: Vec<(&[f32], &[u16])> = logits
+            .iter()
+            .zip(&self.heads)
+            .map(|(l, (_, map))| (l.as_slice(), map.as_slice()))
+            .collect();
+        Ok(merge_bat_logits(&heads, self.species, self.classes))
     }
 }
 
