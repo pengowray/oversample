@@ -25,6 +25,7 @@ pub mod note_line;
 pub mod opfs;
 pub mod opfs_audio;
 pub mod project;
+pub mod recording_place;
 pub mod project_store;
 pub mod rate_notes;
 pub mod scope;

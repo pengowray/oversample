@@ -1,4 +1,4 @@
-use crate::classifier::place::RecordingPlace;
+use crate::recording_place::RecordingPlace;
 use serde::Deserialize;
 
 /// How common a species is in a given region.

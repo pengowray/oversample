@@ -13,7 +13,7 @@ a degree in signed 16-bit integers; repeated points after rounding are dropped.
 Holes are kept as rings of their own; the app's even-odd point-in-polygon test
 treats them correctly.
 
-Format, all little-endian, read by src/bat_book/countries.rs:
+Format, all little-endian, read by src/recording_place/countries.rs:
   u16 country count, then per country:
     u8 name count, then per name: u8 byte length + UTF-8 bytes
       (the English name variants NAME, NAME_LONG, ADMIN, NAME_EN, deduplicated)

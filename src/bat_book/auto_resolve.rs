@@ -1,7 +1,8 @@
 use super::country_map::country_to_region;
+use super::country_map::RegionMatch;
 use super::data::{get_manifest, species, species_matching, NameQuery};
 use super::types::{AutoResolved, BatBookRegion, BatSpecies};
-use crate::classifier::place::recording_country;
+use crate::recording_place::{areas, countries, recording_place, Area};
 use crate::state::LoadedFile;
 
 /// Search all regional bat books for a species by scientific name.
@@ -71,11 +72,23 @@ pub(crate) fn find_species(
         .or_else(|| species_matching(any))
 }
 
-/// The region of the recording's country (source site or GPS position), if
-/// the region map knows it.
+/// The bat book region for a country, or for an area inside it that has a
+/// book of its own (Victoria).
+fn place_to_region(country: &str, area: Option<Area>) -> Option<RegionMatch> {
+    match area {
+        Some(Area::Victoria) => Some(RegionMatch {
+            region: BatBookRegion::VicAustralia,
+            approximate: false,
+        }),
+        _ => country_to_region(country),
+    }
+}
+
+/// The region of the recording's place (source site country or GPS
+/// position), if the region map knows it.
 pub(crate) fn country_region(file: &LoadedFile) -> Option<BatBookRegion> {
-    let place = recording_country(file)?;
-    country_to_region(&place.country).map(|m| m.region)
+    let place = recording_place(file)?;
+    place_to_region(&place.country, place.area).map(|m| m.region)
 }
 
 /// Extract species scientific name from file metadata.
@@ -126,12 +139,12 @@ pub enum PositionRegion {
 }
 
 pub fn region_at(lat: f32, lon: f32) -> PositionRegion {
-    let Some(names) = super::countries::country_names_at(lat, lon) else {
+    let Some(names) = countries::country_names_at(lat, lon) else {
         return PositionRegion::NoCountry;
     };
     match names
         .iter()
-        .find_map(|n| country_to_region(n).map(|m| (m.region, n)))
+        .find_map(|n| place_to_region(n, areas::area_at(n, lat, lon)).map(|m| (m.region, n)))
     {
         Some((region, name)) => PositionRegion::Found(region, name.clone()),
         None => PositionRegion::NoRegion(names[0].clone()),
@@ -168,9 +181,11 @@ pub fn resolve_auto(file: Option<&LoadedFile>, favourites: &[BatBookRegion]) -> 
     };
 
     let scientific_name = get_scientific_name(file);
-    let place = recording_country(file);
+    let place = recording_place(file);
     let country = place.as_ref().map(|p| p.country.clone());
-    let country_match = country.as_deref().and_then(country_to_region);
+    let country_match = place
+        .as_ref()
+        .and_then(|p| place_to_region(&p.country, p.area));
     // Kept only when the region comes from the recording's country.
     let recording_place = country_match.and(place);
     let country_region = country_match.map(|m| m.region);
@@ -321,6 +336,15 @@ mod tests {
 
     #[test]
     fn positions_find_regions() {
+        // Victoria has a book of its own; the rest of Australia has one book.
+        assert_eq!(
+            region_at(-37.81, 144.96),
+            PositionRegion::Found(BatBookRegion::VicAustralia, "Australia".to_string())
+        );
+        assert_eq!(
+            region_at(-33.87, 151.21),
+            PositionRegion::Found(BatBookRegion::Australia, "Australia".to_string())
+        );
         let found = |lat, lon| match region_at(lat, lon) {
             PositionRegion::Found(r, _) => Some(r),
             _ => None,
@@ -335,7 +359,7 @@ mod tests {
     /// position on land never falls back to a favourite or Global unnoticed.
     #[test]
     fn every_outlined_country_has_a_region() {
-        let missing: Vec<&str> = super::super::countries::all_country_names()
+        let missing: Vec<&str> = countries::all_country_names()
             .filter(|names| !names.iter().any(|n| country_to_region(n).is_some()))
             .map(|names| names[0].as_str())
             .collect();

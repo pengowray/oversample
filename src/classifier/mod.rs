@@ -53,7 +53,6 @@
 
 pub mod bat_pick;
 pub mod location;
-pub mod place;
 pub mod species_map;
 pub mod store;
 pub mod summary;

@@ -316,7 +316,7 @@ fn open_file_point(state: AppState) -> Result<(f64, f64), &'static str> {
         .with(|files| {
             files
                 .get(idx)
-                .and_then(crate::classifier::place::file_place)
+                .and_then(crate::recording_place::file_place)
                 .map(|p| (p.lat as f64, p.lon as f64))
         })
         .ok_or(NEAR_FILE_NO_LOCATION)

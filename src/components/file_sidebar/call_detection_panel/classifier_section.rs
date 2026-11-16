@@ -13,9 +13,10 @@ use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};
 use crate::classifier::{
-    self, catalog, location, place, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
+    self, catalog, location, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
 };
 use crate::components::icons::Icon;
+use crate::recording_place as place;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
