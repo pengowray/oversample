@@ -17,6 +17,7 @@ pub mod format_units;
 pub mod heard_axis;
 pub mod heterodyne;
 pub mod license;
+pub mod live_embedding;
 pub mod markdown;
 pub mod note_line;
 pub mod opfs;

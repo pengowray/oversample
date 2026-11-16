@@ -444,6 +444,12 @@ pub enum ToWorker {
     /// The recording's next samples ([`attach::SAMPLES`], channels
     /// interleaved), to denoise. Answered by `DenoisedPiece`.
     DenoisePiece { run: u32 },
+    /// Score one BirdNET window of the most recent audio, for the live view.
+    /// [`attach::SAMPLES`] holds mono audio at `source_rate` that ends now; the
+    /// last 3 s of it are used, padded with zeros at the front when shorter.
+    /// Needs the BirdNET backbone in the audio slot. Answered by `Live`. It
+    /// leaves any run alone.
+    Live { req: u32, source_rate: u32 },
 }
 
 /// Worker to app.
@@ -484,6 +490,10 @@ pub enum FromWorker {
     /// can be none. `done` of the recording's `total` blocks are denoised,
     /// and when the two are equal the recording is complete.
     DenoisedPiece { run: u32, done: u32, total: u32 },
+    /// The answer to `Live`. [`attach::EMBEDDING`] holds the 1,024-value
+    /// embedding followed by the confidence (0 to 1) of every class in label
+    /// order. `ms` is the time the resampling and the model took.
+    Live { req: u32, ms: f64 },
     /// Something failed. `run` is `None` for model loading.
     Error {
         run: Option<u32>,

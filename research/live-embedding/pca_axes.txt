@@ -1,0 +1,19 @@
+PC1 (1.8% of variance)
+  low:  Plain-winged Antshrike, Mouse-coloured Antshrike, Dusky-throated Antshrike, Amazonian Barred-Woodcreeper, Lawrence's Thrush, Grey Antbird, Grey Antwren, Black-faced Antthrush
+  high: Singing Bushlark, Sabota Lark, Bluethroat, Melodious Lark, Turkestan Shrike, Crested Lark, Greater Short-toed Lark, Sand Lark
+PC2 (1.3% of variance)
+  low:  Little Cormorant, Brown-headed Gull, Little Egret, Black-crowned Night Heron, Black-headed Ibis, Black-headed Gull, Brown Pelican, Splendid Starling
+  high: Ashy-throated Chlorospingus, Sooty-capped Chlorospingus, Citrine Warbler, Superciliaried Hemispingus, Lacrimose Mountain Tanager, Three-striped Warbler, Black-crested Warbler, Yellow-breasted Brushfinch
+PC3 (1.1% of variance)
+  low:  Brown Skua, Coscoroba Swan, Puna Miner, Adelie Penguin, Spectacled Tyrant, Black-eared Fairy, Slate-coloured Coot, Red Shoveler
+  high: Blue-throated Flycatcher, Bronzed Drongo, Lesser Racket-tailed Drongo, Javan Leafbird, Orange-headed Thrush, Ashy Drongo, White-rumped Shama, Tickell's Blue Flycatcher
+PC4 (0.9% of variance)
+  low:  Sabota Lark, Kalahari Scrub Robin, Somali Short-toed Lark, Karoo Scrub Robin, Pearly-bellied Seedeater, Moustached Grass-Warbler, Golden-backed Weaver, Malabar Lark
+  high: Pileated Woodpecker, Yellow-bellied Sapsucker, Blackburnian Warbler, Black-throated Green Warbler, Brown Creeper, Nashville Warbler, Pine Warbler, Downy Woodpecker
+PC5 (0.9% of variance)
+  low:  Common Yellowthroat, Pine Warbler, Indigo Bunting, Northern Parula, Swamp Sparrow, American Goldfinch, Chestnut-sided Warbler, Song Sparrow
+  high: Ethiopian Black-headed Oriole, Pale-winged Starling, Scarlet-faced Liocichla, African Hill Babbler, Bush Blackcap, Chorister Robin-Chat, White-winged Robin, Chestnut-crested Cotinga
+PC6 (0.8% of variance)
+  low:  Baltimore Oriole, Brown Thrasher, Bullock's Oriole, Long-billed Thrasher, Grey Catbird, Rose-breasted Grosbeak, Blue Mockingbird, Orchard Oriole
+  high: Streak-throated Canastero, Yellow-rumped Flowerpecker, Amethyst Brown-Dove, Brown Accentor, White-crowned Hornbill, Oriental Bay-Owl, Rosy Pipit, White-browed Ground-Tyrant
+first 6 together: 6.8%

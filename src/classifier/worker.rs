@@ -300,6 +300,8 @@ fn on_message(ev: MessageEvent) {
             | FromWorker::Denoised { .. }
             | FromWorker::DenoiseMeasured { .. }
             | FromWorker::DenoisedPiece { .. } => {}
+            // The live view's answers go to its own worker (`crate::live_embedding`).
+            FromWorker::Live { .. } => {}
             FromWorker::Error { run, error } => {
                 flush = client.take_flush();
                 // Fail every waiter the error concerns: the run's, or (for a

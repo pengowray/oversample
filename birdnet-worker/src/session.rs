@@ -3,9 +3,11 @@
 
 use crate::denoise::stream::StreamDenoiser;
 use crate::denoise::{check_smooth_frames, Denoiser, TractMask};
-use crate::engine::{top_scores, Backbone, Head};
+use crate::engine::{sigmoid, top_scores, Backbone, Head};
 use crate::perch;
+use crate::resample::StreamResampler;
 use crate::windows::{Window, Windower};
+use oversample_ipc::classifier::WINDOW_SAMPLES;
 use oversample_ipc::classifier::{
     ClassifierError, FromWorker, Method, ModelPart, ModelSlot, ToWorker,
 };
@@ -358,6 +360,32 @@ impl Session {
                 }
                 out.send(FromWorker::Rescored { run, top }, None);
             }
+            ToWorker::Live { req, source_rate } => {
+                let t = now_ms();
+                let Some((_, AudioModel::BirdNet(backbone))) = self.audio.as_ref() else {
+                    out.send(inference_error(req, "BirdNET is not loaded".into()), None);
+                    return;
+                };
+                if source_rate == 0 {
+                    out.send(inference_error(req, "no sample rate".into()), None);
+                    return;
+                }
+                let window = live_window(att.samples.as_deref().unwrap_or_default(), source_rate);
+                match backbone.run(&window) {
+                    Ok(b) => {
+                        let mut payload = b.embedding;
+                        payload.extend(b.logits.iter().map(|&l| sigmoid(l)));
+                        out.send(
+                            FromWorker::Live {
+                                req,
+                                ms: now_ms() - t,
+                            },
+                            Some(&payload),
+                        );
+                    }
+                    Err(e) => out.send(inference_error(req, format!("{e:#}")), None),
+                }
+            }
             ToWorker::Occurrence {
                 req,
                 lat,
@@ -443,6 +471,25 @@ impl Session {
     }
 }
 
+/// The last 3 s of `samples` at BirdNET's rate: resampled from `source_rate`,
+/// then cut or zero-padded at the front to one window.
+pub fn live_window(samples: &[f32], source_rate: u32) -> Vec<f32> {
+    let want_in = (WINDOW_SAMPLES as u64 * source_rate as u64).div_ceil(48_000) as usize;
+    let tail = &samples[samples.len().saturating_sub(want_in)..];
+    let mut buf = Vec::with_capacity(WINDOW_SAMPLES + 1024);
+    let mut r = StreamResampler::new(source_rate, 48_000);
+    r.push(tail, &mut buf);
+    r.finish(&mut buf);
+    if buf.len() >= WINDOW_SAMPLES {
+        buf.drain(..buf.len() - WINDOW_SAMPLES);
+        buf
+    } else {
+        let mut w = vec![0.0; WINDOW_SAMPLES - buf.len()];
+        w.extend(buf);
+        w
+    }
+}
+
 /// A count of blocks for a progress message. A recording has fewer than
 /// `u32::MAX` blocks unless it is over 17 years long at 1 MHz.
 fn progress_count(blocks: u64) -> u32 {
@@ -460,5 +507,37 @@ fn inference_error(run: u32, message: String) -> FromWorker {
     FromWorker::Error {
         run: Some(run),
         error: ClassifierError::Inference { message },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::live_window;
+    use oversample_ipc::classifier::WINDOW_SAMPLES;
+
+    #[test]
+    fn live_window_pads_short_audio_at_the_front() {
+        let w = live_window(&vec![0.5; 48_000], 48_000);
+        assert_eq!(w.len(), WINDOW_SAMPLES);
+        assert_eq!(w[0], 0.0);
+        assert_eq!(w[WINDOW_SAMPLES - 1], 0.5);
+    }
+
+    #[test]
+    fn live_window_keeps_the_last_three_seconds() {
+        let mut s = vec![1.0; 48_000];
+        s.extend(vec![0.25; WINDOW_SAMPLES]);
+        let w = live_window(&s, 48_000);
+        assert_eq!(w.len(), WINDOW_SAMPLES);
+        assert!(w.iter().all(|&v| v == 0.25));
+        // Other rates come out one window long too.
+        assert_eq!(
+            live_window(&vec![0.1; 400_000], 256_000).len(),
+            WINDOW_SAMPLES
+        );
+        assert_eq!(
+            live_window(&vec![0.1; 30_000], 22_050).len(),
+            WINDOW_SAMPLES
+        );
     }
 }
