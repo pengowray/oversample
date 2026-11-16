@@ -9,12 +9,12 @@ import path from "path";
  * gain and playhead stay the same. The noise settings stay with each file.
  *
  * Makes a real denoised copy, so it needs the model file (see denoise.spec.ts):
- * DENOISE_MODEL, or the parity folder of batchi-noisier2noise. Without that
+ * DENOISE_MODEL, or the copy in batchi-noisier2noise. Without that
  * file the tests are skipped.
  */
 const modelPath =
   process.env.DENOISE_MODEL ??
-  path.join(os.homedir(), "projects/batchi-noisier2noise/runs/parity/model.onnx");
+  path.join(os.homedir(), "projects/batchi-noisier2noise/hf/oversample-denoise/oversample-denoise-v2.onnx");
 
 // The pinch gestures that set the zoom and the frequency range need touch.
 test.use({ hasTouch: true });
@@ -77,7 +77,7 @@ function batLikeWav(sampleRate: number, seconds: number): Buffer {
 }
 
 async function serveModel(page: Page) {
-  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
+  await page.route("**/oversample-denoise-v2.onnx", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/octet-stream",

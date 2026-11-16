@@ -154,6 +154,15 @@ pub async fn delete(file: &ModelFile) -> Result<(), ClassifierError> {
     Ok(())
 }
 
+/// Delete the files that earlier versions of the app stored and nothing uses
+/// now ([`super::catalog::RETIRED_FILES`]). Errors are ignored: a file that
+/// cannot be deleted is tried again the next time.
+pub async fn delete_retired() {
+    for file in super::catalog::RETIRED_FILES {
+        let _ = delete(file).await;
+    }
+}
+
 async fn write(file: &ModelFile, bytes: &js_sys::Uint8Array) -> Result<(), ClassifierError> {
     if is_tauri() {
         let len = bytes.length();

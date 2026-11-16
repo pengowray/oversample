@@ -8,13 +8,14 @@ import path from "path";
  * the progress, and the denoised copy in the file list.
  *
  * The model is not in the repository. The test serves it from a local file in
- * place of the download: DENOISE_MODEL, or the parity folder that
- * batchi-noisier2noise's reference.py writes. Without that file the download
- * test is skipped. The file must be the one the catalog's size and hash name.
+ * place of the download: DENOISE_MODEL, or the copy in batchi-noisier2noise
+ * (hf/oversample-denoise/oversample-denoise-v2.onnx). Without that file the
+ * download test is skipped. The file must be the one the catalog's size and
+ * hash name.
  */
 const modelPath =
   process.env.DENOISE_MODEL ??
-  path.join(os.homedir(), "projects/batchi-noisier2noise/runs/parity/model.onnx");
+  path.join(os.homedir(), "projects/batchi-noisier2noise/hf/oversample-denoise/oversample-denoise-v2.onnx");
 
 /** Mono 16-bit WAV: noise with a downward sweep every 100 ms. */
 function batLikeWav(sampleRate: number, seconds: number): Buffer {
@@ -58,7 +59,7 @@ function batLikeWav(sampleRate: number, seconds: number): Buffer {
  * request alone, so the test downloads from the catalog's real URL. */
 async function serveModel(page: Page) {
   if (process.env.DENOISE_REAL_DOWNLOAD) return;
-  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
+  await page.route("**/oversample-denoise-v2.onnx", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/octet-stream",
@@ -101,7 +102,7 @@ test("a 44.1 kHz recording is denoised and the copy is added to the file list", 
   page.on("pageerror", (e) => errors.push(e.message));
 
   await openRecording(page, "bird-rate.wav", batLikeWav(44_100, 6));
-  await expect(page.getByText("Model: trained on bat recordings")).toBeVisible();
+  await expect(page.getByText("Model: trained on bat and bird recordings")).toBeVisible();
   const button = page.getByRole("button", { name: "Make denoised copy" });
   await expect(button).toBeEnabled();
   await button.click();
@@ -125,7 +126,7 @@ test("Make denoised copy downloads the model and adds the copy to the file list"
   page.on("pageerror", (e) => errors.push(e.message));
 
   await openRecording(page, "pass.wav", batLikeWav(384_000, 2.5));
-  await expect(page.getByText("Model: trained on bat recordings")).toBeVisible();
+  await expect(page.getByText("Model: trained on bat and bird recordings")).toBeVisible();
   await expect(page.getByText("Adds a copy and keeps the original.")).toBeVisible();
   await expect(page.getByText("Downloads the model first: 0.3 MB, once.")).toBeVisible();
   await page.screenshot({ path: "test-results/denoise-idle.png" });

@@ -36,8 +36,9 @@ pub enum FileKind {
     /// eBird code for birds, a number for others), scientific name, English
     /// name, tab-separated.
     GeomodelLabels,
-    /// The learned bat-call denoiser: STFT features in, a gain for every bin
-    /// out. Not a classifier; it has its own worker (`src/denoise.rs`).
+    /// The learned denoiser for bat and bird recordings: STFT features in, a
+    /// gain for every bin out. Not a classifier; it has its own worker
+    /// (`src/denoise.rs`).
     Denoiser,
 }
 
@@ -93,15 +94,32 @@ pub const PERCH_LABELS_REVISION: &str = "c3c3c816976a6c1bb75140b8fbaef7397a6f708
 /// v3.0.4 from birdnet-team/geomodel, Apache 2.0).
 pub const GEOMODEL_REVISION: &str = "e4a58d521af276de0c69a9cf8348d431e97854e3";
 
-/// The bat-call denoiser, from the `batchi-noisier2noise` project. The weights
-/// are kept out of the app and its repository, and downloaded when asked for.
+/// The denoiser for bat and bird recordings (v2), from the
+/// `batchi-noisier2noise` project. The weights are kept out of the app and its
+/// repository, and downloaded when asked for.
 pub const DENOISER: ModelFile = ModelFile {
+    id: "oversample-denoise-v2.onnx",
+    url: "https://huggingface.co/pengowray/oversample-denoise/resolve/051830ad31679ff5825fff801d8c0b57a98e6bcd/oversample-denoise-v2.onnx",
+    size: 263_936,
+    sha256: "8f6f6e864409cfc83c5f4844d882dbd7c396053b16e172405a0c8e27fe4a066a",
+    kind: FileKind::Denoiser,
+};
+
+/// The denoiser before v2, trained on bat recordings only. No longer used:
+/// the app deletes it from the device when it finds it (see
+/// [`RETIRED_FILES`]).
+pub const DENOISER_V1: ModelFile = ModelFile {
     id: "oversample-bat-denoise-v1.onnx",
     url: "https://huggingface.co/pengowray/oversample-bat-denoise/resolve/bb824d1c2431ab3cb9f422751350faddfd590dfc/oversample-bat-denoise-v1.onnx",
     size: 263_936,
     sha256: "87799f99479976887030e1d962c8a8c40b4e994777c8aee7fdfac2cd9567326d",
     kind: FileKind::Denoiser,
 };
+
+/// Files that earlier versions of the app downloaded and that nothing uses
+/// now. They are not in [`all_files`], so they are never downloaded, read or
+/// listed; the app only deletes them ([`retired_file_by_id`]).
+pub const RETIRED_FILES: [&ModelFile; 1] = [&DENOISER_V1];
 
 pub const GEOMODEL: ModelFile = ModelFile {
     id: "birdnet-geomodel-v3.0.4-fp32-b1.onnx",
@@ -322,6 +340,12 @@ pub fn file_by_id(id: &str) -> Option<&'static ModelFile> {
     all_files().find(|f| f.id == id)
 }
 
+/// The retired file stored under `id`, if any. The Tauri command that deletes
+/// a file accepts these names too.
+pub fn retired_file_by_id(id: &str) -> Option<&'static ModelFile> {
+    RETIRED_FILES.into_iter().find(|f| f.id == id)
+}
+
 /// Licence and credit for a method, to show with its results and in About.
 #[derive(Clone, Copy, Debug)]
 pub struct Attribution {
@@ -416,7 +440,7 @@ mod tests {
 
     #[test]
     fn ids_are_unique_and_safe() {
-        let ids: Vec<&str> = all_files().map(|f| f.id).collect();
+        let ids: Vec<&str> = all_files().chain(RETIRED_FILES).map(|f| f.id).collect();
         let mut sorted = ids.clone();
         sorted.sort();
         sorted.dedup();
@@ -426,6 +450,16 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')));
         }
+    }
+
+    #[test]
+    fn retired_files_are_not_in_the_catalog() {
+        for f in RETIRED_FILES {
+            assert!(file_by_id(f.id).is_none(), "{}", f.id);
+            assert_eq!(retired_file_by_id(f.id), Some(f));
+        }
+        assert!(retired_file_by_id(DENOISER.id).is_none());
+        assert!(DENOISER.url.ends_with(DENOISER.id));
     }
 
     #[test]

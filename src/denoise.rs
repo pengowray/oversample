@@ -45,22 +45,38 @@ pub struct Model {
     pub min_rate: u32,
 }
 
-/// The bat model. It was trained on bat recordings from 250 to 500 kHz, used
-/// sample for sample, and checked by eye at 192, 256, 384 and 500 kHz
-/// (2026-11-14). It works on spectrogram bins and frames, not on hertz, and in
-/// a trial on bird recordings at 22.05, 32, 44.1 and 48 kHz it took about
-/// 12 dB off the hiss and kept loud song (2026-11-15, the "Bird pilot" section
-/// of batchi-noisier2noise's README). Not tried below 22.05 kHz.
-pub const BAT_MODEL: Model = Model {
+/// The model for bat and bird recordings (v2). It was trained on 203 bat
+/// recordings at 250 to 500 kHz and 461 bird recordings at 22 to 96 kHz
+/// (nearly all at 44.1 or 48 kHz), each used sample for sample at its own
+/// rate (the model card in batchi-noisier2noise's `hf/oversample-denoise`).
+/// It works on spectrogram bins and frames, not on hertz. The app does not
+/// run it below 22.05 kHz.
+pub const DENOISE_MODEL: Model = Model {
     file: &catalog::DENOISER,
-    trained_on: "bat recordings",
+    trained_on: "bat and bird recordings",
     min_rate: 22_050,
 };
 
-/// The model "Make denoised copy" uses. There is one model today; a choice
-/// between models would be made here.
+/// The model "Make denoised copy" uses, for every recording.
 pub fn model() -> &'static Model {
-    &BAT_MODEL
+    &DENOISE_MODEL
+}
+
+/// What the worker does to the network's gain: the smoothed chain, which
+/// leaves fewer patches of noise than the plain gain.
+const GAIN: DenoiseGain = DenoiseGain::Smoothed;
+
+/// Frames in the smoothed gain's median (5 bins by this many frames of 128
+/// samples) for a recording read at `sample_rate` Hz, after any
+/// time-expansion correction. Over 96 kHz it is 3 frames (1 ms at 384 kHz):
+/// 9 frames are longer than a short bat call and take about 5 dB off pulses
+/// under 2 ms. At 96 kHz and below it is 9.
+pub fn smooth_frames(sample_rate: u32) -> u32 {
+    if sample_rate > 96_000 {
+        3
+    } else {
+        oversample_ipc::classifier::DEFAULT_SMOOTH_FRAMES
+    }
 }
 
 /// Longest recording that is denoised in memory, in samples over all the
@@ -115,7 +131,8 @@ pub mod text {
     pub const ADDED: &str = "Denoised copy added to the file list";
     pub const TOOLTIP: &str = "Lowers steady background noise such as hiss, keeping at least 10% of the original sound at every frequency.";
 
-    /// The status area's first line: "Model: trained on bat recordings".
+    /// The status area's first line: "Model: trained on bat and bird
+    /// recordings".
     pub fn model_line(trained_on: &str) -> String {
         format!("Model: trained on {trained_on}")
     }
@@ -345,8 +362,17 @@ fn stop_worker() {
 }
 
 /// Look up whether the model file is on this device, for the menu's help line.
+/// The first time in a session it also deletes the old model files that
+/// earlier versions downloaded ([`store::delete_retired`]).
 pub fn check_model_stored(state: AppState) {
+    thread_local! {
+        static RETIRED_DELETED: Cell<bool> = const { Cell::new(false) };
+    }
+    let delete_retired = !RETIRED_DELETED.with(|d| d.replace(true));
     wasm_bindgen_futures::spawn_local(async move {
+        if delete_retired {
+            store::delete_retired().await;
+        }
         let stored = store::is_downloaded(model().file).await;
         state.denoise.model_stored().set(Some(stored));
     });
@@ -532,16 +558,19 @@ async fn run(state: AppState, generation: u32) -> Result<(), String> {
                 drop(samples);
                 // Posted by its buffer so the samples move instead of copying.
                 let obj_value: JsValue = array.buffer().into();
+                let smooth_frames = smooth_frames(sample_rate);
                 let start = if channels == 1 {
                     ToWorker::DenoiseStart {
                         run: run_id,
-                        gain: DenoiseGain::Plain,
+                        gain: GAIN,
+                        smooth_frames,
                     }
                 } else {
                     ToWorker::DenoiseStartChannels {
                         run: run_id,
                         channels,
-                        gain: DenoiseGain::Plain,
+                        gain: GAIN,
+                        smooth_frames,
                     }
                 };
                 post_samples(&start, &array, &obj_value);
@@ -708,7 +737,8 @@ async fn denoise_into(
                         run: run_id,
                         channels,
                         frames: total as f64,
-                        gain: DenoiseGain::Plain,
+                        gain: GAIN,
+                        smooth_frames: smooth_frames(file.audio.sample_rate),
                     },
                     None,
                 );
@@ -802,6 +832,29 @@ pub fn denoised_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordings_over_96_khz_get_a_median_of_3_frames() {
+        assert_eq!(smooth_frames(22_050), 9);
+        assert_eq!(smooth_frames(48_000), 9);
+        assert_eq!(smooth_frames(96_000), 9);
+        assert_eq!(smooth_frames(96_001), 3);
+        assert_eq!(smooth_frames(384_000), 3);
+        // A ×10 time-expanded file read at its header's 38.4 kHz, and the
+        // same file after "Correct for ×10 time expansion" (384 kHz).
+        assert_eq!(smooth_frames(38_400), 9);
+        assert_eq!(smooth_frames(384_000), 3);
+    }
+
+    #[test]
+    fn every_recording_uses_the_bat_and_bird_model() {
+        assert_eq!(model().file.id, "oversample-denoise-v2.onnx");
+        assert_eq!(
+            text::model_line(model().trained_on),
+            "Model: trained on bat and bird recordings"
+        );
+        assert_eq!(model().min_rate, 22_050);
+    }
 
     #[test]
     fn the_result_is_named_after_the_recording() {

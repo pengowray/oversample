@@ -3,7 +3,8 @@
 //! bytes here in parts, as raw IPC bodies; WebKitGTK has no OPFS to keep them in.
 //!
 //! Only file names from the catalog (`oversample_ipc::classifier::catalog`) are
-//! accepted, so no command can touch a path outside `models/`.
+//! accepted, so no command can touch a path outside `models/`. Deleting also
+//! accepts the catalog's retired files, which earlier versions stored.
 
 use oversample_ipc::classifier::catalog;
 use std::io::{Seek, SeekFrom, Write};
@@ -110,10 +111,11 @@ pub fn models_read(app: tauri::AppHandle, file: String) -> Result<tauri::ipc::Re
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Delete a stored file (and any unfinished part). Not stored is not an error.
+/// Delete a stored file (and any unfinished part), from the catalog or its
+/// retired files. Not stored is not an error.
 #[tauri::command]
 pub fn models_delete(app: tauri::AppHandle, file: String) -> Result<(), String> {
-    let file = checked(&file)?;
+    let file = catalog::retired_file_by_id(&file).map_or_else(|| checked(&file), Ok)?;
     let dir = models_dir(&app)?;
     let _ = std::fs::remove_file(dir.join(part_name(file.id)));
     match std::fs::remove_file(dir.join(file.id)) {

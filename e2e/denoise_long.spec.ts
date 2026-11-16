@@ -21,7 +21,7 @@ import path from "path";
  */
 const modelPath =
   process.env.DENOISE_MODEL ??
-  path.join(os.homedir(), "projects/batchi-noisier2noise/runs/parity/model.onnx");
+  path.join(os.homedir(), "projects/batchi-noisier2noise/hf/oversample-denoise/oversample-denoise-v2.onnx");
 
 /** The folder in the browser's storage that the copies are written to. */
 const STORAGE_DIR = "oversample-audio";
@@ -114,7 +114,7 @@ function quietLevel(shape: Shape, channel: number): number {
 }
 
 async function serveModel(page: Page) {
-  await page.route("**/oversample-bat-denoise-v1.onnx", (route) =>
+  await page.route("**/oversample-denoise-v2.onnx", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/octet-stream",
