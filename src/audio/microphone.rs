@@ -150,7 +150,8 @@ pub async fn ensure_usb_permission(state: &AppState, device_name: &str) {
     }
 }
 
-/// Query the default cpal input device's supported sample rates without opening the mic.
+/// Query the chosen (or default) cpal input device's supported sample rates
+/// without opening the mic.
 /// Updates `state.mic.supported_rates()` with the result.
 pub async fn query_cpal_supported_rates(state: &AppState) {
     if !state.is_tauri {
@@ -164,10 +165,12 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
         Ok(v) => v,
         Err(_) => return,
     };
-    for dev in &result.devices {
-        if !dev.is_default {
-            continue;
-        }
+    // The chosen device, or the default when none is chosen.
+    let selected = state.mic.selected_device().get_untracked();
+    if let Some(dev) = result.devices.iter().find(|d| match &selected {
+        Some(name) => &d.name == name,
+        None => d.is_default,
+    }) {
         let mut rates = std::collections::BTreeSet::new();
         for range in &dev.sample_rate_ranges {
             rates.insert(range.min);
@@ -182,7 +185,6 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
         if !rates_vec.is_empty() {
             state.mic.supported_rates().set(rates_vec);
         }
-        break;
     }
 }
 
@@ -220,8 +222,7 @@ pub async fn query_mic_info(state: &AppState) {
             )
             .await
             {
-                // Read the channel count of the chosen device (or the default),
-                // for the Channels row.
+                // The chosen device, or the default when none is chosen.
                 let selected = state.mic.selected_device().get_untracked();
                 let chosen = result.devices.iter().find(|d| match &selected {
                     Some(name) => &d.name == name,
@@ -231,44 +232,41 @@ pub async fn query_mic_info(state: &AppState) {
                     .and_then(|d| d.sample_rate_ranges.iter().map(|r| r.channels).max())
                     .unwrap_or(0);
                 state.mic.cpal_device_channels().set(device_channels as u32);
-                for dev in &result.devices {
-                    if dev.is_default {
-                        let n = dev.name.to_lowercase();
-                        let conn = if n.contains("usb") {
-                            "USB"
-                        } else if n.contains("bluetooth") || n.contains("bt ") {
-                            "Bluetooth"
-                        } else {
-                            "Internal"
-                        };
-                        state.mic.connection_type().set(Some(conn.to_string()));
-                        state.mic.device_name().set(Some(dev.name.clone()));
+                if let Some(dev) = chosen {
+                    let n = dev.name.to_lowercase();
+                    let conn = if n.contains("usb") {
+                        "USB"
+                    } else if n.contains("bluetooth") || n.contains("bt ") {
+                        "Bluetooth"
+                    } else {
+                        "Internal"
+                    };
+                    state.mic.connection_type().set(Some(conn.to_string()));
+                    state.mic.device_name().set(Some(dev.name.clone()));
 
-                        let mut max_rate: u32 = 0;
-                        let mut format_str: Option<String> = None;
-                        for range in &dev.sample_rate_ranges {
-                            if range.max > max_rate {
-                                max_rate = range.max;
-                                format_str = Some(range.format.clone());
-                            }
+                    let mut max_rate: u32 = 0;
+                    let mut format_str: Option<String> = None;
+                    for range in &dev.sample_rate_ranges {
+                        if range.max > max_rate {
+                            max_rate = range.max;
+                            format_str = Some(range.format.clone());
                         }
-                        if max_rate > 0 {
-                            state.mic.sample_rate().set(max_rate);
+                    }
+                    if max_rate > 0 {
+                        state.mic.sample_rate().set(max_rate);
+                    }
+                    if let Some(fmt) = format_str {
+                        let bits: u16 = match fmt.as_str() {
+                            "I16" => 16,
+                            "I24" => 24,
+                            "I32" => 32,
+                            "F32" => 32,
+                            _ => 0,
+                        };
+                        if bits > 0 {
+                            state.mic.bits_per_sample().set(bits);
+                            state.mic.is_float().set(fmt == "F32");
                         }
-                        if let Some(fmt) = format_str {
-                            let bits: u16 = match fmt.as_str() {
-                                "I16" => 16,
-                                "I24" => 24,
-                                "I32" => 32,
-                                "F32" => 32,
-                                _ => 0,
-                            };
-                            if bits > 0 {
-                                state.mic.bits_per_sample().set(bits);
-                                state.mic.is_float().set(fmt == "F32");
-                            }
-                        }
-                        break;
                     }
                 }
             }

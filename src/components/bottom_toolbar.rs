@@ -1099,7 +1099,11 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
     // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
     // when nothing usable is saved.
     let current = move || {
-        let pick = state.mic.channel_pick().get();
+        let device = state.mic.device_name().get();
+        let pick = state
+            .mic
+            .channel_picks()
+            .with(|p| crate::state::channel_pick_for(p, device.as_deref()));
         if !pick.channels.is_empty() && pick.channels.iter().all(|&c| c < channels) {
             crate::state::format_channel_pick(&pick)
         } else {
@@ -1108,8 +1112,10 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
     };
     let on_change = move |ev: leptos::ev::Event| {
         let val = leptos::prelude::event_target_value(&ev);
-        state.mic.channel_pick().set(crate::state::parse_channel_pick(&val));
-        crate::settings::set_raw(crate::settings::keys::MIC_CHANNEL_PICK, &val);
+        let Some(device) = state.mic.device_name().get_untracked() else {
+            return;
+        };
+        crate::state::set_channel_pick(&state, &device, crate::state::parse_channel_pick(&val));
         restart_listening(state);
     };
     let pairs: Vec<u32> = (3..channels).step_by(2).collect();

@@ -36,10 +36,12 @@ pub mod keys {
     pub const MIC_BIT_DEPTH_OVERRIDES: &str = "oversample_mic_bit_depth_overrides";
     /// The mic panel's Channels setting: "mono" or "stereo".
     pub const MIC_CHANNEL_MODE: &str = "oversample_mic_channel_mode";
-    /// The channels to record from a device with more than 2 channels:
-    /// 1-based, "5,6" for a pair or "5" for one, or "avg" for channels 1 and 2
-    /// averaged. Unset, empty or the old "mix" means channels 1 and 2 in stereo.
-    pub const MIC_CHANNEL_PICK: &str = "oversample_mic_usb_channels";
+    /// JSON map of mic device name -> the channels to record from it, for
+    /// devices with more than 2 channels: 1-based, "5,6" for a pair or "5" for
+    /// one, or "avg" for channels 1 and 2 averaged. A device with no entry
+    /// records channels 1 and 2 in stereo. (Replaces the single
+    /// "oversample_mic_usb_channels" setting, which is no longer read.)
+    pub const MIC_CHANNEL_PICKS: &str = "oversample_mic_channel_picks";
     /// The Export panel's WAV bit depth: "same", "16" or "float".
     pub const EXPORT_WAV_DEPTH: &str = "oversample_export_wav_depth";
     /// The Export panel's "Normalize peak to -3 dBFS" checkbox.
@@ -85,6 +87,20 @@ pub fn get_mic_bit_depth_overrides() -> std::collections::HashMap<String, u16> {
 pub fn set_mic_bit_depth_overrides(map: &std::collections::HashMap<String, u16>) {
     if let Ok(s) = serde_json::to_string(map) {
         set_raw(keys::MIC_BIT_DEPTH_OVERRIDES, &s);
+    }
+}
+
+/// Load the per-device Channels picks (device name -> pick as saved).
+pub fn get_mic_channel_picks() -> std::collections::HashMap<String, String> {
+    get_raw(keys::MIC_CHANNEL_PICKS)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the per-device Channels picks.
+pub fn set_mic_channel_picks(map: &std::collections::HashMap<String, String>) {
+    if let Ok(s) = serde_json::to_string(map) {
+        set_raw(keys::MIC_CHANNEL_PICKS, &s);
     }
 }
 

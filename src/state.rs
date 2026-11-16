@@ -1525,7 +1525,13 @@ pub fn parse_channel_pick(v: &str) -> ChannelPick {
     }
     let picked: Option<Vec<u32>> = v
         .split(',')
-        .map(|c| c.trim().parse::<u32>().ok().filter(|&c| c >= 1).map(|c| c - 1))
+        .map(|c| {
+            c.trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|&c| c >= 1)
+                .map(|c| c - 1)
+        })
         .collect();
     match picked {
         Some(p) if (1..=2).contains(&p.len()) => ChannelPick {
@@ -1536,7 +1542,7 @@ pub fn parse_channel_pick(v: &str) -> ChannelPick {
     }
 }
 
-/// A pick as the `MIC_CHANNEL_PICK` setting.
+/// A pick as saved in the `MIC_CHANNEL_PICKS` setting.
 pub fn format_channel_pick(pick: &ChannelPick) -> String {
     if pick.averaged {
         return "avg".to_string();
@@ -1546,6 +1552,40 @@ pub fn format_channel_pick(pick: &ChannelPick) -> String {
         .map(|c| (c + 1).to_string())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// The Channels pick saved for `device`, or the default (channels 1 and 2 in
+/// stereo) for a device with none or no name.
+pub fn channel_pick_for(
+    picks: &std::collections::HashMap<String, ChannelPick>,
+    device: Option<&str>,
+) -> ChannelPick {
+    device
+        .and_then(|d| picks.get(d))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The Channels pick for the mic's current device (untracked).
+pub fn current_channel_pick(state: &AppState) -> ChannelPick {
+    let device = state.mic.device_name().get_untracked();
+    state
+        .mic
+        .channel_picks()
+        .with_untracked(|p| channel_pick_for(p, device.as_deref()))
+}
+
+/// Save `pick` for `device`, in the app state and in settings.
+pub fn set_channel_pick(state: &AppState, device: &str, pick: ChannelPick) {
+    state.mic.channel_picks().update(|p| {
+        p.insert(device.to_string(), pick);
+    });
+    let saved = state.mic.channel_picks().with_untracked(|p| {
+        p.iter()
+            .map(|(d, pick)| (d.clone(), format_channel_pick(pick)))
+            .collect()
+    });
+    crate::settings::set_mic_channel_picks(&saved);
 }
 
 impl ChannelMode {
@@ -2135,8 +2175,9 @@ pub struct MicState {
     pub max_bit_depth: u16,
     /// Mono or stereo channel mode for mic recording.
     pub channel_mode: ChannelMode,
-    /// The channels to record from a device with more than 2 channels.
-    pub channel_pick: ChannelPick,
+    /// The channels to record from each device with more than 2 channels, by
+    /// device name. A device with no entry records channels 1 and 2 in stereo.
+    pub channel_picks: std::collections::HashMap<String, ChannelPick>,
     /// Channels in the widest input setting of the native (cpal) mic, from
     /// its device list entry or from opening it. 0 when not known.
     pub cpal_device_channels: u32,
@@ -2763,9 +2804,10 @@ impl AppState {
                 channel_mode: crate::settings::get_raw(crate::settings::keys::MIC_CHANNEL_MODE)
                     .map(|v| ChannelMode::from_key(&v))
                     .unwrap_or_default(),
-                channel_pick: crate::settings::get_raw(crate::settings::keys::MIC_CHANNEL_PICK)
-                    .map(|v| parse_channel_pick(&v))
-                    .unwrap_or_default(),
+                channel_picks: crate::settings::get_mic_channel_picks()
+                    .into_iter()
+                    .map(|(device, v)| (device, parse_channel_pick(&v)))
+                    .collect(),
                 usb_device_channels: 0,
                 cpal_device_channels: 0,
                 device_info: None,
@@ -4376,7 +4418,7 @@ impl AppState {
 
 #[cfg(test)]
 mod usb_channel_setting_tests {
-    use super::{format_channel_pick, parse_channel_pick, ChannelPick};
+    use super::{channel_pick_for, format_channel_pick, parse_channel_pick, ChannelPick};
 
     fn pick(channels: &[u32], averaged: bool) -> ChannelPick {
         ChannelPick {
@@ -4397,5 +4439,16 @@ mod usb_channel_setting_tests {
         assert_eq!(format_channel_pick(&pick(&[4, 5], false)), "5,6");
         assert_eq!(format_channel_pick(&pick(&[0, 1], true)), "avg");
         assert_eq!(format_channel_pick(&ChannelPick::default()), "");
+    }
+
+    #[test]
+    fn each_device_keeps_its_own_pick() {
+        let picks = std::collections::HashMap::from([("X8".to_string(), pick(&[4, 5], false))]);
+        assert_eq!(channel_pick_for(&picks, Some("X8")), pick(&[4, 5], false));
+        assert_eq!(
+            channel_pick_for(&picks, Some("Other")),
+            ChannelPick::default()
+        );
+        assert_eq!(channel_pick_for(&picks, None), ChannelPick::default());
     }
 }

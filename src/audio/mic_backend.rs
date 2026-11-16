@@ -585,7 +585,6 @@ impl MicBackend {
     /// Open the mic. Returns true on success.
     pub async fn open(&self, state: &AppState) -> bool {
         let channel_mode = state.mic.channel_mode().get_untracked();
-        let channel_pick = state.mic.channel_pick().get_untracked();
         let opened = match self {
             MicBackend::Browser => open_web(state).await,
             MicBackend::Cpal => open_cpal(state).await,
@@ -593,6 +592,8 @@ impl MicBackend {
         };
         if opened {
             OPENED_CHANNEL_MODE.with(|m| m.set(channel_mode));
+            // Opening sets the device name the pick is saved under.
+            let channel_pick = crate::state::current_channel_pick(state);
             OPENED_CHANNEL_PICK.with(|c| *c.borrow_mut() = channel_pick);
         }
         opened
@@ -604,7 +605,8 @@ impl MicBackend {
     pub fn channel_mode_changed(&self, state: &AppState) -> bool {
         OPENED_CHANNEL_MODE.with(|m| m.get()) != state.mic.channel_mode().get_untracked()
             || (matches!(self, MicBackend::RawUsb | MicBackend::Cpal)
-                && OPENED_CHANNEL_PICK.with(|c| *c.borrow() != state.mic.channel_pick().get_untracked()))
+                && OPENED_CHANNEL_PICK
+                    .with(|c| *c.borrow() != crate::state::current_channel_pick(state)))
     }
 
     /// Close the mic unconditionally.
@@ -1566,7 +1568,12 @@ async fn open_cpal(state: &AppState) -> bool {
             ChannelMode::Stereo => 2,
         }
     };
-    let pick = state.mic.channel_pick().get_untracked();
+    let pick = state.mic.channel_picks().with_untracked(|p| {
+        let device = selected_device
+            .clone()
+            .or_else(|| state.mic.device_name().get_untracked());
+        crate::state::channel_pick_for(p, device.as_deref())
+    });
     let open_args = oversample_ipc::mic::MicOpenArgs {
         max_sample_rate: (max_sr > 0).then_some(max_sr),
         device_name: selected_device,
@@ -1591,14 +1598,22 @@ async fn open_cpal(state: &AppState) -> bool {
         };
 
     if info.device_channels > 0 {
-        state.mic.cpal_device_channels().set(info.device_channels as u32);
+        state
+            .mic
+            .cpal_device_channels()
+            .set(info.device_channels as u32);
     }
     if info.device_channels > 2 {
-        if pick.channels.iter().any(|&c| c >= info.device_channels as u32) {
-            state.status.message().set(Some(format!(
-                "{} not available: this device has {} channels. Using channels 1 and 2 (stereo).",
-                usb_channel_names(&pick.channels),
-                info.device_channels
+        if pick
+            .channels
+            .iter()
+            .any(|&c| c >= info.device_channels as u32)
+        {
+            state.status.message().set(Some(channel_fallback_message(
+                &pick.channels,
+                info.device_channels as u32,
+                None,
+                false,
             )));
         }
     } else if channels == 2 && info.channels != 2 {
@@ -1734,7 +1749,10 @@ async fn open_usb(state: &AppState) -> bool {
     // more than 2 channels), then open the device via the Kotlin plugin.
     let max_sr = state.mic.max_sample_rate().get_untracked();
     let max_bits = state.mic.max_bit_depth().get_untracked() as u32;
-    let saved_pick = state.mic.channel_pick().get_untracked();
+    let saved_pick = state
+        .mic
+        .channel_picks()
+        .with_untracked(|p| crate::state::channel_pick_for(p, Some(&audio_dev.product_name)));
     let dev_info = query_usb_device_info(state, &device_name).await;
     let plan = dev_info
         .as_ref()
@@ -1780,7 +1798,9 @@ async fn open_usb(state: &AppState) -> bool {
             sample_rate: max_sr as i32,
             max_bit_depth: max_bits as i32,
             interface_number: plan.as_ref().map_or(-1, |p| p.plan.interface_number as i32),
-            alternate_setting: plan.as_ref().map_or(-1, |p| p.plan.alternate_setting as i32),
+            alternate_setting: plan
+                .as_ref()
+                .map_or(-1, |p| p.plan.alternate_setting as i32),
         },
     )
     .await
@@ -1820,14 +1840,12 @@ async fn open_usb(state: &AppState) -> bool {
             && p.plan.interface_number as i32 == info.interface_number
     });
     if let Some(p) = plan.as_ref().filter(|p| p.plan.fell_back) {
-        state
-            .status
-            .message()
-            .set(Some(usb_fallback_message(
-                &saved_pick.channels,
-                p,
-                saved_pick.averaged,
-            )));
+        state.status.message().set(Some(channel_fallback_message(
+            &saved_pick.channels,
+            p.device_channels,
+            Some(p.rate),
+            saved_pick.averaged,
+        )));
     }
     let (channels, stereo) = usb_stream_channels(
         plan.as_ref().map(|p| p.plan.picked.as_slice()),
@@ -2041,7 +2059,7 @@ fn usb_stream_channels(
 }
 
 /// "Channels 5 and 6" or "Channel 5" for 0-based channels.
-fn usb_channel_names(picked: &[u32]) -> String {
+fn channel_names(picked: &[u32]) -> String {
     match picked {
         [a, b] => format!("Channels {} and {}", a + 1, b + 1),
         [a] => format!("Channel {}", a + 1),
@@ -2049,25 +2067,30 @@ fn usb_channel_names(picked: &[u32]) -> String {
     }
 }
 
-/// The status message when the saved USB channel pick can't be streamed and
+/// The status message when the device's saved channel pick can't be used and
 /// channels 1 and 2 are used instead. The saved pick is kept for next time.
-fn usb_fallback_message(saved: &[u32], p: &UsbPlan, averaged: bool) -> String {
-    let saved_names = usb_channel_names(saved);
+/// The pick names a channel past `device_channels`, or else it is not
+/// available at `rate` (USB devices, whose wider settings may lack a rate).
+fn channel_fallback_message(
+    saved: &[u32],
+    device_channels: u32,
+    rate: Option<u32>,
+    averaged: bool,
+) -> String {
+    let saved_names = channel_names(saved);
     let used = if averaged {
         "Using channels 1 and 2 averaged (mono)."
     } else {
         "Using channels 1 and 2 (stereo)."
     };
-    if saved.iter().any(|&c| c >= p.device_channels) {
-        format!(
-            "{saved_names} not available: this device has {} channels. {used}",
-            p.device_channels
-        )
-    } else {
-        format!(
+    match rate {
+        Some(rate) if saved.iter().all(|&c| c < device_channels) => format!(
             "{saved_names} not available at {} on this device. {used}",
-            crate::format_units::sample_rate_khz(p.rate)
-        )
+            crate::format_units::sample_rate_khz(rate)
+        ),
+        _ => format!(
+            "{saved_names} not available: this device has {device_channels} channels. {used}"
+        ),
     }
 }
 
@@ -2114,7 +2137,6 @@ pub fn forget_usb_device_info(state: &AppState) {
     USB_DEVICE_INFO.with(|c| *c.borrow_mut() = None);
     state.mic.usb_device_channels().set(0);
 }
-
 
 async fn close_usb(state: &AppState) {
     if let Err(e) = tauri_invoke_no_args("usb_stop_stream").await {
@@ -2266,20 +2288,44 @@ mod tests {
 
 #[cfg(test)]
 mod usb_channel_tests {
-    use super::usb_stream_channels;
+    use super::{channel_fallback_message, usb_stream_channels};
+
+    #[test]
+    fn the_fallback_message_says_why_the_pick_is_not_used() {
+        assert_eq!(
+            channel_fallback_message(&[4, 5], 4, None, false),
+            "Channels 5 and 6 not available: this device has 4 channels. Using channels 1 and 2 (stereo)."
+        );
+        assert_eq!(
+            channel_fallback_message(&[6], 8, Some(384_000), false),
+            "Channel 7 not available at 384\u{a0}kHz on this device. Using channels 1 and 2 (stereo)."
+        );
+    }
 
     #[test]
     fn a_wide_device_records_its_pick_or_channels_1_and_2_in_stereo() {
-        assert_eq!(usb_stream_channels(Some(&[4, 5]), false, 8, false), (vec![4, 5], true));
-        assert_eq!(usb_stream_channels(Some(&[0, 1]), false, 8, false), (vec![0, 1], true));
-        assert_eq!(usb_stream_channels(Some(&[6]), false, 8, true), (vec![6], false));
+        assert_eq!(
+            usb_stream_channels(Some(&[4, 5]), false, 8, false),
+            (vec![4, 5], true)
+        );
+        assert_eq!(
+            usb_stream_channels(Some(&[0, 1]), false, 8, false),
+            (vec![0, 1], true)
+        );
+        assert_eq!(
+            usb_stream_channels(Some(&[6]), false, 8, true),
+            (vec![6], false)
+        );
         // No plan (the plugin chose the setting): channels 1 and 2 in stereo.
         assert_eq!(usb_stream_channels(None, false, 8, false), (vec![], true));
     }
 
     #[test]
     fn channels_1_and_2_averaged_record_one_channel() {
-        assert_eq!(usb_stream_channels(Some(&[0, 1]), true, 8, true), (vec![0, 1], false));
+        assert_eq!(
+            usb_stream_channels(Some(&[0, 1]), true, 8, true),
+            (vec![0, 1], false)
+        );
     }
 
     #[test]
