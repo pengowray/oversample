@@ -33,9 +33,29 @@ pub async fn tauri_invoke(cmd: &str, args: &JsValue) -> Result<JsValue, String> 
         .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
 }
 
-/// Invoke a Tauri command with `body` as the raw request body (no JSON), and
-/// `headers` as request headers. The command reads them from its
-/// `tauri::ipc::Request` (`InvokeBody::Raw` and `headers()`).
+/// True in Android's webview, which cannot send raw IPC bodies: Tauri turns a
+/// `Uint8Array` there into a JSON array of numbers.
+pub fn is_android() -> bool {
+    web_sys::window()
+        .and_then(|w| w.navigator().user_agent().ok())
+        .is_some_and(|ua| ua.to_ascii_lowercase().contains("android"))
+}
+
+/// The most bytes to send in one [`tauri_invoke_raw`] call. On Android each
+/// call carries the bytes as base64 text (about 1.4 MB for this limit).
+pub fn raw_part_limit() -> u32 {
+    if is_android() {
+        1024 * 1024
+    } else {
+        8 * 1024 * 1024
+    }
+}
+
+/// Invoke a Tauri command with `body` as its bytes and `headers` as request
+/// headers. The command reads them with `crate::ipc_bytes::body` and
+/// `crate::ipc_bytes::header` in `src-tauri`. Elsewhere the bytes go as the
+/// raw request body; on Android, as base64 text in a `{"base64": ...}` JSON
+/// body. Keep each call within [`raw_part_limit`].
 pub async fn tauri_invoke_raw(
     cmd: &str,
     body: &js_sys::Uint8Array,
@@ -51,8 +71,17 @@ pub async fn tauri_invoke_raw(
     }
     let options = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&options, &JsValue::from_str("headers"), &hdrs);
+    let payload: JsValue = if is_android() {
+        use base64::Engine;
+        let text = base64::engine::general_purpose::STANDARD.encode(body.to_vec());
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("base64"), &text.into());
+        obj.into()
+    } else {
+        body.clone().into()
+    };
     let promise_val = invoke_fn
-        .call3(&tauri, &JsValue::from_str(cmd), body, &options)
+        .call3(&tauri, &JsValue::from_str(cmd), &payload, &options)
         .map_err(|e| format!("Invoke call failed: {:?}", e))?;
     let promise: js_sys::Promise = promise_val
         .dyn_into()

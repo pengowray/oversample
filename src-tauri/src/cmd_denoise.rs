@@ -52,7 +52,7 @@ fn name_from_hex(hex: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| bad())
 }
 
-/// Write the next part of a copy. Raw body; headers `x-copy-name` (the file
+/// Write the next part of a copy. Bytes from [`crate::ipc_bytes::body`]; headers `x-copy-name` (the file
 /// name's UTF-8 bytes in hexadecimal), `x-copy-run` (a number that tells this
 /// copy from an earlier, cancelled one of the same name) and `x-copy-offset`
 /// (byte offset). Offset 0 starts the file.
@@ -61,17 +61,8 @@ pub fn denoise_copy_write(
     app: tauri::AppHandle,
     request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected raw bytes".into());
-    };
-    let header = |name: &str| {
-        request
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-            .ok_or_else(|| format!("missing header {name}"))
-    };
+    let bytes = crate::ipc_bytes::body(&request)?;
+    let header = |name: &str| crate::ipc_bytes::header(&request, name);
     let name = name_from_hex(&header("x-copy-name")?)?;
     let run: u32 = header("x-copy-run")?
         .parse()
@@ -94,7 +85,7 @@ pub fn denoise_copy_write(
         f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
         f
     };
-    f.write_all(bytes).map_err(|e| e.to_string())
+    f.write_all(&bytes).map_err(|e| e.to_string())
 }
 
 /// Finish a copy: check the part file's size and give it its name, replacing

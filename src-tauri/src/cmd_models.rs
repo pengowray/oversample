@@ -1,7 +1,7 @@
 //! Model files for BirdNET and BattyBirdNET, kept in the app data folder's
 //! `models/`. The webview downloads them (with a SHA-256 check) and sends the
-//! bytes here in parts, as raw IPC bodies (base64 text on Android); WebKitGTK has
-//! no OPFS to keep them in.
+//! bytes here in parts (see `crate::ipc_bytes`); WebKitGTK has no OPFS to keep
+//! them in.
 //!
 //! Only file names from the catalog (`oversample_ipc::classifier::catalog`) are
 //! accepted, so no command can touch a path outside `models/`. Deleting also
@@ -42,7 +42,7 @@ pub fn models_sizes(app: tauri::AppHandle) -> Result<Vec<(String, u64)>, String>
         .collect())
 }
 
-/// Write one part of a file being stored. Raw body; headers `x-model-file`
+/// Write one part of a file being stored. Bytes from [`crate::ipc_bytes::body`]; headers `x-model-file`
 /// (catalog id) and `x-model-offset` (byte offset). Offset 0 starts the file
 /// again. Parts go to `<id>.part` until [`models_commit`].
 #[tauri::command]
@@ -50,47 +50,15 @@ pub fn models_write_part(
     app: tauri::AppHandle,
     request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected raw bytes".into());
-    };
-    let header = |name: &str| {
-        request
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-            .ok_or_else(|| format!("missing header {name}"))
-    };
-    let file = header("x-model-file")?;
-    let offset: u64 = header("x-model-offset")?
+    let bytes = crate::ipc_bytes::body(&request)?;
+    let file = checked(&crate::ipc_bytes::header(&request, "x-model-file")?)?;
+    let offset: u64 = crate::ipc_bytes::header(&request, "x-model-offset")?
         .parse()
         .map_err(|_| "bad x-model-offset".to_string())?;
-    write_part(&app, &file, offset, bytes)
-}
-
-/// [`models_write_part`] for Android, whose webview cannot send raw IPC
-/// bodies: Tauri turns a `Uint8Array` there into a JSON array of numbers. The
-/// part comes as base64 text in the JSON arguments instead.
-#[tauri::command]
-pub fn models_write_part_b64(
-    app: tauri::AppHandle,
-    file: String,
-    offset: u64,
-    data: String,
-) -> Result<(), String> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|e| format!("bad base64: {e}"))?;
-    write_part(&app, &file, offset, &bytes)
-}
-
-fn write_part(app: &tauri::AppHandle, file: &str, offset: u64, bytes: &[u8]) -> Result<(), String> {
-    let file = checked(file)?;
     if offset + bytes.len() as u64 > file.size {
         return Err(format!("{} is larger than expected", file.id));
     }
-    let path = models_dir(app)?.join(part_name(file.id));
+    let path = models_dir(&app)?.join(part_name(file.id));
     let mut f = if offset == 0 {
         std::fs::File::create(&path).map_err(|e| e.to_string())?
     } else {
@@ -105,7 +73,7 @@ fn write_part(app: &tauri::AppHandle, file: &str, offset: u64, bytes: &[u8]) -> 
         f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
         f
     };
-    f.write_all(bytes).map_err(|e| e.to_string())?;
+    f.write_all(&bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
 
