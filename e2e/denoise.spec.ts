@@ -397,13 +397,11 @@ test("Strength starts at Normal, its line follows the pick, the arrow keys move 
     "title",
     "Lowers steady background noise such as hiss.",
   );
-  const menuHeight = () =>
-    page.evaluate(
-      () =>
-        document.querySelector(".denoise-strength")!.closest("[class*=panel]")!.getBoundingClientRect()
-          .height,
-    );
-  const height = await menuHeight();
+  // The line under Strength has room for two lines, so the button below it
+  // stays where it is when the pick changes.
+  const button = page.getByRole("button", { name: "Make denoised copy" });
+  const buttonTop = async () => (await button.boundingBox())!.y;
+  const top = await buttonTop();
 
   await heavy.click();
   await expect(heavy).toHaveAttribute("aria-checked", "true");
@@ -411,7 +409,14 @@ test("Strength starts at Normal, its line follows the pick, the arrow keys move 
   await expect(
     page.getByText("Lowers noise by up to 40 dB. Faint sounds may cut in and out."),
   ).toBeVisible();
-  expect(await menuHeight()).toBe(height);
+  expect(await buttonTop()).toBe(top);
+
+  // Space plays the recording when an option does not have the focus.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press(" ");
+  await expect.poll(async () => (await testSnap(page)).isPlaying).toBe(true);
+  await page.keyboard.press(" ");
+  await expect.poll(async () => (await testSnap(page)).isPlaying).toBe(false);
 
   // Tab reaches the picked option only; the arrow keys move the pick and the
   // focus. Space and the arrows do not reach the app's shortcuts.
@@ -494,8 +499,10 @@ test("a Heavy copy is quieter than a Normal copy where there are no calls", asyn
   );
   expect(normal.length).toBe(original.length);
   expect(heavy.length).toBe(original.length);
-  const quietNormal = dB(level(normal, 2.2, 2.8) / level(original, 2.2, 2.8));
-  const quietHeavy = dB(level(heavy, 2.2, 2.8) / level(original, 2.2, 2.8));
+  // The second half of the second without whistles: Heavy's gain falls by
+  // at most 0.16 dB a frame, so it is still falling just after a whistle.
+  const quietNormal = dB(level(normal, 2.5, 2.95) / level(original, 2.5, 2.95));
+  const quietHeavy = dB(level(heavy, 2.5, 2.95) / level(original, 2.5, 2.95));
   console.log(`no calls: Normal ${quietNormal.toFixed(1)} dB, Heavy ${quietHeavy.toFixed(1)} dB`);
   expect(quietHeavy).toBeLessThan(quietNormal - 6);
 });
