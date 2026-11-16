@@ -1,4 +1,4 @@
-// Species map for the Call detection tab: BirdNET's 6,522 classes as faint
+// Species map for the Call detection tab: a model's classes as faint
 // points (positions from research/species-map), the windows of a run as
 // highlighted dots, hover for names. Drawn with Apache ECharts (vendor/,
 // Apache-2.0), which is loaded the first time a map opens.

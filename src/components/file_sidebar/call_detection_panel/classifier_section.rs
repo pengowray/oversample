@@ -661,10 +661,9 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 </div>
                 {lists}
                 {move || top_three(state, method, current_file)}
-                // BirdNET only: BattyBirdNET's regional classifiers give no
-                // usable map (research/species-map/README.md), and the map is
-                // laid out from BirdNET's classes, not Perch's.
-                {(method == Method::BirdNet).then(|| view! {
+                // BattyBirdNET's regional classifiers give no usable map
+                // (research/species-map/README.md).
+                {crate::classifier::species_map::map_spec(method).is_some().then(|| view! {
                     <div class="detection-annotate-row">
                         <button class="psd-btn" on:click=move |_| map_open.set(true)>"Species map"</button>
                     </div>
@@ -673,7 +672,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 // phones, and the dialog must not go with it.
                 {move || map_open.get().then(|| view! {
                     <leptos::portal::Portal>
-                        <SpeciesMapDialog open=map_open current_file=current_file />
+                        <SpeciesMapDialog open=map_open current_file=current_file method=method />
                     </leptos::portal::Portal>
                 })}
             </div>

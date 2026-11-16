@@ -1,12 +1,13 @@
-//! The species map dialog: BirdNET's 6,522 classes as faint points, placed so
-//! that classes the model hears as alike sit together (`research/species-map`),
+//! The species map dialog: a model's classes (BirdNET's or Perch's) as faint
+//! points, placed so that classes the model hears as alike sit together
+//! (`research/species-map`),
 //! with this file's windows as highlighted dots. Drawn by `species-map.js`
 //! with Apache ECharts; positions come from `crate::classifier::species_map`.
 
 use super::classifier_section::show_window;
-use crate::classifier::species_map::{parse_map, place_windows};
+use crate::classifier::species_map::{map_spec, parse_map, place_windows, MapSpec};
 use crate::classifier::summary::{window_kind, WindowKind};
-use crate::classifier::{location, ClassifierRun, Method};
+use crate::classifier::{self, location, ClassifierRun, Method};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
@@ -15,35 +16,46 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-type Map = Arc<Vec<(f32, f32)>>;
+type Map = Arc<Vec<Option<(f32, f32)>>>;
 
 thread_local! {
-    static MAP: std::cell::RefCell<Option<Map>> = const { std::cell::RefCell::new(None) };
+    /// Loaded maps, by file name.
+    static MAPS: std::cell::RefCell<Vec<(&'static str, Map)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-async fn load_map() -> Result<Map, String> {
-    if let Some(m) = MAP.with(|m| m.borrow().clone()) {
+async fn load_map(spec: &'static MapSpec) -> Result<Map, String> {
+    let cached = MAPS.with(|m| {
+        m.borrow()
+            .iter()
+            .find(|(f, _)| *f == spec.file)
+            .map(|(_, m)| m.clone())
+    });
+    if let Some(m) = cached {
         return Ok(m);
     }
-    let bytes = super::super::fetch_bytes("birdnet-map.bin").await?;
+    let bytes = super::super::fetch_bytes(spec.file).await?;
     let m = Arc::new(parse_map(&bytes));
-    MAP.with(|c| *c.borrow_mut() = Some(m.clone()));
+    MAPS.with(|c| c.borrow_mut().push((spec.file, m.clone())));
     Ok(m)
 }
 
-/// BirdNET's classes as `species-map.js` draws them: `[x, y, common, scientific]`.
-fn species_json(run: &ClassifierRun, map: &[(f32, f32)]) -> serde_json::Value {
+/// The model's classes as `species-map.js` draws them: `[x, y, common,
+/// scientific]`, or `["-", "-", "", ""]` (not drawn) for a class with no position.
+fn species_json(run: &ClassifierRun, map: &[Option<(f32, f32)>]) -> serde_json::Value {
     let species: Vec<_> = map
         .iter()
         .enumerate()
-        .map(|(i, &(x, y))| {
+        .map(|(i, p)| {
+            let Some((x, y)) = *p else {
+                return serde_json::json!(["-", "-", "", ""]);
+            };
             let l = run.labels.get(i);
-            (
+            serde_json::json!([
                 round4(x),
                 round4(y),
                 l.map_or("", |l| l.common.as_str()),
                 l.map_or("", |l| l.scientific.as_str()),
-            )
+            ])
         })
         .collect();
     serde_json::json!(species)
@@ -60,12 +72,13 @@ fn round4(v: f32) -> f32 {
 /// place and month; those get a flag after their name.
 fn windows_json(
     run: &ClassifierRun,
-    map: &[(f32, f32)],
+    map: &[Option<(f32, f32)>],
+    radius: f32,
     min: f32,
     selected: Option<usize>,
     unlikely: &dyn Fn(u16) -> bool,
 ) -> serde_json::Value {
-    let placed = place_windows(run, map, min);
+    let placed = place_windows(run, map, radius, min);
     let mut found: Vec<u16> = placed
         .iter()
         .map(|p| run.windows[p.index].top[0].class)
@@ -121,8 +134,10 @@ fn call(name: &str, args: &[&JsValue]) -> Option<JsValue> {
 pub(super) fn SpeciesMapDialog(
     open: RwSignal<bool>,
     current_file: Memo<Option<u64>>,
+    method: Method,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
+    let spec = map_spec(method).expect("species map opened for a model without one");
     let chart_ref = NodeRef::<leptos::html::Div>::new();
     // None while loading; then the map, or why it could not load.
     let map: RwSignal<Option<Result<Map, String>>> = RwSignal::new(None);
@@ -130,7 +145,7 @@ pub(super) fn SpeciesMapDialog(
     // True while a species in the results is flagged, so the legend names the flag.
     let any_unlikely = RwSignal::new(false);
     spawn_local(async move {
-        let m = load_map().await;
+        let m = load_map(spec).await;
         map.set(Some(m));
     });
 
@@ -141,7 +156,7 @@ pub(super) fn SpeciesMapDialog(
             return;
         };
         let times = state.classifier.results().with_untracked(|m| {
-            m.get(&(file, Method::BirdNet))
+            m.get(&(file, method))
                 .and_then(|r| r.windows.get(i))
                 .map(|w| (w.start_s, w.end_s))
         });
@@ -161,19 +176,19 @@ pub(super) fn SpeciesMapDialog(
         let Some(file) = current_file.get() else {
             return;
         };
-        let min = state.call_detection.min_confidence().get();
+        let min = classifier::min_confidence(state, method);
         let selected = state.call_detection.selected_window().get();
         // Results arrive in batches while a run is going; most batches change
         // nothing on the map, so redraw only when what is drawn changes, and
-        // send the 6,522 species points only when the file changes.
+        // send the species points only when the file changes.
         let json = state.classifier.results().with(|r| {
-            let run = r.get(&(file, Method::BirdNet))?;
+            let run = r.get(&(file, method))?;
             let unlikely = |class: u16| {
                 run.labels
                     .get(class as usize)
-                    .is_some_and(|l| location::unlikely_here(state, file, Method::BirdNet, l))
+                    .is_some_and(|l| location::unlikely_here(state, file, method, l))
             };
-            let mut d = windows_json(run, &m, min, selected, &unlikely);
+            let mut d = windows_json(run, &m, spec.radius, min, selected, &unlikely);
             let any = d["unlikely"].as_array().is_some_and(|a| !a.is_empty());
             if any_unlikely.get_untracked() != any {
                 any_unlikely.set(any);
@@ -225,10 +240,10 @@ pub(super) fn SpeciesMapDialog(
     // the selected window is one of them (only then is an amber dot shown).
     let drawn_windows = move || {
         let file = current_file.get()?;
-        let min = state.call_detection.min_confidence().get();
+        let min = classifier::min_confidence(state, method);
         let selected = state.call_detection.selected_window().get();
         state.classifier.results().with(|r| {
-            r.get(&(file, Method::BirdNet)).map(|run| {
+            r.get(&(file, method)).map(|run| {
                 let shown = |i: usize| window_kind(run, i, min) == WindowKind::Species;
                 let n = (0..run.windows.len()).filter(|&i| shown(i)).count();
                 (
@@ -284,7 +299,7 @@ pub(super) fn SpeciesMapDialog(
                 </div>
                 <div class="species-map-notes">
                     <ul class="species-map-legend">
-                        <li><span class="map-key map-key-species"></span>"BirdNET's 6,522 species and sounds"</li>
+                        <li><span class="map-key map-key-species"></span>{spec.classes}</li>
                         <li><span class="map-key map-key-found"></span>"Species in the results"</li>
                         <li><span class="map-key map-key-window"></span>{windows_label}</li>
                         <Show when=move || any_unlikely.get()>
@@ -294,8 +309,8 @@ pub(super) fn SpeciesMapDialog(
                             <li><span class="map-key map-key-selected"></span>"Selected window"</li>
                         </Show>
                     </ul>
-                    <p>"Species that BirdNET hears as alike sit close together. Scroll or pinch to zoom. Click a window to select it."</p>
-                    <p class="detection-status-note">"Positions from BirdNET V2.4's classifier weights. CC BY-NC-SA 4.0."</p>
+                    <p>{format!("Species that {} hears as alike sit close together. Scroll or pinch to zoom. Click a window to select it.", spec.model)}</p>
+                    <p class="detection-status-note">{spec.source}</p>
                 </div>
             </div>
         </div>
