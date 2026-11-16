@@ -22,7 +22,8 @@ xc-lib = { path = "../xc-lib" }
 oversample-core = { path = "../oversample-core" }
 oversample-ipc = { path = "../oversample-ipc" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
-tokio = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["fs", "io-util", "time"] }
+sha2 = "0.11"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.17"
 
