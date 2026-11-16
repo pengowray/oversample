@@ -45,23 +45,6 @@ pub fn stream_finalized_to_shared_fd(
 }
 
 #[tauri::command]
-pub fn save_recording(
-    app: tauri::AppHandle,
-    filename: String,
-    data: Vec<u8>,
-) -> Result<String, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("recordings");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&filename);
-    std::fs::write(&path, &data).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
 pub fn mic_open(
     state: tauri::State<MicMutex>,
     max_sample_rate: Option<u32>,

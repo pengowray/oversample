@@ -71,11 +71,4 @@ class MainActivity : TauriActivity() {
     geolocationPlugin?.handlePermissionResult(requestCode, grantResults)
     audioServicePlugin?.handlePermissionResult(requestCode, grantResults)
   }
-
-  @Suppress("DEPRECATION")
-  override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-    super.onActivityResult(requestCode, resultCode, data)
-    // Forward SAF picker results to media store plugin
-    mediaStorePlugin?.handleActivityResult(requestCode, resultCode, data)
-  }
 }

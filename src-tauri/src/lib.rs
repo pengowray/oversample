@@ -71,7 +71,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            cmd_mic::save_recording,
             cmd_mic::mic_open,
             cmd_mic::mic_close,
             cmd_mic::mic_start_recording,
@@ -85,6 +84,8 @@ pub fn run() {
             cmd_audio_files::read_file_bytes,
             cmd_audio_files::read_file_range,
             cmd_audio_files::read_fd_range,
+            cmd_save::save_open_dialog,
+            cmd_save::save_open_recording,
             cmd_save::save_adopt_fd,
             cmd_save::save_write,
             cmd_save::save_close,
@@ -115,7 +116,6 @@ pub fn run() {
             cmd_annotations::read_central_annotations,
             cmd_annotations::write_central_annotations,
             cmd_annotations::export_annotations_file,
-            cmd_annotations::save_export_file,
             cmd_annotations::open_file_dialog,
             cmd_models::models_sizes,
             cmd_models::models_download,

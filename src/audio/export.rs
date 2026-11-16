@@ -2,7 +2,7 @@
 
 use crate::state::store_fields::*;
 use leptos::prelude::*;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::JsCast;
 
 use crate::annotations::{Annotation, AnnotationKind, Region};
 use crate::audio::playback::apply_gain;
@@ -526,12 +526,12 @@ async fn save_export_to_media_store(
     relative_path: &str,
     mime: &str,
 ) -> ExportSave {
-    match crate::shared_storage::save(data, filename, relative_path, mime).await {
-        Ok(crate::shared_storage::SharedSave::Saved(path)) => {
+    match crate::native_save::save_to_shared_storage(data, filename, relative_path, mime).await {
+        Ok(crate::native_save::SharedSave::Saved(path)) => {
             log::info!("Export saved to shared storage: {path}");
             ExportSave::Saved(path)
         }
-        Ok(crate::shared_storage::SharedSave::NeedsRetry) => {
+        Ok(crate::native_save::SharedSave::NeedsRetry) => {
             // Pre-Q first run: storage permission was just granted and nothing
             // is written yet. Don't report this as a successful save.
             log::warn!("Export not saved (permission/retry) — needs another tap");
@@ -546,31 +546,17 @@ async fn save_export_to_media_store(
 
 /// Desktop: write export bytes through a native "Save As" dialog.
 async fn save_export_via_dialog(data: &[u8], filename: &str) -> ExportSave {
-    use crate::tauri_bridge::tauri_invoke;
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("filename"),
-        &JsValue::from_str(filename),
-    )
-    .ok();
-    let array = js_sys::Uint8Array::new_with_length(data.len() as u32);
-    array.copy_from(data);
-    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
-
-    match tauri_invoke("save_export_file", &args.into()).await {
-        Ok(result) => {
-            let path = result.as_string().unwrap_or_default();
-            if path.is_empty() {
-                log::info!("Export cancelled");
-                ExportSave::Cancelled
-            } else {
-                log::info!("Export saved to: {}", path);
-                ExportSave::Saved(path)
-            }
+    match crate::native_save::save_with_dialog(data, filename).await {
+        Ok(Some(path)) => {
+            log::info!("Export saved to: {path}");
+            ExportSave::Saved(path)
+        }
+        Ok(None) => {
+            log::info!("Export cancelled");
+            ExportSave::Cancelled
         }
         Err(e) => {
-            log::error!("Export save failed: {}", e);
+            log::error!("Export save failed: {e}");
             ExportSave::Failed
         }
     }

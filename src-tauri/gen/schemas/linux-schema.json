@@ -2349,6 +2349,12 @@
           "markdownDescription": "Enables the cancelRecordingEntry command without any pre-configured scope."
         },
         {
+          "description": "Enables the cleanupPendingEntries command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-cleanupPendingEntries",
+          "markdownDescription": "Enables the cleanupPendingEntries command without any pre-configured scope."
+        },
+        {
           "description": "Enables the createExportEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:allow-createExportEntry",
@@ -2359,12 +2365,6 @@
           "type": "string",
           "const": "media-store:allow-createRecordingEntry",
           "markdownDescription": "Enables the createRecordingEntry command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the exportFile command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:allow-exportFile",
-          "markdownDescription": "Enables the exportFile command without any pre-configured scope."
         },
         {
           "description": "Enables the finalizeRecordingEntry command without any pre-configured scope.",
@@ -2385,12 +2385,6 @@
           "markdownDescription": "Enables the openRecordingForRead command without any pre-configured scope."
         },
         {
-          "description": "Enables the saveToSharedStorage command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:allow-saveToSharedStorage",
-          "markdownDescription": "Enables the saveToSharedStorage command without any pre-configured scope."
-        },
-        {
           "description": "Denies the cancelExportEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:deny-cancelExportEntry",
@@ -2403,6 +2397,12 @@
           "markdownDescription": "Denies the cancelRecordingEntry command without any pre-configured scope."
         },
         {
+          "description": "Denies the cleanupPendingEntries command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-cleanupPendingEntries",
+          "markdownDescription": "Denies the cleanupPendingEntries command without any pre-configured scope."
+        },
+        {
           "description": "Denies the createExportEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:deny-createExportEntry",
@@ -2413,12 +2413,6 @@
           "type": "string",
           "const": "media-store:deny-createRecordingEntry",
           "markdownDescription": "Denies the createRecordingEntry command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the exportFile command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:deny-exportFile",
-          "markdownDescription": "Denies the exportFile command without any pre-configured scope."
         },
         {
           "description": "Denies the finalizeRecordingEntry command without any pre-configured scope.",
@@ -2437,12 +2431,6 @@
           "type": "string",
           "const": "media-store:deny-openRecordingForRead",
           "markdownDescription": "Denies the openRecordingForRead command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the saveToSharedStorage command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:deny-saveToSharedStorage",
-          "markdownDescription": "Denies the saveToSharedStorage command without any pre-configured scope."
         },
         {
           "description": "Enables the closeUsbDevice command without any pre-configured scope.",

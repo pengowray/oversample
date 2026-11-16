@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
 
 use crate::types::{AudioData, WavMarker};
 
@@ -217,13 +215,18 @@ pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavM
 /// via the Kotlin MediaStore plugin. Skips internal storage entirely.
 /// Only meaningful on Android.
 pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
-    match crate::shared_storage::save(wav_data, filename, "Recordings/Oversample", "audio/wav")
-        .await
+    match crate::native_save::save_to_shared_storage(
+        wav_data,
+        filename,
+        "Recordings/Oversample",
+        "audio/wav",
+    )
+    .await
     {
-        Ok(crate::shared_storage::SharedSave::Saved(path)) => {
+        Ok(crate::native_save::SharedSave::Saved(path)) => {
             log::info!("Saved to shared storage: {path}");
         }
-        Ok(crate::shared_storage::SharedSave::NeedsRetry) => {
+        Ok(crate::native_save::SharedSave::NeedsRetry) => {
             log::warn!("Not saved to shared storage: storage permission was just asked for");
         }
         Err(e) => {
@@ -232,51 +235,17 @@ pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
     }
 }
 
-/// Try to save recording via Tauri IPC (web mode).
-/// Returns the saved path on success, or None on failure.
+/// Save a recording to the app data folder's `recordings/` (Tauri only).
+/// Returns the saved path, or `None` outside Tauri or on failure.
 pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> Option<String> {
-    use crate::tauri_bridge::get_tauri_internals;
-
-    let tauri = get_tauri_internals()?;
-
-    let invoke = match js_sys::Reflect::get(&tauri, &JsValue::from_str("invoke")) {
-        Ok(f) if f.is_function() => js_sys::Function::from(f),
-        _ => return None,
-    };
-
-    let args = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &args,
-        &JsValue::from_str("filename"),
-        &JsValue::from_str(filename),
-    )
-    .ok();
-
-    let array = js_sys::Uint8Array::new_with_length(wav_data.len() as u32);
-    array.copy_from(wav_data);
-    js_sys::Reflect::set(&args, &JsValue::from_str("data"), &array).ok();
-
-    let result = invoke.call2(&tauri, &JsValue::from_str("save_recording"), &args);
-    match result {
-        Ok(promise_val) => {
-            if let Ok(promise) = promise_val.dyn_into::<js_sys::Promise>() {
-                match JsFuture::from(promise).await {
-                    Ok(path) => {
-                        let path_str = path.as_string();
-                        log::info!("Saved recording to: {:?}", path_str);
-                        path_str
-                    }
-                    Err(e) => {
-                        log::error!("Tauri save failed: {:?}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            }
+    crate::tauri_bridge::get_tauri_internals()?;
+    match crate::native_save::save_recording(wav_data, filename).await {
+        Ok(path) => {
+            log::info!("Saved recording to: {path}");
+            Some(path)
         }
         Err(e) => {
-            log::error!("Tauri invoke failed: {:?}", e);
+            log::error!("Tauri save failed: {e}");
             None
         }
     }

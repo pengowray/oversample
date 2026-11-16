@@ -12,8 +12,8 @@
 // A mismatch between (1) and (2) fails `default_capabilities_match_registered_commands`.
 // A registered command with no Kotlin `@Command` fails `registered_commands_have_kotlin_impl`.
 // The Kotlin files may legitimately define EXTRA @Commands that aren't exposed as
-// permissions (e.g. usb-audio's requestAudioPermission/checkUsbStatus, media-store's
-// cleanupPendingEntries), so that direction is intentionally not enforced.
+// permissions (e.g. usb-audio's requestAudioPermission/checkUsbStatus), so that
+// direction is intentionally not enforced.
 //
 // Without this guard a typo or renamed command surfaces only as a runtime IPC
 // rejection on-device, never as a build/test failure.
@@ -35,15 +35,14 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
     (
         "media-store",
         &[
-            "saveToSharedStorage",
             "createRecordingEntry",
             "finalizeRecordingEntry",
             "cancelRecordingEntry",
-            "exportFile",
             "createExportEntry",
             "finishExportEntry",
             "cancelExportEntry",
             "openRecordingForRead",
+            "cleanupPendingEntries",
         ],
     ),
     (

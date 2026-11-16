@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
 import android.content.ContentValues
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -27,17 +26,10 @@ private const val SUBFOLDER = "Oversample"
 private const val WRITE_STORAGE_REQUEST_CODE = 9001
 
 @InvokeArg
-data class SaveToSharedArgs(val internalPath: String = "", val filename: String = "", val deleteInternal: Boolean = false)
-
-
-@InvokeArg
 data class CreateRecordingEntryArgs(val filename: String = "")
 
 @InvokeArg
 data class OpenForReadArgs(val uri: String = "")
-
-@InvokeArg
-data class ExportFileArgs(val internalPath: String = "", val suggestedName: String = "")
 
 @InvokeArg
 data class CreateExportEntryArgs(
@@ -53,127 +45,36 @@ data class ExportEntryArgs(val uri: String = "", val mimeType: String = "")
 class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
 
     private var pendingPermissionInvoke: Invoke? = null
-    private var pendingExportInvoke: Invoke? = null
-    private var pendingExportBytes: ByteArray? = null
-    private var pendingExportMimeType: String? = null
 
     // For fd-passing recording: Kotlin holds the MediaStore entry open
     private var pendingRecordingUri: Uri? = null
-
-    companion object {
-        const val EXPORT_REQUEST_CODE = 9002
-    }
 
     override fun load(webView: android.webkit.WebView) {
         super.load(webView)
         Log.i(TAG, "MediaStorePlugin loaded")
     }
 
-    // ── Save recording to shared storage ────────────────────────────────
-
-    /**
-     * Copy a WAV file from internal app storage to shared storage
-     * (Recordings/Oversample on API 29+, Music/Oversample on API 24-28).
-     * Returns the public path or content URI string.
-     */
-    @Command
-    fun saveToSharedStorage(invoke: Invoke) {
-        val args = invoke.parseArgs(SaveToSharedArgs::class.java)
-        val internalFile = File(args.internalPath)
-        if (!internalFile.exists()) {
-            invoke.reject("File not found: ${args.internalPath}")
-            return
-        }
-        val filename = args.filename.ifEmpty { internalFile.name }
-
-        try {
-            val resultPath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveViaMediaStore(internalFile, filename)
-            } else {
-                if (!hasWritePermission()) {
-                    // Request permission and retry
-                    pendingPermissionInvoke = invoke
-                    requestWritePermission()
-                    return
-                }
-                saveViaDirectFile(internalFile, filename)
-            }
-            // Delete internal file after successful move
-            if (args.deleteInternal) {
-                internalFile.delete()
-                Log.i(TAG, "Deleted internal copy: ${args.internalPath}")
-            }
-            val result = JSObject()
-            result.put("path", resultPath)
-            invoke.resolve(result)
-        } catch (e: Exception) {
-            Log.e(TAG, "saveToSharedStorage failed", e)
-            invoke.reject("Failed to save: ${e.message}")
-        }
-    }
-
     // ── Exports: fd-passing, like recordings ────────────────────────────
 
     /**
      * Create a shared-storage entry for an export and return a raw POSIX fd
-     * that Rust writes the bytes to (`save_adopt_fd`). The MediaStore
-     * collection follows the MIME type (audio, video, else Downloads). On API
-     * 29+ the entry stays hidden (IS_PENDING=1) until finishExportEntry.
+     * that Rust writes the bytes to (`save_adopt_fd`). See [createEntry].
      * Returns no fd when the pre-Q storage permission was just asked for.
      */
     @Command
     fun createExportEntry(invoke: Invoke) {
         val args = invoke.parseArgs(CreateExportEntryArgs::class.java)
-        val filename = args.filename.ifEmpty { "export" }
         try {
+            val entry = createEntry(
+                invoke,
+                args.filename.ifEmpty { "export" },
+                args.mimeType,
+                args.relativePath.ifEmpty { "Download/$SUBFOLDER/exports" },
+            ) ?: return
             val result = JSObject()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val resolver = activity.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                    put(MediaStore.MediaColumns.MIME_TYPE, args.mimeType)
-                    if (args.relativePath.isNotEmpty()) {
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, args.relativePath)
-                    }
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }
-                val uri = resolver.insert(collectionUriFor(args.mimeType), values)
-                    ?: throw Exception("Failed to create MediaStore entry for $filename")
-                val pfd = try {
-                    resolver.openFileDescriptor(uri, "w")
-                } catch (e: Exception) {
-                    resolver.delete(uri, null, null)
-                    throw e
-                } ?: run {
-                    resolver.delete(uri, null, null)
-                    throw Exception("Failed to open fd for $uri")
-                }
-                result.put("fd", pfd.detachFd()) // Rust owns the fd now
-                result.put("uri", uri.toString())
-                result.put("path", uri.toString())
-            } else {
-                if (!hasWritePermission()) {
-                    pendingPermissionInvoke = invoke
-                    requestWritePermission()
-                    return
-                }
-                @Suppress("DEPRECATION")
-                val dir = File(
-                    Environment.getExternalStorageDirectory(),
-                    args.relativePath.ifEmpty { "Download/$SUBFOLDER/exports" },
-                )
-                dir.mkdirs()
-                val destFile = File(dir, filename)
-                val pfd = android.os.ParcelFileDescriptor.open(
-                    destFile,
-                    android.os.ParcelFileDescriptor.MODE_WRITE_ONLY or
-                        android.os.ParcelFileDescriptor.MODE_CREATE or
-                        android.os.ParcelFileDescriptor.MODE_TRUNCATE,
-                )
-                result.put("fd", pfd.detachFd())
-                result.put("uri", destFile.absolutePath)
-                result.put("path", destFile.absolutePath)
-            }
+            result.put("fd", entry.fd)
+            result.put("uri", entry.uri)
+            result.put("path", entry.uri)
             invoke.resolve(result)
         } catch (e: Exception) {
             Log.e(TAG, "createExportEntry failed", e)
@@ -231,69 +132,26 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
     // ── ContentResolver fd-passing for direct recording ─────────────────
 
     /**
-     * Create a MediaStore entry for a new recording and return a raw POSIX fd
-     * that Rust can write WAV data to directly. The entry starts with
-     * IS_PENDING=1; call finalizeRecordingEntry when writing is complete.
-     *
-     * On API < 29, creates the file directly and returns its fd.
+     * Create a shared-storage entry for a new recording in
+     * Recordings/Oversample and return a raw POSIX fd that Rust writes the WAV
+     * to directly. See [createEntry]. Call finalizeRecordingEntry when writing
+     * is complete.
      */
     @Command
     fun createRecordingEntry(invoke: Invoke) {
         val args = invoke.parseArgs(CreateRecordingEntryArgs::class.java)
-        val filename = args.filename.ifEmpty { "recording.wav" }
-
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val resolver = activity.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.Audio.Media.DISPLAY_NAME, filename)
-                    put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
-                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Recordings/$SUBFOLDER")
-                    put(MediaStore.Audio.Media.IS_PENDING, 1)
-                }
-                val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                val uri = resolver.insert(collection, values)
-                    ?: throw Exception("Failed to create MediaStore entry for $filename")
-
-                pendingRecordingUri = uri
-
-                val pfd = resolver.openFileDescriptor(uri, "w")
-                    ?: throw Exception("Failed to open fd for $uri")
-                val fd = pfd.detachFd() // caller (Rust) owns the fd now
-
-                Log.i(TAG, "Created recording entry: $filename -> $uri (fd=$fd)")
-                val result = JSObject()
-                result.put("fd", fd)
-                result.put("uri", uri.toString())
-                invoke.resolve(result)
-            } else {
-                // Pre-Q: create file directly
-                if (!hasWritePermission()) {
-                    pendingPermissionInvoke = invoke
-                    requestWritePermission()
-                    return
-                }
-                @Suppress("DEPRECATION")
-                val baseDir = File(Environment.getExternalStorageDirectory(), "Recordings")
-                val appDir = File(baseDir, SUBFOLDER)
-                appDir.mkdirs()
-                val destFile = File(appDir, filename)
-                // Create empty file and open fd
-                destFile.createNewFile()
-                val pfd = android.os.ParcelFileDescriptor.open(
-                    destFile,
-                    android.os.ParcelFileDescriptor.MODE_WRITE_ONLY or android.os.ParcelFileDescriptor.MODE_TRUNCATE
-                )
-                val fd = pfd.detachFd()
-
-                pendingRecordingUri = null // not needed for pre-Q
-
-                Log.i(TAG, "Created recording file: ${destFile.absolutePath} (fd=$fd)")
-                val result = JSObject()
-                result.put("fd", fd)
-                result.put("uri", destFile.absolutePath)
-                invoke.resolve(result)
-            }
+            val entry = createEntry(
+                invoke,
+                args.filename.ifEmpty { "recording.wav" },
+                "audio/wav",
+                "Recordings/$SUBFOLDER",
+            ) ?: return
+            pendingRecordingUri = entry.pendingUri
+            val result = JSObject()
+            result.put("fd", entry.fd)
+            result.put("uri", entry.uri)
+            invoke.resolve(result)
         } catch (e: Exception) {
             Log.e(TAG, "createRecordingEntry failed", e)
             invoke.reject("Failed to create recording entry: ${e.message}")
@@ -332,11 +190,11 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Scan MediaStore for our own pending (IS_PENDING=1) entries in
-     * Recordings/Oversample and delete them. Called once on app startup to
-     * clean up after a crash that left MediaStore rows orphaned — without
-     * this the user would see zero-byte "pending" files via other apps that
-     * honour IS_PENDING, and they'd accumulate silently over time.
+     * Delete our own pending (IS_PENDING=1) MediaStore entries in Oversample
+     * folders: recordings and exports, in the audio, video and download
+     * collections. Called once on app startup to clean up after a crash that
+     * left rows unfinished. Without this, apps that ignore IS_PENDING would show
+     * zero-byte or half-written files, and they would pile up.
      *
      * Safe: scoped storage on API 29+ restricts this query to entries our
      * own app owns, so we can't accidentally delete other apps' in-progress
@@ -354,34 +212,40 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
             }
 
             val resolver = activity.contentResolver
-            val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            // Only look inside our subfolder so we don't touch anything else
-            // the user might have put in shared Recordings via another app.
-            val selection = "${MediaStore.Audio.Media.IS_PENDING} = 1 AND " +
-                "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
-            val args = arrayOf("%Recordings/$SUBFOLDER/%")
+            // Only look inside our own folders (Recordings/Oversample/,
+            // Movies/Oversample/exports/, ...) so we don't touch anything else.
+            val selection = "${MediaStore.MediaColumns.IS_PENDING} = 1 AND " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+            val args = arrayOf("%/$SUBFOLDER/%")
             val projection = arrayOf(
-                MediaStore.Audio.Media._ID,
-                MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+            )
+            val collections = listOf(
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
             )
 
             var deleted = 0
             val names = mutableListOf<String>()
-            resolver.query(collection, projection, selection, args, null)?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idColumn)
-                    val name = cursor.getString(nameColumn) ?: "unknown"
-                    val uri = ContentUris.withAppendedId(collection, id)
-                    try {
-                        val rows = resolver.delete(uri, null, null)
-                        if (rows > 0) {
-                            deleted++
-                            names.add(name)
+            for (collection in collections) {
+                resolver.query(collection, projection, selection, args, null)?.use { cursor ->
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idColumn)
+                        val name = cursor.getString(nameColumn) ?: "unknown"
+                        val uri = ContentUris.withAppendedId(collection, id)
+                        try {
+                            val rows = resolver.delete(uri, null, null)
+                            if (rows > 0) {
+                                deleted++
+                                names.add(name)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to delete pending entry $uri: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to delete pending entry $uri: ${e.message}")
                     }
                 }
             }
@@ -460,75 +324,6 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
 
     // ── Export file via SAF picker ───────────────────────────────────────
 
-    /**
-     * Open a system "Save As" dialog for the user to choose where to export a file.
-     * Works for any file type (WAV, BATM, etc).
-     */
-    @Command
-    fun exportFile(invoke: Invoke) {
-        val args = invoke.parseArgs(ExportFileArgs::class.java)
-        val file = File(args.internalPath)
-        if (!file.exists()) {
-            invoke.reject("File not found: ${args.internalPath}")
-            return
-        }
-        val suggestedName = args.suggestedName.ifEmpty { file.name }
-        val mimeType = when {
-            suggestedName.endsWith(".wav", ignoreCase = true) -> "audio/wav"
-            suggestedName.endsWith(".flac", ignoreCase = true) -> "audio/flac"
-            suggestedName.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
-            suggestedName.endsWith(".ogg", ignoreCase = true) -> "audio/ogg"
-            suggestedName.endsWith(".batm", ignoreCase = true) -> "application/octet-stream"
-            suggestedName.endsWith(".yaml", ignoreCase = true) -> "text/yaml"
-            suggestedName.endsWith(".yml", ignoreCase = true) -> "text/yaml"
-            else -> "application/octet-stream"
-        }
-
-        pendingExportInvoke = invoke
-        pendingExportBytes = file.readBytes()
-        pendingExportMimeType = mimeType
-
-        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = mimeType
-            putExtra(Intent.EXTRA_TITLE, suggestedName)
-        }
-        activity.startActivityForResult(intent, EXPORT_REQUEST_CODE)
-    }
-
-    // ── Activity result handling (SAF) ──────────────────────────────────
-
-    fun handleActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != EXPORT_REQUEST_CODE) return
-
-        val invoke = pendingExportInvoke ?: return
-        pendingExportInvoke = null
-        val bytes = pendingExportBytes
-        pendingExportBytes = null
-        pendingExportMimeType = null
-
-        if (resultCode != Activity.RESULT_OK || data?.data == null) {
-            val result = JSObject()
-            result.put("cancelled", true)
-            invoke.resolve(result)
-            return
-        }
-
-        val uri = data.data!!
-        try {
-            activity.contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(bytes)
-            }
-            val result = JSObject()
-            result.put("cancelled", false)
-            result.put("uri", uri.toString())
-            invoke.resolve(result)
-        } catch (e: Exception) {
-            Log.e(TAG, "SAF export failed", e)
-            invoke.reject("Export failed: ${e.message}")
-        }
-    }
-
     // ── Permission handling ─────────────────────────────────────────────
 
     fun handlePermissionResult(requestCode: Int, grantResults: IntArray) {
@@ -550,61 +345,70 @@ class MediaStorePlugin(private val activity: Activity) : Plugin(activity) {
 
     // ── Internal helpers ────────────────────────────────────────────────
 
-    /** API 29+: Save via MediaStore to Recordings/Oversample */
-    private fun saveViaMediaStore(sourceFile: File, displayName: String): String {
-        val resolver = activity.contentResolver
+    /** A new shared-storage entry and the fd that Rust writes it through. */
+    private class NewEntry(
+        val fd: Int,
+        /** The content:// URI (API 29+) or the file path (older versions). */
+        val uri: String,
+        /** The MediaStore row (API 29+), to finish or delete later. */
+        val pendingUri: Uri?,
+    )
 
-        val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
-            put(MediaStore.Audio.Media.RELATIVE_PATH, "Recordings/$SUBFOLDER")
-            put(MediaStore.Audio.Media.IS_PENDING, 1)
-        }
-
-        val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val uri = resolver.insert(collection, values)
-            ?: throw Exception("Failed to create MediaStore entry for $displayName")
-
-        resolver.openOutputStream(uri)?.use { outputStream ->
-            sourceFile.inputStream().use { inputStream ->
-                inputStream.copyTo(outputStream, bufferSize = 8192)
+    /**
+     * Create a shared-storage entry and open it for writing.
+     *
+     * - API 29+: a MediaStore row in the collection that matches [mimeType],
+     *   in [relativePath], hidden (IS_PENDING=1) until it is finished.
+     * - Older versions: a file at [relativePath] under shared storage.
+     *
+     * Returns null after asking for the pre-Q storage permission; the invoke
+     * is then answered by handlePermissionResult.
+     */
+    private fun createEntry(
+        invoke: Invoke,
+        filename: String,
+        mimeType: String,
+        relativePath: String,
+    ): NewEntry? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = activity.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-        } ?: throw Exception("Failed to open output stream for $displayName")
-
-        // Mark as complete
-        values.clear()
-        values.put(MediaStore.Audio.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-
-        Log.i(TAG, "Saved to MediaStore: $displayName -> $uri")
-        return uri.toString()
-    }
-
-    /** API 24-28: Save via direct file I/O to shared storage */
-    @Suppress("DEPRECATION")
-    private fun saveViaDirectFile(sourceFile: File, displayName: String): String {
-        // Use Recordings/ directory (create it if needed, works fine on pre-Q)
-        val baseDir = File(Environment.getExternalStorageDirectory(), "Recordings")
-        val appDir = File(baseDir, SUBFOLDER)
-        appDir.mkdirs()
-
-        val destFile = File(appDir, displayName)
-        sourceFile.inputStream().use { input ->
-            destFile.outputStream().use { output ->
-                input.copyTo(output, bufferSize = 8192)
+            val uri = resolver.insert(collectionUriFor(mimeType), values)
+                ?: throw Exception("Failed to create MediaStore entry for $filename")
+            val pfd = try {
+                resolver.openFileDescriptor(uri, "w")
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            } ?: run {
+                resolver.delete(uri, null, null)
+                throw Exception("Failed to open fd for $uri")
             }
+            Log.i(TAG, "Created entry: $filename -> $uri")
+            return NewEntry(pfd.detachFd(), uri.toString(), uri) // Rust owns the fd now
         }
-
-        // Notify MediaStore so it appears in media apps / file managers
-        MediaScannerConnection.scanFile(
-            activity,
-            arrayOf(destFile.absolutePath),
-            arrayOf("audio/wav"),
-            null
+        if (!hasWritePermission()) {
+            pendingPermissionInvoke = invoke
+            requestWritePermission()
+            return null
+        }
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStorageDirectory(), relativePath)
+        dir.mkdirs()
+        val destFile = File(dir, filename)
+        val pfd = android.os.ParcelFileDescriptor.open(
+            destFile,
+            android.os.ParcelFileDescriptor.MODE_WRITE_ONLY or
+                android.os.ParcelFileDescriptor.MODE_CREATE or
+                android.os.ParcelFileDescriptor.MODE_TRUNCATE,
         )
-
-        Log.i(TAG, "Saved to file: ${destFile.absolutePath}")
-        return destFile.absolutePath
+        Log.i(TAG, "Created file: ${destFile.absolutePath}")
+        return NewEntry(pfd.detachFd(), destFile.absolutePath, null)
     }
 
     /** Pick the MediaStore collection that matches a MIME type. */
