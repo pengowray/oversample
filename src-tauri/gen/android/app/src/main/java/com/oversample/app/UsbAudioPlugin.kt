@@ -77,6 +77,19 @@ private const val VENDOR_WILDLIFE_ACOUSTICS = 0x2926 // Wildlife Acoustics, Inc.
 // See batgizmo UsbService.kt and nativeusb.cpp for reference.
 private const val EMT2_MIN_PACKET_SIZE = 1024 // Safety margin above observed 771 bytes
 
+// TASCAM Portacapture X8 with the Oversample edition patch (batchi-tascam-oversample-colab,
+// docs/HOMEBREW.md, "192 kHz stereo over USB"). From B276 its input interface's alternate setting
+// 3 at 192 kHz carries 2 channels of 32-bit float (INPUT 3 and 4 after the X8's dual-gain merge,
+// as it records its float tracks), although the descriptor says 8 channels of 4-byte PCM. The patch
+// marks this by ending its clock's top rate range at 192,001 Hz, which lists the same rates.
+// Earlier patched builds end it at 192,000 and send nothing on that setting at 192 kHz.
+private const val VENDOR_TASCAM = 0x0644
+private const val PRODUCT_PORTACAPTURE_X8 = 0x8074
+private const val X8_FLOAT_RATE = 192000
+private const val X8_FLOAT_MARK = 192001
+private const val X8_FLOAT_INTERFACE = 2
+private const val X8_FLOAT_ALT = 3
+
 @TauriPlugin
 class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
 
@@ -95,6 +108,29 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
      * Detect Wildlife Acoustics Echo Meter Touch 2 devices.
      * These require special handling: forced sample rate setting and oversized packet buffers.
      */
+    /**
+     * The input endpoint to use for 32-bit float stereo from a Portacapture X8 whose patch marks
+     * it (see X8_FLOAT_MARK), described as what it carries at 192 kHz: 2 channels of 4-byte
+     * float. Null for any other device, rate or build, or a max bit depth under 32.
+     */
+    private fun x8FloatEndpoint(
+        device: UsbDevice,
+        audioInfo: AudioDeviceInfo,
+        rate: Int,
+        maxBitDepth: Int
+    ): AudioEndpointInfo? {
+        if (device.vendorId != VENDOR_TASCAM || device.productId != PRODUCT_PORTACAPTURE_X8) return null
+        if (rate != X8_FLOAT_RATE || X8_FLOAT_MARK !in audioInfo.rangeMaxima) return null
+        if (maxBitDepth in 1 until 32) return null
+        return audioInfo.endpoints
+            .firstOrNull {
+                it.address and 0x80 != 0 &&
+                    it.interfaceNumber == X8_FLOAT_INTERFACE &&
+                    it.alternateSetting == X8_FLOAT_ALT
+            }
+            ?.copy(channels = 2, bitResolution = 32, subslotSize = 4, isFloat = true)
+    }
+
     private fun isEmt2Device(device: UsbDevice): Boolean {
         val name = (device.productName ?: "").lowercase()
         return device.vendorId == VENDOR_WILDLIFE_ACOUSTICS ||
@@ -491,7 +527,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             // Among settings with the same channels and rate, the deepest samples win (a
             // device may offer 2-byte and 3-byte settings), within the user's max bit depth,
             // and PCM before float of the same size.
-            val endpoint = audioInfo.endpoints
+            val best = audioInfo.endpoints
                 .filter { it.address and 0x80 != 0 } // input endpoints only
                 .sortedWith(compareBy<AudioEndpointInfo>(
                     { channelRank(it.channels) },
@@ -502,6 +538,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 ))
                 .firstOrNull()
                 ?: audioInfo.endpoints.first()
+            // A patched Portacapture X8 sends 32-bit float stereo at 192 kHz on its 8-channel
+            // 4-byte setting (see X8_FLOAT_MARK), within the user's max bit depth.
+            val endpoint = x8FloatEndpoint(device, audioInfo, desiredRate, args.maxBitDepth) ?: best
 
             Log.i(TAG, "Selected endpoint: addr=0x${endpoint.address.toString(16)} " +
                     "maxPkt=${endpoint.maxPacketSize} rate=${endpoint.sampleRate} " +
@@ -786,7 +825,11 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
      * The rates in a UAC2 clock's GET RANGE answer: a 2-byte count, then {min, max, res} as
      * 4-byte little-endian words. A sub-range with a resolution steps from min to max.
      */
-    private fun getUac2SampleRates(connection: UsbDeviceConnection, clockId: Int, control: Int): List<Int> {
+    private fun getUac2SampleRates(connection: UsbDeviceConnection, clockId: Int, control: Int): List<Int> =
+        getUac2Ranges(connection, clockId, control).first
+
+    /** The rates in a UAC2 clock's GET RANGE answer, and the maximum of each sub-range. */
+    private fun getUac2Ranges(connection: UsbDeviceConnection, clockId: Int, control: Int): Pair<List<Int>, Set<Int>> {
         val buffer = ByteArray(2 + 12 * 32)
         val n = connection.controlTransfer(
             DEVICE_TO_HOST_CLASS_INTERFACE,  // 0xA1
@@ -795,16 +838,18 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             (clockId shl 8) or control,
             buffer, buffer.size, 1000
         )
-        if (n < 14) return emptyList()
+        if (n < 14) return Pair(emptyList(), emptySet())
         val bb = ByteBuffer.wrap(buffer, 0, n).order(ByteOrder.LITTLE_ENDIAN)
         val count = bb.short.toInt() and 0xFFFF
         val rates = mutableSetOf<Int>()
+        val maxima = mutableSetOf<Int>()
         for (i in 0 until count) {
             if (bb.remaining() < 12) break
             val min = bb.int
             val max = bb.int
             val res = bb.int
             if (min <= 0 || max < min) continue
+            maxima.add(max)
             if (res <= 0) {
                 rates.add(min)
                 rates.add(max)
@@ -819,7 +864,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             }
         }
         Log.i(TAG, "UAC2 GET_RANGE rates: ${rates.sorted()}")
-        return rates.sorted()
+        return Pair(rates.sorted(), maxima)
     }
 
     // ── Raw descriptor parsing ───────────────────────────────────────────
@@ -842,7 +887,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     data class AudioDeviceInfo(
         val uacVersion: Int,  // 1 or 2
         val sampleRates: List<Int>,
-        val endpoints: List<AudioEndpointInfo>
+        val endpoints: List<AudioEndpointInfo>,
+        /** The maximum of each sub-range in a UAC2 clock's GET RANGE answer. */
+        val rangeMaxima: Set<Int> = emptySet()
     )
 
     /**
@@ -1111,9 +1158,11 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }
 
         // A UAC2 clock lists its rates in its GET RANGE answer.
+        var rangeMaxima = emptySet<Int>()
         if (uac2ClockId >= 0) {
             try {
-                val listed = getUac2SampleRates(connection, uac2ClockId, control)
+                val (listed, maxima) = getUac2Ranges(connection, uac2ClockId, control)
+                rangeMaxima = maxima
                 if (listed.isNotEmpty()) {
                     sampleRates.clear()
                     sampleRates.addAll(listed)
@@ -1136,7 +1185,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         return AudioDeviceInfo(
             uacVersion = if (uacVersion == 0) 1 else uacVersion,
             sampleRates = sampleRates.sorted(),
-            endpoints = endpoints
+            endpoints = endpoints,
+            rangeMaxima = rangeMaxima
         )
     }
 
