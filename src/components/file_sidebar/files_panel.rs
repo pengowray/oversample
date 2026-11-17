@@ -513,9 +513,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                                     title=move || {
                                                         let (ro, sidecar) = batm_badge_state();
                                                         match (ro, sidecar) {
-                                                            (true, true) => "View-only \u{2014} .batm sidecar not being updated. Click to enable editing.",
+                                                            (true, true) => "View-only \u{2014} annotations aren\u{2019}t saved, and the .batm beside the recording isn\u{2019}t updated. Click to enable editing.",
                                                             (true, false) => "View-only \u{2014} annotations won\u{2019}t be saved. Click to enable editing.",
-                                                            (false, true) => ".batm sidecar next to audio file is being updated. Click for view-only.",
+                                                            (false, true) => "Annotations are also saved in the .batm beside the recording. Click for view-only.",
                                                             (false, false) => "",
                                                         }.to_string()
                                                     }

@@ -493,7 +493,7 @@ pub(crate) async fn list_names_in(dir_name: &str) -> Result<Vec<String>, String>
 }
 
 /// Explicitly save a file-adjacent .batm sidecar (Tauri only).
-/// Called when user clicks "Save .batm sidecar". Sets had_sidecar so future auto-saves update it.
+/// Called when the user clicks "Save .batm" (desktop). Sets had_sidecar so future auto-saves update it.
 pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     use leptos::prelude::{GetUntracked, Update, WithUntracked};
 
@@ -582,7 +582,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     wasm_bindgen_futures::spawn_local(async move {
         match tauri_save_sidecar(&path, &sidecar_yaml).await {
             Ok(()) => state.show_info_toast(format!("Saved {path}.batm")),
-            Err(e) => state.show_error_toast(format!("Sidecar save failed: {e}")),
+            Err(e) => state.show_error_toast(format!("Couldn't save the .batm beside the recording: {e}")),
         }
     });
 }

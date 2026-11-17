@@ -470,11 +470,11 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             }
 
             let msg = if merged_count > 0 {
-                format!("Merged {merged_count} sidecar(s)")
+                format!("Added annotations from {merged_count} file(s)")
             } else if skipped > 0 {
                 "Already merged".to_string()
             } else {
-                "No sidecars found".to_string()
+                "No saved annotations found".to_string()
             };
             merge_status.set(Some(msg));
         });
@@ -904,8 +904,8 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 <div class="project-section-header">"Annotations"</div>
                 <div class="project-merge-row">
                     <button class="project-btn-inline" on:click=on_merge_batm
-                        title="Import annotations from .batm sidecar files into this project"
-                    >"Merge .batm sidecars"</button>
+                        title="Add the saved annotations of the loaded files to this project"
+                    >"Add saved annotations"</button>
                     {if merge_count > 0 {
                         Some(view! { <span class="project-merge-count">{format!("{merge_count} merged")}</span> })
                     } else {

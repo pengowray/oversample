@@ -505,7 +505,7 @@ pub fn AnnotationFilesSection(
                                     move |_: web_sys::MouseEvent| cb.run(())
                                 }
                                 disabled=move || has_annotations.get().is_none() || has_file_path.get().is_none()
-                                title="Save .batm sidecar next to the audio file"
+                                title="Save a .batm beside the recording"
                             >
                                 "Save .batm"
                             </button>
