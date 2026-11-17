@@ -10064,3 +10064,69 @@ button.canvas-overflow-action-btn.disabled {
     background: #2f5f47;
     color: #fff;
 }
+
+/* Where the open file's annotations are saved (annotation_storage.rs), under
+   the Annotations heading and in an annotation's menu. Same size and colour
+   as the panel's notes. Row 2 (Google Drive) is a grey button that opens the
+   Drive settings; it keeps one height through every upload state so the
+   list below does not move after each save. */
+.annotation-storage {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 0 16px 6px;
+    font-size: 11px;
+    color: #999;
+    line-height: 1.4;
+}
+.canvas-overflow-info .annotation-storage {
+    padding: 0;
+}
+/* The menu sizes to its content: hold the width of the longest Drive state
+   ("Waiting to upload to Google Drive") so the menu does not shrink when an
+   upload finishes. */
+.canvas-overflow-info .annotation-storage:has(.annotation-storage-drive) {
+    min-width: 200px;
+}
+.annotation-storage-row {
+    max-width: 100%;
+}
+/* "Also saved in NAME.batm beside the recording": the name shrinks first. */
+.annotation-storage-row.with-name {
+    display: flex;
+    white-space: pre;
+}
+/* A long recording name is cut; the row's tooltip names the file in full. */
+.annotation-storage-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #ccc;
+}
+/* A link to the Google Drive settings (its text is a state, so not a grey
+   button). Full row width and 24px tall: the smallest click target the UI
+   checks allow, and no size change when the state text changes. */
+.annotation-storage-drive {
+    align-self: stretch;
+    max-width: 100%;
+    min-height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: #8cf;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.annotation-storage-drive:hover,
+.annotation-storage-drive:focus-visible {
+    text-decoration: underline;
+}
+.annotation-storage .drive-warning,
+.annotation-storage-drive.drive-warning {
+    color: #fc8;
+}

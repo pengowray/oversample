@@ -324,4 +324,53 @@ test.describe("Google Drive copies", () => {
     await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
     await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
   });
+
+  // ── Where the open file's annotations are saved ──────────────────────────
+
+  async function showAnnotations(page: Page) {
+    const show = page.locator('button[title="Show info panel"]');
+    if (await show.isVisible()) await show.click();
+    await page.locator(".sidebar-tab-dropdown").click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
+  }
+
+  test("signed out, the Annotations panel says the annotations are saved in this browser", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "where-out.wav", noiseWav(96_000, 8, 6666));
+    await annotate(page, 0.2, 0.4);
+    await showAnnotations(page);
+    const line = page.locator(".right-sidebar .annotation-storage");
+    await expect(line).toHaveText("Saved in this browser");
+    await expect(line.locator("button")).toHaveCount(0);
+  });
+
+  test("signed in, the line shows this file's upload: waiting, then saved in Google Drive", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "where-in.wav", noiseWav(96_000, 8, 7777));
+    await annotate(page, 0.2, 0.4);
+    await showAnnotations(page);
+    const line = page.locator(".right-sidebar .annotation-storage");
+    await expect(line).toContainText("Saved in this browser");
+    const driveButton = line.getByRole("button");
+    await expect(driveButton).toHaveText("Waiting to upload to Google Drive");
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    await expect(driveButton).toHaveText("Saved in Google Drive");
+
+    // The same line is in the annotation's menu.
+    const menuButton = page.locator('.canvas-overflow-btn[title="Annotation options"]').first();
+    await menuButton.click();
+    await expect(page.locator(".canvas-overflow-menu .annotation-storage")).toContainText("Saved in Google Drive");
+    // The menu closes on a click outside it (its backdrop covers the page).
+    await page.locator(".canvas-overflow-backdrop").click({ position: { x: 5, y: 5 } });
+    await expect(page.locator(".canvas-overflow-menu")).toHaveCount(0);
+
+    // The button opens the Google Drive group in Settings.
+    await driveButton.click();
+    await expect(page.locator(".drive-settings")).toBeInViewport();
+  });
 });

@@ -992,6 +992,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                     {oversample_core::annotation_tags::display_all(&tags)}
                                                 </div>
                                             })}
+                                            <div class="canvas-overflow-info">
+                                                <crate::components::annotation_storage::AnnotationStorage />
+                                            </div>
                                             <div class="canvas-overflow-separator"></div>
                                             <button
                                                 class="canvas-overflow-item"

@@ -110,6 +110,9 @@ struct Sync {
     uploads_running: usize,
     /// Counts sign-in attempts; an older attempt's polling stops.
     sign_in_attempt: u64,
+    /// Goes up whenever the per-file state may have changed, so that
+    /// `file_drive_state` callers update (browser only; made in `init`).
+    version: Option<ArcRwSignal<u64>>,
 }
 
 /// Most uploads that run at the same time (a first sign-in can have many
@@ -209,6 +212,9 @@ fn publish() {
     let Some(state) = app_state() else {
         return;
     };
+    if let Some(v) = with(|s| s.version.clone()) {
+        v.update(|n| *n = n.wrapping_add(1));
+    }
     // A comparison of all files counts as saving: until it ends, "Saved to
     // Google Drive" would not yet be known to be true.
     let (waiting, uploading) = with(|s| {
@@ -257,6 +263,7 @@ pub fn init(state: AppState) {
     with(|s| {
         s.state = Some(state);
         s.memory = load_memory();
+        s.version = Some(ArcRwSignal::new(0));
     });
     add_window_listeners();
     wasm_bindgen_futures::spawn_local(async move {
@@ -506,6 +513,56 @@ fn add_window_listeners() {
     let on_online = Closure::<dyn Fn()>::new(retry);
     let _ = window.add_event_listener_with_callback("online", on_online.as_ref().unchecked_ref());
     on_online.forget();
+}
+
+// ── Per-file state ──────────────────────────────────────────────────────
+
+/// Where the Drive copy of one annotation file stands, for the line that
+/// says where a file's annotations are saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileDriveState {
+    /// Not compared with Drive yet in this sign-in.
+    Checking,
+    /// The Drive copy matches the local copy.
+    Saved,
+    /// A change waits for the upload delay.
+    Waiting,
+    Uploading,
+    /// A change waits, and the last Drive request failed.
+    Problem(DriveProblem),
+    /// Drive holds a set for another recording under this key; this file's
+    /// annotations are not copied.
+    NotCopied,
+}
+
+/// The Drive state of the annotation file stored under `key`, or `None`
+/// when not signed in (or in Tauri). Reactive: re-runs when it may change.
+pub fn file_drive_state(state: AppState, key: &str) -> Option<FileDriveState> {
+    if state.is_tauri || !state.drive.signed_in().get() {
+        return None;
+    }
+    let problem = state.drive.problem().get();
+    if let Some(v) = with(|s| s.version.clone()) {
+        v.track();
+    }
+    let sk = batm_key(key);
+    Some(with(|s| {
+        if s.blocked.contains(&sk) {
+            FileDriveState::NotCopied
+        } else if s.uploading.contains(&sk) {
+            FileDriveState::Uploading
+        } else if s.pending.contains_key(&sk) {
+            match problem {
+                Some(p) => FileDriveState::Problem(p),
+                None if s.checked.contains(&sk) => FileDriveState::Waiting,
+                None => FileDriveState::Checking,
+            }
+        } else if s.checked.contains(&sk) {
+            FileDriveState::Saved
+        } else {
+            FileDriveState::Checking
+        }
+    }))
 }
 
 // ── Hooks called by local storage ───────────────────────────────────────
@@ -880,6 +937,7 @@ impl Drop for Checking {
 /// The comparison of `sync_key` is done: uploads may go ahead.
 fn mark_checked(sync_key: &str) {
     with(|s| s.checked.insert(sync_key.to_string()));
+    publish();
     if with(|s| s.pending.contains_key(sync_key)) {
         schedule_upload(sync_key, UPLOAD_DELAY_MS);
     }
