@@ -3619,7 +3619,13 @@ impl AppState {
     }
 
     /// Apply a snapshot to the annotation store: `Some` inserts/replaces,
-    /// `None` clears the file's entry. Used by undo/redo restore.
+    /// `None` (the file had no annotation set before the first change) empties
+    /// the file's set. Used by undo/redo restore.
+    ///
+    /// The set is emptied, not removed, so that the save below writes it:
+    /// with no set in the store `save_annotations` writes nothing, and the
+    /// saved file (and its Google Drive copy) would keep the annotations the
+    /// undo took away.
     fn restore_annotation_snapshot(
         &self,
         file_id: u64,
@@ -3628,7 +3634,10 @@ impl AppState {
         self.annotations.store().update(|store| match snapshot {
             Some(set) => store.insert(file_id, set),
             None => {
-                store.remove(file_id);
+                if let Some(set) = store.get_mut(file_id) {
+                    set.annotations.clear();
+                    set.lowest_bat_hz = None;
+                }
             }
         });
         // Persist the file we actually mutated. The global autosave Effect only

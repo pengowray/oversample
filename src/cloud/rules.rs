@@ -363,6 +363,30 @@ mod tests {
         );
     }
 
+    /// Undoing or deleting a file's last annotation leaves an empty set. It
+    /// must replace the Drive copy it was last synced with; if the local set
+    /// were removed instead, the Drive copy would be downloaded and the
+    /// annotation would come back.
+    #[test]
+    fn an_emptied_local_set_uploads_and_a_missing_one_downloads() {
+        let synced = set(T1, &[("a", 1.0)]);
+        let base = annotation_fingerprint(&synced);
+        let emptied = annotation_fingerprint(&set(T2, &[]));
+        assert_eq!(
+            decide(
+                Kind::Annotations,
+                Some(copy(&emptied, T2)),
+                Some(copy(&base, T1)),
+                Some(&base)
+            ),
+            Action::Upload
+        );
+        assert_eq!(
+            decide(Kind::Annotations, None, Some(copy(&base, T1)), Some(&base)),
+            Action::Download
+        );
+    }
+
     #[test]
     fn drive_edited_since_last_sync_downloads() {
         let base = annotation_fingerprint(&set(T1, &[("a", 1.0)]));

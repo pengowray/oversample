@@ -373,4 +373,53 @@ test.describe("Google Drive copies", () => {
     await driveButton.click();
     await expect(page.locator(".drive-settings")).toBeInViewport();
   });
+
+  // ── Undoing a file's only annotation ─────────────────────────────────────
+
+  async function undoUntilNone(page: Page) {
+    // (A label edit is an undo step of its own.)
+    for (let i = 0; i < 4 && (await snap(page)).regions.length > 0; i++) {
+      await page.keyboard.press("Control+z");
+      await page.waitForTimeout(200);
+    }
+    expect((await snap(page)).regions.length).toBe(0);
+  }
+
+  test("undoing the only annotation is saved: after a reload the file has no annotations", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
+    const wav = noiseWav(96_000, 8, 8888);
+    await open(page, "undo-only.wav", wav);
+    await annotate(page, 0.2, 0.4);
+    await expect
+      .poll(async () => Object.values(await savedFiles(page)).some((t) => t.includes("time_start:")))
+      .toBe(true);
+    await undoUntilNone(page);
+    await expect
+      .poll(async () => Object.values(await savedFiles(page)).every((t) => !t.includes("time_start:")))
+      .toBe(true);
+
+    await page.reload();
+    await open(page, "undo-only.wav", wav);
+    await page.waitForTimeout(1500);
+    expect((await snap(page)).regions.length).toBe(0);
+  });
+
+  test("undoing the only annotation uploads the empty set to Google Drive", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "undo-drive.wav", noiseWav(96_000, 8, 9999));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    expect(drive.uploads[0].content).toContain("time_start:");
+
+    await undoUntilNone(page);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(2);
+    expect(drive.uploads[1].method).toBe("PATCH");
+    expect(drive.uploads[1].content).not.toContain("time_start:");
+  });
 });
+
