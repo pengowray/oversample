@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.5.213"
+version = "0.5.214"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -22,10 +22,16 @@ xc-lib = { path = "../xc-lib" }
 oversample-core = { path = "../oversample-core" }
 oversample-ipc = { path = "../oversample-ipc" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
-tokio = { version = "1", features = ["fs", "io-util", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "time", "net", "macros", "sync", "rt"] }
 sha2 = "0.11"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.17"
+
+# Google sign-in for Drive copies (src/google_auth.rs), desktop only.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+oauth2 = { version = "5", default-features = false }
+open = "5"
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
@@ -33,6 +39,9 @@ libc = "0.2"
 jni = "0.22"
 ndk-context = "0.1"
 rustls-platform-verifier = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

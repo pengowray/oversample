@@ -1,12 +1,15 @@
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_denoise;
+mod cmd_google;
 mod cmd_mic;
 mod cmd_models;
 mod cmd_noise_presets;
 mod cmd_playback;
 mod cmd_save;
 mod cmd_usb;
+#[cfg(desktop)]
+mod google_auth;
 mod ipc_bytes;
 mod native_playback;
 mod recording;
@@ -124,6 +127,11 @@ pub fn run() {
             cmd_denoise::denoise_copy_write,
             cmd_denoise::denoise_copy_commit,
             cmd_denoise::denoise_copy_discard,
+            cmd_google::google_status,
+            cmd_google::google_sign_in,
+            cmd_google::google_sign_in_cancel,
+            cmd_google::google_access_token,
+            cmd_google::google_sign_out,
             device_info,
         ])
         .run(tauri::generate_context!())
