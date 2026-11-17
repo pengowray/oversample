@@ -1712,30 +1712,6 @@ body.sidebar-resizing {
     cursor: default;
 }
 
-.hash-indicator {
-    display: none;
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 13px;
-    line-height: 1;
-}
-.hash-indicator.match {
-    display: block;
-    color: #4caf50;
-}
-.hash-indicator.mismatch {
-    display: block;
-    color: #e53935;
-}
-.metadata-row:hover .hash-indicator {
-    right: 28px;
-}
-.hash-from-ref {
-    opacity: 0.55;
-    font-style: italic;
-}
 .hash-note {
     font-style: italic;
     color: #ff9800;
@@ -1938,11 +1914,85 @@ body.sidebar-resizing {
     border: 0;
     border-top: 1px solid #333;
 }
-.metadata-value-block.metadata-hash {
+/* File Identity hash rows (metadata_panel.rs hash_row).
+   A hash is on one line: its first and last characters with "…" between.
+   The middle characters are in .hash-mid at font size 0, so they take no
+   room but are still selected and copied with the rest; the "…" is generated
+   content, which is not copied. */
+.hash-value {
     font-family: monospace;
     font-size: 11px;
-    word-break: break-all;
     color: #bbb;
+    white-space: nowrap;
+}
+/* A saved hash that has not been compared with the file is not known to be
+   this file's hash: italic and dimmer, as the "Not computed" text is. */
+.hash-row[data-state="saved"] .hash-value {
+    color: #909090;
+    font-style: italic;
+}
+.hash-mid {
+    font-size: 0;
+}
+.hash-mid::before {
+    content: "\2026";
+    font-size: 11px;
+}
+/* Copy is always shown in a hash row, not only on hover: the Check button
+   beside it then stays where it is, and Copy can be reached by touch. */
+.hash-row .copy-btn-spacious {
+    display: inline-block;
+}
+/* Check and Compute: 24 px high, the smallest size that is easy to press. */
+.hash-row .hash-calc-btn {
+    padding: 0 8px;
+    min-height: 24px;
+}
+/* The line under a hash: where the hash is from, and whether it was compared
+   with a saved one. Grey for the usual states. */
+.hash-status {
+    font-size: 11px;
+    color: #909090;
+    padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+.hash-mark {
+    margin-right: 4px;
+}
+.hash-status-match .hash-mark {
+    color: #4caf50;
+}
+.hash-status-failed {
+    color: #ff9800;
+}
+/* A hash that differs from the saved one is the case the group exists for:
+   red text, and a red tint over the whole row. */
+.hash-status-mismatch {
+    color: #ff7b72;
+    font-weight: 600;
+}
+.hash-row[data-state="mismatch"] {
+    background: rgba(229, 57, 53, 0.14);
+}
+/* The two hashes of a mismatch, each after its name. */
+.hash-pair {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 8px;
+    align-items: baseline;
+    padding-top: 3px;
+}
+.hash-pair-label {
+    font-size: 11px;
+    color: #aaa;
+}
+.hash-not-computed {
+    font-size: 11px;
+    color: #909090;
+    font-style: italic;
+}
+.hash-others > summary {
+    padding: 6px 16px;
 }
 .metadata-value-relative {
     font-size: 11px;
@@ -2003,16 +2053,6 @@ a.open-link-btn {
     text-align: center;
     box-sizing: border-box;
 }
-
-/* Inline match/mismatch indicator in the key line. */
-.hash-indicator-inline {
-    font-size: 13px;
-    line-height: 1;
-    color: transparent;
-    flex-shrink: 0;
-}
-.hash-indicator-inline.match { color: #4caf50; }
-.hash-indicator-inline.mismatch { color: #e53935; }
 
 /* JSON expansion block (e.g. Wildlife Acoustics "Audio settings"). */
 .metadata-value-json {

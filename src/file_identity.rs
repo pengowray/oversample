@@ -2,8 +2,9 @@
 use crate::annotations::FileIdentity;
 use crate::state::store_fields::*;
 use crate::state::AppState;
+use crate::state::SidecarHashes;
 use crate::web_util::yield_now;
-use leptos::prelude::{Update, WithUntracked};
+use leptos::prelude::{ArcRwSignal, Set, Update, WithUntracked};
 use sha2::{Digest, Sha256};
 
 /// Size of each chunk for the multi-point spot hash (1 MB).
@@ -107,22 +108,34 @@ pub async fn compute_spot_hash_b3(
     Ok(finalize_spot_hash(&chunk_hashes))
 }
 
-/// Compute Layers 3 + 4 together: content hash (audio-samples-only BLAKE3) and
-/// full BLAKE3 over the whole file. Reads the entire file in 1 MB chunks.
+/// The hashes of one file. A hash that was not computed is `None`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ComputedHashes {
+    pub spot: Option<String>,
+    pub blake3: Option<String>,
+    pub sha256: Option<String>,
+    pub content: Option<String>,
+}
+
+/// Compute the hashes in `kinds` that need the whole file: the full BLAKE3,
+/// the full SHA-256 and the content hash. The file is read once, in 1 MB
+/// pieces, whichever of the three are asked for.
 ///
 /// The content hash covers only `file[data_offset .. data_offset+data_size]`,
 /// skipping both the header and any trailing metadata (e.g. GUANO). This means
 /// metadata edits don't change the content hash.
 ///
-/// Returns (content_hash, full_blake3) as hex strings.
-pub async fn compute_full_hashes(
+/// `progress` is called with the number of bytes read so far. The read stops
+/// with `Err("Cancelled")` when `cancelled` returns true.
+pub async fn compute_whole_file_hashes(
     reader: &(impl AsyncRangeReader + ?Sized),
     file_size: u64,
     data_offset: Option<u64>,
     data_size: Option<u64>,
-    generation: u32,
-    check_cancelled: impl Fn(u32) -> bool,
-) -> Result<(String, String), String> {
+    kinds: &[HashKind],
+    progress: impl Fn(u64),
+    cancelled: impl Fn() -> bool,
+) -> Result<ComputedHashes, String> {
     let audio_start = data_offset.unwrap_or(0);
     let audio_end = match data_size {
         Some(sz) => (audio_start + sz).min(file_size),
@@ -130,35 +143,46 @@ pub async fn compute_full_hashes(
     };
     let audio_start = audio_start.min(audio_end);
 
-    let mut content_hasher = blake3::Hasher::new();
-    let mut full_hasher = blake3::Hasher::new();
+    let mut content_hasher = kinds.contains(&HashKind::Content).then(blake3::Hasher::new);
+    let mut full_hasher = kinds.contains(&HashKind::Blake3).then(blake3::Hasher::new);
+    let mut sha_hasher = kinds.contains(&HashKind::Sha256).then(Sha256::new);
 
     let chunk_size: u64 = SPOT_CHUNK_SIZE; // 1 MB
     let mut offset: u64 = 0;
 
     while offset < file_size {
-        if check_cancelled(generation) {
+        if cancelled() {
             return Err("Cancelled".into());
         }
 
         let len = chunk_size.min(file_size - offset);
         let bytes = reader.read(offset, len).await?;
+        if bytes.len() as u64 != len {
+            return Err(format!(
+                "Read {} of {len} bytes at offset {offset}",
+                bytes.len()
+            ));
+        }
 
-        // Full hash: always update with original bytes
-        full_hasher.update(&bytes);
-
-        // Content hash: only feed the intersection with [audio_start, audio_end)
-        let chunk_start = offset;
-        let chunk_end = offset + len;
-        let slice_start = audio_start.max(chunk_start);
-        let slice_end = audio_end.min(chunk_end);
-        if slice_start < slice_end {
-            let lo = (slice_start - chunk_start) as usize;
-            let hi = (slice_end - chunk_start) as usize;
-            content_hasher.update(&bytes[lo..hi]);
+        if let Some(h) = full_hasher.as_mut() {
+            h.update(&bytes);
+        }
+        if let Some(h) = sha_hasher.as_mut() {
+            h.update(&bytes);
+        }
+        // Content hash: only the part of this piece inside [audio_start, audio_end)
+        if let Some(h) = content_hasher.as_mut() {
+            let slice_start = audio_start.max(offset);
+            let slice_end = audio_end.min(offset + len);
+            if slice_start < slice_end {
+                let lo = (slice_start - offset) as usize;
+                let hi = (slice_end - offset) as usize;
+                h.update(&bytes[lo..hi]);
+            }
         }
 
         offset += len;
+        progress(offset);
 
         // Yield every 4 MB
         if (offset / chunk_size).is_multiple_of(4) {
@@ -166,42 +190,12 @@ pub async fn compute_full_hashes(
         }
     }
 
-    let content_hash = content_hasher.finalize().to_hex().to_string();
-    let full_hash = full_hasher.finalize().to_hex().to_string();
-    Ok((content_hash, full_hash))
-}
-
-/// Compute full file SHA-256 via async range reader.
-pub async fn compute_full_sha256(
-    reader: &(impl AsyncRangeReader + ?Sized),
-    file_size: u64,
-    generation: u32,
-    check_cancelled: impl Fn(u32) -> bool,
-) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let chunk_size: u64 = SPOT_CHUNK_SIZE;
-    let mut offset: u64 = 0;
-
-    while offset < file_size {
-        if check_cancelled(generation) {
-            return Err("Cancelled".into());
-        }
-
-        let len = chunk_size.min(file_size - offset);
-        let bytes = reader.read(offset, len).await?;
-        hasher.update(&bytes);
-        offset += len;
-
-        if (offset / chunk_size).is_multiple_of(4) {
-            yield_now().await;
-        }
-    }
-
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(ComputedHashes {
+        spot: None,
+        blake3: full_hasher.map(|h| h.finalize().to_hex().to_string()),
+        sha256: sha_hasher.map(|h| h.finalize().iter().map(|b| format!("{b:02x}")).collect()),
+        content: content_hasher.map(|h| h.finalize().to_hex().to_string()),
+    })
 }
 
 /// Trait for async range reading (implemented for web File blobs and Tauri paths).
@@ -307,114 +301,274 @@ impl AsyncRangeReader for BytesRangeReader {
     }
 }
 
-/// Threshold: files below this size verify via full blake3; above via spot_hash_b3.
-/// The spot hash reads up to 16 x 1MB = 16MB, so below ~24MB the full blake3
-/// costs about the same and is more definitive.
+/// The size, in bytes, that divides small files from large ones. It decides
+/// two things, and they use this one number:
+///
+/// - Which hash the Info panel shows as the file's main hash: the full BLAKE3
+///   below this size, and the spot hash at this size and above.
+/// - Whether every hash is computed without being asked for. Below this size
+///   they all are, so a saved hash is compared with the file as soon as it is
+///   shown. At this size and above only the spot hash is, and the others are
+///   computed when the user asks.
+///
+/// The spot hash reads up to 16 x 1 MB = 16 MB, so below about 24 MB the full
+/// BLAKE3 costs about the same and covers every byte.
 pub const SMALL_FILE_THRESHOLD: u64 = 24_000_000;
 
-/// Merge reference hashes from XC sidecar and annotation-store sidecar identity.
-/// XC hashes take priority when both sources have a value.
-fn merge_references(
-    xc_hashes: &Option<crate::state::SidecarHashes>,
-    sidecar_id: &Option<FileIdentity>,
-) -> crate::state::SidecarHashes {
-    let mut merged = crate::state::SidecarHashes::default();
-
-    // Start with sidecar identity (from .batm file)
-    if let Some(sid) = sidecar_id {
-        merged.blake3 = sid.full_blake3.clone();
-        merged.sha256 = sid.full_sha256.clone();
-        merged.spot_hash_b3 = sid.spot_hash_b3.clone();
-        merged.content_hash = sid.content_hash.clone();
-        merged.file_size = Some(sid.file_size);
-        merged.data_offset = sid.data_offset;
-        merged.data_size = sid.data_size;
-    }
-
-    // Override with XC hashes (more authoritative for downloaded files)
-    if let Some(xc) = xc_hashes {
-        if xc.blake3.is_some() {
-            merged.blake3 = xc.blake3.clone();
-        }
-        if xc.sha256.is_some() {
-            merged.sha256 = xc.sha256.clone();
-        }
-        if xc.spot_hash_b3.is_some() {
-            merged.spot_hash_b3 = xc.spot_hash_b3.clone();
-        }
-        if xc.content_hash.is_some() {
-            merged.content_hash = xc.content_hash.clone();
-        }
-        if xc.file_size.is_some() {
-            merged.file_size = xc.file_size;
-        }
-        if xc.data_offset.is_some() {
-            merged.data_offset = xc.data_offset;
-        }
-        if xc.data_size.is_some() {
-            merged.data_size = xc.data_size;
-        }
-    }
-
-    merged
+/// The kinds of hash kept for a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HashKind {
+    /// BLAKE3 of up to 16 pieces of 1 MB spread over the audio data.
+    Spot,
+    /// BLAKE3 of the whole file.
+    Blake3,
+    /// SHA-256 of the whole file.
+    Sha256,
+    /// BLAKE3 of the audio data only, without the header and trailing metadata.
+    Content,
 }
 
-/// Compare computed identity against reference hashes. Returns the verification outcome.
+impl HashKind {
+    pub const ALL: [HashKind; 4] = [
+        HashKind::Spot,
+        HashKind::Blake3,
+        HashKind::Sha256,
+        HashKind::Content,
+    ];
+
+    /// The name the Info panel shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            HashKind::Spot => "Spot hash",
+            HashKind::Blake3 => "Full BLAKE3",
+            HashKind::Sha256 => "Full SHA-256",
+            HashKind::Content => "Content hash",
+        }
+    }
+
+    /// A short name for the `data-hash` attribute of the Info panel's row.
+    pub fn key(self) -> &'static str {
+        match self {
+            HashKind::Spot => "spot",
+            HashKind::Blake3 => "blake3",
+            HashKind::Sha256 => "sha256",
+            HashKind::Content => "content",
+        }
+    }
+
+    /// This kind of hash in a file's identity.
+    pub fn in_identity(self, id: &FileIdentity) -> Option<&String> {
+        match self {
+            HashKind::Spot => id.spot_hash_b3.as_ref(),
+            HashKind::Blake3 => id.full_blake3.as_ref(),
+            HashKind::Sha256 => id.full_sha256.as_ref(),
+            HashKind::Content => id.content_hash.as_ref(),
+        }
+    }
+
+    fn in_identity_mut(self, id: &mut FileIdentity) -> &mut Option<String> {
+        match self {
+            HashKind::Spot => &mut id.spot_hash_b3,
+            HashKind::Blake3 => &mut id.full_blake3,
+            HashKind::Sha256 => &mut id.full_sha256,
+            HashKind::Content => &mut id.content_hash,
+        }
+    }
+
+    fn in_saved(self, saved: &SidecarHashes) -> Option<&String> {
+        match self {
+            HashKind::Spot => saved.spot_hash_b3.as_ref(),
+            HashKind::Blake3 => saved.blake3.as_ref(),
+            HashKind::Sha256 => saved.sha256.as_ref(),
+            HashKind::Content => saved.content_hash.as_ref(),
+        }
+    }
+
+    fn in_computed(self, hashes: &ComputedHashes) -> Option<&String> {
+        match self {
+            HashKind::Spot => hashes.spot.as_ref(),
+            HashKind::Blake3 => hashes.blake3.as_ref(),
+            HashKind::Sha256 => hashes.sha256.as_ref(),
+            HashKind::Content => hashes.content.as_ref(),
+        }
+    }
+}
+
+/// Where a saved hash was read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavedSource {
+    /// The metadata file that came with a Xeno-canto recording
+    /// (`LoadedFile::xc_hashes`).
+    XenoCanto,
+    /// The annotations saved for the file in an earlier session
+    /// (`LoadedFile::saved_hashes`).
+    Annotations,
+}
+
+/// How a hash computed from the file compares with the saved hash of the same
+/// kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HashState {
+    /// Computed from the file. There is no saved hash of this kind.
+    Computed,
+    /// Read from saved data. Not computed from the file, so not compared.
+    Saved,
+    /// Computed from the file, and equal to the saved hash.
+    Match,
+    /// Computed from the file, and different from the saved hash.
+    Mismatch,
+}
+
+/// One kind of hash of a file: the value computed from the file in this
+/// session, and the value read from saved data. Either can be missing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HashRow {
+    pub kind: HashKind,
+    pub computed: Option<String>,
+    pub saved: Option<(String, SavedSource)>,
+}
+
+impl HashRow {
+    /// `None` when the file has no hash of this kind, computed or saved.
+    pub fn state(&self) -> Option<HashState> {
+        match (&self.computed, &self.saved) {
+            (None, None) => None,
+            (Some(_), None) => Some(HashState::Computed),
+            (None, Some(_)) => Some(HashState::Saved),
+            (Some(c), Some((s, _))) if c.eq_ignore_ascii_case(s) => Some(HashState::Match),
+            (Some(_), Some(_)) => Some(HashState::Mismatch),
+        }
+    }
+}
+
+/// The four kinds of hash of a file, in `HashKind::ALL` order. A hash from
+/// the Xeno-canto metadata file is used before one from the saved
+/// annotations: it describes the recording as it was published.
+pub fn hash_rows(
+    identity: Option<&FileIdentity>,
+    xc_hashes: Option<&SidecarHashes>,
+    saved_hashes: Option<&SidecarHashes>,
+) -> Vec<HashRow> {
+    HashKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let from = |saved: Option<&SidecarHashes>, source| {
+                saved
+                    .and_then(|s| kind.in_saved(s))
+                    .map(|h| (h.clone(), source))
+            };
+            HashRow {
+                kind,
+                computed: identity.and_then(|id| kind.in_identity(id)).cloned(),
+                saved: from(xc_hashes, SavedSource::XenoCanto)
+                    .or_else(|| from(saved_hashes, SavedSource::Annotations)),
+            }
+        })
+        .collect()
+}
+
+/// The four kinds of hash of an open file.
+pub fn file_hash_rows(f: &crate::state::LoadedFile) -> Vec<HashRow> {
+    hash_rows(
+        f.identity.as_ref(),
+        f.xc_hashes.as_ref(),
+        f.saved_hashes.as_ref(),
+    )
+}
+
+/// The hash the Info panel shows for a file of `file_size` bytes; the other
+/// kinds go in its list of other hashes.
 ///
-/// Logic:
-/// 1. File size check (>4KB difference = significant)
-/// 2. Primary hash: blake3 for small files (<10MB), spot_hash for large files
-/// 3. Content hash fallback if primary mismatches
-fn run_verification(
-    identity: &FileIdentity,
-    reference: &crate::state::SidecarHashes,
-) -> crate::state::VerifyOutcome {
-    use crate::state::VerifyOutcome;
-
-    if reference.is_empty() {
-        return VerifyOutcome::Pending;
-    }
-
-    // 1. File size check
-    if let Some(ref_size) = reference.file_size {
-        let diff = (identity.file_size as i64 - ref_size as i64).unsigned_abs();
-        if diff > 4096 {
-            // Sizes differ significantly — hash verification still proceeds
-            // but is very likely to fail (unless file was completely rewritten)
-        }
-    }
-
-    // 2. Primary hash check based on file size
-    let is_small = identity.file_size < SMALL_FILE_THRESHOLD;
-
-    let primary_matched = if is_small {
-        match (&identity.full_blake3, &reference.blake3) {
-            (Some(computed), Some(expected)) => Some(computed == expected),
-            _ => None,
-        }
+/// It is the spot hash for a large file and the full BLAKE3 for a small one
+/// (`SMALL_FILE_THRESHOLD`). When the file has no hash of that kind and
+/// `preferred_is_coming` is false (the hash is not being computed and cannot
+/// be), it is the first kind the file does have, of full SHA-256, content
+/// hash, full BLAKE3 and spot hash.
+pub fn main_hash(file_size: u64, rows: &[HashRow], preferred_is_coming: bool) -> HashKind {
+    let preferred = if file_size < SMALL_FILE_THRESHOLD {
+        HashKind::Blake3
     } else {
-        match (&identity.spot_hash_b3, &reference.spot_hash_b3) {
-            (Some(computed), Some(expected)) => Some(computed == expected),
-            _ => None,
-        }
+        HashKind::Spot
     };
-
-    match primary_matched {
-        Some(true) => return VerifyOutcome::Match,
-        None => return VerifyOutcome::Pending,
-        Some(false) => {} // Mismatch — try content_hash fallback
+    if preferred_is_coming {
+        return preferred;
     }
+    [
+        preferred,
+        HashKind::Sha256,
+        HashKind::Content,
+        HashKind::Blake3,
+        HashKind::Spot,
+    ]
+    .into_iter()
+    .find(|kind| rows.iter().any(|r| r.kind == *kind && r.state().is_some()))
+    .unwrap_or(preferred)
+}
 
-    // 3. Content hash fallback
-    if let (Some(computed_ch), Some(expected_ch)) =
-        (&identity.content_hash, &reference.content_hash)
-    {
-        if computed_ch == expected_ch {
-            return VerifyOutcome::ContentMatch;
+/// Whether the file's audio data is the saved one while the rest of the file
+/// is not: the content hash is equal to the saved content hash, and a hash
+/// of the file (spot, full BLAKE3 or full SHA-256) differs from the saved one.
+/// An edit to the file's header or to metadata stored in it does this.
+pub fn only_audio_matches(rows: &[HashRow]) -> bool {
+    let state = |kind| {
+        rows.iter()
+            .find(|r| r.kind == kind)
+            .and_then(HashRow::state)
+    };
+    state(HashKind::Content) == Some(HashState::Match)
+        && [HashKind::Spot, HashKind::Blake3, HashKind::Sha256]
+            .into_iter()
+            .any(|kind| state(kind) == Some(HashState::Mismatch))
+}
+
+/// The hashes and size in an identity read from saved annotations.
+fn saved_hashes_of(id: &FileIdentity) -> SidecarHashes {
+    SidecarHashes {
+        blake3: id.full_blake3.clone(),
+        sha256: id.full_sha256.clone(),
+        file_size: Some(id.file_size),
+        spot_hash_b3: id.spot_hash_b3.clone(),
+        content_hash: id.content_hash.clone(),
+        data_offset: id.data_offset,
+        data_size: id.data_size,
+    }
+}
+
+/// Keep the hashes of the annotation set read from disk for file `file_id`,
+/// as `LoadedFile::saved_hashes`. Called when the set is put in the store.
+///
+/// The store's own copy of the identity does not serve: every save replaces
+/// it with the identity computed from the file, and a hash compared with that
+/// copy is compared with itself.
+pub fn remember_saved_hashes(state: AppState, file_id: u64, saved: &FileIdentity) {
+    let saved = saved_hashes_of(saved);
+    state.library.files().update(|files| {
+        // The first set read is the one from disk. A later one can be the
+        // Google Drive copy of what this session saved, which holds the
+        // computed hashes.
+        if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+            if f.saved_hashes.is_none() {
+                f.saved_hashes = Some(saved);
+            }
+        }
+    });
+}
+
+/// The identity to save with a file's annotations: the one computed from the
+/// file, with each kind of hash that has not been computed taken from the
+/// annotations read from disk. Without this a save would drop a full hash
+/// that an earlier session computed for a large file.
+pub fn identity_to_save(f: &crate::state::LoadedFile) -> Option<FileIdentity> {
+    let mut id = f.identity.clone()?;
+    if let Some(saved) = &f.saved_hashes {
+        for kind in HashKind::ALL {
+            let slot = kind.in_identity_mut(&mut id);
+            if slot.is_none() {
+                *slot = kind.in_saved(saved).cloned();
+            }
         }
     }
-
-    VerifyOutcome::Mismatch
+    Some(id)
 }
 
 /// Whether the identity stored in a saved annotation set can be that of
@@ -447,30 +601,6 @@ pub fn saved_identity_agrees(saved: &FileIdentity, file: &FileIdentity) -> bool 
         }
     }
     !compared
-}
-
-/// Read the current reference hashes for a file from state.
-fn get_merged_reference(state: AppState, file_index: usize) -> crate::state::SidecarHashes {
-    let xc_hashes = state
-        .library
-        .files()
-        .with_untracked(|files| files.get(file_index).and_then(|f| f.xc_hashes.clone()));
-    let sidecar_id = state.file_id_at(file_index).and_then(|id| {
-        state
-            .annotations
-            .store()
-            .with_untracked(|store| store.get(id).map(|set| set.file_identity.clone()))
-    });
-    merge_references(&xc_hashes, &sidecar_id)
-}
-
-/// Store verification outcome on the LoadedFile.
-fn set_verify_outcome(state: AppState, file_index: usize, outcome: crate::state::VerifyOutcome) {
-    state.library.files().update(|files| {
-        if let Some(f) = files.get_mut(file_index) {
-            f.verify_outcome = outcome;
-        }
-    });
 }
 
 thread_local! {
@@ -600,244 +730,313 @@ pub fn start_identity_computation(
         drop(save_hold);
 
         let is_small = file_size < SMALL_FILE_THRESHOLD;
+        let bytes = file_bytes.map(std::sync::Arc::new);
 
-        // For small files, auto-compute blake3 + content_hash (not SHA-256)
-        if is_small {
-            if let Some(bytes) = file_bytes {
-                yield_now().await;
-                let Some(file_index) = state.file_idx_for_id(file_id) else {
-                    return;
-                };
-
-                // Layer 3: content hash (audio samples only) + Layer 4: full BLAKE3
-                let audio_start = data_offset.unwrap_or(0) as usize;
-                let audio_end = match data_size {
-                    Some(sz) => (audio_start + sz as usize).min(bytes.len()),
-                    None => bytes.len(),
-                };
-                let audio_start = audio_start.min(audio_end);
-                let content_hash = blake3::hash(&bytes[audio_start..audio_end])
-                    .to_hex()
-                    .to_string();
-                let full_blake3 = blake3::hash(&bytes).to_hex().to_string();
-
-                state.library.files().update(|files| {
-                    if let Some(f) = files.get_mut(file_index) {
-                        if let Some(ref mut id) = f.identity {
-                            id.content_hash = Some(content_hash);
-                            id.full_blake3 = Some(full_blake3);
-                        }
-                    }
-                });
-
-                crate::opfs::save_annotations_to_opfs(state, file_index);
-            } else {
-                // Small file without in-memory bytes: compute via file handle
-                let has_handle = state.library.files().with_untracked(|files| {
-                    files
-                        .get(file_index)
-                        .is_some_and(|f| f.file_handle.is_some())
-                });
-                if has_handle {
-                    start_full_hash_computation(state, file_index, false);
-                }
-            }
-        }
-
-        // Run verification against reference hashes
-        let Some(file_index) = state.file_idx_for_id(file_id) else {
-            return;
+        // A small file gets every hash now. A large file whose bytes are in
+        // memory gets the kinds it has a saved hash of: the bytes are not
+        // kept, and this is the one time those hashes can be compared.
+        let kinds: Vec<HashKind> = if is_small {
+            vec![HashKind::Blake3, HashKind::Content, HashKind::Sha256]
+        } else if bytes.is_some() {
+            saved_kinds_not_computed(state, file_id)
+        } else {
+            Vec::new()
         };
-        let reference = get_merged_reference(state, file_index);
-        let identity = state
-            .library
-            .files()
-            .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
+        run_hash_job(state, file_id, kinds, bytes).await;
 
-        if let Some(ref id) = identity {
-            let mut outcome = run_verification(id, &reference);
-
-            // On mismatch: for large files, content_hash isn't auto-computed.
-            // Compute it now as a fallback, then re-verify.
-            if outcome == crate::state::VerifyOutcome::Mismatch && id.content_hash.is_none() {
-                let handle = state.library.files().with_untracked(|files| {
-                    files.get(file_index).and_then(|f| f.file_handle.clone())
-                });
-                if let Some(handle) = handle {
-                    let reader = reader_from_handle(&handle);
-                    let check = |_: u32| false; // no cancellation for fallback
-                    if let Ok((content_hash, full_blake3)) = compute_full_hashes(
-                        reader.as_ref(),
-                        file_size,
-                        data_offset,
-                        data_size,
-                        0,
-                        &check,
-                    )
-                    .await
-                    {
-                        let Some(file_index) = state.file_idx_for_id(file_id) else {
-                            return;
-                        };
-                        state.library.files().update(|files| {
-                            if let Some(f) = files.get_mut(file_index) {
-                                if let Some(ref mut fid) = f.identity {
-                                    fid.content_hash = Some(content_hash);
-                                    fid.full_blake3 = Some(full_blake3);
-                                }
-                            }
-                        });
-                        crate::opfs::save_annotations_to_opfs(state, file_index);
-
-                        // Re-verify with content_hash now available
-                        let updated_id = state.library.files().with_untracked(|files| {
-                            files.get(file_index).and_then(|f| f.identity.clone())
-                        });
-                        if let Some(ref uid) = updated_id {
-                            outcome = run_verification(uid, &reference);
-                        }
-                    }
-                }
-            }
-
-            if let Some(file_index) = state.file_idx_for_id(file_id) {
-                set_verify_outcome(state, file_index, outcome);
-            }
+        // A large file whose spot hash differs from the saved one: compute
+        // the content hash, which tells whether the audio data is still the
+        // saved one and only the header or metadata changed.
+        let needs_content = state.library.files().with_untracked(|files| {
+            files.iter().find(|f| f.id == file_id).is_some_and(|f| {
+                let rows = file_hash_rows(f);
+                let state_of = |kind| {
+                    rows.iter()
+                        .find(|r| r.kind == kind)
+                        .and_then(HashRow::state)
+                };
+                state_of(HashKind::Spot) == Some(HashState::Mismatch)
+                    && state_of(HashKind::Content) == Some(HashState::Saved)
+            })
+        });
+        if needs_content {
+            run_hash_job(state, file_id, vec![HashKind::Content], None).await;
         }
     });
 }
 
-/// Compute Layers 3+4 on demand. Called when user clicks [Calculate hash].
-/// Optionally also computes SHA-256 (Layer 4-alt).
-pub fn start_full_hash_computation(state: AppState, file_index: usize, include_sha256: bool) {
-    use leptos::prelude::{Get, Set};
+/// A hash computation in progress for one file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HashJob {
+    id: u64,
+    pub file_id: u64,
+    pub kinds: Vec<HashKind>,
+    /// Bytes of the file read so far, and the file's size.
+    pub read: u64,
+    pub total: u64,
+}
 
-    // Increment generation to cancel any in-progress computation
-    let gen = state.status.hash_generation().get() + 1;
-    state.status.hash_generation().set(gen);
-    state.status.hash_computing().set(true);
+impl HashJob {
+    /// How much of the file has been read, from 0 to 100.
+    pub fn percent(&self) -> u32 {
+        if self.total == 0 {
+            return 100;
+        }
+        ((self.read as f64 / self.total as f64) * 100.0).floor() as u32
+    }
+}
 
-    let file_size = state
-        .library
-        .files()
-        .with_untracked(|files| {
-            files
-                .get(file_index)
-                .map(|f| f.identity.as_ref().map(|id| id.file_size).unwrap_or(0))
+/// Hash computations in progress, and the ones that failed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HashJobs {
+    pub running: Vec<HashJob>,
+    /// File id, kind of hash, and the error.
+    pub failed: Vec<(u64, HashKind, String)>,
+}
+
+impl HashJobs {
+    /// The computation of `kind` in progress for file `file_id`.
+    pub fn running(&self, file_id: u64, kind: HashKind) -> Option<&HashJob> {
+        self.running
+            .iter()
+            .find(|j| j.file_id == file_id && j.kinds.contains(&kind))
+    }
+
+    /// The error from the last computation of `kind` for file `file_id`, if
+    /// it failed.
+    pub fn failure(&self, file_id: u64, kind: HashKind) -> Option<&str> {
+        self.failed
+            .iter()
+            .find(|(id, k, _)| *id == file_id && *k == kind)
+            .map(|(_, _, e)| e.as_str())
+    }
+}
+
+thread_local! {
+    // An `Arc` signal: it is made on first use, under whatever reactive owner
+    // is current then, and has to outlive that owner.
+    static HASH_JOBS: ArcRwSignal<HashJobs> = ArcRwSignal::new(HashJobs::default());
+    static NEXT_HASH_JOB: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Hash computations in progress and failed, for the Info panel's hash rows.
+/// It changes as a file is read, so the rows' status lines read it and the
+/// file list does not.
+pub fn hash_jobs() -> ArcRwSignal<HashJobs> {
+    HASH_JOBS.with(Clone::clone)
+}
+
+/// The handle hashes are computed through after a file has opened.
+fn reread_handle(
+    f: &crate::state::LoadedFile,
+) -> Option<crate::audio::streaming_source::FileHandle> {
+    f.file_handle.clone().or_else(|| f.hash_source.clone())
+}
+
+/// Whether hashes of file `f` can still be computed: its bytes can be read
+/// again.
+pub fn can_compute_hashes(f: &crate::state::LoadedFile) -> bool {
+    f.file_handle.is_some() || f.hash_source.is_some()
+}
+
+/// The kinds of hash file `file_id` has a saved value of and no computed one.
+fn saved_kinds_not_computed(state: AppState, file_id: u64) -> Vec<HashKind> {
+    state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file_id)
+            .map(|f| {
+                file_hash_rows(f)
+                    .iter()
+                    .filter(|r| r.state() == Some(HashState::Saved))
+                    .map(|r| r.kind)
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Compute `kinds` of hash for file `file_id` and put them in its identity.
+/// Kinds the file already has, and kinds being computed, are left out. The
+/// file is read from `bytes` when given, and otherwise through its handle.
+///
+/// The full BLAKE3 and the content hash are computed together: both are
+/// BLAKE3, and the second costs little once the file is being read.
+async fn run_hash_job(
+    state: AppState,
+    file_id: u64,
+    mut kinds: Vec<HashKind>,
+    bytes: Option<std::sync::Arc<Vec<u8>>>,
+) {
+    if kinds.contains(&HashKind::Blake3) || kinds.contains(&HashKind::Content) {
+        kinds.extend([HashKind::Blake3, HashKind::Content]);
+    }
+    let jobs = hash_jobs();
+    let found = state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file_id)
+            .and_then(|f| Some((f.identity.clone()?, reread_handle(f))))
+    });
+    let Some((identity, handle)) = found else {
+        return;
+    };
+    let mut wanted: Vec<HashKind> = Vec::new();
+    for kind in kinds {
+        let have = kind.in_identity(&identity).is_some();
+        let running = jobs.with_untracked(|j| j.running(file_id, kind).is_some());
+        if !have && !running && !wanted.contains(&kind) {
+            wanted.push(kind);
+        }
+    }
+    if wanted.is_empty() {
+        return;
+    }
+    let from_memory = bytes.is_some();
+    let reader: Box<dyn AsyncRangeReader + '_> = match (bytes, handle.as_ref()) {
+        (Some(bytes), _) => Box::new(BytesRangeReader { bytes }),
+        (None, Some(handle)) => reader_from_handle(handle),
+        (None, None) => return,
+    };
+
+    let job_id = NEXT_HASH_JOB.with(|n| {
+        n.set(n.get() + 1);
+        n.get()
+    });
+    jobs.update(|j| {
+        j.failed
+            .retain(|(id, kind, _)| !(*id == file_id && wanted.contains(kind)));
+        j.running.push(HashJob {
+            id: job_id,
+            file_id,
+            kinds: wanted.clone(),
+            read: 0,
+            total: identity.file_size,
+        });
+    });
+    // The status bar's "Computing file identity..." is for reads of the file.
+    // Hashing bytes already in memory as a file opens is over too soon to
+    // announce.
+    let reads_file = !from_memory;
+    if reads_file {
+        state.status.hash_computing().set(true);
+    }
+
+    let result = async {
+        let mut hashes = if wanted.iter().any(|k| *k != HashKind::Spot) {
+            compute_whole_file_hashes(
+                reader.as_ref(),
+                identity.file_size,
+                identity.data_offset,
+                identity.data_size,
+                &wanted,
+                |read| {
+                    jobs.update(|j| {
+                        if let Some(job) = j.running.iter_mut().find(|job| job.id == job_id) {
+                            job.read = read;
+                        }
+                    })
+                },
+                // The file was closed.
+                || state.file_idx_for_id(file_id).is_none(),
+            )
+            .await?
+        } else {
+            ComputedHashes::default()
+        };
+        if wanted.contains(&HashKind::Spot) {
+            hashes.spot = Some(
+                compute_spot_hash_b3(
+                    reader.as_ref(),
+                    identity.file_size,
+                    identity.data_offset,
+                    identity.data_size,
+                )
+                .await?,
+            );
+        }
+        Ok::<_, String>(hashes)
+    }
+    .await;
+
+    jobs.update(|j| {
+        j.running.retain(|job| job.id != job_id);
+        if let Err(e) = &result {
+            if e != "Cancelled" {
+                for kind in &wanted {
+                    j.failed.push((file_id, *kind, e.clone()));
+                }
+            }
+        }
+    });
+    if reads_file {
+        state
+            .status
+            .hash_computing()
+            .set(jobs.with_untracked(|j| !j.running.is_empty()));
+    }
+
+    let hashes = match result {
+        Ok(hashes) => hashes,
+        Err(e) => {
+            if e != "Cancelled" {
+                log::warn!("Hash computation failed: {e}");
+            }
+            return;
+        }
+    };
+    let Some(file_index) = state.file_idx_for_id(file_id) else {
+        return;
+    };
+    state.library.files().update(|files| {
+        if let Some(id) = files.get_mut(file_index).and_then(|f| f.identity.as_mut()) {
+            for kind in &wanted {
+                if let Some(hash) = kind.in_computed(&hashes) {
+                    *kind.in_identity_mut(id) = Some(hash.clone());
+                }
+            }
+        }
+    });
+    // The saved annotations hold the file's hashes.
+    crate::opfs::save_annotations_to_opfs(state, file_index);
+}
+
+/// Compute `kinds` of hash for file `file_id` from the file, when the user
+/// asks for them in the Info panel. A kind that has a saved hash is compared
+/// with it once computed (`HashRow::state`).
+pub fn compute_hashes(state: AppState, file_id: u64, kinds: Vec<HashKind>) {
+    wasm_bindgen_futures::spawn_local(run_hash_job(state, file_id, kinds, None));
+}
+
+/// For a small file (`SMALL_FILE_THRESHOLD`), compute every kind of hash it
+/// has a saved value of and no computed one, so the saved value is compared
+/// with the file. The Info panel calls this when it shows the file's hashes.
+/// A kind whose computation failed is not tried again here; the panel's
+/// Check button tries it again.
+pub fn check_saved_hashes_of_small_file(state: AppState, file_id: u64) {
+    let small_and_readable = state.library.files().with_untracked(|files| {
+        files.iter().find(|f| f.id == file_id).is_some_and(|f| {
+            can_compute_hashes(f)
+                && f.identity
+                    .as_ref()
+                    .is_some_and(|id| id.file_size < SMALL_FILE_THRESHOLD)
         })
-        .unwrap_or(0);
-
-    let data_offset = state.library.files().with_untracked(|files| {
-        files
-            .get(file_index)
-            .and_then(|f| f.identity.as_ref().and_then(|id| id.data_offset))
     });
-
-    let data_size = state.library.files().with_untracked(|files| {
-        files
-            .get(file_index)
-            .and_then(|f| f.identity.as_ref().and_then(|id| id.data_size))
-    });
-
-    let handle = state
-        .library
-        .files()
-        .with_untracked(|files| files.get(file_index).and_then(|f| f.file_handle.clone()));
-
-    let Some(handle) = handle else {
-        log::warn!("No file handle available for hash computation (file_index={file_index})");
-        state.status.hash_computing().set(false);
+    if !small_and_readable {
         return;
-    };
-    // Found again by id after each await, as in `start_identity_computation`.
-    let Some(file_id) = state.file_id_at(file_index) else {
-        state.status.hash_computing().set(false);
-        return;
-    };
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let reader = reader_from_handle(&handle);
-        let check = |g: u32| state.status.hash_generation().get() != g;
-
-        // Compute BLAKE3 layers 3+4
-        match compute_full_hashes(
-            reader.as_ref(),
-            file_size,
-            data_offset,
-            data_size,
-            gen,
-            &check,
-        )
-        .await
-        {
-            Ok((content_hash, full_blake3)) => {
-                let file_index = state.file_idx_for_id(file_id);
-                state.library.files().update(|files| {
-                    if let Some(f) = file_index.and_then(|i| files.get_mut(i)) {
-                        if let Some(ref mut id) = f.identity {
-                            id.content_hash = Some(content_hash);
-                            id.full_blake3 = Some(full_blake3);
-                        }
-                    }
-                });
-            }
-            Err(e) => {
-                if e != "Cancelled" {
-                    log::warn!("Full hash computation failed: {e}");
-                }
-            }
-        }
-
-        // Optionally compute SHA-256
-        if include_sha256 && !check(gen) {
-            let reader2 = reader_from_handle(&handle);
-            match compute_full_sha256(reader2.as_ref(), file_size, gen, &check).await {
-                Ok(sha256) => {
-                    let file_index = state.file_idx_for_id(file_id);
-                    state.library.files().update(|files| {
-                        if let Some(f) = file_index.and_then(|i| files.get_mut(i)) {
-                            if let Some(ref mut id) = f.identity {
-                                id.full_sha256 = Some(sha256);
-                            }
-                        }
-                    });
-                }
-                Err(e) => {
-                    if e != "Cancelled" {
-                        log::warn!("SHA-256 computation failed: {e}");
-                    }
-                }
-            }
-        }
-
-        // Only clear computing flag if this is still the current generation
-        if !check(gen) {
-            state.status.hash_computing().set(false);
-            let Some(file_index) = state.file_idx_for_id(file_id) else {
-                return;
-            };
-
-            // Mark all hashes as verified and run verification
-            state.library.files().update(|files| {
-                if let Some(f) = files.get_mut(file_index) {
-                    f.all_hashes_verified = true;
-                }
-            });
-
-            let reference = get_merged_reference(state, file_index);
-            let identity = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_index).and_then(|f| f.identity.clone()));
-            if let Some(ref id) = identity {
-                let outcome = run_verification(id, &reference);
-                set_verify_outcome(state, file_index, outcome);
-            }
-
-            // Save updated identity to sidecar
-            crate::opfs::save_annotations_to_opfs(state, file_index);
-        }
-    });
+    }
+    let jobs = hash_jobs();
+    let kinds: Vec<HashKind> = saved_kinds_not_computed(state, file_id)
+        .into_iter()
+        .filter(|kind| {
+            jobs.with_untracked(|j| {
+                j.failure(file_id, *kind).is_none() && j.running(file_id, *kind).is_none()
+            })
+        })
+        .collect();
+    if !kinds.is_empty() {
+        compute_hashes(state, file_id, kinds);
+    }
 }
 
 #[cfg(test)]
@@ -885,6 +1084,121 @@ mod tests {
             &with(None, Some("cc")),
             &with(Some("bb"), None)
         ));
+    }
+
+    fn saved(kind: HashKind, hash: &str) -> SidecarHashes {
+        let mut s = SidecarHashes::default();
+        let slot = match kind {
+            HashKind::Spot => &mut s.spot_hash_b3,
+            HashKind::Blake3 => &mut s.blake3,
+            HashKind::Sha256 => &mut s.sha256,
+            HashKind::Content => &mut s.content_hash,
+        };
+        *slot = Some(hash.to_string());
+        s
+    }
+
+    fn state_of(rows: &[HashRow], kind: HashKind) -> Option<HashState> {
+        rows.iter()
+            .find(|r| r.kind == kind)
+            .and_then(HashRow::state)
+    }
+
+    #[test]
+    fn a_hash_row_says_where_its_hash_is_from_and_whether_it_matches() {
+        let mut id = identity_layer1("rec.wav", 1000);
+        id.spot_hash_b3 = Some("aa".into());
+        id.full_blake3 = Some("bb".into());
+        id.full_sha256 = Some("cc".into());
+        let mut xc = saved(HashKind::Blake3, "BB");
+        xc.sha256 = Some("dd".into());
+        let annotations = saved(HashKind::Content, "ee");
+        let rows = hash_rows(Some(&id), Some(&xc), Some(&annotations));
+
+        // Computed, and nothing saved to compare it with.
+        assert_eq!(state_of(&rows, HashKind::Spot), Some(HashState::Computed));
+        // Equal to the saved hash, whatever the case of its letters.
+        assert_eq!(state_of(&rows, HashKind::Blake3), Some(HashState::Match));
+        assert_eq!(state_of(&rows, HashKind::Sha256), Some(HashState::Mismatch));
+        // Saved, and not computed from the file.
+        assert_eq!(state_of(&rows, HashKind::Content), Some(HashState::Saved));
+        assert_eq!(
+            rows[3].saved,
+            Some(("ee".to_string(), SavedSource::Annotations))
+        );
+
+        // No hash of a kind, computed or saved.
+        let rows = hash_rows(Some(&identity_layer1("rec.wav", 1000)), None, None);
+        assert!(rows.iter().all(|r| r.state().is_none()));
+    }
+
+    #[test]
+    fn a_xeno_canto_hash_is_used_before_one_from_saved_annotations() {
+        let xc = saved(HashKind::Sha256, "from-xc");
+        let annotations = saved(HashKind::Sha256, "from-annotations");
+        let rows = hash_rows(None, Some(&xc), Some(&annotations));
+        assert_eq!(
+            rows[2].saved,
+            Some(("from-xc".to_string(), SavedSource::XenoCanto))
+        );
+    }
+
+    #[test]
+    fn the_main_hash_is_the_full_blake3_below_the_threshold_and_the_spot_hash_from_it() {
+        let mut id = identity_layer1("rec.wav", 1000);
+        id.spot_hash_b3 = Some("aa".into());
+        id.full_blake3 = Some("bb".into());
+        let rows = hash_rows(Some(&id), None, None);
+        assert_eq!(
+            main_hash(SMALL_FILE_THRESHOLD - 1, &rows, false),
+            HashKind::Blake3
+        );
+        assert_eq!(
+            main_hash(SMALL_FILE_THRESHOLD, &rows, false),
+            HashKind::Spot
+        );
+
+        // A small file with no full BLAKE3: the SHA-256 if there is one, then
+        // the content hash, then the spot hash.
+        id.full_blake3 = None;
+        let rows = hash_rows(Some(&id), None, None);
+        assert_eq!(main_hash(1000, &rows, false), HashKind::Spot);
+        let rows = hash_rows(Some(&id), None, Some(&saved(HashKind::Content, "cc")));
+        assert_eq!(main_hash(1000, &rows, false), HashKind::Content);
+        let rows = hash_rows(Some(&id), Some(&saved(HashKind::Sha256, "dd")), None);
+        assert_eq!(main_hash(1000, &rows, false), HashKind::Sha256);
+        // While the full BLAKE3 is being computed, its row is the main one.
+        assert_eq!(main_hash(1000, &rows, true), HashKind::Blake3);
+    }
+
+    #[test]
+    fn only_the_audio_matches_when_the_content_hash_is_equal_and_a_file_hash_differs() {
+        let mut id = identity_layer1("rec.wav", 1000);
+        id.full_blake3 = Some("new".into());
+        id.content_hash = Some("audio".into());
+        let mut before = saved(HashKind::Blake3, "old");
+        before.content_hash = Some("audio".into());
+        assert!(only_audio_matches(&hash_rows(
+            Some(&id),
+            None,
+            Some(&before)
+        )));
+
+        // The whole file is the saved one.
+        before.blake3 = Some("new".into());
+        assert!(!only_audio_matches(&hash_rows(
+            Some(&id),
+            None,
+            Some(&before)
+        )));
+        // The audio differs too.
+        before.blake3 = Some("old".into());
+        before.content_hash = Some("other".into());
+        assert!(!only_audio_matches(&hash_rows(
+            Some(&id),
+            None,
+            Some(&before)
+        )));
     }
 
     #[test]

@@ -17,20 +17,6 @@ use std::collections::VecDeque;
 /// `crate::state::SidecarHashes` references keep working.
 pub use oversample_ipc::SidecarHashes;
 
-/// Overall verification result against reference hashes (XC sidecar or .batm).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum VerifyOutcome {
-    #[default]
-    /// No verification attempted yet (hashes still computing or no reference available).
-    Pending,
-    /// Primary hash matched reference.
-    Match,
-    /// Primary hash failed, but content_hash matched (header-only change).
-    ContentMatch,
-    /// All verification failed.
-    Mismatch,
-}
-
 /// The user's per-file bandpass-EQ settings (the multi-band filter curve + the
 /// user's manual bandpass), part of the per-file denoise bucket. `bandpass_mode`
 /// is the USER's bandpass; HFR's transient bandpass lives on the live
@@ -361,10 +347,15 @@ pub struct LoadedFile {
     /// A file-adjacent .batm sidecar existed when this file was loaded.
     /// When true, auto-save updates the sidecar alongside the central store.
     pub had_sidecar: bool,
-    /// Overall verification result against reference hashes.
-    pub verify_outcome: VerifyOutcome,
-    /// True after user clicks "Calculate all hashes" — enables indicators on all hash rows.
-    pub all_hashes_verified: bool,
+    /// The hashes and size in the annotations read from disk for this file,
+    /// as they were saved (`file_identity::remember_saved_hashes`). The Info
+    /// panel compares the file's computed hashes with these.
+    pub saved_hashes: Option<SidecarHashes>,
+    /// A handle for reading the file's bytes again to compute its hashes,
+    /// for a file that was decoded into memory. `file_handle` is not used
+    /// for this: a file that has one is taken to be read from its file as
+    /// it plays.
+    pub hash_source: Option<crate::audio::streaming_source::FileHandle>,
     /// WAV cue-point markers parsed from the file (read-only display).
     pub wav_markers: Vec<crate::types::WavMarker>,
     /// Loading entry ID while this file is still loading (for inline progress display).

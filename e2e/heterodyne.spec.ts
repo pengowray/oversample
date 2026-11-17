@@ -294,6 +294,9 @@ test.describe("heterodyne badge and note", () => {
   test("the badge scrolls the Info panel back to the Sample rate row and note", async ({
     page,
   }) => {
+    // A short window: the Info panel must be long enough to scroll the note
+    // out of view.
+    await page.setViewportSize({ width: 1280, height: 480 });
     await openCase(page, { fields: { rmk: "Recording with Magenta Bat5" }, rate: 48_000 });
     await showInfo(page);
     const panel = page.locator(".right-sidebar .sidebar-panel");

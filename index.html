@@ -225,6 +225,27 @@
         else document.addEventListener('DOMContentLoaded', initLock);
         window.__lock_grow = { attach: attach, update: update };
     })();
+    // A hash in the Info panel is shown shortened: its middle characters are
+    // in the page at font size 0 (.hash-mid). Chromium and Firefox copy them
+    // with the rest of a selection. This puts the whole hash (data-full) on
+    // the clipboard in any browser, when the selection is inside one hash.
+    document.addEventListener('copy', function (ev) {
+        var sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !ev.clipboardData) return;
+        var inHash = function (node) {
+            var el = node && (node.nodeType === 1 ? node : node.parentElement);
+            return el && el.closest ? el.closest('.hash-value[data-full]') : null;
+        };
+        var a = inHash(sel.anchorNode);
+        if (!a || a !== inHash(sel.focusNode)) return;
+        var full = a.getAttribute('data-full');
+        var picked = sel.toString().replace(/\s+/g, '');
+        // Only when the selection takes in the hidden middle; a few
+        // characters picked from one end are copied as they are.
+        if (picked.length < full.length && full.indexOf(picked) !== -1) return;
+        ev.clipboardData.setData('text/plain', full);
+        ev.preventDefault();
+    });
     </script>
 </head>
 <body></body>

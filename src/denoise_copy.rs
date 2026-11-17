@@ -222,7 +222,16 @@ pub async fn open(state: AppState, written: Written, name: &str) -> Result<(), S
             });
             match (&opened, streamed) {
                 (Ok(()), Some(id)) => STORED.with(|s| s.borrow_mut().push((id, stored))),
-                _ => opfs_audio::delete(&stored).await,
+                _ => {
+                    // The stored file is deleted, so the copy's hashes
+                    // cannot be computed from it later.
+                    state.library.files().update(|files| {
+                        if let Some(f) = files.last_mut().filter(|f| f.name == name) {
+                            f.hash_source = None;
+                        }
+                    });
+                    opfs_audio::delete(&stored).await
+                }
             }
             opened
         }

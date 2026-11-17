@@ -960,38 +960,237 @@ fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
     }
 }
 
-/// Hash row with match indicator. Spacious layout.
-fn hash_row(
-    label: &str,
-    hash: &str,
-    reference: Option<&str>,
-    from_reference: bool,
-) -> impl IntoView {
-    let hash_for_copy = hash.to_string();
-    let label = label.to_string();
-    let on_copy = move |ev: web_sys::MouseEvent| {
-        ev.stop_propagation();
-        super::copy_to_clipboard(&hash_for_copy);
-    };
-    let (indicator, indicator_class) = match reference {
-        Some(expected) if expected == hash => ("\u{2713}", "hash-indicator-inline match"),
-        Some(_) => ("\u{2717}", "hash-indicator-inline mismatch"),
-        None => ("", "hash-indicator-inline"),
-    };
-    let value_class = if from_reference {
-        "metadata-value-block metadata-hash hash-from-ref"
-    } else {
-        "metadata-value-block metadata-hash"
-    };
-    let hash_display = hash.to_string();
+/// Characters of a hash shown before and after the "…" that stands for its
+/// middle.
+const HASH_SHOWN_EACH_END: usize = 10;
+
+/// A hash on one line: its first and last characters with "…" between them.
+///
+/// The whole hash is in the text, so selecting the line and copying gives all
+/// of it. The middle is in a span that takes no room (`.hash-mid`, font size
+/// 0), and the "…" is drawn by CSS, so it is not part of the copied text. A
+/// `copy` listener in index.html covers browsers that leave zero-size text
+/// out of the clipboard: it puts `data-full` there.
+fn hash_value(hash: &str) -> impl IntoView {
+    let full = hash.to_string();
+    let n = HASH_SHOWN_EACH_END;
+    if !hash.is_ascii() || hash.len() <= 2 * n + 1 {
+        let text = full.clone();
+        return view! { <span class="hash-value" data-full=full>{text}</span> }.into_any();
+    }
+    let head = hash[..n].to_string();
+    let mid = hash[n..hash.len() - n].to_string();
+    let tail = hash[hash.len() - n..].to_string();
     view! {
-        <div class="metadata-row metadata-row-spacious">
-            <div class="metadata-key-line">
-                <span class="metadata-key">{label}</span>
-                <span class=indicator_class>{indicator}</span>
-                <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+        <span class="hash-value" data-full=full.clone() title=full>
+            {head}<span class="hash-mid">{mid}</span>{tail}
+        </span>
+    }
+    .into_any()
+}
+
+/// The name of the place a saved hash was read from, as the status lines of
+/// the hash rows give it.
+fn saved_source_name(source: crate::file_identity::SavedSource) -> &'static str {
+    match source {
+        crate::file_identity::SavedSource::XenoCanto => "Xeno-canto",
+        crate::file_identity::SavedSource::Annotations => "saved annotations",
+    }
+}
+
+/// One kind of hash in the File Identity group: its name, the buttons, the
+/// hash on one line, and a status line saying where the hash is from and
+/// whether it was compared with a saved one.
+///
+/// `can_compute`: the file can be read again. `auto`: the file is small, so
+/// its hashes are computed without a button. `coming`: this hash is being
+/// computed as the file opens.
+fn hash_row(
+    state: AppState,
+    file_id: u64,
+    row: crate::file_identity::HashRow,
+    can_compute: bool,
+    auto: bool,
+    coming: bool,
+) -> impl IntoView {
+    use crate::file_identity::{HashKind, HashState, SavedSource};
+
+    let kind = row.kind;
+    let row_state = row.state();
+    let has_saved = row.saved.is_some();
+    let source = row.saved.as_ref().map(|(_, s)| *s);
+    let jobs = crate::file_identity::hash_jobs();
+
+    // The hash the Copy button copies: the file's own when it is known.
+    let shown = row
+        .computed
+        .clone()
+        .or_else(|| row.saved.as_ref().map(|(h, _)| h.clone()));
+    let copy = shown.clone().map(|hash| {
+        let on_copy = move |ev: web_sys::MouseEvent| {
+            ev.stop_propagation();
+            super::copy_to_clipboard(&hash);
+        };
+        view! {
+            <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy full hash">
+                {"\u{2398}"}
+            </button>
+        }
+    });
+
+    // Check (compare a saved hash with the file) or Compute (a hash the file
+    // has no value of). A small file's saved hashes are compared without a
+    // button, so its Check button is there only after a read failed.
+    let action = {
+        let jobs = jobs.clone();
+        move || {
+            let (running, failed) = jobs.with(|j| {
+                (
+                    j.running(file_id, kind).is_some(),
+                    j.failure(file_id, kind).is_some(),
+                )
+            });
+            if running || !can_compute || (coming && !failed) {
+                return None;
+            }
+            let (label, title) = match row_state {
+                Some(HashState::Saved) if !auto || failed => (
+                    "Check",
+                    if kind == HashKind::Spot {
+                        "Compute this hash from the file and compare it with the saved hash."
+                    } else {
+                        "Compute this hash from the file and compare it with the saved hash. \
+                         Reads the whole file, which can take a while."
+                    },
+                ),
+                None => (
+                    "Compute",
+                    "Compute this hash from the file. Reads the whole file, which can take a while.",
+                ),
+                _ => return None,
+            };
+            let on_click = move |ev: web_sys::MouseEvent| {
+                ev.stop_propagation();
+                crate::file_identity::compute_hashes(state, file_id, vec![kind]);
+            };
+            Some(view! {
+                <button class="hash-calc-btn" on:click=on_click title=title>{label}</button>
+            })
+        }
+    };
+
+    let status = move || {
+        let (running, failure) = jobs.with(|j| {
+            (
+                j.running(file_id, kind)
+                    .map(|job| (job.percent(), job.kinds != [HashKind::Spot])),
+                j.failure(file_id, kind).map(str::to_string),
+            )
+        });
+        let verb = if has_saved { "compare" } else { "compute" };
+        if let Some((percent, whole_file)) = running {
+            let text = if whole_file {
+                format!("Reading file to {verb}: {percent}%")
+            } else {
+                format!("Reading file to {verb}")
+            };
+            return view! { <div class="hash-status hash-status-busy">{text}</div> }.into_any();
+        }
+        if let Some(error) = failure {
+            return view! {
+                <div class="hash-status hash-status-failed">
+                    {format!("Could not read the file: {error}")}
+                </div>
+            }
+            .into_any();
+        }
+        if coming {
+            return view! {
+                <div class="hash-status hash-status-busy">{format!("Reading file to {verb}")}</div>
+            }
+            .into_any();
+        }
+        let source = source.unwrap_or(SavedSource::Annotations);
+        match row_state {
+            Some(HashState::Computed) => {
+                view! { <div class="hash-status">"Computed from this file"</div> }.into_any()
+            }
+            Some(HashState::Saved) => view! {
+                <div class="hash-status">
+                    {match source {
+                        SavedSource::XenoCanto => "From Xeno-canto. Not compared yet.",
+                        SavedSource::Annotations => "From saved annotations. Not compared yet.",
+                    }}
+                </div>
+            }
+            .into_any(),
+            Some(HashState::Match) => view! {
+                <div class="hash-status hash-status-match">
+                    <span class="hash-mark">{"\u{2713}"}</span>
+                    {match source {
+                        SavedSource::XenoCanto => "Matches the Xeno-canto hash",
+                        SavedSource::Annotations => "Matches the hash in saved annotations",
+                    }}
+                </div>
+            }
+            .into_any(),
+            // The mismatch line is above the two hashes (see below).
+            Some(HashState::Mismatch) | None => ().into_any(),
+        }
+    };
+
+    let body = match (row_state, &row.computed, &row.saved) {
+        // Both hashes, each named, under a line that says they differ.
+        (Some(HashState::Mismatch), Some(computed), Some((saved, source))) => view! {
+            <div class="hash-status hash-status-mismatch">
+                <span class="hash-mark">{"\u{2717}"}</span>
+                {match source {
+                    SavedSource::XenoCanto => "Does not match the Xeno-canto hash",
+                    SavedSource::Annotations => "Does not match the hash in saved annotations",
+                }}
             </div>
-            <div class=value_class>{hash_display}</div>
+            <div class="hash-pair">
+                <span class="hash-pair-label">"This file"</span>
+                {hash_value(computed)}
+                <span class="hash-pair-label">
+                    {match source {
+                        SavedSource::XenoCanto => "Xeno-canto",
+                        SavedSource::Annotations => "Saved",
+                    }}
+                </span>
+                {hash_value(saved)}
+            </div>
+        }
+        .into_any(),
+        _ => match &shown {
+            Some(hash) => {
+                view! { <div class="metadata-value-block">{hash_value(hash)}</div> }.into_any()
+            }
+            None if coming => ().into_any(),
+            None => view! {
+                <div class="metadata-value-block hash-not-computed">"Not computed"</div>
+            }
+            .into_any(),
+        },
+    };
+
+    let state_name = match row_state {
+        Some(HashState::Computed) => "computed",
+        Some(HashState::Saved) => "saved",
+        Some(HashState::Match) => "match",
+        Some(HashState::Mismatch) => "mismatch",
+        None => "none",
+    };
+    view! {
+        <div class="metadata-row metadata-row-spacious hash-row"
+             data-hash=kind.key() data-state=state_name>
+            <div class="metadata-key-line">
+                <span class="metadata-key">{kind.label()}</span>
+                {action}
+                {copy}
+            </div>
+            {body}
+            {status}
         </div>
     }
 }
@@ -1071,184 +1270,196 @@ fn format_file_size(bytes: usize) -> String {
     }
 }
 
-fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
-    let state = expect_context::<AppState>();
-    let identity = f.identity.clone();
-    let has_file_handle = f.file_handle.is_some();
-    let verify_outcome = f.verify_outcome.clone();
-    let all_verified = f.all_hashes_verified;
+thread_local! {
+    /// Files (by `LoadedFile.id`) whose "Other hashes" list the user opened.
+    /// Kept here because the File Identity group is built again whenever the
+    /// file changes, which includes the end of a hash computation started
+    /// from inside the list.
+    static OTHER_HASHES_OPEN: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
 
-    // Key off this section's own file id (not the current-file index) so the
-    // sidecar hashes always match the file being rendered.
-    let sidecar_identity = state
-        .annotations
-        .store()
-        .with_untracked(|store| store.get(f.id).map(|set| set.file_identity.clone()));
-    let xc = &f.xc_hashes;
-    let ref_blake3 = xc.as_ref().and_then(|h| h.blake3.clone()).or_else(|| {
-        sidecar_identity
-            .as_ref()
-            .and_then(|s| s.full_blake3.clone())
-    });
-    let ref_sha256 = xc.as_ref().and_then(|h| h.sha256.clone()).or_else(|| {
-        sidecar_identity
-            .as_ref()
-            .and_then(|s| s.full_sha256.clone())
-    });
-    let ref_spot = xc
+/// The File Identity group: the file's size in bytes, its main hash, and its
+/// other hashes in a list that opens. Which hash is the main one, and what
+/// each row's state is, come from `crate::file_identity`.
+fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
+    use crate::file_identity::{HashKind, HashState, SavedSource};
+
+    let state = expect_context::<AppState>();
+    let file_id = f.id;
+    let rows = crate::file_identity::file_hash_rows(f);
+    let can_compute = crate::file_identity::can_compute_hashes(f);
+
+    let actual_size = f.identity.as_ref().map(|id| id.file_size);
+    let saved_size = f
+        .xc_hashes
         .as_ref()
-        .and_then(|h| h.spot_hash_b3.clone())
+        .and_then(|h| h.file_size.map(|s| (s, SavedSource::XenoCanto)))
         .or_else(|| {
-            sidecar_identity
+            f.saved_hashes
                 .as_ref()
-                .and_then(|s| s.spot_hash_b3.clone())
+                .and_then(|h| h.file_size.map(|s| (s, SavedSource::Annotations)))
         });
-    let ref_content = xc
-        .as_ref()
-        .and_then(|h| h.content_hash.clone())
-        .or_else(|| {
-            sidecar_identity
-                .as_ref()
-                .and_then(|s| s.content_hash.clone())
+    let size = actual_size.or(saved_size.map(|(s, _)| s)).unwrap_or(0);
+    let is_small = size < crate::file_identity::SMALL_FILE_THRESHOLD;
+
+    // A hash that is on its way as the file opens: the spot hash until it is
+    // known, then, for a small file, the others.
+    let spot_pending = crate::file_identity::spot_hash_pending(file_id);
+    let jobs = crate::file_identity::hash_jobs();
+    let coming = |kind: HashKind| {
+        let row_empty = rows.iter().any(|r| r.kind == kind && r.computed.is_none());
+        let (failed, running) = jobs.with_untracked(|j| {
+            (
+                j.failure(file_id, kind).is_some(),
+                j.running(file_id, kind).is_some(),
+            )
         });
-    let ref_file_size = xc
-        .as_ref()
-        .and_then(|h| h.file_size)
-        .or_else(|| sidecar_identity.as_ref().map(|s| s.file_size));
+        let at_open = spot_pending && (kind == HashKind::Spot || is_small);
+        row_empty && !failed && f.identity.is_some() && (at_open || running)
+    };
 
     let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
 
-    let actual_size = identity.as_ref().map(|id| id.file_size);
-    let display_size = actual_size.or(ref_file_size);
-    let is_small = display_size
-        .map(|s| s < crate::file_identity::SMALL_FILE_THRESHOLD)
-        .unwrap_or(true);
-
-    if let Some(size) = display_size {
-        if size > 0 {
-            let size_ref = match (actual_size, ref_file_size) {
-                (Some(actual), Some(expected)) => Some(if actual == expected {
-                    actual.to_string()
-                } else {
-                    format!("{expected}")
-                }),
-                _ => None,
-            };
-            items.push(
-                hash_row(
-                    "File size (bytes)",
-                    &size.to_string(),
-                    size_ref.as_deref(),
-                    false,
-                )
+    if size > 0 {
+        let status = match (actual_size, saved_size) {
+            (Some(actual), Some((saved, source))) if actual == saved => Some(
+                view! {
+                    <div class="hash-status hash-status-match">
+                        <span class="hash-mark">{"\u{2713}"}</span>
+                        {match source {
+                            SavedSource::XenoCanto => "Matches the Xeno-canto size",
+                            SavedSource::Annotations => "Matches the size in saved annotations",
+                        }}
+                    </div>
+                }
                 .into_any(),
-            );
-        }
-    }
-
-    if let Some(ref id) = identity {
-        if let Some(ref hash) = id.spot_hash_b3 {
-            let reference = if !is_small || all_verified {
-                ref_spot.as_deref()
-            } else {
-                None
-            };
-            items.push(hash_row("Spot hash", hash, reference, false).into_any());
-        } else {
-            items.push(
-                spacious_row(
-                    "Spot hash".into(),
-                    "computing...".into(),
-                    None,
-                    MetadataView::Original,
-                )
+            ),
+            (Some(_), Some((saved, source))) => Some(
+                view! {
+                    <div class="hash-status hash-status-mismatch">
+                        <span class="hash-mark">{"\u{2717}"}</span>
+                        {format!("Different size in {}: {saved} bytes", saved_source_name(source))}
+                    </div>
+                }
                 .into_any(),
-            );
-        }
-
-        if let Some(ref hash) = id.full_blake3 {
-            let reference = if is_small || all_verified {
-                ref_blake3.as_deref()
-            } else {
-                None
-            };
-            items.push(hash_row("Full BLAKE3", hash, reference, false).into_any());
-        } else if let Some(ref known) = ref_blake3 {
-            items.push(hash_row("Full BLAKE3", known, None, true).into_any());
-        }
-
-        if let Some(ref hash) = id.content_hash {
-            let reference =
-                if verify_outcome == crate::state::VerifyOutcome::ContentMatch || all_verified {
-                    ref_content.as_deref()
-                } else {
-                    None
-                };
-            items.push(hash_row("Content hash", hash, reference, false).into_any());
-        } else if let Some(ref known) = ref_content {
-            items.push(hash_row("Content hash", known, None, true).into_any());
-        }
-
-        if let Some(ref hash) = id.full_sha256 {
-            let reference = if all_verified {
-                ref_sha256.as_deref()
-            } else {
-                None
-            };
-            items.push(hash_row("Full SHA-256", hash, reference, false).into_any());
-        } else if let Some(ref known) = ref_sha256 {
-            items.push(hash_row("Full SHA-256", known, None, true).into_any());
-        }
-    } else {
-        if let Some(ref known) = ref_spot {
-            items.push(hash_row("Spot hash", known, None, true).into_any());
-        }
-        if let Some(ref known) = ref_blake3 {
-            items.push(hash_row("Full BLAKE3", known, None, true).into_any());
-        }
-        if let Some(ref known) = ref_content {
-            items.push(hash_row("Content hash", known, None, true).into_any());
-        }
-        if let Some(ref known) = ref_sha256 {
-            items.push(hash_row("Full SHA-256", known, None, true).into_any());
-        }
-    }
-
-    if verify_outcome == crate::state::VerifyOutcome::ContentMatch {
+            ),
+            _ => None,
+        };
+        let size_text = size.to_string();
+        let on_copy = {
+            let size_text = size_text.clone();
+            move |ev: web_sys::MouseEvent| {
+                ev.stop_propagation();
+                super::copy_to_clipboard(&size_text);
+            }
+        };
         items.push(
             view! {
-                <div class="metadata-row metadata-row-spacious">
-                    <div class="hash-note">"Header changed \u{2014} audio content verified"</div>
+                <div class="metadata-row metadata-row-spacious hash-row" data-hash="size">
+                    <div class="metadata-key-line">
+                        <span class="metadata-key">"File size (bytes)"</span>
+                        <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">
+                            {"\u{2398}"}
+                        </button>
+                    </div>
+                    <div class="metadata-value-block hash-value">{size_text}</div>
+                    {status}
                 </div>
             }
             .into_any(),
         );
     }
 
-    if has_file_handle && !all_verified {
-        let computing = state.status.hash_computing().get();
-        let on_calc_all = move |_: web_sys::MouseEvent| {
-            if let Some(idx) = state.library.current_index().get_untracked() {
-                crate::file_identity::start_full_hash_computation(state, idx, true);
-            }
-        };
-        let label = if computing {
-            "Computing..."
+    let main = crate::file_identity::main_hash(
+        size,
+        &rows,
+        coming(if is_small {
+            HashKind::Blake3
         } else {
-            "Calculate all hashes"
+            HashKind::Spot
+        }),
+    );
+    let shown = |kind: HashKind| {
+        rows.iter()
+            .find(|r| r.kind == kind)
+            .filter(|r| r.state().is_some() || can_compute || coming(kind))
+            .cloned()
+    };
+    if let Some(row) = shown(main) {
+        items.push(hash_row(state, file_id, row, can_compute, is_small, coming(main)).into_any());
+    }
+
+    if crate::file_identity::only_audio_matches(&rows) {
+        items.push(
+            view! {
+                <div class="metadata-row metadata-row-spacious">
+                    <div class="hash-note">
+                        "The audio is the same. Only the file's header or embedded metadata is different."
+                    </div>
+                </div>
+            }
+            .into_any(),
+        );
+    }
+
+    let others: Vec<_> = HashKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != main)
+        .filter_map(shown)
+        .collect();
+    if !others.is_empty() {
+        // A hash in the list that differs from the saved one opens the list.
+        let mismatch = others
+            .iter()
+            .any(|r| r.state() == Some(HashState::Mismatch));
+        let open = mismatch || OTHER_HASHES_OPEN.with(|o| o.borrow().contains(&file_id));
+        let on_toggle = move |ev: web_sys::Event| {
+            let now_open = ev
+                .target()
+                .and_then(|t| js_sys::Reflect::get(&t, &"open".into()).ok())
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            OTHER_HASHES_OPEN.with(|o| {
+                if now_open {
+                    o.borrow_mut().insert(file_id);
+                } else {
+                    o.borrow_mut().remove(&file_id);
+                }
+            });
         };
-        items.push(view! {
-            <div class="metadata-row metadata-row-spacious">
-                <button class="hash-calc-btn" on:click=on_calc_all disabled=computing>{label}</button>
-            </div>
-        }.into_any());
+        let label = format!("Other hashes ({})", others.len());
+        let other_rows: Vec<_> = others
+            .into_iter()
+            .map(|row| {
+                let coming = coming(row.kind);
+                hash_row(state, file_id, row, can_compute, is_small, coming).into_any()
+            })
+            .collect();
+        items.push(
+            view! {
+                <details class="metadata-same hash-others" open=open on:toggle=on_toggle>
+                    <summary>{label}</summary>
+                    {other_rows}
+                </details>
+            }
+            .into_any(),
+        );
+    }
+
+    // A small file's saved hashes are compared with the file as soon as they
+    // are shown. Started after this view is built, since it changes signals.
+    if is_small {
+        spawn_local(async move {
+            crate::file_identity::check_saved_hashes_of_small_file(state, file_id);
+        });
     }
 
     if items.is_empty() {
         view! { <span></span> }.into_any()
     } else {
         view! {
-            <div class="setting-group">
+            <div class="setting-group file-identity">
                 <div class="setting-group-title setting-group-title-major">"File Identity"</div>
                 {items}
             </div>

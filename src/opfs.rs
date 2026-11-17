@@ -328,11 +328,11 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
             // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
-            if let Some(id) = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_idx).and_then(|f| f.identity.clone()))
-            {
+            if let Some(id) = state.library.files().with_untracked(|files| {
+                files
+                    .get(file_idx)
+                    .and_then(crate::file_identity::identity_to_save)
+            }) {
                 set.file_identity = id;
             }
             // Capture current NR state into the sidecar
@@ -548,11 +548,11 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
         }
         // Sync file identity and noise profile, touch modified_at
         if let Some(set) = store.get_mut(file_id) {
-            if let Some(id) = state
-                .library
-                .files()
-                .with_untracked(|files| files.get(file_idx).and_then(|f| f.identity.clone()))
-            {
+            if let Some(id) = state.library.files().with_untracked(|files| {
+                files
+                    .get(file_idx)
+                    .and_then(crate::file_identity::identity_to_save)
+            }) {
                 set.file_identity = id;
             }
             set.noise_profile = sync_noise_profile_from_state(state);
@@ -631,6 +631,7 @@ fn apply_loaded_sidecar(
     let Some(file_idx) = state.file_idx_for_id(file_id) else {
         return;
     };
+    crate::file_identity::remember_saved_hashes(state, file_id, &loaded.file_identity);
     // What is on disk now; a save with the same content keeps its time.
     remember_fingerprint(
         file_id,

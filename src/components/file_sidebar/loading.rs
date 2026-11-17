@@ -147,11 +147,20 @@ pub(crate) async fn read_and_load_file(
         return Err(msg);
     }
     let bytes = read_file_bytes(&file).await?;
-    let result = load_named_bytes(name, &bytes, None, None, None, state, load_id, false).await;
-    if result.is_ok() {
+    let result = load_named_bytes_id(name, &bytes, None, None, None, state, load_id, false).await;
+    if let Ok(file_id) = result {
+        // The decoded file keeps no bytes. Its hashes are computed from the
+        // browser's file when the Info panel asks for them.
+        state.library.files().update(|files| {
+            if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+                f.hash_source = Some(crate::audio::streaming_source::FileHandle::WebFile(
+                    file.clone(),
+                ));
+            }
+        });
         finalize_loaded_file(state, last_modified_ms);
     }
-    result
+    result.map(|_| ())
 }
 
 /// Open a WAV of `size` bytes at `path` on disk (Tauri): streamed from disk
@@ -409,8 +418,8 @@ pub(crate) async fn load_named_bytes_id(
         cached_full_peak_db: None,
         read_only: false,
         had_sidecar: false,
-        verify_outcome: crate::state::VerifyOutcome::Pending,
-        all_hashes_verified: false,
+        saved_hashes: None,
+        hash_source: None,
         wav_markers,
         loading_id: Some(load_id),
         min_display_freq: None,
@@ -943,6 +952,11 @@ pub(crate) async fn load_native_file(
             if let Some(ref mut id) = f.identity {
                 id.file_path = Some(path.clone());
             }
+            // Its hashes are computed from the file on disk when the Info
+            // panel asks for them.
+            f.hash_source = Some(crate::audio::streaming_source::FileHandle::TauriPath(
+                path.clone(),
+            ));
         }
     });
 
