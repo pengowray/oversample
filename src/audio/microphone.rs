@@ -85,33 +85,31 @@ async fn acquire_gps_location() -> Option<GpsLocation> {
 
 // ── Tauri IPC query helpers ─────────────────────────────────────────────
 
-/// Request Android RECORD_AUDIO runtime permission via Tauri plugin.
-/// Returns true if granted, false if denied or not on Android.
-pub async fn request_audio_permission_tauri(state: &AppState) -> bool {
-    if !state.is_tauri {
+/// Ask Android for the Microphone (RECORD_AUDIO) permission before a mic is
+/// opened. Android shows its prompt only while it is still willing to ask; when
+/// the permission is refused, the notice with "Open settings" is shown and this
+/// returns false. Returns true off Android.
+async fn ensure_record_permission(state: &AppState) -> bool {
+    if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return true;
     }
-    state.log_debug("info", "Requesting RECORD_AUDIO permission via plugin...");
     match tauri_invoke_typed_no_args::<oversample_ipc::plugins::PermissionGranted>(
         "plugin:usb-audio|requestAudioPermission",
     )
     .await
     {
         Ok(result) => {
-            if result.granted {
-                state.log_debug("info", "RECORD_AUDIO permission granted");
-            } else {
+            state.dialogs.mic_access_notice().set(!result.granted);
+            if !result.granted {
                 state.log_debug("error", "RECORD_AUDIO permission denied");
-                state.show_error_toast("Microphone permission denied");
             }
             result.granted
         }
         Err(e) => {
-            state.log_debug(
-                "warn",
-                format!("requestAudioPermission failed (may not be Android): {}", e),
-            );
-            true // Non-fatal on desktop Tauri
+            // The plugin only exists on Android; let the mic open report any
+            // real failure.
+            state.log_debug("warn", format!("requestAudioPermission failed: {}", e));
+            true
         }
     }
 }
@@ -518,6 +516,20 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
 
     let strategy = state.mic.strategy().get_untracked();
 
+    // Android: every backend needs the Microphone permission (the raw USB one
+    // for its foreground service), and so does choosing a mic to record with.
+    let t_perm = js_sys::Date::now();
+    if strategy != MicStrategy::None && !ensure_record_permission(state).await {
+        state.mic.acquisition_state().set(MicAcquisitionState::Idle);
+        return None;
+    }
+    // A slow answer means Android showed its prompt (same timing rule as the
+    // mic opens below).
+    let prompted = js_sys::Date::now() - t_perm > 1500.0;
+    // The backends report a specific failure (e.g. the browser's "Microphone
+    // permission denied") in the status message; keep it when there is one.
+    state.status.message().set(None);
+
     match strategy {
         MicStrategy::None => {
             state.log_debug("info", "acquire_mic: strategy=None, mic disabled");
@@ -531,7 +543,10 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
             let t0 = js_sys::Date::now();
             if MicBackend::Browser.open(state).await {
                 let elapsed = js_sys::Date::now() - t0;
-                state.mic.permission_dialog_shown().set(elapsed > 1500.0);
+                state
+                    .mic
+                    .permission_dialog_shown()
+                    .set(prompted || elapsed > 1500.0);
                 state.mic.backend().set(Some(MicBackend::Browser));
                 state
                     .mic
@@ -551,9 +566,11 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                 state.mic.backend().set(None);
                 state.mic.device_info().set(None);
                 state.mic.selected_device().set(None);
-                state.status.message().set(Some(
-                    "Browser mic failed. Please choose a microphone.".into(),
-                ));
+                if state.status.message().get_untracked().is_none() {
+                    state.status.message().set(Some(
+                        "Browser mic failed. Please choose a microphone.".into(),
+                    ));
+                }
                 None
             }
         }
@@ -566,7 +583,10 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                 let t0 = js_sys::Date::now();
                 if open_backend(state, backend).await {
                     let elapsed = js_sys::Date::now() - t0;
-                    state.mic.permission_dialog_shown().set(elapsed > 1500.0);
+                    state
+                        .mic
+                        .permission_dialog_shown()
+                        .set(prompted || elapsed > 1500.0);
                     state
                         .mic
                         .acquisition_state()
@@ -582,10 +602,12 @@ pub async fn acquire_mic(state: &AppState, action: MicPendingAction) -> Option<M
                     state.mic.device_info().set(None);
                     state.mic.selected_device().set(None);
                     state.mic.acquisition_state().set(MicAcquisitionState::Idle);
-                    state
-                        .status
-                        .message()
-                        .set(Some("Microphone failed. Please choose again.".into()));
+                    if state.status.message().get_untracked().is_none() {
+                        state
+                            .status
+                            .message()
+                            .set(Some("Microphone failed. Please choose again.".into()));
+                    }
                     return None;
                 }
             }

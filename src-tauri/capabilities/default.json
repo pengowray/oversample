@@ -10,6 +10,7 @@
     "usb-audio:allow-getUsbDeviceInfo",
     "usb-audio:allow-openUsbDevice",
     "usb-audio:allow-closeUsbDevice",
+    "usb-audio:allow-requestAudioPermission",
     "media-store:allow-createRecordingEntry",
     "media-store:allow-finalizeRecordingEntry",
     "media-store:allow-cancelRecordingEntry",
@@ -30,6 +31,7 @@
     "audio-service:allow-isNotificationPermissionGranted",
     "audio-service:allow-requestNotificationPermission",
     "audio-service:allow-areCaptureNotificationsShown",
-    "audio-service:allow-openNotificationSettings"
+    "audio-service:allow-openNotificationSettings",
+    "audio-service:allow-openAppSettings"
   ]
 }

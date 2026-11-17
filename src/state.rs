@@ -2399,6 +2399,8 @@ pub struct DialogsState {
     pub notif_hidden_notice: bool,
     /// Persisted: that notice was closed; it is not shown again.
     pub notif_hidden_notice_dismissed: bool,
+    /// The notice that Android's Microphone permission is refused is showing.
+    pub mic_access_notice: bool,
     pub xc_browser_open: bool,
     pub wiki_browser_open: bool,
     /// The "Find recordings" dialog (combined species search).
@@ -2891,6 +2893,7 @@ impl AppState {
                     false,
                 ),
                 notif_hidden_notice: false,
+                mic_access_notice: false,
                 notif_hidden_notice_dismissed: crate::settings::get_bool(
                     crate::settings::keys::NOTIF_HIDDEN_NOTICE_DISMISSED,
                     false,

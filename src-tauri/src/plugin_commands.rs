@@ -12,7 +12,7 @@
 // A mismatch between (1) and (2) fails `default_capabilities_match_registered_commands`.
 // A registered command with no Kotlin `@Command` fails `registered_commands_have_kotlin_impl`.
 // The Kotlin files may legitimately define EXTRA @Commands that aren't exposed as
-// permissions (e.g. usb-audio's requestAudioPermission/checkUsbStatus), so that
+// permissions, so that
 // direction is intentionally not enforced.
 //
 // Without this guard a typo or renamed command surfaces only as a runtime IPC
@@ -30,6 +30,7 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "getUsbDeviceInfo",
             "openUsbDevice",
             "closeUsbDevice",
+            "requestAudioPermission",
         ],
     ),
     (
@@ -62,6 +63,7 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "requestNotificationPermission",
             "areCaptureNotificationsShown",
             "openNotificationSettings",
+            "openAppSettings",
         ],
     ),
 ];

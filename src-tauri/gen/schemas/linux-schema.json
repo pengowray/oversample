@@ -195,6 +195,12 @@
           "markdownDescription": "Enables the isNotificationPermissionGranted command without any pre-configured scope."
         },
         {
+          "description": "Enables the openAppSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-openAppSettings",
+          "markdownDescription": "Enables the openAppSettings command without any pre-configured scope."
+        },
+        {
           "description": "Enables the openNotificationSettings command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:allow-openNotificationSettings",
@@ -247,6 +253,12 @@
           "type": "string",
           "const": "audio-service:deny-isNotificationPermissionGranted",
           "markdownDescription": "Denies the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the openAppSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-openAppSettings",
+          "markdownDescription": "Denies the openAppSettings command without any pre-configured scope."
         },
         {
           "description": "Denies the openNotificationSettings command without any pre-configured scope.",
@@ -2481,6 +2493,12 @@
           "markdownDescription": "Enables the openUsbDevice command without any pre-configured scope."
         },
         {
+          "description": "Enables the requestAudioPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-requestAudioPermission",
+          "markdownDescription": "Enables the requestAudioPermission command without any pre-configured scope."
+        },
+        {
           "description": "Enables the requestUsbPermission command without any pre-configured scope.",
           "type": "string",
           "const": "usb-audio:allow-requestUsbPermission",
@@ -2509,6 +2527,12 @@
           "type": "string",
           "const": "usb-audio:deny-openUsbDevice",
           "markdownDescription": "Denies the openUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestAudioPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-requestAudioPermission",
+          "markdownDescription": "Denies the requestAudioPermission command without any pre-configured scope."
         },
         {
           "description": "Denies the requestUsbPermission command without any pre-configured scope.",

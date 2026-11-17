@@ -53,6 +53,30 @@ pub fn ToastDisplay() -> impl IntoView {
                     </div>
                 }
             })}
+            {move || state.dialogs.mic_access_notice().get().then(|| {
+                let on_open = move |_: web_sys::MouseEvent| {
+                    state.dialogs.mic_access_notice().set(false);
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = crate::tauri_bridge::tauri_invoke_no_args(
+                            "plugin:audio-service|openAppSettings",
+                        )
+                        .await;
+                    });
+                };
+                let on_close = move |_: web_sys::MouseEvent| {
+                    state.dialogs.mic_access_notice().set(false);
+                };
+                view! {
+                    <div class="capture-notice" role="alert">
+                        <span class="capture-notice-text">"Microphone not allowed for Oversample"</span>
+                        <button class="capture-notice-btn" on:click=on_open>"Open settings"</button>
+                        <button class="capture-notice-close"
+                            title="Close"
+                            aria-label="Close"
+                            on:click=on_close>"\u{00d7}"</button>
+                    </div>
+                }
+            })}
             {move || state.status.message().get().map(|msg| {
                 let state2 = state;
                 wasm_bindgen_futures::spawn_local(async move {

@@ -206,8 +206,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Request Android RECORD_AUDIO runtime permission.
-     * Needed for WebView getUserMedia to work on Android.
+     * Request Android RECORD_AUDIO runtime permission. The frontend calls this
+     * before opening any mic: the native (cpal) mic and the microphone
+     * foreground service both need it and neither asks for it.
      */
     @Command
     fun requestAudioPermission(invoke: Invoke) {

@@ -78,9 +78,9 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(StartAudioArgs::class.java)
 
         // RECORD_AUDIO must be granted before starting a microphone FGS, or
-        // startForeground() throws. The frontend already requests it via
-        // usb-audio|requestAudioPermission before opening the mic; this is a
-        // belt-and-suspenders guard.
+        // startForeground() throws. The frontend requests it via
+        // usb-audio|requestAudioPermission before opening any mic (acquire_mic),
+        // so this only fails if the permission is revoked in between.
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             invoke.reject("RECORD_AUDIO not granted")
@@ -219,6 +219,24 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             Log.w(TAG, "notification settings intent failed: ${e.message}")
             invoke.reject("Could not open notification settings: ${e.message}")
+        }
+    }
+
+    /** Open Android's "App info" page for this app, where the user can allow
+     *  the Microphone permission after refusing it. */
+    @Command
+    fun openAppSettings(invoke: Invoke) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${activity.packageName}"))
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            activity.startActivity(intent)
+            val result = JSObject()
+            result.put("opened", true)
+            invoke.resolve(result)
+        } catch (e: Exception) {
+            Log.w(TAG, "app settings intent failed: ${e.message}")
+            invoke.reject("Could not open app settings: ${e.message}")
         }
     }
 
